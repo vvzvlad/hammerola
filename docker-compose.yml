@@ -104,7 +104,9 @@ services:
         max-size: 10m
     labels:
       traefik.enable: "true"
-      traefik.http.routers.hammerola.rule: Host(`new.example.com`)
+      # A-запись 3d.vvzvlad.xyz -> 45.67.213.41 ЕЩЁ НЕ ЗАВЕДЕНА (SPEC 2.6):
+      # сейчас имя ловится вайлдкардом *.vvzvlad.xyz и уходит на дом, а не на slug.
+      traefik.http.routers.hammerola.rule: Host(`3d.vvzvlad.xyz`)
       traefik.http.services.hammerola.loadBalancer.server.port: 8000
       traefik.http.routers.hammerola.entrypoints: websecure
       traefik.http.routers.hammerola.tls: "true"
