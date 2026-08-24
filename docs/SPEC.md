@@ -1659,8 +1659,12 @@ origin аутентифицированные эндпоинты уже есть
 на исполнение — до переезда на раннере, после переезда в хабе.
 
 **Шаг 1. Ядро в образ хаба.** Пины `cadquery`, `cadquery-ocp`, `ocp-tessellate`,
-`trimesh`. Системные библиотеки в Dockerfile: `libgl1`, `libx11-6`, `libxext6`,
-`libxrender1`, `libsm6`, `libice6` — и намеренно НЕ `libglu1-mesa`. В smoke добавить
+`trimesh`. Системные библиотеки в Dockerfile: `libgl1`, `libx11-6`, `libexpat1`,
+`libxext6`, `libxrender1`, `libsm6`, `libice6` — и намеренно НЕ `libglu1-mesa`.
+(`libexpat1` добавлен по факту разбора колеса: вендоренный в `cadquery-ocp`
+fontconfig несёт незапатченный `DT_NEEDED libexpat.so.1`, а в `python:3.11-slim`
+libexpat нет вовсе; сегодня он приезжает только транзитивно через `libgl1`.
+Обоснование списка целиком — в комментарии Dockerfile.) В smoke добавить
 `import cadquery` внутри собранного образа, иначе класс ошибок с `libGL` вылезет уже
 в проде. VTK принимается как есть: его жёстко требует сам `cadquery-ocp`
 (`vtk==9.6.2`), а не trame, и единственный способ избавиться — подменить дистрибутив

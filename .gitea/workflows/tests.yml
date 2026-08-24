@@ -197,7 +197,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: test                          # no green tests → no image is built
-    # 20 (build) + 12 (smoke) = 32 minutes of step-level bounds; 40 leaves 8 on top for
+    # 20 (build) + 14 (smoke) = 34 minutes of step-level bounds; 40 leaves 6 on top for
     # checkout and the two cleanup steps. The outer bound has to EXCEED the sum, not equal it:
     # act_runner kills the whole job when this fires and a step marked `if: always()` is not
     # guaranteed to run afterwards, so a job killed here leaves containers and an image on the
@@ -260,15 +260,18 @@ jobs:
       # real credentials, and a gate that needed them would simply be switched off on PRs,
       # which is where the artefact most needs looking at.
       #
-      # 12 minutes is set against ci/smoke.py's OWN worst case, which the script documents and
-      # sums from its individual per-call bounds: 615 s — a little over 10 minutes — if every
+      # 14 minutes is set against ci/smoke.py's OWN worst case, which the script documents and
+      # sums from its individual per-call bounds: 705 s — a little under 12 minutes — if every
       # docker call it makes runs out its budget. In practice the whole gate is a few seconds.
       # Being killed BY this timeout is what the margin is for: the script's own container
-      # cleanup would not run, and the `if: always()` step below is what catches that.
+      # cleanup would not run, and the `if: always()` step below is what catches that. It was
+      # 12 minutes against a 615 s sum until the CAD-kernel probe was added, which brought its
+      # own 90 s bound — `import cadquery` maps ~222 MB of OpenCASCADE off a cold overlay the
+      # first time. Raise this number whenever that sum grows past it, in BOTH workflows.
       #
       # SMOKE_IMAGE and SMOKE_NAME both come from the job-level `env:` above, so this step
       # needs no `env:` block of its own.
-      timeout-minutes: 12
+      timeout-minutes: 14
       # The `run:` body of this step is byte-identical to the one in image-check-publish.yml —
       # the commentary above it and where its two variables come from are free to differ, and
       # do. The PR gate and the publishing gate must run the same checks against the same kind

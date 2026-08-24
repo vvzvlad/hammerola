@@ -22,6 +22,13 @@ image has a realistic chance of shipping broken while the suite stays green:
 * (c) privileges are really dropped — the process is `app`, not root.
 * (d) `.dockerignore` did its job: no tests, no `.env`, no `.venv` inside the image.
 * (e) the image's own command starts and gets through its own startup.
+* (f) the CAD kernel imports inside the image, and carries the versions requirements.txt
+      declares — including the transitive `cadquery-ocp`, which cadquery constrains only by
+      RANGE. This one is not about packaging at all: `cadquery-ocp` is a native OpenCASCADE
+      binding, and a base image missing one system library fails at `import cadquery` with
+      `ImportError: libGL.so.1` — at import time, before any geometry, and therefore in
+      production rather than in any test, because the suite runs on a checkout where the
+      developer's own machine supplies those libraries.
 
 Constraints of this runner, which shaped every choice below
 ------------------------------------------------------------
@@ -119,6 +126,120 @@ REQUIRED_VARIABLE = "PUBLISH_TOKEN"
 # one-line change that looks harmless in review.
 EXCLUDED_PATHS = ["/app/tests", "/app/.env", "/app/.venv"]
 
+# --- check (f): the CAD kernel -------------------------------------------------------------
+# The imports the hub's own code is entitled to make, as (module, symbol) — an empty symbol
+# means a plain `import module`. Written as data rather than as three lines of probe source so
+# that the verdict count below can be DERIVED from it and cannot go stale when one is added.
+#
+# `ocp_tessellate.convert` is named down to the symbol on purpose: `import ocp_tessellate` on
+# its own succeeds without pulling in the half that matters, so it would keep passing on a
+# release that moved or renamed the exporter, which is the whole viewer payload.
+CAD_IMPORTS = (
+    ("cadquery", ""),
+    ("ocp_tessellate.convert", "export_three_cad_viewer_js"),
+    ("trimesh", ""),
+)
+
+# The versions the image is required to carry, keyed by DISTRIBUTION name (what
+# importlib.metadata knows them as) rather than by import name — `cadquery-ocp` has no import
+# name at all, and `ocp-tessellate` imports as `ocp_tessellate`.
+#
+# Copied from requirements.txt on purpose rather than parsed out of it: this is the gate's OWN
+# independent statement of the contract, so a requirements.txt edited without thought has to
+# come here and disagree out loud. Keep the two in step — one edit in the same commit, and that
+# is the price of the check.
+#
+# `cadquery-ocp` is the row that earns this check the most. cadquery 2.8.0 declares it as
+# `cadquery-ocp<8.0,>=7.9.3.1` — a RANGE — so it is requirements.txt's explicit pin, and nothing
+# in cadquery itself, that keeps the geometry kernel from moving under every model this hub
+# serves between two builds of an unchanged Dockerfile. This row is what proves that pin
+# actually took effect in the built image, which is a different question from whether it is
+# written down.
+PINS = {
+    "cadquery": "2.8.0",
+    "cadquery-ocp": "7.9.3.1.1",
+    "ocp-tessellate": "3.4.1",
+    "trimesh": "4.12.2",
+}
+
+# Marks the start of the CAD probe's machine-readable verdicts on the container's stdout. A
+# sentinel rather than "parse the whole output as JSON" because the output is NOT clean:
+# OpenCASCADE and VTK write warnings of their own accord, and neither this file nor the probe
+# controls them. Everything before the LAST occurrence of this line is discarded, and of what
+# follows it only the first non-empty line is parsed — noise arrives on BOTH sides, since OCCT's
+# and VTK's static destructors print during interpreter finalisation, after the payload. A run
+# that lacks the sentinel entirely is treated as a probe that never reported, not as an empty
+# pass. parse_cad_verdicts() below spells out why each half of that matters.
+CAD_SENTINEL = "---HAMMEROLA-CAD-PROBE-JSON---"
+
+# The probe, run by the image's OWN interpreter inside the already-running probe container. It
+# takes one JSON argument — the imports, the pins and the sentinel — so that the constants above
+# stay the single place any of that is written on this side of the boundary, and it answers with
+# one JSON object mapping the key it was given to a reason string or null.
+#
+# It reports FACTS and leaves the prose to check_cad_kernel() below: the runner knows which key
+# is which and can say what a failure means, while everything in here has to survive being
+# squeezed through `python -c`.
+#
+# Delivered as `-c` rather than on stdin because that keeps `docker()` a one-argument-list
+# function; the script is a couple of kilobytes, far under any ARG_MAX. Note that with `-c` the
+# script itself is NOT argv[0] — `python -c SRC arg` gives `sys.argv == ["-c", arg]` — so the
+# request is argv[1].
+#
+# Every check is individually wrapped, and the sentinel is printed only at the very END: a probe
+# that died unexpectedly therefore produces NO verdicts at all rather than a truncated set that
+# would look like a smaller gate passing.
+CAD_PROBE_SOURCE = r"""
+import json
+import sys
+import traceback
+
+request = json.loads(sys.argv[1])
+verdicts = {}
+
+
+def crash(error):
+    return "{}: {}\n{}".format(type(error).__name__, error, traceback.format_exc())
+
+
+for key, module, symbol in request["imports"]:
+    try:
+        # fromlist is what makes __import__ hand back the SUBMODULE rather than the top-level
+        # package, which is the only form `ocp_tessellate.convert` can be checked through.
+        imported = __import__(module, fromlist=["__name__"])
+        if symbol:
+            getattr(imported, symbol)
+    except Exception as error:
+        verdicts[key] = crash(error)
+    else:
+        verdicts[key] = None
+
+metadata_problem = None
+try:
+    from importlib.metadata import version as dist_version
+except Exception as error:
+    dist_version = None
+    metadata_problem = crash(error)
+
+for key, name, expected in request["pins"]:
+    if dist_version is None:
+        verdicts[key] = "importlib.metadata is unavailable\n" + metadata_problem
+        continue
+    try:
+        actual = dist_version(name)
+    except Exception as error:
+        verdicts[key] = (
+            "it is not installed at all, or its metadata cannot be read\n" + crash(error))
+        continue
+    if actual == expected:
+        verdicts[key] = None
+    else:
+        verdicts[key] = "the image has {} instead".format(actual)
+
+print(request["sentinel"])
+print(json.dumps(verdicts))
+"""
+
 # How many verdicts each probe below is REQUIRED to return, compared against what it actually
 # returned before anything is reported. Every probe builds a local `targets` tuple first and
 # returns exactly one row per target on every path it can take — including the paths where the
@@ -154,10 +275,11 @@ EXCLUDED_PATHS = ["/app/tests", "/app/.env", "/app/.venv"]
 #
 # The counts are derived from the source wherever a derivation exists — the excluded-path
 # sweep emits one row per path, so it is written as `len(EXCLUDED_PATHS)` and cannot go stale
-# when that list grows. The rest are literals because the `targets` tuples they count are
-# literal, and a literal that has to be kept in step is the entire point here.
+# when that list grows, and (f) is one row per declared import plus one per pin for the same
+# reason. The rest are literals because the `targets` tuples they count are literal, and a
+# literal that has to be kept in step is the entire point here.
 #
-# Each label carries the probe's LETTER — the same (a)…(e) the list at the top of the module
+# Each label carries the probe's LETTER — the same (a)…(f) the list at the top of the module
 # docstring uses and each probe's own docstring opens with. That prefix is not decoration: this
 # label is the only thing a self-check failure gives whoever reads the run, and a label phrased
 # in words of its own would make them grep for prose that appears nowhere else in this file.
@@ -169,6 +291,7 @@ EXPECTED_TARGETS = (
     ("(c) privileges dropped", 4),
     ("(d) excluded paths", len(EXCLUDED_PATHS)),
     ("(e) startup", 2),
+    ("(f) CAD kernel", len(CAD_IMPORTS) + len(PINS)),
 )
 
 # The environment the probe and real-command containers run with. The value is invented here
@@ -187,9 +310,13 @@ SMOKE_ENV = [
 # root, heals /app/data and execs `gosu app sleep 900`, so PID 1 in that container is exactly
 # what check (c) wants to look at. Check (e) covers the real command separately, in its own
 # container, which is where that question belongs.
-# 900 s is far beyond this gate's own worst case (see the timeout arithmetic below); the
-# container is removed in a `finally` regardless, and the workflow removes it again under
-# `if: always()`.
+# 900 s is measured from the moment THIS container starts, so it is not a bound on the gate as
+# a whole and the two must not be confused. What it has to outlast is the last `docker exec`
+# into it — check (f), the CAD probe — and the arithmetic below puts the start of this container
+# at 240 s and the end of that exec at 645 s in the worst case, i.e. 405 s of its own life used
+# out of 900. Adding another exec into this container eats into that margin; adding a call
+# BEFORE it starts does not. The container is removed in a `finally` regardless, and the
+# workflow removes it again under `if: always()`.
 IDLE_COMMAND = ["sleep", "900"]
 
 # The first line `main.py` logs. Its presence proves the settings parsed — i.e. the required
@@ -225,8 +352,11 @@ STARTUP_MARKERS = (STARTUP_MARKER,)
 #  + 30 (rm cmd)            + 60 (cmd run -d)
 #  + 45 (startup poll: 30 s budget + one final 15 s `logs`)
 #  + 30 (inspect cmd state)
+#  + 90 (exec: CAD kernel probe)
 #  + 30 (rm probe, finally) + 30 (rm cmd, finally)
-#  = 615 s, a little over 10 minutes. Both workflows allow 12.
+#  = 705 s, a little under 12 minutes. Both workflows allow 14, and that headroom was raised
+# together with the CAD probe below — a step timeout that does not exceed this sum turns a
+# slow-but-healthy run into a killed step whose own container cleanup never executes.
 # Three of these `rm`s are PRE-run cleanups: every container is removed by name before it is
 # started, so a re-run from the Gitea UI — which keeps the same run id, hence the same
 # $SMOKE_NAME — cannot die on "name already in use".
@@ -236,6 +366,13 @@ GUARD_TIMEOUT = 90
 START_TIMEOUT = 60
 EXEC_TIMEOUT = 30
 LOGS_TIMEOUT = 15
+# The CAD probe gets a bound of its own, three times the others, and the reason is the size of
+# what it touches rather than the work it does. `import cadquery` maps ~222 MB of OpenCASCADE
+# shared objects plus VTK, and the FIRST time that happens in a freshly built image every one
+# of those pages is read off a cold overlay on a runner the whole fleet shares. Warm, the probe
+# takes a couple of seconds; the margin is for the cold case, and it is the one call in this
+# file where a 30 s bound could produce a red gate on a perfectly good image.
+CAD_TIMEOUT = 90
 
 # The startup-marker poll, bounded in WALL CLOCK rather than in attempts: each attempt shells
 # out to `docker logs`, whose own timeout is 15 s, so an attempt-counted bound would multiply
@@ -841,6 +978,168 @@ def check_startup(image, name):
     return rows
 
 
+def cad_import_statement(module, symbol):
+    """The import line the hub's own code would write, spelled out for a report row."""
+    if symbol:
+        return "from {} import {}".format(module, symbol)
+    return "import {}".format(module)
+
+
+def parse_cad_verdicts(output):
+    """Pull check (f)'s verdict map out of the container's stdout.
+
+    Returns (verdicts, None) or (None, reason). Noise on BOTH sides of the payload is discarded,
+    and both sides really do occur: OpenCASCADE and VTK print warnings of their own accord, the
+    probe cannot silence them, and `docker()` folds stderr into stdout — so the output around the
+    payload is not under this gate's control. Everything before the LAST sentinel goes, and of
+    what follows only the FIRST NON-EMPTY LINE is parsed.
+
+    That last part is the difference between a working gate and seven false failures. The payload
+    comes from `json.dumps`, which never emits a newline, so it is always exactly one line; but
+    OCCT's and VTK's static destructors run during interpreter finalisation, i.e. AFTER that line
+    has been printed. Feeding the whole remainder to json.loads would meet those bytes as
+    `JSONDecodeError: Extra data` and report all seven CAD targets as failed over an image that
+    is perfectly fine — the most expensive kind of red there is, because it blocks publication
+    and the next run behaves differently.
+    """
+    if CAD_SENTINEL not in output:
+        return None, (
+            "the probe never printed its sentinel, so it produced no verdicts. It prints that "
+            "line only after every check has run, which means it died partway — note that a "
+            "native import can take the interpreter down with a SIGSEGV and no traceback at "
+            "all, which is a fault in the image's own libraries. Full container output:\n"
+            "{}".format(excerpt(output)))
+    payload = output.rsplit(CAD_SENTINEL, 1)[1]
+    lines = [line for line in payload.splitlines() if line.strip()]
+    if not lines:
+        return None, (
+            "the probe printed its sentinel and then nothing at all. Those are two consecutive "
+            "print() calls, so the interpreter died between them — after every check had run "
+            "but before their verdicts were serialised, which points at json.dumps choking on a "
+            "verdict value or at the process being killed at exactly that moment. Full container "
+            "output:\n{}".format(excerpt(output)))
+    try:
+        verdicts = json.loads(lines[0])
+    except ValueError as error:
+        return None, (
+            "the probe's verdicts did not parse as JSON ({}). First non-empty line after the "
+            "sentinel:\n{}".format(describe(error), excerpt(lines[0])))
+    if not isinstance(verdicts, dict):
+        return None, "the probe's verdicts are a {}, not an object".format(
+            type(verdicts).__name__)
+    return verdicts, None
+
+
+def check_cad_kernel(name, blocked=None):
+    """(f) The geometry kernel is in the image, imports, and is the version that was pinned.
+
+    This is the check the whole of step 1 exists for, and it answers something no test in this
+    repository can. The suite runs against a CHECKOUT on a machine that already has X and GL
+    libraries lying around; `cadquery-ocp` is a native OpenCASCADE binding, so the one thing
+    that can be wrong here — a system library missing from the Dockerfile's apt list — is
+    invisible to every one of those tests and surfaces as `ImportError: libGL.so.1` at import
+    time, in production, on the first request that tries to build anything.
+
+    It also reads the installed versions back. requirements.txt pinning `cadquery-ocp` is a
+    STATEMENT; whether the resolver honoured it is a fact about the artefact, and only the
+    artefact can be asked. That matters more than the usual "did pip do what it was told",
+    because cadquery constrains OCP by range: an unnoticed drift there moves the geometry
+    kernel under every model the hub serves, and the symptom is not an error at all — it is a
+    rebuilt model whose STL and whose per-part buffer hashes quietly stop matching the ones
+    already published.
+
+    Runs by `docker exec` into the long-lived probe container that checks (c) and (d) already
+    started, rather than starting a fourth container: this image is around two gigabytes, so
+    starting one more would add the slowest thing this gate does for no extra coverage.
+
+    Deliberately NOT run with `-u app`, unlike the write probe in check (c). What is being
+    asked here is whether the dynamic linker can satisfy OCP and what the installed metadata
+    says — both identical for either account, since pip installed into a world-readable
+    site-packages — while `docker exec -u app` does not go through the entrypoint and so
+    supplies none of the environment gosu would have set. Running as the unprivileged account
+    would therefore buy nothing and risk a red gate over a missing HOME.
+    """
+    imports = [
+        ("import:{}:{}".format(module, symbol), module, symbol)
+        for module, symbol in CAD_IMPORTS
+    ]
+    # sorted() so the pin rows come out in the same order on every run and across python
+    # versions: these rows get read side by side with a previous run's log when a bump goes
+    # wrong.
+    pins = [("pin:{}".format(dist), dist, PINS[dist]) for dist in sorted(PINS)]
+
+    import_targets = [
+        (key, "`{}` succeeds inside the image".format(cad_import_statement(module, symbol)))
+        for key, module, symbol in imports
+    ]
+    pin_targets = [
+        (key, "the image carries {} {}".format(dist, expected))
+        for key, dist, expected in pins
+    ]
+    targets = import_targets + pin_targets
+
+    if blocked is not None:
+        return [(target, blocked) for _, target in targets]
+
+    request = json.dumps({
+        "imports": [[key, module, symbol] for key, module, symbol in imports],
+        "pins": [[key, dist, expected] for key, dist, expected in pins],
+        "sentinel": CAD_SENTINEL,
+    })
+
+    status, output = docker(
+        ["exec", name, "python", "-c", CAD_PROBE_SOURCE, request], CAD_TIMEOUT)
+    if status is None:
+        return [(target, "not attempted: " + output) for _, target in targets]
+
+    verdicts, problem = parse_cad_verdicts(output)
+    if verdicts is None:
+        if status != 0:
+            # A non-zero exit is NOT by itself a verdict — the probe reports its own failures
+            # through the map and exits 0 having done so. It means the interpreter could not
+            # finish at all, and for a native binding the likeliest cause is a signal rather
+            # than an exception, which is why the two facts are reported together.
+            problem = "the container exited {} and {}".format(status, problem)
+        return [(target, problem) for _, target in targets]
+
+    rows = []
+    missing = object()
+
+    for key, target in import_targets:
+        reason = verdicts.get(key, missing)
+        if reason is missing:
+            rows.append((target, (
+                "the probe returned no verdict for this import. Full container "
+                "output:\n{}".format(excerpt(output)))))
+        elif reason is None:
+            rows.append((target, None))
+        else:
+            rows.append((target, (
+                "it raised. This is where a system library missing from the Dockerfile shows "
+                "up: OCP is a native OpenCASCADE binding, so an image without libGL/X11 fails "
+                "at THIS line rather than at any geometry call. Check the apt list in the "
+                "Dockerfile against the DT_NEEDED sweep documented there — and if the message "
+                "names libGLU.so.1, that list's one explicit omission is what was "
+                "wrong.\n{}".format(reason))))
+
+    for key, target in pin_targets:
+        reason = verdicts.get(key, missing)
+        if reason is missing:
+            rows.append((target, (
+                "the probe returned no verdict for this pin. Full container output:\n"
+                "{}".format(excerpt(output)))))
+        elif reason is None:
+            rows.append((target, None))
+        else:
+            rows.append((target, (
+                "{}. requirements.txt and this file's PINS have drifted apart, or the resolver "
+                "picked something else — and for cadquery-ocp that means the geometry kernel "
+                "under every model this hub serves has moved without a file being "
+                "touched.".format(reason))))
+
+    return rows
+
+
 def main():
     image = os.environ.get(IMAGE_ENV)
     name = os.environ.get(NAME_ENV)
@@ -890,6 +1189,14 @@ def main():
         excluded_rows = check_excluded_paths(probe_name, blocked=blocked)
 
         startup_rows = check_startup(image, cmd_name)
+
+        # Last, and inside the `try` because it execs into the probe container started above —
+        # so it has to be covered by the same `finally`. Running it here rather than beside the
+        # other two execs keeps this list in the same order as EXPECTED_TARGETS, which is what
+        # the positional pairing below depends on; the cost is that it is the call furthest
+        # from the probe container's own `sleep`, and the arithmetic at IDLE_COMMAND is where
+        # that margin is checked.
+        cad_rows = check_cad_kernel(probe_name, blocked=blocked)
     finally:
         # Both long-lived containers, removed whatever happened above. The workflow removes
         # them again under `if: always()` for the case where this process itself was killed by
@@ -904,7 +1211,8 @@ def main():
     # green while each probe's failures were being reported under the other one's name. Nothing
     # in this file can detect that; keeping the two tuples in step by eye is what prevents it,
     # which is why the letters are on the labels.
-    produced = (contract_rows, guard_rows, privileges_rows, excluded_rows, startup_rows)
+    produced = (contract_rows, guard_rows, privileges_rows, excluded_rows, startup_rows,
+                cad_rows)
 
     # Three self-checks, and they are three because each one catches a break the others cannot
     # see. They are collected in two lists rather than one because they are REPORTED
@@ -918,15 +1226,16 @@ def main():
     # per-probe comparison below is structurally incapable of making it: `zip` stops at the
     # shorter of its arguments and says nothing about the surplus. So a refactor that drops a
     # probe from the `produced` tuple — rather than leaving it in place returning [], which the
-    # per-probe check would catch — pairs the 4 survivors against the first 4 declarations, finds
+    # per-probe check would catch — pairs the 5 survivors against the first 5 declarations, finds
     # every one of them consistent, and reports `miscounted == []`.
     #
     # What this check buys there is the DIAGNOSIS, not the verdict. That run is refused either
-    # way: the 4 surviving groups contribute 14 rows against a declared total of 16, so (3) below
-    # fires and the gate exits 3 with or without this check. But (3) can only report that the
-    # arithmetic between the probes and `rows` came out wrong, and its own wording points at the
-    # other way that happens — a group extended into `rows` twice, or one left out of the loop —
-    # which is the wrong place to start looking. This check names the fault in one line: the two
+    # way: dropping the CAD group that way leaves 5 groups contributing 16 rows against a
+    # declared total of 23, so (3) below fires and the gate exits 3 with or without this check.
+    # But (3) can only report that the arithmetic between the probes and `rows` came out wrong,
+    # and its own wording points at the other way that happens — a group extended into `rows`
+    # twice, or one left out of the loop — which is the wrong place to start looking. This
+    # check names the fault in one line: the two
     # lists no longer have the same number of entries, so a probe was added or removed without
     # its declaration moving in the same commit. Both lines are printed together; this is the one
     # that points at the commit. (`zip(..., strict=True)` would express this in one word and is
@@ -967,8 +1276,8 @@ def main():
     # SECOND time — a duplicated `rows.extend(...)`, a copy-paste while adding a probe — leaves
     # the arity right and leaves every per-probe count right, because both of those inspect
     # `produced` and this mistake happens after it. Duplicating the 3-verdict guard group that
-    # way collects 19 rows where 16 are declared, and without this check the run would end on
-    # `smoke ok: 19/19`, which reads as a gate doing MORE work when it is in fact grading one
+    # way collects 26 rows where 23 are declared, and without this check the run would end on
+    # `smoke ok: 26/26`, which reads as a gate doing MORE work when it is in fact grading one
     # probe twice and counting that probe's verdicts twice over.
     declared_total = sum(count for _, count in EXPECTED_TARGETS)
     if len(rows) != declared_total:

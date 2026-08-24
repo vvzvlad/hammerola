@@ -197,8 +197,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: test                          # no green tests → no image is built
-    # The three step-level timeouts below come to 47 minutes (20 build + 12 smoke + 15 push);
-    # 55 leaves 8 on top for checkout, the tag computation, the registry login, the two
+    # The three step-level timeouts below come to 49 minutes (20 build + 14 smoke + 15 push);
+    # 55 leaves 6 on top for checkout, the tag computation, the registry login, the two
     # cleanup steps and the logout. The outer bound has to EXCEED the sum, not equal it:
     # act_runner kills the whole job when this fires, and a step marked `if: always()` is not
     # guaranteed to run afterwards — so a job that dies mid-push leaves the smoke containers
@@ -352,12 +352,15 @@ jobs:
       # what lets the identical step run on a pull request in tests.yml, where the
       # deployment's real secrets are not available and should not be.
       #
-      # 12 minutes is set against ci/smoke.py's OWN worst case, which the script documents and
-      # sums from its individual per-call bounds: 615 s — a little over 10 minutes — if every
+      # 14 minutes is set against ci/smoke.py's OWN worst case, which the script documents and
+      # sums from its individual per-call bounds: 705 s — a little under 12 minutes — if every
       # docker call it makes runs out its budget. In practice the whole gate is a few seconds.
       # Being killed BY this timeout is what the margin is for: the script's own container
-      # cleanup would not run, and the `if: always()` step below is what catches that.
-      timeout-minutes: 12
+      # cleanup would not run, and the `if: always()` step below is what catches that. It was
+      # 12 minutes against a 615 s sum until the CAD-kernel probe was added, which brought its
+      # own 90 s bound — `import cadquery` maps ~222 MB of OpenCASCADE off a cold overlay the
+      # first time. Raise this number whenever that sum grows past it, in BOTH workflows.
+      timeout-minutes: 14
       env:
         # SMOKE_NAME is not here: it is set once at job level, so this step and the cleanup
         # step below are guaranteed to be talking about the same containers.

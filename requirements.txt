@@ -21,3 +21,76 @@ pydantic==2.13.4
 pydantic-settings==2.7.0
 loguru==0.7.2
 httpx==0.28.1
+
+# --- The CAD kernel ---------------------------------------------------------------------------
+# The geometry stack, and the whole reason this project exists as ONE artefact: the hub does not
+# hand the build to a separate builder image, it computes the geometry itself. So these are
+# RUNTIME dependencies of the service, not tooling that happens to sit beside it, and they are
+# what makes this image large — roughly two gigabytes rather than the couple of hundred megabytes
+# everything above it costs.
+#
+# The four move together, and they are pinned for a reason the pins above do not have: a range
+# here would let an upstream release change a fillet or a tessellation between two builds of an
+# unchanged model, and nothing downstream would report it — the STL simply comes out different,
+# and the per-part buffer hash that the revision comparison is built on (SPEC §8, «Сравнение двух
+# ревизий») stops matching for reasons that have nothing to do with the model.
+#
+# BE PRECISE ABOUT WHAT THESE FOUR LINES BUY, because the obvious sentence — "a model rebuilt
+# from the same source a year from now produces the same geometry" — is NOT what is written here
+# and is not true today. Pinned are the geometry kernel (cadquery + the OpenCASCADE binding
+# underneath it), the tessellation exporter and the mesh library. Not pinned is the rest of the
+# environment: installing this file brings in 60 distributions, of which these are 4. Three more
+# are pinned for us further up the tree (`cadquery-ocp` declares `vtk==9.6.2` and
+# `cadquery-ocp-proxy==7.9.3.1.1`, `pydantic` declares `pydantic-core==2.46.4`); the remaining
+# 53 arrive transitively and float, and they are not all inert — numpy builds the very buffers
+# the revision comparison hashes, and nlopt and casadi are the solver behind part placement in
+# assemblies, so numba, llvmlite, scipy, ezdxf and matplotlib are floating alongside things that
+# can move geometry. Whether that gets a lock file is an open decision, recorded in the
+# AGENTS.md checklist; until it is made, treat reproducibility as covering the kernel, not the
+# build.
+#
+# ci/smoke.py states these same four versions independently (its `PINS`) and reads them back out
+# of the BUILT IMAGE before anything is published, so an image whose resolver picked something
+# else for one of THESE FOUR never reaches the registry — the gate says nothing about the other
+# 56, and cannot, since nothing declares what they should be. A bump is therefore two edits in
+# one commit, and the gate is what enforces that it is two and not one.
+cadquery==2.8.0
+
+# The OpenCASCADE binding — ~271 MB unpacked, the largest single thing in this image. It is a
+# TRANSITIVE dependency (cadquery pulls it in) and it is named here anyway. That is not
+# belt-and-braces:
+#
+#   cadquery 2.8.0 declares `cadquery-ocp<8.0,>=7.9.3.1` — a RANGE, not a pin. Verified with
+#   `importlib.metadata.requires("cadquery")`. So without this line two builds of an unchanged
+#   Dockerfile pick up whatever OCP was newest on PyPI at the moment each one ran, and the
+#   geometry kernel underneath every model this hub serves moves without a single file in this
+#   repository being touched.
+#
+# Keep it in step with cadquery above: a cadquery bump can widen or move that range, and if the
+# two ever become unsatisfiable pip fails the build loudly — which is the correct outcome, and
+# far better than the silent kernel swap this line exists to prevent.
+#
+# VTK rides along with it (`vtk==9.6.2`, required by cadquery-ocp ITSELF, not by trame) and is
+# accepted as is. The only way to drop it is to substitute the `cadquery-ocp-novtk` distribution
+# in defiance of the declared dependency; ~0.6 GB is not worth that permanent fragility. Decided
+# in SPEC 8A — do not reopen it.
+cadquery-ocp==7.9.3.1.1
+
+# Turns a built model into the viewer payload this hub serves:
+# `from ocp_tessellate.convert import export_three_cad_viewer_js`.
+#
+# HELD AT 3.4.1 DELIBERATELY, although 3.5.0 exists — and the reason to upgrade is real, which is
+# exactly why it is not done here. 3.4.1 is the version the vendored viewer was released
+# alongside (`ocp_vscode` 4.0.1 ships the renderer for the JSON this produces), and 3.5.0 fixes a
+# bug confirmed on our own data: `face_types` and `edge_types` fall out of step with
+# `triangles_per_face` when degenerate geometry is skipped (SPEC §8, «Сравнение двух ревизий»).
+# Both halves of the payload contract therefore move on that bump — the producer and the
+# vendored renderer — so it is a change of its own, carrying a test that reproduces the
+# desynchronisation, rather than a version quietly raised alongside something unrelated.
+ocp-tessellate==3.4.1
+
+# The publish gate's watertightness check: the STL is loaded back and `is_watertight` is what
+# stands between a mesh with holes and a part somebody tries to slice. Without it that gate has
+# no way to ask the question at all, and a model exports, publishes and looks perfectly fine in
+# the viewer while being unprintable.
+trimesh==4.12.2
