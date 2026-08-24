@@ -100,3 +100,25 @@ ocp-tessellate==3.4.1
 # no way to ask the question at all, and a model exports, publishes and looks perfectly fine in
 # the viewer while being unprintable.
 trimesh==4.12.2
+
+# --- The preview picture -----------------------------------------------------------------------
+# The three below are what `src/cadbuild/preview_png.py` imports at module level to draw the
+# smoke-test PNG of a part: mplot3d does the projection and the depth ordering, numpy carries the
+# triangles and does the decimation, Pillow composes the tiles and the footer. Without any one of
+# them that module raises on import — which `assembly.render_previews` catches and turns into
+# "warning: no previews", so what breaks is not the build but the picture, silently, on every
+# build from then on.
+#
+# ALL THREE ARE ALREADY IN THE IMAGE and cost it nothing: cadquery-ocp requires vtk, vtk requires
+# matplotlib, and matplotlib requires numpy and pillow. They are named here anyway, and that is
+# exactly the case the rule in AGENTS.md is about — inheriting a dependency means an unrelated
+# upgrade up the tree can take it away, and the import then fails at startup in production on a
+# commit that changed nothing near it. A `cadquery-ocp-novtk` substitution, or vtk dropping its
+# matplotlib requirement, would do precisely that here.
+#
+# The versions are the ones pip already resolves for python 3.11 with the pins above in place, so
+# adding these lines changes no installed byte today; numpy is at 2.4.x and not 2.5.x because
+# 2.5 requires python >= 3.12 and the image is python:3.11-slim.
+matplotlib==3.11.1
+numpy==2.4.6
+Pillow==12.3.0

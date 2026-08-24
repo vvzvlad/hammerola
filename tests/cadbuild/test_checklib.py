@@ -1,0 +1,193 @@
+"""The checks a model.py calls, and the top-level name it calls them under.
+
+`import checklib` is a contract with nine repositories, exactly like `views()`
+and `printables()`. It has to keep working after the code moved into a package,
+and it has to be the SAME module -- `pairwise_interference` records what it
+measured, and metrics.json reads that record back. Two copies of the module
+would be two records, one of which nobody reads.
+"""
+
+import contextlib
+import importlib
+import sys
+from pathlib import Path
+
+import pytest
+
+import checklib as top_level
+from src.cadbuild import checklib
+from src.cadbuild.errors import BuildError
+
+IMPLEMENTATION = Path(checklib.__file__).resolve()
+
+
+@pytest.fixture(autouse=True)
+def clean_record():
+    checklib._INTERFERENCE.clear()
+    yield
+    checklib._INTERFERENCE.clear()
+
+
+def _ours(name):
+    """Module names this file is allowed to forget and put back."""
+    return name == "checklib" or name == "src" or name.startswith("src.")
+
+
+@contextlib.contextmanager
+def a_process_that_has_imported_neither(first_on_the_path=None):
+    """`checklib` and everything `src`-shaped forgotten, restored exactly after.
+
+    The interesting orderings all happen once per process and are therefore
+    invisible to a suite that imported both modules before the first test ran.
+    This puts sys.modules back to before either was imported, so an
+    `importlib.import_module` inside the block really does execute the shim.
+
+    `first_on_the_path` stands in for the model project: geometry.load_model
+    puts the project root at sys.path[0] before importing model.py, and the
+    contents of that directory are the model author's, not ours.
+
+    EVERY name is saved and put back, not just the four this file names. The
+    modules under src.cadbuild carry module-level state that other tests hold
+    references to -- paths._root, checklib._INTERFERENCE -- and restoring a
+    subset would leave those tests running against one module object while the
+    conftest guard inspects another.
+    """
+    saved_modules = {name: module for name, module in sys.modules.items() if _ours(name)}
+    saved_path = list(sys.path)
+    for name in saved_modules:
+        del sys.modules[name]
+    if first_on_the_path is not None:
+        sys.path.insert(0, str(first_on_the_path))
+    try:
+        yield
+    finally:
+        sys.path[:] = saved_path
+        for name in [name for name in sys.modules if _ours(name)]:
+            del sys.modules[name]
+        sys.modules.update(saved_modules)
+
+
+# --------------------------------------------------------------------------
+# The compatibility name
+# --------------------------------------------------------------------------
+
+def test_the_top_level_name_is_the_same_module_not_a_copy():
+    assert top_level.pairwise_interference is checklib.pairwise_interference
+    assert top_level.recorded_interference is checklib.recorded_interference
+
+
+def test_the_record_is_shared_between_the_two_names():
+    checklib._INTERFERENCE["a|b"] = 1.5
+    assert top_level.recorded_interference() == {"a|b": 1.5}
+
+
+def test_everything_a_model_calls_is_re_exported():
+    for name in ("pairwise_interference", "mating_face_flat",
+                 "material_under_head", "name_pairs", "recorded_interference"):
+        assert hasattr(top_level, name), name
+
+
+def test_the_shim_survives_a_model_project_that_has_a_src_of_its_own(tmp_path):
+    """The shim must not resolve its implementation through the name `src`.
+
+    `src` is about the most ordinary directory name a repository has, and
+    load_model puts the model project's root on sys.path FIRST on purpose, so a
+    project carrying one owns that name for the rest of the process. A shim
+    written as `from src.cadbuild.checklib import ...` therefore raises
+    ModuleNotFoundError on `import checklib` -- in a process where the package
+    half has not been imported yet, which is the process SPEC 8A.2 step 4
+    spawns to run a model in.
+
+    The decoy here is what a model project's src/ looks like from the import
+    system's side: a package by that name with no `cadbuild` in it.
+    """
+    project = tmp_path / "model-project"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "__init__.py").write_text("", encoding="utf-8")
+
+    with a_process_that_has_imported_neither(first_on_the_path=project):
+        shim = importlib.import_module("checklib")
+        implementation = sys.modules["src.cadbuild.checklib"]
+        assert Path(implementation.__file__).resolve() == IMPLEMENTATION
+        assert shim.pairwise_interference is implementation.pairwise_interference
+        # The name that would have been consulted was never touched at all.
+        assert "src" not in sys.modules
+
+
+def test_a_shim_imported_before_the_package_still_shares_the_one_record():
+    """The whole point of the shim, in the order step 4 will meet it.
+
+    The model runs first, and its `import checklib` is what brings the
+    implementation into the process; `collect_metrics` reaches it later,
+    through the package, and has to arrive at the SAME module. Two module
+    objects means two `_INTERFERENCE` dicts -- the model fills one, metrics.json
+    reads the other, and a build that measured its overlaps publishes none of
+    them without anything going red.
+
+    Loading a file under a name whose parent package is not imported is exactly
+    where that could break, so it is checked in that order rather than in the
+    one this suite happens to import in.
+    """
+    with a_process_that_has_imported_neither():
+        shim = importlib.import_module("checklib")
+        # `from . import checklib`, made by the module that writes metrics.json.
+        metrics = importlib.import_module("src.cadbuild.metrics")
+        assert metrics.checklib is sys.modules["src.cadbuild.checklib"]
+
+        metrics.checklib._INTERFERENCE["body|lid"] = 4.10
+        assert shim.recorded_interference() == {"body|lid": 4.10}
+
+
+# --------------------------------------------------------------------------
+# name_pairs -- shared with the view validator on purpose
+# --------------------------------------------------------------------------
+
+def test_a_list_of_pairs_comes_back_as_frozensets():
+    assert checklib.name_pairs([("a", "b")], "allowed_touching") == \
+           {frozenset(("a", "b"))}
+
+
+def test_a_pair_that_is_not_two_strings_is_refused():
+    """The copies drifted and the one in publish.py let this through."""
+    for bad in ([("a", 1)], [("a",)], ["ab"], [("a", "b", "c")]):
+        with pytest.raises(ValueError):
+            checklib.name_pairs(bad, "allowed_touching")
+
+
+def test_a_flat_tuple_of_two_names_is_refused_by_name():
+    """`allowed_touching=("body", "lid")` -- the mistake this exists for."""
+    with pytest.raises(ValueError) as exc:
+        checklib.name_pairs(("body", "lid"), "allowed_touching")
+    assert "not a pair of names" in str(exc.value)
+
+
+def test_a_bare_string_is_refused_with_the_right_message():
+    with pytest.raises(ValueError) as exc:
+        checklib.name_pairs("body", "allowed_touching")
+    assert "list of name PAIRS" in str(exc.value)
+
+
+def test_a_pair_given_as_a_generator_is_consumed_exactly_once():
+    """Iterating a pair twice is once too many: the second pass sees nothing,
+    `all()` over nothing is True, and non-strings walk through."""
+    assert checklib.name_pairs([(x for x in ("a", "b"))], "nested_ok") == \
+           {frozenset(("a", "b"))}
+
+
+def test_nothing_declared_is_an_empty_set():
+    assert checklib.name_pairs((), "allowed_touching") == set()
+
+
+# --------------------------------------------------------------------------
+# The record metrics.json carries
+# --------------------------------------------------------------------------
+
+def test_the_record_starts_empty():
+    assert checklib.recorded_interference() == {}
+
+
+def test_the_record_is_a_copy_callers_cannot_corrupt():
+    checklib._INTERFERENCE["a|b"] = 1.0
+    taken = checklib.recorded_interference()
+    taken["a|b"] = 99.0
+    assert checklib.recorded_interference() == {"a|b": 1.0}

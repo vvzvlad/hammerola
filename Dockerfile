@@ -94,6 +94,13 @@ COPY src/ src/
 COPY templates/ templates/
 COPY static/ static/
 COPY main.py .
+# The one top-level module in this image, and it is not a stray file: every
+# model.py in the fleet opens with `import checklib`, exactly as it opens with
+# `def views()`. It re-exports src/cadbuild/checklib.py under that name, and it
+# has to be at /app rather than inside the package because a model is imported
+# with its own directory FIRST on sys.path — so the name has to resolve on the
+# path behind it, which /app is. See checklib.py's own docstring.
+COPY checklib.py .
 # --chmod pins the executable bit: exec-form ENTRYPOINT fails with "permission
 # denied" if the bit is lost in the build context (Windows checkout, tar copy).
 COPY --chmod=0755 entrypoint.sh /entrypoint.sh

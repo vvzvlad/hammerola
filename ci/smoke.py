@@ -28,7 +28,10 @@ image has a realistic chance of shipping broken while the suite stays green:
       binding, and a base image missing one system library fails at `import cadquery` with
       `ImportError: libGL.so.1` — at import time, before any geometry, and therefore in
       production rather than in any test, because the suite runs on a checkout where the
-      developer's own machine supplies those libraries.
+      developer's own machine supplies those libraries. The preview renderer is in this check
+      for a second reason: the build imports it lazily and DEGRADES to a warning when it will
+      not import, so an image whose matplotlib is broken publishes builds with no pictures,
+      for ever, with nothing anywhere going red.
 * (g) the templates and the viewer assets are actually IN the image — the mirror image of (d),
       and the one this gate was missing. Losing a `COPY templates/`/`COPY static/` line from
       the Dockerfile breaks nothing any other check can see: the image builds, the container
@@ -172,6 +175,13 @@ REQUIRED_PATHS = [
     "/app/templates/pointer.html",
     "/app/static/_v/three-cad-viewer.esm.js",
     "/app/static/_v/viewer.js",
+    # The sixth is a single file rather than a tree, and it is here for the same reason as the
+    # five above: nothing else can see it go missing. `checklib.py` is copied on a line of its
+    # own (`COPY checklib.py .`) and is the top-level name every model.py imports; the suite
+    # runs against a checkout where it is simply present, and the image starts, serves and
+    # passes every check above without it. What breaks is the first model that imports it,
+    # inside a build, long after the image was published.
+    "/app/checklib.py",
 ]
 
 # --- check (f): the CAD kernel -------------------------------------------------------------
@@ -182,10 +192,34 @@ REQUIRED_PATHS = [
 # `ocp_tessellate.convert` is named down to the symbol on purpose: `import ocp_tessellate` on
 # its own succeeds without pulling in the half that matters, so it would keep passing on a
 # release that moved or renamed the exporter, which is the whole viewer payload.
+#
+# The last two are not third-party at all — they are the build half that moved in from
+# cad_publish (SPEC 8A.2 step 3), and they are checked here because they are the only part of
+# this repository whose import path depends on the IMAGE rather than on the checkout.
+# `src.cadbuild.build` pulls the whole moved graph in behind it (views, gate, printables,
+# metrics, assembly …) and every one of those imports is package-relative, so it fails as a
+# unit if a COPY line or a package name drifts. `checklib` is the top-level name every model.py
+# in the fleet opens with: it lives at /app so that a model imported with its own directory
+# first on sys.path still finds it behind that, and nothing but this can tell whether that
+# arrangement survived the build. Both are pure python and cost the probe nothing — the CAD
+# imports above are what make it slow.
+#
+# `src.cadbuild.preview_png` is NOT reached by `src.cadbuild.build` and is here for that exact
+# reason. It is the only module in this repository that imports matplotlib, numpy and Pillow —
+# the three pins added below — and `assembly.render_previews` imports it LAZILY, inside the
+# function, wrapped in a bare `except` that degrades to `warning: no previews` and returns an
+# empty list. That is the right behaviour at build time (a python without a rendering stack
+# must still be able to publish geometry) and it is precisely why the failure has to be caught
+# here: in an image whose matplotlib does not load, every build would go green for ever while
+# quietly shipping no pictures at all, and nothing downstream would say so. The pin rows below
+# do not cover this — see there.
 CAD_IMPORTS = (
     ("cadquery", ""),
     ("ocp_tessellate.convert", "export_three_cad_viewer_js"),
     ("trimesh", ""),
+    ("src.cadbuild.build", "build"),
+    ("src.cadbuild.preview_png", "render"),
+    ("checklib", "pairwise_interference"),
 )
 
 # The versions the image is required to carry, keyed by DISTRIBUTION name (what
@@ -203,11 +237,31 @@ CAD_IMPORTS = (
 # serves between two builds of an unchanged Dockerfile. This row is what proves that pin
 # actually took effect in the built image, which is a different question from whether it is
 # written down.
+#
+# The last three are the preview renderer's, and they earn a row for the opposite reason to
+# `cadquery-ocp`: nothing in this repository asked for them until now, because they arrive on
+# their own through cadquery-ocp -> vtk -> matplotlib -> numpy/pillow. requirements.txt names
+# them because `src/cadbuild/preview_png.py` imports them directly, and this row is what proves
+# the pin took — the day vtk stops requiring matplotlib, or the image is built against
+# `cadquery-ocp-novtk`, the version the gate reads back is not the one declared here (or is not
+# there at all) and the image does not reach the registry.
+#
+# WHAT A PIN ROW DOES NOT PROVE, for those three and for every other row here: it is metadata
+# and nothing else. `importlib.metadata.version` reads the `.dist-info` directory beside the
+# package and never loads a single line of it, so an interrupted install, a wheel built for a
+# different manylinux/glibc than the base image, or a system library missing from the apt list
+# all leave the recorded version perfectly intact and this row perfectly green — while the
+# first `import matplotlib` in the running image raises. The import rows in CAD_IMPORTS above
+# are the half that actually loads the compiled extensions; the two halves answer different
+# questions and neither one substitutes for the other.
 PINS = {
     "cadquery": "2.8.0",
     "cadquery-ocp": "7.9.3.1.1",
     "ocp-tessellate": "3.4.1",
     "trimesh": "4.12.2",
+    "matplotlib": "3.11.1",
+    "numpy": "2.4.6",
+    "pillow": "12.3.0",
 }
 
 # Marks the start of the CAD probe's machine-readable verdicts on the container's stdout. A
@@ -1163,7 +1217,7 @@ def parse_cad_verdicts(output):
     comes from `json.dumps`, which never emits a newline, so it is always exactly one line; but
     OCCT's and VTK's static destructors run during interpreter finalisation, i.e. AFTER that line
     has been printed. Feeding the whole remainder to json.loads would meet those bytes as
-    `JSONDecodeError: Extra data` and report all seven CAD targets as failed over an image that
+    `JSONDecodeError: Extra data` and report every CAD target as failed over an image that
     is perfectly fine — the most expensive kind of red there is, because it blocks publication
     and the next run behaves differently.
     """

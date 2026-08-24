@@ -76,8 +76,24 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       **внутри** staging (по компоненту, а не по префиксу строки), третья — проход по
       одному компоненту через `mkdirat`/`openat` с `O_DIRECTORY|O_NOFOLLOW`, каталоги
       хаб создаёт сам. Обоснования — SPEC §7.1, тесты — `tests/test_archive_security.py`.
-- [ ] **Шаг 3. Перенос `cad_publish` внутрь** — 5791 строка плюс 14 тест-файлов.
-      Основной объём работы. Отдельно решить судьбу `checklib`.
+- [x] **Шаг 3. Перенос `cad_publish` внутрь** — сделано. Сборочная половина живёт
+      в `src/cadbuild/` (19 модулей), её тесты — в `tests/cadbuild/` (9 файлов,
+      169 тестов, свой `conftest.py`). Клиентская половина осталась в
+      `cad_publish` и НЕ переезжала: `cli`, `__main__`, `settings`, `hub`,
+      `remote`, `gitinfo`, `init_project`, `preview` (локальный HTTP-сервер
+      предпросмотра — у хаба свой), `archive` (клиент пакует, хаб распаковывает).
+      Из `metrics.py` не поехали `fetch_baseline` и `check_project_match` — это
+      ноутбук, спрашивающий хаб по HTTP; чистая половина (диффы, отпечатки
+      исходника, печать) поехала целиком. `render.py` переименован в
+      `preview_png.py`, потому что в хабе уже есть `src/render.py` про другое.
+      **Судьба `checklib` решена:** он остался частью контракта с моделью —
+      `src/cadbuild/checklib.py` плюс шим `checklib.py` В КОРНЕ репозитория, как
+      было в `cad_publish`. Корень, а не пакет: модель импортируется с её
+      собственным каталогом первым в `sys.path`, значит имя обязано
+      разрешаться на пути ПОЗАДИ него, и этим путём в образе является `/app`.
+      Механика обнаружения затенения (`geometry._warn_if_checklib_shadowed`)
+      работает как работала. Ничего из перенесённого не подключено к сервису —
+      это шаги 4 и 6.
 - [ ] **Шаг 4. Исполнение** — отдельный процесс через `spawn`/exec (НЕ `fork`:
       тредпул OCCT после форка виснет), `rlimit` во внешней обёртке плюс таймер и
       `SIGKILL` в родителе, ограниченный тредпул OCCT.
@@ -127,7 +143,23 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
 
 ## Project structure
 - `src/` — application code (`settings.py` is the single config entry point)
-- `tests/` — pytest
+- `src/cadbuild/` — the build half, moved in from `cad_publish` (SPEC 8A.2 step
+  3): take a model's source, compute the geometry, gate it, export the
+  artefacts and the viewer payload. Kept as a subpackage rather than spread
+  through `src/` because it is a different job from serving: nothing in it
+  touches HTTP, the data volume or a credential, and nothing under `src/`
+  imports it YET — running a model is step 4, the gate on the receiving side is
+  step 6
+- `checklib.py` — at the ROOT, and not a stray file: `import checklib` is part
+  of the contract with every model.py in the fleet, exactly like `views()` and
+  `printables()`. It re-exports `src/cadbuild/checklib.py` under that name, and
+  it has to sit at the root because a model is imported with its own directory
+  FIRST on `sys.path` (so a project may deliberately shadow it) and the name
+  then has to resolve on the path behind it — `/app` in the image. Smoke check
+  (g) is what proves it reached the image
+- `tests/` — pytest. `tests/cadbuild/` is the moved suite and has a `conftest.py`
+  of its own: its `isolated_project` fixture is autouse and would otherwise
+  chdir every hub test into a scratch project
 - `data/` — runtime state: builds, pointers and comments as a directory tree with
   JSON alongside, no database (gitignored, mounted as a docker volume)
 - `templates/` — page templates that ship inside the image: `index.html`,

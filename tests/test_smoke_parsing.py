@@ -2,11 +2,13 @@
 
 `ci/smoke.py` is the publish gate and normally runs only on the runner, against a built image —
 which is why nothing in it was covered here before. `parse_cad_verdicts()` is the exception worth
-pulling out: it is a PURE function over a string, it decides whether seven CAD targets are
+pulling out: it is a PURE function over a string, it decides whether EVERY CAD target is
 reported green or red, and the strings it has to survive are produced by libraries nobody here
 controls. OpenCASCADE and VTK print during interpreter finalisation, `docker()` folds stderr into
 stdout, so noise lands on both sides of the payload — and a parser that mishandled the trailing
-kind failed all seven targets on an image that was perfectly fine.
+kind failed the whole check on an image that was perfectly fine. Written without a count on
+purpose: the number of targets is derived from CAD_IMPORTS and PINS and moves whenever either
+list does, and a number spelled out here would be stale by the next import that gets added.
 
 Imported as `ci.smoke` on the strength of `pythonpath = .` in pytest.ini: `ci/` has no
 `__init__.py`, and none is needed — python 3 treats it as a namespace package. Importing the
@@ -53,7 +55,7 @@ def test_noise_after_the_payload_is_ignored():
 
     Static destructors in OCCT and VTK run during interpreter finalisation — i.e. after the
     payload has been printed — and `docker()` merges stderr into the same stream. Parsing the
-    whole remainder would raise `JSONDecodeError: Extra data` here and fail all seven CAD targets
+    whole remainder would raise `JSONDecodeError: Extra data` here and fail every CAD target
     over an image with nothing wrong with it.
     """
     output = "{}\n{}\nvtkDebugLeaks: leaked 3 instances of vtkPolyData\n".format(
@@ -76,7 +78,7 @@ def test_sentinel_with_nothing_after_it_is_a_reason_not_an_exception():
 
     assert verdicts is None
     # The reason has to say what happened, not just that something did: it is the whole of what
-    # the seven CAD rows will carry in the log — and it has to distinguish this case from "no
+    # the CAD rows will carry in the log — and it has to distinguish this case from "no
     # sentinel at all", because the two point at different halves of the probe.
     assert "sentinel and then nothing" in problem
     # Blank lines after the sentinel are noise, not a payload: whitespace must not be handed to
