@@ -1,0 +1,23 @@
+# Runtime dependencies — what the image needs to RUN. The Dockerfile installs this file and
+# only this file; anything test-only belongs in requirements-dev.txt.
+#
+# Pinned with `==`, never `>=` and never bare: unpinned, the image built from a given commit
+# is a different image every week, so a breaking upstream release reaches production through
+# a rebuild that changed no line of this repository — and gets blamed on whichever commit
+# happened to trigger the rebuild.
+#
+# Name every package the code imports DIRECTLY, even one that already arrives through another
+# package's dependency or extra. Inherited, it disappears the day that other package stops
+# pulling it in, and the failure does not read as a missing dependency: it lands at runtime,
+# wherever the import happens to be reached, as a feature that silently stops doing anything.
+
+# `from pydantic import ValidationError` in src/config_errors.py — that except clause is the
+# whole startup guard, and ci/smoke.py check (b) exists to prove it still fires. Named here
+# even though pip installs it anyway as a dependency of pydantic-settings below, which is the
+# rule above applied to its own worked example: the day a pydantic-settings upgrade changes
+# what it depends on, this import goes away with it, and the failure arrives as an ImportError
+# at startup in a file nobody edited.
+pydantic==2.13.4
+pydantic-settings==2.7.0
+loguru==0.7.2
+httpx==0.28.1

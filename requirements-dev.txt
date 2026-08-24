@@ -1,0 +1,17 @@
+# Dev/test dependencies — not needed at runtime, and never installed into the image: the
+# Dockerfile installs requirements.txt only and names each file it copies, so nothing listed
+# here reaches the artefact, and .dockerignore keeps `tests/` — what these packages exist to
+# run — out of the build context (ci/smoke.py check (d) is what enforces that).
+# Install with:  pip install -r requirements-dev.txt
+#
+# Annotate a requirement with WHAT BREAKS WITHOUT IT, not with what the package is. The line
+# earns its place on a test-only dependency whose absence is an ImportError at collection
+# rather than a failed assertion: in CI that reads as an entirely red suite whose message
+# names a missing module and says nothing about this project, and a word here is the shortest
+# route from that message back to `make install`.
+-r requirements.txt
+
+pytest==9.0.3          # the runner: without it `make test` and both CI test steps die on "No module named pytest"
+pytest-asyncio==1.4.0  # no async test here yet, but pytest.ini already sets asyncio_mode=auto: without it that is an "Unknown config option" and the first `async def test_` fails on "not natively supported"
+pytest-cov==7.1.0      # not wired into addopts today; without it an ad-hoc `pytest --cov=src` fails on "unrecognized arguments: --cov"
+respx==0.23.1          # unused by the skeleton's own tests; kept because httpx is a runtime dep and the first client added needs its transport mocked, not the network hit in CI

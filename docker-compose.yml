@@ -1,0 +1,218 @@
+# Deploy template. Pull the prebuilt image from the Gitea registry — do NOT build on prod.
+# Values below are PLACEHOLDERS (XXX), not real secrets.
+#
+# This is the WEB-SERVICE variant (published via Traefik). For a polling bot with
+# no inbound port, drop `networks`, the Traefik labels and the healthcheck.
+
+# The key below is NOT the name of the volume on the host. For a volume that is not
+# declared `external`, compose composes the real name as `<compose project>_<key>`, and under
+# Portainer the compose project is the STACK name — so the key on its own never determines
+# anything. The same key deployed into two differently named stacks produces two different
+# volumes, and "which volume will this mount" is therefore a question about the deployment,
+# not a question this file can answer by itself.
+#
+# The placeholder names here DO agree with each other — the compose service, the volume key,
+# `container_name` and the image path are all spelled `hammerola` — so they can be read as a
+# worked example: deployed under Portainer as a stack named `hammerola`, the key
+# `hammerola` below resolves to the volume `hammerola_hammerola` on the host. That is
+# AGENTS.md's one-name-everywhere rule applied: a project picks ONE spelling for the repo, the
+# working directory, the service, the container, the stack and the image (underscores, so the
+# name is also a legal Python module name), and the moment to settle it is BEFORE the first
+# deploy. After that the volume name is state on the host rather than a naming preference:
+# changing the spelling changes `<stack>_<key>`, and the deployment quietly detaches from its
+# own data.
+#
+# Two situations turn that arithmetic into permanent data loss, and neither of them fails:
+#
+# * Pointing this file at a deployment that ALREADY EXISTS — adopting a service that was
+#   deployed by hand, importing a stack, re-creating one that was deleted from Portainer but
+#   not from the host. The `<stack>_<key>` computed from this file has to come out as the
+#   exact volume name already on that host. If it does not, docker does not complain about a
+#   volume it cannot find: there is nothing to find, so it CREATES one, empty, and mounts it.
+#   The redeploy goes green, the container comes up, the healthcheck passes, the logs are
+#   clean — and every bit of accumulated state is gone, still sitting in the old volume that
+#   nothing references any more.
+# * Bringing the same file up under a DIFFERENT project name than the one that created the
+#   volume, which resolves `<stack>_<key>` somewhere else and starts the next deploy from an
+#   empty one, exactly as above. Note there is no rename button to look for: Portainer does
+#   not let a standalone stack's name be edited after it is created, so this arrives as a
+#   delete-and-recreate under a new name — which feels like re-registering the same service
+#   and is not — or, off Portainer, as a `docker compose -p <something-else> up` that anybody
+#   might type without noticing the flag matters.
+#
+# The one cheap check that catches both, before either can happen: run `docker volume ls` on
+# the target host BEFORE the first redeploy of an existing service and confirm the name this
+# file will compute is on that list. Ten seconds, and it is the only moment at which the
+# mistake is still visible — afterwards everything looks healthy.
+#
+# The fix in both cases is to stop letting the name be computed and pin it instead:
+#
+#   volumes:
+#     hammerola:
+#       external: true
+#       name: the_exact_volume_name_on_the_host
+#
+# which also converts the failure mode: an external volume that does not exist is a loud
+# refusal to start, instead of a fresh empty one nobody notices.
+volumes:
+  hammerola:
+
+networks:
+  docker_main_net:
+    external: true
+
+services:
+  hammerola:
+    image: gitea.vvzvlad.xyz/projects/hammerola:latest
+    container_name: hammerola
+    restart: always
+    # The app runs as non-root user `app` (uid 1000): the entrypoint starts as
+    # root, chowns /app/data and drops privileges via gosu. Setting a
+    # `user: "UID:GID"` override here makes the entrypoint skip the chown —
+    # the volume must then already be owned by that uid.
+    security_opt:
+      - no-new-privileges:true   # forbids privilege escalation via setuid binaries; compatible with gosu (it only drops privileges)
+    # Optional hardening. The cap_add list is the minimum the root entrypoint
+    # needs (chown -R the volume + gosu setuid/setgid drop):
+    # cap_drop: [ALL]
+    # cap_add: [CHOWN, DAC_OVERRIDE, SETUID, SETGID]
+    volumes:
+      - hammerola:/app/data          # all mutable state survives restart/update
+    # Configuration belongs in this block, or in a file that TRAVELS with the stack (committed
+    # beside this compose file and deployed from the repository). What it must never become is
+    # an `env_file:` pointing at an absolute path on the host — `/data/hammerola/app.env` and
+    # the like. Portainer executes compose INSIDE ITS OWN container, so such a path is resolved
+    # in the Portainer server's filesystem, not on the host this stack runs on: the file you can
+    # see over SSH on the target host is not the file compose goes looking for. When the two
+    # happen to line up it works indefinitely and proves nothing; the day the stack is deployed
+    # by a different control plane it fails with "env file not found" while the container
+    # already running keeps serving traffic unchanged. So the stack quietly stops being
+    # DEPLOYABLE without stopping being UP, which means nobody finds out until the next
+    # redeploy — and the redeploy that finds out is usually the migration itself, when
+    # everything else is in motion too. That is exactly how it went on this fleet during the
+    # 2026-08-17 consolidation; the stacks only deployed again once their env files were copied
+    # into the Portainer server's own volume.
+    environment:
+      PUBLISH_TOKEN: XXX
+      TZ: Europe/Moscow
+    networks:
+      - docker_main_net
+    logging:
+      driver: "json-file"
+      options:
+        max-file: 5
+        max-size: 10m
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.hammerola.rule: Host(`new.example.com`)
+      traefik.http.services.hammerola.loadBalancer.server.port: 8000
+      traefik.http.routers.hammerola.entrypoints: websecure
+      traefik.http.routers.hammerola.tls: "true"
+      traefik.http.routers.hammerola.tls.certresolver: letsEncrypt
+      # Auto-update: ContainerAutomation.AutoUpdate in OUR Portainer build (the fork in the
+      # Gitea repository `projects/portainer` on gitea.vvzvlad.xyz; upstream Portainer, CE or
+      # BE, has no such mechanism at all) picks this up and redeploys the container when
+      # :latest moves (Scope=labeled, rolled back on failure, and polled on an interval that is
+      # a Portainer setting rather than a constant — 5 minutes on our instance today, 6 hours
+      # by the product's own default, so read it there before timing anything against it). This is
+      # the ONE label the convention carries — the watchtower-family key that used to sit
+      # beside it is gone, and that is unconditional rather than a default: as of the
+      # 2026-08-17 consolidation no watchtower and no autoheal container was left on any
+      # environment of this fleet, and not a single `com.centurylinklabs.watchtower.*` or bare
+      # `autoheal` label either (that bare key is the sidecar's own — it is NOT
+      # `io.portainer.autoheal.enable`, which belongs to our Portainer build and is the subject
+      # of the auto-heal paragraph below). A second key here would be dead text that still
+      # READS like a working fallback, which is worse than no fallback at all. Do not add one
+      # back.
+      #
+      # What this label does not do is guarantee updates by itself. Everything described
+      # above — the 5-minute poll, the health gate below, the rollback — is a property of the
+      # CONTROL PLANE that owns the host this stack lands on, not of the label and not of
+      # this project. The label is an inert string; a control plane either reads it or does
+      # not. Deploy this same file onto a host owned by a stock Portainer — or by anything
+      # else without ContainerAutomation — and none of it happens: nothing rejects the label,
+      # nothing warns, the stack deploys green, and the container goes on running the image
+      # it was first started with until somebody compares its digest against the registry by
+      # hand. That is the entire failure mode — not an error, an absence, with no log line,
+      # no failed stack and no red dot anywhere to notice.
+      #
+      # So the question to settle BEFORE relying on this label is "which control plane owns
+      # the target host", not "is the host on the list of exceptions". Resist writing that
+      # list here: this fleet has run more than one Portainer at the same time, ownership of
+      # a host has already changed hands once, and the previous version of this very comment
+      # rotted for exactly that reason — it named a host, the host moved, and the warning
+      # then pointed at the wrong place while still sounding authoritative. Check ownership
+      # at deploy time, in the Portainer that actually claims the environment, and the answer
+      # is current by construction.
+      #
+      # ONE label is what this template carries, and the reason is not that the other one was
+      # forgotten. Our Portainer build also has an AUTO-HEAL that restarts containers
+      # docker reports `unhealthy`, opted into per container with `io.portainer.autoheal.enable`.
+      # Put both labels on one container and auto-heal can MASK the health gate described under
+      # `healthcheck:` below — turning a bad update the gate would have rolled back into one
+      # that is accepted. The mechanics, from api/containerautomation/: auto-heal lists
+      # candidates with a `health=unhealthy` filter over RUNNING containers only and ticks every
+      # 30 s (`autoheal.go`, `service.go`), while the update's rollback gate polls health every
+      # 3 s and triggers on the FIRST `unhealthy` sample it sees, without waiting for its
+      # deadline (`rollback.go`, whose own reasoning is that docker only reports `unhealthy`
+      # after the configured retries have already failed, so the signal is definitive). For most
+      # of the gate's window the new container is still `starting`, which auto-heal cannot see
+      # at all — the two do not interact there. The overlap is the `unhealthy` state alone, and
+      # the gate normally OBSERVES it within one poll interval (≤3 s) and begins the rollback
+      # from there — 3 s is when it notices, not when the rollback is done; auto-heal only gets
+      # there first when its 30 s tick happens to land inside that gap. When it does, the
+      # restart resets health to `starting`, the gate goes on waiting to its deadline, and if
+      # the container then comes up healthy the update is ACCEPTED: the broken image stays
+      # deployed and the updater's log shows an ordinary successful update, with nothing
+      # recording the near miss. (The reverse order is not silent — a heal-restart landing on a
+      # rollback already in flight surfaces as a RestoreError.)
+      #
+      # So adding the second label is a deliberate TRADE, not an upgrade. It is right for a
+      # service where "get it back up" matters more than "let a bad update roll back honestly"
+      # — a checker bot, a scraper, anything whose worst outcome is being down. It is wrong for
+      # one where a reproducible deploy matters. Whoever adds it should add it knowing it can
+      # convert a caught bad update into an accepted one.
+      io.portainer.update.enable: "true"
+    healthcheck:
+      # Short interval + start_period are REQUIRED behind Traefik: Traefik does not
+      # route to a container while its health is starting/unhealthy, so interval:30m
+      # with no start_period leaves it unrouted for ~30 min (default cert + 404).
+      #
+      # The second reason is stronger and holds with or without Traefik: these timings are
+      # load-bearing for the `io.portainer.update.enable` label above. After OUR Portainer
+      # build (our fork of Portainer — the Gitea repository `projects/portainer` on
+      # gitea.vvzvlad.xyz, the mechanism living in its `api/containerautomation/` package;
+      # upstream Portainer, CE or BE, has no such mechanism at all — a stock instance does not
+      # even carry the RollbackTimeout setting named below, which is why "which control plane
+      # owns this host" decides whether any of the next paragraph applies) recreates a
+      # container, it polls docker every 3s for `healthy`; if the deadline passes while the
+      # container is still `starting`, or it reports `unhealthy`, or is not running, the image
+      # is ROLLED BACK — the previous image id is retagged onto the original reference and the
+      # container is recreated from it. The deadline is max(RollbackTimeout, start_period +
+      # 15s), and RollbackTimeout is a Portainer setting: 120s on our instance today, so a
+      # start_period of 105s or less leaves a 120s window and a longer one extends it.
+      #
+      # The trap is a long `interval` with no `start_period`: docker runs the FIRST probe one
+      # whole interval after start, and probes at `start-interval` (5s by default) only during
+      # a start period. So `interval: 30m` with no start_period GUARANTEES the container is
+      # still `starting` when the deadline expires, and a perfectly good image is rolled back
+      # for nothing. That happened on this fleet on 2026-08-15 to `zakhar-voice-assistant`:
+      # health `starting`, probe log empty — never probed once. Nor does it heal itself: after
+      # a rollback the updater suppresses that container for 24h, until the remote digest
+      # changes (the cooldown lives in Portainer's memory, so a restart clears it), so the
+      # service goes on quietly running the OLD code with nothing in the deployment saying so.
+      #
+      # Dropping the healthcheck — which the header offers for a polling bot — does not make
+      # that gate pass, it removes it: with none declared here and none in the image (docker
+      # merges the image's HEALTHCHECK into the container's config; an explicit NONE counts as
+      # none) the update is called successful the moment the container is recreated, and
+      # nothing is ever rolled back. Still fine advice, but it is a TRADE: you buy simplicity
+      # and give up automatic rollback of a broken image. Two preconditions this file already
+      # satisfies — with rollback enabled the updater skips containers that have no
+      # `container_name`, and skips the gate for digest-pinned images (`repo@sha256:…`), which
+      # have no tag to roll back to.
+      test: ["CMD", "curl", "-s", "-f", "-o", "/dev/null", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
