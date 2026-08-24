@@ -93,7 +93,35 @@ services:
     # 2026-08-17 consolidation; the stacks only deployed again once their env files were copied
     # into the Portainer server's own volume.
     environment:
+      # Replace XXX with the real token before deploying, and give the same value
+      # to CI as the repository secret the publish workflow sends as
+      # `Authorization: Bearer`. The public SITE has no read-side auth at all
+      # (SPEC 5.5); the comment queue below is the one thing that does.
       PUBLISH_TOKEN: XXX
+      # Guards READING the comment queue (SPEC 7A.2). The queue is raw input from
+      # anyone at all, so it is not readable without this. Give it to the agent's
+      # MCP server and to nothing else; a DIFFERENT value from PUBLISH_TOKEN, so
+      # either can be rotated on its own.
+      # Writing a comment is public and takes no token TODAY — inherited verbatim
+      # from cad_snapshot_hub, not a property this stack keeps. SPEC 8A.1 reverses
+      # it and step 0 of the plan (AGENTS.md) moves the write side behind a token
+      # too; this block gains a variable for it then.
+      COMMENT_READ_TOKEN: XXX
+      # Everything below has a default in src/settings.py and is spelled out here
+      # only where the deployment disagrees with it. DATA_DIR must match the mount
+      # point of the volume declared above.
+      DATA_DIR: /app/data
+      # RETENTION_BUILDS: 20      # newest commit builds kept per project (SPEC 7.3)
+      # MAX_BUILD_BYTES: 67108864 # 64 MiB ceiling on one uploaded build
+      # The ceilings on the PUBLIC comment endpoint (SPEC 7A.4). Defaults are in
+      # src/settings.py; set them here only to tighten a specific one.
+      # COMMENT_MAX_TEXT_CHARS: 4000
+      # COMMENT_MAX_PHOTO_BYTES: 8388608   # 8 MiB per photo or rendered frame
+      # COMMENT_MAX_BODY_BYTES: 20971520   # 20 MiB for the whole form
+      # COMMENT_MAX_PER_BUILD: 100
+      # COMMENT_MAX_TOTAL: 5000
+      # COMMENT_RATE_LIMIT: 5              # per address, per window
+      # COMMENT_RATE_WINDOW_SECONDS: 600
       TZ: Europe/Moscow
     networks:
       - docker_main_net
@@ -111,6 +139,14 @@ services:
       traefik.http.routers.hammerola.entrypoints: websecure
       traefik.http.routers.hammerola.tls: "true"
       traefik.http.routers.hammerola.tls.certresolver: letsEncrypt
+      # Compression is NOT optional here and is not a micro-optimisation. A view is
+      # a JSON tessellation measured at 2.02 MB raw / 0.31 MB gzip on the real T13
+      # model — a 6.5x factor (SPEC 2.3) — and the browser fetches one per view
+      # switch. The application deliberately does not compress anything itself:
+      # doing it in one place, at the edge, is what keeps the file server a plain
+      # sendfile with an honest Content-Length.
+      traefik.http.middlewares.hammerola_compress.compress: "true"
+      traefik.http.routers.hammerola.middlewares: hammerola_compress
       # Auto-update: ContainerAutomation.AutoUpdate in OUR Portainer build (the fork in the
       # Gitea repository `projects/portainer` on gitea.vvzvlad.xyz; upstream Portainer, CE or
       # BE, has no such mechanism at all) picks this up and redeploys the container when

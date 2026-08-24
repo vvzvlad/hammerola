@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>3d.vvzvlad.xyz</title><link rel="stylesheet" href="/_v/site.css">
+</head><body>
+<!-- /project/<pid>/ — the URL that names no pointer, and therefore the only one
+     allowed to apply the reader's remembered choice (SPEC 9). It used to be a
+     302 to `latest` on the server, and it cannot stay one: the choice lives in
+     localStorage, which only the browser can read.
+
+     This page is deliberately tiny and pulls NONE of the viewer: its whole job
+     is to read one key and leave. Everything it shows lives in the header, so
+     it borrows the chrome every other page on the site already has instead of
+     bringing styling of its own — including the link colour, which is the half
+     of "still works with no script" that is easy to ship broken: a default link
+     on a #1e1e1e background is a link nobody can read once it has been visited.
+
+     The link is not decoration. It is what is left when the script does not
+     run, and a reader who lands on a page with no way forward is worse off than
+     the redirect ever left them. -->
+<div id="bar"><b>3d.vvzvlad.xyz</b>
+  <span class="meta">opening the build you were last on&hellip;</span>
+  <span class="spacer"></span>
+  <a href="latest/">Open the latest build</a>
+</div>
+<script type="module" src="/_v/pointer.js"></script>
+</body></html>

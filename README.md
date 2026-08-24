@@ -4,10 +4,14 @@ Builds CAD models from code and serves them through a browser viewer. The name i
 "pianola" — a mechanism that plays itself: push a model source, get back a page you can
 open, rotate and download printable files from.
 
-**Status: scaffold.** This repository is the skeleton only — `src/` holds nothing but the
-settings entry point. The service is being assembled out of three existing repositories
-(`cad_snapshot_hub`, `3d/cad_builder`, `3d/cad_publish`), step by step. What is being built
-and in what order is in `docs/SPEC.md`, section 8A; `AGENTS.md` carries the checklist.
+**Status: in migration.** The hub itself has already moved in — `src/` serves the site, takes
+a push, renders the viewer and holds the comment queue, with the CadQuery kernel pinned into
+the image. What is still missing is the BUILDER half: the hub accepts a finished artefact
+today and does not yet compute the geometry itself. The service is being assembled out of
+three existing repositories (`cad_snapshot_hub`, `3d/cad_builder`, `3d/cad_publish`), step by
+step, and the remaining steps start at accepting a source TREE instead of an archive. What is
+being built and in what order is in `docs/SPEC.md`, section 8A; `AGENTS.md` carries the
+checklist.
 
 The layout below follows the «Как создавать проект» guide in the gitmost wiki
 (space Netmap, section «Руководства»).
@@ -84,9 +88,10 @@ separate, externally visible identifier, it may be shorter, and renaming it brea
 | `Makefile` | Single entry point for repeated actions: `install`, `test`, `run`. Run `make help`. |
 | `src/` | Application code; `settings.py` reads all config from ENV / `.env`. |
 | `tests/` | pytest suite (runs in CI before the image is built). |
-| `ci/smoke.py` | The gate between build and publish. Drives `docker` against the freshly built image and checks the things a green test suite cannot: the declared ENTRYPOINT/CMD/WORKDIR, that the startup guard still fires *and still names the missing variable*, that privileges are really dropped to `app`, that `.dockerignore` kept `tests/`, `.env` and `.venv` out of the image, and that the image's own command reaches its startup marker. No ports, no secrets, no network — so the identical gate runs on pull requests too. |
-| `data/` | Runtime state (SQLite, cache, files). Gitignored, mounted as a volume. |
-| `templates/` | Static assets baked into the image. |
+| `ci/smoke.py` | The gate between build and publish. Drives `docker` against the freshly built image and checks the seven things a green test suite cannot: (a) the declared ENTRYPOINT/CMD/WORKDIR/PYTHONUNBUFFERED, (b) that the startup guard still fires *and still names **every** missing variable* — there are two credentials, and a guard that named only the first would cost one redeploy per key, (c) that privileges are really dropped to `app`, (d) that `.dockerignore` kept `tests/`, `.env` and `.venv` out of the image, (e) that the image's own command reaches its startup marker, (f) that the CAD kernel imports inside the image and carries the pinned versions, and (g) the mirror of (d) — that `templates/` and `static/` really *are* in the image, which nothing else can see: the suite runs on a checkout where they always exist. No ports, no secrets, no network — so the identical gate runs on pull requests too. |
+| `data/` | Runtime state: builds, pointers and comments, as a directory tree with JSON alongside — no database. Gitignored, mounted as a volume. |
+| `templates/` | Page templates baked into the image (`index.html`, `build.html`, `pointer.html`) — one per URL the hub serves. |
+| `static/` | The viewer payload baked into the image (`static/_v/`): `three-cad-viewer.esm.js` and the hub's own `viewer.js` driver, plus the site CSS. Its own `COPY` line in the Dockerfile, and its own smoke check (g). |
 | `Dockerfile` | Slim single-stage build; deps cached before code; no `EXPOSE`; no `USER` — privileges are dropped by `entrypoint.sh`. |
 | `entrypoint.sh` | Postgres-style hybrid: starts as root, fixes `/app/data` ownership, drops to non-root `app` (uid 1000) via gosu. |
 | `docker-compose.yml` | Deploy template — image from the Gitea registry, volume, Traefik labels, and **one** auto-update label (`io.portainer.update.enable`), read by the ContainerAutomation auto-update in **our** Portainer build (the fork in the Gitea repository `projects/portainer` on `gitea.vvzvlad.xyz`, not a directory in this repo; upstream Portainer, CE or BE, has no such mechanism). Do not add the watchtower-family key beside it — unconditionally: no watchtower is left anywhere in this fleet, so a second key is dead text that still reads like a working fallback. Separately: the polling, the health gate and the rollback are a property of the control plane that owns the target host, so check that ownership before relying on the label. The volume KEY is not the volume NAME (`<stack>_<key>`): the name this file computes must match the volume already on the host, and a different stack name **or** a different key spelling silently mounts a new empty volume and comes up looking healthy with all state gone — check `docker volume ls` on the target host first, or pin it with `external: true` + `name:`. Config goes in `environment:` or a file committed beside this one — never an absolute host path in `env_file:`, which Portainer resolves inside its OWN container, not on the target host. |

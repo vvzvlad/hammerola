@@ -18,7 +18,7 @@ this repo says it is. Every check below is one of those, and every one of them i
 image has a realistic chance of shipping broken while the suite stays green:
 
 * (a) the image's declared contract: ENTRYPOINT, CMD, WORKDIR and PYTHONUNBUFFERED.
-* (b) the required-variable guard still fires AND still says what is missing.
+* (b) the required-variable guard still fires AND still names EVERY variable that is missing.
 * (c) privileges are really dropped — the process is `app`, not root.
 * (d) `.dockerignore` did its job: no tests, no `.env`, no `.venv` inside the image.
 * (e) the image's own command starts and gets through its own startup.
@@ -29,6 +29,11 @@ image has a realistic chance of shipping broken while the suite stays green:
       `ImportError: libGL.so.1` — at import time, before any geometry, and therefore in
       production rather than in any test, because the suite runs on a checkout where the
       developer's own machine supplies those libraries.
+* (g) the templates and the viewer assets are actually IN the image — the mirror image of (d),
+      and the one this gate was missing. Losing a `COPY templates/`/`COPY static/` line from
+      the Dockerfile breaks nothing any other check can see: the image builds, the container
+      starts, `/health` answers with a literal string that reads no file, and every check above
+      stays green while every page the hub serves is a 404 or a viewer with no viewer in it.
 
 Constraints of this runner, which shaped every choice below
 ------------------------------------------------------------
@@ -79,8 +84,9 @@ IMAGE_ENV = "SMOKE_IMAGE"
 NAME_ENV = "SMOKE_NAME"
 
 # The three containers this gate starts, by suffix on $SMOKE_NAME:
-#   ""      the long-lived one checks (c) and (d) `docker exec` into. Started with a sleeping
-#           command rather than the image's own so that it is a stable place to exec into.
+#   ""      the long-lived one checks (c), (d), (f) and (g) `docker exec` into. Started with a
+#           sleeping command rather than the image's own so that it is a stable place to exec
+#           into. Its `sleep` has to outlast the LAST of those four execs — see IDLE_COMMAND.
 #   -guard  the short-lived one started with NO environment for check (b).
 #   -cmd    the one started with the image's REAL command for check (e). Deliberately NOT
 #           started with `--rm`: check (e) reads `docker logs` and `docker inspect` AFTER it
@@ -115,16 +121,58 @@ APP_UID = 1000
 # src/config_errors.py, which is THIS REPO'S OWN wording — that is what makes matching on them
 # safe, unlike matching on a message pydantic is free to reword.
 GUARD_FRAGMENT = "Missing required variable(s)"
-# The one field src/settings.py declares with no default, spelled the way config_errors.py
-# prints it: SCREAMING_CASE, i.e. the name of the ENVIRONMENT VARIABLE an operator has to set,
-# not the lowercase field name pydantic reports internally.
-REQUIRED_VARIABLE = "PUBLISH_TOKEN"
+# EVERY field src/settings.py declares with no default, spelled the way config_errors.py prints
+# it: SCREAMING_CASE, i.e. the name of the ENVIRONMENT VARIABLE an operator has to set, not the
+# lowercase field name pydantic reports internally.
+#
+# A LIST rather than one name, and check (b) below casts one verdict per entry, because the
+# thing being proved is not "the guard mentioned a variable" — it is that whoever redeploys the
+# stack is told about EACH key they dropped. config_errors.py collects all of them and prints
+# them together, so a guard that regressed to naming only the first one would still satisfy a
+# check that looked for a single name, and the operator would fix PUBLISH_TOKEN, redeploy, and
+# meet the identical failure again over COMMENT_READ_TOKEN. Two variables is exactly where that
+# regression becomes possible and invisible at the same time.
+#
+# Keep this in step with the no-default fields in src/settings.py: a credential added there
+# without a line here is a key the gate never proves the guard names.
+REQUIRED_VARIABLES = ["PUBLISH_TOKEN", "COMMENT_READ_TOKEN"]
 
 # Paths that must NOT be inside the image. Every one of them is excluded by .dockerignore, and
 # today the Dockerfile also copies its files one by one rather than with a blanket `COPY . .`
 # — so this check is defence in depth for the day somebody widens that copy list, which is a
 # one-line change that looks harmless in review.
 EXCLUDED_PATHS = ["/app/tests", "/app/.env", "/app/.venv"]
+
+# Paths that MUST be inside the image — the mirror of the list above, and it exists because the
+# two failures are not symmetrical in how loudly they announce themselves. A file that should
+# not be there is a leak nobody notices; a file that should be there and is not takes the whole
+# site down, and yet it is the one this gate could not see.
+#
+# Nothing else in the pipeline covers it. The suite runs against a CHECKOUT, where `templates/`
+# and `static/` are simply present, so it cannot be missing there; the Dockerfile copies those
+# two trees on lines of their own (`COPY templates/ templates/`, `COPY static/ static/`), and
+# dropping either one — or renaming a directory on one side of a COPY — still produces an image
+# that builds, starts, drops privileges, prints its startup marker and answers `/health` with a
+# literal string that touches no file on disk. Every check above therefore stays green, and the
+# breakage surfaces on the first real request.
+#
+# The five entries are the ones whose absence has no other symptom: one template per page the
+# hub serves — the index at `/`, one build's page, and the pointer page at `/project/<pid>/`,
+# which `render.pointer_page_html()` serves as a PAGE rather than as a redirect — plus the two
+# halves of the viewer payload. `three-cad-viewer.esm.js` is 3.5 MB and `viewer.js` is the hub's
+# own driver for it — a page that loads one without the other renders an empty canvas with an
+# error only in the browser console, i.e. nowhere CI can look.
+# Deliberately not the whole tree: this is a tripwire on the COPY lines, not an inventory, and a
+# list that had to be updated for every new asset would be edited to match the image rather than
+# the other way round. Templates ARE listed one per page, though, because each of the three is
+# reached by a different URL and a missing one breaks only that URL.
+REQUIRED_PATHS = [
+    "/app/templates/index.html",
+    "/app/templates/build.html",
+    "/app/templates/pointer.html",
+    "/app/static/_v/three-cad-viewer.esm.js",
+    "/app/static/_v/viewer.js",
+]
 
 # --- check (f): the CAD kernel -------------------------------------------------------------
 # The imports the hub's own code is entitled to make, as (module, symbol) — an empty symbol
@@ -273,13 +321,14 @@ print(json.dumps(verdicts))
 # it matters — a probe DELETED from the `produced` tuple, rather than left in place returning
 # nothing, is compared against no declaration at all and so cannot disagree with one.
 #
-# The counts are derived from the source wherever a derivation exists — the excluded-path
-# sweep emits one row per path, so it is written as `len(EXCLUDED_PATHS)` and cannot go stale
-# when that list grows, and (f) is one row per declared import plus one per pin for the same
-# reason. The rest are literals because the `targets` tuples they count are literal, and a
-# literal that has to be kept in step is the entire point here.
+# The counts are derived from the source wherever a derivation exists — the excluded-path and
+# required-path sweeps emit one row per path, so they are written as `len(EXCLUDED_PATHS)` and
+# `len(REQUIRED_PATHS)` and cannot go stale when either list grows; (b) is its two fixed rows
+# plus one per required variable, and (f) is one row per declared import plus one per pin for
+# the same reason. The rest are literals because the `targets` tuples they count are literal,
+# and a literal that has to be kept in step is the entire point here.
 #
-# Each label carries the probe's LETTER — the same (a)…(f) the list at the top of the module
+# Each label carries the probe's LETTER — the same (a)…(g) the list at the top of the module
 # docstring uses and each probe's own docstring opens with. That prefix is not decoration: this
 # label is the only thing a self-check failure gives whoever reads the run, and a label phrased
 # in words of its own would make them grep for prose that appears nowhere else in this file.
@@ -287,11 +336,13 @@ print(json.dumps(verdicts))
 # was for.
 EXPECTED_TARGETS = (
     ("(a) image contract", 4),
-    ("(b) required-variable guard", 3),
+    # The exit code and the guard's own wording, plus one row per variable it has to name.
+    ("(b) required-variable guard", 2 + len(REQUIRED_VARIABLES)),
     ("(c) privileges dropped", 4),
     ("(d) excluded paths", len(EXCLUDED_PATHS)),
     ("(e) startup", 2),
     ("(f) CAD kernel", len(CAD_IMPORTS) + len(PINS)),
+    ("(g) required paths", len(REQUIRED_PATHS)),
 )
 
 # The environment the probe and real-command containers run with. The value is invented here
@@ -303,6 +354,11 @@ EXPECTED_TARGETS = (
 # that has nothing to do with the image this gate is meant to be judging.
 SMOKE_ENV = [
     "PUBLISH_TOKEN=fake-smoke-token-not-real-0123456789abc",
+    # The second credential, and the same reasoning applies to it: it guards
+    # reading the comment queue (SPEC 7A.2), the hub only ever compares it, and
+    # without it the container declines to start — which would make check (e)
+    # fail for a reason that has nothing to do with the image.
+    "COMMENT_READ_TOKEN=fake-smoke-comment-read-token-not-real",
 ]
 
 # The command the probe container runs INSTEAD of the image's own. It still goes through
@@ -312,16 +368,17 @@ SMOKE_ENV = [
 # container, which is where that question belongs.
 # 900 s is measured from the moment THIS container starts, so it is not a bound on the gate as
 # a whole and the two must not be confused. What it has to outlast is the last `docker exec`
-# into it — check (f), the CAD probe — and the arithmetic below puts the start of this container
-# at 240 s and the end of that exec at 645 s in the worst case, i.e. 405 s of its own life used
-# out of 900. Adding another exec into this container eats into that margin; adding a call
-# BEFORE it starts does not. The container is removed in a `finally` regardless, and the
+# into it — check (g), the required-path sweep — and the arithmetic below puts the start of this
+# container at 240 s and the end of that exec at 675 s in the worst case, i.e. 435 s of its own
+# life used out of 900. Adding another exec into this container eats into that margin; adding a
+# call BEFORE it starts does not. The container is removed in a `finally` regardless, and the
 # workflow removes it again under `if: always()`.
 IDLE_COMMAND = ["sleep", "900"]
 
-# The first line `main.py` logs. Its presence proves the settings parsed — i.e. the required
-# variable arrived and validation was satisfied — and that logging was configured at the
-# declared LOG_LEVEL. RENAME THIS TOGETHER WITH main.py when the template is copied.
+# The first line `main.py` logs. Its presence proves the settings parsed — i.e. every required
+# variable arrived (both of them: PUBLISH_TOKEN and COMMENT_READ_TOKEN, the two SMOKE_ENV
+# supplies) and validation was satisfied — and that logging was configured at the declared
+# LOG_LEVEL. RENAME THIS TOGETHER WITH main.py when the template is copied.
 STARTUP_MARKER = "Starting hammerola"
 # The markers check (e) waits for, in the order main.py emits them. There is only one today,
 # and the poll below still waits for the WHOLE list rather than for the first entry. That is
@@ -353,10 +410,13 @@ STARTUP_MARKERS = (STARTUP_MARKER,)
 #  + 45 (startup poll: 30 s budget + one final 15 s `logs`)
 #  + 30 (inspect cmd state)
 #  + 90 (exec: CAD kernel probe)
+#  + 30 (exec: required-path sweep)
 #  + 30 (rm probe, finally) + 30 (rm cmd, finally)
-#  = 705 s, a little under 12 minutes. Both workflows allow 14, and that headroom was raised
-# together with the CAD probe below — a step timeout that does not exceed this sum turns a
-# slow-but-healthy run into a killed step whose own container cleanup never executes.
+#  = 735 s, a little over 12 minutes. Both workflows allow 14 (840 s), and that headroom was
+# raised together with the CAD probe below — a step timeout that does not exceed this sum turns
+# a slow-but-healthy run into a killed step whose own container cleanup never executes. The
+# remaining 105 s of margin is what a further exec into the probe container would spend, so
+# adding one means revisiting `timeout-minutes` in both workflows rather than only this sum.
 # Three of these `rm`s are PRE-run cleanups: every container is removed by name before it is
 # started, so a re-run from the Gitea UI — which keeps the same run id, hence the same
 # $SMOKE_NAME — cannot die on "name already in use".
@@ -410,6 +470,11 @@ EXIT_SELF_CHECK = 3
 # argv straight to exec with no shell on the runner side, so `sh -c SCRIPT sh path1 path2`
 # puts the paths in "$@" untouched — nothing here can be broken by a path that contains a
 # space, a quote or a `$`.
+# Shared by checks (d) and (g), which ask opposite questions of the same script: it reports
+# `present`/`absent` per path and says nothing about which of the two is wanted, so each caller
+# supplies its own verdict. That is also why neither of them treats a MISSING line as a pass —
+# "the sweep said nothing about this path" is a third answer, and reading it as either of the
+# other two is how a sweep that silently stopped covering a path would go green.
 PRESENCE_SCRIPT = (
     'for p in "$@"; do '
     'if [ -e "$p" ]; then echo "present $p"; else echo "absent $p"; fi; '
@@ -554,10 +619,18 @@ def check_image_contract(image):
         "it is {!r}. Check (e) below starts the container with the image's own command "
         "precisely so that the gate cannot drift from what production runs".format(cmd))))
 
-    # Not cosmetic: `src/settings.py` defaults `db_path` to a path under the working directory
-    # and the code loads templates relative to it, so moving the WORKDIR either breaks startup
-    # or quietly puts the database somewhere that is not the mounted volume — where it looks
-    # like it works right up until the container is recreated.
+    # Not cosmetic: `src/settings.py` defaults `data_dir` to the RELATIVE path `data`, and
+    # `Store` resolves it with `Path(data_dir).resolve()` — i.e. against the process's working
+    # directory. Moving the WORKDIR therefore puts every build, every pointer and every comment
+    # somewhere that is not the mounted volume, which looks like it works right up until the
+    # container is recreated and all of it is gone.
+    #
+    # The other two trees this image is made of do NOT depend on this row, and the difference is
+    # worth stating because the reflex is to assume they do: `render.TEMPLATES_DIR` and
+    # `app.STATIC_DIR` are both `Path(__file__).resolve().parent.parent / ...`, so `templates/`
+    # and `static/` are anchored to where the CODE lives (/app) and survive a changed WORKDIR
+    # untouched. That is exactly why they need a check of their own rather than this one, and
+    # check (g) below is it — it asks for those files at their absolute paths.
     working_dir = config.get("WorkingDir")
     rows.append((workdir_target, None if working_dir == APP_DIR else (
         "it is {!r}. Relative paths — the data directory above all — resolve against the "
@@ -584,22 +657,31 @@ def check_image_contract(image):
 
 
 def check_required_variable_guard(image, name):
-    """(b) The image refuses to start without its required variable, AND SAYS SO.
+    """(b) The image refuses to start without its required variables, AND NAMES EVERY ONE.
 
     Started with NO environment at all — no `-e` of any kind — which is the shape of the real
     accident: a stack redeployed after somebody dropped a variable out of the compose file or
     the `.env`.
 
-    Three separate rows, because the exit code ALONE is worth very little here. A typo in an
+    Separate rows, because the exit code ALONE is worth very little here. A typo in an
     import, a wheel that failed to install, a syntax error in a module — every one of those
     also exits non-zero with no environment set, and every one of them would let this check
     report success while the guard it claims to be testing had quietly stopped existing. So
-    the exit code is one row and the two things the message has to contain are two more:
+    the exit code is one row and the things the message has to contain are the rest:
 
       * the class of the problem (`Missing required variable(s)`), which is what tells an
         operator this is a configuration fault and not a crash;
       * the NAME of the variable, which is the difference between a five-second fix and
         reading the source of a container that will not start.
+
+    That second bullet is ONE ROW PER VARIABLE rather than one row for the set, and with two
+    credentials that is no longer a formality. config_errors.py collects every missing key and
+    prints them together; a regression to naming only the first — a `[0]`, a `next(...)`, a
+    loop rewritten as a lookup — would still satisfy a check that searched the output for a
+    single name, and the operator would then set PUBLISH_TOKEN, redeploy, and meet the exact
+    same failure again over COMMENT_READ_TOKEN, one round trip per variable. Asking about each
+    one separately is also what makes the failure readable: the row names the key the guard
+    stopped mentioning.
 
     With `restart: always` in production the container gets restarted either way, so that
     message is the ONLY signal that separates "somebody dropped a variable" from an image that
@@ -607,8 +689,11 @@ def check_required_variable_guard(image, name):
     """
     exit_target = "the image exits non-zero when started with no environment at all"
     class_target = "...and its output says {!r}".format(GUARD_FRAGMENT)
-    variable_target = "...and its output names {}".format(REQUIRED_VARIABLE)
-    targets = (exit_target, class_target, variable_target)
+    variable_targets = [
+        (variable, "...and its output names {}".format(variable))
+        for variable in REQUIRED_VARIABLES
+    ]
+    targets = [exit_target, class_target] + [target for _, target in variable_targets]
 
     # Pre-run removal: a re-run from the UI keeps the same run id and therefore the same
     # container name, and `--rm` does not help when a previous run was killed mid-flight.
@@ -638,13 +723,16 @@ def check_required_variable_guard(image, name):
             "wheel — and the exit code above therefore proves nothing about the guard. "
             "Output:\n{}".format(status, excerpt(output)))))
 
-    if REQUIRED_VARIABLE in output:
-        rows.append((variable_target, None))
-    else:
-        rows.append((variable_target, (
-            "it does not. Whoever redeploys the stack is told that something is missing but "
-            "not what, which turns a five-second fix into reading the source of a container "
-            "that will not start. Output:\n{}".format(excerpt(output)))))
+    for variable, variable_target in variable_targets:
+        if variable in output:
+            rows.append((variable_target, None))
+        else:
+            rows.append((variable_target, (
+                "it does not. Whoever redeploys the stack is told that something is missing "
+                "but not that {} is part of it, which turns a five-second fix into reading the "
+                "source of a container that will not start — or, when the guard names some of "
+                "the missing keys and not this one, into fixing them one redeploy at a time. "
+                "Output:\n{}".format(variable, excerpt(output)))))
 
     return rows
 
@@ -792,6 +880,36 @@ def check_privileges_dropped(name, blocked=None):
     return rows
 
 
+def sweep_paths(name, paths):
+    """Ask the container which of `paths` exist. Shared by checks (d) and (g).
+
+    Returns (seen, None, output) where `seen` maps each path the sweep reported to "present" or
+    "absent", or (None, reason, output) when the sweep could not be run at all. Both callers
+    fail EVERY one of their rows on that second shape: a sweep that did not run has not proved
+    anything about any path, and reporting fewer rows than declared is what the self-check in
+    main() exists to catch.
+
+    The parsing lives here rather than in each caller because the two ask OPPOSITE questions of
+    the same output — (d) wants "absent", (g) wants "present" — and a copy of this loop that
+    drifted would let one of them start reading a missing line as its own good answer. The
+    verdict stays with the caller; only the facts are shared.
+    """
+    status, output = docker(
+        ["exec", name, "sh", "-c", PRESENCE_SCRIPT, "sh"] + list(paths), EXEC_TIMEOUT)
+    if status is None:
+        return None, "not attempted: " + output, output
+    if status != 0:
+        return None, "the path sweep could not be run (docker exec exited {}):\n{}".format(
+            status, excerpt(output)), output
+
+    seen = {}
+    for line in output.splitlines():
+        fields = line.split(None, 1)
+        if len(fields) == 2 and fields[0] in ("present", "absent"):
+            seen[fields[1]] = fields[0]
+    return seen, None, output
+
+
 def check_excluded_paths(name, blocked=None):
     """(d) `.dockerignore` did its job: the build context left the wrong things behind.
 
@@ -831,20 +949,9 @@ def check_excluded_paths(name, blocked=None):
     if blocked is not None:
         return [(target, blocked) for target in targets]
 
-    status, output = docker(
-        ["exec", name, "sh", "-c", PRESENCE_SCRIPT, "sh"] + EXCLUDED_PATHS, EXEC_TIMEOUT)
-    if status is None:
-        return [(target, "not attempted: " + output) for target in targets]
-    if status != 0:
-        reason = "the path sweep could not be run (docker exec exited {}):\n{}".format(
-            status, excerpt(output))
-        return [(target, reason) for target in targets]
-
-    seen = {}
-    for line in output.splitlines():
-        fields = line.split(None, 1)
-        if len(fields) == 2 and fields[0] in ("present", "absent"):
-            seen[fields[1]] = fields[0]
+    seen, problem, output = sweep_paths(name, EXCLUDED_PATHS)
+    if seen is None:
+        return [(target, problem) for target in targets]
 
     rows = []
     for path, target in zip(EXCLUDED_PATHS, targets):
@@ -866,23 +973,81 @@ def check_excluded_paths(name, blocked=None):
     return rows
 
 
+def check_required_paths(name, blocked=None):
+    """(g) The templates and the viewer assets really are in the image.
+
+    The mirror of (d), and the asymmetry between the two is the reason this exists. A file that
+    should not be in the image is invisible from outside and needs a check to be found at all;
+    a file that should be there and is not takes down every page the hub serves — and was, until
+    this check, equally invisible to the pipeline.
+
+    Nothing else covers it, in either direction:
+
+      * the pytest suite runs against a CHECKOUT, where `templates/` and `static/` are simply
+        present. It cannot observe a Dockerfile that stopped copying them.
+      * check (a) does not reach it either: `render.TEMPLATES_DIR` and `app.STATIC_DIR` are
+        anchored to `Path(__file__).parent.parent`, not to the working directory, so a correct
+        WORKDIR says nothing about whether those two trees were copied.
+      * checks (b), (c) and (e) all pass on an image with no templates at all. That is the sharp
+        part: `/health` answers with a literal string that opens no file, so the container comes
+        up, drops privileges, logs its startup marker and looks completely healthy while `GET /`
+        is a traceback and the viewer is an empty canvas.
+
+    So `COPY static/ static/` deleted from the Dockerfile — or a directory renamed on one side
+    of a COPY — reaches `:latest` green. This is the row that stops it.
+
+    One `docker exec` answers all five, so a failure to run it fails every row rather than
+    silently covering fewer paths than it claims. `sh -c` with the paths as positional arguments
+    is the same mechanism check (d) uses; only the verdict is inverted.
+    """
+    targets = ["{} is in the image".format(path) for path in REQUIRED_PATHS]
+
+    if blocked is not None:
+        return [(target, blocked) for target in targets]
+
+    seen, problem, output = sweep_paths(name, REQUIRED_PATHS)
+    if seen is None:
+        return [(target, problem) for target in targets]
+
+    rows = []
+    for path, target in zip(REQUIRED_PATHS, targets):
+        state = seen.get(path)
+        if state == "present":
+            rows.append((target, None))
+        elif state == "absent":
+            rows.append((target, (
+                "it is NOT. The Dockerfile copies `templates/` and `static/` on lines of their "
+                "own, so a missing COPY, a renamed directory or a file dropped from the tree "
+                "produces an image that builds, starts and reports itself healthy while the "
+                "page that needs this file is broken for every visitor. Nothing else in this "
+                "pipeline can see that: the suite runs against a checkout, where the file is "
+                "always there")))
+        else:
+            # Same reasoning as in check (d), and it matters more here: "the sweep said nothing
+            # about this path" read as a pass would silently un-check the very file this row
+            # exists for.
+            rows.append((target, (
+                "the sweep returned no verdict for this path. Full output:\n{}".format(
+                    excerpt(output)))))
+    return rows
+
+
 def check_startup(image, name):
     """(e) The image's OWN command starts and gets through its own startup.
 
     Two rows, and the second one is the one to read carefully before changing it.
 
     The healthy set is deliberately BOTH of these:
-      * reached the marker and is still running — what a service with a real loop looks like;
-      * reached the marker and exited 0 — what THIS SKELETON looks like, because `main.py`
-        logs one line and returns, and there is nothing wrong with that.
+      * reached the marker and is still running — which is what THIS service does: `main.py`
+        binds the port and hands control to serve_forever();
+      * reached the marker and exited 0 — a one-shot command that did its job and returned.
     The unhealthy set is: a non-zero exit, or no marker at all.
 
-    That framing is chosen so the check does not have to be rewritten the day somebody fills
-    in the TODO in main.py and the container starts staying up. The alternative — requiring
-    the container to still be running — would fail on today's skeleton, and the alternative
-    after that — requiring it to have exited — would start failing silently the moment the
-    real application appeared, which is precisely when this check becomes worth having. What
-    is actually being asserted is "it got through its own startup and did not fall over", and
+    Both are kept even though only the first shape occurs today. Narrowing this to "must still
+    be running" would buy nothing — the marker plus a zero exit already means startup
+    succeeded — and it would turn any future one-shot entrypoint (a migration, a `--check`
+    mode) into a red smoke gate for a container that did exactly what it was asked. What is
+    actually being asserted is "it got through its own startup and did not fall over", and
     that statement is true of both shapes.
     """
     marker_target = "the image's own command logs {!r}".format(STARTUP_MARKER)
@@ -1197,6 +1362,13 @@ def main():
         # from the probe container's own `sleep`, and the arithmetic at IDLE_COMMAND is where
         # that margin is checked.
         cad_rows = check_cad_kernel(probe_name, blocked=blocked)
+
+        # Also an exec into the probe container, and therefore also inside this `try`. Placed
+        # after the CAD probe so that this list keeps the same order as EXPECTED_TARGETS, which
+        # the positional pairing below depends on. Being the LAST exec makes it the call the
+        # probe container's `sleep` has to outlast — the arithmetic at IDLE_COMMAND accounts for
+        # it, and moving another call after this one means redoing that arithmetic.
+        required_rows = check_required_paths(probe_name, blocked=blocked)
     finally:
         # Both long-lived containers, removed whatever happened above. The workflow removes
         # them again under `if: always()` for the case where this process itself was killed by
@@ -1206,13 +1378,13 @@ def main():
 
     # SAME ORDER AS EXPECTED_TARGETS, and that is a requirement rather than a convention: the
     # pairing below is positional, so a group moved here without moving its declaration is
-    # compared against somebody else's count. Two of these groups return 4 verdicts each —
-    # (a) and (c) — so swapping exactly those two would still satisfy every check below and go
-    # green while each probe's failures were being reported under the other one's name. Nothing
+    # compared against somebody else's count. THREE of these groups return 4 verdicts each —
+    # (a), (c) and (g) — so swapping any two of those would still satisfy every check below and
+    # go green while each probe's failures were being reported under another one's name. Nothing
     # in this file can detect that; keeping the two tuples in step by eye is what prevents it,
     # which is why the letters are on the labels.
     produced = (contract_rows, guard_rows, privileges_rows, excluded_rows, startup_rows,
-                cad_rows)
+                cad_rows, required_rows)
 
     # Three self-checks, and they are three because each one catches a break the others cannot
     # see. They are collected in two lists rather than one because they are REPORTED
@@ -1226,12 +1398,12 @@ def main():
     # per-probe comparison below is structurally incapable of making it: `zip` stops at the
     # shorter of its arguments and says nothing about the surplus. So a refactor that drops a
     # probe from the `produced` tuple — rather than leaving it in place returning [], which the
-    # per-probe check would catch — pairs the 5 survivors against the first 5 declarations, finds
+    # per-probe check would catch — pairs the 6 survivors against the first 6 declarations, finds
     # every one of them consistent, and reports `miscounted == []`.
     #
     # What this check buys there is the DIAGNOSIS, not the verdict. That run is refused either
-    # way: dropping the CAD group that way leaves 5 groups contributing 16 rows against a
-    # declared total of 23, so (3) below fires and the gate exits 3 with or without this check.
+    # way: dropping the required-path group that way leaves 6 groups contributing 24 rows against
+    # a declared total of 28, so (3) below fires and the gate exits 3 with or without this check.
     # But (3) can only report that the arithmetic between the probes and `rows` came out wrong,
     # and its own wording points at the other way that happens — a group extended into `rows`
     # twice, or one left out of the loop — which is the wrong place to start looking. This
@@ -1275,9 +1447,9 @@ def main():
     # it earns its place on a case neither of them can see: a probe group poured into `rows` a
     # SECOND time — a duplicated `rows.extend(...)`, a copy-paste while adding a probe — leaves
     # the arity right and leaves every per-probe count right, because both of those inspect
-    # `produced` and this mistake happens after it. Duplicating the 3-verdict guard group that
-    # way collects 26 rows where 23 are declared, and without this check the run would end on
-    # `smoke ok: 26/26`, which reads as a gate doing MORE work when it is in fact grading one
+    # `produced` and this mistake happens after it. Duplicating the 4-verdict guard group that
+    # way collects 32 rows where 28 are declared, and without this check the run would end on
+    # `smoke ok: 32/32`, which reads as a gate doing MORE work when it is in fact grading one
     # probe twice and counting that probe's verdicts twice over.
     declared_total = sum(count for _, count in EXPECTED_TARGETS)
     if len(rows) != declared_total:

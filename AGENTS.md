@@ -4,12 +4,14 @@
      BOOTSTRAP — удали эту секцию целиком, когда её пункты закрыты.
      ====================================================================== -->
 
-## ⚠️ Проект только что создан, кода ещё нет
+## ⚠️ Проект в середине переезда: хаб уже здесь, билдера ещё нет
 
-Здесь сейчас только скаффолд из канонического шаблона: `src/settings.py` с
-плейсхолдерным `PUBLISH_TOKEN`, тесты на конфиг, Dockerfile, CI и compose. Логики
-сервиса не написано ни строки — она переезжает сюда по шагам плана, а не копируется
-целиком. Ты — первый агент в этом окне, и контекста исходного чата у тебя нет.
+Код сервиса из `cad_snapshot_hub` уже перенесён — `src/` раздаёт сайт, принимает пуш,
+рендерит вьювер и держит очередь комментариев, тесты и шаблоны с ассетами на месте.
+Ядро CadQuery уже в образе: пины в `requirements.txt`, системные библиотеки в
+Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`, проверка (f)).
+Чего ещё нет — второй половины: хаб принимает готовый артефакт и не считает геометрию
+сам. Поэтому шаги плана начинаются с приёма ДЕРЕВА исходников (шаг 2), а не с нуля.
 
 **Что это за проект.** `hammerola` (от «пианола» — механизм, который играет сам)
 собирает CAD-модели из кода и раздаёт их браузерным вьювером. Он ПОГЛОЩАЕТ три
@@ -46,11 +48,12 @@
 
       Ресурсных лимитов контейнера в этом шаге НЕТ намеренно, хотя в SPEC 8A.2 они
       записаны рядом. Там они относятся к УЖЕ РАБОТАЮЩЕМУ хабу, у которого
-      контейнер живёт без единого потолка; здесь сервиса ещё нет, ограничивать
-      нечего, а числа всё равно придётся пересчитывать под сборку моделей, когда
+      контейнер живёт без единого потолка; здесь код сервиса уже перенесён, но он
+      ни разу не выкатывался и геометрию пока не считает — снимать числа попросту
+      не с чего, а под сборку моделей их всё равно придётся пересчитывать, когда
       появится что считать. Лимиты ставятся тогда же, когда сервис впервые
       выкатывается, — по замерам, а не наугад.
-- [ ] **Шаг 1. Ядро в образ.** Пины `cadquery`, `cadquery-ocp`, `ocp-tessellate`,
+- [x] **Шаг 1. Ядро в образ.** Пины `cadquery`, `cadquery-ocp`, `ocp-tessellate`,
       `trimesh`; системные библиотеки в Dockerfile (`libgl1`, `libx11-6`, `libexpat1`,
       `libxext6`, `libxrender1`, `libsm6`, `libice6`, и намеренно НЕ `libglu1-mesa`);
       `import cadquery` в smoke внутри собранного образа.
@@ -119,8 +122,18 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
 ## Project structure
 - `src/` — application code (`settings.py` is the single config entry point)
 - `tests/` — pytest
-- `data/` — runtime state (gitignored, mounted as a docker volume)
-- `templates/` — static assets that ship inside the image
+- `data/` — runtime state: builds, pointers and comments as a directory tree with
+  JSON alongside, no database (gitignored, mounted as a docker volume)
+- `templates/` — page templates that ship inside the image: `index.html`,
+  `build.html`, `pointer.html`, one per URL the hub serves
+- `static/` — the viewer payload that ships inside the image (`static/_v/`):
+  `three-cad-viewer.esm.js`, the hub's own `viewer.js` driver, the site CSS. A
+  separate tree with its own `COPY` line in the Dockerfile and its own smoke
+  check (g)
+- `ci/smoke.py` — the gate between build and publish: seven checks (a)–(g) the
+  test suite structurally cannot make, because it runs against a checkout and
+  never looks at the artefact. (b) proves the startup guard names EVERY missing
+  variable — both credentials, not just the first
 - `docs/SPEC.md` — requirements, verified facts and the work plan (section 8A)
 - `main.py` — thin entry point over `src/`
 

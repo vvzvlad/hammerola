@@ -1,0 +1,958 @@
+"""On-disk layout, safe unpacking, atomic publication and retention.
+
+Layout under DATA_DIR (SPEC 3, 7.2). Everything here is runtime state and lives on
+the docker volume; templates and viewer assets deliberately live outside it,
+because the volume would shadow them.
+
+    <data>/index.json                      cards for the public index page
+    <data>/project/<pid>/builds.json       build picker for one project
+    <data>/project/<pid>/latest            SYMLINK -> <commit>, newest from CI
+    <data>/project/<pid>/dev/              THE local slot — one directory, rewritten
+                                           on every laptop push (SPEC 7.6)
+    <data>/project/<pid>/<commit>/         one immutable build
+    <data>/project/<pid>/.tmp-<commit>-<uuid>/   staging, never served
+
+`latest` and `dev` are the two names a build directory may not claim, for
+different reasons: `latest` is a symlink the store moves, and `dev` is the local
+slot itself, a real directory the store rewrites.
+
+Two naming rules carry security weight and are enforced by whitelist rather than
+by blacklist, because a whitelist cannot be walked around by an encoding nobody
+thought of:
+
+  * `<pid>` and `<commit>` come from the URL and may only be `[A-Za-z0-9_-]`, so
+    they can never contain a separator or a dot component. `latest` and `dev` are
+    reserved.
+  * a member name inside the uploaded tar may only be a bare filename of the same
+    shape plus dots, so `../`, `/etc/passwd` and `a/../../b` are all rejected on
+    the name alone — before the member's TYPE is even considered.
+"""
+
+import gzip
+import hashlib
+import json
+import os
+import re
+import shutil
+import tarfile
+import threading
+import time
+import uuid
+import zlib
+from datetime import datetime, timezone
+from pathlib import Path
+
+from loguru import logger
+
+from src import render
+
+# Identifiers that arrive in the URL. No dot at all: that keeps a build directory
+# from ever colliding with `builds.json`, and keeps it from being a dot-entry the
+# file server hides.
+# `\A`/`\Z` and not `^`/`$`: in Python `$` also matches just before a trailing
+# newline, so `^...$` accepts "proj1\n" — which would create a directory with a
+# newline in its name and put a bare LF into the `Location` header of the reply.
+SAFE_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
+
+# The two moving names of a project. Neither may ever be cached, and that is the
+# only thing they have in common — mechanically they are different objects.
+#
+#   latest -> a SYMLINK to the newest build FROM CI. The link people paste into
+#             chat, so it means one thing only: the project as of some commit.
+#   dev    -> THE local slot (SPEC 7.6): one directory, overwritten by every push
+#             from the author's laptop. There is exactly one, like there is
+#             exactly one `latest`, and it has no history because a local build
+#             is not a version of anything — it is the current state of a working
+#             copy. Uncommitted work must never move `latest`, or the public link
+#             starts meaning "whatever was on somebody's machine at the time".
+LATEST_LINK = "latest"
+DEV_LINK = "dev"
+POINTER_NAMES = (LATEST_LINK, DEV_LINK)
+
+# Names a build may not claim, because the hub already answers to them: `latest`
+# is a pointer symlink, `dev` is the local slot's directory, and both are the
+# last segment of a publish route.
+# `resolve` is deliberately NOT here: it is reserved by the COMMENT api only
+# (SPEC 7A.2), where it costs a build the ability to be commented on and nothing
+# else, and app.py documents that trade.
+RESERVED_BUILD_NAMES = set(POINTER_NAMES)
+
+# A member of the uploaded tar. Dots are allowed (file extensions) but the name
+# must start alphanumeric, so `.hidden`, `.` and `..` are all out, and there is no
+# `/` in the character class at all, so nothing can describe a subdirectory.
+# `\Z` for the same reason as above: `$` would let "model.stl\n" through.
+SAFE_MEMBER = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+
+# Ceiling on the number of entries in one archive. A build is a handful of files;
+# anything near this is either a mistake or an attempt to make us do work.
+MAX_MEMBERS = 256
+
+# Everything a damaged archive can raise once the header has been read. Opening
+# the file proves the gzip header is there and nothing else: the member table, the
+# per-member data and the gzip CRC are all read lazily, on the iteration and the
+# `read()` calls further down, so this set is what actually decides whether a
+# truncated upload is a 422 or a 500 with a stack trace.
+#
+# `gzip.BadGzipFile` is listed by name because it is a subclass of OSError, and
+# OSError here means "the DISK failed" — a distinction worth keeping, since one of
+# those is the pusher's problem and the other is ours.
+CORRUPT_ARCHIVE_ERRORS = (tarfile.TarError, EOFError, zlib.error, gzip.BadGzipFile)
+
+# Copy buffer for extraction. Small enough that the running total below is checked
+# often, large enough not to syscall per byte.
+CHUNK = 64 * 1024
+
+# Where the payload digest of a build is remembered, so a retry of the same commit
+# can be told apart from a different build claiming the same commit (SPEC 7).
+# Dot-prefixed: the file server refuses to serve dot entries.
+PAYLOAD_DIGEST_FILE = ".payload.sha256"
+
+# Every transient name the store writes. All dot-prefixed, so none of them is ever
+# served or picked up by `builds_of` — which is exactly why nothing notices when
+# one is left behind by a SIGKILL, and why they are swept explicitly at startup.
+STAGING_PREFIX = ".tmp-"        # a build being unpacked
+LATEST_LINK_PREFIX = ".latest-"  # a symlink about to be renamed over `latest`
+UPLOAD_PREFIX = ".upload-"      # one spooled request body, up to MAX_BUILD_BYTES
+TRASH_PREFIX = ".trash-"        # a build renamed out of the way before deletion
+JSON_TMP_PREFIX = ".wip-"       # builds.json / index.json mid-write
+
+LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, UPLOAD_PREFIX,
+                     TRASH_PREFIX, JSON_TMP_PREFIX)
+
+# A leftover younger than this may belong to a publish running RIGHT NOW, in this
+# process or another one sharing the volume. An hour is far longer than any push
+# takes and short enough that a killed 64 MiB upload does not sit there for days.
+LEFTOVER_MAX_AGE_SECONDS = 3600
+
+
+class PublishError(Exception):
+    """A publish that must be answered with a specific HTTP status.
+
+    Carries the status so app.py does not have to classify failures a second
+    time, and a message that is safe to hand back to CI — the point of a 422 is
+    that the person who pushed can see WHICH file was missing.
+    """
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def utcnow_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def published_stamp() -> str:
+    """When a build arrived, to the millisecond.
+
+    Finer than `utcnow_iso`, and the extra digits are load-bearing rather than
+    decorative: `published` is half of the key an open page polls with
+    (`commit@published`), and in the local slot it is the ONLY half that moves —
+    that slot's `commit` is the constant `dev` for every build it will ever hold
+    (SPEC 7.6). Two pushes inside one second are not a human edit-build-look
+    loop, but a script that rebuilds on save is exactly that, and a second-
+    resolution stamp would leave such a page showing the older of the two for
+    good.
+
+    Deliberately NOT a change to `utcnow_iso`: the comment queue stamps `created`
+    with it and `?since=` filters that field by STRING comparison against a
+    second-resolution timestamp, so widening the format there would quietly move
+    the boundary of every such query.
+    """
+    now = datetime.now(timezone.utc)
+    return f"{now:%Y-%m-%dT%H:%M:%S}.{now.microsecond // 1000:03d}Z"
+
+
+def _build_url(pid: str, name: str) -> dict:
+    """The body of a successful publish: where the thing just published lives.
+
+    One URL, for both routes. A commit push answers with its permanent
+    `/<commit>/`; a local push answers with `/dev/`, which is the only address a
+    local build has ever needed — it is the slot, and the author keeps it open in
+    a tab (SPEC 7.6).
+    """
+    return {"url": f"/project/{pid}/{name}/"}
+
+
+def _built_key(meta: dict) -> tuple:
+    """Sort key for "which build is newest" — `built`, then arrival time.
+
+    `built` is whatever the model's CI wrote; it is not validated beyond being a
+    string, so it can be unparseable. An unparseable value sorts oldest instead of
+    raising: a build that made it past validation must still be orderable, or one
+    malformed timestamp would break the picker for the whole project.
+    """
+    raw = meta.get("built") or ""
+    stamp = 0.0
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        stamp = parsed.timestamp()
+    except (TypeError, ValueError):
+        stamp = 0.0
+    return (stamp, str(meta.get("published") or ""))
+
+
+class Store:
+    """Everything that touches DATA_DIR.
+
+    One instance per process. `retention_builds` and `max_build_bytes` are passed
+    in rather than read from the settings singleton so tests can build a Store on
+    a tmp_path without touching the process environment.
+    """
+
+    def __init__(self, data_dir, retention_builds: int, max_build_bytes: int):
+        self.root = Path(data_dir).resolve()
+        self.retention_builds = retention_builds
+        self.max_build_bytes = max_build_bytes
+        self.projects_dir = self.root / "project"
+        # Publication is serialized per project: builds.json, the `latest` symlink
+        # and retention all read the full set of builds and then rewrite it, so two
+        # concurrent pushes to the SAME project could interleave into a builds.json
+        # that lists a build retention has just deleted. Different projects never
+        # touch each other's state and are free to run in parallel.
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+        # The root index spans every project, so it gets its own global lock.
+        self._index_lock = threading.Lock()
+        self.projects_dir.mkdir(parents=True, exist_ok=True)
+        self._sweep_leftovers()
+
+    # -- leftovers ---------------------------------------------------------
+    def _sweep_leftovers(self) -> None:
+        """Delete transient entries an earlier run died in the middle of.
+
+        Nothing else ever will. Every name here is dot-prefixed, so `builds_of`
+        skips it, the file server refuses to serve it and retention never sees
+        it — a SIGKILL during a push therefore leaves up to MAX_BUILD_BYTES of
+        spooled body plus a half-unpacked staging tree on the volume, permanently.
+
+        Only entries older than an hour are touched, because a concurrent publish
+        in this very process is using names of exactly the same shape.
+        """
+        cutoff = time.time() - LEFTOVER_MAX_AGE_SECONDS
+        directories = [self.root]
+        try:
+            directories += [p for p in self.projects_dir.iterdir() if p.is_dir()]
+        except OSError:
+            pass
+        for directory in directories:
+            try:
+                entries = list(directory.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                if not entry.name.startswith(LEFTOVER_PREFIXES):
+                    continue
+                try:
+                    # lstat, not stat: a leftover `.latest-<uuid>` is a symlink
+                    # and may already dangle.
+                    if entry.lstat().st_mtime > cutoff:
+                        continue
+                    if entry.is_dir() and not entry.is_symlink():
+                        shutil.rmtree(entry)
+                    else:
+                        entry.unlink()
+                except OSError as error:
+                    logger.warning(f"could not sweep leftover {entry}: {error}")
+                    continue
+                logger.info(f"swept leftover {entry}")
+
+    # -- naming ------------------------------------------------------------
+    @staticmethod
+    def valid_pid(pid: str) -> bool:
+        return bool(SAFE_ID.match(pid))
+
+    @staticmethod
+    def valid_build_id(name: str) -> bool:
+        """Is this a name a commit build may be published and served under?
+
+        Only the two reserved names are out. The `dev-` PREFIX is deliberately not
+        reserved any more: it used to be, because dev ids were `dev-<digest>` and
+        a commit called `dev-1234` would have landed in the local retention bucket
+        and been dropped after two pushes. There is no local bucket now — there is
+        one slot, with no history — so `dev-1234` is just a commit id like any
+        other and gets the same permanent URL.
+        """
+        return bool(SAFE_ID.match(name)) and name not in RESERVED_BUILD_NAMES
+
+    def _lock_for(self, pid: str) -> threading.Lock:
+        with self._locks_guard:
+            return self._locks.setdefault(pid, threading.Lock())
+
+    # -- publish -----------------------------------------------------------
+    def upload_path(self) -> Path:
+        """A private path under DATA_DIR for one request body.
+
+        On the volume rather than in /tmp: a body is up to MAX_BUILD_BYTES, the
+        container's writable layer is not where that belongs, and the dot prefix
+        keeps it out of `builds_of` and out of the file server. Swept by
+        `_sweep_leftovers` if the process dies before deleting it.
+        """
+        return self.root / f"{UPLOAD_PREFIX}{uuid.uuid4().hex}"
+
+    def publish(self, pid: str, commit: str, body_path: Path,
+                body_size: int) -> tuple[int, dict]:
+        """Accept one build from a spooled body. Returns (status, response body).
+
+        201 published, 200 identical retry, 409 same commit / different content.
+        Anything else is raised as PublishError.
+
+        Takes a PATH, not bytes: the body is already on disk by the time it gets
+        here, and reading it back into memory to hand it over would undo exactly
+        the peak this avoids.
+        """
+        if not self.valid_pid(pid):
+            raise PublishError(422, f"invalid project id: {pid!r}")
+        if not self.valid_build_id(commit):
+            raise PublishError(422, f"invalid commit id: {commit!r}")
+        if body_size > self.max_build_bytes:
+            raise PublishError(
+                413, f"body is {body_size} bytes, limit is {self.max_build_bytes}")
+
+        pdir = self.projects_dir / pid
+        with self._lock_for(pid):
+            pdir.mkdir(parents=True, exist_ok=True)
+            staging = pdir / f"{STAGING_PREFIX}{commit}-{uuid.uuid4().hex}"
+            staging.mkdir()
+            try:
+                files = self._unpack(body_path, staging)
+                digest = _payload_digest(files)
+                final = pdir / commit
+
+                # Idempotency BEFORE the rename: the build directory is immutable
+                # and was served with a one-year immutable cache, so silently
+                # replacing it would make every cached copy a lie (SPEC 7).
+                if final.exists():
+                    existing = _read_digest(final)
+                    if existing is not None and existing == digest:
+                        logger.info(f"publish {pid}/{commit}: identical retry, kept")
+                        return 200, _build_url(pid, commit)
+                    raise PublishError(
+                        409,
+                        f"build {commit} already exists with different content")
+
+                meta = self._finish_staging(pid, commit, staging, files, digest)
+                try:
+                    os.rename(staging, final)
+                except OSError as error:
+                    # Lost a race with another writer, or the directory appeared
+                    # between the check above and here. Re-run the same comparison
+                    # rather than reporting a filesystem error CI cannot act on.
+                    if not final.exists():
+                        raise PublishError(
+                            422, f"could not publish build: {error}") from error
+                    existing = _read_digest(final)
+                    if existing is not None and existing == digest:
+                        return 200, _build_url(pid, commit)
+                    raise PublishError(
+                        409,
+                        f"build {commit} already exists with different content",
+                    ) from error
+                staging = None  # renamed away; nothing left to clean up
+            finally:
+                if staging is not None:
+                    shutil.rmtree(staging, ignore_errors=True)
+
+            # Order matters: the symlink moves first so a reader is never sent to
+            # a build that is about to be pruned, retention then runs with the
+            # pointer already on its final target, and the picker is written last
+            # so it lists exactly what survived.
+            self._switch_latest(pid)
+            self._prune(pid)
+            self._write_builds_json(pid)
+
+        self._refresh_index()
+        logger.info(
+            f"publish {pid}/{commit}: {len(files)} files, "
+            f"{len(meta['variants'])} views, {body_size} bytes compressed")
+        return 201, _build_url(pid, commit)
+
+    def publish_dev(self, pid: str, body_path: Path,
+                    body_size: int) -> tuple[int, dict]:
+        """Overwrite the project's ONE local slot, `<pid>/dev/` (SPEC 7.6).
+
+        The author is editing model.py on a laptop and wants to see the result
+        now, without committing. That work has no commit to be addressed by, and
+        — the part that decides this whole design — it has no history worth
+        keeping either: attempt seventeen of an evening is not a version of the
+        project, it is the working copy as it stands. So there is exactly one
+        slot, like there is exactly one `latest`, and every push rewrites it.
+
+        Rewriting a URL in place is only safe because that URL is served
+        `no-cache`, which is what buys the simplicity: no minted ids, no second
+        retention window, no local entries in `builds.json`. The commit route
+        keeps its 409 and its year of `immutable` untouched — the two never meet.
+
+        Returns 201 when the slot changed and 200 when the same bytes are already
+        in it. The digest comparison is kept purely so an unchanged rebuild does
+        no work and does not disturb a reader; it is an internal detail and
+        nothing in the URL is derived from it.
+        """
+        if not self.valid_pid(pid):
+            raise PublishError(422, f"invalid project id: {pid!r}")
+        if body_size > self.max_build_bytes:
+            raise PublishError(
+                413, f"body is {body_size} bytes, limit is {self.max_build_bytes}")
+
+        pdir = self.projects_dir / pid
+        url = _build_url(pid, DEV_LINK)
+        with self._lock_for(pid):
+            pdir.mkdir(parents=True, exist_ok=True)
+            staging = pdir / f"{STAGING_PREFIX}{DEV_LINK}-{uuid.uuid4().hex}"
+            staging.mkdir()
+            try:
+                files = self._unpack(body_path, staging)
+                digest = _payload_digest(files)
+                if _read_digest(pdir / DEV_LINK) == digest:
+                    # Same bytes as the slot already holds. Nothing to write, and
+                    # nothing SHOULD be written: a swap here would take the page
+                    # the author has open through a needless re-render.
+                    logger.info(f"publish {pid}/{DEV_LINK}: identical, kept")
+                    return 200, url
+                meta = self._finish_staging(pid, DEV_LINK, staging, files, digest)
+                self._swap_dev_slot(pdir, staging)
+                staging = None  # renamed into place; nothing left to clean up
+            finally:
+                if staging is not None:
+                    shutil.rmtree(staging, ignore_errors=True)
+
+            # `latest` is not touched and neither is retention: a local build is
+            # not a commit, so it cannot be the newest one, and nothing about it
+            # accumulates. `builds.json` is rewritten because the picker shows
+            # whether the slot is occupied at all.
+            self._write_builds_json(pid)
+
+        logger.info(
+            f"publish {pid}/{DEV_LINK}: {len(files)} files, "
+            f"{len(meta['variants'])} views, {body_size} bytes compressed")
+        return 201, url
+
+    @staticmethod
+    def _swap_dev_slot(pdir: Path, staging: Path) -> None:
+        """Put a freshly unpacked tree into `<pid>/dev/`, replacing what is there.
+
+        POSIX has no way to atomically replace a non-empty DIRECTORY under a fixed
+        name — `rename` onto a directory only succeeds if the target is empty —
+        so this is two renames with nothing between them: the old slot is moved
+        aside whole, the new one takes the name, and only then are the old bytes
+        deleted. That is deliberately NOT "empty the slot, then unpack into it":
+        the difference is that a reader is never inside a directory that is being
+        filled, which is the failure that actually matters. It can, for the width
+        of one syscall, find the name absent — the price of the slot BEING the
+        build rather than a symlink to one, and the reason `latest`, which has to
+        survive being pasted into chat, is a symlink instead.
+
+        If the second rename fails the old slot is put back, so a failed push
+        leaves the author looking at what they had rather than at a 404.
+        """
+        slot = pdir / DEV_LINK
+        parked = pdir / f"{TRASH_PREFIX}{uuid.uuid4().hex}"
+        occupied = os.path.lexists(slot)
+        if occupied:
+            os.rename(slot, parked)
+        try:
+            os.rename(staging, slot)
+        except OSError:
+            if occupied:
+                os.rename(parked, slot)
+            raise
+        if occupied:
+            shutil.rmtree(parked, ignore_errors=True)
+
+    # -- unpacking ---------------------------------------------------------
+    def _unpack(self, body_path: Path, dest: Path) -> dict:
+        """Extract the archive into `dest`, refusing anything unusual.
+
+        Deliberately NOT `tar.extractall(filter="data")`. That filter exists (it
+        was backported to 3.11.4, and the image's python has it), but relying on
+        it would make this depend on a runtime detail we do not pin, and it still
+        allows subdirectories and device-free special cases we do not want. What
+        is written here is a whitelist: a member has to be a regular file whose
+        name is a bare, dot-free-leading filename, or the whole push is refused.
+
+        Refusing rather than skipping is the point. A skipped member produces a
+        build that is missing a file and looks fine, and the meta.json check
+        further down would then fail with a confusing message about a broken
+        link; refusing names the actual problem.
+        """
+        try:
+            # Opened by path: `BytesIO(body)` would put a second full copy of the
+            # body in memory next to the one already on disk.
+            tar = tarfile.open(body_path, mode="r:gz")
+        except (tarfile.TarError, EOFError, OSError) as error:
+            raise PublishError(422, f"body is not a gzipped tar: {error}") from error
+
+        files: dict[str, str] = {}
+        # Resolved once: every member's landing spot is compared against this.
+        real_dest = os.path.realpath(dest)
+        try:
+            self._extract_members(tar, dest, real_dest, files)
+        except CORRUPT_ARCHIVE_ERRORS as error:
+            # The open() above only proved there was a gzip header. Everything
+            # else — the member table, each member's data, the trailing CRC — is
+            # read here, so a truncated body or a member that lies about its size
+            # fails at THIS point, and it is still an unusable upload rather than
+            # a bug in the hub. Without this it left as a 500 and a stack trace,
+            # and CI was told `{"error": "internal error"}` about its own archive.
+            raise PublishError(422, f"archive is corrupt: {error}") from error
+        except OSError as error:
+            # Deliberately NOT turned into a 422. This is the disk saying no —
+            # ENOSPC above all — and answering "your archive is bad" would send CI
+            # off to debug a file that is fine while the volume quietly fills up.
+            # Logged loudly here because the 500 it becomes carries no detail.
+            logger.error(f"unpacking into {dest} failed on the filesystem: {error}")
+            raise
+
+        if not files:
+            raise PublishError(422, "archive is empty")
+        return files
+
+    def _extract_members(self, tar, dest: Path, real_dest: str,
+                         files: dict) -> None:
+        """The member loop of `_unpack`. Fills `files` with name -> sha256.
+
+        Split out so its caller can wrap the WHOLE walk — iteration and reads
+        included, not just the open — in one place, and so `files` is still
+        readable for the caller after a failure.
+        """
+        total = 0
+        # Folded name -> the name that claimed it, for the message below.
+        seen_names: dict[str, str] = {}
+        with tar:
+            for index, member in enumerate(tar):
+                if index >= MAX_MEMBERS:
+                    raise PublishError(
+                        422, f"archive has more than {MAX_MEMBERS} members")
+
+                name = member.name
+                if name.startswith("./"):
+                    name = name[2:]
+
+                # `tar -czf build.tar.gz .` is the obvious way to build this
+                # archive, and it stores an entry for the directory itself (`.`).
+                # Refusing that would break the first thing every model's CI
+                # tries, so directory entries are skipped without comment. It
+                # costs no safety: nothing is extracted from them, and a file
+                # INSIDE a directory is still refused on its own name below,
+                # because the whitelist has no `/` in it.
+                if member.isdir():
+                    continue
+
+                # Name first: an absolute path, a `..` hop or a subdirectory can
+                # never match the whitelist, so traversal is refused before the
+                # member type is even looked at.
+                if not SAFE_MEMBER.match(name):
+                    raise PublishError(
+                        422,
+                        f"unsafe archive member name {member.name!r}: the archive "
+                        f"must be flat, and names must match {SAFE_MEMBER.pattern}")
+
+                # Then the type. A symlink or a hardlink pointing outside would be
+                # a write outside the build directory; a device, fifo or directory
+                # is simply not something a build contains.
+                if member.issym() or member.islnk():
+                    raise PublishError(
+                        422, f"archive member {name!r} is a link; links are refused")
+                if not member.isfile():
+                    raise PublishError(
+                        422,
+                        f"archive member {name!r} is not a regular file "
+                        f"(type {member.type!r})")
+                # Case-INSENSITIVELY, and that is not pedantry: the check decides
+                # whether two members can land on one filesystem, and APFS and a
+                # Docker Desktop bind mount both fold case. `data.json` plus
+                # `DATA.JSON` passed an exact-match check, then hit the O_EXCL
+                # below and turned an unusable archive into a 500 with a stack
+                # trace — on macOS, i.e. exactly where `make test` runs.
+                if name.lower() in seen_names:
+                    raise PublishError(
+                        422,
+                        f"archive member {name!r} appears twice (names are "
+                        f"compared case-insensitively: the filesystem may not "
+                        f"tell {name!r} from {seen_names[name.lower()]!r})")
+
+                source = tar.extractfile(member)
+                if source is None:
+                    raise PublishError(
+                        422, f"archive member {name!r} has no readable content")
+
+                digest = hashlib.sha256()
+                target = dest / name
+                # Second, INDEPENDENT line of defence. The name whitelist above
+                # is the primary control, but it is one regexp: relax it by a
+                # character in some future edit and traversal is back. This asks
+                # the only question that actually matters — where would the write
+                # land — of the filesystem rather than of the string. realpath
+                # collapses `..` and follows symlinks, so a name that resolves
+                # anywhere but directly inside `dest` is refused.
+                if os.path.dirname(os.path.realpath(target)) != real_dest:
+                    raise PublishError(
+                        422,
+                        f"archive member {member.name!r} would be written "
+                        f"outside the build directory")
+
+                # O_EXCL: never write over something already at that name.
+                # O_NOFOLLOW: never follow a symlink sitting at that name — which
+                # closes the same hole a moment later than realpath does, but
+                # atomically, so the two together leave no window.
+                fd = os.open(
+                    target,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                    0o644)
+                # The header's `size` is attacker-controlled, so the ceiling is
+                # applied to the bytes actually written, not to what it claims.
+                with os.fdopen(fd, "wb") as out:
+                    while True:
+                        chunk = source.read(CHUNK)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > self.max_build_bytes:
+                            raise PublishError(
+                                413,
+                                f"archive expands beyond {self.max_build_bytes} bytes")
+                        digest.update(chunk)
+                        out.write(chunk)
+                os.chmod(target, 0o644)
+                files[name] = digest.hexdigest()
+                seen_names[name.lower()] = name
+
+    # -- staging -> publishable directory ----------------------------------
+    def _finish_staging(self, pid, commit, staging: Path, files, digest) -> dict:
+        """Validate meta.json and write everything the build page needs."""
+        raw = self._read_meta(staging)
+        try:
+            meta = render.build_meta(
+                pid=pid, commit=commit, raw=raw, staging=staging, files=files,
+                published=published_stamp(), dev=(commit == DEV_LINK))
+        except ValueError as error:
+            # render.py validates without knowing about HTTP; every way it can
+            # refuse is "the push described something that is not there", i.e. 422.
+            raise PublishError(422, str(error)) from error
+
+        # meta.json only. The page shell is NOT written here: it is identical for
+        # every build and it changes with the image, so a per-build copy served
+        # under a commit URL's year of `immutable` would pin every published build
+        # to the viewer markup of the day it was pushed. app.py renders it from
+        # the template instead, the same way it serves `/`.
+        (staging / "meta.json").write_text(
+            json.dumps(meta, indent=1), encoding="utf-8")
+        (staging / PAYLOAD_DIGEST_FILE).write_text(digest, encoding="utf-8")
+        return meta
+
+    @staticmethod
+    def _read_meta(staging: Path) -> dict:
+        path = staging / "meta.json"
+        if not path.is_file():
+            raise PublishError(422, "archive has no meta.json")
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, UnicodeDecodeError) as error:
+            raise PublishError(422, f"meta.json is not valid JSON: {error}") from error
+        if not isinstance(raw, dict):
+            raise PublishError(422, "meta.json must be a JSON object")
+        return raw
+
+    # -- project-level state -----------------------------------------------
+    def builds_of(self, pid: str) -> list[dict]:
+        """Every published COMMIT build of one project, newest first.
+
+        The `dev` slot is skipped, and skipping it here is what keeps it out of
+        `builds.json`, out of `/index.json`, out of `latest` and out of retention
+        in one place instead of four (SPEC 7.6). It is a directory with a real
+        meta.json — it would otherwise be listed like any build — but it is not a
+        version of the project, and history is a history of commits.
+
+        Reads each build's own meta.json rather than a project-level list, so the
+        directory tree stays the single source of truth: a build that was pruned,
+        or one restored by hand, needs no bookkeeping anywhere else.
+
+        Which is exactly why a meta.json here cannot be assumed to be one WE
+        wrote. Everything downstream — `_switch_latest`, `_prune`,
+        `render.builds_json`, `render.index_card` — subscripts these dicts
+        directly, so one `{}` left by a half-finished restore used to take out the
+        next publish of that project with a 500, after the build was already on
+        disk and before `latest` had moved. A meta that cannot answer those
+        questions is skipped exactly like an unreadable one: the build stops being
+        listed, and the project keeps working.
+        """
+        pdir = self.projects_dir / pid
+        if not pdir.is_dir():
+            return []
+        metas = []
+        for entry in pdir.iterdir():
+            if entry.name.startswith(".") or not entry.is_dir() or entry.is_symlink():
+                continue
+            if entry.name in RESERVED_BUILD_NAMES:
+                continue
+            meta_path = entry / "meta.json"
+            if not meta_path.is_file():
+                continue
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (ValueError, OSError, RecursionError):
+                logger.warning(f"unreadable meta.json in {entry}")
+                continue
+            if not _usable_meta(meta, entry.name):
+                logger.warning(
+                    f"ignoring build {pid}/{entry.name}: its meta.json is not "
+                    f"one this hub wrote (missing or wrong required fields)")
+                continue
+            metas.append(meta)
+        metas.sort(key=_built_key, reverse=True)
+        return metas
+
+    def latest_commit(self, pid: str) -> str | None:
+        """What `latest` currently points at, or None if it is not set."""
+        try:
+            return os.readlink(self.projects_dir / pid / LATEST_LINK)
+        except OSError:
+            return None
+
+    def _switch_latest(self, pid: str) -> None:
+        """Point `latest` at the newest build.
+
+        Every build `builds_of` returns is a commit build — the local slot is not
+        in that list — which is the whole rule `latest` exists to keep (SPEC 7.6):
+        it is the link that gets pasted into chat, and it has to go on meaning
+        "the project as of some commit".
+        """
+        metas = self.builds_of(pid)
+        if not metas:
+            return
+        self._point(pid, LATEST_LINK, metas[0]["commit"])
+
+    def _point(self, pid: str, name: str, target: str) -> None:
+        """Move one pointer symlink, atomically.
+
+        `os.symlink` to a temporary name followed by `os.rename` over the old link
+        replaces it in ONE step. The obvious alternative — unlink the old link,
+        then create the new one — leaves a window in which /project/<pid>/latest/
+        is a 404, and that window is open on every single publish.
+
+        The link is RELATIVE (just the build name). An absolute one would bake in
+        the path the hub happened to have when it wrote it, and break the day the
+        same tree is mounted somewhere else — which is exactly what the container
+        does with /app/data.
+        """
+        pdir = self.projects_dir / pid
+        tmp_link = pdir / f"{LATEST_LINK_PREFIX}{uuid.uuid4().hex}"
+        os.symlink(target, tmp_link)
+        os.rename(tmp_link, pdir / name)
+
+    def _write_builds_json(self, pid: str) -> None:
+        """Rewrite the build picker from what is actually on disk.
+
+        Called AFTER retention, not before. Writing it first — the order SPEC 7.2
+        lists the steps in — publishes a list that still names the builds pruning
+        is about to delete, so the picker offers commits that 404 when clicked.
+        Temp file plus rename, so a reader sees the old list or the new one and
+        never a half-written file.
+
+        The local slot is not one of the entries and never will be — that is the
+        point of it being a slot (SPEC 7.6) — but the picker still has to be able
+        to OFFER it, so whether it is occupied is recorded alongside the list.
+        Which is also why this runs for a project that has no commit builds yet:
+        a local-only project has an empty history and a slot worth linking to.
+        """
+        metas = self.builds_of(pid)
+        dev_meta = self._dev_meta(pid)
+        if not metas and dev_meta is None:
+            return
+        _atomic_write_json(
+            self.projects_dir / pid / "builds.json",
+            render.builds_json(pid, metas, dev=dev_meta is not None,
+                               latest=self.latest_commit(pid),
+                               fallback=dev_meta))
+
+    def _dev_meta(self, pid: str) -> dict | None:
+        """The local slot's meta.json, or None if the slot is empty.
+
+        Read rather than assumed: with no commit build in the project it is the
+        only source of the project's name and title, and `builds.json` needs
+        those to render a header.
+        """
+        try:
+            meta = json.loads(
+                (self.projects_dir / pid / DEV_LINK / "meta.json"
+                 ).read_text(encoding="utf-8"))
+        except (ValueError, OSError, RecursionError):
+            return None
+        return meta if _usable_meta(meta, DEV_LINK) else None
+
+    def _prune(self, pid: str) -> None:
+        """Keep the newest RETENTION_BUILDS builds of a project (SPEC 7.3).
+
+        One window, because there is only one kind of build to count: the local
+        slot is a single directory that never accumulates, so it is not in
+        `builds_of` and there is nothing here for it to compete with.
+
+        The build `latest` points at is never removed, even when it has fallen
+        out of the window: it is the URL people keep, and a dangling symlink
+        there would take a live page offline to save 2 MB.
+        """
+        metas = self.builds_of(pid)
+        pinned = self.latest_commit(pid)
+        # `builds_of` returns newest first, so everything past the limit is out
+        # of the window.
+        for meta in metas[self.retention_builds:]:
+            commit = meta["commit"]
+            if commit == pinned:
+                continue
+            victim = self.projects_dir / pid / commit
+            self._delete_build(pid, commit, victim)
+
+    def _delete_build(self, pid: str, commit: str, victim: Path) -> None:
+        """Take a build out of service first, then delete it.
+
+        `rmtree(ignore_errors=True)` gets this backwards. A partial failure leaves
+        a directory that still has files in it — so it is still SERVED — but has
+        lost its meta.json, so `builds_of` no longer lists it, retention never
+        considers it again and nothing will ever finish the job. The rename is the
+        atomic step that makes it unreachable; whether the recursive delete then
+        succeeds only decides how long the bytes linger, and a failure is logged
+        instead of swallowed so it is at least visible.
+        """
+        parked = victim.parent / f"{TRASH_PREFIX}{uuid.uuid4().hex}"
+        try:
+            os.rename(victim, parked)
+        except OSError as error:
+            logger.warning(f"retention: could not retire {pid}/{commit}: {error}")
+            return
+        logger.info(f"retention: dropped {pid}/{commit}")
+        try:
+            shutil.rmtree(parked)
+        except OSError as error:
+            # Already out of service and named for the sweeper, so this costs
+            # disk space until the next start and nothing else.
+            logger.warning(
+                f"retention: {pid}/{commit} retired but not yet removed "
+                f"({parked.name}): {error}")
+
+    def _refresh_index(self) -> None:
+        """Rebuild the root index.json from every project's newest COMMIT build.
+
+        The local slot is left out for the same reason it does not move `latest`
+        (SPEC 7.6): the front page is the most public surface there is, and a card
+        that quietly starts describing uncommitted work from somebody's laptop is
+        that promise broken in the one place everybody looks. It costs nothing to
+        arrange — `builds_of` already excludes the slot. A project whose only
+        build is a local one therefore has no card yet, which is the honest
+        answer: nothing has been published from a commit.
+        """
+        with self._index_lock:
+            cards = []
+            for pdir in sorted(self.projects_dir.iterdir()):
+                if pdir.name.startswith(".") or not pdir.is_dir():
+                    continue
+                metas = self.builds_of(pdir.name)
+                if metas:
+                    cards.append(render.index_card(metas[0]))
+            cards.sort(key=lambda c: c["built"], reverse=True)
+            _atomic_write_json(self.root / "index.json", cards)
+
+
+def _usable_meta(meta, dir_name: str) -> bool:
+    """Can everything downstream read this meta.json without a KeyError?
+
+    The fields listed here are the ones `_switch_latest`, `_prune` and the two
+    renderers subscript directly; a build whose meta cannot answer for all of them
+    is not servable, so it is better left out of the list than allowed to break
+    the next publish of the whole project.
+
+    `commit` is also required to MATCH the directory it was found in. It is what
+    `latest` is pointed at, so a mismatch — a build copied under a new name, a
+    meta restored into the wrong directory — would produce a dangling symlink,
+    i.e. the one failure the atomic switch exists to prevent.
+    """
+    if not isinstance(meta, dict):
+        return False
+    for key in ("pid", "project", "title", "commit", "built", "published"):
+        if not isinstance(meta.get(key), str):
+            return False
+    if meta["commit"] != dir_name:
+        return False
+    variants = meta.get("variants")
+    if not isinstance(variants, list) or not variants:
+        return False
+    return all(isinstance(v, dict) and isinstance(v.get("parts"), int)
+               and isinstance(v.get("gzip"), int) for v in variants)
+
+
+def _payload_digest(files: dict) -> str:
+    """A digest of WHAT WAS UPLOADED, independent of tar order and timestamps.
+
+    Deliberately covers only the archive's own members, not the meta.json we
+    rewrite from them. That one is normalized by code which changes when the
+    service is updated, so hashing it would turn a hub release into a spurious
+    409 on every CI retry of an already-published commit.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(files):
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(files[name].encode("ascii"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _read_digest(build_dir: Path) -> str | None:
+    try:
+        return (build_dir / PAYLOAD_DIGEST_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def _atomic_write_json(path: Path, payload) -> None:
+    """Write JSON so a reader sees the old file or the new one, never a torn one."""
+    atomic_write_bytes(path, json.dumps(payload, indent=1).encode("utf-8"))
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write bytes so a reader sees the old file or the new one, never a torn one.
+
+    The fsync before the rename is what makes that true across a power loss as
+    well as across a concurrent read: rename is atomic with respect to other
+    processes either way, but without the flush the new NAME can reach the disk
+    while the new CONTENT has not, and the file comes back empty after a crash.
+
+    Public, unlike everything else in this module's private half, because the
+    comment queue (SPEC 7A.3) lives outside a build directory but has exactly the
+    same requirement: a reader must never see half a comment. One implementation
+    of "temp file, fsync, rename" rather than two that drift apart.
+    """
+    tmp = path.parent / f"{JSON_TMP_PREFIX}{path.name}-{uuid.uuid4().hex}"
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, 0o644)
+        os.rename(tmp, path)
+    except BaseException:
+        # The temp name is dot-prefixed, so a leftover is invisible to every
+        # reader and would sit on the volume until the next startup sweep. That
+        # is tolerable after a SIGKILL and not tolerable per failed request on a
+        # PUBLIC endpoint, which is what the comment queue is.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    # And the DIRECTORY, because the rename is a change to the directory entry
+    # rather than to the file. Flushing only the file leaves the new content
+    # durable under a name that is not: after a power loss the old name can still
+    # be the one on disk, which is precisely the outcome the sentence above
+    # promises will not happen. Best effort — some filesystems refuse to fsync a
+    # directory, and that is not a reason to fail a publish that has landed.
+    try:
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError as error:
+        logger.warning(f"could not fsync the directory of {path}: {error}")

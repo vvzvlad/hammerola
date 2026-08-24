@@ -145,12 +145,14 @@ jobs:
         # without it a once-pulled python:3.11-slim would sit in its cache for months and the
         # tests would run against an unpatched base — the same reason `docker build --pull`
         # carries the flag.
-        # PUBLISH_TOKEN is the one variable src/settings.py declares with no default:
-        # `settings` is built at import time, so without it importing anything under src/
-        # raises and the whole suite errors during collection. The value is invented here and
-        # reaches nothing — it is a shared secret compared for equality, so it has no format to
-        # satisfy. A variable that IS format-validated at construction time would need a value
-        # of the right shape, or startup fails for a reason that says nothing about the code.
+        # PUBLISH_TOKEN and COMMENT_READ_TOKEN are the two variables src/settings.py declares
+        # with no default (the second guards reading the comment queue, SPEC 7A.2):
+        # `settings` is built at import time, so without them importing anything under src/
+        # raises and the whole suite errors during collection. The values are invented here and
+        # reach nothing — both are shared secrets compared for equality against the
+        # Authorization header, so neither has a format to satisfy and any non-empty string
+        # does. A variable that IS format-validated at construction time would need a value of
+        # the right shape, or startup fails for a reason that says nothing about the code.
         # `--name` is what makes this container reachable AFTERWARDS, and it does not duplicate
         # `--rm`: `--rm` is removal-on-exit performed by the daemon, and a step killed by its
         # own `timeout-minutes` kills the docker CLI here on the runner, not the container over
@@ -161,7 +163,8 @@ jobs:
         tar -cf - --exclude=./.git --exclude=./.venv --exclude=./data \
           --exclude=./.env --exclude=./.pytest_cache --exclude=__pycache__ . \
           | docker run --rm -i --pull always --name "$TEST_NAME" \
-          -e PUBLISH_TOKEN=fake-test-token-not-real-0123456789abcdef \
+          -e PUBLISH_TOKEN=fake-test-publish-token-not-real \
+          -e COMMENT_READ_TOKEN=fake-test-comment-read-token-not-real \
           -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
           -e PYTHONDONTWRITEBYTECODE=1 \
           "$RUNTIME_IMAGE" \
@@ -353,13 +356,14 @@ jobs:
       # deployment's real secrets are not available and should not be.
       #
       # 14 minutes is set against ci/smoke.py's OWN worst case, which the script documents and
-      # sums from its individual per-call bounds: 705 s — a little under 12 minutes — if every
+      # sums from its individual per-call bounds: 735 s — a little over 12 minutes — if every
       # docker call it makes runs out its budget. In practice the whole gate is a few seconds.
       # Being killed BY this timeout is what the margin is for: the script's own container
       # cleanup would not run, and the `if: always()` step below is what catches that. It was
       # 12 minutes against a 615 s sum until the CAD-kernel probe was added, which brought its
       # own 90 s bound — `import cadquery` maps ~222 MB of OpenCASCADE off a cold overlay the
-      # first time. Raise this number whenever that sum grows past it, in BOTH workflows.
+      # first time; check (g)'s required-path sweep then added another 30 s exec. That leaves
+      # 105 s of margin. Raise this number whenever that sum grows past it, in BOTH workflows.
       timeout-minutes: 14
       env:
         # SMOKE_NAME is not here: it is set once at job level, so this step and the cleanup

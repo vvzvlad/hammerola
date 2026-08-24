@@ -14,4 +14,5 @@
 pytest==9.0.3          # the runner: without it `make test` and both CI test steps die on "No module named pytest"
 pytest-asyncio==1.4.0  # no async test here yet, but pytest.ini already sets asyncio_mode=auto: without it that is an "Unknown config option" and the first `async def test_` fails on "not natively supported"
 pytest-cov==7.1.0      # not wired into addopts today; without it an ad-hoc `pytest --cov=src` fails on "unrecognized arguments: --cov"
-respx==0.23.1          # unused by the skeleton's own tests; kept because httpx is a runtime dep and the first client added needs its transport mocked, not the network hit in CI
+httpx==0.28.1          # tests/harness.py and tests/test_comments.py drive a real socket with it; without it every test module dies at collection on "No module named httpx". Test-only on purpose: src/ is stdlib above pydantic/loguru and makes no outbound request, so this stays out of the image
+respx==0.23.1          # unused today; kept for the day something in src/ does make an outbound call and its transport needs mocking rather than the network hit in CI

@@ -20,6 +20,46 @@ import os
 # workflow `env:` block: those carry the container names, RUNTIME_IMAGE and the smoke gate's
 # SMOKE_* variables, none of which the suite reads.
 os.environ.setdefault("PUBLISH_TOKEN", "test-token")
+# The second credential, for the same reason and by the same route: the comment
+# queue is public to write and token-guarded to read (SPEC 7A.2), so Settings()
+# requires COMMENT_READ_TOKEN too and importing src.settings without it fails.
+os.environ.setdefault("COMMENT_READ_TOKEN", "test-read-token")
+
+import pytest  # noqa: E402  (must come after the env assignment above)
+
+from harness import start_hub, stop_hub  # noqa: E402
+
+
+@pytest.fixture
+def hub(tmp_path):
+    """A live hub on an ephemeral port, with its own empty data directory.
+
+    Function-scoped on purpose: publication mutates a directory tree, a symlink
+    and two index files, so tests that shared one hub would depend on collection
+    order the moment one of them published anything.
+    """
+    instance = start_hub(tmp_path / "data")
+    try:
+        yield instance
+    finally:
+        stop_hub(instance)
+
+
+@pytest.fixture
+def hub_factory(tmp_path):
+    """For tests that need a hub configured differently (retention, size caps)."""
+    started = []
+
+    def make(**kw):
+        instance = start_hub(tmp_path / f"data{len(started)}", **kw)
+        started.append(instance)
+        return instance
+
+    try:
+        yield make
+    finally:
+        for instance in started:
+            stop_hub(instance)
 
 
 # --- Global-state guard: a pattern to copy, not code that runs ------------------------------

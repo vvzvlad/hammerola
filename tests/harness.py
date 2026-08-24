@@ -1,0 +1,339 @@
+"""Helpers for driving a real hub over a real socket.
+
+The suite talks HTTP to a `ThreadingHTTPServer` bound to an ephemeral port rather
+than calling handler methods directly. That is deliberate: half of what this
+service promises is in the RESPONSE — status codes, `Cache-Control`, `Location` —
+and a test that reached past the HTTP layer could not observe any of it, which is
+exactly the layer SPEC 7.4 makes claims about.
+"""
+
+import io
+import json
+import tarfile
+import threading
+from types import SimpleNamespace
+
+import httpx
+
+from src.app import create_server
+
+TOKEN = "test-publish-token"
+READ_TOKEN = "test-comment-read-token"
+
+# A sentinel for "this field was not supplied at all", as distinct from
+# `payload=None`, which means "send the JSON literal null". Defined here rather
+# than beside the other comment helpers below because it is a DEFAULT ARGUMENT of
+# a method on Hub, and those are evaluated when the class body runs.
+NOTHING = object()
+
+
+def settings_for(data_dir, retention_builds=20,
+                 max_build_bytes=8 * 1024 * 1024, **overrides):
+    """A settings-shaped object, without touching the process environment.
+
+    src.settings builds its singleton at import time from real env vars; a test
+    that needed to vary retention would have to re-import the module. Everything
+    downstream only reads attributes, so a namespace is a faithful stand-in.
+
+    `overrides` carries the comment ceilings (SPEC 7A.4). They are keyword
+    arguments rather than named parameters because there are eight of them and a
+    test only ever varies one: a rate-limit test wants `comment_rate_limit=1` and
+    could not care less what the photo ceiling is.
+    """
+    values = dict(
+        publish_token=TOKEN,
+        comment_read_token=READ_TOKEN,
+        host="127.0.0.1",
+        port=0,  # ask the OS for a free port, then read back which one
+        data_dir=str(data_dir),
+        retention_builds=retention_builds,
+        max_build_bytes=max_build_bytes,
+        comment_max_text_chars=4000,
+        comment_max_photo_bytes=1024 * 1024,
+        comment_max_body_bytes=4 * 1024 * 1024,
+        comment_max_per_build=100,
+        comment_max_total=5000,
+        # High enough that an ordinary test never trips it; the tests that are
+        # ABOUT the limit set it down to 1 or 2 explicitly.
+        comment_rate_limit=1000,
+        comment_rate_window_seconds=600,
+        log_level="INFO",
+    )
+    unknown = set(overrides) - set(values)
+    if unknown:
+        # A typo in an override would otherwise be silently ignored and the test
+        # would pass while exercising the default.
+        raise TypeError(f"unknown settings override: {sorted(unknown)}")
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+class Hub:
+    """A running server plus the client conveniences the tests keep needing."""
+
+    def __init__(self, server):
+        self.server = server
+        self.store = server.store
+        self.data = server.store.root
+        host, port = server.server_address[:2]
+        self.url = f"http://{host}:{port}"
+
+    # The hub under test is on 127.0.0.1, so the machine's proxy settings are
+    # never right for it and reading them can be actively fatal: httpx parses
+    # every NO_PROXY entry as a URL, and a perfectly ordinary `::1` in there
+    # raises before the request is even attempted. `make test` on a laptop
+    # behind a corporate proxy would fail in a way that has nothing to do with
+    # the code being tested.
+    TRUST_ENV = False
+
+    def get(self, path, **kw):
+        kw.setdefault("trust_env", self.TRUST_ENV)
+        return httpx.get(self.url + path, follow_redirects=False, timeout=10, **kw)
+
+    def request(self, method, path, **kw):
+        """For the verbs the two helpers above do not cover (HEAD, mostly)."""
+        kw.setdefault("trust_env", self.TRUST_ENV)
+        return httpx.request(method, self.url + path, timeout=10, **kw)
+
+    def publish(self, pid, commit, body, token=TOKEN):
+        headers = {"Content-Type": "application/gzip"}
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
+        return httpx.post(f"{self.url}/api/v1/publish/{pid}/{commit}",
+                          content=body, headers=headers, timeout=30,
+                          trust_env=self.TRUST_ENV)
+
+    def publish_dev(self, pid, body, token=TOKEN):
+        """POST /api/v1/publish/<pid>/dev — into the local slot (SPEC 7.6).
+
+        Deliberately routed through `publish` with the literal segment rather
+        than given its own URL builder: the whole claim is that `dev` is an
+        ordinary last path segment which the router treats specially, and a test
+        that bypassed the router could not observe that.
+        """
+        return self.publish(pid, "dev", body, token=token)
+
+    def project_dir(self, pid):
+        return self.store.projects_dir / pid
+
+    # -- comments (SPEC 7A) ------------------------------------------------
+    def post_comment(self, pid, commit, payload=NOTHING, photo=None, shot=None,
+                     headers=None, body=None, content_type=None):
+        """POST a comment. Public — no token is sent, and that is the point.
+
+        `body`/`content_type` bypass the encoder entirely, which is what lets a
+        test send a body no ordinary client would produce.
+        """
+        if body is None:
+            fields = {}
+            if payload is not NOTHING:
+                fields["comment"] = json.dumps(payload)
+            files = {}
+            if photo is not None:
+                files["photo"] = photo
+            if shot is not None:
+                files["shot"] = shot
+            body, content_type = multipart_body(fields, files)
+        sent = {"Content-Type": content_type} if content_type else {}
+        sent.update(headers or {})
+        return httpx.post(f"{self.url}/api/v1/comments/{pid}/{commit}",
+                          content=body, headers=sent, timeout=30,
+                          trust_env=self.TRUST_ENV)
+
+    def read_comments(self, path="", token=READ_TOKEN, method="GET", **kw):
+        headers = kw.pop("headers", {}) or {}
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
+        return httpx.request(method, f"{self.url}/api/v1/comments{path}",
+                             headers=headers, timeout=10,
+                             trust_env=self.TRUST_ENV, **kw)
+
+    def comment_dir(self, pid):
+        return self.data / "comments" / pid
+
+
+def multipart_body(fields=None, files=None, boundary="TestBoundary--123"):
+    """Encode a multipart/form-data body by hand. -> (bytes, content type).
+
+    Hand-rolled rather than delegated to httpx because half of what these tests
+    do is send something a well-behaved client cannot: a photo whose declared
+    Content-Type disagrees with its bytes, a duplicate field, a truncated body.
+    `files` values are (filename, bytes, declared content type).
+    """
+    marker = f"--{boundary}".encode("ascii")
+    chunks = []
+    for name, value in (fields or {}).items():
+        data = value.encode("utf-8") if isinstance(value, str) else value
+        chunks.append(
+            marker + b"\r\n"
+            + f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
+            + data + b"\r\n")
+    for name, (filename, data, ctype) in (files or {}).items():
+        chunks.append(
+            marker + b"\r\n"
+            + (f'Content-Disposition: form-data; name="{name}"; '
+               f'filename="{filename}"\r\n').encode()
+            + f"Content-Type: {ctype}\r\n\r\n".encode()
+            + data + b"\r\n")
+    chunks.append(marker + b"--\r\n")
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
+# -- attachment fixtures ----------------------------------------------------
+# Real magic bytes, because that is the whole mechanism under test: a PNG is a
+# PNG here because its first eight bytes say so, not because of its name.
+PNG_BYTES = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR"
+             + b"\x00" * 32)
+JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + b"\x00" * 32
+WEBP_BYTES = b"RIFF" + b"\x24\x00\x00\x00" + b"WEBPVP8 " + b"\x00" * 32
+SVG_BYTES = (b'<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg">'
+             b'<script>alert(1)</script></svg>')
+GIF_BYTES = b"GIF89a" + b"\x00" * 32
+
+
+def comment_payload(**extra):
+    """The JSON half of a comment, in the shape viewer.js sends (SPEC 7A.1)."""
+    payload = {
+        "text": "the bracket fouls the standoff",
+        "view": "assembled",
+        "part": "/root/bracket",
+        "point": [1.0, 2.0, 3.5],
+        "camera": {
+            "position": [10.0, 10.0, 10.0],
+            "quaternion": [0.0, 0.0, 0.0, 1.0],
+            "target": [0.0, 0.0, 0.0],
+            "zoom": 1.25,
+        },
+    }
+    payload.update(extra)
+    return payload
+
+
+def start_hub(data_dir, **kw):
+    """Bind, serve on a daemon thread, and hand back a Hub. Caller stops it."""
+    server = create_server(settings_for(data_dir, **kw))
+    # `shutdown()` blocks until serve_forever notices, which it only does once per
+    # poll interval — the 0.5 s default would add half a second to every test that
+    # uses a hub, which is most of them.
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread.start()
+    hub = Hub(server)
+    hub._thread = thread
+    return hub
+
+
+def stop_hub(hub):
+    hub.server.shutdown()
+    hub.server.server_close()
+    hub._thread.join(timeout=5)
+
+
+# -- archive building -------------------------------------------------------
+def meta_bytes(views=None, downloads=None, **extra):
+    """A meta.json in the wire format of SPEC 7 (`views`, not `variants`)."""
+    payload = {
+        "project": "demo",
+        "title": "Demo project",
+        "built": "2026-08-21T04:16:00Z",
+        "views": views if views is not None else [
+            {"id": "assembled", "name": "assembled",
+             "file": "assembled.json", "parts": 2},
+        ],
+    }
+    if downloads is not None:
+        payload["downloads"] = downloads
+    payload.update(extra)
+    return json.dumps(payload).encode("utf-8")
+
+
+def view_bytes(marker="a"):
+    """Stand-in for a tessellation. Only its bytes matter to the hub."""
+    return json.dumps({"shapes": [marker], "name": "root"}).encode("utf-8")
+
+
+def tar_gz(files: dict) -> bytes:
+    """A flat, well-formed gzipped tar — the shape CI is supposed to send."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+def good_build(marker="a", downloads=None, extra_files=None) -> bytes:
+    files = {
+        "meta.json": meta_bytes(downloads=downloads),
+        "assembled.json": view_bytes(marker),
+    }
+    files.update(extra_files or {})
+    return tar_gz(files)
+
+
+def raw_tar_gz(entries) -> bytes:
+    """Build an archive from explicit TarInfo objects.
+
+    `tar_gz` above cannot express the interesting cases: tarfile will happily
+    WRITE a member named `../escape` or a symlink, but the convenience wrapper has
+    no way to ask for one. These builders do, which is what lets the security
+    tests send a genuinely hostile archive rather than a description of one.
+    """
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for info, data in entries:
+            tar.addfile(info, io.BytesIO(data) if data is not None else None)
+    return buffer.getvalue()
+
+
+def file_entry(name, data):
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.REGTYPE
+    info.size = len(data)
+    info.mode = 0o644
+    return info, data
+
+
+def symlink_entry(name, target):
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.SYMTYPE
+    info.linkname = target
+    info.size = 0
+    return info, None
+
+
+def hardlink_entry(name, target):
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.LNKTYPE
+    info.linkname = target
+    info.size = 0
+    return info, None
+
+
+def dir_entry(name):
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.DIRTYPE
+    info.mode = 0o755
+    info.size = 0
+    return info, None
+
+
+def fifo_entry(name):
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.FIFOTYPE
+    info.mode = 0o644
+    info.size = 0
+    return info, None
+
+
+def chardev_entry(name, major=1, minor=3):
+    """A character device — /dev/null by default."""
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.CHRTYPE
+    info.mode = 0o644
+    info.size = 0
+    info.devmajor = major
+    info.devminor = minor
+    return info, None

@@ -92,6 +92,7 @@ RUN mkdir -p data && chown app:app data
 # Code and static assets
 COPY src/ src/
 COPY templates/ templates/
+COPY static/ static/
 COPY main.py .
 # --chmod pins the executable bit: exec-form ENTRYPOINT fails with "permission
 # denied" if the bit is lost in the build context (Windows checkout, tar copy).

@@ -20,7 +20,13 @@
 pydantic==2.13.4
 pydantic-settings==2.7.0
 loguru==0.7.2
-httpx==0.28.1
+
+# No HTTP client here on purpose. `src/` is stdlib-only above those three: ThreadingHTTPServer
+# serves the site, tarfile unpacks a push, email.parser handles multipart, and nothing in the
+# service ever makes an outbound request. httpx is what the TESTS use to drive a real socket,
+# so it lives in requirements-dev.txt — keeping it out of the image is one fewer package in the
+# runtime attack surface for no loss at all. Adding an outbound call to `src/` is what moves it
+# back up here, and nothing less than that.
 
 # --- The CAD kernel ---------------------------------------------------------------------------
 # The geometry stack, and the whole reason this project exists as ONE artefact: the hub does not
