@@ -300,12 +300,23 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
         seen.add(view_id)
 
         name = view.get("file")
-        # The archive is flat and its member names were whitelisted during
-        # extraction, so membership in `files` is the whole check: a view can only
-        # ever point at a file that was actually unpacked into this build.
+        # Member names were whitelisted during extraction, so membership in
+        # `files` is most of the check: a view can only ever point at a file that
+        # was actually unpacked into this build.
         if not isinstance(name, str) or name not in files:
             raise ValueError(
                 f"view {view_id!r} points at {name!r}, which is not in the archive")
+        # The rest of the check is that it sits at the TOP LEVEL. The archive may
+        # carry a tree now (SPEC 7.1), but serving answers
+        # `/project/<pid>/<commit>/<name>` and nothing deeper, so a view pointing
+        # into a subdirectory would validate here, publish with a 201 and then
+        # 404 in the browser — a build that is accepted and cannot be opened.
+        # Refusing it names the problem to whoever pushed, at push time.
+        if "/" in name:
+            raise ValueError(
+                f"view {view_id!r} points at {name!r}, which is inside a "
+                f"subdirectory; a view file has to sit at the top level of the "
+                f"archive, because that is the only place the hub serves from")
         # A view pointing at one of those names would be measured here and then
         # answered by the hub's own file — the rewritten meta.json, or the
         # generated page at index.html — so the viewer would fetch something
@@ -349,6 +360,14 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
         if not isinstance(name, str) or name not in files:
             raise ValueError(
                 f"download {label!r} points at {name!r}, which is not in the archive")
+        # Same reason as for a view file: what the button links to has to be a
+        # top-level name, because that is the shape of the only URL that serves
+        # a build's files.
+        if "/" in name:
+            raise ValueError(
+                f"download {label!r} points at {name!r}, which is inside a "
+                f"subdirectory; a download has to sit at the top level of the "
+                f"archive, because that is the only place the hub serves from")
         if name in GENERATED_FILES:
             raise ValueError(
                 f"download {label!r} points at {name!r}, which the hub rewrites "

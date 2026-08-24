@@ -9,9 +9,9 @@ a push, renders the viewer and holds the comment queue, with the CadQuery kernel
 the image. What is still missing is the BUILDER half: the hub accepts a finished artefact
 today and does not yet compute the geometry itself. The service is being assembled out of
 three existing repositories (`cad_snapshot_hub`, `3d/cad_builder`, `3d/cad_publish`), step by
-step, and the remaining steps start at accepting a source TREE instead of an archive. What is
-being built and in what order is in `docs/SPEC.md`, section 8A; `AGENTS.md` carries the
-checklist.
+step. A push may already carry a source TREE rather than a flat archive; the remaining steps
+start at moving `cad_publish` in and running it out of process. What is being built and in
+what order is in `docs/SPEC.md`, section 8A; `AGENTS.md` carries the checklist.
 
 The layout below follows the «Как создавать проект» guide in the gitmost wiki
 (space Netmap, section «Руководства»).

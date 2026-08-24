@@ -23,11 +23,14 @@ thought of:
   * `<pid>` and `<commit>` come from the URL and may only be `[A-Za-z0-9_-]`, so
     they can never contain a separator or a dot component. `latest` and `dev` are
     reserved.
-  * a member name inside the uploaded tar may only be a bare filename of the same
-    shape plus dots, so `../`, `/etc/passwd` and `a/../../b` are all rejected on
-    the name alone — before the member's TYPE is even considered.
+  * a member name inside the uploaded tar is a RELATIVE PATH: `/`-separated
+    components, each of the same shape as a bare filename plus dots. `../`,
+    `/etc/passwd`, `a/../../b`, `a//b` and `a/./b` are all rejected on the name
+    alone — before the member's TYPE is even considered — because no component
+    may be empty, `.` or `..`, and none may start with a dot at all.
 """
 
+import errno
 import gzip
 import hashlib
 import json
@@ -77,15 +80,56 @@ POINTER_NAMES = (LATEST_LINK, DEV_LINK)
 # else, and app.py documents that trade.
 RESERVED_BUILD_NAMES = set(POINTER_NAMES)
 
-# A member of the uploaded tar. Dots are allowed (file extensions) but the name
-# must start alphanumeric, so `.hidden`, `.` and `..` are all out, and there is no
-# `/` in the character class at all, so nothing can describe a subdirectory.
+# ONE COMPONENT of a member's path inside the uploaded tar. The archive carries a
+# TREE now — a model's source is `model.py`, `enclosure.py`, `scripts/`, `ref/` —
+# so a member name is a relative path and this is the rule each of its
+# `/`-separated pieces has to pass. The alphabet is exactly the one a whole member
+# name had to match while the archive was flat, which is what makes the move to
+# trees an addition rather than a relaxation: dots are allowed (file extensions)
+# but a component must START alphanumeric, so `.hidden`, `.`, `..` and the empty
+# string are all out, and the class contains no `/`, no backslash, no NUL and
+# nothing outside ASCII — so a component can never itself be a separator, a
+# traversal hop, or a lookalike of one in some other script.
 # `\Z` for the same reason as above: `$` would let "model.stl\n" through.
-SAFE_MEMBER = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+SAFE_COMPONENT = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
-# Ceiling on the number of entries in one archive. A build is a handful of files;
-# anything near this is either a mistake or an attempt to make us do work.
-MAX_MEMBERS = 256
+# Ceiling on the DEPTH of a member's path, counted in components including the
+# file name itself: `model.py` is 1, `scripts/gen/parts.py` is 3.
+#
+# Eight, for two reasons that both need a number rather than "deep enough". A
+# model's source is shallow by nature (`ref/vendor/rev2/part.step` is 4 and
+# already contrived), so eight leaves room without inviting anything. And it
+# bounds the longest path this can produce: 8 components of 128 characters plus 7
+# separators is 1031 bytes, which added to the deepest staging path the hub can
+# build — data dir, `project/`, a 64-character pid, `.tmp-` + a 64-character
+# commit + a 32-hex uuid — stays far below PATH_MAX (4096 on Linux). Without a
+# ceiling here a legal archive could push a path past it and turn a publish into
+# an ENAMETOOLONG deep inside extraction, i.e. a 500 on an archive that broke no
+# rule. It also caps the directory walk at 8 `mkdir`+`openat` pairs per member.
+MAX_PATH_DEPTH = 8
+
+# Ceiling on the number of entries in one archive, directory entries included —
+# every entry costs an iteration whether or not anything is extracted from it.
+#
+# 1024 rather than the 256 that fitted a flat build: what arrives is now a source
+# TREE, where a `scripts/` and a `ref/` with a few dozen files each are ordinary,
+# and 256 is close enough to a real project to be hit by an honest push. 1024 is
+# still far below anything that costs us: the work per member is one `openat` and
+# one write loop, and the only state kept per member is its path in the
+# duplicate map — 1024 × ~1 KiB worst case, ~1 MiB, against four concurrent
+# publish slots. The bytes are bounded separately and much lower (see
+# `max_build_bytes`), so this number governs SYSCALLS and bookkeeping, not disk.
+MAX_MEMBERS = 1024
+
+# Errno values that mean "this archive's own layout is impossible", as opposed to
+# "the disk said no". A member whose parent directory is another member's file, a
+# file name already taken by a directory, a component that turned out to be a
+# symlink: every one of those is the pusher's problem and gets a 422. Everything
+# else — ENOSPC above all — stays an OSError and becomes a 500, per the rule
+# `_unpack` spells out. Getting this set wrong in the generous direction is how a
+# full volume starts being reported to CI as a bad archive.
+LAYOUT_ERRNOS = frozenset({errno.EEXIST, errno.ENOTDIR, errno.EISDIR,
+                           errno.ELOOP, errno.ENAMETOOLONG})
 
 # Everything a damaged archive can raise once the header has been read. Opening
 # the file proves the gzip header is there and nothing else: the member table, the
@@ -193,6 +237,133 @@ def _built_key(meta: dict) -> tuple:
     except (TypeError, ValueError):
         stamp = 0.0
     return (stamp, str(meta.get("published") or ""))
+
+
+# -- member paths ----------------------------------------------------------
+def _member_parts(raw_name: str, name: str) -> list[str]:
+    """Split one member name into checked path components, or raise a 422.
+
+    `raw_name` is what the archive said and is used in messages; `name` is the
+    same thing with a leading `./` removed, which is what actually gets checked.
+
+    Everything a traversal needs is refused by the component rule alone, and it
+    is worth listing which shape dies on which clause, because the whitelist
+    reads like it only bans exotic characters:
+
+      * `../evil` and `a/../../b` — a `..` component does not start alphanumeric;
+      * `/etc/passwd` and a leading `/` — splitting gives an EMPTY first
+        component, and the empty string does not match either;
+      * `a//b` — an empty component in the middle, same clause;
+      * `a/./b` and a trailing `a/` — `.` and `` again;
+      * `a\\..\\b`, a NUL, a non-ASCII lookalike — none of those characters is in
+        the class at all.
+
+    So there is no separate list of forbidden shapes to keep in sync with the
+    pattern: the pattern IS the list, applied per component.
+    """
+    parts = name.split("/")
+    if len(parts) > MAX_PATH_DEPTH:
+        raise PublishError(
+            422,
+            f"archive member {raw_name!r} is {len(parts)} path components deep; "
+            f"the ceiling is {MAX_PATH_DEPTH}")
+    for part in parts:
+        if not SAFE_COMPONENT.match(part):
+            raise PublishError(
+                422,
+                f"unsafe archive member name {raw_name!r}: it must be a relative "
+                f"path whose every component matches {SAFE_COMPONENT.pattern}, "
+                f"and {part!r} does not")
+    return parts
+
+
+def _open_member_dir(dest_fd: int, parts: list[str], raw_name: str) -> int:
+    """Create and open one member's directory chain, one component at a time.
+
+    Returns a descriptor for the directory the member's file belongs in; the
+    caller closes it unless it IS `dest_fd`, which the caller owns.
+
+    The whole point is that no path of more than one component is ever handed to
+    the kernel. Each component is created with `mkdirat` and then opened with
+    `openat` under O_NOFOLLOW|O_DIRECTORY, so a symlink at any level is an ELOOP
+    rather than a redirection, and a regular file at any level is an ENOTDIR
+    rather than a write into somebody else's file. That is what makes the
+    "symlink planted by an earlier member" family of attacks structurally
+    impossible rather than merely refused: the archive cannot create a symlink
+    (links are rejected outright), and even if something else planted one between
+    two members, this walk would not follow it.
+
+    Directories are OURS: mode 0o755, never the mode a directory entry in the
+    archive asked for, and created from the paths of the files that need them.
+    A pre-existing directory is accepted (EEXIST) because two members of the same
+    tree legitimately share a parent.
+    """
+    current = dest_fd
+    for part in parts:
+        try:
+            os.mkdir(part, 0o755, dir_fd=current)
+        except FileExistsError:
+            # Already made by an earlier member of this same archive — or
+            # already something else entirely, which the open below is what
+            # decides. `mkdir` does not follow a symlink at the final component,
+            # so a dangling symlink lands here too and is caught one line later.
+            pass
+        except OSError:
+            if current != dest_fd:
+                os.close(current)
+            raise
+        try:
+            opened = os.open(
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=current)
+        except OSError as error:
+            if error.errno in LAYOUT_ERRNOS:
+                raise PublishError(
+                    422,
+                    f"archive member {raw_name!r} cannot be unpacked: {part!r} "
+                    f"is not a directory this archive is allowed to write "
+                    f"through") from error
+            raise
+        finally:
+            if current != dest_fd:
+                os.close(current)
+        # On the descriptor, and unconditionally: `mkdir`'s mode argument is
+        # filtered through the process umask, so a hub started under `umask 077`
+        # would create 0o700 directories and the non-root `app` user would then
+        # be unable to READ the build it just published. The files below get the
+        # same treatment for the same reason.
+        try:
+            os.fchmod(opened, 0o755)
+        except OSError:
+            os.close(opened)
+            raise
+        current = opened
+    return current
+
+
+def _create_member_file(parent_fd: int, leaf: str, raw_name: str) -> int:
+    """Create one member's file inside an already-opened directory. -> fd.
+
+    O_EXCL and O_NOFOLLOW carry the same weight they did while the archive was
+    flat. What the tree adds is a NEW way for an archive to be impossible — a
+    member `a/b.py` after a member `a`, so the name is taken by a directory — and
+    that has to come out as a 422 rather than as an unhandled OSError, which is
+    a 500 with a stack trace about an archive that is plainly the pusher's fault.
+    """
+    try:
+        return os.open(
+            leaf,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+            0o644,
+            dir_fd=parent_fd)
+    except OSError as error:
+        if error.errno in LAYOUT_ERRNOS:
+            raise PublishError(
+                422,
+                f"archive member {raw_name!r} cannot be created: {leaf!r} is "
+                f"already taken by something else in this archive") from error
+        raise
 
 
 class Store:
@@ -468,10 +639,11 @@ class Store:
 
         Deliberately NOT `tar.extractall(filter="data")`. That filter exists (it
         was backported to 3.11.4, and the image's python has it), but relying on
-        it would make this depend on a runtime detail we do not pin, and it still
-        allows subdirectories and device-free special cases we do not want. What
-        is written here is a whitelist: a member has to be a regular file whose
-        name is a bare, dot-free-leading filename, or the whole push is refused.
+        it would make this depend on a runtime detail we do not pin, and it
+        permits things we do not want at all — it merely CLAMPS permissions and
+        strips special files, where we refuse the whole push. What is written
+        here is a whitelist: a member has to be a regular file whose name is a
+        relative path of `SAFE_COMPONENT` components, or nothing is published.
 
         Refusing rather than skipping is the point. A skipped member produces a
         build that is missing a file and looks fine, and the meta.json check
@@ -512,113 +684,165 @@ class Store:
 
     def _extract_members(self, tar, dest: Path, real_dest: str,
                          files: dict) -> None:
-        """The member loop of `_unpack`. Fills `files` with name -> sha256.
+        """The member loop of `_unpack`. Fills `files` with path -> sha256.
 
         Split out so its caller can wrap the WHOLE walk — iteration and reads
         included, not just the open — in one place, and so `files` is still
         readable for the caller after a failure.
+
+        Keys of `files` are the member's RELATIVE PATH with `/` separators, not a
+        bare name: two files called `part.step` in different directories are two
+        different members and have to hash as two.
         """
         total = 0
-        # Folded name -> the name that claimed it, for the message below.
+        # Folded PATH -> the path that claimed it, for the message below.
         seen_names: dict[str, str] = {}
-        with tar:
-            for index, member in enumerate(tar):
-                if index >= MAX_MEMBERS:
-                    raise PublishError(
-                        422, f"archive has more than {MAX_MEMBERS} members")
+        # The staging directory, held open for the whole walk. Every directory
+        # and every file below is opened RELATIVE to this descriptor, so the
+        # kernel never resolves a path of ours from the root and there is no
+        # prefix for anything to have swapped underneath us.
+        dest_fd = os.open(dest, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            with tar:
+                for index, member in enumerate(tar):
+                    if index >= MAX_MEMBERS:
+                        raise PublishError(
+                            422, f"archive has more than {MAX_MEMBERS} members")
 
-                name = member.name
-                if name.startswith("./"):
-                    name = name[2:]
+                    name = member.name
+                    if name.startswith("./"):
+                        name = name[2:]
 
-                # `tar -czf build.tar.gz .` is the obvious way to build this
-                # archive, and it stores an entry for the directory itself (`.`).
-                # Refusing that would break the first thing every model's CI
-                # tries, so directory entries are skipped without comment. It
-                # costs no safety: nothing is extracted from them, and a file
-                # INSIDE a directory is still refused on its own name below,
-                # because the whitelist has no `/` in it.
-                if member.isdir():
-                    continue
+                    # `tar -czf build.tar.gz .` is the obvious way to build this
+                    # archive, and it stores an entry for the directory itself
+                    # (`.`) and one for every subdirectory. Those entries are
+                    # skipped without comment — and, more to the point, the
+                    # directories are created by US, from the paths of the FILES
+                    # that need them, with our own mode. A directory entry is
+                    # therefore never trusted for its name, its mode or its
+                    # existence: an archive that lists `scripts/` and an archive
+                    # that only lists `scripts/gen.py` unpack identically.
+                    if member.isdir():
+                        continue
 
-                # Name first: an absolute path, a `..` hop or a subdirectory can
-                # never match the whitelist, so traversal is refused before the
-                # member type is even looked at.
-                if not SAFE_MEMBER.match(name):
-                    raise PublishError(
-                        422,
-                        f"unsafe archive member name {member.name!r}: the archive "
-                        f"must be flat, and names must match {SAFE_MEMBER.pattern}")
+                    # Name first: an absolute path, a `..` hop, an empty
+                    # component or a `.` component can never match the
+                    # whitelist, so traversal is refused before the member type
+                    # is even looked at.
+                    parts = _member_parts(member.name, name)
 
-                # Then the type. A symlink or a hardlink pointing outside would be
-                # a write outside the build directory; a device, fifo or directory
-                # is simply not something a build contains.
-                if member.issym() or member.islnk():
-                    raise PublishError(
-                        422, f"archive member {name!r} is a link; links are refused")
-                if not member.isfile():
-                    raise PublishError(
-                        422,
-                        f"archive member {name!r} is not a regular file "
-                        f"(type {member.type!r})")
-                # Case-INSENSITIVELY, and that is not pedantry: the check decides
-                # whether two members can land on one filesystem, and APFS and a
-                # Docker Desktop bind mount both fold case. `data.json` plus
-                # `DATA.JSON` passed an exact-match check, then hit the O_EXCL
-                # below and turned an unusable archive into a 500 with a stack
-                # trace — on macOS, i.e. exactly where `make test` runs.
-                if name.lower() in seen_names:
-                    raise PublishError(
-                        422,
-                        f"archive member {name!r} appears twice (names are "
-                        f"compared case-insensitively: the filesystem may not "
-                        f"tell {name!r} from {seen_names[name.lower()]!r})")
+                    # Then the type. A symlink or a hardlink pointing outside
+                    # would be a write outside the build directory; a device,
+                    # fifo or directory is simply not something a build contains.
+                    if member.issym() or member.islnk():
+                        raise PublishError(
+                            422,
+                            f"archive member {name!r} is a link; links are refused")
+                    if not member.isfile():
+                        raise PublishError(
+                            422,
+                            f"archive member {name!r} is not a regular file "
+                            f"(type {member.type!r})")
+                    # Case-INSENSITIVELY and over the WHOLE path, which is not
+                    # pedantry on either count: the check decides whether two
+                    # members can land on one filesystem, and APFS and a Docker
+                    # Desktop bind mount both fold case. `data.json` plus
+                    # `DATA.JSON` passed an exact-match check, then hit the
+                    # O_EXCL below and turned an unusable archive into a 500 with
+                    # a stack trace — on macOS, i.e. exactly where `make test`
+                    # runs. Folding only the last component instead of the path
+                    # would call `a/model.py` and `b/model.py` a collision, which
+                    # they are not; folding the path catches `a/File` against
+                    # `A/file`, which they are.
+                    folded = "/".join(parts).lower()
+                    if folded in seen_names:
+                        raise PublishError(
+                            422,
+                            f"archive member {name!r} appears twice (names are "
+                            f"compared case-insensitively over the whole path: "
+                            f"the filesystem may not tell {name!r} from "
+                            f"{seen_names[folded]!r})")
 
-                source = tar.extractfile(member)
-                if source is None:
-                    raise PublishError(
-                        422, f"archive member {name!r} has no readable content")
+                    source = tar.extractfile(member)
+                    if source is None:
+                        raise PublishError(
+                            422,
+                            f"archive member {name!r} has no readable content")
 
-                digest = hashlib.sha256()
-                target = dest / name
-                # Second, INDEPENDENT line of defence. The name whitelist above
-                # is the primary control, but it is one regexp: relax it by a
-                # character in some future edit and traversal is back. This asks
-                # the only question that actually matters — where would the write
-                # land — of the filesystem rather than of the string. realpath
-                # collapses `..` and follows symlinks, so a name that resolves
-                # anywhere but directly inside `dest` is refused.
-                if os.path.dirname(os.path.realpath(target)) != real_dest:
-                    raise PublishError(
-                        422,
-                        f"archive member {member.name!r} would be written "
-                        f"outside the build directory")
+                    digest = hashlib.sha256()
+                    target = dest.joinpath(*parts)
+                    # Second, INDEPENDENT line of defence. The name whitelist
+                    # above is the primary control, but it is one regexp: relax
+                    # it by a character in some future edit and traversal is
+                    # back. This asks the only question that actually matters —
+                    # where would the write land — of the filesystem rather than
+                    # of the string. realpath collapses `..` and follows symlinks
+                    # over the WHOLE prefix, so a member whose parent directory
+                    # is a symlink out of staging is refused here even though its
+                    # own name is impeccable. "Inside" rather than the old
+                    # "directly in", because the archive is a tree now — which is
+                    # exactly the edit that could have quietly become
+                    # `startswith(real_dest)` and accepted `<staging>-evil/`.
+                    real_target = os.path.realpath(target)
+                    if not real_target.startswith(real_dest + os.sep):
+                        raise PublishError(
+                            422,
+                            f"archive member {member.name!r} would be written "
+                            f"outside the build directory")
 
-                # O_EXCL: never write over something already at that name.
-                # O_NOFOLLOW: never follow a symlink sitting at that name — which
-                # closes the same hole a moment later than realpath does, but
-                # atomically, so the two together leave no window.
-                fd = os.open(
-                    target,
-                    os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
-                    0o644)
-                # The header's `size` is attacker-controlled, so the ceiling is
-                # applied to the bytes actually written, not to what it claims.
-                with os.fdopen(fd, "wb") as out:
-                    while True:
-                        chunk = source.read(CHUNK)
-                        if not chunk:
-                            break
-                        total += len(chunk)
-                        if total > self.max_build_bytes:
-                            raise PublishError(
-                                413,
-                                f"archive expands beyond {self.max_build_bytes} bytes")
-                        digest.update(chunk)
-                        out.write(chunk)
-                os.chmod(target, 0o644)
-                files[name] = digest.hexdigest()
-                seen_names[name.lower()] = name
+                    # Third: the walk itself, which is the one that cannot be
+                    # raced. Every component is created and opened one at a time
+                    # with O_NOFOLLOW|O_DIRECTORY relative to the previous one,
+                    # so a symlink anywhere along the path is an error rather
+                    # than a redirection — including one planted a microsecond
+                    # ago by something outside this process.
+                    parent_fd = _open_member_dir(dest_fd, parts[:-1], member.name)
+                    try:
+                        # O_EXCL: never write over something already at that
+                        # name. O_NOFOLLOW: never follow a symlink sitting at
+                        # that name — which closes the same hole a moment later
+                        # than realpath does, but atomically, so the two together
+                        # leave no window.
+                        fd = _create_member_file(parent_fd, parts[-1], member.name)
+                    finally:
+                        if parent_fd != dest_fd:
+                            os.close(parent_fd)
+                    # The header's `size` is attacker-controlled, so the ceiling
+                    # is applied to the bytes actually written, not to what it
+                    # claims.
+                    try:
+                        out = os.fdopen(fd, "wb")
+                    except BaseException:
+                        # `fdopen` adopts the descriptor only once it has
+                        # succeeded; if it raises, nothing owns `fd` any more and
+                        # nothing will ever close it — one leaked descriptor per
+                        # member, on a process that also serves every read.
+                        os.close(fd)
+                        raise
+                    with out:
+                        # The mode is set on the DESCRIPTOR rather than on the
+                        # path — by then the file is the one we just created, so
+                        # there is nothing left for a name lookup to resolve to
+                        # instead — and inside the `with`, so a failure here
+                        # cannot leak the descriptor. It is set at all because
+                        # `open`'s mode argument is filtered through the umask.
+                        os.fchmod(out.fileno(), 0o644)
+                        while True:
+                            chunk = source.read(CHUNK)
+                            if not chunk:
+                                break
+                            total += len(chunk)
+                            if total > self.max_build_bytes:
+                                raise PublishError(
+                                    413,
+                                    f"archive expands beyond "
+                                    f"{self.max_build_bytes} bytes")
+                            digest.update(chunk)
+                            out.write(chunk)
+                    files["/".join(parts)] = digest.hexdigest()
+                    seen_names[folded] = name
+        finally:
+            os.close(dest_fd)
 
     # -- staging -> publishable directory ----------------------------------
     def _finish_staging(self, pid, commit, staging: Path, files, digest) -> dict:
