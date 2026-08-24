@@ -158,6 +158,11 @@ moment anything is imported. The only place a hyphen is acceptable is a DNS name
 be shorter, and renaming it breaks links, so it is not covered by this rule.
 
 ## Conventions
+- **Commit messages are written in English.** Subject in conventional-commit style, body
+  explaining WHY rather than restating the diff. This holds even though the design
+  documents under `docs/` are in Russian: the log is read with `git log` by tooling and
+  by people who did not take part in the discussion, while the documents are read by
+  whoever continues the work.
 - All mutable state goes under `data/`.
 - All config comes from ENV / `.env` (see `.env.example`).
 - Credentials / addresses of our own services that the user provides go ONLY into
