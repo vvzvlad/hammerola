@@ -107,11 +107,28 @@ jobs:
         # was configured to hold the workspace. A tar over stdin is correct in every one of
         # those configurations, and it also keeps the container from writing __pycache__ and
         # .pytest_cache back into the checkout as root.
-        # `.git` is excluded because nothing in the suite reads it and it is the largest thing
-        # in the tree. Note that .dockerignore does NOT apply here — this is a tar, not a build
+        # `.git` TRAVELS WITH THE TREE — it is the one thing here deliberately NOT excluded, and
+        # it used to be. tests/test_no_conflict_markers.py asks git, and only git, for the list
+        # of TRACKED files: what it guards is the COMMIT rather than the working tree, and the
+        # index is the only place that list exists. Without the repository beside the code that
+        # test does not quietly check less, it ERRORS with `fatal: not a git repository` — so
+        # installing git without sending `.git` swaps one red test for another. The `.git/config`
+        # exclusion below is what keeps sending it from also sending a credential.
+        # Note that .dockerignore does NOT apply here — this is a tar, not a build
         # context — which is what makes tests/ and requirements-dev.txt available, both of
         # which the image itself deliberately excludes. That same fact is why every other
         # exclusion has to be spelled out here by hand, one flag each:
+        # `.git/config` is the ONE part of the repository left behind, and that flag is
+        # load-bearing rather than tidiness. actions/checkout defaults `persist-credentials` to
+        # true and writes the run's token into that file as an `http.<server>.extraheader`, so
+        # sending `.git` whole would hand a live credential to the container that is about to
+        # `pip install` the entire dependency tree — the same exposure the late `docker login` in
+        # the publishing workflow exists to prevent, arriving through a different door. The
+        # by-hand reproduction has its own version of it: a remote URL with a token in it, or a
+        # credential helper. Nothing in the check reads the file — `git ls-files` reads
+        # `.git/index`, and git falls back to its defaults for everything the missing config
+        # would have said. Verified in the container on this repository rather than assumed:
+        # same file count with it and without it.
         # `.venv` is a virtualenv built on the HOST — wheels compiled for another platform and
         # another interpreter version than the python:3.11-slim about to run them. Tens of
         # megabytes pushed through stdin on every run, landing in /src beside the code as a
@@ -157,7 +174,34 @@ jobs:
         # fires. Unnamed it would then be unreachable by anything at all, because the cleanup
         # step below (like every cleanup in these workflows) removes containers BY NAME. One
         # timed-out test step would leak a container onto the shared daemon permanently.
-        tar -cf - --exclude=./.git --exclude=./.venv --exclude=./data \
+        # GIT IS INSTALLED INSIDE THE CONTAINER, and for exactly one test.
+        # tests/test_no_conflict_markers.py enumerates the tracked files with `git ls-files` and
+        # greps each one for a merge marker; python:3.11-slim carries no git at all, so without
+        # this the test dies with `FileNotFoundError: [Errno 2] No such file or directory: 'git'`
+        # — which is how the inherited cad_snapshot_hub CI stayed red for six pushes in a row. It
+        # is the ONLY check that can catch a `<<<<<<< HEAD` that survived a merge into a
+        # committed file: every other test asserts that something IS present, and a marker adds
+        # text without removing any, so nothing else in the suite can see it. One did reach a
+        # served page exactly that way, with 191 green tests around it.
+        # Making the test SKIP when git is absent was considered and REJECTED. It paints the run
+        # green in precisely the situation where the guarantee has stopped existing, which is the
+        # failure this test was written after; an error naming the missing tool is the cheaper
+        # outcome by a wide margin.
+        # The install runs AFTER the extraction, so the tar on stdin is drained before anything
+        # else touches the stream. `--no-install-recommends` because nothing `ls-files` does
+        # reaches less, ssh-client or patch. There is deliberately NO `rm -rf
+        # /var/lib/apt/lists/*` mirroring the Dockerfile's: there it drops the lists from the
+        # LAYER being committed, here nothing is committed at all — the container is `--rm` and
+        # its writable layer goes with it — so the same line would be a no-op that reads like a
+        # working economy.
+        # `git config --global --add safe.directory /src` because the tree arrives owned by
+        # whichever uid packed it. On the runner both ends are root and the setting changes
+        # nothing; on a workstation running this command BY HAND the files land owned by the
+        # developer while the container is root, and git then refuses the repository outright
+        # with `detected dubious ownership` — an error, not a warning, so the by-hand
+        # reproduction this command is also written for would fail on the very test the lines
+        # above exist to make runnable.
+        tar -cf - --exclude=./.git/config --exclude=./.venv --exclude=./data \
           --exclude=./.env --exclude=./.pytest_cache --exclude=__pycache__ . \
           | docker run --rm -i --pull always --name "$TEST_NAME" \
           -e PUBLISH_TOKEN=fake-test-publish-token-not-real \
@@ -165,7 +209,7 @@ jobs:
           -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
           -e PYTHONDONTWRITEBYTECODE=1 \
           "$RUNTIME_IMAGE" \
-          sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; pip install --no-cache-dir -r requirements-dev.txt; pytest --tb=short -q'
+          sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; apt-get update; apt-get install -y --no-install-recommends git; git config --global --add safe.directory /src; pip install --no-cache-dir -r requirements-dev.txt; pytest --tb=short -q'
 
     - name: Remove the test container from the runner
       # `always()` because the run this step exists for is precisely the one that failed or was
