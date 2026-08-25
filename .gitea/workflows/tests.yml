@@ -136,6 +136,15 @@ jobs:
         # more: the container runs its own /usr/local/bin/python with VIRTUAL_ENV unset, so
         # .venv/lib/*/site-packages never enters sys.path and cannot shadow what pip installs
         # inside — do not re-justify this flag as a correctness fix, it is a size fix.
+        # `ui/node_modules` is the same story as `.venv` and carries the flag for the same
+        # reason rather than a different one: a dependency tree installed on the HOST, tens
+        # of megabytes of it, carrying esbuild and rollup binaries built for the host's
+        # architecture. Nothing in this container runs node at all — the browser bundle is
+        # built by the image's own `ui` stage, which installs its own copy — so every byte
+        # of it is weight on stdin and nothing more. Like `.venv` it does not exist on the
+        # runner either; both flags earn their place in the by-hand reproduction of a CI
+        # failure, which runs in a developer's checkout where both directories are sitting
+        # right there.
         # `data/` is runtime state. On the runner it is an empty directory and excluding it
         # changes nothing there — but this exact command is also what a developer runs BY HAND
         # to reproduce a CI failure, and on a workstation `data/` holds the service's real
@@ -201,8 +210,9 @@ jobs:
         # with `detected dubious ownership` — an error, not a warning, so the by-hand
         # reproduction this command is also written for would fail on the very test the lines
         # above exist to make runnable.
-        tar -cf - --exclude=./.git/config --exclude=./.venv --exclude=./data \
-          --exclude=./.env --exclude=./.pytest_cache --exclude=__pycache__ . \
+        tar -cf - --exclude=./.git/config --exclude=./.venv --exclude=./ui/node_modules \
+          --exclude=./data --exclude=./.env --exclude=./.pytest_cache \
+          --exclude=__pycache__ . \
           | docker run --rm -i --pull always --name "$TEST_NAME" \
           -e PUBLISH_TOKEN=fake-test-publish-token-not-real \
           -e COMMENT_READ_TOKEN=fake-test-comment-read-token-not-real \

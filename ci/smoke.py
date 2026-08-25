@@ -159,7 +159,7 @@ EXCLUDED_PATHS = ["/app/tests", "/app/.env", "/app/.venv"]
 # literal string that touches no file on disk. Every check above therefore stays green, and the
 # breakage surfaces on the first real request.
 #
-# The five entries are the ones whose absence has no other symptom: one template per page the
+# The entries here are the ones whose absence has no other symptom: one template per page the
 # hub serves — the index at `/`, one build's page, and the pointer page at `/project/<pid>/`,
 # which `render.pointer_page_html()` serves as a PAGE rather than as a redirect — plus the two
 # halves of the viewer payload. `three-cad-viewer.esm.js` is 3.5 MB and `viewer.js` is the hub's
@@ -175,13 +175,32 @@ REQUIRED_PATHS = [
     "/app/templates/pointer.html",
     "/app/static/_v/three-cad-viewer.esm.js",
     "/app/static/_v/viewer.js",
-    # The sixth is a single file rather than a tree, and it is here for the same reason as the
-    # five above: nothing else can see it go missing. `checklib.py` is copied on a line of its
-    # own (`COPY checklib.py .`) and is the top-level name every model.py imports; the suite
-    # runs against a checkout where it is simply present, and the image starts, serves and
-    # passes every check above without it. What breaks is the first model that imports it,
+    # `checklib.py` is a single file rather than a tree, and it is here for the same reason as
+    # the templates and the viewer payload: nothing else can see it go missing. It is copied on
+    # a line of its own (`COPY checklib.py .`) and is the top-level name every model.py imports;
+    # the suite runs against a checkout where it is simply present, and the image starts, serves
+    # and passes every check above without it. What breaks is the first model that imports it,
     # inside a build, long after the image was published.
     "/app/checklib.py",
+    # The browser bundle, and the only entry here that no COPY of a checked-in file puts in the
+    # image: it is COMPILED by the `ui` stage and copied out of it by name
+    # (`COPY --from=ui /ui/dist/hammerola.js static/_v/hammerola.js`).
+    #
+    # That per-file form is what this row is paired with, and the pairing is the point. A
+    # `COPY --from=ui /ui/dist static/_v` would MERGE the build output into a directory that
+    # already holds committed assets, so a chunk that vite happened to name `index.js` would
+    # silently replace the hub's own `index.js` — and this check would stay green, because the
+    # path it names would still exist. Copying by name makes that impossible: nothing the build
+    # emits reaches the image unless a COPY line asks for it. The two failure modes left are both
+    # loud or covered — a file listed here but no longer produced fails the BUILD, at the COPY
+    # line, in front of whoever is editing it; a second output the COPY lines do not know about
+    # is simply absent from the image, which is what this list is for.
+    #
+    # ONE path because vite emits ONE file today — no page, no chunk, no stylesheet; the
+    # reasoning and the exact output list are in ui/vite.config.mjs. The commit that adds a
+    # dynamic import or a stylesheet adds the file it produces here and a COPY line for it, in
+    # the same commit.
+    "/app/static/_v/hammerola.js",
 ]
 
 # --- check (f): the CAD kernel -------------------------------------------------------------
@@ -1050,7 +1069,7 @@ def check_required_paths(name, blocked=None):
     So `COPY static/ static/` deleted from the Dockerfile — or a directory renamed on one side
     of a COPY — reaches `:latest` green. This is the row that stops it.
 
-    One `docker exec` answers all five, so a failure to run it fails every row rather than
+    One `docker exec` answers all of them, so a failure to run it fails every row rather than
     silently covering fewer paths than it claims. `sh -c` with the paths as positional arguments
     is the same mechanism check (d) uses; only the verdict is inverted.
     """
@@ -1070,12 +1089,12 @@ def check_required_paths(name, blocked=None):
             rows.append((target, None))
         elif state == "absent":
             rows.append((target, (
-                "it is NOT. The Dockerfile copies `templates/` and `static/` on lines of their "
-                "own, so a missing COPY, a renamed directory or a file dropped from the tree "
-                "produces an image that builds, starts and reports itself healthy while the "
-                "page that needs this file is broken for every visitor. Nothing else in this "
-                "pipeline can see that: the suite runs against a checkout, where the file is "
-                "always there")))
+                "it is NOT. Some line of the Dockerfile is supposed to put it there and has "
+                "stopped: a deleted COPY, a renamed directory, a file dropped from a tree, a "
+                "build stage that no longer emits it. Whichever it is, the image still builds, "
+                "still starts and still reports itself healthy, while the page that needs this "
+                "file is broken for every visitor. Nothing else in this pipeline can see that: "
+                "the suite runs against a CHECKOUT and never looks inside the artefact")))
         else:
             # Same reasoning as in check (d), and it matters more here: "the sweep said nothing
             # about this path" read as a pass would silently un-check the very file this row

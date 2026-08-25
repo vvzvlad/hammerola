@@ -1,3 +1,25 @@
+# The browser bundle is compiled HERE, in a stage that exists only during the
+# build, so that node never reaches the runtime image — the service is Python,
+# and a node toolchain in the published image would be several hundred megabytes
+# of attack surface serving one static file.
+#
+# The stage is also the reason the bundle is not committed to the repository. A
+# committed artefact has nothing forcing it to be rebuilt when the JSX beside it
+# changes and nothing that reports it was not, so it drifts from its source in
+# silence. Built here, the bundle in an image is by construction the bundle of
+# that image's commit.
+#
+# The split COPY is the layer cache and not tidiness: package.json and the
+# lockfile change rarely, the sources change constantly, and `npm ci` costs tens
+# of seconds. Copying `ui/` wholesale before the install would invalidate that
+# layer on every edit to a component.
+FROM node:22-bookworm-slim AS ui
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -93,6 +115,42 @@ RUN mkdir -p data && chown app:app data
 COPY src/ src/
 COPY templates/ templates/
 COPY static/ static/
+# The browser bundle, compiled by the `ui` stage above.
+#
+# It lands FLAT beside the committed assets rather than in a subdirectory of its
+# own, and that is forced rather than chosen: the hub serves `/_v/<one path
+# component>` and nothing deeper — `_serve_asset`/`_safe_name` in src/app.py,
+# which is a path-traversal defence. A nested bundle would build, ship, satisfy
+# the gate and then 404 in the browser.
+#
+# ONE COPY PER FILE, NAMED ON BOTH SIDES, and not `COPY --from=ui /ui/dist
+# static/_v`. The directory form would MERGE the build output into a directory
+# that already holds this project's own assets — viewer.js, site.css, index.js,
+# pointer.js, the vendored three-cad-viewer bundle — where a name collision is a
+# silent overwrite. `index.js` is an entirely ordinary name for a bundler to
+# emit, and the gate could not see it happen: check (g) asks whether a path
+# EXISTS, and after such an overwrite it still does. Copying by name means
+# nothing the build emits can reach the image unless a line here asks for it.
+#
+# It is also the second of two defences over which copy wins. .dockerignore
+# excludes `static/_v/hammerola*`, so a workstation's `make ui` output should not
+# reach the build context at all; this line runs AFTER `COPY static/ static/`, so
+# a bundle that got in anyway is overwritten by the stage's output. KEEP THIS
+# LINE BELOW THAT ONE.
+#
+# Both are needed, because neither covers the other's case. Order can only settle
+# a file the stage ALSO emits — winning here means being copied over the same
+# name — so a chunk an older vite config produced and this build no longer does
+# arrives with nothing to overwrite it, and only the .dockerignore line keeps it
+# out. In the other direction, that line is a string somebody can delete without
+# any build failing, and this ordering is what still holds afterwards.
+#
+# When the build starts emitting a second file, it gets a line of its own here
+# and a row in ci/smoke.py's REQUIRED_PATHS. Getting that wrong is loud in both
+# directions: a file listed here and no longer produced fails the build at this
+# line, and a file produced but not listed never enters the image, which is what
+# REQUIRED_PATHS catches.
+COPY --from=ui /ui/dist/hammerola.js static/_v/hammerola.js
 COPY main.py .
 # The one top-level module in this image, and it is not a stray file: every
 # model.py in the fleet opens with `import checklib`, exactly as it opens with

@@ -11,6 +11,40 @@ PY     := $(VENV)/bin/python
 PIP    := $(PY) -m pip
 PYTEST := $(PY) -m pytest
 
+# Where the built browser bundle lands, and exactly which files it consists of.
+# Written once because several files have to agree on them — these variables,
+# templates/build.html's <script src>, the Dockerfile's `COPY --from=ui` lines,
+# REQUIRED_PATHS in ci/smoke.py and vite's own output names.
+# tests/test_ui_bundle.py reads these lines to check the others against them.
+#
+# The output goes FLAT into static/_v/, beside the committed assets, because the
+# hub serves `/_v/<one path component>` and nothing deeper (src/app.py,
+# `_serve_asset`/`_safe_name` — a path-traversal defence, not an oversight).
+#
+# UI_FILES IS AN EXPLICIT LIST for the same reason the Dockerfile copies by name:
+# built and committed files share this directory, so a `cp -R` of the build
+# output would let a chunk vite happened to call `index.js` overwrite the hub's
+# own. Naming the files means nothing reaches static/_v/ unless it is asked for,
+# and a build that stops producing one fails the `cp` loudly — `cp: ui/dist/x: No
+# such file or directory`, then `make: *** [ui] Error 1` — instead of shipping
+# whatever the build did emit under a name nobody chose.
+#
+# LOUD IN MAKE IS NOT THE SAME AS EMPTY IN static/_v/, and the difference is the
+# price of the atomic publish in the `ui` recipe below: the copy goes to a
+# temporary name and only a successful `mv` replaces the destination, so a build
+# that stops producing a file leaves the PREVIOUS one exactly where it was. Both
+# happen at once — verified by renaming vite's output: make stopped with Error 1
+# and static/_v/hammerola.js was byte-for-byte the bundle from before the run. The
+# trade is worth it, because the alternative (delete, then copy) hands a truncated
+# file to any request that arrives mid-copy; but it means a red `make ui` has to be
+# read as "the bundle is STALE", never as "the bundle is gone". `make run` right
+# afterwards serves yesterday's bundle with a status 200 and nothing in the log.
+#
+# A new output gets a name here, a COPY line in the Dockerfile and a row in
+# REQUIRED_PATHS — one commit, three edits.
+UI_OUT   := static/_v
+UI_FILES := hammerola.js
+
 .DEFAULT_GOAL := help
 
 # --- Help --------------------------------------------------------------------
@@ -78,6 +112,109 @@ test: install ## Run the test suite (auto-creates .venv if missing)
 .PHONY: run
 run: install ## Run the application (auto-creates .venv if missing)
 	$(PY) main.py
+
+# --- Frontend ----------------------------------------------------------------
+# The browser bundle is BUILT, never committed — see .gitignore for why — so it
+# has to be produced twice, by two toolchains that must not disagree: here for a
+# workstation, and by the Dockerfile's `ui` stage for the image. This target is
+# the workstation half.
+#
+# DELIBERATELY NOT A PREREQUISITE of `run` or `test`, and that is a decision
+# rather than an omission. node is not part of this project's toolchain: the
+# image builds the bundle in a stage of its own and the Python side neither
+# imports nor executes anything from `ui/`. Wiring this into `run` would make a
+# machine without node unable to START THE SERVICE — over one static asset, on a
+# service whose actual job is receiving pushes and computing geometry. So
+# building the UI is an explicit step, and `make run` on a machine that never
+# ran it serves the page without the React mount while the existing viewer keeps
+# working.
+#
+# npm is needed by the frontend recipes and by nothing else here, so the check is
+# written once and invoked from each of them — it has to be the FIRST thing any of
+# them does, because the alternative failure is npm's own "command not found",
+# which says nothing about node being optional in this project.
+define REQUIRE_NPM
+command -v npm >/dev/null 2>&1 || { \
+		echo "make ui: npm not found. Install Node.js (>= 22.12) to build the frontend."; \
+		echo "         Only this target needs it — the docker image builds the bundle in"; \
+		echo "         a stage of its own, and 'make run' / 'make test' do not use node."; \
+		exit 1; }
+endef
+
+# Sentinel for the node dependencies, the same arrangement as $(VENV)/.deps-installed
+# above and for a sharper reason: `npm ci` DELETES node_modules and reinstalls it
+# from scratch, so running it unconditionally spends tens of seconds on the most
+# frequent iteration this target has — editing one component. npm writes
+# node_modules/.package-lock.json itself at the end of an install, describing what
+# it just installed, so it is a truthful stamp and needs no `touch`.
+#
+# `npm ci` rather than `npm install`: it installs the committed lockfile exactly
+# and fails when package.json disagrees with it, instead of quietly resolving
+# something else and rewriting the lockfile as a side effect of a build. The
+# fallback exists only so a checkout that somehow lost the lockfile still
+# builds; it is not the normal path — the lockfile is committed.
+#
+# That fallback is why the lockfile is a prerequisite through $(wildcard) instead
+# of by name. Named directly, a checkout without it would leave this rule
+# depending on a file no rule can build, and make would stop with "No rule to make
+# target 'ui/package-lock.json'" — a worse outcome than the fallback, since the
+# recipe handles that case perfectly well. Through $(wildcard) the missing name
+# expands to nothing, the rule keeps its remaining prerequisite, and the recipe
+# takes its `npm install` branch.
+ui/node_modules/.package-lock.json: ui/package.json $(wildcard ui/package-lock.json)
+	@$(REQUIRE_NPM)
+	cd ui && if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+# Each file is copied to a temporary name IN THE DESTINATION DIRECTORY and then
+# renamed over its predecessor. A plain `cp` truncates and rewrites in place, so a
+# `make ui` run while `make run` is serving hands out whatever had been written by
+# then — `_serve_asset` in src/app.py opens the file, fstats it and streams it in
+# chunks, so a half-written bundle goes out with status 200 and nothing logged
+# anywhere. Removing the file first, which this target used to do, closes only one
+# of the two windows: a request that had ALREADY opened the file keeps its inode
+# and finishes intact, but one arriving mid-copy opens the new inode and reads a
+# truncated file. A rename closes both at once — it is atomic, so every reader
+# gets either the whole old file or the whole new one.
+#
+# The temporary sits in $(UI_OUT) rather than in /tmp because rename is only
+# atomic WITHIN a filesystem; across one it degrades into exactly the copy this is
+# avoiding.
+#
+# ITS NAME KEEPS THE PREFIX OF THE FILE IT REPLACES — `hammerola.js.tmp.<pid>` —
+# and that is load-bearing, not cosmetic. `static/_v/hammerola*` is the glob in
+# BOTH .gitignore and .dockerignore, so a temporary an interrupted run left behind
+# is already untracked-and-ignored and already outside the build context. A name
+# beginning with a dot, which this used to use, is matched by NEITHER net: nothing
+# stops `.hammerola.js.tmp` from riding into the next `git add -A`, and nothing
+# stops `COPY static/ static/` from baking it into the image as a slice of a bundle
+# no commit accounts for and no check ever looks at. The dot bought exactly one
+# thing — `_safe_name` in src/app.py rejects a leading dot, so the file could not be
+# fetched over HTTP — and that is the smaller worry by a wide margin: a file that
+# exists for milliseconds and is reachable only by guessing a pid, against a stray
+# artefact that lives forever in a commit and in a published image.
+#
+# The pid suffix is what keeps two concurrent `make ui` runs from writing the same
+# temporary and then atomically publishing a mixture of the two.
+#
+# The `trap` deletes the temporary when the shell running this line goes away —
+# including a Ctrl-C in the middle of a copy, which otherwise leaves a partial
+# bundle in static/_v/ for good, since `make clean` only knows about the venv and
+# the Python caches. Each recipe line is its own shell, so one trap covers the whole
+# loop and nothing outside it. It does not change the failure path: the `exit 1`
+# below still reaches make as Error 1, with the half-written temporary removed.
+#
+# Still name by name, never a glob and never `cp -R`: static/_v/ also holds
+# committed assets that only a fresh checkout could bring back.
+.PHONY: ui
+ui: ui/node_modules/.package-lock.json ## Build the browser bundle from ui/ into static/_v/
+	@$(REQUIRE_NPM)
+	cd ui && npm run build
+	mkdir -p $(UI_OUT)
+	for f in $(UI_FILES); do \
+		tmp=$(UI_OUT)/$$f.tmp.$$$$; \
+		trap 'rm -f "$$tmp"' EXIT; \
+		cp ui/dist/$$f "$$tmp" && mv -f "$$tmp" $(UI_OUT)/$$f || exit 1; \
+	done
 
 # --- Housekeeping ------------------------------------------------------------
 .PHONY: clean

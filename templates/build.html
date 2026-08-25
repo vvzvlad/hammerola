@@ -104,5 +104,15 @@
      on screen -- has the sliders and the reset. -->
 <pre id="err"></pre>
 <div id="cad_viewer"></div>
+<!-- TEMPORARY mount point for the new React interface, and temporary in both
+     directions: the placeholder it currently renders goes when the mock-up is
+     ported, and this div goes when the port takes over the page. It sits BESIDE
+     the existing markup rather than replacing any of it on purpose — the port
+     lands in stages, and until it does, #bar, #cad_viewer and viewer.js are
+     what actually serve a model. The bundle finds this element by id and does
+     nothing at all when it is absent, which is how the other pages stay
+     unaffected. -->
+<div id="hmr_root"></div>
 <script type="module" src="/_v/viewer.js"></script>
+<script type="module" src="/_v/hammerola.js"></script>
 </body></html>

@@ -9,3 +9,40 @@ tests/
 .gitea/
 *.md
 .DS_Store
+# The `ui` stage installs its own with `npm ci`, and this keeps a workstation's
+# copy from landing on top of it. The stage runs `RUN npm ci` and only THEN
+# `COPY ui/ ./`, so without this line that second copy would overlay the
+# laptop's node_modules over the freshly installed one — on a different platform
+# (an arm64 mac building an amd64 image) that means native binaries built for
+# the wrong architecture, in a tree that looks perfectly normal. Keeping several
+# hundred megabytes out of the context upload is the secondary benefit.
+ui/node_modules
+# The local build output, which has no business in the context at all: the stage
+# produces its own, and nothing in the image is ever copied from this directory.
+#
+# Correctness is already covered elsewhere — `emptyOutDir` in ui/vite.config.mjs
+# wipes the directory before the stage writes into it, so a stale local dist
+# cannot become the image's bundle. That is somebody else's setting, though, and
+# this line keeps holding whatever it is set to next.
+#
+# What the line itself buys is the CONTEXT: ~140 KB rewritten by every local
+# `make ui`, uploaded on every build to be used by nothing, and invalidating the
+# `COPY ui/ ./` layer each time it changes.
+#
+# It does NOT protect the cache the split COPY above was arranged to keep. That
+# one is `RUN npm ci`, and its layer sees only ui/package.json and
+# ui/package-lock.json — ui/dist cannot reach it. `COPY ui/ ./` and
+# `RUN npm run build` are invalidated by an edit to any component anyway, which
+# is every ordinary iteration, so what this saves there is an upload rather than
+# a rebuild.
+ui/dist
+# A workstation's `make ui` output, which `COPY static/ static/` would otherwise
+# carry into the image — the same net as in .gitignore, deliberately wider than
+# today's single file.
+#
+# The Dockerfile's copy ORDER is the other half of this and does not replace it.
+# Order only settles a file the stage also emits, because winning means being
+# copied over the same name; a chunk an older vite config produced and this build
+# no longer does has nothing to overwrite it, so it would ship in the image as a
+# file no commit can account for. That case is this line's alone.
+static/_v/hammerola*

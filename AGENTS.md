@@ -169,7 +169,18 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
 - `static/` — the viewer payload that ships inside the image (`static/_v/`):
   `three-cad-viewer.esm.js`, the hub's own `viewer.js` driver, the site CSS. A
   separate tree with its own `COPY` line in the Dockerfile and its own smoke
-  check (g)
+  check (g). NOT EVERYTHING IN `static/_v/` IS COMMITTED: files matching
+  `hammerola*` are the browser bundle, produced by `make ui` or by the image's
+  `ui` stage, and they are in `.gitignore` and `.dockerignore` both. Never
+  commit one, and do not expect one in a fresh checkout — an asset that belongs
+  in the repository has to be a name outside that prefix
+- `ui/` — the React sources for the browser UI, and the only place node is used
+  here. Built twice, by two toolchains that must not disagree: `make ui` for a
+  workstation and the Dockerfile's `ui` stage for the image. Nothing under
+  `src/` imports or executes anything in it, which is why `make run` and
+  `make test` work on a machine with no node at all. The output path is written
+  in five files that never import each other, and `tests/test_ui_bundle.py` is
+  what keeps them in step; `ui/README.md` has the layout and the pins
 - `ci/smoke.py` — the gate between build and publish: seven checks (a)–(g) the
   test suite structurally cannot make, because it runs against a checkout and
   never looks at the artefact. (b) proves the startup guard names EVERY missing
