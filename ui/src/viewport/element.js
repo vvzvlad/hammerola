@@ -29,6 +29,7 @@ import { installOrbit } from "./orbit.js";
 import { installTools } from "./tools.js";
 import { installWheel, initialPointingDevice, setPointingDevice } from "./wheel.js";
 import { createOverlay } from "./overlay.js";
+import { createViewCube } from "./viewcube.js";
 import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
 import { measureChrome, refit, sized, treeWidth } from "./sizing.js";
@@ -144,6 +145,12 @@ export class HmrViewport extends HTMLElement {
     this.overlay = createOverlay(this);
     this.appendChild(this.overlay.root);
 
+    // AFTER the overlay, so its cells stay clickable where a pin happens to be
+    // over the same corner: the overlay's layer covers the whole canvas, and the
+    // later sibling is the one that gets the press.
+    this.viewcube = createViewCube(this);
+    this.appendChild(this.viewcube.root);
+
     setPointingDevice(this, initialPointingDevice(), false);
 
     this.teardown = [
@@ -214,6 +221,7 @@ export class HmrViewport extends HTMLElement {
     }
     this.teardown = [];
     if (this.overlay) this.overlay.destroy();
+    if (this.viewcube) this.viewcube.destroy();
     try {
       if (this.viewer) this.viewer.dispose();
     } catch (error) {

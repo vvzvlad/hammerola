@@ -444,6 +444,18 @@ def test_nothing_splits_the_bundle():
 
 # -- the page's own CSP ------------------------------------------------------
 
+# The one absolute URL in the UI that is not an address. `createElementNS` takes
+# an XML NAMESPACE NAME, and a namespace name is an identifier that happens to be
+# spelled as a URL — nothing dereferences it, no request is ever made for it, and
+# the CSP therefore has nothing to say about it. The viewport draws the view cube
+# as SVG built element by element, and this is the only way to build one.
+#
+# Enumerated rather than pattern-matched on purpose: `www.w3.org` as a prefix
+# would also wave through a stylesheet or an image from that host, which is
+# exactly the thing below is for.
+XML_NAMESPACES = {"http://www.w3.org/2000/svg"}
+
+
 def test_no_external_urls_in_the_ui():
     """`default-src 'self'` — an absolute URL to another host is blocked.
 
@@ -453,10 +465,38 @@ def test_no_external_urls_in_the_ui():
     """
     offenders = {}
     for path in INTERFACE_FILES + ADAPTER_FILES:
-        found = re.findall(r"https?://[^\s'\"`)]+", strip_comments(read(path)))
+        found = [url for url in re.findall(r"https?://[^\s'\"`)]+",
+                                           strip_comments(read(path)))
+                 if url not in XML_NAMESPACES]
         if found:
             offenders[path.name] = found
     assert not offenders, f"absolute URLs the CSP will block: {offenders}"
+
+
+def test_the_svg_namespace_is_named_in_exactly_one_place():
+    """The exemption above is one construct in one file, so pin it as one.
+
+    `test_no_external_urls_in_the_ui` waves the namespace through wherever it
+    appears, in any of the UI's files and in any context — a filter far wider
+    than the reason for it, which is a single `const SVG_NS = ...` in the view
+    cube. This is the guard against the day it is copied: a second module
+    spelling the same string would still pass the filter, and so would a fetch,
+    an `<img src>` or a stylesheet link built out of it in viewcube.js itself.
+    """
+    ns, = XML_NAMESPACES
+    users = [p.name for p in INTERFACE_FILES + ADAPTER_FILES
+             if ns in strip_comments(read(p))]
+    assert users == ["viewcube.js"], (
+        f"the SVG namespace is spelled in {users} — it belongs in viewcube.js, "
+        f"and the exemption in test_no_external_urls_in_the_ui covers only that")
+
+    source = strip_comments(read(VIEWPORT / "viewcube.js"))
+    assert re.search(rf'\bconst\s+SVG_NS\s*=\s*["\']{re.escape(ns)}["\']', source), (
+        "viewcube.js no longer names the SVG namespace as the initialiser of "
+        "SVG_NS — the exemption is written for that one construct")
+    assert source.count(ns) == 1, (
+        "viewcube.js spells the SVG namespace more than once; only the SVG_NS "
+        "initialiser is exempt")
 
 
 def test_no_fonts_are_fetched_at_all():

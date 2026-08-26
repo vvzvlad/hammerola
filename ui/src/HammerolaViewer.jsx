@@ -1691,16 +1691,10 @@ export default class HammerolaViewer extends React.Component {
               <div onClick={v.retryView} style={css(`display:inline-block;margin-top:11px;padding:6px 14px;background:#1f7ae0;color:#fff;border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`)}>Try again</div>
             </div>
 
-            <div style={css('position:absolute;left:16px;bottom:14px;pointer-events:none;opacity:.8')}>
-              <svg width="52" height="52" viewBox="0 0 52 52">
-                <path d="M26 26L26 6" stroke="#2e6fd4" strokeWidth="1.6" />
-                <path d="M26 26L44 38" stroke="#c23b3b" strokeWidth="1.6" />
-                <path d="M26 26L8 38" stroke="#2e9e44" strokeWidth="1.6" />
-                <text x="26" y="4" fontSize="9" fill="#2e6fd4" textAnchor="middle" dominantBaseline="hanging" transform="translate(0,-4)">Z</text>
-                <text x="47" y="42" fontSize="9" fill="#c23b3b">X</text>
-                <text x="1" y="42" fontSize="9" fill="#2e9e44">Y</text>
-              </svg>
-            </div>
+            {/* The bottom-left corner is the VIEWPORT'S: it draws the view cube
+                there (ui/src/viewport/viewcube.js). A static axis triad used to
+                be drawn here instead, and it never turned with the camera — see
+                SPEC §8, entries 23 and 24. */}
 
             <div style={css(`position:absolute;right:14px;bottom:12px;font:400 10.5px ${MONO};color:#9aa1a9;pointer-events:none`)}>{v.hintText}</div>
 
