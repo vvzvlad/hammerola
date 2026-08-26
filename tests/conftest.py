@@ -29,6 +29,7 @@ os.environ.setdefault("COMMENT_READ_TOKEN", "test-read-token")
 import pytest  # noqa: E402  (must come after the env assignment above)
 
 from harness import start_hub, stop_hub  # noqa: E402
+from process_limits import rlimits as _rlimits  # noqa: E402
 from src.jobs import WORKER_THREAD_PREFIX  # noqa: E402
 
 
@@ -63,6 +64,91 @@ def guard_build_workers():
         "this test left build workers running — a hub was started and never "
         "closed. Without this assertion the failure would have landed on some "
         "unrelated test later, in another file, under one collection order")
+
+
+# --- Process-level state: the rlimits ------------------------------------------------------
+# The project's rule about module-level mutable state, pointed one level out at state that
+# belongs to the PROCESS. It is the same failure with a worse ending: a test that dirties it
+# passes, and something unrelated dies later — except that here "dies" can mean SIGKILL, so
+# there is no traceback naming even the victim.
+#
+# WHICH ceilings `_rlimits()` reads is not decided here, and deliberately not:
+# `process_limits.WATCHED_RLIMITS` IS `src.buildproc.limits.RLIMIT_NAMES`, i.e. exactly the
+# table `apply_process_limits` walks. Written out here instead, the two would drift apart in
+# silence — a seventh ceiling added to limits.py would be applied and not watched — and that
+# module carries the rest of the reasoning, including why no `hasattr` filter narrows the set.
+# `tests/test_process_limits_guard.py` is what fails if this guard ever watches less than the
+# wrapper sets.
+#
+# Snapshotted at import — before pytest has run a single test — and compared against rather
+# than against "unlimited", because a process inherits whatever started it and what it
+# inherits is FINITE: measured on this workstation (darwin, 2026-08-26) the shell hands down
+# RLIMIT_NPROC=(5333, 8000) and RLIMIT_CORE=(0, unlimited), and the CI container starts from
+# the docker daemon's own defaults instead, which are a different set again. The question this
+# guard asks is "did a TEST change one", not "are they infinite".
+#
+# Early ON PURPOSE, and not to be moved down into the fixture: taken at the first test
+# instead, it would compare against limits that an IMPORTED test module had already changed
+# and report nothing. That case is precisely the one worth catching, so the before-branch
+# below has to blame "a test, or something imported during collection" rather than a test.
+_RLIMITS_AT_IMPORT = _rlimits()
+
+_RLIMITS_DIRTIED = (
+    "the test process is no longer running under the rlimits it started with:\n"
+    "  at import: {before}\n"
+    "  now:       {after}\n"
+    "Something applied ceilings to the test process ITSELF — "
+    "`src.buildproc.limits.apply_process_limits` is the one in this repository, and it "
+    "really does call `resource.setrlimit` on the process it runs in. TREAT IT AS ONE-WAY: "
+    "it sets soft == hard on purpose, and an unprivileged process may not raise its own hard "
+    "limit back (`ValueError: not allowed to raise maximum limit`), so no fixture teardown "
+    "helps where it matters — a workstation, and the image, where everything runs as `app`. "
+    "The CI container is the exception and not a way out: it runs the suite as root (no "
+    "`--user` on the `docker run` in .gitea/workflows/tests.yml), where raising a hard limit "
+    "back is permitted — do not build on that, it makes the suite pass in the one place the "
+    "code under test never runs. What happens next if this assertion is removed: the WHOLE "
+    "REMAINING SUITE shares that one budget and is killed by the kernel when it runs out — "
+    "for RLIMIT_CPU that is SIGKILL, i.e. `Killed`, exit 137, no traceback, in whichever test "
+    "happened to be running, and it reads exactly like an out-of-memory. Apply ceilings in a "
+    "CHILD process instead; tests/buildproc/test_ceilings.py::_applied_in_a_process_of_its_own "
+    "is how.")
+
+
+@pytest.fixture(autouse=True)
+def guard_process_limits():
+    """Fail the test that fences in the test process, not the one the kernel kills.
+
+    Before AND after, for the reason written above `guard_build_workers` and with one
+    aggravating factor: the test this catches after itself is not merely the culprit, it is
+    the ONLY place the culprit can still be named. Once the budget is spent the interpreter
+    is gone mid-test, so a before-only check would report the tail of the suite, forever, as
+    the thing that broke.
+    """
+    before = _rlimits()
+    assert before == _RLIMITS_AT_IMPORT, (
+        "an EARLIER test — or something imported while pytest was COLLECTING, since the "
+        "snapshot is taken when this conftest is imported and that is before any test module "
+        "is — already changed this process's rlimits. This test is where it surfaced, not "
+        "where it was caused.\n"
+        + _RLIMITS_DIRTIED.format(before=_RLIMITS_AT_IMPORT, after=before))
+    yield
+    after = _rlimits()
+    assert after == _RLIMITS_AT_IMPORT, (
+        "THIS test changed the rlimits of the test process itself.\n"
+        + _RLIMITS_DIRTIED.format(before=_RLIMITS_AT_IMPORT, after=after))
+
+
+@pytest.fixture
+def rlimit_guard_snapshot():
+    """What `guard_process_limits` above actually compares against, for its own test.
+
+    Exposed as a fixture because a test module cannot import this conftest safely — three
+    directories under tests/ have one and all three land on sys.path, so `import conftest`
+    picks whichever pytest inserted first. The test on the other end is what makes the guard's
+    OWN silent-failure mode visible: a watch set that has drifted from the ceilings
+    `apply_process_limits` applies, or one that has emptied, guards nothing and says nothing.
+    """
+    return dict(_RLIMITS_AT_IMPORT)
 
 
 @pytest.fixture
