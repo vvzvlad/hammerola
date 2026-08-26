@@ -12,7 +12,7 @@ Routing (SPEC 3, 7.4):
     GET  /_v/<file>                           shared viewer bundle, one per site
     GET  /project/<pid>/                      302 -> latest/
     GET  /project/<pid>/builds.json           build picker
-    GET  /project/<pid>/latest/<file>         newest CI build, no-cache
+    GET  /project/<pid>/latest/<file>         newest build of a commit, no-cache
     GET  /project/<pid>/dev/<file>            the local slot, no-cache
     GET  /project/<pid>/<commit>/<file>       one build's files, immutable forever
     GET  /project/<pid>/<commit>/             the page shell, from the template
@@ -540,10 +540,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 return self._send_file(
                     store.projects_dir / pid / "builds.json", CACHE_NONE, with_body)
 
-            # The two moving names — `latest` for CI, `dev` for the author's
-            # laptop (SPEC 7.6) — are the only moving targets on the whole site,
-            # so they are the only things that may not be cached; a commit
-            # directory can never change and gets a year (SPEC 3.2, 7.4).
+            # The two moving names — `latest` for a commit, `dev` for the
+            # author's laptop (SPEC 7.6) — are the only moving targets on the
+            # whole site, so they are the only things that may not be cached; a
+            # commit directory can never change and gets a year (SPEC 3.2, 7.4).
             # Checked FIRST, and that order is the safety property: `dev` is
             # rewritten in place, so it reaching the immutable branch would hand
             # out a year-long cache of a build that is about to be replaced.

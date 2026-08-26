@@ -22,6 +22,13 @@ a developer's ~/.config/3d/env and could unlock a real Vaultwarden. src.cadbuild
 resolves no setting and holds no credential: the whole client side, settings.py
 included, stayed in cad_publish (see src/cadbuild/__init__.py). There is
 nothing left here to isolate from.
+
+Read those four names as history rather than as a contract with anything here.
+They described the CLIENT's world -- the hub it pushed a finished build to, and
+the build node it built on -- and nothing under src/cadbuild reads any of them.
+PUBLISH_TOKEN is the one worth pointing at, because the hub does read a secret
+by that name: it reads it through src/settings.py, which is a different module
+from the settings.py that stayed behind.
 """
 
 import json

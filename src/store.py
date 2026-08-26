@@ -6,7 +6,7 @@ because the volume would shadow them.
 
     <data>/index.json                      cards for the public index page
     <data>/project/<pid>/builds.json       build picker for one project
-    <data>/project/<pid>/latest            SYMLINK -> <commit>, newest from CI
+    <data>/project/<pid>/latest            SYMLINK -> <commit>, newest build
     <data>/project/<pid>/dev/              THE local slot — one directory, rewritten
                                            on every laptop push (SPEC 7.6)
     <data>/project/<pid>/<commit>/         one immutable build
@@ -63,11 +63,12 @@ SAFE_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 # The two moving names of a project. Neither may ever be cached, and that is the
 # only thing they have in common — mechanically they are different objects.
 #
-#   latest -> a SYMLINK to the newest build FROM CI. The link people paste into
-#             chat, so it means one thing only: the project as of some commit.
+#   latest -> a SYMLINK to the newest build made FOR A COMMIT. The link people
+#             paste into chat, so it means one thing only: the project as of
+#             some commit.
 #   dev    -> THE local slot (SPEC 7.6): one directory, overwritten by every push
 #             from the author's laptop. There is exactly one, like there is
-#             exactly one `latest`, and it has no history because a local build
+#             exactly one `latest`, and it has no history because what it shows
 #             is not a version of anything — it is the current state of a working
 #             copy. Uncommitted work must never move `latest`, or the public link
 #             starts meaning "whatever was on somebody's machine at the time".
@@ -130,7 +131,7 @@ MAX_MEMBERS = 1024
 # symlink: every one of those is the pusher's problem and gets a 422. Everything
 # else — ENOSPC above all — stays an OSError and becomes a 500, per the rule
 # `_unpack` spells out. Getting this set wrong in the generous direction is how a
-# full volume starts being reported to CI as a bad archive.
+# full volume starts being reported to the pusher as a bad archive.
 LAYOUT_ERRNOS = frozenset({errno.EEXIST, errno.ENOTDIR, errno.EISDIR,
                            errno.ELOOP, errno.ENAMETOOLONG})
 
@@ -190,7 +191,7 @@ class PublishError(Exception):
     """A publish that must be answered with a specific HTTP status.
 
     Carries the status so app.py does not have to classify failures a second
-    time, and a message that is safe to hand back to CI — the point of a 422 is
+    time, and a message that is safe to hand back to the pusher — a 422 exists so
     that the person who pushed can see WHICH file was missing.
     """
 
@@ -252,7 +253,7 @@ def _build_url(pid: str, name: str) -> dict:
 def _built_key(meta: dict) -> tuple:
     """Sort key for "which build is newest" — `built`, then arrival time.
 
-    `built` is whatever the model's CI wrote; it is not validated beyond being a
+    `built` is whatever the build wrote; it is not validated beyond being a
     string, so it can be unparseable. An unparseable value sorts oldest instead of
     raising: a build that made it past validation must still be orderable, or one
     malformed timestamp would break the picker for the whole project.
@@ -515,9 +516,9 @@ class Store:
         from a colliding one from here on. It has to be, now that the hub builds:
         the built output carries the wall clock of the build (`meta.json` and
         `metrics.json` both stamp `built`), so hashing THAT would make every
-        rebuild of the same commit a 409 and take away CI's ability to retry —
-        the exact failure `_payload_digest` already refuses to walk into with the
-        rewritten meta.json. What the pusher supplied is the sources; that is
+        rebuild of the same commit a 409 and take away the pusher's ability to
+        retry — the exact failure `_payload_digest` already refuses to walk into
+        with the rewritten meta.json. What the pusher supplied is the sources; that is
         what "the same push" can honestly mean.
         """
         if not self.valid_pid(pid):
@@ -552,7 +553,7 @@ class Store:
         Asked BEFORE a build is queued, which is the whole point: rebuilding a
         commit that is already on disk costs minutes of CPU to arrive at an
         answer that was on disk all along, and answering 200 or 409 from the
-        request keeps both of those codes where CI already expects them —
+        request keeps both of those codes where the pusher already expects them —
         immediately, rather than through a job it would have to poll.
 
         Not under the project lock, on purpose. It is a read whose answer can
@@ -639,7 +640,7 @@ class Store:
             except OSError as error:
                 # Lost a race with another writer, or the directory appeared
                 # between the check above and here. Re-run the same comparison
-                # rather than reporting a filesystem error CI cannot act on.
+                # rather than reporting a filesystem error the pusher cannot act on.
                 if not final.exists():
                     raise PublishError(
                         422, f"could not publish build: {error}") from error
@@ -658,7 +659,7 @@ class Store:
             # ones retention drops, what the picker lists, what the index shows —
             # and every one of those is recomputed from scratch by the next
             # publish of this project, so a failure is recoverable and a lie is
-            # not. Reporting failure here would tell CI the push did not land
+            # not. Reporting failure here would tell the pusher the push did not land
             # while its URL serves the build; since step 5 it would also mark a
             # job `failed` for a build that is live, which is the worst answer
             # available.
@@ -818,12 +819,14 @@ class Store:
             # read here, so a truncated body or a member that lies about its size
             # fails at THIS point, and it is still an unusable upload rather than
             # a bug in the hub. Without this it left as a 500 and a stack trace,
-            # and CI was told `{"error": "internal error"}` about its own archive.
+            # and the pusher was told `{"error": "internal error"}` about an
+            # archive of its own making.
             raise PublishError(422, f"archive is corrupt: {error}") from error
         except OSError as error:
             # Deliberately NOT turned into a 422. This is the disk saying no —
-            # ENOSPC above all — and answering "your archive is bad" would send CI
-            # off to debug a file that is fine while the volume quietly fills up.
+            # ENOSPC above all — and answering "your archive is bad" would send
+            # the pusher off to debug a file that is fine while the volume
+            # quietly fills up.
             # Logged loudly here because the 500 it becomes carries no detail.
             logger.error(f"unpacking into {dest} failed on the filesystem: {error}")
             raise
@@ -1274,7 +1277,7 @@ def _payload_digest(files: dict) -> str:
     Deliberately covers only the archive's own members, not the meta.json the
     hub rewrites from the build. That one is normalized by code which changes
     when the service is updated, so hashing it would turn a hub release into a
-    spurious 409 on every CI retry of an already-published commit.
+    spurious 409 on every retry of an already-published commit.
     """
     digest = hashlib.sha256()
     for name in sorted(files):

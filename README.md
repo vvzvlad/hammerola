@@ -4,14 +4,23 @@ Builds CAD models from code and serves them through a browser viewer. The name i
 "pianola" — a mechanism that plays itself: push a model source, get back a page you can
 open, rotate and download printable files from.
 
-**Status: in migration.** The hub itself has already moved in — `src/` serves the site, takes
-a push, renders the viewer and holds the comment queue, with the CadQuery kernel pinned into
-the image. What is still missing is the BUILDER half: the hub accepts a finished artefact
-today and does not yet compute the geometry itself. The service is being assembled out of
-three existing repositories (`cad_snapshot_hub`, `3d/cad_builder`, `3d/cad_publish`), step by
-step. A push may already carry a source TREE rather than a flat archive; the remaining steps
-start at moving `cad_publish` in and running it out of process. What is being built and in
-what order is in `docs/SPEC.md`, section 8A; `AGENTS.md` carries the checklist.
+**Status: in migration.** The hub is the builder now. What a push carries is a model's
+SOURCE tree; the hub unpacks it, computes the geometry itself — in a separate process,
+with the CadQuery kernel that ships in the image — and publishes the result under the
+pushed commit. The push does not wait for that: it answers `202` with a job id, and
+`GET /api/v1/jobs/<id>` and `.../log` are where the outcome and the build's own output
+come from.
+
+What is NOT there yet, and matters if you came here to publish something: the geometry
+gate does not fire on the receiving side, and **there is no client** — the one that
+exists lives in `cad_publish`, packs a finished build rather than a source tree, and
+pushes it from CI, which this hub no longer accepts. So there is currently no supported
+way to publish a model; that path is being rebuilt, and it is not a matter of finding
+the right invocation.
+
+The service is being assembled out of three existing repositories (`cad_snapshot_hub`,
+`3d/cad_builder`, `3d/cad_publish`), step by step. What is being built and in what order
+is in `docs/SPEC.md`, section 8A; `AGENTS.md` carries the checklist.
 
 The layout below follows the «Как создавать проект» guide in the gitmost wiki
 (space Netmap, section «Руководства»).
@@ -86,10 +95,11 @@ separate, externally visible identifier, it may be shorter, and renaming it brea
 | Path | Purpose |
 |------|---------|
 | `Makefile` | Single entry point for repeated actions: `install`, `test`, `run`, `ui`. Run `make help`. |
-| `src/` | Application code; `settings.py` reads all config from ENV / `.env`. |
+| `src/` | Application code; `settings.py` reads all config from ENV / `.env`. `app.py` is the HTTP surface, `store.py` the on-disk layout and the atomic publish, `jobs.py` the build queue a push hands over to, `buildproc/` the separate process a model actually runs in, and `cadbuild/` the build half moved in from `cad_publish`. |
+| `checklib.py` | At the repository ROOT on purpose, and not a stray file: `import checklib` is part of the contract with every model.py, like `views()` and `printables()`. It re-exports `src/cadbuild/checklib.py` under that name, and it has to sit at the root because a model is imported with its own directory FIRST on `sys.path` — the name then has to resolve on the path behind it, which in the image is `/app`. |
 | `tests/` | pytest suite (runs in CI before the image is built). |
-| `ci/smoke.py` | The gate between build and publish. Drives `docker` against the freshly built image and checks the seven things a green test suite cannot: (a) the declared ENTRYPOINT/CMD/WORKDIR/PYTHONUNBUFFERED, (b) that the startup guard still fires *and still names **every** missing variable* — there are two credentials, and a guard that named only the first would cost one redeploy per key, (c) that privileges are really dropped to `app`, (d) that `.dockerignore` kept `tests/`, `.env` and `.venv` out of the image, (e) that the image's own command reaches its startup marker, (f) that the CAD kernel imports inside the image and carries the pinned versions, and (g) the mirror of (d) — that `templates/` and `static/` really *are* in the image, which nothing else can see: the suite runs on a checkout where they always exist. No ports, no secrets, no network — so the identical gate runs on pull requests too. |
-| `data/` | Runtime state: builds, pointers and comments, as a directory tree with JSON alongside — no database. Gitignored, mounted as a volume. |
+| `ci/smoke.py` | The gate between build and publish. Drives `docker` against the freshly built image and checks the seven things a green test suite cannot: (a) the declared ENTRYPOINT/CMD/WORKDIR/PYTHONUNBUFFERED, (b) that the startup guard still fires *and still names **every** missing variable* — there are two credentials, and a guard that named only the first would cost one redeploy per key, (c) that privileges are really dropped to `app`, (d) that `.dockerignore` kept `tests/`, `.env` and `.venv` out of the image, (e) that the image's own command reaches its startup marker, (f) that the CAD kernel imports inside the image and carries the pinned versions, and (g) the mirror of (d) — that `templates/`, `static/` and `checklib.py` really *are* in the image, which nothing else can see: the suite runs on a checkout where they always exist. No ports, no secrets, no network — so the identical gate runs on pull requests too. |
+| `data/` | Runtime state: builds, pointers, comments and build jobs, as a directory tree with JSON alongside — no database. Gitignored, mounted as a volume. |
 | `templates/` | Page templates baked into the image (`index.html`, `build.html`, `pointer.html`) — one per URL the hub serves. |
 | `static/` | The viewer payload baked into the image (`static/_v/`): `three-cad-viewer.esm.js`, the scripts for the index and pointer pages, plus the site CSS. Its own `COPY` line in the Dockerfile, and its own smoke check (g). **Not everything in `static/_v/` is committed:** the browser bundle (`hammerola*`) is BUILT into that directory, gitignored and excluded from the build context — it arrives in the image from the `ui` stage instead. Do not commit a file matching that prefix, and do not expect one in a fresh checkout until `make ui` has run. |
 | `ui/` | React sources for the browser UI, and the only place node is used. Built by `make ui` on a workstation and by the Dockerfile's `ui` stage for the image; the output is `static/_v/hammerola.js`, which `templates/build.html` loads with a `<script type="module">`. Nothing Python imports or executes anything here, so `make run` and `make test` work on a machine without node. `ui/README.md` explains the layout, the pins and why the output is flat. |
