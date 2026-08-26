@@ -212,6 +212,46 @@ const BUSY_WAIT_MS = 5000;
 /** The letter the viewport holds the cut tool up on. Shown, never bound here. */
 const HOLD_KEY_LABEL = 'C';
 
+/**
+ * `meta.downloads` regrouped as part name -> the files published for that part.
+ *
+ * The hub publishes `{label: filename}` and nothing that says which part a file
+ * belongs to — the answer is in the FILENAME, which is always `<part>.<ext>` for
+ * ext in step/stl/3mf (`download_labels` in src/cadbuild/printables.py). Nothing
+ * about the wire format changes for this; the grouping is done here, in the one
+ * place that needs it.
+ *
+ * READ THE VALUE, NEVER THE KEY, and that is the whole trap: with a single
+ * printable the LABEL degenerates to a bare `step` / `stl` / `3mf` with the part
+ * name gone from it, while the filename does not degenerate at all. A menu built
+ * by matching labels against a part name would therefore work on every assembly
+ * except the one-part one, which is the smallest and most common case there is.
+ *
+ * SPLIT AT THE LAST DOT: a printable's name may itself contain dots (MEMBER_RE
+ * allows them), so `v1.2.plate.stl` is the part `v1.2.plate`, not `v1`.
+ *
+ * A Map rather than an object, because the keys are model-supplied strings and
+ * `__proto__` is a legal printable name — assigning it on an object literal
+ * silently stores nothing.
+ */
+export function filesByPart(downloads) {
+  const out = new Map();
+  Object.values((downloads && typeof downloads === 'object') ? downloads : {})
+    .forEach((value) => {
+      const file = String(value);
+      const cut = file.lastIndexOf('.');
+      // No extension, or nothing before the dot: not a `<part>.<ext>` name, and
+      // guessing at one would put a row in the menu that downloads nothing.
+      if (cut <= 0 || cut === file.length - 1) return;
+      const name = file.slice(0, cut);
+      if (!out.has(name)) out.set(name, []);
+      // In the order the hub wrote them — step, stl, 3mf — rather than sorted,
+      // so the menu lists what was published in the order it was published.
+      out.get(name).push({ ext: file.slice(cut + 1), file });
+    });
+  return out;
+}
+
 export default class HammerolaViewer extends React.Component {
   static defaultProps = { commentsOpen: true };
 
@@ -966,12 +1006,15 @@ export default class HammerolaViewer extends React.Component {
     const cmpReady = s.cmp.length === 2;
 
     // -- the downloads, from meta.downloads: label -> file name
+    const fileHref = (file) => PAGE.base + encodeURIComponent(String(file));
     const downloads = Object.entries((meta && meta.downloads) || {}).map(([label, file]) => ({
       key: label,
       label: String(label).toUpperCase(),
       file: String(file),
-      href: PAGE.base + encodeURIComponent(String(file)),
+      href: fileHref(file),
     }));
+    // The same files, cut up by part, for the row menu below.
+    const partFiles = filesByPart(meta && meta.downloads);
 
     const threads = s.comments.map((c) => ({
       key: c.id, label: c.label, part: c.part, time: c.time, text: c.text, meas: c.meas,
@@ -990,11 +1033,52 @@ export default class HammerolaViewer extends React.Component {
     const mNode = this.node(s.menu && s.menu.id);
     const mName = mNode ? mNode.name : '';
     const note = mNode ? s.notes[mNode.name] : '';
-    const mi = (label, hint, fn, tone) => ({
-      key: label, label, hint: hint || '',
-      style: `display:flex;align-items:center;gap:10px;padding:7px 14px;cursor:pointer;font:400 12px ${SANS};color:#2a2e33` + (tone === 'top' ? ';border-top:1px solid #e3e6ea' : ''),
-      onClick: stop(() => { fn(); this.setState({ menu: null }); }),
+    // `href` turns the row into a real `<a download>` — see the files block
+    // below — and `tone` is 'top' for a rule above the row, 'said' for a row that
+    // states something rather than doing it.
+    //
+    // A 'said' ROW GETS NO HANDLER AT ALL, which is what makes its `cursor:
+    // default` and its grey true rather than a costume. It used to be styled
+    // unclickable and then handed an `onClick` anyway — one that stopped the
+    // event and closed the menu, i.e. a row that acted while saying it would
+    // not. Without one the row is inert, which is exactly what it claims to be:
+    // the click stops at the menu's own wrapper (which stops propagation so that
+    // a press on the menu's padding does not close it through `rootClick`), and
+    // the menu closes on the next click anywhere outside, as it always has.
+    const mi = (label, hint, fn, tone, href) => ({
+      key: label, label, hint: hint || '', href: href || '',
+      style: `display:flex;align-items:center;gap:10px;padding:7px 14px;text-decoration:none;font:400 12px ${SANS};`
+        + (tone === 'said' ? 'cursor:default;color:#8a9099' : 'cursor:pointer;color:#2a2e33')
+        + (tone === 'top' || tone === 'said' ? ';border-top:1px solid #e3e6ea' : ''),
+      onClick: tone === 'said'
+        ? undefined
+        : stop(() => { fn(); this.setState({ menu: null }); }),
     });
+
+    /**
+     * This part's files — the row-menu half of the header's Downloads menu.
+     *
+     * Three rows and not a submenu: one click cannot sensibly deliver three
+     * files, this menu has no submenu machinery anywhere in it, and a row per
+     * file is exactly what the header's menu already looks like — extension on
+     * the left, filename on the right. Each one is a plain `<a href download>`
+     * against the same base URL the header builds, so middle-click and "save
+     * link as" work on it like any other link on the page.
+     *
+     * BOTH EMPTY CASES SAY SO OUT LOUD. A reference part — a tree node that is
+     * not in `printables()` — has no files and never will, and a menu that
+     * silently dropped the item would read as a menu that forgot. Same for a
+     * build that ships nothing: the header's menu has a sentence for that case
+     * and this one must not be worse.
+     */
+    const fileRows = (name) => {
+      if (!downloads.length) return [mi('No files in this build', '', () => {}, 'said')];
+      const files = partFiles.get(name) || [];
+      if (!files.length) return [mi('No files for this part', 'not a printable', () => {}, 'said')];
+      return files.map((f, at) => mi(f.ext.toUpperCase(), f.file, () => {},
+                                     at === 0 ? 'top' : '', fileHref(f.file)));
+    };
+
     const menuItems = !mNode ? [] : [
       mi('Isolate', 'show only this', () => {
         const keep = new Set(mNode.leaves);
@@ -1005,6 +1089,13 @@ export default class HammerolaViewer extends React.Component {
       mi('Translucent', 'see through it', () => this.set({ ghost: this.toggle(s.ghost, mNode.leaves) })),
       ...(viewer || mNode.isNode ? [] : [mi('Note', note ? (note.length > 22 ? `${note.slice(0, 22)}…` : note) : '',
         () => this.setState({ notePop: mNode.name, noteDraft: note || '' }))]),
+      // Files hang on a PART, so a group row has none of its own — the same rule
+      // and the same reason as the note above it. A group is not a printable and
+      // never has files under its own name; offering the union of its leaves'
+      // instead would be one click asking the browser for a dozen downloads,
+      // which browsers block after the first, and the whole build's files are one
+      // menu away in the header already.
+      ...(mNode.isNode ? [] : fileRows(mNode.name)),
       mi('Copy name', '', () => {
         try {
           navigator.clipboard.writeText(mNode.name);
@@ -1713,12 +1804,20 @@ export default class HammerolaViewer extends React.Component {
           {/* ── the tree row's context menu ── */}
           <div onClick={(e) => e.stopPropagation()} style={css(v.menuStyle)}>
             <div style={css(`padding:7px 14px 6px;font:600 10.5px ${MONO};color:#8a9099;border-bottom:1px solid #e3e6ea`)}>{v.menuName}</div>
-            {v.menuItems.map((m) => (
-              <div key={m.key} onClick={m.onClick} style={css(m.style)}>
-                <span style={css('flex:1')}>{m.label}</span>
-                <span style={css(`font:400 10.5px ${MONO};color:#b0b6bd`)}>{m.hint}</span>
-              </div>
-            ))}
+            {/* A row that carries a file is an ANCHOR and not a div: the download
+                is the browser's to do, exactly as in the header's menu, so the
+                link is a real one and can be middle-clicked or saved as. */}
+            {v.menuItems.map((m) => {
+              const inner = (
+                <>
+                  <span style={css('flex:1')}>{m.label}</span>
+                  <span style={css(`font:400 10.5px ${MONO};color:#b0b6bd`)}>{m.hint}</span>
+                </>
+              );
+              return m.href
+                ? <a key={m.key} href={m.href} download onClick={m.onClick} style={css(m.style)}>{inner}</a>
+                : <div key={m.key} onClick={m.onClick} style={css(m.style)}>{inner}</div>;
+            })}
           </div>
 
           {/* ── the note editor: bound to a part NAME, for the whole project ── */}
