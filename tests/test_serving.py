@@ -64,7 +64,7 @@ def test_an_uploaded_index_html_is_never_served(hub):
     for path in ("/project/proj1/abc123/", "/project/proj1/abc123/index.html"):
         body = hub.get(path).text
         assert "alert(document.domain)" not in body, path
-        assert "/_v/viewer.js" in body, path
+        assert "/_v/hammerola.js" in body, path
 
 
 def test_latest_urls_are_not_cached(hub):
@@ -84,22 +84,18 @@ def test_the_vendored_bundle_is_immutable(hub):
 
 
 def test_our_own_assets_are_not_immutable(hub):
-    # viewer.js and site.css DO change with the image under a stable name. An
-    # immutable year on them means a deploy reaches nobody who has already loaded
-    # the site, and there is no way to recall the cached copy.
-    for path in ("/_v/site.css", "/_v/viewer.js", "/_v/index.js"):
+    # index.js, pointer.js and site.css DO change with the image under a stable
+    # name. An immutable year on them means a deploy reaches nobody who has
+    # already loaded the site, and there is no way to recall the cached copy.
+    for path in ("/_v/site.css", "/_v/index.js", "/_v/pointer.js"):
         r = hub.get(path)
         assert r.status_code == 200, path
         assert r.headers["Cache-Control"] == "no-cache", path
     assert hub.get("/_v/site.css").headers["Content-Type"].startswith("text/css")
-
-
-def test_viewer_js_is_served_as_a_module_script(hub):
-    r = hub.get("/_v/viewer.js")
-    assert r.status_code == 200
-    # A wrong Content-Type makes the browser refuse the ES module outright.
-    assert r.headers["Content-Type"].startswith("text/javascript")
-    assert "three-cad-viewer.esm.js" in r.text
+    # A wrong Content-Type makes the browser refuse an ES module outright, and
+    # every script this site loads is one (`<script type="module">`).
+    for path in ("/_v/index.js", "/_v/pointer.js"):
+        assert hub.get(path).headers["Content-Type"].startswith("text/javascript"), path
 
 
 def test_index_page_and_index_json_are_not_cached(hub):
@@ -147,7 +143,7 @@ def test_project_root_of_an_unknown_project_is_a_404(hub):
 
 
 def test_build_url_without_trailing_slash_redirects(hub):
-    # viewer.js derives every relative fetch from its own directory, so without
+    # The page derives every relative fetch from its own directory, so without
     # the trailing slash meta.json would be looked for one level too high.
     hub.publish("proj1", "abc123", good_build())
     r = hub.get("/project/proj1/abc123")
@@ -160,23 +156,7 @@ def test_build_page_is_the_viewer(hub):
     r = hub.get("/project/proj1/abc123/")
     assert r.status_code == 200
     assert r.headers["Content-Type"].startswith("text/html")
-    assert "/_v/viewer.js" in r.text
-
-
-def test_the_build_page_carries_every_element_viewer_js_looks_up(hub):
-    # viewer.js addresses the header by id and never checks what came back, so an
-    # id that the template no longer has surfaces as a TypeError partway through
-    # init: the shell is already painted, the model never appears, and #err stays
-    # empty because the throw happens outside the try. The header is exactly the
-    # part of the page that gets rearranged -- collapsing the download links into
-    # a <details>, adding controls to the bar -- so pin the two files together.
-    script = (STATIC_DIR / "_v" / "viewer.js").read_text(encoding="utf-8")
-    wanted = set(re.findall(r'\$\("([^"]+)"\)', script))
-    assert wanted, "no $(...) lookups in viewer.js -- has the helper been renamed?"
-    hub.publish("proj1", "abc123", good_build())
-    page = hub.get("/project/proj1/abc123/").text
-    missing = sorted(i for i in wanted if f'id="{i}"' not in page)
-    assert not missing, f"viewer.js looks up ids the build page lacks: {missing}"
+    assert "/_v/hammerola.js" in r.text
 
 
 def test_latest_serves_the_newest_build(hub):

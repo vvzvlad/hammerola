@@ -1,12 +1,22 @@
-/* Shared chrome for the index and every build page. */
-/* overflow:hidden stays. The page is a viewport, not a document: the canvas is
-   sized to the space left over, so a page that scrolled would only ever be
-   scrolling away from a canvas that had already been made to fit. It is kept
-   because nothing overflows any more, not in spite of something that does --
-   the header wraps instead of running past the edge (#bar below) and the viewer
-   is now sized to the room it actually has including its own chrome
-   (viewer.js `viewerChrome`). Where scrolling is genuinely needed -- a downloads list
-   longer than the screen -- it is on that element, not on the page. */
+/* Shared chrome for the index page and the pointer page — the only two pages
+   that link this file, and now the only two it describes.
+   THE BUILD PAGE NO LONGER LINKS IT: it draws its own interface and its template
+   carries nothing but the div that mounts it. Everything here that served that
+   page has been taken out rather than left standing, because a rule that matches
+   nothing reads exactly like a rule that matters -- the header's buttons,
+   selects, live-reload note and home link, the downloads and settings panels,
+   the comment form, the viewer's own container, and the rule that hid the
+   vendored widget's Material tab (moot either way now: the viewport starts the
+   library with `tools: false` and the whole panel is display:none).
+   What is left is what index.html and pointer.html actually carry: the page
+   frame, #bar with its title, meta text, spacer and link, the project grid with
+   its cards, and the index's error box. */
+/* overflow:hidden stays, and it is not left over from the viewer either. The
+   two pages that link this file are each one screenful of chrome over one
+   scrolling region, so a scrollbar on the PAGE would only ever be a second way
+   to move something that already moves: the header wraps instead of running past
+   the edge (#bar below), and where scrolling is genuinely needed -- a project
+   list longer than the screen -- it is on #grid, not on the document. */
 html,body{margin:0;height:100%;overflow:hidden;background:#1e1e1e;color:#ddd;
   font:13px/1.4 -apple-system,"Segoe UI",sans-serif}
 body{display:flex;flex-direction:column}
@@ -15,92 +25,17 @@ body{display:flex;flex-direction:column}
 #bar{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;
   padding:7px 14px;border-bottom:1px solid #333;position:relative;z-index:10}
 /* min-width:0 is the half that matters: without it a flex item refuses to go
-   below its content width, so the title and the build id alone hold the line
+   below its content width, so the title and the meta text alone hold the line
    wider than the screen and nothing else gets a chance to fit. */
 #bar b,#bar .meta{min-width:0;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap}
 #bar b{font-size:15px}
 #bar .meta{color:#888;font-size:12px;font-family:ui-monospace,Menlo,monospace}
-/* Live reload: the build id flashes when it changes, and #live_note keeps the
-   time of the swap standing afterwards. A model that changes under someone's
-   hands with no sign reads as a model they broke themselves, so the flash is the
-   point -- and it is a COLOUR flash only. Anything that changed the box (a
-   background pill, a border, padding) would resize a flex item inside #bar and
-   could bump the whole header onto another line for two seconds. */
-@keyframes cad-fresh{0%,55%{color:#7ab8ff}100%{color:#888}}
-#bar #meta.fresh{animation:cad-fresh 2.5s ease-out}
-#bar #live_note{color:#7a7}
-/* Amber rather than red: a deferred swap is "you are busy, it is waiting", not
-   an error. */
-#bar #live_note.wait{color:#d9a05b}
-#bar #live_note[hidden]{display:none}
 /* flex-basis:0 so the spacer claims leftover room without reserving any: at a
    width where the bar wraps there is none to claim, and a spacer with content
-   width would push #dlbox onto a line of its own for nothing. */
+   width would push whatever follows it onto a line of its own for nothing. */
 #bar .spacer{flex:1 1 0;min-width:0}
 #bar a{color:#7ab8ff;text-decoration:none;margin-left:10px}
-#bar #home{margin:0 4px 0 0;font-size:16px;color:#888}
-#bar select{background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:3px;
-  padding:2px 4px;font:12px -apple-system,sans-serif}
-
-/* Downloads: a <summary> dressed as one more control next to the two selects. */
-#dlbox > summary{list-style:none;cursor:pointer;user-select:none;white-space:nowrap;
-  background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:3px;
-  padding:2px 8px;font:12px -apple-system,sans-serif}
-#dlbox > summary::-webkit-details-marker{display:none}
-#dlbox > summary::after{content:" \25be";color:#888}
-#dlbox > summary:hover{border-color:#666}
-#dlbox[open] > summary{border-color:#7ab8ff}
-#dlbox > #dl{display:none}
-/* The panel hangs off #bar, not off #dlbox -- #dlbox is deliberately left
-   unpositioned so #bar is the containing block. #bar spans the whole width, so
-   pinning the panel to its right edge keeps it on screen whatever line the
-   button wrapped onto; anchored to the button itself it would run off the left
-   edge as soon as the button starts a new line on a narrow screen. */
-#dlbox[open] > #dl{display:flex;flex-direction:column;position:absolute;
-  top:100%;right:14px;z-index:20;max-width:calc(100vw - 28px);max-height:60vh;
-  overflow:auto;background:#242424;border:1px solid #444;border-top:none;
-  border-radius:0 0 4px 4px;padding:4px 0;box-shadow:0 6px 16px rgba(0,0,0,.45)}
-#dlbox[open] > #dl a{margin:0;padding:5px 14px;white-space:nowrap}
-#dlbox[open] > #dl a:hover{background:#2f2f2f}
-/* Settings: the same <details> dropdown as #dlbox above, pinned to the same
-   right edge of #bar for the same reason -- a panel anchored to a button that
-   can wrap onto a new line runs off the screen when it does. The two are the
-   only panels in the header and viewer.js closes one when the other opens, so
-   sharing an anchor costs nothing. */
-#setbox > summary{list-style:none;cursor:pointer;user-select:none;
-  background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:3px;
-  padding:2px 8px;font:13px/1.25 -apple-system,sans-serif}
-#setbox > summary::-webkit-details-marker{display:none}
-#setbox > summary:hover{border-color:#666}
-#setbox[open] > summary{border-color:#7ab8ff}
-#setbox > #settings{display:none}
-#setbox[open] > #settings{display:block;position:absolute;top:100%;right:14px;
-  z-index:20;max-width:calc(100vw - 28px);max-height:70vh;overflow:auto;
-  background:#242424;border:1px solid #444;border-top:none;
-  border-radius:0 0 4px 4px;padding:9px 14px 4px;
-  box-shadow:0 6px 16px rgba(0,0,0,.45)}
-#settings .set_row{display:flex;gap:12px;align-items:center;white-space:nowrap}
-#settings .set_row[hidden]{display:none}
-/* A fixed label column so the rows line up as a settings list rather than as a
-   ragged pile of controls, and so the hints below can be indented to match. */
-#settings .set_name{min-width:96px}
-#settings label{display:inline-flex;gap:4px;align-items:center;cursor:pointer}
-#settings input{accent-color:#7ab8ff;margin:0}
-#settings .set_hint{color:#888;font-size:12px;max-width:330px;white-space:normal;
-  margin:2px 0 9px 108px}
-#settings .set_hint[hidden]{display:none}
-#settings .set_hint:last-child{margin-bottom:5px}
-
-/* position/overflow keep the glass-mode tree and toolbar from spilling over the
-   header, and min-height:0 is what lets the flex child actually shrink.
-   z-index:0 is not decoration: `position:relative` with `z-index:auto` does NOT
-   make a stacking context, so the glass tree's own z-index (in the hundreds,
-   inside the vendored bundle) competed directly with #bar's 10 and won -- the
-   tree painted THROUGH the header's dropdowns. Pinning a stacking context here
-   keeps everything the viewer draws inside it, below the header, whatever the
-   bundle numbers its layers. */
-#cad_viewer{flex:1 1 auto;position:relative;z-index:0;overflow:hidden;min-height:0}
 #err{display:none;margin:20px;padding:14px;border:1px solid #a33;background:#2a1a1a;
   color:#f99;white-space:pre-wrap;font:12px ui-monospace,Menlo,monospace}
 #grid{flex:1 1 auto;overflow:auto;padding:18px;display:grid;gap:14px;
@@ -114,63 +49,3 @@ body{display:flex;flex-direction:column}
 .card .pid{color:#6a6a6a;font-size:11px;font-family:ui-monospace,Menlo,monospace;
   margin-top:4px}
 .card .t{color:#7a7;font-size:12px;margin-top:6px}
-
-/* The comment form (SPEC 7A). It sits between the header and the canvas rather
-   than floating over it: the canvas is sized from its CONTAINER (SPEC 5.2), so a
-   panel that takes room in the flex column makes the viewer resize itself, while
-   an overlay would cover the very part somebody is trying to point at. */
-#bar button{background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:3px;
-  padding:3px 9px;font:12px -apple-system,sans-serif;cursor:pointer}
-#bar button[aria-pressed="true"]{background:#7ab8ff;border-color:#7ab8ff;color:#132030}
-#comment_panel{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;
-  padding:9px 14px;border-bottom:1px solid #333;background:#242424}
-#comment_panel[hidden]{display:none}
-#comment_hint{color:#888;font-size:12px}
-#comment_hint.set{color:#7a7;font-family:ui-monospace,Menlo,monospace}
-#comment_text{background:#1e1e1e;color:#ddd;border:1px solid #444;border-radius:3px;
-  padding:6px;font:13px/1.4 -apple-system,"Segoe UI",sans-serif;resize:vertical}
-#comment_panel .row{display:flex;gap:8px;align-items:center}
-#comment_panel .spacer{flex:1}
-#comment_panel button{background:#2a2a2a;color:#ddd;border:1px solid #444;
-  border-radius:3px;padding:3px 11px;font:12px -apple-system,sans-serif;cursor:pointer}
-#comment_send{border-color:#7ab8ff;color:#7ab8ff}
-#comment_panel button[disabled]{opacity:.5;cursor:default}
-#comment_photo{font:12px -apple-system,sans-serif;color:#888;max-width:230px}
-#comment_status{font-size:12px;color:#888}
-#comment_status.ok{color:#7a7}
-#comment_status.bad{color:#f99}
-
-/* The section tool (SPEC 7B) has no styles here because it has no chrome of its
-   own. It had a row like #comment_panel above, in the same slot and for the same
-   stated reason -- and that reason turned out to be the bug. A panel that takes
-   room in the flex column resizes the canvas TWICE, once on the way in and once
-   on the way out, and the section tool's main entry is a HELD key: the layout
-   jumped on every press and release. The comment form can afford that (it is
-   opened deliberately and lives as long as it takes to write a sentence); a
-   two-second peek inside the model cannot.
-   So the tool is now chrome-less. The state it needs to show, it shows through
-   the library's own Clip tab, which it activates anyway. */
-
-/* The Material tab is the one appearance editor with no option to switch off —
-   upstream has flags for measure/select/explode/zscale/zebra/studio but not for
-   this one. Hiding the tab button is how the library itself retires a tab: our
-   own pages ship `tcv_tab_zebra` with display:none the same way. The pane stays
-   in the DOM and unreachable, which is what we want — reaching into the vendored
-   bundle to delete it would be a patch to rebase on every upgrade. */
-.tcv_tab_material { display: none !important; }
-
-/* The viewer's own toolbar (.tcv_cad_toolbar) is deliberately left alone.
-   It looked like it needed `overflow-x: auto` -- at 500px its right edge landed
-   at 508 and the last button was cut in half -- but the cut was not its content
-   overflowing it: the buttons come to ~280px and fit down to about a 290px
-   screen. It was the whole widget being built wider than #cad_viewer, because
-   the size handed to the viewer describes the canvas and it then adds its own
-   margins and the toolbar row on top. That is fixed at the source, in
-   viewer.js (`viewerChrome`), so the toolbar now ends inside the viewport on
-   its own.
-   Scrolling it would also have cost something: overflow-x:auto forces
-   overflow-y from `visible` to `auto` (checked in the browser -- the pair
-   clip/visible is legal, auto/visible is not), and the toolbar is a 38px-tall
-   box that hosts absolutely-positioned menus (.tcv_dropdown-content) which open
-   downwards past its edge. Today they are all behind tools we switch off; the
-   moment one is switched back on it would open into a 38px slot. */

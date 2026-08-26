@@ -59,22 +59,28 @@ jobs:
   test:
     runs-on: ubuntu-latest
     # The runner is shared by every repository, so a hung step does not just stall this run —
-    # it holds a capacity slot everyone else is queueing for. 25 is the outer bound over the
-    # single 20-minute step below, leaving room for checkout and for the container cleanup
-    # that follows it: it must EXCEED the sum, because act_runner kills the whole job when
-    # this fires, and a cleanup step that never gets to run is exactly how a container ends up
-    # left behind on the shared daemon.
-    timeout-minutes: 25
-    # Job-level, so the step that CREATES the test container and the step that REMOVES it
+    # it holds a capacity slot everyone else is queueing for. The two step-level bounds below
+    # come to 30 minutes — 20 for the Python suite, 10 for the JS one — and 35 leaves 5 on top
+    # for checkout and the two container cleanups. The outer bound must EXCEED the sum, because
+    # act_runner kills the whole job when this fires, and a cleanup step that never gets to run
+    # is exactly how a container ends up left behind on the shared daemon.
+    timeout-minutes: 35
+    # Job-level, so the step that CREATES a test container and the step that REMOVES it
     # cannot disagree about its name — the same arrangement, for the same reason, as
     # SMOKE_NAME in the build job below. Written as two separate literals in two steps they
     # would go on looking correct while one of them was edited, turning the cleanup into a
     # step that removes nothing and reports success. The run id is what keeps concurrent runs
     # on this shared daemon from colliding on the name.
-    # RUNTIME_IMAGE deliberately stays in the step's own `env:`: exactly one step uses it and
-    # no second step has to agree with it, so hoisting it here would buy nothing.
+    # Two of them now, one per suite, and they are DIFFERENT names rather than one container
+    # reused: `docker ps` on a machine shared by every repository should say which half is
+    # still running, and a single name would let the Python cleanup remove the node container
+    # out from under a suite that was still going.
+    # RUNTIME_IMAGE and NODE_IMAGE deliberately stay in their own steps' `env:`: exactly one
+    # step uses each of them and no second step has to agree with either, so hoisting them
+    # here would buy nothing.
     env:
       TEST_NAME: hammerola-tests-${{ github.run_id }}
+      JS_NAME: hammerola-js-${{ github.run_id }}
     steps:
     - uses: actions/checkout@v7
 
@@ -139,6 +145,15 @@ jobs:
         # more: the container runs its own /usr/local/bin/python with VIRTUAL_ENV unset, so
         # .venv/lib/*/site-packages never enters sys.path and cannot shadow what pip installs
         # inside — do not re-justify this flag as a correctness fix, it is a size fix.
+        # `ui/node_modules` is the same story as `.venv` and carries the flag for the same
+        # reason rather than a different one: a dependency tree installed on the HOST, tens
+        # of megabytes of it, carrying esbuild and rollup binaries built for the host's
+        # architecture. Nothing in this container runs node at all — the browser bundle is
+        # built by the image's own `ui` stage, which installs its own copy — so every byte
+        # of it is weight on stdin and nothing more. Like `.venv` it does not exist on the
+        # runner either; both flags earn their place in the by-hand reproduction of a CI
+        # failure, which runs in a developer's checkout where both directories are sitting
+        # right there.
         # `data/` is runtime state. On the runner it is an empty directory and excluding it
         # changes nothing there — but this exact command is also what a developer runs BY HAND
         # to reproduce a CI failure, and on a workstation `data/` holds the service's real
@@ -204,8 +219,9 @@ jobs:
         # with `detected dubious ownership` — an error, not a warning, so the by-hand
         # reproduction this command is also written for would fail on the very test the lines
         # above exist to make runnable.
-        tar -cf - --exclude=./.git/config --exclude=./.venv --exclude=./data \
-          --exclude=./.env --exclude=./.pytest_cache --exclude=__pycache__ . \
+        tar -cf - --exclude=./.git/config --exclude=./.venv --exclude=./ui/node_modules \
+          --exclude=./data --exclude=./.env --exclude=./.pytest_cache \
+          --exclude=__pycache__ . \
           | docker run --rm -i --pull always --name "$TEST_NAME" \
           -e PUBLISH_TOKEN=fake-test-publish-token-not-real \
           -e COMMENT_READ_TOKEN=fake-test-comment-read-token-not-real \
@@ -213,6 +229,85 @@ jobs:
           -e PYTHONDONTWRITEBYTECODE=1 \
           "$RUNTIME_IMAGE" \
           sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; apt-get update; apt-get install -y --no-install-recommends git; git config --global --add safe.directory /src; pip install --no-cache-dir -r requirements-dev.txt; pytest --tb=short -q'
+
+    - name: Run the JS test suite in a container
+      # The browser half of the suite: vitest over ui/tests, in jsdom. It covers the parts of
+      # the <hmr-viewport> adapter that have no GPU in them — the camera arithmetic, the zoom
+      # law, the section plane's algebra, the part tree, the state diffing and the hold key.
+      # What only a GPU can answer for is not here and is not meant to be.
+      # It gates the build below exactly as the Python suite does: `needs: test` covers
+      # the whole job, so a red vitest run means no image is built and nothing is pushed.
+      # 10 minutes against an `npm ci` off a cold cache plus a suite measured in seconds.
+      timeout-minutes: 10
+      env:
+        # The SAME base the Dockerfile's `ui` stage builds the bundle with. Kept in the step's
+        # own env: for the same reason RUNTIME_IMAGE is — exactly one step uses it, and no
+        # second step has to agree with it.
+        NODE_IMAGE: node:22-bookworm-slim
+      # The `run:` body of this step is byte-identical to the one in tests.yml. It is on the
+      # whitelist for the same reason the four bodies before it are: the PR gate and the
+      # publishing gate must run the same suite the same way, and the cheapest way to
+      # guarantee that is for the executed text to be literally the same text.
+      run: |
+        set -e
+        set -o pipefail
+        # THE BROWSER HALF OF THE SUITE, in a container of its own — and it has to be a
+        # container: node is not installed on this runner and must not be. Same reasoning as
+        # the Python step above (setup actions are unverified here and fail by silently doing
+        # nothing), plus one more that is specific to node: it is not part of this project's
+        # toolchain at all. Nothing under src/ imports anything from ui/, `make run` works on a
+        # machine that has never seen npm, and the image builds the bundle in a stage of its own.
+        # THE SAME BASE AS THAT STAGE, node:22-bookworm-slim, for exactly the reason the Python
+        # step pins python:3.11-slim: a suite green under one node and a bundle built by another
+        # is the gap this whole arrangement exists to close. Change one, change both.
+        # Clear the name before claiming it. A re-run from the Gitea UI reuses github.run_id, so
+        # $JS_NAME can already be held by the container a killed attempt left behind, and
+        # `docker run --name` fails outright on a name conflict — the re-run would then die
+        # before the suite started, with an error about a container instead of about the code.
+        docker rm -f -v "$JS_NAME" || true
+        # ONLY ui/ TRAVELS, and that is a positive list where the Python step above carries a
+        # list of exclusions. Everything vitest reads lives under ui/ — the sources, the tests,
+        # the committed fixture, package.json and its lockfile — so naming the one directory is
+        # both smaller (the vendored 3.5 MB viewer in static/_v alone dwarfs the whole of ui/)
+        # and strictly safer than any set of --exclude flags: `.env`, `data/` and `.git/config`
+        # cannot travel here because NOTHING outside ui/ does. That matters for the same reason
+        # it matters up there — this exact command is also what a developer runs BY HAND to
+        # reproduce a CI failure, in a checkout where all three are real.
+        # The day something under ui/tests needs a file from outside it — the vendored library,
+        # say, to check a constant against — add that path to the tar deliberately. Do not
+        # replace this with `.` and a fence of exclusions: the fence has to be complete to be
+        # correct, and this list has to be complete to be USABLE, which is the failure that
+        # announces itself.
+        # `ui/node_modules` is excluded even so: a dependency tree installed on the HOST,
+        # carrying binaries built for the host's architecture, which `npm ci` deletes and
+        # reinstalls from the lockfile anyway. It does not exist on the runner; in the by-hand
+        # reproduction it is sitting right there, tens of megabytes of it.
+        # Streamed as a tar over stdin rather than bind-mounted, exactly as above: this job runs
+        # inside act_runner's own job container while `docker` talks to the HOST's daemon, so a
+        # `-v "$PWD:/src"` would ask the host to mount a path that means something entirely
+        # different there, or nothing at all.
+        # `npm ci` and not `npm install`, and in CI that is the load-bearing half: it installs
+        # the committed lockfile exactly and FAILS when package.json disagrees with it, instead
+        # of quietly resolving something else. A resolution that differs from the one the
+        # image's ui stage will get is a bundle nobody tested.
+        # CI=true is what makes npm and vitest choose their non-interactive defaults; the two
+        # NPM_CONFIG_* variables drop the update notifier and the funding banner, the same
+        # housekeeping as PIP_DISABLE_PIP_VERSION_CHECK in the step above.
+        # `--pull always` because this daemon is persistent, unlike GitHub's ephemeral runners:
+        # without it a once-pulled node:22-bookworm-slim would sit in its cache for months and
+        # the suite would run against an unpatched base.
+        # `--name` is what makes this container reachable AFTERWARDS, and it does not duplicate
+        # `--rm`: a step killed by its own `timeout-minutes` kills the docker CLI here on the
+        # runner, not the container over on the host's daemon. That one goes on running, never
+        # exits, so `--rm` never fires — and unnamed it would be unreachable by anything at all,
+        # because every cleanup in these workflows removes containers BY NAME.
+        tar -cf - --exclude=./ui/node_modules ./ui \
+          | docker run --rm -i --pull always --name "$JS_NAME" \
+          -e CI=true \
+          -e NPM_CONFIG_UPDATE_NOTIFIER=false \
+          -e NPM_CONFIG_FUND=false \
+          "$NODE_IMAGE" \
+          sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src/ui; npm ci; npm test'
 
     - name: Remove the test container from the runner
       # `always()` because the run this step exists for is precisely the one that failed or was
@@ -240,6 +335,25 @@ jobs:
       if: always()
       run: |
         docker rm -f -v "$TEST_NAME" || true
+
+    - name: Remove the JS test container from the runner
+      # The twin of the step above it, and it exists for the same run: the one where the JS
+      # step hit its `timeout-minutes`, the docker CLI on the runner died, and the container
+      # kept running on a daemon shared by every repository. On a green run `--rm` has already
+      # removed it and this does nothing.
+      # `|| true` so a container that is already gone cannot turn a leftover into a red job and
+      # bury the suite's actual verdict under a cleanup error.
+      # `-v` for the reason spelled out in the step above it: it takes that one container's
+      # ANONYMOUS volumes with it, can never touch a named one, and is here pre-emptively
+      # because whoever adds a VOLUME will be editing a Dockerfile and will not come back for
+      # this flag. This is the second of the two removal paths for this container; the
+      # pre-run `docker rm -f -v` at the top of the JS step's body is the other.
+      # Byte-identical to its twin in tests.yml, and on the whitelist for the same reason the
+      # test-container cleanup beside it is: a removal step free to drift is a container leak
+      # nobody notices.
+      if: always()
+      run: |
+        docker rm -f -v "$JS_NAME" || true
 
   build:
     runs-on: ubuntu-latest

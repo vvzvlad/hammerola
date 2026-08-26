@@ -12,6 +12,13 @@ pages record the choice and never act on it; only the pointer-less URL acts on
 it. Half of that lives in the browser and is checked in a browser; what can be
 pinned from here is the shape that makes it possible:
 
+THE TWO HALVES LIVE IN DIFFERENT BUNDLES, which is the other thing this file
+watches. The recording half is the interface (`ui/src/store.js`, called from the
+build page); the reading half is `static/_v/pointer_pref.js`, imported by the
+resolver — which cannot use the interface's copy, because pulling 3.6 MB of
+bundle to read one key and leave is exactly what the resolver exists not to do.
+So the key is spelled twice on purpose and compared from here.
+
   * the resolver is a PAGE, not a redirect — the answer is a localStorage key and
     the server cannot read one;
   * it is `no-cache`, like the pointers it hands over to: a cached decision page
@@ -32,9 +39,12 @@ ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "static" / "_v"
 PREF = ASSETS / "pointer_pref.js"
 RESOLVER = ASSETS / "pointer.js"
-VIEWER = ASSETS / "viewer.js"
 INDEX_JS = ASSETS / "index.js"
 TEMPLATE = ROOT / "templates" / "pointer.html"
+# The recording half, which is the interface: the module that owns this origin's
+# storage, and the component that decides a page is an arrival worth recording.
+STORE_JS = ROOT / "ui" / "src" / "store.js"
+COMPONENT = ROOT / "ui" / "src" / "HammerolaViewer.jsx"
 
 
 def _code(path):
@@ -102,9 +112,12 @@ def test_the_resolver_page_is_not_the_build_page(hub):
     """
     hub.publish("proj1", "abc123", good_build())
     body = hub.get("/project/proj1/").text
-    for asset in ("three-cad-viewer.esm.js", "/_v/viewer.js"):
+    for asset in ("three-cad-viewer.esm.js", "/_v/hammerola.js"):
         assert asset not in body, asset
-    assert "cad_viewer" not in body
+    # And no mount point either: the bundle does nothing without one, so a stray
+    # #hmr_root here would be the one way this page could start rendering an
+    # interface it has no business rendering.
+    assert "hmr_root" not in body
 
 
 def test_the_resolver_works_with_no_script_at_all(hub):
@@ -165,45 +178,6 @@ def test_builds_json_answers_has_dev_for_real(hub):
 
 
 # -- what records the choice --------------------------------------------------
-def test_the_pointer_pages_record_and_the_resolver_reads():
-    """One writer, one reader, and they are not the same page.
-
-    This split IS the guarantee that an explicit link wins: the build page has no
-    way to act on the stored value, because it never reads it.
-    """
-    viewer = _code(VIEWER)
-    assert "rememberPointer(PID, POINTER)" in viewer
-    assert "readPointer" not in viewer, \
-        "the build page is reading the stored pointer — it must never act on it"
-    resolver = _code(RESOLVER)
-    assert "readPointer(PID)" in resolver
-    assert "rememberPointer" not in resolver, \
-        "the resolver is recording a choice nobody made on it"
-
-
-def test_a_pointer_page_never_navigates_away_from_its_own_url():
-    """The whole trap, as a check.
-
-    Whatever is stored, /latest/ shows `latest`. The build page's only navigation
-    is the build picker, which is the reader clicking a destination.
-    """
-    viewer = _code(VIEWER)
-    assert "location.replace" not in viewer
-    assert "location.assign" not in viewer
-    # The picker assigns location.href from an onchange, and that is the only
-    # place viewer.js is allowed to move the page.
-    assert len(re.findall(r"location\.href\s*=", viewer)) == 1
-
-
-def test_a_commit_page_remembers_nothing():
-    """A commit is a permanent address, not a standing preference.
-
-    `POINTER` is null on /<commit>/, and the write is guarded by it — otherwise
-    opening a year-old build once would make it the reader's default.
-    """
-    assert "if (POINTER) rememberPointer(PID, POINTER);" in _code(VIEWER)
-
-
 def test_the_key_is_per_project():
     """A single flag would cross two projects that have nothing to do with
     each other: the one being edited, and the one merely being read."""
@@ -216,21 +190,81 @@ def test_the_key_is_per_project():
     assert 'KEY_PREFIX = "hammerola.pointer."' in code
 
 
+def test_the_writer_and_the_reader_spell_the_same_key():
+    """One localStorage key, two files, and nothing in a browser to notice.
+
+    They cannot share a module — see this file's header — so the spelling is
+    compared here instead. Drift is invisible from both ends: the interface goes
+    on writing, the resolver goes on reading null and falling back to `latest`,
+    and the feature is simply gone with nothing logged anywhere.
+    """
+    prefix = re.search(r'const KEY_PREFIX = "([^"]+)"', _code(PREF))
+    assert prefix, "the reader no longer declares KEY_PREFIX"
+
+    store = _code(STORE_JS)
+    namespace = re.search(r"const NS = '([^']+)'", store)
+    assert namespace, "ui/src/store.js no longer declares the `hammerola.` namespace"
+    built = re.search(r"const pointerKey = \(pid\) => `\$\{NS\}([^`$]*)\$\{pid\}`",
+                      store)
+    assert built, \
+        "ui/src/store.js no longer builds the pointer key out of NS and the pid"
+
+    assert namespace.group(1) + built.group(1) == prefix.group(1), (
+        f"the interface writes `{namespace.group(1) + built.group(1)}<pid>` and "
+        f"the resolver reads `{prefix.group(1)}<pid>`")
+
+
 def test_a_stored_value_that_is_not_a_pointer_reads_as_nothing():
     """An old name, a hand-set key, a name this site no longer has.
 
     All of them have to fall back to `latest`, and the check is the same list the
     hub publishes under — which is what test_live_reload pins to the store.
     """
-    code = _code(PREF)
-    assert "POINTER_NAMES.includes(saved) ? saved : null" in code
-    assert "POINTER_NAMES.includes(name)" in code
+    assert "POINTER_NAMES.includes(saved) ? saved : null" in _code(PREF)
+
+
+def test_the_writer_refuses_anything_that_is_not_one_of_the_two_names():
+    """The same list, applied on the way IN.
+
+    A commit id stored here is the failure that looks like nothing: the resolver
+    compares against the two moving names, reads an unknown value as nothing, and
+    sends every later visit to `latest` — so a reader who lives in `dev` loses
+    the memory by opening one pinned build.
+    """
+    store = _code(STORE_JS)
+    assert "POINTER_NAMES.includes(name)" in store
+    assert re.search(r"import \{ POINTER_NAMES \} from '\./hub\.js'", store), (
+        "ui/src/store.js spells the two names itself instead of importing them, "
+        "so this side can now disagree with what the hub publishes under")
 
 
 def test_storage_being_unavailable_is_not_an_error():
-    """Private mode and storage turned off are ordinary, not a broken page."""
+    """Private mode and storage turned off are ordinary, not a broken page.
+
+    One guard per side. The reader has its own try/catch; the writer has none of
+    its own and must not grow one — it goes through `write()`, which is the one
+    guarded door `tests/test_ui_source.py` holds the whole interface to.
+    """
     code = _code(PREF)
-    assert code.count("try {") == 2 and code.count("catch") == 2
+    assert code.count("try {") == 1 and code.count("catch") == 1
+    assert "write(pointerKey(pid), name)" in _code(STORE_JS), (
+        "rememberPointer no longer writes through store.js's guarded helper")
+
+
+def test_the_interface_records_the_pointer_the_page_was_opened_under():
+    """The build page is the arrival, and the arrival is the fact recorded.
+
+    Not the build picker's click: reaching /dev/ by the picker, by a pasted link
+    or by the back button is the same thing, and all three are a page load. And
+    only on a pointer page — a pinned commit is not a choice between the two
+    moving names, so recording one there would be remembering a build.
+    """
+    code = _code(COMPONENT)
+    assert re.search(r"if \(isPointerPage\(\)\)\s*rememberPointer\(PAGE\.pid, "
+                     r"PAGE\.slot\);", code), (
+        "the interface no longer records the pointer it was opened under, or no "
+        "longer guards the write with isPointerPage() — the first leaves "
+        "/project/<pid>/ on `latest` forever, the second remembers commit ids")
 
 
 def test_the_index_links_to_the_project_and_not_to_a_pointer():

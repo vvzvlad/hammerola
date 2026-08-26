@@ -2,107 +2,31 @@
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>3d.vvzvlad.xyz</title>
+<!-- The vendored library's own stylesheet, and the one asset on this page the
+     bundle cannot carry itself: an `import` of it would make the build emit a
+     second output file, which ui/vite.config.mjs exists to prevent. The viewport
+     deliberately registers no shadow root so that these `.tcv_*` rules reach the
+     widget at all (ui/src/viewport/element.js).
+
+     site.css is deliberately NOT linked here any more, and this page is now the
+     only one of the three that does without it. Everything it gave this page was
+     chrome that has gone -- #bar, the settings and download panels, the comment
+     form, #cad_viewer, #err -- plus one rule aimed at the library
+     (.tcv_tab_material), which is moot now that the viewport starts it with
+     `tools: false` and the whole panel is display:none. What is left in it is the
+     old dark page chrome, and painting that under a light interface would buy a
+     dark flash before the first render. index.html and pointer.html still link
+     it; they still have that chrome. -->
 <link rel="stylesheet" href="/_v/three-cad-viewer.css">
-<link rel="stylesheet" href="/_v/site.css">
 </head><body>
-<div id="bar">
-  <a id="home" href="/" title="all projects">&#8962;</a>
-  <b id="title">&hellip;</b>
-  <span class="meta" id="meta"></span>
-  <!-- What live reload has to SAY stays in the header; the switch that turns it
-       on lives in the settings panel below. This is a status line, not a control:
-       it is how a model that changed under somebody's hands says so. Hidden on a
-       /<commit>/ page, like the switch itself — that build is immutable by
-       contract, so there is nothing there to watch for. -->
-  <span class="meta" id="live_note" hidden></span>
-  <select id="variant" title="what to show"></select>
-  <select id="build" title="which build"></select>
-  <span class="spacer"></span>
-  <button id="comment_btn" type="button" aria-pressed="false"
-          title="leave a comment on a part">Comment</button>
-  <!-- Two ways in, and the second one is why the shortcut is written on the
-       button: hold C and the tool is up for as long as the key is down, which is
-       the whole of a "glance inside" without a trip to the header. The button
-       latches it instead, for the times the glance turns into work. -->
-  <button id="section_btn" type="button" aria-pressed="false"
-          title="cut the model open on a face — or hold C for a quick look (drives the viewer's Clip tab)">Section</button>
-  <!-- One control instead of one link per file. The flat list is
-       parts x formats, so it already runs to six links on a two-part model and
-       twelve on a four-part one -- it grew past the header on a 500px screen and
-       would outgrow a wide one too. Collapsed at every width, not only narrow
-       ones: a header whose size depends on how many parts a project has is a
-       header that breaks again on the next project.
-       <details> and not a scripted menu on purpose -- the toggle, the keyboard
-       handling and the focus behaviour are the browser's, and viewer.js keeps
-       filling #dl exactly as before, with no innerHTML anywhere near the
-       filenames that come out of a pushed meta.json. -->
-  <details id="dlbox">
-    <summary>Downloads</summary>
-    <span id="dl"></span>
-  </details>
-  <!-- Settings: what you set once and stop thinking about, as against the
-       header, which is for what you reach for while looking at a model. Built
-       the same way #dlbox is, and for the same reason -- <details> hands the
-       toggle, the keyboard handling and the focus behaviour to the browser. It
-       starts with two rows and is meant to take more. -->
-  <details id="setbox">
-    <summary title="settings">&#9881;&#xFE0E;</summary>
-    <div id="settings">
-      <!-- ONE question, asked once: what are you pointing with. Everything about
-           the wheel follows from the answer and none of it is separately
-           settable, because none of it is a separate decision -- a trackpad has
-           a swipe and a pinch and no wheel, a mouse has a wheel and neither of
-           the other two. A swipe and a wheel notch are the same event as far as
-           the browser is concerned, so viewer.js does not try to tell them
-           apart: it takes the answer from the platform and remembers whatever
-           the reader picks instead, in localStorage. Neither radio is checked in
-           the markup because the answer is not known until viewer.js has looked
-           at both. -->
-      <div class="set_row">
-        <span class="set_name">Pointing device</span>
-        <label><input type="radio" name="pointer" id="pointer_trackpad">Trackpad</label>
-        <label><input type="radio" name="pointer" id="pointer_mouse">Mouse</label>
-      </div>
-      <div class="set_hint" id="pointer_hint"></div>
-      <!-- Hidden on a /<commit>/ page: immutable by contract, so a switch there
-           could only ever be one that does nothing. viewer.js unhides the row on
-           the two pointer URLs, `latest` and `dev`. -->
-      <div class="set_row" id="live_row" hidden>
-        <span class="set_name">Live reload</span>
-        <label><input type="checkbox" id="live_cb">Pick up new builds</label>
-      </div>
-      <div class="set_hint" id="live_hint" hidden>The model is swapped in place,
-        keeping the camera. A build that lands mid-gesture waits for you.</div>
-    </div>
-  </details>
-</div>
-<!-- The comment form (SPEC 7A). Every element is here in the template and only
-     ever filled in with textContent: nothing on this page builds markup from a
-     string, and the comment's own text is never displayed at all. -->
-<div id="comment_panel" hidden>
-  <div id="comment_hint">Double-click a part to anchor the comment.</div>
-  <textarea id="comment_text" rows="3" maxlength="4000"
-            placeholder="What should change?"></textarea>
-  <div class="row">
-    <input type="file" id="comment_photo" accept="image/jpeg,image/png,image/webp">
-    <span class="spacer"></span>
-    <span id="comment_status"></span>
-    <button id="comment_cancel" type="button">Cancel</button>
-    <button id="comment_send" type="button">Send</button>
-  </div>
-</div>
-<!-- The section tool (SPEC 7B) has NO panel of its own, and that is the whole
-     point. It used to have one -- a row under the header with a hint, the depth
-     and From view / Reset / Done -- and that row sat in the page's flex column,
-     so arming the tool took height away from the canvas and leaving it gave the
-     height back. The viewer sizes itself from its container, so both ends of
-     that resized the model: the editor visibly jumped on the way in and on the
-     way out. With the hold key (C) as the main way in, that jump happened on
-     every press and release of a key held for a couple of seconds.
-     What the row carried is not lost: Escape and the Section button both leave
-     the tool, and the library's own Clip tab -- which the tool drives and puts
-     on screen -- has the sliders and the reset. -->
-<pre id="err"></pre>
-<div id="cad_viewer"></div>
-<script type="module" src="/_v/viewer.js"></script>
+<!-- The whole page. The interface draws its own header, its own panels and its
+     own error box inside this div, so the template carries no markup of its own:
+     what used to sit beside it -- the header with the view and build pickers,
+     the comment form, the settings panel and the container the previous page
+     script rendered the widget into -- left with the script that read it.
+
+     The bundle looks this id up and does nothing at all when it is absent, which
+     is what keeps index.html and pointer.html unaffected by it. -->
+<div id="hmr_root"></div>
+<script type="module" src="/_v/hammerola.js"></script>
 </body></html>

@@ -20,3 +20,27 @@ data/*
 !data/.gitkeep
 # Claude Code agent worktrees — never commit
 .claude/worktrees/
+# Frontend build output and its toolchain. `ui/` (the React sources, the exact
+# version pins and package-lock.json) IS committed; what a build turns them into
+# is not.
+#
+# A committed bundle is not merely redundant, it is a second, competing source
+# of truth that drifts SILENTLY. Nothing forces it to be rebuilt when the JSX
+# beside it changes, and nothing anywhere reports that it was not: the file is
+# still valid JavaScript, the page still renders, the gate still finds the path
+# in the image — so a source edit that nobody rebuilt looks exactly like a
+# source edit that had no visible effect, which is a question people answer by
+# reading the JSX. The bundle is produced by `make ui` for a workstation and by
+# the Dockerfile's `ui` stage for the image, and in both cases from the sources
+# in this commit.
+#
+# A prefix glob rather than a directory: the build output lands FLAT in
+# static/_v/, among committed assets that must stay TRACKED (site.css,
+# index.js, pointer.js, pointer_pref.js, the vendored bundle), so the directory
+# itself cannot be ignored. The glob is deliberately wider than today's single output —
+# it is a net for whatever a future build emits under that prefix, and being too
+# wide here costs nothing, whereas being too narrow means a build artefact gets
+# committed by accident.
+static/_v/hammerola*
+ui/node_modules/
+ui/dist/
