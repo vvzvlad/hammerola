@@ -141,16 +141,21 @@ def test_the_exporter_still_produces_the_committed_structure(committed, tmp_path
     does for the same reason.
 
     What is being paid for it, stated plainly rather than left to read as
-    routine: NOT ONE test that computes real geometry executes in CI. Not the
-    ~169 under tests/cadbuild/, and from now on not this one either — so the
-    committed fixture is compared against the real exporter only on a workstation
-    where `make install` put the kernel in place. Between such runs the drift this
-    file exists to catch is unwatched: a change to src/cadbuild/views.py that
-    moves the payload's shape goes through a green CI, and the vitest suite keeps
+    routine: NOT ONE test that computes real geometry executes in CI, and from
+    now on this one is among them — so the committed fixture is compared against
+    the real exporter only on a workstation where `make install` put the kernel
+    in place. Do not read the neighbouring suite as part of that bill.
+    tests/cadbuild/ deliberately does not depend on the kernel (its conftest.py
+    says so outright), and it was measured: with `cadquery`, `OCP`,
+    `ocp_tessellate` and `trimesh` all raising ImportError, exactly ONE of its
+    174 tests skips — the colour-parsing case in tests/cadbuild/test_views.py,
+    guarded the same way as this one. Between such runs the drift this file
+    exists to catch is unwatched: a change to src/cadbuild/views.py that moves
+    the payload's shape goes through a green CI, and the vitest suite keeps
     passing against a document no build produces any more. Closing the hole means
-    putting libgl1 into the test container, which also switches those ~169
-    geometry tests on — a step of its own, with its own cost to measure; it is
-    written up in docs/SPEC.md §8.
+    putting libgl1 into the test container, which switches this test and that
+    single cadbuild one on — a step of its own, with its own cost to measure; it
+    is written up in docs/SPEC.md §8.
 
     Guarding on `cadquery` alone covers `ocp_tessellate` too, which the export
     also needs: both are pinned in requirements.txt and both fail on the same

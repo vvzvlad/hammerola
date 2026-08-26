@@ -89,7 +89,13 @@ def test_two_parts_in_one_view_may_not_share_a_name():
 def test_an_explicit_colour_wins_over_the_palette():
     """A named colour is validated with the tessellator's own parser, so this
     one test needs the CAD stack. Everything else about views does not."""
-    pytest.importorskip("ocp_tessellate",
+    # `exc_type=ImportError` because the failure this guard is FOR is an
+    # ImportError that is NOT a ModuleNotFoundError: in CI the distribution is
+    # on disk and its extension refuses to load (`libGL.so.1`). pytest 9.1
+    # narrows the default to ModuleNotFoundError, so without this the guard
+    # would stop skipping and CI would go red on a pytest bump — the same trap
+    # spelled out in tests/test_view_fixture.py's docstring.
+    pytest.importorskip("ocp_tessellate", exc_type=ImportError,
                         reason="colour parsing uses the tessellator's parser")
     body = part()
     prepared = prepare_views(
