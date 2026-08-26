@@ -15,18 +15,28 @@
  * exactly as they do with the panel up, and switching the library's own tabs
  * from code keeps working too — which the section tool depends on.
  *
- * Everything that edits APPEARANCE stays off, and the reason is the page rather
- * than the library: a build page is a snapshot, the model is whatever the commit
- * says it is, and a viewer setting a reader changes is lost on the next reload
- * anyway. `studioTool`
+ * Every tool that restyles THE MODEL stays off, and the reason is the page rather
+ * than the library: a build page is a snapshot and the model is whatever the
+ * commit says it is, so a reader must not be able to show it as something other
+ * than what was pushed. `studioTool`
  * is the expensive one — it drags in a postprocessing composer — and it is also
  * the one that would break per-part transparency, because Studio shares
  * materials between parts (docs/viewer-api.md §3).
+ *
+ * That is a rule about the MODEL and not a ban on settings. The canvas the model
+ * stands on asserts nothing about the geometry, which is why `theme` below is the
+ * reader's own answer and is remembered for them (THEME_KEY).
  */
 export const displayOptions = {
   glass: true,
   tools: false,
-  theme: "dark",
+  // A GETTER, not a value, and for two reasons that both bite at module scope: a
+  // call up here runs before `THEME_KEY` is initialised further down the file (a
+  // `const` in its temporal dead zone), and it would touch storage on every
+  // import of this module — including the ones a runner with no storage makes,
+  // where the answer is not wanted and the warning is noise. Read here, it runs
+  // exactly once, where element.js spreads this object to build the viewer.
+  get theme() { return readTheme(); },
   treeWidth: 240,
   cadWidth: 800,
   height: 600,
@@ -43,6 +53,24 @@ export const renderOptions = {
   directIntensity: 1.1,
   metalness: 0.3,
   roughness: 0.65,
+  // ONE VALUE FOR BOTH THEMES, and this is a measurement rather than an
+  // oversight: it was picked against a dark canvas, so light was the side that
+  // had to be checked, and light is the side it does BETTER on.
+  //
+  // Measured in Chrome on the fixture build (`make ui-fixture-data`), by reading
+  // the rendered pixels out of a screenshot of each theme. The edge comes back as
+  // exactly (112, 112, 112) in both — nothing about the theme touches it — and
+  // the contrast where it matters is:
+  //
+  //     against the canvas    light #fff  4.95:1     dark #444  1.97:1
+  //     against a face        identical in both (1.45:1 on the olive cap,
+  //                           2.2:1 on the yellow plate)
+  //
+  // An interior edge cannot change with the theme at all, since neither colour
+  // in that pair depends on it; only the SILHOUETTE meets the canvas, and there
+  // light is two and a half times the separation dark ever had. So there is
+  // nothing to make theme-dependent, and a lighter value "for the light theme"
+  // would be undoing the better of the two cases.
   edgeColor: 0x707070,
   defaultOpacity: 0.5,
   normalLen: 0,
@@ -140,6 +168,52 @@ export const PINCH_DELTA_PER_E_FOLD = 100;
 
 /** localStorage key for the one pointing-device answer. */
 export const INPUT_KEY = "hammerola.pointing_device";
+
+/** localStorage key for the canvas theme, the second per-reader answer here.
+ *
+ * Everything the interface draws around the viewport — the header, the tree, the
+ * panels, the bottom strip — is light, and a dark canvas in the middle of it
+ * reads as two programs sharing one window. So the DEFAULT is light; dark stays
+ * reachable because a dark canvas is the better one for looking at a single part
+ * on a dim screen, and neither answer is detectable from here.
+ *
+ * Kept per BROWSER and not per project, unlike the token and the notes
+ * (ui/src/store.js): this is a property of the eyes in front of the screen, and a
+ * reader who set it on one model meant it for the next one too.
+ */
+export const THEME_KEY = "hammerola.viewport_theme";
+
+/** The two the library takes, and the one this page opens on. */
+export const THEMES = ["light", "dark"];
+export const DEFAULT_THEME = "light";
+
+/** The remembered theme, or the default. Never throws, whatever storage does. */
+export function readTheme() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem(THEME_KEY);
+  } catch (error) {
+    // A private window, storage turned off, or a runner with no storage at all:
+    // "nothing was remembered" is a complete answer here.
+    console.warn("theme", error);
+  }
+  return THEMES.includes(saved) ? saved : DEFAULT_THEME;
+}
+
+/** Remember the reader's answer, and hand back the one that was actually taken.
+ *
+ * The return value is the point: an unknown theme is corrected to the default
+ * HERE, so a caller cannot store one thing and show another. */
+export function writeTheme(value) {
+  const theme = THEMES.includes(value) ? value : DEFAULT_THEME;
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch (error) {
+    // The setting still holds for this page; it just will not outlive it.
+    console.warn("theme", error);
+  }
+  return theme;
+}
 
 /** How long after the last press or wheel the viewport still counts as busy.
  *

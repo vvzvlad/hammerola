@@ -79,6 +79,12 @@ import {
 import {
   readToken, writeToken, clearToken, readNotes, writeNotes, rememberPointer,
 } from './store.js';
+// The canvas theme lives with the rest of the viewport's options, and so does the
+// storage for it: `tests/test_ui_source.py` allows this side exactly one module
+// that touches localStorage (store.js), and the viewport keeps its own answers
+// under its own guard. Only the two functions come across — importing the option
+// objects themselves would be this file deciding how the library is started.
+import { readTheme, writeTheme } from './viewport/options.js';
 
 /* CSS string -> React style object. Only here to keep the mock's markup 1:1. */
 const cssCache = new Map();
@@ -232,6 +238,11 @@ export default class HammerolaViewer extends React.Component {
       measure: null, moved: null, toast: null,
       // -- who the reader is
       token: readToken(PAGE.pid), tokenPop: false, tokenDraft: '',
+      // -- and what they want to look at the model against. Read here so the
+      // first paint is already the reader's answer: the same read seeds the
+      // options the viewport starts the library with (viewport/options.js), so
+      // the button below never has to correct a canvas that came up wrong.
+      theme: readTheme(),
     };
   }
 
@@ -524,6 +535,41 @@ export default class HammerolaViewer extends React.Component {
     } catch (error) {
       console.warn('frame', error);
       this.toast('Could not save the frame');
+    }
+  }
+
+  /**
+   * Light or dark under the model — remembered, and applied to the live scene.
+   *
+   * THE CHROME DOES NOT MOVE. Everything this interface draws stays light in
+   * both modes; what changes is the canvas, which is the library's and which is
+   * the whole of what looked out of place. `theme` is the library's own word for
+   * it and carries more than the background — the grid and the orientation
+   * marker are tinted with it — but both of those are off in this viewport
+   * (viewport/options.js), so on this page it IS the background.
+   *
+   * WHY IT GOES THROUGH `viewer` AND NOT THROUGH THE ELEMENT. This is the one
+   * place this file reaches past the element's imperative half, and it is worth
+   * saying why rather than tidying later. The library resolves the theme once,
+   * at construction, into its own state, and re-asserts THAT value at the end of
+   * every render — so setting the attribute from outside, or changing the option
+   * object, holds only until the next view switch. `setTheme` is the library's
+   * public answer to exactly this and keeps its state in step; the element has no
+   * method to forward it, and adding one is not this change's file to edit.
+   *
+   * Guarded end to end, because every step of it is allowed to be missing: no
+   * adapter on the page, a viewport that has not rendered yet, an older library.
+   * The setting is still stored, and the next page load comes up in it.
+   */
+  applyTheme(value) {
+    const theme = writeTheme(value);
+    this.setState({ theme });
+    try {
+      const el = this.el();
+      const viewer = el && el.viewer;
+      if (viewer && typeof viewer.setTheme === 'function') viewer.setTheme(theme);
+    } catch (error) {
+      console.warn('theme', error);
     }
   }
 
@@ -1061,6 +1107,18 @@ export default class HammerolaViewer extends React.Component {
       tComment: setTool('comment'), commentBtnStyle: btn(s.tool === 'comment', viewer),
       fitView: () => this.fitView(),
       grabFrame: () => this.saveFrame(),
+
+      // The canvas theme, in the strip that belongs to the viewport rather than
+      // in a menu about something else — it changes what is behind the model, so
+      // it sits with the other things that do. The button names the mode the
+      // reader is IN, the way the access button beside the token does; what it
+      // switches to is in the tooltip.
+      themeDark: s.theme === 'dark',
+      themeLabel: s.theme === 'dark' ? 'Dark' : 'Light',
+      themeTitle: s.theme === 'dark'
+        ? 'the model sits on a dark canvas — click for light'
+        : 'the model sits on a light canvas — click for dark',
+      toggleTheme: () => this.applyTheme(s.theme === 'dark' ? 'light' : 'dark'),
       hintText: s.tool === 'comment' ? 'click the model to pin a task'
         : s.tool === 'measure' ? 'click a part, or two, to measure'
         : s.tool === 'move' ? 'drag a part · esc to stop'
@@ -1478,6 +1536,16 @@ export default class HammerolaViewer extends React.Component {
                 <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:#3c4147;cursor:pointer;border:1px solid transparent`)}>
                   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
                   Frame
+                </div>
+                <div style={css('width:1px;height:18px;background:#d8dce1')} />
+                {/* what the model stands on — the canvas only, never the chrome */}
+                <div onClick={v.toggleTheme} title={v.themeTitle} style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:#3c4147;cursor:pointer;border:1px solid transparent`)}>
+                  {v.themeDark ? (
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6 5.9 5.9 0 1 0 13.4 9.9z" /></svg>
+                  ) : (
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="3.1" /><path d="M8 1.2v1.7M8 13.1v1.7M1.2 8h1.7M13.1 8h1.7M3.2 3.2l1.2 1.2M11.6 11.6l1.2 1.2M12.8 3.2l-1.2 1.2M4.4 11.6l-1.2 1.2" /></svg>
+                  )}
+                  {v.themeLabel}
                 </div>
               </div>
             </div>

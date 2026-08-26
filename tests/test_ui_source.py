@@ -510,9 +510,10 @@ def test_nothing_writes_markup():
 def test_localstorage_is_touched_in_one_place_only():
     """One module, so there is one place to audit for the try/catch below.
 
-    The viewport keeps its own answer (the pointing device) and is exempt: it is
-    a separate module with its own guard, and the rule is one place PER SIDE, not
-    one place in the repository.
+    The viewport keeps its own answers — the pointing device and the canvas
+    theme, both in `viewport/options.js` — and is exempt: that is a separate
+    module with its own guard, and the rule is one place PER SIDE, not one place
+    in the repository.
     """
     users = [p.name for p in INTERFACE_FILES
              if "localStorage" in strip_comments(read(p))]
