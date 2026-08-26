@@ -122,6 +122,76 @@ def test_fixture_is_a_tree_with_siblings_and_a_mesh_on_every_leaf(committed):
         assert len(shape["vertices"]) % 3 == 0
 
 
+def exported_tree(directory: Path) -> list[dict]:
+    """A stand-in for `export()`: the committed payload under both view names.
+
+    Enough to publish, because publishing never looks at what is inside a view
+    file beyond what `check_view_file` checks — and the committed fixture is a
+    file that passes it (the test above asserts exactly that). What this buys is
+    a test of the publishing half that needs no CAD kernel, i.e. one that runs in
+    the place the kernel-bound test cannot.
+    """
+    directory.mkdir(parents=True)
+    payload = FIXTURE.read_bytes()
+    for name in ("assembled.json", "print.json"):
+        (directory / name).write_bytes(payload)
+    return [
+        {"id": "assembled", "name": "assembled", "file": "assembled.json",
+         "parts": 4},
+        {"id": "print", "name": "as printed", "file": "print.json", "parts": 3},
+    ]
+
+
+def test_publish_to_data_lands_a_build_and_a_rerun_keeps_the_slot(tmp_path):
+    """`make ui-fixture-data`, the half of the generator that talks to the Store.
+
+    That target is the supported way to look at the real interface in a browser,
+    and it was dead for as long as it took somebody to open one: `publish_dev`
+    became `publish_dev_built` and took a staging directory instead of a tar, and
+    nothing anywhere called it. The test above is next door and could not have
+    caught it — it needs a CAD kernel CI does not have, so it skips in the one
+    place that runs on every push. This one hands the export IN and therefore
+    runs everywhere.
+
+    The second publish is the other half of the check, and not a formality: the
+    slot is a page somebody has open, so re-running the target when nothing
+    changed has to answer 200 and leave the directory alone rather than swap a
+    freshly written one under the reader. That is what makes the digest choice in
+    `payload_digest()` observable — a digest covering the meta.json's wall clock
+    would rewrite the slot on every run.
+    """
+    module = load_generator()
+    data_dir = tmp_path / "data"
+
+    first = tmp_path / "first"
+    module.publish_to_data(first, exported_tree(first), data_dir)
+
+    slot = data_dir / "project" / module.FIXTURE_PID / "dev"
+    assert (slot / "assembled.json").read_bytes() == FIXTURE.read_bytes()
+    meta = json.loads((slot / "meta.json").read_text(encoding="utf-8"))
+    assert [variant["id"] for variant in meta["variants"]] == ["assembled", "print"]
+    assert meta["dev"] is True, "the local slot has to be published as a dev build"
+    # Nothing may be left behind in the project directory: the staging tree is
+    # the caller's to remove on every path that is not the rename.
+    assert sorted(p.name for p in (data_dir / "project" / module.FIXTURE_PID)
+                  .iterdir()) == ["builds.json", "dev"]
+
+    # Survives the second publish only if the slot was not rewritten.
+    (slot / "sentinel.txt").write_text("kept", encoding="utf-8")
+    # Changes the meta.json and nothing else, standing in for the `built` stamp
+    # that really does differ between two runs: it must not count as a new build.
+    module.FIXTURE_TITLE = "a different title"
+
+    second = tmp_path / "second"
+    module.publish_to_data(second, exported_tree(second), data_dir)
+
+    assert (slot / "sentinel.txt").is_file(), (
+        "the slot was rewritten by a re-run that published the same views — the "
+        "page a reader has open re-renders for nothing")
+    kept = json.loads((slot / "meta.json").read_text(encoding="utf-8"))
+    assert kept["title"] == meta["title"]
+
+
 def test_the_exporter_still_produces_the_committed_structure(committed, tmp_path):
     """Re-run the generator and compare the SHAPE of what it wrote.
 
