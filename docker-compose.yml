@@ -96,7 +96,7 @@ services:
       # Replace XXX with the real token before deploying, and give the same value
       # to CI as the repository secret the publish workflow sends as
       # `Authorization: Bearer`. The public SITE has no read-side auth at all
-      # (SPEC 5.5); the comment queue below is the one thing that does.
+      # (SPEC 5.4); the comment queue below is the one thing that does.
       PUBLISH_TOKEN: XXX
       # Guards READING the comment queue (SPEC 7A.2). The queue is raw input from
       # anyone at all, so it is not readable without this. Give it to the agent's
@@ -132,8 +132,6 @@ services:
         max-size: 10m
     labels:
       traefik.enable: "true"
-      # A-запись 3d.vvzvlad.xyz -> 45.67.213.41 ЕЩЁ НЕ ЗАВЕДЕНА (SPEC 2.6):
-      # сейчас имя ловится вайлдкардом *.vvzvlad.xyz и уходит на дом, а не на slug.
       traefik.http.routers.hammerola.rule: Host(`3d.vvzvlad.xyz`)
       traefik.http.services.hammerola.loadBalancer.server.port: 8000
       traefik.http.routers.hammerola.entrypoints: websecure

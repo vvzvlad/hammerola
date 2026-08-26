@@ -41,17 +41,17 @@ everything inside it:
     otherwise readable by every build. If that call is ever dropped, the token
     is back within reach and nothing else here would notice.
 
-NOT WIRED TO HTTP. Taking the push asynchronously with a task id and a log
-endpoint is step 5; the gate refusing a build after it has been accepted is
-step 6. This package is what both will call, and it is complete without them.
+WIRED TO HTTP SINCE STEP 5. `src/jobs.py` calls `run_build` from a worker
+thread, with the pushed source tree as the project and the staging directory
+that becomes `<pid>/<commit>` as the output. The gate refusing a build after it
+has been accepted is still step 6.
 
-One check is deliberately owed and belongs with step 5: `ci/smoke.py` should
-grow a probe that the ceilings really go on INSIDE the image, under the `app`
-account, and that `-m src.buildproc.*` resolves from /app. The suite runs
-against a checkout and cannot see any of that. It is not there today because
-nothing in the running service calls this package yet, so there is nothing for
-a broken image to break -- the moment a build lands on the request path, that
-stops being true.
+One check is now OWED rather than merely planned: `ci/smoke.py` should grow a
+probe that the ceilings really go on INSIDE the image, under the `app` account,
+and that `-m src.buildproc.*` resolves from /app. The suite runs against a
+checkout and cannot see any of that. Until step 4 was wired up there was nothing
+for a broken image to break, because nothing in the running service called this
+package; a build now lands on the request path, so that argument has expired.
 
 Everything here is stdlib. Importing it must not import cadquery, and it must
 not import `src.settings` -- the whole point is a process that has never had a

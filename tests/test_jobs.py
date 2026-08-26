@@ -1,0 +1,2805 @@
+"""Taking a push asynchronously: 202, a job, a status and a log (SPEC 8A.2 step 5).
+
+The rest of the suite pushes through `Hub.publish`, which waits for the job and
+reports what it decided — because the rest of the suite is about what ends up on
+disk. This file is about the HANDOVER itself, so everything here goes through
+`publish_async` and looks at the job.
+
+Two claims are worth stating before the tests, because they are what the file is
+really pinning down:
+
+  * a push is answered from what the UPLOAD says and nothing else. The token, the
+    size, the archive and "is this exact push already published" are all decided
+    in the request, so a broken archive is still a 4xx on the push. Everything
+    that needs the BUILD — and only that — moves into a job.
+  * a build that fails publishes nothing. `latest` does not move, the local slot
+    is not touched, no build directory appears, and the pusher is told why with
+    the log the build produced.
+"""
+
+import builtins
+import errno
+import inspect
+import json
+import os
+import queue
+import signal
+import threading
+import time
+from pathlib import Path
+
+import httpx
+import pytest
+from harness import (PublishReply, copying_builder, failing_builder, good_build,
+                     meta_bytes, start_hub, stop_hub, tar_gz, view_bytes)
+from loguru import logger
+
+from src import jobs as jobs_module
+from src.buildproc import (STATUS_FAILED, STATUS_LIMITS_ERROR, STATUS_OK,
+                           Limits, run_build)
+from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_JOBS,
+                      MAX_LOG_BYTES, MAX_RECORD_BYTES, ORDER_NAME,
+                      QUEUE_FULL_RETRY_AFTER_SECONDS, RESTART_CODE,
+                      STATE_BUILDING, STATE_DONE, STATE_FAILED, STATE_QUEUED,
+                      STOPPED_ERROR, SUBMIT_ACCEPTED, SUBMIT_STOPPED,
+                      WORKER_THREAD_PREFIX, BuildQueue, BuildTask, JobStore,
+                      build_arguments)
+from src import store as store_module
+from src.store import (JSON_TMP_PREFIX, LEFTOVER_PREFIXES, SOURCE_PREFIX,
+                       PublishError, Store, utcnow_iso)
+
+TOKEN = "test-publish-token"
+READ_TOKEN = "test-comment-read-token"
+
+
+def _leftovers(hub, pid):
+    """Every transient of a push, wherever it could still be sitting."""
+    found = [p.name for p in hub.data.iterdir()
+             if p.name.startswith(LEFTOVER_PREFIXES)]
+    project = hub.project_dir(pid)
+    if project.is_dir():
+        found += [p.name for p in project.iterdir()
+                  if p.name.startswith(LEFTOVER_PREFIXES)]
+    return found
+
+
+def _plant_job(data, job_id, **fields):
+    """Write a job.json by hand — the way a BUILD can, and that is the point.
+
+    `data/jobs/` is on the volume, and the volume is fully writable by every
+    build (src/buildproc/__init__.py, SPEC 8A.4). So every field here is
+    attacker-controlled in the only sense that matters, and `json.dumps` is
+    called with its default `allow_nan=True` on purpose: that is exactly the
+    asymmetry — Python writes `NaN` happily and the hub's own writer refuses it.
+    """
+    directory = Path(data) / "jobs" / job_id
+    directory.mkdir(parents=True, exist_ok=True)
+    record = {"id": job_id, "pid": "proj1", "commit": "abc123",
+              "state": STATE_BUILDING, "created": utcnow_iso(),
+              "started": None, "finished": None, "status": None, "code": None,
+              "build_url": None, "error": None, "log_truncated": False,
+              "duration_seconds": None}
+    record.update(fields)
+    (directory / "job.json").write_text(json.dumps(record), encoding="utf-8")
+    return directory
+
+
+def _volume_order(data):
+    """The creation order AS IT IS ON THE VOLUME: the ids, oldest first.
+
+    The one object that expresses the order — there is no ordering field in a
+    record any more, deliberately (see `ORDER_NAME` in src/jobs.py). Read
+    straight off the volume rather than through the store, because the whole
+    question these tests ask is what the NEXT start will read.
+    """
+    return json.loads((Path(data) / "jobs" / ORDER_NAME).read_text())["jobs"]
+
+
+def _job_dirs(data):
+    """The job directories on the volume, by name. Not the order file."""
+    return sorted(entry.name for entry in (Path(data) / "jobs").iterdir()
+                  if entry.is_dir())
+
+
+def _volume_records(data):
+    """Every job.json as it really is ON THE VOLUME — not as memory has it.
+
+    The distinction is the whole subject of several tests below: `_read_record`
+    and `_load` normalize what they read, and a normalization that stays in
+    memory leaves the planted value on disk for the next start to read again.
+    `JobStore.get` cannot see that, because it answers from memory by design.
+    """
+    jobs_dir = Path(data) / "jobs"
+    return {entry.name: json.loads((entry / "job.json").read_text())
+            for entry in sorted(jobs_dir.iterdir())
+            if (entry / "job.json").exists()}
+
+
+def _live_workers():
+    """The build threads alive right now, by the name the pool gives them."""
+    return sorted(thread.name for thread in threading.enumerate()
+                  if thread.name.startswith(WORKER_THREAD_PREFIX))
+
+
+def _await_no_workers(timeout=10):
+    """Wait for a released pool to actually finish, before the guard looks.
+
+    A test that stops a pool while its builds are gated has to hand the workers
+    back to the interpreter itself: `shutdown` has already forgotten them by
+    then, so nothing else joins them and the autouse guard in conftest would
+    otherwise fail whichever test ran next.
+    """
+    deadline = time.monotonic() + timeout
+    while _live_workers() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert _live_workers() == []
+
+
+def _bare_store(data):
+    """A Store on `data`, without a server around it."""
+    return Store(data_dir=data, retention_builds=20,
+                 max_build_bytes=8 * 1024 * 1024)
+
+
+def _staged(store, pid, commit, marker):
+    """A finished build's output, sitting in its staging directory."""
+    staging = store.build_staging(pid, commit)
+    staging.mkdir()
+    (staging / "meta.json").write_bytes(meta_bytes())
+    (staging / "assembled.json").write_bytes(view_bytes(marker))
+    return staging, ("meta.json", "assembled.json")
+
+
+class _CountedHandle:
+    """A file object that remembers the size argument every read was given.
+
+    Enough of one for `_read_capped`, which opens, reads once and leaves. What
+    it is for is the difference between "the file was refused" and "the file was
+    refused without being read" — the second is the claim a byte ceiling on a
+    volume somebody else writes to actually makes.
+    """
+
+    def __init__(self, handle, sizes):
+        self._handle = handle
+        self._sizes = sizes
+
+    def read(self, size=-1):
+        self._sizes.append(size)
+        return self._handle.read(size)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exception):
+        return self._handle.__exit__(*exception)
+
+
+class GatedBuilder:
+    """A builder that stops in the middle, so a test can look at a live job.
+
+    Also counts how many builds are in it at once, which is the only way to
+    observe that build parallelism is its own number rather than the accept one.
+    """
+
+    def __init__(self):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.running = 0
+        self.peak = 0
+        self.started = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, project_dir, out_dir, *, pid, **kw):
+        with self._lock:
+            self.running += 1
+            self.started += 1
+            self.peak = max(self.peak, self.running)
+        self.entered.set()
+        try:
+            assert self.release.wait(timeout=30), "the test never released the build"
+        finally:
+            with self._lock:
+                self.running -= 1
+        return copying_builder(project_dir, out_dir, pid=pid)
+
+
+class SwitchableBuilder:
+    """Copies the tree, until a test flips it into refusing."""
+
+    def __init__(self):
+        self.fail = False
+        self.status = STATUS_FAILED
+        self.log = "build failed: the model has no printables\n"
+
+    def __call__(self, project_dir, out_dir, *, pid, **kw):
+        if self.fail:
+            return failing_builder(status=self.status, log=self.log)(
+                project_dir, out_dir, pid=pid)
+        return copying_builder(project_dir, out_dir, pid=pid)
+
+
+class RecordingBuilder:
+    """Copies the tree and remembers exactly what it was handed."""
+
+    def __init__(self):
+        self.seen = None
+
+    def __call__(self, project_dir, out_dir, *, pid, **kw):
+        self.seen = {
+            "pid": pid,
+            "project_dir": Path(project_dir),
+            "out_dir": Path(out_dir),
+            "out_dir_existed": Path(out_dir).exists(),
+            "sources": sorted(p.name for p in Path(project_dir).iterdir()),
+        }
+        return copying_builder(project_dir, out_dir, pid=pid)
+
+
+@pytest.fixture
+def gated_hub(tmp_path):
+    """A hub whose builds stop until the test lets them go. One worker."""
+    builder = GatedBuilder()
+    hub = start_hub(tmp_path / "data", build_runner=builder, build_workers=1)
+    hub.builder = builder
+    try:
+        yield hub
+    finally:
+        # Released before the hub is closed, always: `server_close` waits for a
+        # worker that is mid-build, so a test that failed early would otherwise
+        # hang for the join timeout and then fail again on the worker guard.
+        builder.release.set()
+        stop_hub(hub)
+
+
+# -- the handover ------------------------------------------------------------
+def test_a_push_is_accepted_with_202_and_a_job_to_follow(hub):
+    reply = hub.publish_async("proj1", "abc123", good_build())
+    assert reply.status_code == 202
+    body = reply.json()
+    assert set(body) == {"job", "status_url", "log_url"}
+
+    job_id = body["job"]
+    # Unguessable, not sequential: the id is the only thing between one pusher's
+    # build log and another's, and a counter would let anyone walk the lot.
+    assert len(job_id) == 22
+    assert body["status_url"] == f"/api/v1/jobs/{job_id}"
+    assert body["log_url"] == f"/api/v1/jobs/{job_id}/log"
+    # `Location` says the same thing in the header the status code is about.
+    assert reply.headers["Location"] == body["status_url"]
+
+    second = hub.publish_async("proj1", "def456", good_build("second"))
+    assert second.json()["job"] != job_id
+
+    for pending in (job_id, second.json()["job"]):
+        hub.await_job(pending)
+
+
+def test_the_job_goes_queued_then_building_then_done(gated_hub):
+    hub = gated_hub
+    first = hub.publish_async("proj1", "aaa111", good_build("one")).json()["job"]
+    assert hub.builder.entered.wait(timeout=10)
+
+    # One worker, and it is inside the first build, so the second push cannot
+    # have started: it is queued, which is a state of its own precisely because
+    # "not finished" covers two very different situations.
+    second = hub.publish_async("proj1", "bbb222", good_build("two")).json()["job"]
+    assert hub.job(first).json()["state"] == STATE_BUILDING
+    assert hub.job(second).json()["state"] == STATE_QUEUED
+
+    building = hub.job(first).json()
+    assert building["pid"] == "proj1"
+    assert building["commit"] == "aaa111"
+    assert building["created"] and building["started"]
+    assert building["finished"] is None
+    assert building["build_url"] is None
+
+    hub.builder.release.set()
+    done = hub.await_job(first).record
+    assert done["state"] == STATE_DONE
+    assert done["code"] == 201
+    assert done["status"] == STATUS_OK
+    assert done["build_url"] == "/project/proj1/aaa111/"
+    assert done["error"] is None
+    assert done["finished"] and done["duration_seconds"] is not None
+    hub.await_job(second)
+
+
+def test_a_successful_build_publishes_exactly_as_it_used_to(hub):
+    reply = hub.publish_async("proj1", "abc123", good_build())
+    record = hub.await_job(reply.json()["job"]).record
+
+    assert record["state"] == STATE_DONE
+    build = hub.project_dir("proj1") / "abc123"
+    assert (build / "meta.json").is_file()
+    assert (build / "assembled.json").is_file()
+    assert os.readlink(hub.project_dir("proj1") / "latest") == "abc123"
+    assert json.loads((hub.project_dir("proj1") / "builds.json").read_text()
+                      )["builds"][0]["commit"] == "abc123"
+    assert json.loads((hub.data / "index.json").read_text())[0]["pid"] == "proj1"
+    assert hub.get(record["build_url"]).status_code == 200
+    # And nothing of the machinery is left behind on the volume.
+    assert _leftovers(hub, "proj1") == []
+
+
+def test_the_local_slot_goes_through_the_same_job(hub):
+    reply = hub.publish_async("proj1", "dev", good_build("local"))
+    assert reply.status_code == 202
+    record = hub.await_job(reply.json()["job"]).record
+
+    assert record["commit"] == "dev"
+    assert record["build_url"] == "/project/proj1/dev/"
+    assert (hub.project_dir("proj1") / "dev" / "meta.json").is_file()
+
+    # Every assertion below is the difference between the worker having taken
+    # the slot route and having taken the commit one. The URL alone cannot tell
+    # them apart — a commit build called `dev` would answer at the same address
+    # — so what is checked is the machinery only `publish` runs: `latest` moves,
+    # retention counts, the project gets an index card and the build appears in
+    # the picker's list. None of that may happen for the local slot (SPEC 7.6).
+    assert not (hub.project_dir("proj1") / "latest").exists()
+    assert not (hub.data / "index.json").exists()
+    picker = json.loads((hub.project_dir("proj1") / "builds.json").read_text())
+    assert picker["builds"] == []
+    assert picker["has_dev"] is True
+    assert picker["latest"] is None
+
+
+def test_an_answer_that_needs_no_build_is_given_on_the_push(hub):
+    """200 and 409 stay on the push, and cost no build at all.
+
+    Rebuilding a commit that is already on disk would spend minutes of CPU to
+    arrive at an answer that was on disk all along — and CI, which retries, is
+    exactly the caller that would pay for it.
+    """
+    body = good_build()
+    assert hub.publish("proj1", "abc123", body).status_code == 201
+
+    retry = hub.publish_async("proj1", "abc123", body)
+    assert retry.status_code == 200
+    assert retry.json() == {"url": "/project/proj1/abc123/"}
+    assert "job" not in retry.json()
+
+    clash = hub.publish_async("proj1", "abc123", good_build("different"))
+    assert clash.status_code == 409
+
+    # Neither of them left an unpacked tree waiting for a worker.
+    assert _leftovers(hub, "proj1") == []
+
+
+def test_a_broken_archive_is_refused_on_the_push_and_never_becomes_a_job(hub):
+    """An archive that is not an archive needs no build to be refused."""
+    before = len(list((hub.data / "jobs").iterdir()))
+    assert hub.publish_async("proj1", "abc123", b"not a tarball").status_code == 422
+    assert len(list((hub.data / "jobs").iterdir())) == before
+    assert _leftovers(hub, "proj1") == []
+
+
+# -- what the build is handed ------------------------------------------------
+def test_the_build_gets_the_sources_and_a_separate_output_directory(hub_factory):
+    """The tree the model wrote into may not be the tree that gets published.
+
+    The sources are unpacked into one directory and the build writes into
+    another, which is the one that is renamed onto `<pid>/<commit>`. Anything a
+    model puts in the tree it was GIVEN therefore reaches nobody unless the build
+    deliberately writes it as output.
+    """
+    recorder = RecordingBuilder()
+    hub = hub_factory(build_runner=recorder)
+    assert hub.publish("proj1", "abc123", good_build()).status_code == 201
+
+    seen = recorder.seen
+    assert seen["pid"] == "proj1"
+    assert seen["project_dir"] != seen["out_dir"]
+    assert seen["sources"] == ["assembled.json", "meta.json"]
+    # The sources sit at the root of the data directory, under a dot name the
+    # file server refuses; the output sits inside the project, because that is
+    # where it has to be for the publish to be one rename.
+    assert seen["project_dir"].parent == hub.data
+    assert seen["project_dir"].name.startswith(".src-")
+    assert seen["out_dir"].parent == hub.project_dir("proj1")
+    assert seen["out_dir"].name.startswith(".tmp-")
+    # And the build creates its own output directory (cadbuild.build insists on
+    # a clean one), so the hub must not have created it first.
+    assert not seen["out_dir_existed"]
+
+
+def test_build_parallelism_is_its_own_number(gated_hub):
+    """Accepting is not building, and the two ceilings are separate.
+
+    Four pushes are accepted while ONE build runs: the accept slots are sized by
+    a body on disk and a tar reader, the build pool by cores. A test that only
+    counted accepted pushes could not tell the two apart, so this counts how many
+    builds were inside the builder at once.
+    """
+    hub = gated_hub
+    accepted = [hub.publish_async("proj1", f"c{n}", good_build(f"v{n}"))
+                for n in range(4)]
+    assert [r.status_code for r in accepted] == [202] * 4
+    assert hub.builder.entered.wait(timeout=10)
+    time.sleep(0.2)  # long enough for a second worker to have started, if any
+
+    assert hub.builder.peak == 1, (
+        "more builds ran at once than the pool was given workers")
+    hub.builder.release.set()
+    for reply in accepted:
+        assert hub.await_job(reply.json()["job"]).status_code == 201
+
+
+def test_a_full_queue_is_refused_with_503_and_a_retry_after(tmp_path):
+    """A bounded queue, because an unbounded one lies about capacity.
+
+    A hub that accepts everything and gets to it in an hour has told CI the push
+    succeeded while holding an unpacked tree per entry. 503 is the truth and CI
+    already knows what to do with it.
+    """
+    builder = GatedBuilder()
+    hub = start_hub(tmp_path / "data", build_runner=builder, build_workers=1,
+                    build_queue_size=1)
+    try:
+        first = hub.publish_async("proj1", "c1", good_build("one"))
+        assert first.status_code == 202
+        assert builder.entered.wait(timeout=10)   # the worker is busy
+
+        second = hub.publish_async("proj1", "c2", good_build("two"))
+        assert second.status_code == 202          # ...and now the queue is full
+
+        third = hub.publish_async("proj1", "c3", good_build("three"))
+        assert third.status_code == 503
+        assert third.headers["Retry-After"] == str(QUEUE_FULL_RETRY_AFTER_SECONDS)
+        assert "queue is full" in third.json()["error"]
+
+        # The refused push left no tree behind and no job pretending to wait: a
+        # job nothing will ever pick up is a status that never changes its answer.
+        states = [json.loads(p.read_text())["state"]
+                  for p in sorted((hub.data / "jobs").glob("*/job.json"))]
+        assert states.count(STATE_FAILED) == 1, states
+
+        builder.release.set()
+        for reply in (first, second):
+            assert hub.await_job(reply.json()["job"]).status_code == 201
+    finally:
+        builder.release.set()
+        stop_hub(hub)
+
+
+@pytest.mark.parametrize("blows_up", [
+    RuntimeError("the pool itself broke"),
+    BrokenPipeError(errno.EPIPE, "Broken pipe"),
+])
+def test_a_job_the_handover_threw_under_is_failed_not_left_queued(
+        tmp_path, monkeypatch, blows_up):
+    """`jobs.create` has returned and `builds.submit` has not been reached.
+
+    Every other way out of `_queue_build` answers its JOB as well as its pusher:
+    the queue was full, the pool was stopping, a worker took it. This one used
+    to answer only the pusher — with a 500, or with nothing at all when the
+    socket had already gone — and neither is something a job can read. The
+    record stayed `queued`; `_prune_locked` never drops a job that has not
+    finished, so it held a MAX_JOBS slot until the hub restarted, while the
+    status endpoint went on saying `queued` about a build nobody was running.
+
+    BOTH HANDLERS, because both are on that path and the disconnect one is the
+    easier to overlook: it re-raises rather than replying, so there is no answer
+    anywhere in it to notice the job is missing from.
+    """
+    hub = start_hub(tmp_path / "data")
+    try:
+        def explodes(_task):
+            raise blows_up
+
+        monkeypatch.setattr(hub.server.builds, "submit", explodes)
+        try:
+            reply = hub.publish_async("proj1", "abc123", good_build())
+            # The ordinary failure is a 500; a client that has gone away gets
+            # no reply at all, which httpx reports as a protocol error.
+            assert reply.status_code == 500
+        except httpx.HTTPError:
+            assert isinstance(blows_up, BrokenPipeError)
+        monkeypatch.undo()
+
+        issued = _job_dirs(hub.data)
+        assert len(issued) == 1, issued
+        record = hub.server.jobs.get(issued[0])
+        assert record["state"] == STATE_FAILED, (
+            "the job stayed queued, so it holds a MAX_JOBS slot until the hub "
+            "restarts and answers `queued` about a build that does not exist")
+        assert record["code"] == 500
+        assert record["error"] == HANDOVER_ERROR
+        assert record["finished"]
+        # ...and the sources went with it, as on every path that did not hand
+        # the tree over to a worker.
+        assert _leftovers(hub, "proj1") == []
+    finally:
+        stop_hub(hub)
+
+
+def test_a_job_a_worker_already_owns_is_not_failed_by_a_late_throw(tmp_path,
+                                                                    monkeypatch):
+    """The other direction, which is the one that would damage a live build.
+
+    Once `submit` has returned SUBMIT_ACCEPTED the task belongs to a worker and
+    that worker is going to answer the job itself. Anything thrown after that
+    point — the log line, the reply tuple — must not fail a build that is at
+    that moment running, which is why the handover failure is conditional on
+    not having handed over.
+    """
+    hub = start_hub(tmp_path / "data")
+    try:
+        exploded = threading.Event()
+        real_info = jobs_module.logger.info
+
+        def explode_once(message, *args, **keywords):
+            if "queued as job" in str(message) and not exploded.is_set():
+                exploded.set()
+                raise RuntimeError("the log itself broke")
+            return real_info(message, *args, **keywords)
+
+        monkeypatch.setattr("src.app.logger.info", explode_once)
+        reply = hub.publish_async("proj1", "abc123", good_build())
+        monkeypatch.undo()
+        assert exploded.is_set(), "the throw never happened, so this proves nothing"
+        assert reply.status_code == 500
+
+        issued = _job_dirs(hub.data)
+        assert len(issued) == 1, issued
+        # The worker owned it and published it, and the push's own 500 did not
+        # take that away.
+        record = hub.server.jobs.get(issued[0])
+        deadline = time.monotonic() + 10
+        while record["state"] not in (STATE_DONE, STATE_FAILED):
+            assert time.monotonic() < deadline, record
+            time.sleep(0.02)
+            record = hub.server.jobs.get(issued[0])
+        assert record["state"] == STATE_DONE, record
+        assert record["error"] is None
+        assert (hub.project_dir("proj1") / "abc123").is_dir()
+    finally:
+        stop_hub(hub)
+
+
+# -- a build that fails ------------------------------------------------------
+def test_a_failed_build_moves_neither_latest_nor_the_slot(hub_factory):
+    builder = SwitchableBuilder()
+    hub = hub_factory(build_runner=builder)
+    assert hub.publish("proj1", "good1", good_build("good")).status_code == 201
+    assert hub.publish("proj1", "dev", good_build("slot")).status_code == 201
+    slot_before = (hub.project_dir("proj1") / "dev" / "assembled.json").read_bytes()
+
+    builder.fail = True
+    failed = hub.publish_async("proj1", "bad1", good_build("bad"))
+    record = hub.await_job(failed.json()["job"]).record
+    assert record["state"] == STATE_FAILED
+    assert record["status"] == STATUS_FAILED
+    assert record["code"] == 422
+    assert record["build_url"] is None
+    assert "refused" in record["error"]
+
+    failed_dev = hub.publish_async("proj1", "dev", good_build("bad slot"))
+    assert hub.await_job(failed_dev.json()["job"]).record["state"] == STATE_FAILED
+
+    assert not (hub.project_dir("proj1") / "bad1").exists()
+    assert os.readlink(hub.project_dir("proj1") / "latest") == "good1"
+    assert (hub.project_dir("proj1") / "dev" / "assembled.json"
+            ).read_bytes() == slot_before
+    listed = json.loads((hub.project_dir("proj1") / "builds.json").read_text())
+    assert [b["commit"] for b in listed["builds"]] == ["good1"]
+    # And neither the sources nor the half-built output outlived the job.
+    assert _leftovers(hub, "proj1") == []
+
+
+def test_a_build_the_hub_could_not_fence_is_ours_not_the_pushers(hub_factory):
+    """`limits_error` is a 500: the ceilings would not go on, and that says
+    nothing at all about the model that was pushed."""
+    builder = SwitchableBuilder()
+    builder.status = STATUS_LIMITS_ERROR
+    builder.log = "buildproc: RLIMIT_CPU could not be set\n"
+    hub = hub_factory(build_runner=builder)
+    builder.fail = True
+
+    reply = hub.publish_async("proj1", "abc123", good_build())
+    record = hub.await_job(reply.json()["job"]).record
+    assert record["state"] == STATE_FAILED
+    assert record["code"] == 500
+
+
+def test_a_job_is_never_left_building_when_something_throws(hub_factory):
+    """The one failure a job registry must not have.
+
+    A job that leaves the worker without a terminal state stays `building` until
+    the hub is restarted, and the pusher polls a status that will never change
+    again — which looks exactly like a build that is taking a long time.
+    """
+    def exploding(project_dir, out_dir, *, pid, **kw):
+        raise RuntimeError("the runner itself broke")
+
+    hub = hub_factory(build_runner=exploding)
+    reply = hub.publish_async("proj1", "abc123", good_build())
+    record = hub.await_job(reply.json()["job"]).record
+
+    assert record["state"] == STATE_FAILED
+    assert record["code"] == 500
+    assert record["error"] == "internal error"
+    assert record["finished"]
+    assert _leftovers(hub, "proj1") == []
+
+
+def test_a_build_that_produced_nothing_publishable_is_422(hub_factory):
+    """The build ran and the hub refused what it produced.
+
+    A tree with no meta.json is what `_finish_staging` turns down, and it is the
+    same 422 the push used to get — it just arrives through the job now, because
+    only a finished build can be asked the question.
+    """
+    hub = hub_factory()
+    reply = hub.publish_async("proj1", "abc123",
+                              tar_gz({"assembled.json": view_bytes()}))
+    record = hub.await_job(reply.json()["job"]).record
+    assert record["state"] == STATE_FAILED
+    assert record["code"] == 422
+    assert "meta.json" in record["error"]
+    assert not (hub.project_dir("proj1") / "abc123").exists()
+    assert _leftovers(hub, "proj1") == []
+
+
+# -- the log -----------------------------------------------------------------
+def test_the_build_log_is_handed_back_to_whoever_pushed(hub_factory):
+    """The whole reason this step exists.
+
+    Until now the model was built by a CI runner and a failed build was read in
+    the runner's job log. Building on the hub takes that away, and nothing
+    replaces it by itself.
+    """
+    builder = SwitchableBuilder()
+    builder.log = "exporting printables:\nbuild failed: bracket fouls standoff\n"
+    hub = hub_factory(build_runner=builder)
+    builder.fail = True
+
+    reply = hub.publish_async("proj1", "abc123", good_build())
+    job_id = reply.json()["job"]
+    hub.await_job(job_id)
+
+    log = hub.job_log(job_id)
+    assert log.status_code == 200
+    assert log.headers["Content-Type"] == "text/plain; charset=utf-8"
+    assert log.text == builder.log
+    # It is on the volume beside the record, not only in memory.
+    assert (hub.data / "jobs" / job_id / "log.txt").read_text() == builder.log
+
+
+def test_a_successful_build_keeps_its_log_too(hub):
+    reply = hub.publish_async("proj1", "abc123", good_build())
+    job_id = reply.json()["job"]
+    hub.await_job(job_id)
+    assert "copying builder" in hub.job_log(job_id).text
+
+
+def test_the_log_of_a_job_that_has_not_spoken_yet_is_empty_not_missing(gated_hub):
+    """Empty and 404 are different answers: one is "nothing yet", the other is
+    "no such job", and a poller has to be able to tell them apart."""
+    hub = gated_hub
+    job_id = hub.publish_async("proj1", "abc123", good_build()).json()["job"]
+    assert hub.builder.entered.wait(timeout=10)
+
+    log = hub.job_log(job_id)
+    assert log.status_code == 200
+    assert log.text == ""
+    hub.builder.release.set()
+    hub.await_job(job_id)
+
+
+# -- who may look ------------------------------------------------------------
+def test_both_job_endpoints_need_the_publish_token(hub):
+    job_id = hub.publish_async("proj1", "abc123", good_build()).json()["job"]
+    hub.await_job(job_id)
+
+    for path in (f"/api/v1/jobs/{job_id}", f"/api/v1/jobs/{job_id}/log"):
+        assert hub.get(path).status_code == 401, path
+        assert hub.get(path, headers={"Authorization": "Bearer nope"}
+                       ).status_code == 401, path
+        # The comment-read token guards a different thing and must not be
+        # accepted here: the two go to different places and rotate separately.
+        assert hub.get(path, headers={"Authorization": f"Bearer {READ_TOKEN}"}
+                       ).status_code == 401, path
+        assert hub.get(path, headers={"Authorization": f"Bearer {TOKEN}"}
+                       ).status_code == 200, path
+
+
+def test_an_unknown_job_answers_exactly_as_a_malformed_one_does(hub):
+    """A job id nobody issued and a job id belonging to somebody else must be
+    indistinguishable — the id is the only thing separating one pusher's build
+    log from another's."""
+    real = hub.publish_async("proj1", "abc123", good_build()).json()["job"]
+    hub.await_job(real)
+
+    stranger = "A" * 22          # well formed, never issued
+    malformed = ["short", "..", "x" * 40, f"{real}extra"]
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+
+    baseline = hub.get(f"/api/v1/jobs/{stranger}", headers=headers)
+    assert baseline.status_code == 404
+    for candidate in malformed:
+        reply = hub.get(f"/api/v1/jobs/{candidate}", headers=headers)
+        assert reply.status_code == 404, candidate
+        assert reply.json() == baseline.json(), candidate
+    assert hub.get(f"/api/v1/jobs/{stranger}/log", headers=headers
+                   ).status_code == 404
+    # And an id that is really a path is not one either.
+    assert hub.get(f"/api/v1/jobs/{real}/log/extra", headers=headers
+                   ).status_code == 404
+
+
+# -- the registry itself -----------------------------------------------------
+def test_a_job_stranded_by_a_restart_is_failed_at_startup(tmp_path):
+    """A job left `building` by a SIGKILL would otherwise never change again.
+
+    The process that was building it is gone and nothing resumes it — the
+    sources were unpacked into a directory the sweeper removes — so the pusher
+    would poll a status that stays `building` for the life of the volume.
+    """
+    data = tmp_path / "data"
+    first = JobStore(data)
+    queued = first.create("proj1", "aaa111")["id"]
+    building = first.create("proj1", "bbb222")["id"]
+    first.start(building)
+    finished = first.create("proj1", "ccc333")["id"]
+    first.finish(finished, state=STATE_DONE, code=201,
+                 build_url="/project/proj1/ccc333/")
+
+    after = JobStore(data)
+    for stranded in (queued, building):
+        record = after.get(stranded)
+        assert record["state"] == STATE_FAILED, stranded
+        assert record["code"] == 503
+        assert "restarted" in record["error"]
+        assert record["finished"]
+    # ...and a job that had already finished is left exactly as it was.
+    assert after.get(finished)["state"] == STATE_DONE
+    assert after.get(finished)["build_url"] == "/project/proj1/ccc333/"
+
+
+def test_a_stranded_job_is_reported_over_http_too(tmp_path):
+    data = tmp_path / "data"
+    store = JobStore(data)
+    job_id = store.create("proj1", "abc123")["id"]
+    store.start(job_id)
+
+    hub = start_hub(data)
+    try:
+        record = hub.job(job_id).json()
+        assert record["state"] == STATE_FAILED
+        assert "restarted" in record["error"]
+    finally:
+        stop_hub(hub)
+
+
+def test_jobs_are_pruned_by_count_when_a_new_one_arrives(tmp_path, monkeypatch):
+    """And all six share one `created`, pinned rather than hoped for.
+
+    `created` has second resolution, so a burst of pushes ties — and a prune
+    ordered by the timestamp then has its TIEBREAK decide which one survives
+    instead of the age. Freezing the clock is what makes this test about that
+    case every run: left to the real one, whether the six land inside a second
+    is a coin flip, and the test would quietly stop exercising the burst.
+    """
+    # Frozen at whatever the clock says NOW rather than at a literal date: a
+    # hardcoded stamp would drift past MAX_JOB_AGE_SECONDS one day and this test
+    # would start failing for the entirely unrelated reason that its jobs got too
+    # old to keep.
+    frozen = utcnow_iso()
+    monkeypatch.setattr(jobs_module, "utcnow_iso", lambda: frozen)
+    store = JobStore(tmp_path / "data", max_jobs=3)
+    created = []
+    for index in range(6):
+        record = store.create("proj1", f"c{index}")
+        store.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/c{index}/")
+        created.append(record["id"])
+        assert record["created"] == frozen
+
+    kept = [job_id for job_id in created if store.get(job_id) is not None]
+    assert len(kept) == 3
+    assert set(kept) == set(created[-3:])
+    # Off the volume as well as out of memory — the log is the bulk of a job.
+    assert _job_dirs(tmp_path / "data") == sorted(created[-3:])
+    # ...and the order file names exactly those three, newest last.
+    assert _volume_order(tmp_path / "data") == created[-3:]
+
+
+def test_the_order_retention_counts_by_survives_a_restart(tmp_path, monkeypatch):
+    """The same burst as the test above, read back by a fresh JobStore.
+
+    `_prune_locked` documents why it cannot sort by `created` — second
+    resolution, so a CI burst ties — and a restart has to restore the SAME
+    order or the ceiling drops a different three of the six than the running hub
+    would have. Sorting by `(created, id)` did not restore it: the id is 128
+    random bits, so the survivors were an arbitrary three. This is the test for
+    the restart specifically; the one above never reopens the store and could
+    not see it.
+    """
+    frozen = utcnow_iso()
+    monkeypatch.setattr(jobs_module, "utcnow_iso", lambda: frozen)
+    data = tmp_path / "data"
+    store = JobStore(data)
+    created = []
+    for index in range(6):
+        record = store.create("proj1", f"c{index}")
+        store.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/c{index}/")
+        created.append(record["id"])
+    assert {store.get(job_id)["created"] for job_id in created} == {frozen}
+
+    reopened = JobStore(data, max_jobs=3)
+    kept = [job_id for job_id in created if reopened.get(job_id) is not None]
+    assert kept == created[-3:]
+    # And the next job created after the restart still sorts after all of them,
+    # rather than in front of them with an order that started from scratch.
+    fresh = reopened.create("proj1", "c6")["id"]
+    assert _volume_order(data) == kept + [fresh]
+
+
+def test_a_job_that_is_still_running_is_never_pruned(tmp_path):
+    """Retention clears old evidence; a live build is not evidence yet.
+
+    Dropping it would take the status and the log out from under the pusher who
+    is at that moment polling them — and a 404 for a build that is running is
+    indistinguishable from a job id that was never issued.
+    """
+    store = JobStore(tmp_path / "data", max_jobs=1)
+    running = store.create("proj1", "slow")["id"]
+    store.start(running)
+    for index in range(4):
+        done = store.create("proj1", f"c{index}")["id"]
+        store.finish(done, state=STATE_DONE, code=201, build_url="/project/x/")
+
+    assert store.get(running)["state"] == STATE_BUILDING
+    assert (tmp_path / "data" / "jobs" / running).is_dir()
+
+
+def test_jobs_are_pruned_by_age(tmp_path):
+    """An age ceiling as well as a count: a hub nobody pushes to would otherwise
+    keep a job from two years ago because it never reached the count."""
+    data = tmp_path / "data"
+    store = JobStore(data, max_age_seconds=3600)
+    fresh = store.create("proj1", "fresh")["id"]
+    stale = store.create("proj1", "stale")["id"]
+
+    record = json.loads((data / "jobs" / stale / "job.json").read_text())
+    record["created"] = "2020-01-01T00:00:00Z"
+    (data / "jobs" / stale / "job.json").write_text(json.dumps(record))
+
+    reopened = JobStore(data, max_age_seconds=3600)
+    assert reopened.get(stale) is None
+    assert not (data / "jobs" / stale).exists()
+    assert reopened.get(fresh) is not None
+
+
+def test_a_pushed_job_survives_a_restart_and_is_still_readable(tmp_path):
+    """The log is on the volume, so it outlives the process that captured it."""
+    data = tmp_path / "data"
+    hub = start_hub(data)
+    try:
+        job_id = hub.publish_async("proj1", "abc123", good_build()).json()["job"]
+        assert hub.await_job(job_id).status_code == 201
+    finally:
+        stop_hub(hub)
+
+    again = start_hub(data)
+    try:
+        assert again.job(job_id).json()["state"] == STATE_DONE
+        assert "copying builder" in again.job_log(job_id).text
+    finally:
+        stop_hub(again)
+
+
+def test_the_registry_holds_nothing_a_reader_can_corrupt(tmp_path):
+    """`get` hands out a copy, not the worker's live record."""
+    store = JobStore(tmp_path / "data")
+    job_id = store.create("proj1", "abc123")["id"]
+    handed_out = store.get(job_id)
+    handed_out["state"] = "nonsense"
+    assert store.get(job_id)["state"] == STATE_QUEUED
+
+
+def test_the_default_ceilings_are_the_documented_ones(tmp_path):
+    """Numbers other parts of the system are reasoned about with.
+
+    `MAX_CONCURRENT_BUILDS` is deliberately NOT `app.MAX_CONCURRENT_PUBLISHES`:
+    one is sized by a body on disk and a tar reader, the other by cores, and the
+    day either is retuned the other must not move with it.
+    """
+    from src.app import MAX_CONCURRENT_PUBLISHES
+
+    assert jobs_module.MAX_CONCURRENT_BUILDS == 2
+    assert jobs_module.MAX_CONCURRENT_BUILDS != MAX_CONCURRENT_PUBLISHES
+    assert jobs_module.MAX_QUEUED_JOBS >= jobs_module.MAX_CONCURRENT_BUILDS
+    assert MAX_JOBS == 200
+    assert jobs_module.MAX_JOB_AGE_SECONDS == 14 * 24 * 3600
+    assert jobs_module.MAX_STRANGERS_SWEPT == 1024
+
+    # THE ORDER FILE THIS HUB CAN WRITE HAS TO FIT UNDER THE CEILING IT WILL
+    # REFUSE TO READ, and the two are computed from different numbers, so
+    # nothing else keeps them on the same side of each other. The failure is
+    # silent in the worst way: every start reads the file the previous one
+    # wrote, refuses it as oversized, announces the order as lost and reads
+    # every job as a stranger — retention then keeps whichever ones the volume
+    # happened to list last. Pinned as the inequality rather than as today's
+    # bytes, because what would break it is somebody trimming
+    # ORDER_ENTRY_BYTES to "what an id actually costs" (28 bytes today, against
+    # 64 declared — the headroom is 2.3x and it is deliberate).
+    entries = (MAX_JOBS + jobs_module.MAX_QUEUED_JOBS
+               + jobs_module.MAX_CONCURRENT_BUILDS)
+    widest = jobs_module._order_bytes([f"{index:022d}" for index in range(entries)])
+    order_ceiling = (jobs_module.ORDER_ENVELOPE_BYTES
+                     + jobs_module.ORDER_ENTRY_BYTES * entries)
+    assert len(widest) <= order_ceiling, (
+        f"the fullest order file this hub can write is {len(widest)} bytes "
+        f"against a read ceiling of {order_ceiling}; every start would refuse "
+        f"the file the one before it wrote")
+    # And the registry itself agrees on both halves of that number, rather than
+    # keeping its own copy of the arithmetic.
+    registry = JobStore(tmp_path / "data")
+    assert registry._max_order_entries == entries
+    assert registry._max_order_bytes == order_ceiling
+    # And the WHOLE stop fits inside docker's default stop grace period (10 s;
+    # the compose file sets no `stop_grace_period`). Pinned as the arithmetic it
+    # is, not as a bare "under ten": the stop costs one `serve_forever` poll
+    # before `shutdown` is even entered, and then the budget — which covers the
+    # queue drain AND the joins, because `shutdown` starts the clock before the
+    # drain. A budget over the grace period saves no build — SIGKILL arrives on
+    # docker's schedule, not ours — it only turns every ordinary stop into the
+    # abrupt ending the join is there to avoid.
+    #
+    # What is NOT in this sum is the pool size, and that is the point of writing
+    # it out: the joins share one deadline (`BuildQueue.shutdown`), so growing
+    # MAX_CONCURRENT_BUILDS cannot grow the stop. Multiplied per worker, today's
+    # two would already spend the entire grace period on the joins alone.
+    #
+    # The one thing the sum cannot promise is a drain that OVERRUNS the budget
+    # on its own — it is up to MAX_QUEUED_JOBS `rmtree`s and record writes, and
+    # cutting it short would leave exactly the trees and unanswered jobs it
+    # exists to collect. What the floor bounds is the stop's own waiting on top
+    # of that: the total is `poll + max(JOIN, drain + FLOOR)`, which is why the
+    # floor is never allowed to exceed the budget.
+    docker_stop_grace_seconds = 10
+    serve_forever_poll_seconds = 0.5     # the default `main.py` serves with
+    assert jobs_module.WORKER_JOIN_SECONDS > 0
+    assert 0 < jobs_module.WORKER_JOIN_FLOOR_SECONDS
+    assert (jobs_module.WORKER_JOIN_FLOOR_SECONDS
+            <= jobs_module.WORKER_JOIN_SECONDS)
+    assert (serve_forever_poll_seconds + jobs_module.WORKER_JOIN_SECONDS
+            < docker_stop_grace_seconds)
+
+
+# -- what a build can leave on the volume ------------------------------------
+def test_a_record_the_hub_cannot_write_back_does_not_stop_it_starting(tmp_path):
+    """One planted `NaN` used to be a hub that never started again.
+
+    `json.loads` accepts `NaN` and `Infinity` — a Python extension, on by
+    default — and `json.dumps(allow_nan=False)`, which is what this module
+    writes with, refuses them. `_load` rewrites every job it finds in flight, so
+    a record left `building` with a non-finite number in it raised out of
+    `JobStore.__init__`, out of `create_server` and out of `main()`. From the
+    volume, on every start, for ever — and the volume is writable by every
+    build.
+    """
+    data = tmp_path / "data"
+    real = JobStore(data)
+    kept = real.create("proj1", "abc123")["id"]
+    real.finish(kept, state=STATE_DONE, code=201,
+                build_url="/project/proj1/abc123/")
+
+    poisoned = "P" * 22
+    _plant_job(data, poisoned, state=STATE_BUILDING,
+               duration_seconds=float("nan"))
+
+    again = JobStore(data)
+    # The hub is up, and the jobs it really wrote are exactly as they were.
+    assert again.get(kept)["state"] == STATE_DONE
+    # The planted one was read into the shape this module writes: no non-finite
+    # number survived, so it could be failed like any other stranded job.
+    record = again.get(poisoned)
+    assert record["state"] == STATE_FAILED
+    assert record["duration_seconds"] is None
+
+
+def test_a_record_this_hub_did_not_write_is_skipped_rather_than_believed(tmp_path):
+    """Three shapes, three reasons, one answer: it is not a record.
+
+    A state outside the four is the worst of them — retention only ever drops a
+    TERMINAL job and `_load` only ever fails a `queued`/`building` one, so a
+    fifth word is a record no rule can reach, counting against MAX_JOBS for the
+    life of the volume.
+    """
+    data = tmp_path / "data"
+    JobStore(data)
+    wrong_state, wrong_id, too_big = "S" * 22, "I" * 22, "B" * 22
+    _plant_job(data, wrong_state, state="pending-for-ever")
+    _plant_job(data, wrong_id, id="J" * 22)
+    _plant_job(data, too_big, error="x" * (MAX_RECORD_BYTES + 1024))
+
+    store = JobStore(data)
+    for planted in (wrong_state, wrong_id, too_big):
+        assert store.get(planted) is None, planted
+        # Left where it is rather than deleted: unreadable is not proof of who
+        # wrote it, and somebody may want to look at it.
+        assert (data / "jobs" / planted).is_dir(), planted
+
+
+def test_a_directory_the_order_file_does_not_name_sorts_oldest(tmp_path):
+    """A record the hub did not put in the order is read at the end retention eats.
+
+    The volume is writable by every build, so a directory holding a perfectly
+    well-formed record is no evidence that this hub ever created the job. The
+    registry therefore trusts exactly one statement about the order — the file
+    it wrote itself — and reads everything else as older than all of it. Oldest
+    is the end that cannot be used: `_prune_locked` drops it first, so planting
+    directories crowds out no real job however the record inside is filled in.
+
+    THE VERSION THIS REPLACES kept the order as a number in each record, so it
+    had to trust the number FOR ITS ORDER — and a planted record simply claimed
+    to be the newest job there is and outlived the real ones. There is nothing
+    to claim any more: a list of ids carries no magnitude.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data, max_jobs=3)
+    real = []
+    for index in range(3):
+        record = store.create("proj1", f"c{index}")
+        store.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/c{index}/")
+        real.append(record["id"])
+    # `z` * 22 sorts last in the id alphabet AND the planted record claims the
+    # largest ordering number the old reader would accept: whichever tiebreak is
+    # left over, this is the record that wins it.
+    planted = "z" * 22
+    _plant_job(data, planted, state=STATE_DONE, seq=2 ** 31)
+
+    reopened = JobStore(data, max_jobs=3)
+    assert [job_id for job_id in real
+            if reopened.get(job_id) is not None] == real, (
+        "a planted directory displaced a job this hub really created")
+    assert reopened.get(planted) is None
+    # Left where it is rather than deleted: the ceiling had no room to read it,
+    # and being unnamed by the order file is not proof of who wrote it.
+    assert (data / "jobs" / planted).is_dir()
+
+    # With room under the ceiling it IS adopted — the hub does not throw away a
+    # job whose order entry never reached the volume — but at the oldest end, so
+    # the very next push is what pushes it out, ahead of every real job.
+    roomy = JobStore(data, max_jobs=4)
+    assert roomy.get(planted) is not None
+    fresh = roomy.create("proj1", "c3")
+    roomy.finish(fresh["id"], state=STATE_DONE, code=201,
+                 build_url="/project/proj1/c3/")
+    assert roomy.get(planted) is None
+    assert all(roomy.get(job_id) is not None for job_id in real)
+
+
+def test_the_creation_order_a_restart_reads_is_the_one_the_running_hub_had(
+        tmp_path):
+    """Across a restart, a prune, and a restart after it.
+
+    Two restarts with a prune between them, because one restart with nothing
+    dropped cannot see the failure this pins: with nothing dropped, any
+    mechanism at all looks correct. What broke before was exactly the second
+    step — the running hub's order reached the volume for SOME records and not
+    others, so the third start read an order the hub had never been in, and the
+    visible symptom was retention keeping an arbitrary three of six.
+    """
+    data = tmp_path / "data"
+    first = JobStore(data, max_jobs=3)
+    made = []
+    for index in range(6):
+        record = first.create("proj1", f"c{index}")
+        first.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/c{index}/")
+        made.append(record["id"])
+    # Three survived the ceiling, and the volume says so in one place.
+    survivors = made[3:]
+    assert _volume_order(data) == survivors
+    assert _job_dirs(data) == sorted(survivors)
+
+    # A roomier ceiling on the way back up, so nothing is pruned and the order
+    # this start writes is the whole of what it read plus what it made.
+    second = JobStore(data, max_jobs=10)
+    fresh = []
+    for index in range(3):
+        record = second.create("proj1", f"n{index}")
+        second.finish(record["id"], state=STATE_DONE, code=201,
+                      build_url=f"/project/proj1/n{index}/")
+        fresh.append(record["id"])
+    assert _volume_order(data) == survivors + fresh, (
+        "the order the volume holds is not the order this hub created the jobs "
+        "in, so the next start will keep the wrong ones")
+
+    # And the consequence, stated as the thing anybody would notice: the three
+    # newest jobs are the three that survive a tighter ceiling.
+    third = JobStore(data, max_jobs=3)
+    assert _job_dirs(data) == sorted(fresh), (
+        "retention kept jobs that were made before the ones it dropped")
+    assert all(third.get(job_id) is not None for job_id in fresh)
+
+
+def test_one_record_the_volume_refuses_cannot_reorder_the_registry(tmp_path):
+    """The write-back pass has one stopping place per record. None is the order.
+
+    `_rewrite_locked` writes the records ONE AT A TIME, and a build chooses
+    which of those writes fails without needing a bug anywhere: `chmod 0500` on
+    one job directory refuses exactly that record's write and no other.
+    `atomic_write_bytes` cannot create its temporary file in there — and could
+    not rename one in from outside either, because `rename` needs the same write
+    permission on the destination directory that `open` needed.
+
+    WHEN THE ORDER WAS A NUMBER IN EACH RECORD that was enough to reorder the
+    registry. The pass renumbered 4,5,6 into 1,2,3, the middle write failed, and
+    the volume was left holding 1,5,3: two numbering spaces at once, an order
+    the running hub had never been in (c3 < c5 < c4 instead of c3 < c4 < c5),
+    and — with the counter restarted at len+1 — numbers the hub then handed out
+    again, to be broken by 128 random bits of id. The order is one file now, so
+    a record the volume refuses costs that record's normalization and nothing
+    else.
+    """
+    data = tmp_path / "data"
+    first = JobStore(data, max_jobs=3)
+    made = []
+    for index in range(6):
+        record = first.create("proj1", f"c{index}")
+        first.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/c{index}/")
+        made.append(record["id"])
+    kept = made[3:]                       # c3, c4, c5 — oldest to newest
+    assert _volume_order(data) == kept
+
+    # A build makes exactly the MIDDLE record unwritable, and nothing else.
+    middle = data / "jobs" / kept[1]
+    os.chmod(middle, 0o500)
+    try:
+        partial = JobStore(data, max_jobs=3)
+        # Still served, out of memory: a record that could not be written back
+        # is not a record that is forgotten.
+        assert partial.get(kept[1])["state"] == STATE_DONE
+    finally:
+        os.chmod(middle, 0o700)
+
+    # The order on the volume is still, exactly, the order the running hub had.
+    assert _volume_order(data) == kept, (
+        "a single unwritable job directory changed the order of the registry")
+    # ...and the consequence somebody would actually see: the next start with
+    # room for one keeps the job that really was the newest.
+    tightest = JobStore(data, max_jobs=1)
+    assert [job_id for job_id in kept
+            if tightest.get(job_id) is not None] == [kept[2]]
+
+
+def test_an_order_the_volume_refuses_leaves_the_previous_one_whole(
+        tmp_path, monkeypatch):
+    """One write, so there is no half of it to be left behind.
+
+    This is the property the whole arrangement exists for, stated as the failure
+    rather than the success: the order that reaches the volume is either the new
+    one entire or the old one entire. `atomic_write_bytes` writes a temporary
+    file and renames it, and a rename does not half-happen — so a refused order
+    write costs the changes since the last one that landed, and costs nothing
+    the changes before it.
+
+    What the next start then does with the jobs the order does not name is the
+    documented fallback and not a scramble: they go to the OLDEST end, and every
+    job the order DOES name keeps its place relative to every other.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data, max_jobs=10)
+    made = []
+    for index in range(3):
+        record = store.create("proj1", f"c{index}")
+        store.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/c{index}/")
+        made.append(record["id"])
+    assert _volume_order(data) == made
+
+    landed = jobs_module.atomic_write_bytes
+
+    def refuse_the_order(path, payload, *args, **keywords):
+        if Path(path).name == ORDER_NAME:
+            raise OSError(errno.EACCES, "Permission denied")
+        return landed(path, payload, *args, **keywords)
+
+    monkeypatch.setattr(jobs_module, "atomic_write_bytes", refuse_the_order)
+    later = []
+    for index in range(2):
+        # The push is still ACCEPTED: the order is not what a push needs to
+        # succeed, and refusing one because a 5 KiB file did not land would
+        # fail a build that is about to run.
+        record = store.create("proj1", f"n{index}")
+        store.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/n{index}/")
+        later.append(record["id"])
+        assert store.get(record["id"])["state"] == STATE_DONE
+    monkeypatch.undo()
+
+    # The file is exactly what the last write that LANDED put there — the three
+    # original ids in their original order. Not a mixture, not a truncation, and
+    # not one of the two new jobs half inserted.
+    assert _volume_order(data) == made
+
+    reopened = JobStore(data, max_jobs=10)
+    # Nothing was lost: the two jobs the order never heard about are adopted.
+    assert all(reopened.get(job_id) is not None for job_id in made + later)
+    # And they went to the oldest end, while the three the order names kept
+    # their order among themselves exactly.
+    order = _volume_order(data)
+    assert order[-3:] == made
+    assert set(order[:2]) == set(later)
+
+
+# -- reading the order file itself -------------------------------------------
+# `_read_order` is the load-bearing half of everything above: the registry
+# trusts exactly one statement about the creation order, and this is the reader
+# of it. It is also entirely reachable by a build, so its ceilings and its
+# rebuilding matter as much as `_read_record`'s do.
+def test_the_order_ceiling_keeps_the_newest_ids_not_the_oldest(tmp_path):
+    """The TAIL survives the entry ceiling, and which end is not cosmetic.
+
+    The newest jobs are at the end of the file and they are the ones retention
+    keeps. A ceiling that kept the HEAD would hand `_load` the oldest ids, so
+    every recent job would be a directory the order does not name — read as a
+    stranger, put at the OLDEST end, and dropped first. The symptom is a hub
+    that throws away precisely the jobs somebody just pushed, while behaving
+    perfectly otherwise.
+    """
+    path = tmp_path / ORDER_NAME
+    ids = [f"o{index:02d}".ljust(22, "y") for index in range(8)]
+    path.write_bytes(json.dumps({"jobs": ids}).encode("utf-8"))
+
+    assert jobs_module._read_order(path, 3, 4096) == ids[-3:]
+    # ...and under the ceiling nothing is cut at all.
+    assert jobs_module._read_order(path, 8, 4096) == ids
+
+
+def test_a_repeated_id_in_the_order_file_is_read_once(tmp_path):
+    """Distinct ids, and a repeat keeps the OLDEST position it appeared at.
+
+    Oldest is the safe end — the same one `_load` puts a stranger at — so a
+    build that repeats an id cannot use the repeat to move a job later in the
+    queue than it really is.
+    """
+    path = tmp_path / ORDER_NAME
+    first, second, third = "a" * 22, "b" * 22, "c" * 22
+    path.write_bytes(json.dumps(
+        {"jobs": [first, second, first, third, second]}).encode("utf-8"))
+
+    assert jobs_module._read_order(path, 10, 4096) == [first, second, third]
+
+
+def test_a_padded_order_file_cannot_crowd_out_a_job_of_this_hubs(tmp_path):
+    """What the de-duplication above is actually holding up.
+
+    `known` is what the room for strangers is measured against, and a stranger
+    here is this hub's OWN job whose order entry never reached the volume —
+    adopted at the oldest end rather than thrown away. Repeats inflate `known`
+    without naming anything new, so a file padded with copies of one real id
+    leaves no room to adopt, and a job the hub really created is read as
+    somebody else's directory and left to the age sweep.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data, max_jobs=5)
+    real = []
+    for index in range(2):
+        record = store.create("proj1", f"c{index}")
+        store.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/c{index}/")
+        real.append(record["id"])
+    # A job of this hub's whose order write never landed: a well-formed record
+    # in a directory the order file does not name.
+    unnamed = "U" * 22
+    _plant_job(data, unnamed, state=STATE_DONE)
+
+    # ...and an order file padded to the ceiling with copies of a real id.
+    (data / "jobs" / ORDER_NAME).write_bytes(json.dumps(
+        {"jobs": [real[0]] * 4 + [real[1]]}).encode("utf-8"))
+
+    reopened = JobStore(data, max_jobs=5)
+    assert reopened.get(unnamed) is not None, (
+        "an order file padded with repeats took the room this hub keeps for "
+        "adopting a job whose order entry never landed")
+    assert all(reopened.get(job_id) is not None for job_id in real)
+
+
+def test_a_permuted_order_file_is_believed_and_that_is_the_accepted_cost(
+        tmp_path):
+    """A build can write this file, so it can write a WELL-FORMED one.
+
+    Real ids, permuted: every name is valid, every directory exists, the size is
+    under the ceiling. There is nothing left for the reader to object to and it
+    does not object — retention's order is then whatever the build said, and the
+    hub says nothing about it.
+
+    ACCEPTED RATHER THAN FIXED, and the reason is that it is not an escalation:
+    the same build can `rmtree` another job's directory outright, which is
+    strictly more than moving it up the queue it is deleted from. What the file
+    buys is the narrower claim `ORDER_NAME` makes — a build that fails ONE
+    record's write no longer reorders the registry — and this test is here so
+    the wider claim is not read into it by mistake.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data, max_jobs=3)
+    made = []
+    for index in range(3):
+        record = store.create("proj1", f"c{index}")
+        store.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/c{index}/")
+        made.append(record["id"])
+    assert _volume_order(data) == made
+
+    (data / "jobs" / ORDER_NAME).write_bytes(json.dumps(
+        {"jobs": list(reversed(made))}).encode("utf-8"))
+
+    said = []
+    sink = logger.add(said.append, level="WARNING")
+    try:
+        reopened = JobStore(data, max_jobs=1)
+    finally:
+        logger.remove(sink)
+
+    # The job the FILE calls newest is the one that survived — which is the one
+    # the running hub created FIRST.
+    assert [job_id for job_id in made
+            if reopened.get(job_id) is not None] == [made[0]]
+    assert said == [], (
+        "a permuted order file was announced; nothing here can tell one from a "
+        "real order, so a warning would fire on every ordinary start too")
+
+
+def test_an_order_file_larger_than_the_hub_writes_is_refused_unread(
+        tmp_path, monkeypatch):
+    """The byte ceiling, and the half of it that is about memory.
+
+    `data/jobs/` is writable by every build, so the SIZE of this file is not a
+    number this hub decides — and it is read on the startup path, where a hub
+    that dies for memory never gets to sweep the thing that killed it. Refusing
+    it is only half the answer: the refusal has to happen without the bytes
+    reaching memory first, which is what the read size below pins.
+    """
+    path = tmp_path / ORDER_NAME
+    ceiling = 4096
+    ids = [f"o{index:02d}".ljust(22, "y") for index in range(4)]
+    # Well formed and enormous: the shape is right, so nothing but the ceiling
+    # can turn it down.
+    path.write_bytes(json.dumps(
+        {"jobs": ids, "pad": "x" * (ceiling * 8)}).encode("utf-8"))
+    assert path.stat().st_size > ceiling * 8
+
+    sizes = []
+    real_open = builtins.open
+
+    def watched_open(target, *args, **keywords):
+        handle = real_open(target, *args, **keywords)
+        return (_CountedHandle(handle, sizes) if Path(target) == path
+                else handle)
+
+    said = []
+    sink = logger.add(said.append, level="WARNING")
+    monkeypatch.setattr(builtins, "open", watched_open)
+    try:
+        assert jobs_module._read_order(path, 8, ceiling) is None
+    finally:
+        monkeypatch.undo()
+        logger.remove(sink)
+
+    assert sizes == [ceiling + 1], (
+        f"the reader asked for {sizes} bytes of a file a build chose the size "
+        f"of; one byte over the ceiling is all it may ever hold")
+    assert len(said) == 1 and "not read" in said[0]
+
+
+def test_an_empty_order_beside_job_directories_is_announced(tmp_path):
+    """Planting `{"jobs": []}` must not be quieter than deleting the file.
+
+    Both are the same loss — every directory becomes a stranger and retention
+    drops them in whatever sequence the volume lists — and the file was the only
+    thing that expressed the order, so nothing else notices. `_read_order` still
+    tells "empty" from "unreadable"; that distinction is about whether to
+    believe a damaged order, not about whether to say the order is gone.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data)
+    made = []
+    for index in range(3):
+        record = store.create("proj1", f"c{index}")
+        store.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/c{index}/")
+        made.append(record["id"])
+
+    (data / "jobs" / ORDER_NAME).write_bytes(
+        json.dumps({"jobs": []}).encode("utf-8"))
+
+    said = []
+    sink = logger.add(said.append, level="WARNING")
+    try:
+        reopened = JobStore(data)
+    finally:
+        logger.remove(sink)
+
+    lost = [line for line in said if "no order to put them in" in line]
+    assert len(lost) == 1 and "3 job" in lost[0], said
+    # ...and the jobs themselves are adopted, at the oldest end, as they are
+    # when the file is missing outright.
+    assert all(reopened.get(job_id) is not None for job_id in made)
+
+
+def test_an_empty_order_on_an_empty_registry_says_nothing(tmp_path):
+    """The other half: an empty order is what a registry with no jobs HAS.
+
+    This is the state every fresh hub writes for itself, so a warning here would
+    fire on the first start of every deployment and teach whoever reads the logs
+    to ignore the line that matters.
+    """
+    data = tmp_path / "data"
+    JobStore(data)
+    assert _volume_order(data) == []
+
+    said = []
+    sink = logger.add(said.append, level="WARNING")
+    try:
+        JobStore(data)
+    finally:
+        logger.remove(sink)
+    assert said == []
+
+
+def test_a_record_dated_in_the_future_cannot_outlive_the_age_ceiling(
+        tmp_path, monkeypatch):
+    """The age ceiling measures a string every build can write.
+
+    A record dated 2999 is never older than any cutoff, so retention could not
+    reach it and it counted against MAX_JOBS for the life of the volume — the
+    ceiling defeated by a date rather than by anything the hub did. Pulled back
+    to now, it ages like every other record; the clock is frozen at a date long
+    past so "ages like every other record" is observable in one step.
+
+    THE FROZEN CLOCK IS WHAT MAKES THIS ONE READABLE AND ALSO WHAT MAKES IT
+    INCOMPLETE, which is why the test below exists beside it: `utcnow_iso` is
+    mocked here and `time.time` is not, so the stamp lands in 2020 and the
+    cutoff is measured from today. With the real clock the correction lands on
+    "now" and this test would pass on a hub where nothing was corrected at all.
+    """
+    data = tmp_path / "data"
+    JobStore(data)
+    planted = "F" * 22
+    _plant_job(data, planted, state=STATE_DONE,
+               created="2999-01-01T00:00:00Z")
+
+    monkeypatch.setattr(jobs_module, "utcnow_iso",
+                        lambda: "2020-01-01T00:00:00Z")
+    store = JobStore(data, max_age_seconds=3600)
+
+    assert store.get(planted) is None
+    assert not (data / "jobs" / planted).exists()
+
+
+def test_the_stamp_pulled_back_from_the_future_lands_on_the_volume(tmp_path):
+    """The same defence, on the real clock, across a restart.
+
+    `_created` pulls a date in the future back to "now" — in MEMORY. For a
+    record that is already terminal nothing used to write that back, so the
+    volume kept 2999 and the next start read it and pulled it back to a fresh
+    "now" all over again. The age ceiling could therefore never reach the
+    record as long as the hub restarted more often than once every
+    MAX_JOB_AGE_SECONDS, which is to say always — a fourteen-day ceiling
+    defeated by an ordinary redeploy.
+
+    No clock is mocked here on purpose. Freezing `utcnow_iso` in the past hides
+    the failure completely: the correction then lands in 2020 while the cutoff
+    is measured from today, so the record ages out whether or not the volume
+    ever heard about it.
+    """
+    data = tmp_path / "data"
+    JobStore(data)
+    planted = "F" * 22
+    _plant_job(data, planted, state=STATE_DONE,
+               created="2999-01-01T00:00:00Z")
+
+    # Adopted rather than dropped — "now" is the truthful reading of a date this
+    # hub cannot believe — and, the half that matters, corrected ON DISK.
+    first = JobStore(data, max_age_seconds=1)
+    assert first.get(planted) is not None
+    assert _volume_records(data)[planted]["created"] != "2999-01-01T00:00:00Z"
+
+    # Two seconds is past a one-second ceiling by a whole second, whichever way
+    # the stamp's truncation to seconds went.
+    time.sleep(2)
+    second = JobStore(data, max_age_seconds=1)
+    assert second.get(planted) is None, (
+        "the record is still counted, so the volume still says 2999 and every "
+        "start pulls it back to a fresh now")
+    assert not (data / "jobs" / planted).exists()
+
+
+def test_a_directory_with_no_record_in_it_is_swept_once_it_ages_out(tmp_path):
+    """MAX_JOBS bounds what the hub can READ; this bounds the rest.
+
+    A directory under `data/jobs/` is not necessarily a job — the volume is
+    writable by every build — and the hub makes one itself a moment before it
+    writes the record into it, so a volume that fills up leaves one too.
+    Refusing to believe them was never the same as collecting them, and until
+    this sweep nothing ever removed one.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data)
+    kept = store.create("proj1", "abc123")["id"]
+    store.finish(kept, state=STATE_DONE, code=201,
+                 build_url="/project/proj1/abc123/")
+
+    old_empty = data / "jobs" / ("E" * 22)
+    old_empty.mkdir()
+    old_garbage = data / "jobs" / ("G" * 22)
+    old_garbage.mkdir()
+    (old_garbage / "job.json").write_bytes(b"this is not a job record")
+    fresh_empty = data / "jobs" / ("N" * 22)
+    fresh_empty.mkdir()
+    stale = time.time() - 7200
+    for directory in (old_empty, old_garbage):
+        os.utime(directory, (stale, stale))
+
+    reopened = JobStore(data, max_age_seconds=3600)
+
+    assert not old_empty.exists()
+    assert not old_garbage.exists()
+    # The fresh one stays: being unreadable is not proof of who wrote it, and it
+    # may be evidence somebody wants. It goes the same way once it is as old.
+    assert fresh_empty.is_dir()
+    assert reopened.get(kept) is not None
+
+
+def test_the_startup_sweep_reaches_everything_that_is_not_a_job(tmp_path):
+    """"MAX_JOBS bounds what the hub can READ; this bounds the rest" — all of it.
+
+    The previous version of that sentence was a claim the sweep could not back,
+    and it missed in two directions at once. By NAME: only directories whose
+    name was a well-formed job id ever reached the sweep, so a stray file, a
+    directory called anything else, or a symlink was skipped before the age
+    ceiling could look at it and stayed for the life of the volume. By TIME: the
+    mtime is a value a build sets freely, and one dated in the future is never
+    past any cutoff — `created`-in-2999 for a directory.
+
+    The mtime cannot be answered the way `_created` answers the stamp, and that
+    is worth saying rather than working around: writing a corrected mtime back
+    would destroy the evidence the sweep is being careful about, because the
+    mtime IS the evidence. So it is not corrected — a date in the future simply
+    buys no immunity.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data)
+    kept = store.create("proj1", "abc123")["id"]
+    store.finish(kept, state=STATE_DONE, code=201,
+                 build_url="/project/proj1/abc123/")
+
+    stale = time.time() - 7200
+    jobs_dir = data / "jobs"
+    odd_name = jobs_dir / "not-a-job-id"
+    odd_name.mkdir()
+    stray_file = jobs_dir / "leftover.tmp"
+    stray_file.write_bytes(b"x" * 16)
+    link = jobs_dir / ("L" * 22)
+    link.symlink_to(jobs_dir / kept)
+    for entry in (odd_name, stray_file):
+        os.utime(entry, (stale, stale))
+    os.utime(link, (stale, stale), follow_symlinks=False)
+    # A directory dated in 2999 — with a name the sweep DOES recognise, so this
+    # is the time hole on its own and not the name one over again.
+    future = jobs_dir / ("U" * 22)
+    future.mkdir()
+    os.utime(future, (time.time() + 10 * 365 * 24 * 3600,) * 2)
+
+    reopened = JobStore(data, max_age_seconds=3600)
+
+    assert not odd_name.exists(), "a directory outside the id alphabet was skipped"
+    assert not stray_file.exists(), "a stray file was skipped"
+    assert not link.is_symlink(), "a symlink was skipped"
+    assert not future.exists(), "a date in the future bought immunity"
+    # The real job, and its log, are untouched — including the one the symlink
+    # was pointing at, which must go with the LINK and not with its target.
+    assert reopened.get(kept) is not None
+    assert (jobs_dir / kept / "job.json").is_file()
+    assert (jobs_dir / ORDER_NAME).is_file()
+
+
+def test_a_half_written_record_lands_where_the_sweep_looks(tmp_path,
+                                                           monkeypatch):
+    """The registry's temporary files go in `data/jobs/`, not inside a job.
+
+    `atomic_write_bytes` writes a temporary file and renames it, so a process
+    killed between the two leaves the temporary behind. Beside its target it
+    would be INSIDE a job directory, and nothing collects one there: the sweep
+    removes whole entries under `data/jobs/` that are not jobs of this registry,
+    and a live job's directory is a job. In the shared directory it is a
+    stranger like any other and ages out with everything else.
+
+    THIS IS NOT A DEFENCE against a build making one write fail, which is what
+    the relocation was first proposed for. `rename(tmp, dir/name)` needs write
+    permission on the DESTINATION directory exactly as `open(dir/tmp)` did, so
+    `chmod 0500` on a job directory refuses both — measured, both ways. What
+    makes a pointwise failure survivable is that nothing shared between records
+    is written per record any more.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data)
+    job_id = store.create("proj1", "abc123")["id"]
+
+    renamed = []
+    landing = store_module.os.rename
+    monkeypatch.setattr(
+        store_module.os, "rename",
+        lambda src, dst: (renamed.append(Path(src)), landing(src, dst))[1])
+    store.finish(job_id, state=STATE_DONE, code=201,
+                 build_url="/project/proj1/abc123/", log="a build said this\n")
+    monkeypatch.undo()
+
+    assert renamed, "nothing was written, so this test proves nothing"
+    assert all(path.parent == data / "jobs" for path in renamed), (
+        f"a temporary file was written inside a job directory, where nothing "
+        f"ever collects a leftover: {[str(p) for p in renamed]}")
+
+    # And the halves of the reason, on the volume: a leftover in the shared
+    # directory ages out, one inside a job directory does not — which is why
+    # the writer no longer puts one there.
+    stale = time.time() - 7200
+    shared = data / "jobs" / f"{JSON_TMP_PREFIX}job.json-{'a' * 32}"
+    shared.write_bytes(b"half a record")
+    inside = data / "jobs" / job_id / f"{JSON_TMP_PREFIX}job.json-{'b' * 32}"
+    inside.write_bytes(b"half a record")
+    for leftover in (shared, inside):
+        os.utime(leftover, (stale, stale))
+
+    reopened = JobStore(data, max_age_seconds=3600)
+    assert not shared.exists()
+    assert inside.exists()
+    assert reopened.get(job_id) is not None
+
+
+def test_a_leftover_of_a_killed_write_is_not_kept_for_fourteen_days(tmp_path):
+    """Landing where the sweep looks is only half of it; WHEN matters too.
+
+    `Store._sweep_leftovers` — the thing that collects a `.wip-` file everywhere
+    else — walks the data root and the project directories, and `data/jobs/` is
+    neither, so it never enters this tree at all. That leaves
+    `_sweep_strangers`, and on the record ceiling a stray would wait fourteen
+    days and a restart. In the old place it went with the job at the next prune,
+    i.e. in hours — so the relocation, taken on its own, made the wait LONGER.
+    A `.wip-log.txt-*` is up to MAX_LOG_BYTES, so that wait is measured in
+    megabytes apiece.
+
+    The short cutoff is safe here and only here: `_sweep_strangers` runs from
+    `JobStore.__init__`, before the pool exists and before the socket is bound,
+    so nothing in this process is writing into `data/jobs/` while it looks.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data)
+    kept = store.create("proj1", "abc123")["id"]
+    store.finish(kept, state=STATE_DONE, code=201,
+                 build_url="/project/proj1/abc123/")
+
+    two_hours_ago = time.time() - 7200
+    stray = data / "jobs" / f"{JSON_TMP_PREFIX}log.txt-{'c' * 32}"
+    stray.write_bytes(b"half a log")
+    # The same age, and NOT of that shape: this one is somebody's evidence about
+    # a build, so it keeps the record ceiling. Here to show the short cutoff
+    # belongs to the PREFIX rather than to the sweep as a whole.
+    evidence = data / "jobs" / ("E" * 22)
+    evidence.mkdir()
+    for entry in (stray, evidence):
+        os.utime(entry, (two_hours_ago, two_hours_ago))
+
+    # The DEFAULT age ceiling — fourteen days — which is the whole point: on it,
+    # nothing else on this volume would have collected the stray.
+    reopened = JobStore(data)
+
+    assert not stray.exists(), (
+        "a half-written file of the hub's own is sitting in data/jobs/ under "
+        "the record ceiling, and nothing else there ever collects one")
+    assert evidence.is_dir()
+    assert reopened.get(kept) is not None
+
+
+def test_a_flooded_registry_does_not_flood_the_log(tmp_path):
+    """One aggregated line, whatever the count.
+
+    The sweep used to warn once per entry, so the 988 directories of the
+    experiment were 988 warnings in every start of the hub — for ever, because
+    the entries are on the volume and the sweep keeps them until they age out.
+    The compose file caps the container log at 5 files of 10 MB, so what the
+    planted directories push out is the service's own logs: the thing somebody
+    would have been reading to find out about them.
+    """
+    data = tmp_path / "data"
+    JobStore(data)
+    for index in range(30):
+        (data / "jobs" / f"q{index:02d}".ljust(22, "z")).mkdir()
+
+    said = []
+    sink = logger.add(said.append, level="WARNING")
+    try:
+        JobStore(data)
+    finally:
+        logger.remove(sink)
+
+    # TWO lines, and neither of them counts up: the sweep's aggregate, and the
+    # one saying the order names none of these thirty directories. Both are
+    # per-START rather than per-entry, which is the property under test — the
+    # number of warnings must not be a number a build gets to choose.
+    assert len(said) == 2, (
+        f"the start wrote {len(said)} warnings for 30 planted directories; a "
+        f"build gets to choose that number")
+    swept = [line for line in said if "past the job age ceiling" in line]
+    orderless = [line for line in said if "no order to put them in" in line]
+    assert len(swept) == 1 and "30" in swept[0]
+    assert len(orderless) == 1 and "30" in orderless[0]
+
+
+def test_the_number_of_records_one_start_reads_is_bounded(tmp_path,
+                                                          monkeypatch):
+    """MAX_RECORD_BYTES bounded ONE record; nothing bounded how many.
+
+    `data/jobs/` is writable by every build, so how many directories are in it
+    is decided by whatever last wrote to the volume — and the load used to read
+    every one of them into memory before the first prune ran. 2000 planted
+    records at the largest size the reader accepts came to 128 MiB of heap on a
+    start, an amplification of roughly 1:1 with the disk they occupied. A build
+    that filled the volume would therefore decide how much memory the hub needs
+    to come up, which is the one outcome this registry may not have: a hub that
+    does not start, from the same volume, every time.
+
+    The bound is `_max_order_entries` — `max_jobs` plus the jobs in flight that
+    `_prune_locked` exempts — and NOT `max_jobs`, which is the narrower number
+    this used to be cut at. Both are numbers the hub picks and the volume cannot
+    move, which is all the memory argument needs; what the wider one buys is in
+    the test below this one.
+    """
+    data = tmp_path / "data"
+    ceiling = 5
+    entries = (ceiling + jobs_module.MAX_QUEUED_JOBS
+               + jobs_module.MAX_CONCURRENT_BUILDS)
+    total = entries + 7          # longer than any order this hub could write
+    roomy = JobStore(data, max_jobs=total + 1)
+    made = []
+    for index in range(total):
+        record = roomy.create("proj1", f"c{index}")
+        roomy.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/c{index}/")
+        made.append(record["id"])
+    # ...and twenty directories a build made up, each holding a record that is
+    # entirely well formed. They are not in the order file, which is the only
+    # thing that separates them from the real ones.
+    planted = [f"p{index:02d}".ljust(22, "x") for index in range(20)]
+    for job_id in planted:
+        _plant_job(data, job_id, state=STATE_DONE)
+
+    read = []
+    real_read = jobs_module._read_record
+    monkeypatch.setattr(
+        jobs_module, "_read_record",
+        lambda path: (read.append(path), real_read(path))[1])
+    reopened = JobStore(data, max_jobs=ceiling)
+    monkeypatch.undo()
+
+    unnamed = made[:total - entries]     # dropped by the ORDER entry ceiling
+    assert len(read) == entries, (
+        f"the start read {len(read)} records with {total + len(planted)} "
+        f"directories on the volume; how many are there is not a number this "
+        f"hub decides")
+    assert not any(Path(path).parent.name in set(planted) for path in read)
+    assert [job_id for job_id in made
+            if reopened.get(job_id) is not None] == made[-ceiling:]
+    # The jobs past the ceiling are gone from the volume, not merely unread —
+    # retention has always removed them, and reading fewer must not turn that
+    # into a leak.
+    assert _job_dirs(data) == sorted(unnamed + made[-ceiling:] + planted)
+    # The planted ones are left for the age sweep, which is where a directory
+    # that is not a job of this registry has always gone: retention deletes this
+    # hub's OWN surplus, never somebody's evidence. So are the real jobs the
+    # order file was too short to name — being unnamed is what makes them
+    # strangers, and a stranger is collected by age.
+    assert _volume_order(data) == made[-ceiling:]
+
+
+def test_a_corrupted_record_does_not_take_a_real_job_down_with_it(tmp_path):
+    """The cut before the read is by POSITION, so it cannot see a bad record.
+
+    "Everything past the cut is what `_prune_locked` would drop anyway" is true
+    of records that can be READ. One that cannot never reaches `self._records`,
+    so `_prune_locked` counts one fewer and keeps one fewer, while the cut has
+    already deleted by position. Cut at `max_jobs`, corrupting N records at the
+    newest end therefore cost up to N real jobs at the oldest end — and the
+    build chose both N and which ones. Twenty jobs, a ceiling of five and five
+    broken `job.json` emptied the registry completely: the fifteen oldest were
+    deleted unread, and the five that were read were the five that were broken.
+
+    The cut is `_max_order_entries` wide now, which is the longest order this
+    hub could have written, so it can never remove an entry the hub itself put
+    there and `_prune_locked` does the whole of retention after the read.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data, max_jobs=20)
+    made = []
+    for index in range(20):
+        record = store.create("proj1", f"c{index}")
+        store.finish(record["id"], state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/c{index}/")
+        made.append(record["id"])
+
+    broken = made[-5:]
+    for job_id in broken:
+        (data / "jobs" / job_id / "job.json").write_bytes(b"not a record")
+
+    reopened = JobStore(data, max_jobs=5)
+
+    survivors = [job_id for job_id in made if reopened.get(job_id) is not None]
+    assert survivors == made[-10:-5], (
+        "the registry did not keep the five newest READABLE jobs; a build that "
+        "corrupted five records chose which real jobs went with them")
+    # The broken ones are not believed and not deleted on the spot either —
+    # being unreadable is not proof of who wrote it, so they go by age like any
+    # other stranger.
+    for job_id in broken:
+        assert reopened.get(job_id) is None
+        assert (data / "jobs" / job_id).is_dir()
+
+
+def test_a_job_the_volume_refuses_to_record_leaves_nothing_in_memory(
+        tmp_path, monkeypatch):
+    """The one write here that is not best effort, and the order proves it.
+
+    `finish` can lose its writes and carry on, because the record is already in
+    memory and memory is what every status poll is answered from. `create` has
+    nobody to serve: the push is answered 500 and the id never reaches the
+    pusher. A record inserted before a write that then failed would therefore
+    sit in memory until the process ends — `_prune_locked` only ever drops a
+    TERMINAL job, and nothing is ever going to finish this one.
+    """
+    store = JobStore(tmp_path / "data")
+    issued = "K" * 22
+    monkeypatch.setattr(jobs_module.secrets, "token_urlsafe", lambda _n: issued)
+
+    def full_volume(*_args, **_kw):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(store, "_write", full_volume)
+    with pytest.raises(OSError):
+        store.create("proj1", "abc123")
+
+    assert store.get(issued) is None
+
+
+def test_a_log_that_cannot_be_written_at_all_still_finishes_the_job(tmp_path,
+                                                                    monkeypatch):
+    """OSError is not the only way a write goes wrong.
+
+    `_write` next to it catches `(OSError, ValueError)` for exactly this reason,
+    and the guard around the log has to be the same pair: a job that loses its
+    terminal state to a failure in a file that is only EVIDENCE is the one
+    failure this registry must not have.
+    """
+    store = JobStore(tmp_path / "data")
+    job_id = store.create("proj1", "abc123")["id"]
+
+    def refuses(*_args, **_kw):
+        raise ValueError("I/O operation on closed file")
+
+    monkeypatch.setattr(store, "_write_log", refuses)
+    store.finish(job_id, state=STATE_DONE, code=201,
+                 build_url="/project/proj1/abc123/", log="a build said this\n")
+
+    assert store.get(job_id)["state"] == STATE_DONE
+    assert store.get(job_id)["build_url"] == "/project/proj1/abc123/"
+
+
+def test_a_build_writing_its_log_does_not_hold_up_everybody_elses_status_poll(
+        tmp_path, monkeypatch):
+    """`_lock` is the registry's ONLY lock, so it is also the status endpoint's.
+
+    Every `get` takes it — every poll, from every pusher, of every job. Held
+    across `_write_log`, one finishing build blocked all of them for as long as
+    the volume took to fsync up to MAX_LOG_BYTES. The log still goes down before
+    the state changes, because a poller that reads `done` is about to fetch the
+    log; what it must not cost is the lock.
+    """
+    store = JobStore(tmp_path / "data")
+    watched = store.create("proj1", "watched")["id"]
+    finishing = store.create("proj1", "finishing")["id"]
+
+    inside, release = threading.Event(), threading.Event()
+    writing_the_log = store._write_log
+
+    def slow_volume(job_id, log):
+        inside.set()
+        assert release.wait(timeout=10), "the test never released the write"
+        writing_the_log(job_id, log)
+
+    monkeypatch.setattr(store, "_write_log", slow_volume)
+    finisher = threading.Thread(
+        target=lambda: store.finish(finishing, state=STATE_DONE, code=201,
+                                    build_url="/project/proj1/finishing/",
+                                    log="a build said this\n"),
+        name="finishing-build", daemon=True)
+    finisher.start()
+    assert inside.wait(timeout=10)
+
+    # Polled on a thread of its own so a lock that IS held fails this test
+    # instead of hanging it.
+    polled = []
+    poller = threading.Thread(target=lambda: polled.append(store.get(watched)),
+                              name="status-poll", daemon=True)
+    poller.start()
+    poller.join(timeout=5)
+    assert not poller.is_alive(), (
+        "a status poll waited on another job's build log reaching the volume")
+    assert polled[0]["state"] == STATE_QUEUED
+    # And the order the log write is done in first for: the state does not turn
+    # terminal until the log has landed.
+    assert store.get(finishing)["state"] == STATE_QUEUED
+
+    release.set()
+    finisher.join(timeout=10)
+    assert store.get(finishing)["state"] == STATE_DONE
+    assert store.log(finishing) == "a build said this\n"
+
+
+def test_a_registry_the_volume_will_not_list_does_not_stop_the_hub_starting(
+        tmp_path, monkeypatch):
+    """`_load` says NOTHING IN HERE MAY RAISE, and the listing is in here.
+
+    `os.scandir` and `DirEntry.is_dir` go to the same volume every build can
+    write, and neither is total: opening the directory raises on EIO or EACCES,
+    and `is_dir` swallows only the errors that mean "no". Either one escaping
+    is `JobStore.__init__` raising out of `create_server` and out of `main()` —
+    a hub that does not come up, from the same volume, every time. Starting with
+    no job history is bad; not starting is worse, and it is not recoverable
+    without a person on the host.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data)
+    kept = store.create("proj1", "abc123")["id"]
+    store.finish(kept, state=STATE_DONE, code=201,
+                 build_url="/project/proj1/abc123/")
+
+    listing = os.scandir
+
+    def volume_refuses_the_listing(path=".", *args, **keywords):
+        if Path(path).name == "jobs":
+            raise OSError(errno.EIO, "Input/output error")
+        return listing(path, *args, **keywords)
+
+    monkeypatch.setattr(jobs_module.os, "scandir", volume_refuses_the_listing)
+    assert JobStore(data).get(kept) is None
+    monkeypatch.undo()
+
+    class RefusingEntry:
+        """A directory entry the volume will not answer a question about."""
+
+        def __init__(self, entry):
+            self.name = entry.name
+
+        def is_dir(self, *_args, **_keywords):
+            raise OSError(errno.EACCES, "Permission denied")
+
+    class RefusingScan:
+        """`os.scandir`'s context manager, over entries that refuse."""
+
+        def __init__(self, entries):
+            self._entries = entries
+
+        def __enter__(self):
+            return iter(self._entries)
+
+        def __exit__(self, *_exc):
+            return False
+
+    def volume_refuses_the_entry(path=".", *args, **keywords):
+        if Path(path).name != "jobs":
+            return listing(path, *args, **keywords)
+        with listing(path, *args, **keywords) as entries:
+            return RefusingScan([RefusingEntry(entry) for entry in entries])
+
+    monkeypatch.setattr(jobs_module.os, "scandir", volume_refuses_the_entry)
+    assert JobStore(data).get(kept) is None
+    monkeypatch.undo()
+
+    # And nothing was destroyed on the way past: the volume answering again is
+    # a hub that reads its jobs again.
+    assert JobStore(data).get(kept)["state"] == STATE_DONE
+
+
+def test_a_stamp_the_platform_cannot_convert_does_not_stop_the_hub_starting(
+        tmp_path, monkeypatch):
+    """The same shape as the planted `NaN`, one function further down.
+
+    `_epoch` runs from `_prune_locked` <- `_load` <- `JobStore.__init__` <-
+    `create_server` <- `main()`, so anything it lets escape is a hub that does
+    not come up — from the same volume, on every start, for ever. Parsing is not
+    the only step that can fail: `datetime.timestamp()` raises `OverflowError`
+    or `OSError` on the extreme years, depending on the platform doing the
+    conversion, and the years come off a volume every build can write.
+    """
+    data = tmp_path / "data"
+    JobStore(data)
+    _plant_job(data, "T" * 22, state=STATE_DONE,
+               created="0001-01-01T00:00:00Z")
+
+    class ExplodingDatetime:
+        """A conversion that fails the way a platform's own can."""
+
+        @staticmethod
+        def strptime(*_args, **_kw):
+            return ExplodingDatetime()
+
+        def replace(self, **_kw):
+            return self
+
+        def timestamp(self):
+            raise OverflowError("timestamp out of range for platform time_t")
+
+    monkeypatch.setattr(jobs_module, "datetime", ExplodingDatetime)
+    # The assertion is that this returns at all.
+    JobStore(data)
+
+
+def test_the_biggest_log_a_build_can_hand_over_is_served_whole(tmp_path):
+    """The read ceiling has to fit what the WRITE path can produce.
+
+    `runner._Drain` keeps `Limits.log_bytes` of RAW output and decodes it with
+    `errors="replace"`, and a byte that is not valid UTF-8 becomes U+FFFD, which
+    encodes back to THREE bytes. So a model printing binary — precisely the
+    build whose log somebody needs — makes the hub write three times the ceiling
+    the build ran under. With a smaller number here the hub served its OWN log
+    truncated, under a warning saying the log was larger than a build can
+    produce; it was not, the hub wrote it.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data)
+    job_id = store.create("proj1", "abc123")["id"]
+    captured = (b"\xff" * Limits.log_bytes).decode("utf-8", errors="replace")
+
+    store.finish(job_id, state=STATE_FAILED, code=422,
+                 error="the model or a gate refused the build", log=captured)
+
+    served = store.log(job_id)
+    assert LOG_TRUNCATED_NOTE not in served
+    assert served == captured
+
+
+def test_a_log_handed_to_the_registry_is_cut_before_it_reaches_the_volume(
+        tmp_path):
+    """The cut belongs on the WRITE, not only on the read.
+
+    MAX_LOG_BYTES is what the read path is willing to serve, so a file written
+    past it comes back truncated under a warning about a log larger than a build
+    can produce — and on this path the hub itself wrote it. The ceiling is
+    derived to fit the worst case a build can hand over, so this cut is
+    unreachable in production, which is exactly why it needs a test: it is what
+    keeps what the hub writes inside what the hub will read on the day either
+    number moves.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data)
+    job_id = store.create("proj1", "abc123")["id"]
+    # A three-byte character, in a count that makes the cut land INSIDE one of
+    # them: a slice of UTF-8 bytes is not UTF-8, and this file is served as text.
+    store.finish(job_id, state=STATE_FAILED, code=422,
+                 log="中" * (MAX_LOG_BYTES // 2))
+
+    raw = (data / "jobs" / job_id / "log.txt").read_bytes()
+    assert len(raw) <= MAX_LOG_BYTES
+    # Strict, because "it decodes" is the claim: nothing was left half written.
+    assert raw.decode("utf-8").endswith(LOG_TRUNCATED_NOTE)
+    # And what comes back is that file whole, rather than a second truncation.
+    assert store.log(job_id) == raw.decode("utf-8")
+
+
+def test_a_log_larger_than_a_build_can_produce_is_served_truncated(tmp_path):
+    """The log is read off the volume on every request, and capped there.
+
+    The hub writes it from an already-capped `BuildOutcome.log`, so a file this
+    size was not written by the hub — and without a ceiling, serving it is a
+    request thread holding however many megabytes somebody chose.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data)
+    job_id = store.create("proj1", "abc123")["id"]
+    (data / "jobs" / job_id / "log.txt").write_bytes(b"A" * (MAX_LOG_BYTES + 4096))
+
+    served = store.log(job_id)
+    assert served.endswith(LOG_TRUNCATED_NOTE)
+    assert len(served) == MAX_LOG_BYTES + len(LOG_TRUNCATED_NOTE)
+
+
+# -- a job that ends when the volume will not take it ------------------------
+def test_a_build_whose_log_cannot_be_written_still_finishes(hub_factory,
+                                                            monkeypatch):
+    """The published build that reported itself as still building.
+
+    ENOSPC on the log — a megabyte — is the ordinary way for this to happen, and
+    the log used to be written before the record was updated with nothing
+    between them. The result was a job stuck `building` while its build was on
+    disk and `latest` already pointed at it: the pusher polls a status that
+    never changes, and after a restart is told to push again about a build that
+    landed.
+    """
+    hub = hub_factory()
+
+    def full_volume(*_args, **_kw):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(hub.server.jobs, "_write_log", full_volume)
+
+    job_id = hub.publish_async("proj1", "abc123", good_build()).json()["job"]
+    record = hub.await_job(job_id, timeout=10).record
+
+    assert record["state"] == STATE_DONE
+    assert record["code"] == 201
+    assert record["build_url"] == "/project/proj1/abc123/"
+    # ...and the build really is published, which is what made the stuck state a
+    # lie rather than merely a delay.
+    assert (hub.project_dir("proj1") / "abc123" / "meta.json").is_file()
+    # The log is simply missing, which is the honest consequence and the small
+    # half of the trade.
+    assert hub.job_log(job_id).text == ""
+
+
+def test_a_record_the_volume_refuses_still_changes_the_status_served(tmp_path,
+                                                                     monkeypatch):
+    """Memory and disk disagree, and memory wins — it is the one being served."""
+    store = JobStore(tmp_path / "data")
+    job_id = store.create("proj1", "abc123")["id"]
+
+    def full_volume(*_args, **_kw):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(store, "_write", full_volume)
+    store.finish(job_id, state=STATE_DONE, code=201,
+                 build_url="/project/proj1/abc123/")
+
+    assert store.get(job_id)["state"] == STATE_DONE
+    assert store.get(job_id)["code"] == 201
+
+
+# -- publishing, and everything after it -------------------------------------
+def test_a_failure_after_the_rename_still_reports_the_build_as_published(
+        hub_factory, monkeypatch):
+    """The rename IS the publication; what follows it is bookkeeping.
+
+    `latest`, retention, the picker and the index are all recomputed from disk
+    by the next publish, so a failure in them is recoverable. Reporting the job
+    as failed is not: the build is at its permanent URL and `latest` may already
+    name it, and CI would be told to push a commit that is live.
+    """
+    hub = hub_factory()
+
+    def broken(_pid):
+        raise OSError(errno.EIO, "the pointer could not be written")
+
+    monkeypatch.setattr(hub.store, "_switch_latest", broken)
+
+    job_id = hub.publish_async("proj1", "abc123", good_build()).json()["job"]
+    record = hub.await_job(job_id, timeout=10).record
+
+    assert record["state"] == STATE_DONE
+    assert record["code"] == 201
+    assert record["build_url"] == "/project/proj1/abc123/"
+    assert (hub.project_dir("proj1") / "abc123" / "meta.json").is_file()
+    assert _leftovers(hub, "proj1") == []
+
+
+def test_a_commit_taken_while_the_build_ran_is_caught_under_the_lock(tmp_path):
+    """`settled` answers from the request; `publish_built` answers for real.
+
+    The gap between the two used to be milliseconds and is now a whole build, so
+    the recheck immediately before the rename is the only thing standing between
+    two pushes of one commit and a silently replaced immutable build.
+    """
+    store = _bare_store(tmp_path / "data")
+    staging, names = _staged(store, "proj1", "abc123", "a")
+    assert store.publish_built("proj1", "abc123", staging, names, "digest-a"
+                               )[0] == 201
+
+    # A second build of the same commit, finishing minutes later with different
+    # content. `settled` said nothing was there — because when it looked, there
+    # was nothing there.
+    other, names = _staged(store, "proj1", "abc123", "b")
+    with pytest.raises(PublishError) as refused:
+        store.publish_built("proj1", "abc123", other, names, "digest-b")
+    assert refused.value.status == 409
+
+    # And the identical retry of a build that landed while it was running is the
+    # 200 it would have got on the push.
+    same, names = _staged(store, "proj1", "abc123", "a")
+    assert store.publish_built("proj1", "abc123", same, names, "digest-a") == (
+        200, {"url": "/project/proj1/abc123/"})
+
+
+def test_two_builds_of_one_commit_race_to_one_answer(tmp_path):
+    """The same thing through the whole pipeline, with both builds in flight."""
+    builder = GatedBuilder()
+    hub = start_hub(tmp_path / "data", build_runner=builder, build_workers=2)
+    try:
+        pushes = [hub.publish_async("proj1", "abc123", good_build(marker))
+                  for marker in ("one", "two")]
+        assert [reply.status_code for reply in pushes] == [202, 202]
+
+        deadline = time.monotonic() + 10
+        while builder.started < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert builder.started == 2, "both builds have to be in flight at once"
+
+        builder.release.set()
+        codes = sorted(hub.await_job(reply.json()["job"]).status_code
+                       for reply in pushes)
+        assert codes == [201, 409]
+        assert _leftovers(hub, "proj1") == []
+    finally:
+        builder.release.set()
+        stop_hub(hub)
+
+
+# -- stopping ----------------------------------------------------------------
+def test_stopping_the_pool_takes_the_queued_sources_with_it(tmp_path):
+    """A dropped job still owns an unpacked tree, and nothing else removes it.
+
+    `Store._sweep_leftovers` was the answer this used to give and it is not one:
+    it runs from `Store.__init__` only, and it skips everything younger than an
+    hour, while a container comes back in seconds. So a tree dropped by a stop
+    survived the very restart that was supposed to collect it.
+    """
+    data = tmp_path / "data"
+    store = _bare_store(data)
+    jobs = JobStore(data)
+    # Workers deliberately NOT started: nothing consumes the queue, so what the
+    # shutdown does with it is the only thing this can be observing.
+    pool = BuildQueue(store, jobs, build_runner=copying_builder)
+    queued = []
+    for index in range(3):
+        sources = data / f"{SOURCE_PREFIX}{index:032x}"
+        sources.mkdir(parents=True)
+        (sources / "model.py").write_text("# a pushed source tree\n")
+        record = jobs.create("proj1", f"c{index}")
+        assert pool.submit(BuildTask(
+            job_id=record["id"], pid="proj1", commit=f"c{index}",
+            sources=sources, digest=f"digest-{index}")) == SUBMIT_ACCEPTED
+        queued.append((record["id"], sources))
+
+    pool.shutdown()
+
+    for job_id, sources in queued:
+        assert not sources.exists(), "an unpacked source tree outlived the stop"
+        record = jobs.get(job_id)
+        assert record["state"] == STATE_FAILED, job_id
+        # 503 and "push again": nothing was wrong with the push.
+        assert record["code"] == 503
+        assert "push again" in record["error"]
+
+
+def test_the_stop_budget_is_spent_by_the_pool_not_by_each_worker(tmp_path,
+                                                                 monkeypatch):
+    """One deadline for all the workers, not a timeout each.
+
+    The join exists to keep an ordinary stop away from SIGKILL: docker sends one
+    10 s after its SIGTERM and the compose file asks for no longer. Multiplied
+    per worker, the budget reaches that grace period all by itself — at the
+    pool's own default of two it IS the grace period — so the number meant to
+    avoid a SIGKILL would be what guaranteed one, and worse with every worker
+    added. Four workers here, all of them stuck, so the difference between the
+    two readings is four times the budget rather than two.
+    """
+    monkeypatch.setattr(jobs_module, "WORKER_JOIN_SECONDS", 0.5)
+    builder = GatedBuilder()
+    hub = start_hub(tmp_path / "data", build_runner=builder, build_workers=4)
+    try:
+        for index in range(4):
+            assert hub.publish_async("proj1", f"c{index}",
+                                     good_build(f"v{index}")).status_code == 202
+        deadline = time.monotonic() + 10
+        while builder.running < 4 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert builder.running == 4, "every worker has to be busy for this"
+
+        started = time.monotonic()
+        hub.server.builds.shutdown()
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 1.0, (
+            f"the stop spent {elapsed:.2f}s joining four workers that were "
+            f"given {jobs_module.WORKER_JOIN_SECONDS}s between them, so the "
+            f"budget is being spent per thread and grows with the pool")
+    finally:
+        builder.release.set()
+        _await_no_workers()
+        stop_hub(hub)
+
+
+def test_the_drain_is_paid_for_out_of_the_stop_budget(tmp_path, monkeypatch):
+    """The budget is what the STOP spends, not what the joins spend.
+
+    `WORKER_JOIN_SECONDS` is sized against docker's 10 s grace period, and the
+    drain runs before the joins: up to MAX_QUEUED_JOBS trees to remove and a job
+    record to write, with an fsync, for each, on the volume the joins are then
+    waiting for. Started after it, the clock said 5 s while a real stop cost the
+    drain PLUS 5 s — so SIGKILL landed inside the join the number exists to
+    protect, and both the comment and the test said otherwise.
+
+    The floor is what keeps the correction from going too far the other way: a
+    drain that ate the whole budget would join for nothing at all.
+    """
+    monkeypatch.setattr(jobs_module, "WORKER_JOIN_SECONDS", 2.0)
+    monkeypatch.setattr(jobs_module, "WORKER_JOIN_FLOOR_SECONDS", 0.2)
+    slow_drain_seconds = 2.0
+    builder = GatedBuilder()
+    hub = start_hub(tmp_path / "data", build_runner=builder, build_workers=1)
+    try:
+        assert hub.publish_async("proj1", "c0",
+                                 good_build()).status_code == 202
+        assert builder.entered.wait(timeout=10), "the worker has to be busy"
+
+        draining = hub.server.builds._drop_queued
+
+        def slowly():
+            time.sleep(slow_drain_seconds)
+            return draining()
+
+        monkeypatch.setattr(hub.server.builds, "_drop_queued", slowly)
+        started = time.monotonic()
+        hub.server.builds.shutdown()
+        elapsed = time.monotonic() - started
+
+        assert elapsed < slow_drain_seconds + 1.0, (
+            f"the stop took {elapsed:.2f}s: {slow_drain_seconds:.1f}s of drain "
+            f"and then a full {jobs_module.WORKER_JOIN_SECONDS}s of join on top "
+            f"of it, so the budget describes the joins rather than the stop")
+        # ...and the join was not starved to nothing by the drain either.
+        assert elapsed >= slow_drain_seconds + jobs_module.WORKER_JOIN_FLOOR_SECONDS
+    finally:
+        builder.release.set()
+        _await_no_workers()
+        stop_hub(hub)
+
+
+def test_a_task_a_worker_already_took_is_not_torn_down_by_the_stop(tmp_path):
+    """The third holder of a task, and the one the old reasoning left out.
+
+    `submit`'s post-check used to drain the queue, find nothing, and conclude
+    from "the queue hands one item to exactly one caller" that the task must
+    have come back to it. It need not have: a WORKER may have taken it and be
+    inside `_build_and_publish` with it. The caller then does what a refusal
+    tells it to — `app._queue_build` removes the source tree in its `finally`
+    and fails the job — under a build that is reading that tree and is minutes
+    from renaming its output into an immutable URL.
+    """
+    data = tmp_path / "data"
+    jobs = JobStore(data)
+    builder = GatedBuilder()
+    pool = BuildQueue(_bare_store(data), jobs, build_runner=builder, workers=1)
+    pool.start()
+
+    class StopOnceTheWorkerHasIt(queue.Queue):
+        """A queue that lets the worker take the task, then stops the hub.
+
+        Substituted rather than raced against a real stop because the window is
+        two statements wide: a test that hoped to hit it would pass whether or
+        not `submit` can tell a worker from itself.
+        """
+
+        def put_nowait(self, item):
+            super().put_nowait(item)
+            assert builder.entered.wait(timeout=10), "no worker took the task"
+            pool._stopping.set()
+
+    pool._queue = StopOnceTheWorkerHasIt(maxsize=4)
+
+    sources = data / f"{SOURCE_PREFIX}{2:032x}"
+    sources.mkdir(parents=True)
+    (sources / "meta.json").write_bytes(meta_bytes())
+    (sources / "assembled.json").write_bytes(view_bytes("a"))
+    record = jobs.create("proj1", "c2")
+
+    try:
+        assert pool.submit(BuildTask(
+            job_id=record["id"], pid="proj1", commit="c2", sources=sources,
+            digest="digest-2")) == SUBMIT_ACCEPTED, (
+            "the stop reported a refusal for a task a worker already had, so "
+            "the request thread is about to delete a live build's sources")
+        # Nothing was taken from the build: its tree is where it left it and its
+        # job is not carrying somebody else's verdict.
+        assert sources.is_dir()
+        assert jobs.get(record["id"])["state"] == STATE_BUILDING
+
+        builder.release.set()
+        deadline = time.monotonic() + 10
+        while (jobs.get(record["id"])["state"] not in (STATE_DONE, STATE_FAILED)
+               and time.monotonic() < deadline):
+            time.sleep(0.01)
+        # And it published, which is the only proof that the tree was whole when
+        # the build read it.
+        assert jobs.get(record["id"])["state"] == STATE_DONE
+    finally:
+        # In a `finally` and in this order, so a failed assertion above leaves no
+        # worker behind for the guard in conftest to find on some later test.
+        builder.release.set()
+        pool.shutdown()
+        _await_no_workers()
+
+
+def test_a_push_that_lands_on_a_stopping_hub_is_told_that_and_not_queue_full(
+        tmp_path):
+    """One refusal code, two entirely different reasons, and they are not the same.
+
+    `submit` refuses a full queue and a hub on its way out alike, and the push
+    path used to sign both "the build queue is full, retry later". That is not a
+    small inaccuracy: the queue is empty, the advice to wait 60 s and retry the
+    same hub is wrong, and when the stop's own drain had already written the job
+    the true sentence — "the hub was stopped, push again" — this replaced it
+    with the false one, on the job record as well as in the reply.
+    """
+    hub = start_hub(tmp_path / "data")
+    try:
+        # Stopped without closing the socket, which is the state a push landing
+        # during a stop really meets: request threads are daemon threads and run
+        # straight through the shutdown that is happening beside them.
+        hub.server.builds.shutdown()
+
+        reply = hub.publish_async("proj1", "abc123", good_build())
+        assert reply.status_code == 503
+        assert reply.json()["error"] == STOPPED_ERROR
+        # No Retry-After: nothing is going to free up here, the hub is going
+        # away. Telling CI to come back in a minute to this process is a lie.
+        assert "Retry-After" not in reply.headers
+
+        # The job says the same thing, so a pusher who polls it is not told a
+        # different story from the one the reply told.
+        records = list(_volume_records(hub.data).values())
+        assert len(records) == 1
+        assert records[0]["state"] == STATE_FAILED
+        assert records[0]["code"] == 503
+        assert records[0]["error"] == STOPPED_ERROR
+        # And the tree the push unpacked went with it.
+        assert _leftovers(hub, "proj1") == []
+    finally:
+        stop_hub(hub)
+
+
+def test_a_push_handed_over_after_the_stop_began_is_refused(tmp_path):
+    """`daemon_threads = True`, so a request thread outlives the drain.
+
+    The thread serving a push keeps running while `shutdown` empties the queue
+    on another one. Queued after that, the task is one no worker will ever read:
+    the pusher is told 202 about a build nobody will run, and the unpacked tree
+    it owns stays on the volume — `Store._sweep_leftovers` runs at startup and
+    skips everything younger than an hour, while a container comes back in
+    seconds.
+
+    And the refusal says WHICH refusal it is, because the caller does different
+    things with the two: a full queue leaves the job for the request thread to
+    fail, a stop has already answered it.
+    """
+    data = tmp_path / "data"
+    jobs = JobStore(data)
+    # Workers deliberately not started: what `submit` does with a stopping pool
+    # is the only thing this can be observing.
+    pool = BuildQueue(_bare_store(data), jobs, build_runner=copying_builder)
+    pool.shutdown()
+
+    sources = data / f"{SOURCE_PREFIX}{0:032x}"
+    sources.mkdir(parents=True)
+    (sources / "model.py").write_text("# a pushed source tree\n")
+    record = jobs.create("proj1", "c0")
+
+    assert pool.submit(BuildTask(
+        job_id=record["id"], pid="proj1", commit="c0", sources=sources,
+        digest="digest-0")) == SUBMIT_STOPPED
+    # Answered by `submit` itself: the task never entered the queue, so no drain
+    # is ever going to find it and say so.
+    answered = jobs.get(record["id"])
+    assert answered["state"] == STATE_FAILED
+    assert answered["code"] == 503
+    assert "push again" in answered["error"]
+
+
+def test_a_push_that_races_the_drain_is_taken_back_out_of_the_queue(tmp_path):
+    """The same thing one moment later: the stop lands mid-insertion.
+
+    Checking before the insertion only narrows the window; the task can still be
+    put down after the drain has gone past it. The queue is substituted here
+    rather than raced against a real thread because the window is two statements
+    wide, and a test that hoped to hit it would pass whether or not the second
+    check exists.
+    """
+    data = tmp_path / "data"
+    jobs = JobStore(data)
+    pool = BuildQueue(_bare_store(data), jobs, build_runner=copying_builder)
+
+    class StopMidInsertion(queue.Queue):
+        """A queue that runs the whole stop between the put and the check."""
+
+        def put_nowait(self, item):
+            super().put_nowait(item)
+            pool.shutdown()
+
+    pool._queue = StopMidInsertion(maxsize=4)
+
+    sources = data / f"{SOURCE_PREFIX}{1:032x}"
+    sources.mkdir(parents=True)
+    (sources / "model.py").write_text("# a pushed source tree\n")
+    record = jobs.create("proj1", "c1")
+
+    assert pool.submit(BuildTask(
+        job_id=record["id"], pid="proj1", commit="c1", sources=sources,
+        digest="digest-1")) == SUBMIT_STOPPED
+    # And the task was answered rather than merely refused: its sources are gone
+    # and its job says what happened, which is the last thing the hub can say.
+    # Note WHO answered it: `shutdown`'s drain, running inside `put_nowait`, not
+    # the drain `submit` runs afterwards — which by then finds an empty queue.
+    # That is the case the shared record of dropped ids exists for.
+    assert not sources.exists()
+    assert jobs.get(record["id"])["state"] == STATE_FAILED
+    assert jobs.get(record["id"])["error"] == STOPPED_ERROR
+
+
+def test_a_submit_whose_drain_throws_still_answers_its_job(tmp_path,
+                                                           monkeypatch):
+    """`submit`'s drain gets the wrapper `shutdown`'s call to it already has.
+
+    The reasoning transfers one for one: the drain is a loop over directories
+    and job records on a volume this module gets to assume nothing about, and it
+    runs at the moment there is nothing after it. Escaping here it does two
+    things at once, and the second is the permanent one. The pusher gets a 500
+    out of the request handler — recoverable, they retry. The task stays in a
+    queue no worker will read again, so its job stays `queued` FOR EVER: nothing
+    else answers a task the drain did not take, retention drops only terminal
+    jobs (`_prune_locked`), and the slot it holds against MAX_JOBS therefore
+    comes back only with a restart.
+
+    So a drain that threw is not read as "a worker has it". It cannot be — the
+    drain did not finish, so the task may equally be sitting in a queue nobody
+    will read — and between a job that is answered wrongly and a job that is
+    never answered, this answers it.
+    """
+    data = tmp_path / "data"
+    jobs = JobStore(data)
+    pool = BuildQueue(_bare_store(data), jobs, build_runner=copying_builder)
+
+    def drain_that_throws():
+        raise OSError(errno.EIO, "Input/output error")
+
+    class StopMidInsertion(queue.Queue):
+        """The stop lands between the put and the check, as it really can."""
+
+        def put_nowait(self, item):
+            super().put_nowait(item)
+            pool._stopping.set()
+
+    pool._queue = StopMidInsertion(maxsize=4)
+    monkeypatch.setattr(pool, "_drop_queued", drain_that_throws)
+
+    sources = data / f"{SOURCE_PREFIX}{2:032x}"
+    sources.mkdir(parents=True)
+    (sources / "model.py").write_text("# a pushed source tree\n")
+    record = jobs.create("proj1", "c1")
+
+    # The assertion is first of all that this RETURNS rather than raising.
+    assert pool.submit(BuildTask(
+        job_id=record["id"], pid="proj1", commit="c1", sources=sources,
+        digest="digest-2")) == SUBMIT_STOPPED
+    # And that the job is terminal, so it neither holds a MAX_JOBS slot for the
+    # life of the process nor leaves a pusher polling a status that will never
+    # change again.
+    answered = jobs.get(record["id"])
+    assert answered["state"] == STATE_FAILED
+    assert answered["code"] == RESTART_CODE
+    assert answered["error"] == STOPPED_ERROR
+
+
+def test_a_stop_whose_drain_throws_still_joins_its_workers(tmp_path,
+                                                           monkeypatch):
+    """`shutdown` runs when there is nothing after it.
+
+    The drain walks the volume — a directory per queued task, a record per job —
+    so it is not a step that cannot fail. Letting it out would skip every join
+    below it and come out of `server_close`, leaving a worker mid-publish to be
+    killed between the rename and the pointer writes: the exact ending the join
+    exists to prevent.
+    """
+    data = tmp_path / "data"
+    pool = BuildQueue(_bare_store(data), JobStore(data),
+                      build_runner=copying_builder)
+    pool.start()
+
+    def explode():
+        raise RuntimeError("the volume went away in the middle of the drain")
+
+    monkeypatch.setattr(pool, "_drop_queued", explode)
+    pool.shutdown()
+    _await_no_workers()
+
+
+def test_the_listening_socket_is_closed_before_the_pool_is_drained(tmp_path,
+                                                                   monkeypatch):
+    """A hub on its way out must stop accepting, not accept and then refuse.
+
+    The pool's shutdown drains the queue and then waits out its join budget, and
+    with the socket still open every moment of that is a moment in which the hub
+    takes a connection, spools a body, unpacks a tree and hands it to a pool
+    that is stopping — work whose only possible ending is a job saying to push
+    again.
+    """
+    hub = start_hub(tmp_path / "data")
+    seen = {}
+    draining = hub.server.builds.shutdown
+
+    def watched():
+        # -1 is what `socket.close()` leaves behind, so this is the question
+        # "had the socket already been closed when the drain started".
+        seen["socket_closed"] = hub.server.socket.fileno() == -1
+        draining()
+
+    monkeypatch.setattr(hub.server.builds, "shutdown", watched)
+    stop_hub(hub)
+    assert seen["socket_closed"] is True
+
+
+def test_the_hub_answers_sigterm_by_shutting_down(tmp_path):
+    """SIGTERM is how `docker stop` ends this service, i.e. every deploy.
+
+    Under the default disposition the process is just terminated: `serve_forever`
+    never returns, `server_close` never runs, and the build pool's shutdown —
+    the queue drain and the wait for a worker mid-publish — never runs in
+    production at all, only under Ctrl+C on somebody's laptop.
+    """
+    from main import install_stop_handler
+
+    hub = start_hub(tmp_path / "data")
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        install_stop_handler(hub.server)
+        os.kill(os.getpid(), signal.SIGTERM)
+        hub._thread.join(timeout=10)
+        assert not hub._thread.is_alive(), (
+            "SIGTERM did not stop the server; if this hangs rather than fails, "
+            "the handler called shutdown() on the thread that serves")
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        stop_hub(hub)
+
+
+def test_the_sigterm_handler_never_waits_on_threadings_own_lock():
+    """The handler wakes a thread; it must not START one.
+
+    `Thread.start()` takes `threading._active_limbo_lock`, and the main thread
+    holds that same lock every time `ThreadingHTTPServer` spawns a thread for an
+    incoming connection. A Python signal handler runs ON THE MAIN THREAD between
+    two bytecodes, so it can be entered while that thread is inside `start()` —
+    and a `start()` from the handler would then wait for a lock its own thread
+    holds. Nothing would release it: the handler never returns, the serve loop
+    never comes round, and the stop hangs until SIGKILL, which is the ending the
+    handler was written to prevent.
+
+    The lock is held by another thread here rather than by this one, so the
+    failure shows up as a DELAY instead of a deadlock and this test can report
+    it rather than hang on it.
+    """
+    from main import install_stop_handler
+
+    limbo_lock = getattr(threading, "_active_limbo_lock", None)
+    if limbo_lock is None:
+        pytest.skip("this interpreter does not expose threading's limbo lock")
+
+    class StubServer:
+        def __init__(self):
+            self.stopped = threading.Event()
+
+        def shutdown(self):
+            self.stopped.set()
+
+    server = StubServer()
+    holding, release = threading.Event(), threading.Event()
+
+    def hold_the_lock():
+        with limbo_lock:
+            holding.set()
+            # Bounded whatever happens: before the fix the handler blocks on
+            # this lock, so the main thread cannot reach the line below that
+            # would otherwise release it.
+            release.wait(timeout=1.0)
+
+    holder = threading.Thread(target=hold_the_lock, name="limbo-holder",
+                              daemon=True)
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        install_stop_handler(server)
+        holder.start()
+        assert holding.wait(timeout=5)
+
+        started = time.monotonic()
+        os.kill(os.getpid(), signal.SIGTERM)
+        assert server.stopped.wait(timeout=5)
+        took = time.monotonic() - started
+
+        assert took < 0.5, (
+            f"the stop took {took:.2f}s to start while another thread held "
+            f"threading's limbo lock, so the handler is waiting on it — held "
+            f"by the main thread instead, that wait never ends")
+    finally:
+        release.set()
+        holder.join(timeout=5)
+        signal.signal(signal.SIGTERM, previous)
+
+
+# -- the seam nothing else in this suite crosses -----------------------------
+def test_the_worker_calls_the_real_run_build_the_way_it_is_declared(hub_factory,
+                                                                    monkeypatch):
+    """Every other test in this suite substitutes the builder, on purpose.
+
+    Computing geometry per test is minutes and needs CadQuery, so the stand-in
+    stays — but with it in place NOTHING exercises the join between
+    `_build_and_publish` and `src.buildproc.run_build`. Renaming a parameter
+    there leaves the whole suite green and breaks production on the first push.
+
+    So the call is captured as the worker really made it and then bound against
+    the real function's signature. Both halves are needed: binding an expression
+    written out here would only check a copy that stops following the worker,
+    and `build_arguments` is what makes the two the same expression rather than
+    two that happen to agree today.
+
+    WHICH IS WHY THE HELPER IS WATCHED RATHER THAN RE-EVALUATED. Comparing the
+    captured call against `build_arguments(...)` called again here proves only
+    that the two AGREE, and a worker that spelled the same expression out by
+    hand agrees perfectly — right up until `build_arguments` is changed and the
+    hand-written copy is not, which is the whole failure this is guarding. So
+    the helper itself reports whether it was the one that built the call.
+    """
+    class CallRecorder:
+        def __init__(self):
+            self.call = None
+
+        def __call__(self, *args, **keywords):
+            self.call = (args, keywords)
+            return copying_builder(*args, **keywords)
+
+    built_by_the_helper = []
+    helper = jobs_module.build_arguments
+
+    def watched(*args, **keywords):
+        call = helper(*args, **keywords)
+        built_by_the_helper.append(call)
+        return call
+
+    monkeypatch.setattr(jobs_module, "build_arguments", watched)
+    recorder = CallRecorder()
+    hub = hub_factory(build_runner=recorder)
+    assert hub.publish("proj1", "abc123", good_build()).status_code == 201
+
+    args, keywords = recorder.call
+    # `bind` raises TypeError the moment `run_build`'s signature stops accepting
+    # what the worker passes — a renamed keyword, an argument that moved.
+    inspect.signature(run_build).bind(*args, **keywords)
+    # ...and the call the worker made is the one the helper handed it, so the
+    # check above is pointed at the real call rather than at a copy of it.
+    assert built_by_the_helper == [(args, keywords)], (
+        "the worker did not get its arguments from `build_arguments`, so "
+        "nothing keeps the call it makes and the call this test binds together")
+    # Belt and braces on the helper itself: it is the expression, not a wrapper
+    # that could quietly start returning something else.
+    assert build_arguments(args[0], args[1], keywords["pid"]) == (args, keywords)
+
+
+def test_a_publish_reply_is_reconstructed_from_the_job(hub):
+    """The harness helper the rest of the suite leans on, pinned once here.
+
+    Two hundred tests call `Hub.publish` and read a status code off it; if this
+    translation were wrong they would all be asserting against a fiction.
+    """
+    reply = hub.publish_async("proj1", "abc123", good_build())
+    record = hub.job(reply.json()["job"], token=TOKEN)
+    hub.await_job(reply.json()["job"])
+    finished = hub.job(reply.json()["job"]).json()
+
+    rebuilt = PublishReply(finished)
+    assert rebuilt.status_code == finished["code"] == 201
+    assert rebuilt.json() == {"url": "/project/proj1/abc123/"}
+    assert json.loads(rebuilt.text) == rebuilt.json()
+    assert record.status_code == 200
