@@ -69,8 +69,8 @@ OCTET_TYPE = "application/octet-stream"
 
 # Only the vendored bundle may be cached forever: its name carries the library's
 # identity and it is replaced by a differently named file, never edited. Our own
-# `viewer.js` and `site.css` DO change with the image under a stable name, so an
-# immutable year would leave people on the old viewer until 2027 after a deploy.
+# `hammerola.js` and `site.css` DO change with the image under a stable name, so
+# an immutable year would leave people on the old page until 2027 after a deploy.
 VENDORED_ASSET_PREFIX = "three-cad-viewer."
 
 # The pages load everything from this origin and nothing is inline, so the policy
@@ -421,10 +421,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings):
                 info = os.fstat(handle.fileno())
                 if not stat.S_ISREG(info.st_mode):
                     return self._error(404, "not found", with_body=with_body)
-                # Only the vendored bundle gets the immutable year. `viewer.js`
-                # and `site.css` are ours and change under a stable name with
-                # every image, so `immutable` on them would pin visitors to the
-                # viewer that shipped the day they first loaded the site.
+                # Only the vendored bundle gets the immutable year. Our own
+                # scripts and `site.css` change under a stable name with every
+                # image, so `immutable` on them would pin visitors to the page
+                # that shipped the day they first loaded the site.
                 cache = (CACHE_IMMUTABLE
                          if path.name.startswith(VENDORED_ASSET_PREFIX)
                          else CACHE_NONE)
@@ -443,8 +443,8 @@ def make_handler(store: Store, comment_store: CommentStore, settings):
             """The shell of a build page — from the IMAGE, never from the build.
 
             It is byte-for-byte the same for every build and every project, and it
-            CHANGES with the image: the day `viewer.js` needs one more element,
-            every page has to have it. A copy written into each build directory
+            CHANGES with the image: the day the browser code needs one more
+            element, every page has to have it. A copy written into each build directory
             and served with the year of `immutable` that a commit URL carries
             would freeze each published build on the markup that shipped the day
             it was pushed — and that permanent URL is the one thing this service

@@ -479,28 +479,25 @@ def test_comments_are_not_served_from_the_public_site(hub):
 
 
 # -- the page that writes into the queue ------------------------------------
-def test_the_build_page_ships_the_comment_form(hub):
-    """viewer.js fills these in by id; a template without them fails silently."""
-    _publish(hub)
-    body = hub.get("/project/proj1/abc123/").text
-    for element in ("comment_btn", "comment_panel", "comment_text",
-                    "comment_photo", "comment_send", "comment_cancel",
-                    "comment_status", "comment_hint"):
-        assert element in body, element
+def test_the_committed_page_scripts_never_build_markup_from_a_string():
+    """The rule the whole site is written under (SPEC 7A.4).
 
-
-def test_the_viewer_never_builds_markup_from_a_string():
-    """The rule the whole comment UI is written under (SPEC 7A.4).
-
-    This page takes text from a stranger's keyboard and lives on one origin
+    These pages take text from a stranger's keyboard and live on one origin
     shared with every project on the host. Two stored XSS bugs in this project
     were assignments to innerHTML, so the absence is asserted rather than
     reviewed.
+
+    The scripts checked here are the COMMITTED ones — the index page and the
+    pointer resolver. The build page's own interface is compiled from `ui/src/`
+    and is held to the same rule there, by
+    tests/test_ui_source.py::test_nothing_writes_markup; there is no point
+    reading `static/_v/hammerola.js` for it, because that file is a build
+    artefact and a fresh checkout does not have one.
     """
-    # The property ACCESS, not the word: both files talk about innerHTML in a
+    # The property ACCESS, not the word: these files talk about innerHTML in a
     # comment explaining why they do not use it, and a test that failed on prose
     # would be deleted the first time it cried wolf.
-    for name in ("viewer.js", "index.js"):
+    for name in ("index.js", "pointer.js", "pointer_pref.js"):
         source = (STATIC / "_v" / name).read_text(encoding="utf-8")
         for forbidden in (".innerHTML", ".outerHTML", '["innerHTML"]',
                           ".insertAdjacentHTML(", "document.write("):

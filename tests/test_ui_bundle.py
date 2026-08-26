@@ -357,9 +357,9 @@ def test_every_copied_bundle_file_is_checked_by_the_gate(bundle_copies):
 def test_the_bundle_is_copied_file_by_file(stage_copies, out_dir):
     """No `COPY --from=ui /ui/dist static/_v` — the merging form.
 
-    static/_v/ holds committed assets (viewer.js, site.css, index.js, pointer.js,
-    the vendored viewer) and the build output lands among them, so a directory
-    copy MERGES the two. `index.js` is an entirely ordinary name for a bundler to
+    static/_v/ holds committed assets (site.css, index.js, pointer.js,
+    pointer_pref.js, the vendored viewer) and the build output lands among them,
+    so a directory copy MERGES the two. `index.js` is an entirely ordinary name for a bundler to
     emit, and a collision there silently replaces the hub's own file. The publish
     gate cannot see it: check (g) asks whether a path EXISTS, and after such an
     overwrite it still does.
@@ -569,6 +569,39 @@ def test_the_page_loads_the_bundle_from_that_path(entry_name, out_dir):
         f"{sources!r}. Nothing else in this repository would notice: the bundle "
         "is still built, still copied into the image and still found by the "
         "publish gate -- the page just never fetches it."
+    )
+
+
+def test_the_page_loads_nothing_but_the_bundle(entry_name, out_dir):
+    """And no second script beside it — the old page viewer above all.
+
+    The build page used to be driven by a page script of its own, which built the
+    header, the panels and the comment form out of the markup the template
+    carried. Both are gone: the interface draws all of it, and that script is not
+    in the repository or the image any more.
+
+    What this guards is the shape of the failure if it comes back. The two would
+    not conflict loudly — the old script mounted into a `#cad_viewer` this
+    template no longer has, so it would fail somewhere in the console while the
+    interface rendered over the top of it and the page LOOKED right. Meanwhile
+    the browser would fetch a 404 on every load, both would bind the library's
+    keymap and the wheel, and the pointer-preference key would get two writers.
+    Nothing else here would notice: the bundle test above only asserts its own
+    `src` is PRESENT, and the publish gate asks whether paths exist rather than
+    which ones the page asks for.
+
+    So this asserts the whole list rather than the absence of one name: any
+    second `<script src>` on this page is the thing worth stopping, whatever it
+    is called.
+    """
+    url = f"/{out_dir.split('/', 1)[1]}/{entry_name}"
+    html = read_markup("templates", "build.html")
+    sources = re.findall(r"<script[^>]*\bsrc=[\"']([^\"']+)[\"']", html)
+
+    assert sources == [url], (
+        f"templates/build.html loads {sources!r}; the only script it may load is "
+        f"{url!r}. A page script beside the bundle is a 404 or a second driver "
+        "for the same viewer, and neither shows up as a broken page."
     )
 
 

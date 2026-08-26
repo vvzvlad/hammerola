@@ -1,11 +1,19 @@
 // Which moving pointer — `latest` or `dev` — a reader last opened, PER PROJECT.
 //
-// Two pages need this and they are not the same page: the build page writes it
-// (viewer.js), the resolver at /project/<pid>/ reads it (pointer.js). One module
-// so there is exactly one spelling of the key and one answer to "what counts as
-// a valid stored value": a copy in each file is a pair that agrees until the day
-// one of them is edited, and the failure would be silent — a reader whose choice
-// simply stops being remembered.
+// THIS FILE IS THE READING HALF, and its one importer is the resolver at
+// /project/<pid>/ (pointer.js). The recording half is the build page, which is
+// now the React interface: `rememberPointer` in ui/src/store.js writes the key
+// when a build page opens under one of the two moving names.
+//
+// THE TWO HALVES CANNOT SHARE A MODULE, which is why the key is spelled twice.
+// This file is served straight to the resolver page, and that page must not
+// pull the interface bundle — 3.6 MB downloaded to read one key and leave, on
+// the way to a page that will download it again (tests/test_pointer_memory.py
+// pins that too). So the spellings are compared from Python instead, which is
+// the same arrangement POINTER_NAMES has lived under since live reload
+// (tests/test_live_reload.py). A copy nothing compares is a pair that agrees
+// until the day one of them is edited, and the failure is silent — a reader
+// whose choice simply stops being remembered.
 //
 // PER PROJECT, not one flag for the whole site. Someone editing one model lives
 // in `dev` while merely looking at another, and a single flag would open the
@@ -38,22 +46,4 @@ export function readPointer(pid) {
     console.warn("pointer preference", e);
   }
   return POINTER_NAMES.includes(saved) ? saved : null;
-}
-
-/**
- * Remember that this project was last opened on `name`.
- *
- * Called from the pointer pages themselves, which is what makes the choice
- * follow what the reader ACTUALLY looked at rather than what they clicked in a
- * picker: arriving at /dev/ by any route — the build picker, a pasted link, the
- * back button — is the same fact, and it is recorded in one place.
- */
-export function rememberPointer(pid, name) {
-  if (!pid || !POINTER_NAMES.includes(name)) return;
-  try {
-    localStorage.setItem(key(pid), name);
-  } catch (e) {
-    // The page works exactly as before; only the memory is lost.
-    console.warn("pointer preference", e);
-  }
 }

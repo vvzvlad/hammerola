@@ -192,7 +192,7 @@ GIF_BYTES = b"GIF89a" + b"\x00" * 32
 
 
 def comment_payload(**extra):
-    """The JSON half of a comment, in the shape viewer.js sends (SPEC 7A.1)."""
+    """The JSON half of a comment, in the shape the build page sends (SPEC 7A.1)."""
     payload = {
         "text": "the bracket fouls the standoff",
         "view": "assembled",

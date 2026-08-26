@@ -7,8 +7,8 @@ Three things are generated here and nothing else writes them:
   * the root `index.json` that feeds the public index page.
 
 Page HTML is not templated in any interesting sense: both pages are static and get
-everything they show from JSON at runtime, which is exactly why the same viewer.js
-serves every project and every build. They are read from `templates/` — files in
+everything they show from JSON at runtime, which is exactly why one copy of the
+browser code serves every project and every build. They are read from `templates/` — files in
 the image, never in `data/`, because the volume would shadow them.
 
 Validation lives here too, because "is this meta.json usable" and "what does the

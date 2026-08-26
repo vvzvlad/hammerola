@@ -161,20 +161,24 @@ EXCLUDED_PATHS = ["/app/tests", "/app/.env", "/app/.venv"]
 #
 # The entries here are the ones whose absence has no other symptom: one template per page the
 # hub serves — the index at `/`, one build's page, and the pointer page at `/project/<pid>/`,
-# which `render.pointer_page_html()` serves as a PAGE rather than as a redirect — plus the two
-# halves of the viewer payload. `three-cad-viewer.esm.js` is 3.5 MB and `viewer.js` is the hub's
-# own driver for it — a page that loads one without the other renders an empty canvas with an
-# error only in the browser console, i.e. nowhere CI can look.
+# which `render.pointer_page_html()` serves as a PAGE rather than as a redirect — plus the
+# vendored viewer library. `three-cad-viewer.esm.js` is 3.5 MB and is fetched at RUNTIME by a
+# URL in the bundle (`VIEWER_MODULE_URL` in ui/src/viewport/library.js) rather than imported at
+# build time, so nothing in the image build can notice it is gone: the page renders an empty
+# canvas and says so only in the browser console, i.e. nowhere CI can look.
 # Deliberately not the whole tree: this is a tripwire on the COPY lines, not an inventory, and a
 # list that had to be updated for every new asset would be edited to match the image rather than
 # the other way round. Templates ARE listed one per page, though, because each of the three is
 # reached by a different URL and a missing one breaks only that URL.
+#
+# The hub's own driver for that library used to be listed here beside it, back when the build
+# page was a script the repository shipped. It is not an asset any more and is not in the image
+# at all: the build page is the React bundle, which is the `hammerola.js` row further down.
 REQUIRED_PATHS = [
     "/app/templates/index.html",
     "/app/templates/build.html",
     "/app/templates/pointer.html",
     "/app/static/_v/three-cad-viewer.esm.js",
-    "/app/static/_v/viewer.js",
     # `checklib.py` is a single file rather than a tree, and it is here for the same reason as
     # the templates and the viewer payload: nothing else can see it go missing. It is copied on
     # a line of its own (`COPY checklib.py .`) and is the top-level name every model.py imports;
