@@ -131,7 +131,45 @@ def test_the_exporter_still_produces_the_committed_structure(committed, tmp_path
     last decimal place — noise, on a test whose whole job is to be believed. What
     it does compare is every name and every nesting level, which is what the
     adapter reads and what a format change moves.
+
+    THIS TEST DOES NOT RUN IN CI, AND THAT IS WHAT THE GUARD BELOW COSTS. Both
+    workflows run the suite in a bare `python:3.11-slim` carrying nothing but
+    `git`, while the system libraries the CAD kernel links against are installed
+    by the RUNTIME Dockerfile only — so there `import cadquery` dies with
+    `ImportError: libGL.so.1`: the distribution is on disk, the shared object it
+    loads is not. The guard turns that into a skip, exactly as tests/cadbuild/
+    does for the same reason.
+
+    What is being paid for it, stated plainly rather than left to read as
+    routine: NOT ONE test that computes real geometry executes in CI. Not the
+    ~169 under tests/cadbuild/, and from now on not this one either — so the
+    committed fixture is compared against the real exporter only on a workstation
+    where `make install` put the kernel in place. Between such runs the drift this
+    file exists to catch is unwatched: a change to src/cadbuild/views.py that
+    moves the payload's shape goes through a green CI, and the vitest suite keeps
+    passing against a document no build produces any more. Closing the hole means
+    putting libgl1 into the test container, which also switches those ~169
+    geometry tests on — a step of its own, with its own cost to measure; it is
+    written up in docs/SPEC.md §8.
+
+    Guarding on `cadquery` alone covers `ocp_tessellate` too, which the export
+    also needs: both are pinned in requirements.txt and both fail on the same
+    missing system library, so an interpreter that imports the first imports the
+    second.
+
+    `exc_type=ImportError` is explicit because the failure this guard is FOR is
+    an ImportError that is not a ModuleNotFoundError — the module is found and
+    its extension refuses to load. pytest 9 still defaults to catching plain
+    ImportError but warns about it, and 9.1 changes the default to
+    ModuleNotFoundError; without the argument this guard would then stop
+    skipping and the CI container would go red again on a pytest bump.
     """
+    pytest.importorskip(
+        "cadquery", exc_type=ImportError,
+        reason="the CAD kernel does not import in this interpreter, so the real "
+               "exporter cannot be run — see this test's docstring for what "
+               "skipping it costs in CI")
+
     module = load_generator()
     module.export(tmp_path / "out")
     fresh = json.loads(

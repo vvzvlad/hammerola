@@ -192,6 +192,25 @@ jobs:
         # fires. Unnamed it would then be unreachable by anything at all, because the cleanup
         # step below (like every cleanup in these workflows) removes containers BY NAME. One
         # timed-out test step would leak a container onto the shared daemon permanently.
+        # `--memory` / `--memory-swap` are a MEASURED ceiling, and without them this container
+        # can take the whole runner: 19 GB shared with every other repository's jobs, so a
+        # runaway allocation here stops being this job's failure and becomes everybody's.
+        # Measured on cirunner-docker (Debian 13, x86_64, 8 vcpu, 19 GB) with this exact
+        # command: `memory.peak` over a full green run is 403 MB; the suite still passes at
+        # `--memory=384m`; the kernel really kills it (`OOMKilled=true`) at 320m, 256m and
+        # 192m. The floor is therefore between 320 and 384 MB, and 2g is ~5x both that floor
+        # and the peak. The margin is deliberately a MULTIPLE rather than a percentage: a
+        # suite that grows a fixture, a dependency or a parallel worker must not start failing
+        # CI for a reason that has nothing to do with the commit, while an allocation that
+        # runs away still dies inside this job instead of on the host. Re-measure when the
+        # container's contents change — installing the CAD kernel's system libraries here
+        # would invalidate this number outright, because nothing in this run imports OCP
+        # today.
+        # The two flags MUST STAY EQUAL. `--memory-swap` is the memory+swap TOTAL, and leaving
+        # it unset gives the container swap equal to the limit, so a process that ran away
+        # would thrash to twice the number instead of being killed at it — the ceiling would
+        # still be written here while no longer being enforced, which is worse than not having
+        # one, and the measurements above would no longer describe what happens.
         # GIT IS INSTALLED INSIDE THE CONTAINER, and for exactly one test.
         # tests/test_no_conflict_markers.py enumerates the tracked files with `git ls-files` and
         # greps each one for a merge marker; python:3.11-slim carries no git at all, so without
@@ -223,6 +242,7 @@ jobs:
           --exclude=./data --exclude=./.env --exclude=./.pytest_cache \
           --exclude=__pycache__ . \
           | docker run --rm -i --pull always --name "$TEST_NAME" \
+          --memory=2g --memory-swap=2g \
           -e PUBLISH_TOKEN=fake-test-publish-token-not-real \
           -e COMMENT_READ_TOKEN=fake-test-comment-read-token-not-real \
           -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
