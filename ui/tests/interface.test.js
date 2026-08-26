@@ -119,10 +119,11 @@ describe('takePending', () => {
   })
 
   it('goes ahead after its deadline, so a lost pointerup cannot strand it', () => {
-    // `pointerHeld` is cleared by a `pointerup` on the window, and there is no
-    // guarantee this page ever sees one: a release over another window, a tab
-    // that lost focus mid-drag. The reader pressed Switch, and a button that
-    // quietly does nothing for ever is the worse of the two failures.
+    // A press leaves `pointersDown` when its own id comes back on a `pointerup`,
+    // and there is no guarantee this page ever sees one: a release over another
+    // window, a tab that lost focus mid-drag. `blur` is the viewport's own way
+    // out of that (ui/src/viewport/live.js) — this deadline is the backstop
+    // behind it, because a Switch that quietly does nothing for ever is worse.
     const c = offering({ busy: true })
     c.takePending()
     vi.advanceTimersByTime(60000)

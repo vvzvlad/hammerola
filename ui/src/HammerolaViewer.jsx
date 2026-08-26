@@ -79,6 +79,12 @@ import {
 import {
   readToken, writeToken, clearToken, readNotes, writeNotes, rememberPointer,
 } from './store.js';
+// The canvas theme lives with the rest of the viewport's options, and so does the
+// storage for it: `tests/test_ui_source.py` allows this side exactly one module
+// that touches localStorage (store.js), and the viewport keeps its own answers
+// under its own guard. Only the two functions come across — importing the option
+// objects themselves would be this file deciding how the library is started.
+import { readTheme, writeTheme } from './viewport/options.js';
 
 /* CSS string -> React style object. Only here to keep the mock's markup 1:1. */
 const cssCache = new Map();
@@ -206,6 +212,46 @@ const BUSY_WAIT_MS = 5000;
 /** The letter the viewport holds the cut tool up on. Shown, never bound here. */
 const HOLD_KEY_LABEL = 'C';
 
+/**
+ * `meta.downloads` regrouped as part name -> the files published for that part.
+ *
+ * The hub publishes `{label: filename}` and nothing that says which part a file
+ * belongs to — the answer is in the FILENAME, which is always `<part>.<ext>` for
+ * ext in step/stl/3mf (`download_labels` in src/cadbuild/printables.py). Nothing
+ * about the wire format changes for this; the grouping is done here, in the one
+ * place that needs it.
+ *
+ * READ THE VALUE, NEVER THE KEY, and that is the whole trap: with a single
+ * printable the LABEL degenerates to a bare `step` / `stl` / `3mf` with the part
+ * name gone from it, while the filename does not degenerate at all. A menu built
+ * by matching labels against a part name would therefore work on every assembly
+ * except the one-part one, which is the smallest and most common case there is.
+ *
+ * SPLIT AT THE LAST DOT: a printable's name may itself contain dots (MEMBER_RE
+ * allows them), so `v1.2.plate.stl` is the part `v1.2.plate`, not `v1`.
+ *
+ * A Map rather than an object, because the keys are model-supplied strings and
+ * `__proto__` is a legal printable name — assigning it on an object literal
+ * silently stores nothing.
+ */
+export function filesByPart(downloads) {
+  const out = new Map();
+  Object.values((downloads && typeof downloads === 'object') ? downloads : {})
+    .forEach((value) => {
+      const file = String(value);
+      const cut = file.lastIndexOf('.');
+      // No extension, or nothing before the dot: not a `<part>.<ext>` name, and
+      // guessing at one would put a row in the menu that downloads nothing.
+      if (cut <= 0 || cut === file.length - 1) return;
+      const name = file.slice(0, cut);
+      if (!out.has(name)) out.set(name, []);
+      // In the order the hub wrote them — step, stl, 3mf — rather than sorted,
+      // so the menu lists what was published in the order it was published.
+      out.get(name).push({ ext: file.slice(cut + 1), file });
+    });
+  return out;
+}
+
 export default class HammerolaViewer extends React.Component {
   static defaultProps = { commentsOpen: true };
 
@@ -232,6 +278,11 @@ export default class HammerolaViewer extends React.Component {
       measure: null, moved: null, toast: null,
       // -- who the reader is
       token: readToken(PAGE.pid), tokenPop: false, tokenDraft: '',
+      // -- and what they want to look at the model against. Read here so the
+      // first paint is already the reader's answer: the same read seeds the
+      // options the viewport starts the library with (viewport/options.js), so
+      // the button below never has to correct a canvas that came up wrong.
+      theme: readTheme(),
     };
   }
 
@@ -524,6 +575,41 @@ export default class HammerolaViewer extends React.Component {
     } catch (error) {
       console.warn('frame', error);
       this.toast('Could not save the frame');
+    }
+  }
+
+  /**
+   * Light or dark under the model — remembered, and applied to the live scene.
+   *
+   * THE CHROME DOES NOT MOVE. Everything this interface draws stays light in
+   * both modes; what changes is the canvas, which is the library's and which is
+   * the whole of what looked out of place. `theme` is the library's own word for
+   * it and carries more than the background — the grid and the orientation
+   * marker are tinted with it — but both of those are off in this viewport
+   * (viewport/options.js), so on this page it IS the background.
+   *
+   * WHY IT GOES THROUGH `viewer` AND NOT THROUGH THE ELEMENT. This is the one
+   * place this file reaches past the element's imperative half, and it is worth
+   * saying why rather than tidying later. The library resolves the theme once,
+   * at construction, into its own state, and re-asserts THAT value at the end of
+   * every render — so setting the attribute from outside, or changing the option
+   * object, holds only until the next view switch. `setTheme` is the library's
+   * public answer to exactly this and keeps its state in step; the element has no
+   * method to forward it, and adding one is not this change's file to edit.
+   *
+   * Guarded end to end, because every step of it is allowed to be missing: no
+   * adapter on the page, a viewport that has not rendered yet, an older library.
+   * The setting is still stored, and the next page load comes up in it.
+   */
+  applyTheme(value) {
+    const theme = writeTheme(value);
+    this.setState({ theme });
+    try {
+      const el = this.el();
+      const viewer = el && el.viewer;
+      if (viewer && typeof viewer.setTheme === 'function') viewer.setTheme(theme);
+    } catch (error) {
+      console.warn('theme', error);
     }
   }
 
@@ -920,12 +1006,15 @@ export default class HammerolaViewer extends React.Component {
     const cmpReady = s.cmp.length === 2;
 
     // -- the downloads, from meta.downloads: label -> file name
+    const fileHref = (file) => PAGE.base + encodeURIComponent(String(file));
     const downloads = Object.entries((meta && meta.downloads) || {}).map(([label, file]) => ({
       key: label,
       label: String(label).toUpperCase(),
       file: String(file),
-      href: PAGE.base + encodeURIComponent(String(file)),
+      href: fileHref(file),
     }));
+    // The same files, cut up by part, for the row menu below.
+    const partFiles = filesByPart(meta && meta.downloads);
 
     const threads = s.comments.map((c) => ({
       key: c.id, label: c.label, part: c.part, time: c.time, text: c.text, meas: c.meas,
@@ -944,11 +1033,52 @@ export default class HammerolaViewer extends React.Component {
     const mNode = this.node(s.menu && s.menu.id);
     const mName = mNode ? mNode.name : '';
     const note = mNode ? s.notes[mNode.name] : '';
-    const mi = (label, hint, fn, tone) => ({
-      key: label, label, hint: hint || '',
-      style: `display:flex;align-items:center;gap:10px;padding:7px 14px;cursor:pointer;font:400 12px ${SANS};color:#2a2e33` + (tone === 'top' ? ';border-top:1px solid #e3e6ea' : ''),
-      onClick: stop(() => { fn(); this.setState({ menu: null }); }),
+    // `href` turns the row into a real `<a download>` — see the files block
+    // below — and `tone` is 'top' for a rule above the row, 'said' for a row that
+    // states something rather than doing it.
+    //
+    // A 'said' ROW GETS NO HANDLER AT ALL, which is what makes its `cursor:
+    // default` and its grey true rather than a costume. It used to be styled
+    // unclickable and then handed an `onClick` anyway — one that stopped the
+    // event and closed the menu, i.e. a row that acted while saying it would
+    // not. Without one the row is inert, which is exactly what it claims to be:
+    // the click stops at the menu's own wrapper (which stops propagation so that
+    // a press on the menu's padding does not close it through `rootClick`), and
+    // the menu closes on the next click anywhere outside, as it always has.
+    const mi = (label, hint, fn, tone, href) => ({
+      key: label, label, hint: hint || '', href: href || '',
+      style: `display:flex;align-items:center;gap:10px;padding:7px 14px;text-decoration:none;font:400 12px ${SANS};`
+        + (tone === 'said' ? 'cursor:default;color:#8a9099' : 'cursor:pointer;color:#2a2e33')
+        + (tone === 'top' || tone === 'said' ? ';border-top:1px solid #e3e6ea' : ''),
+      onClick: tone === 'said'
+        ? undefined
+        : stop(() => { fn(); this.setState({ menu: null }); }),
     });
+
+    /**
+     * This part's files — the row-menu half of the header's Downloads menu.
+     *
+     * Three rows and not a submenu: one click cannot sensibly deliver three
+     * files, this menu has no submenu machinery anywhere in it, and a row per
+     * file is exactly what the header's menu already looks like — extension on
+     * the left, filename on the right. Each one is a plain `<a href download>`
+     * against the same base URL the header builds, so middle-click and "save
+     * link as" work on it like any other link on the page.
+     *
+     * BOTH EMPTY CASES SAY SO OUT LOUD. A reference part — a tree node that is
+     * not in `printables()` — has no files and never will, and a menu that
+     * silently dropped the item would read as a menu that forgot. Same for a
+     * build that ships nothing: the header's menu has a sentence for that case
+     * and this one must not be worse.
+     */
+    const fileRows = (name) => {
+      if (!downloads.length) return [mi('No files in this build', '', () => {}, 'said')];
+      const files = partFiles.get(name) || [];
+      if (!files.length) return [mi('No files for this part', 'not a printable', () => {}, 'said')];
+      return files.map((f, at) => mi(f.ext.toUpperCase(), f.file, () => {},
+                                     at === 0 ? 'top' : '', fileHref(f.file)));
+    };
+
     const menuItems = !mNode ? [] : [
       mi('Isolate', 'show only this', () => {
         const keep = new Set(mNode.leaves);
@@ -959,6 +1089,13 @@ export default class HammerolaViewer extends React.Component {
       mi('Translucent', 'see through it', () => this.set({ ghost: this.toggle(s.ghost, mNode.leaves) })),
       ...(viewer || mNode.isNode ? [] : [mi('Note', note ? (note.length > 22 ? `${note.slice(0, 22)}…` : note) : '',
         () => this.setState({ notePop: mNode.name, noteDraft: note || '' }))]),
+      // Files hang on a PART, so a group row has none of its own — the same rule
+      // and the same reason as the note above it. A group is not a printable and
+      // never has files under its own name; offering the union of its leaves'
+      // instead would be one click asking the browser for a dozen downloads,
+      // which browsers block after the first, and the whole build's files are one
+      // menu away in the header already.
+      ...(mNode.isNode ? [] : fileRows(mNode.name)),
       mi('Copy name', '', () => {
         try {
           navigator.clipboard.writeText(mNode.name);
@@ -1061,6 +1198,18 @@ export default class HammerolaViewer extends React.Component {
       tComment: setTool('comment'), commentBtnStyle: btn(s.tool === 'comment', viewer),
       fitView: () => this.fitView(),
       grabFrame: () => this.saveFrame(),
+
+      // The canvas theme, in the strip that belongs to the viewport rather than
+      // in a menu about something else — it changes what is behind the model, so
+      // it sits with the other things that do. The button names the mode the
+      // reader is IN, the way the access button beside the token does; what it
+      // switches to is in the tooltip.
+      themeDark: s.theme === 'dark',
+      themeLabel: s.theme === 'dark' ? 'Dark' : 'Light',
+      themeTitle: s.theme === 'dark'
+        ? 'the model sits on a dark canvas — click for light'
+        : 'the model sits on a light canvas — click for dark',
+      toggleTheme: () => this.applyTheme(s.theme === 'dark' ? 'light' : 'dark'),
       hintText: s.tool === 'comment' ? 'click the model to pin a task'
         : s.tool === 'measure' ? 'click a part, or two, to measure'
         : s.tool === 'move' ? 'drag a part · esc to stop'
@@ -1479,6 +1628,16 @@ export default class HammerolaViewer extends React.Component {
                   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
                   Frame
                 </div>
+                <div style={css('width:1px;height:18px;background:#d8dce1')} />
+                {/* what the model stands on — the canvas only, never the chrome */}
+                <div onClick={v.toggleTheme} title={v.themeTitle} style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:#3c4147;cursor:pointer;border:1px solid transparent`)}>
+                  {v.themeDark ? (
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6 5.9 5.9 0 1 0 13.4 9.9z" /></svg>
+                  ) : (
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="3.1" /><path d="M8 1.2v1.7M8 13.1v1.7M1.2 8h1.7M13.1 8h1.7M3.2 3.2l1.2 1.2M11.6 11.6l1.2 1.2M12.8 3.2l-1.2 1.2M4.4 11.6l-1.2 1.2" /></svg>
+                  )}
+                  {v.themeLabel}
+                </div>
               </div>
             </div>
 
@@ -1532,16 +1691,10 @@ export default class HammerolaViewer extends React.Component {
               <div onClick={v.retryView} style={css(`display:inline-block;margin-top:11px;padding:6px 14px;background:#1f7ae0;color:#fff;border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`)}>Try again</div>
             </div>
 
-            <div style={css('position:absolute;left:16px;bottom:14px;pointer-events:none;opacity:.8')}>
-              <svg width="52" height="52" viewBox="0 0 52 52">
-                <path d="M26 26L26 6" stroke="#2e6fd4" strokeWidth="1.6" />
-                <path d="M26 26L44 38" stroke="#c23b3b" strokeWidth="1.6" />
-                <path d="M26 26L8 38" stroke="#2e9e44" strokeWidth="1.6" />
-                <text x="26" y="4" fontSize="9" fill="#2e6fd4" textAnchor="middle" dominantBaseline="hanging" transform="translate(0,-4)">Z</text>
-                <text x="47" y="42" fontSize="9" fill="#c23b3b">X</text>
-                <text x="1" y="42" fontSize="9" fill="#2e9e44">Y</text>
-              </svg>
-            </div>
+            {/* The bottom-left corner is the VIEWPORT'S: it draws the view cube
+                there (ui/src/viewport/viewcube.js). A static axis triad used to
+                be drawn here instead, and it never turned with the camera — see
+                SPEC §8, entries 23 and 24. */}
 
             <div style={css(`position:absolute;right:14px;bottom:12px;font:400 10.5px ${MONO};color:#9aa1a9;pointer-events:none`)}>{v.hintText}</div>
 
@@ -1645,12 +1798,20 @@ export default class HammerolaViewer extends React.Component {
           {/* ── the tree row's context menu ── */}
           <div onClick={(e) => e.stopPropagation()} style={css(v.menuStyle)}>
             <div style={css(`padding:7px 14px 6px;font:600 10.5px ${MONO};color:#8a9099;border-bottom:1px solid #e3e6ea`)}>{v.menuName}</div>
-            {v.menuItems.map((m) => (
-              <div key={m.key} onClick={m.onClick} style={css(m.style)}>
-                <span style={css('flex:1')}>{m.label}</span>
-                <span style={css(`font:400 10.5px ${MONO};color:#b0b6bd`)}>{m.hint}</span>
-              </div>
-            ))}
+            {/* A row that carries a file is an ANCHOR and not a div: the download
+                is the browser's to do, exactly as in the header's menu, so the
+                link is a real one and can be middle-clicked or saved as. */}
+            {v.menuItems.map((m) => {
+              const inner = (
+                <>
+                  <span style={css('flex:1')}>{m.label}</span>
+                  <span style={css(`font:400 10.5px ${MONO};color:#b0b6bd`)}>{m.hint}</span>
+                </>
+              );
+              return m.href
+                ? <a key={m.key} href={m.href} download onClick={m.onClick} style={css(m.style)}>{inner}</a>
+                : <div key={m.key} onClick={m.onClick} style={css(m.style)}>{inner}</div>;
+            })}
           </div>
 
           {/* ── the note editor: bound to a part NAME, for the whole project ── */}

@@ -25,7 +25,7 @@
 // through a scene. Each of those functions has its own tests in parts.test.js
 // and section.test.js, against the real thing.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../src/viewport/parts.js', () => ({
   applyGhost: vi.fn(),
@@ -50,8 +50,12 @@ vi.mock('../src/viewport/library.js', () => ({
   loadViewerLibrary: vi.fn(async () => { throw new Error('no library here') }),
 }))
 
+// The registration of `<hmr-viewport>`, for the one describe block below that
+// really upgrades the element. Importing it is what makes `document.createElement`
+// build an HmrViewport rather than an unknown inline box.
+import '../src/viewport/index.js'
 import { HmrViewport } from '../src/viewport/element.js'
-import { EVENT_ERROR } from '../src/viewport/events.js'
+import { EVENT_ERROR, TAG } from '../src/viewport/events.js'
 import {
   applyGhost, applyHidden, applySelected, resetMoves,
 } from '../src/viewport/parts.js'
@@ -512,6 +516,81 @@ describe('show', () => {
     vp.setState({ hidden: ['/Group/a'] })
     expect(vp.load).not.toHaveBeenCalled()
     vi.restoreAllMocks()
+  })
+})
+
+describe('the widgets connectedCallback puts on the page', () => {
+  // THE ELEMENT IS REALLY UPGRADED HERE, and this is the only block in the file
+  // that does it. Nothing on this path reaches the library: `connectedCallback`
+  // builds the container, the overlay and the view cube, and the viewer itself
+  // is not constructed until `show()` — which is why the header above can say
+  // the element is never upgraded and this can still work.
+  //
+  // WHAT IT IS FOR: nothing else, anywhere, notices whether the cube is mounted.
+  // Deleting the two lines in `element.js` that create and append it left every
+  // JS and Python test green with the widget simply absent from the page. The
+  // module sets NO class name on its root — a deliberate decision with reasons
+  // of its own — and that also opts it out of
+  // `test_every_class_the_viewport_sets_is_styled_here`, which was the one
+  // mechanism that would otherwise have caught it.
+  //
+  // `ResizeObserver` is the one thing jsdom does not have and the element does
+  // use; it is stubbed, exactly as live.test.js stubs it, because what it
+  // observes here is a box that never resizes.
+  beforeEach(() => {
+    // The element reads a remembered pointing device on boot, and there is no
+    // localStorage in this environment; the read is guarded, so all that reaches
+    // the test is the warning.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    })
+  })
+
+  afterEach(async () => {
+    // `disconnectedCallback` defers its teardown by a microtask — it has to,
+    // since a React move is a removal followed by an insertion — so the flush is
+    // part of the cleanup rather than an optimisation.
+    document.body.innerHTML = ''
+    await Promise.resolve()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const mount = () => {
+    const el = document.createElement(TAG)
+    document.body.appendChild(el)
+    return el
+  }
+
+  /** The cube's root, found the ONE way anything outside the module can find
+   *  it: its placement. It carries no class name on purpose — see the comment
+   *  at the top of createViewCube — so there is nothing else to match on. */
+  const cubeIn = (el) => [...el.children].find(
+    (child) => child.style.left === '16px' && child.style.bottom === '14px')
+
+  it('mounts the view cube, after the overlay', () => {
+    const el = mount()
+    const cube = cubeIn(el)
+    expect(cube).toBeTruthy()
+    expect(cube.querySelector('svg')).toBeTruthy()
+    // AFTER the overlay, so a cell stays clickable where a pin happens to be
+    // over the same corner: the overlay's layer covers the whole canvas, and the
+    // later sibling is the one that gets the press.
+    const kids = [...el.children]
+    expect(kids.indexOf(cube))
+      .toBeGreaterThan(kids.findIndex((c) => c.className === 'hmr_overlay'))
+  })
+
+  it('takes it down again when the element leaves the document', () => {
+    // Not merely tidiness: the cube owns a rAF loop, and one left running holds
+    // the element, its `vp` and the scene behind it for the life of the page.
+    const el = mount()
+    expect(cubeIn(el)).toBeTruthy()
+    el.destroy()
+    expect(cubeIn(el)).toBeUndefined()
+    expect(el.querySelector('svg')).toBeNull()
   })
 })
 

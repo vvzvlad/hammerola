@@ -29,6 +29,7 @@ import { installOrbit } from "./orbit.js";
 import { installTools } from "./tools.js";
 import { installWheel, initialPointingDevice, setPointingDevice } from "./wheel.js";
 import { createOverlay } from "./overlay.js";
+import { createViewCube } from "./viewcube.js";
 import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
 import { measureChrome, refit, sized, treeWidth } from "./sizing.js";
@@ -115,7 +116,11 @@ export class HmrViewport extends HTMLElement {
     this.measureLabel = null;
     this.moved = new Map();
     this.partHome = new Map();
-    this.pointerHeld = false;
+    // THE IDS OF THE POINTERS CURRENTLY DOWN ON THE CANVAS, and not a flag: two
+    // fingers on the glass are two presses, and one bit meant the first release
+    // answered for the second — see `installIdleClock`, which is the only thing
+    // that writes this.
+    this.pointersDown = new Set();
     // -Infinity AND NOT 0, because `lastTouch` holds a `performance.now()`
     // reading and that clock is zeroed at the START OF THE NAVIGATION: 0 does
     // not mean "long ago", it means "the instant this page opened". A viewport
@@ -139,6 +144,12 @@ export class HmrViewport extends HTMLElement {
 
     this.overlay = createOverlay(this);
     this.appendChild(this.overlay.root);
+
+    // AFTER the overlay, so its cells stay clickable where a pin happens to be
+    // over the same corner: the overlay's layer covers the whole canvas, and the
+    // later sibling is the one that gets the press.
+    this.viewcube = createViewCube(this);
+    this.appendChild(this.viewcube.root);
 
     setPointingDevice(this, initialPointingDevice(), false);
 
@@ -210,6 +221,7 @@ export class HmrViewport extends HTMLElement {
     }
     this.teardown = [];
     if (this.overlay) this.overlay.destroy();
+    if (this.viewcube) this.viewcube.destroy();
     try {
       if (this.viewer) this.viewer.dispose();
     } catch (error) {

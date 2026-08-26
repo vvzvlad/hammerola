@@ -63,10 +63,10 @@ visible.
 """
 
 import argparse
-import io
+import hashlib
 import json
+import shutil
 import sys
-import tarfile
 import tempfile
 import time
 from pathlib import Path
@@ -205,35 +205,80 @@ def meta_json(entries):
     }
 
 
+def payload_digest(out_dir, names):
+    """A stable fingerprint of the exported views. Hex sha256.
+
+    The hub uses this number for exactly one thing: telling a re-publish of the
+    same thing from a genuinely new one. A real push digests the SOURCE tree it
+    unpacked, because that is what the pusher supplied — and this fixture has no
+    source tree at all: `model()` is right here and `export()` writes artefacts
+    straight out of it. So the exported outputs are what there is to fingerprint.
+
+    WHICH outputs is the load-bearing part. meta.json is left out because it
+    stamps the wall clock (`built`), so hashing it would make every run a
+    different push: the slot would be rewritten each time, and whatever page the
+    reader has open on /project/fixture0000/dev/ would be re-rendered under them
+    for nothing. A random or time-based number would do the same, only always.
+    The view files, in contrast, are a pure function of the model above and the
+    pinned `cadquery`/`ocp-tessellate`, so re-running the target without touching
+    either answers 200 and leaves the slot alone — which is the behaviour someone
+    looking at the interface by hand actually wants.
+
+    That is the same reasoning `Store` applies to a real push, where the
+    rewritten meta.json is deliberately outside the digest as well.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(names):
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((out_dir / name).read_bytes())
+    return digest.hexdigest()
+
+
 def publish_to_data(out_dir, entries, data_dir):
     """Put a real build in `data/` so `make run` has something to show.
 
     Through the hub's OWN store rather than by writing the directory by hand.
-    `Store.publish_dev()` is what an actual push ends in — it unpacks the tar,
-    validates every view file, writes the normalised meta.json and the payload
-    digest — so what lands under data/ is a build the hub made, not an
-    imitation of one that would diverge the first time the layout changed.
+    `Store.publish_dev_built()` is what an actual push ends in — it validates
+    every view file, writes the normalised meta.json and the payload digest, and
+    swaps the local slot — so what lands under data/ is a build the hub made,
+    not an imitation of one that would diverge the first time the layout changed.
 
     The SAME export the fixture came out of, handed in rather than recomputed:
     a second tessellation would take twice as long to produce a build that is
     only nearly the file the JS suite reads.
+
+    WHAT IS HANDED OVER is an unpacked directory, not an archive: since the hub
+    builds models itself (SPEC 8A.2 step 5) the build writes into the staging
+    directory that is renamed into place, so unpacking happens before publishing
+    rather than inside it. This target is the same shape with the build already
+    done — which is why the export is copied into the staging directory the
+    store names, and not published from the scratch directory it was written in:
+    publication is a rename WITHIN the project directory (`Store.build_staging`).
     """
-    from src.store import Store
+    from src.store import DEV_LINK, Store
 
     (out_dir / "meta.json").write_text(
         json.dumps(meta_json(entries), indent=2) + "\n", encoding="utf-8")
 
-    # The push format: one gzipped tar of the build directory's contents.
-    blob = io.BytesIO()
-    with tarfile.open(fileobj=blob, mode="w:gz") as tar:
-        for path in sorted(out_dir.iterdir()):
-            tar.add(path, arcname=path.name)
-    body = out_dir / "body.tar.gz"
-    body.write_bytes(blob.getvalue())
+    # What a build declares it ships, in the shape `publish_dev_built` takes it:
+    # the list `src/cadbuild/build.py` returns, minus the parts this fixture does
+    # not produce (no metrics file, no downloads).
+    views = [entry["file"] for entry in entries]
+    names = ["meta.json"] + views
 
     store = Store(data_dir, retention_builds=20,
                   max_build_bytes=64 * 1024 * 1024)
-    status, answer = store.publish_dev(FIXTURE_PID, body, body.stat().st_size)
+    staging = store.build_staging(FIXTURE_PID, DEV_LINK)
+    shutil.copytree(out_dir, staging)
+    try:
+        status, answer = store.publish_dev_built(
+            FIXTURE_PID, staging, names, payload_digest(out_dir, views))
+    finally:
+        # The caller owns the staging tree on every path except the one where
+        # publishing renamed it away — the 200 above included, where the slot
+        # already holds this build and nothing was moved.
+        shutil.rmtree(staging, ignore_errors=True)
     print(f"published {status} into {data_dir}: {answer.get('url', '')}")
 
 

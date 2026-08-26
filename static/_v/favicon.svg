@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="hammerola">
+  <!-- Three punched bars on a filled tile: a piano roll, which is what the name
+       is from. The tile is what makes the mark work on a light AND a dark tab
+       strip - it brings its own background, so the bars never have to contrast
+       with the browser's chrome. The media query below only warms the tile for
+       dark chrome; the fill attributes are the fallback, because a renderer that
+       ignores the stylesheet (many icon rasterisers do) must still get a
+       complete icon rather than a black square. -->
+  <style>
+    .tile { fill: #2f6feb; }
+    .bar  { fill: #ffffff; }
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: #4c8dff; }
+      .bar  { fill: #0d1117; }
+    }
+  </style>
+  <rect class="tile" x="1" y="1" width="30" height="30" rx="7" fill="#2f6feb"/>
+  <!-- Widths and gaps are both 4.5+ units so that at 16x16 every bar is a solid
+       2px column with a 2px gap beside it. Anything finer greys out. -->
+  <rect class="bar" x="5.25" y="8"  width="4.5" height="16" rx="2.25" fill="#ffffff"/>
+  <rect class="bar" x="13.75" y="6"  width="4.5" height="20" rx="2.25" fill="#ffffff"/>
+  <rect class="bar" x="22.25" y="11" width="4.5" height="12" rx="2.25" fill="#ffffff"/>
+</svg>

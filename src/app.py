@@ -89,6 +89,11 @@ OCTET_TYPE = "application/octet-stream"
 # an immutable year would leave people on the old page until 2027 after a deploy.
 VENDORED_ASSET_PREFIX = "three-cad-viewer."
 
+# The site icon, and the one asset with two URLs. The pages link it by its real
+# name; `/favicon.ico` serves the same file for the clients that never parsed any
+# HTML to find that link.
+FAVICON_ASSET = "favicon.svg"
+
 # The pages load everything from this origin and nothing is inline, so the policy
 # can be the strictest useful one. It is the BACKSTOP for the validation done on
 # the way in — `render._plain_text` on every displayed string and
@@ -333,6 +338,16 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     return self._serve_index_json(with_body)
                 if head == "_v":
                     return self._serve_asset(segments[1:], with_body)
+                if head == "favicon.ico" and len(segments) == 1:
+                    # SVG bytes at a `.ico` URL, deliberately. Every page links
+                    # the icon by its real name, so this path is only ever taken
+                    # by a client that arrived without parsing any HTML — and
+                    # what decides how one renders is the Content-Type, which
+                    # `_serve_asset` derives from the file's own extension. The
+                    # alternative is generating and committing a binary .ico
+                    # nobody would ever regenerate, for a URL almost nothing
+                    # takes.
+                    return self._serve_asset([FAVICON_ASSET], with_body)
                 if head == "project":
                     return self._serve_project(segments[1:], trailing_slash,
                                                with_body)
