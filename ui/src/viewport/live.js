@@ -109,9 +109,16 @@ export function restoreLive(vp, keep) {
  * The rule this encodes: a stale model is a smaller loss than anything the
  * person in front of it is in the middle of. The interface has reasons of its
  * own to defer a swap — a half-typed comment is the clearest — and asks this for
- * the ones only the viewport can see: a drag in progress, and the moment just
- * after one, because a swap re-seats the camera and doing that between a
- * mousedown and the mouseup pulls the model out from under the pointer.
+ * the ones only the viewport can see: a gesture ON THE CANVAS in progress, and
+ * the moment just after one, because a swap re-seats the camera and doing that
+ * between a mousedown and the mouseup pulls the model out from under the
+ * pointer.
+ *
+ * ON THE CANVAS is the whole qualifier, and `lastTouch` only ever records one of
+ * those — see `installIdleClock`. A click anywhere else on the page is not the
+ * reader holding the model, and counting it here made this answer true for
+ * IDLE_MS after EVERY click in the interface, the press on the "Switch" button
+ * that asks for the swap included.
  */
 export function isBusy(vp) {
   if (vp.pointerHeld) return true;
@@ -127,7 +134,25 @@ export function installIdleClock(vp) {
   const opts = { capture: true, passive: true };
   const touched = () => { vp.lastTouch = performance.now(); };
   const onDown = () => { vp.pointerHeld = true; touched(); };
-  const onUp = () => { vp.pointerHeld = false; touched(); };
+  // ONLY A RELEASE THAT ENDS A PRESS OF OUR OWN, which is what `pointerHeld`
+  // says: this listener is on the window (see below) and therefore hears every
+  // release on the page, and a stamp for one of those would make `isBusy` mean
+  // "somebody clicked something recently" instead of "the model is being held".
+  // The reader's press on "Switch" is such a release, and it reaches the window
+  // BEFORE React dispatches the click that acts on it — so the swap the button
+  // asks for found the viewport busy every single time and deferred for the
+  // whole of IDLE_MS, on a page nobody had touched the model on.
+  //
+  // The guard costs the flag nothing, and that matters: ANY release still
+  // clears it, because the only case it skips is the one where there is nothing
+  // to clear. A press whose release went to another window leaves the flag
+  // standing with nobody left to clear it, and the reader's next click
+  // anywhere — on the page, not necessarily on the model — is what recovers it.
+  const onUp = () => {
+    if (!vp.pointerHeld) return;
+    vp.pointerHeld = false;
+    touched();
+  };
   vp.box.addEventListener("pointerdown", onDown, opts);
   vp.box.addEventListener("wheel", touched, opts);
   // On the WINDOW: the trackball captures the pointer, so a drag that starts on

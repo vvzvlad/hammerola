@@ -56,12 +56,53 @@ export function installTools(vp) {
     removeEventListener("pointercancel", onCancel, true);
   };
 
+  /** Where the section plane ended up, announced once.
+   *
+   * The drag moved the library's slider, whose zero is the grid centre. What the
+   * interface's own control shows is the depth from the FACE, so it is read back
+   * and announced at the end of the gesture — and this is the only place that
+   * writes `state.cutOffset`, so the number on screen and the number the next
+   * `applySection` walks the plane by cannot come apart.
+   *
+   * Read against the scene THAT IS STILL ON SCREEN, which is what makes it safe
+   * to call from `endGesture` below: `show()` ends the gesture before it
+   * captures anything and long before it clears the viewer.
+   */
+  const reportCut = () => {
+    if (!vp.sectionSeed) return;
+    vp.state.cutOffset = sectionOffset(vp);
+    emit(vp, EVENT_FACE, {
+      id: vp.sectionSeed.id || null,
+      name: vp.sectionSeed.name || null,
+      point: vp.sectionSeed.point,
+      normal: vp.sectionSeed.normal,
+      offset: vp.state.cutOffset,
+      range: sectionRange(vp.viewer),
+    });
+  };
+
   // Published so the element can end a gesture the reader has not let go of,
   // which is what a scene being replaced under one is. Everything a live press
   // holds — the plane's screen axis, a part's starting offset — was measured
   // against the scene that is going away, so continuing it would move the NEW
   // model by numbers about the old one.
-  vp.endGesture = finish;
+  //
+  // IT CONCLUDES THE GESTURE RATHER THAN ABANDONING IT, and the difference is
+  // one readback. A swap can arrive mid-drag — the interface waits for the hand
+  // to come off the model but gives up after a deadline (BUSY_WAIT_MS), which is
+  // there so a `pointerup` this page never sees cannot strand the reader's own
+  // Switch. The release that would have run `reportCut` then never comes, and
+  // `state.cutOffset` keeps the depth from BEFORE the drag: the plane still
+  // lands correctly, because `restoreSection` subtracts that same stale offset
+  // and the seed simply moves to absorb the difference — but the seed is no
+  // longer on the face that was clicked and the interface goes on printing a
+  // depth the plane has not been at since the drag started.
+  const endGesture = () => {
+    const p = press;
+    finish();
+    if (p && p.moved && p.tool === "cut") reportCut();
+  };
+  vp.endGesture = endGesture;
 
   /** Turn a click on a face into an oriented, located cutting plane.
    *
@@ -209,20 +250,7 @@ export function installTools(vp) {
     const g = internals(vp.viewer);
     if (!g) return;
     if (p.moved) {
-      if (p.tool === "cut" && vp.sectionSeed) {
-        // The drag moved the library's slider, whose zero is the grid centre.
-        // What the interface's own control shows is the depth from the FACE, so
-        // it is read back and announced once, at the end of the gesture.
-        vp.state.cutOffset = sectionOffset(vp);
-        emit(vp, EVENT_FACE, {
-          id: vp.sectionSeed.id || null,
-          name: vp.sectionSeed.name || null,
-          point: vp.sectionSeed.point,
-          normal: vp.sectionSeed.normal,
-          offset: vp.state.cutOffset,
-          range: sectionRange(vp.viewer),
-        });
-      }
+      if (p.tool === "cut") reportCut();
       return;
     }
     // A press that never moved is a click, and it costs the trackball nothing:
@@ -327,7 +355,10 @@ export function installTools(vp) {
   // that is gone.
   return () => {
     vp.box.removeEventListener("pointerdown", onDown, true);
+    // `finish` and NOT `endGesture`: this is the viewport going away, so there
+    // is nobody left to tell where the plane ended up and no scene to read it
+    // off. Only the listeners have to go.
     finish();
-    if (vp.endGesture === finish) vp.endGesture = null;
+    if (vp.endGesture === endGesture) vp.endGesture = null;
   };
 }

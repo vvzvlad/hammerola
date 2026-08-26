@@ -42,6 +42,14 @@ vi.mock('../src/viewport/section.js', () => ({
   suspendSectionCut: vi.fn(),
 }))
 
+// The library's own loader, replaced so `show()` can be driven as far as its
+// FAILURE path — which is the only part of it that runs without a GPU. Nothing
+// else here reaches it: every other test either stops before `show` or never
+// gets past the fetch.
+vi.mock('../src/viewport/library.js', () => ({
+  loadViewerLibrary: vi.fn(async () => { throw new Error('no library here') }),
+}))
+
 import { HmrViewport } from '../src/viewport/element.js'
 import { EVENT_ERROR } from '../src/viewport/events.js'
 import {
@@ -424,6 +432,86 @@ describe('load', () => {
       expect(vp.load).toHaveBeenCalledWith({ live: true })
       expect(vp.loadFailed).toBeNull()
     })
+
+    it('stops counting when the reader asks for it again', () => {
+      // THE DELIBERATE REPEAT, which the memory above used to take away with the
+      // accidental one. Choosing a revision is a whole navigation and
+      // `showView` returns at once for the id already on screen, so on a build
+      // with a single view a fetch that failed had no way back short of
+      // reloading the page. `__retry` is the interface's Retry button.
+      const vp = element({ views, view: 'a', buildKey: 'k1' }, null)
+      vp.loadFailed = 'a.json'
+      vp.load = vi.fn()
+      vp.setState({ __retry: true })
+      expect(vp.loadFailed).toBeNull()
+      expect(vp.load).toHaveBeenCalledWith({ live: false })
+      // Acted on and taken back out, like the other three imperative flags: left
+      // in `state` it would read as a viewport permanently retrying.
+      expect('__retry' in vp.state).toBe(false)
+    })
+
+    it('keeps the frame on a retry of the view that is on screen', () => {
+      // A LIVE SWAP WHOSE FETCH FAILED: the previous build is still standing
+      // under the reader's camera, and the retry is the same view again, so
+      // there is a frame worth carrying across.
+      const vp = element({ views, view: 'a', buildKey: 'k2' })
+      vp.view = 'a'
+      vp.loadFailed = 'a.json'
+      vp.load = vi.fn()
+      vp.setState({ __retry: true })
+      expect(vp.load).toHaveBeenCalledWith({ live: true })
+    })
+
+    it('does not, when what is on screen is a different view', () => {
+      // A view SWITCH whose fetch failed. Keeping that camera would put the new
+      // arrangement under a frame fitted to the old one, which is exactly what
+      // an ordinary view change refuses to do.
+      const vp = element({ views, view: 'b', buildKey: 'k1' })
+      vp.view = 'a'
+      vp.loadFailed = 'b.json'
+      vp.load = vi.fn()
+      vp.setState({ __retry: true })
+      expect(vp.load).toHaveBeenCalledWith({ live: false })
+    })
+  })
+})
+
+describe('show', () => {
+  const views = [{ id: 'a', file: 'a.json' }]
+
+  it('says so when the payload is not a model at all', async () => {
+    // A view file that parsed into a JSON scalar. This exit used to say nothing,
+    // and silence costs both halves of block 11 at once: no `hmr:error`, so the
+    // interface's panel is never drawn, and no `loadFailed`, so the next
+    // `hmr:state` — one arrives on every click in the tree — fetches it again.
+    const vp = element({ views, view: 'a' }, null)
+    await vp.show(42, { view: 'a', token: 0 })
+    const event = emitted(vp)
+    expect(event.type).toBe(EVENT_ERROR)
+    expect(event.detail.stage).toBe('render')
+    expect(event.detail.view).toBe('a')
+
+    vp.load = vi.fn()
+    vp.setState({ hidden: ['/Group/a'] })
+    expect(vp.load).not.toHaveBeenCalled()
+  })
+
+  it('remembers a render failure even for a view with no name', async () => {
+    // `loadFailed` is only ever READ as a yes/no, and the name it stores is
+    // perfectly able to be null: a build whose views carry no `id`, on an
+    // element that has not settled one either. Storing that null switches the
+    // guard off at the one moment it is there for — so this stores `true`,
+    // exactly as the no-file exit in `load` does.
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const vp = element({ views: [{ id: null, file: 'a.json' }], view: 'a' }, null)
+    await vp.show({ parts: [] }, { view: null, token: 0 })
+    expect(vp.loadFailed).toBe(true)
+    expect(emitted(vp).detail.stage).toBe('render')
+
+    vp.load = vi.fn()
+    vp.setState({ hidden: ['/Group/a'] })
+    expect(vp.load).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
   })
 })
 

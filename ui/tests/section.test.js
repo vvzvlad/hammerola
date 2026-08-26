@@ -441,6 +441,42 @@ describe('captureSection -> restoreSection', () => {
     expect(after.vp.state.cutOffset).toBe(5)
   })
 
+  it('takes the offset back off along the FLIPPED normal, not the recorded one', () => {
+    // The seed is recorded UNFLIPPED (`captureSection`), while the offset was
+    // walked along the normal in force — the flipped one. So the subtraction
+    // that turns the captured plane back into a seed has to use the flipped one
+    // too, and getting the sign wrong is worth exactly twice the offset: the
+    // seed lands that far the wrong side of the face, and `applySection` then
+    // walks the plane the same distance again from there.
+    //
+    // BOTH SCENES ARE THE SAME SIZE, for the reason the test above spells out:
+    // equal grids make every placement bias equal, so the tolerance can be a
+    // billionth — a millionth of the bias itself — and nothing can hide in it.
+    const before = scene()
+    const face = [0, 0, 0]
+    placeSectionPlane(before.vp, before.g, [1, 0, 0], face)
+    before.vp.state.cutFlip = true
+    before.vp.state.cutOffset = 3
+    applySection(before.vp, before.g)
+    const keep = captureSection(before.vp)
+    const stood = distance(before.g, keep.point)
+
+    const after = scene()
+    after.vp.state.cutFlip = true
+    after.vp.state.cutOffset = 3
+    expect(restoreSection(after.vp, keep)).toBe(true)
+
+    // The seed is the face again, which is what an offset counts FROM...
+    for (let axis = 0; axis < 3; axis += 1) {
+      expect(after.vp.sectionSeed.point[axis]).toBeCloseTo(face[axis], 9)
+    }
+    // ...and the plane itself is back where the reader left it.
+    expect(distance(after.g, keep.point)).toBeCloseTo(stood, 9)
+    // ...and stays there through the reconcile that follows every `hmr:state`.
+    applySection(after.vp, after.g)
+    expect(distance(after.g, keep.point)).toBeCloseTo(stood, 9)
+  })
+
   it('forgets the seed again when the cut was not one the reader placed', () => {
     const before = scene()
     before.vp.viewer.setClipSlider(SECTION_INDEX, 3, true)

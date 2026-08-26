@@ -116,7 +116,13 @@ export class HmrViewport extends HTMLElement {
     this.moved = new Map();
     this.partHome = new Map();
     this.pointerHeld = false;
-    this.lastTouch = 0;
+    // -Infinity AND NOT 0, because `lastTouch` holds a `performance.now()`
+    // reading and that clock is zeroed at the START OF THE NAVIGATION: 0 does
+    // not mean "long ago", it means "the instant this page opened". A viewport
+    // nobody had touched therefore answered `isBusy()` with true for the first
+    // IDLE_MS of its life, which is the same trap the `pointerup` guard in
+    // `installIdleClock` closes from the other end.
+    this.lastTouch = -Infinity;
     this.trackpad = false;
     this.hoverText = "";
     this.loadToken = 0;
@@ -233,12 +239,15 @@ export class HmrViewport extends HTMLElement {
     const before = this.state;
     this.state = { ...before, ...patch };
 
-    // The mock-up's three imperative flags. They are commands rather than state
-    // — "forget the moves", "drop the plane", "clear the tape" — so they are
-    // acted on and then taken back out of `state`. Left in, they would sit there
-    // reading like a viewport permanently in the middle of a reset, which is the
-    // sort of thing somebody later writes a condition against.
-    for (const flag of ["__resetMove", "__resetCut", "__clearMeasure"]) {
+    // The imperative flags. They are commands rather than state — "forget the
+    // moves", "drop the plane", "clear the tape", "try that view again" — so they
+    // are acted on and then taken back out of `state`. Left in, they would sit
+    // there reading like a viewport permanently in the middle of a reset, which
+    // is the sort of thing somebody later writes a condition against.
+    //
+    // `__retry` is the fourth and is acted on further down, where the decision
+    // to load lives; the mock-up's three are here because they are self-contained.
+    for (const flag of ["__resetMove", "__resetCut", "__clearMeasure", "__retry"]) {
       delete this.state[flag];
     }
     if (patch.__resetMove) resetMoves(this);
@@ -273,13 +282,33 @@ export class HmrViewport extends HTMLElement {
     // `setState` and not its own `set()`, so nothing dispatches `hmr:state` back
     // at us (HammerolaViewer.jsx, the ERROR handler, where the same thing is
     // written down). Change that one call and the storm closes into a real loop.
-    if (reload || swap) this.loadFailed = null;
-    if (reload || swap || (this.state.view && !this.viewer && !this.loadFailed)) {
+    //
+    // AND THE READER ASKING AGAIN IS THE THIRD WAY IT STOPS COUNTING — the
+    // Retry button in the interface's error panel, which arrives here as
+    // `__retry`. Without one, `loadFailed` closed the accidental repeat and
+    // took the deliberate one with it: choosing a revision is a whole
+    // navigation, `showView(id)` returns immediately for the id already on
+    // screen, and a build with a single view therefore had NO path back at all
+    // short of reloading the page — so a network blip that lasted a second
+    // stayed on screen until somebody pressed F5.
+    const retry = !!patch.__retry;
+    if (reload || swap || retry) this.loadFailed = null;
+    if (reload || swap || retry
+        || (this.state.view && !this.viewer && !this.loadFailed)) {
       // A build that changed under the same view is a LIVE RELOAD and keeps the
       // frame; a different view is a different arrangement of the same parts,
       // whose own extent and orientation the camera has to be re-fitted to
       // (ui-brief block 2), so it deliberately does not.
-      this.load({ live: swap && !reload });
+      //
+      // A retry keeps the frame under exactly one condition, and it is the same
+      // one spelled differently: there is a scene on screen AND it is showing
+      // the view being fetched again. That is a live reload whose fetch failed —
+      // the previous build is still standing under the reader's camera. A retry
+      // after a failed VIEW SWITCH leaves a different view on screen, and
+      // carrying that camera over would be the very thing the line above refuses.
+      const live = !reload
+        && (swap || (retry && !!this.viewer && this.view === this.state.view));
+      this.load({ live });
       return;
     }
     this.reconcile();
@@ -348,7 +377,25 @@ export class HmrViewport extends HTMLElement {
 
   /** Put one payload on screen. The whole pipeline, and `load` is its one caller. */
   async show(shapes, { live, view, token }) {
-    if (!shapes || typeof shapes !== "object") return;
+    // Which view this call is about, resolved ONCE. Three lines below used to
+    // spell it out separately, and the moment one of them drifts the reader is
+    // told a different view failed than the one the element stopped retrying.
+    const named = view === undefined ? this.state.view : view;
+    if (!shapes || typeof shapes !== "object") {
+      // THE OTHER EXIT THAT SAID NOTHING — `load` had one and it was fixed; this
+      // is the same failure one step further in, reachable with a view file that
+      // parsed into a JSON scalar. Silence here costs both halves of block 11 at
+      // once: no `hmr:error`, so the interface's `viewError` stays null and the
+      // panel is never drawn, and no `loadFailed`, so the next `hmr:state` — one
+      // arrives on every click in the tree — fetches the same file again.
+      if (token !== this.loadToken) return;
+      this.loadFailed = named || true;
+      emit(this, EVENT_ERROR, {
+        stage: "render", view: named || null,
+        message: "the view file does not describe a model",
+      });
+      return;
+    }
     try {
       const { Viewer, Display } = await loadViewerLibrary();
       // Another load overtook this one — the reader clicked twice, or a build
@@ -396,7 +443,7 @@ export class HmrViewport extends HTMLElement {
       refit(this);
       const g = internals(this.viewer);
       if (g) muteStatusLine(this, g.display);
-      this.view = view === undefined ? this.state.view : view;
+      this.view = named;
       this.lastPick = null;
       this.applied = { hidden: null, ghost: null, selected: undefined, camera: null };
       this.reconcile();
@@ -418,10 +465,16 @@ export class HmrViewport extends HTMLElement {
       // library's own module not loading is the likely one — leaves `viewer`
       // null, and the first-load branch in `setState` would come straight back
       // here on the next patch.
-      this.loadFailed = view === undefined ? this.state.view : view;
+      //
+      // `|| true`, exactly as the no-file exit in `load` writes it: what is
+      // stored is only ever read as a yes/no, and `named` is perfectly able to
+      // be null — a build whose views carry no `id`, on a page that has not
+      // settled one either. Storing that null switches the guard OFF at the one
+      // moment it is there for.
+      this.loadFailed = named || true;
       console.error("viewport render", error);
       emit(this, EVENT_ERROR, {
-        stage: "render", view: view === undefined ? this.state.view : view,
+        stage: "render", view: named || null,
         message: String((error && error.message) || error),
       });
     }

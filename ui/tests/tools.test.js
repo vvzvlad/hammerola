@@ -35,8 +35,10 @@ vi.mock('../src/viewport/picking.js', async (importOriginal) => ({
 }))
 
 import { HmrViewport } from '../src/viewport/element.js'
-import { EVENT_PICK } from '../src/viewport/events.js'
+import { EVENT_FACE, EVENT_PICK } from '../src/viewport/events.js'
+import { internals } from '../src/viewport/internals.js'
 import { faceNormalAt, pickEntity } from '../src/viewport/picking.js'
+import { placeSectionPlane, sectionOffset } from '../src/viewport/section.js'
 import { installTools } from '../src/viewport/tools.js'
 import { fakeViewer, fakeViewport } from './fakes.js'
 
@@ -87,6 +89,11 @@ function pointerDown(vp, [clientX, clientY] = [100, 100]) {
 /** The release. It goes to the WINDOW, which is where onDown put the listener. */
 function pointerUp([clientX, clientY] = [100, 100]) {
   window.dispatchEvent(new MouseEvent('pointerup', { clientX, clientY }))
+}
+
+/** A drag, to the same place. Far enough to be past CLICK_PX. */
+function pointerMove([clientX, clientY]) {
+  window.dispatchEvent(new MouseEvent('pointermove', { clientX, clientY }))
 }
 
 const emitted = (vp) => vp.dispatchEvent.mock.calls.map(([event]) => event.type)
@@ -163,5 +170,72 @@ describe('who owns the press', () => {
     expect(event.preventDefault).not.toHaveBeenCalled()
     expect(event.stopPropagation).not.toHaveBeenCalled()
     pointerUp()
+  })
+})
+
+describe('where the section drag says the plane ended up', () => {
+  /** A viewport with the cut tool armed and a plane already laid on a face, in
+   *  an orientation the drag can actually move: the fake camera looks down -Z,
+   *  and a normal along X is the one whose screen projection has not collapsed. */
+  function cutting() {
+    const vp = toolViewport({ tool: 'cut' })
+    placeSectionPlane(vp, internals(vp.viewer), [1, 0, 0], [0, 0, 0])
+    vp.sectionSeed.id = '/Group/wall'
+    vp.sectionSeed.name = 'wall'
+    vi.clearAllMocks()
+    return vp
+  }
+
+  /** A press, a drag of 200 px along the plane's own screen axis. */
+  const dragFrom = (vp) => {
+    pointerDown(vp, [100, 100])
+    pointerMove([300, 100])
+  }
+
+  it('is announced once, at the release', () => {
+    const vp = cutting()
+    // Nothing is written while the drag runs: the number the interface shows is
+    // a readback, and sixty of them a second is a re-render per frame.
+    dragFrom(vp)
+    expect(vp.state.cutOffset).toBe(0)
+    expect(emitted(vp)).not.toContain(EVENT_FACE)
+
+    pointerUp([300, 100])
+    expect(emitted(vp)).toContain(EVENT_FACE)
+    expect(Math.abs(vp.state.cutOffset)).toBeGreaterThan(0.5)
+    expect(vp.state.cutOffset).toBeCloseTo(sectionOffset(vp), 9)
+  })
+
+  it('is announced by a SWAP that ends the gesture too', () => {
+    // `show()` ends a gesture the reader has not let go of, because everything
+    // it holds was measured against the scene about to be torn down — and a swap
+    // can arrive mid-drag, since the interface waits for the hand to come off
+    // the model but gives up after a deadline. Ending the gesture without this
+    // readback leaves `state.cutOffset` at the depth from BEFORE the drag: the
+    // plane still lands right, because the restore subtracts that same stale
+    // number and the seed absorbs the difference, but the seed is no longer on
+    // the face that was clicked and the interface prints a depth the plane has
+    // not been at since the drag began.
+    const vp = cutting()
+    dragFrom(vp)
+
+    vp.endGesture()
+
+    expect(emitted(vp)).toContain(EVENT_FACE)
+    expect(Math.abs(vp.state.cutOffset)).toBeGreaterThan(0.5)
+    expect(vp.state.cutOffset).toBeCloseTo(sectionOffset(vp), 9)
+  })
+
+  it('says nothing when the gesture never moved the plane', () => {
+    // A press the reader has not dragged is a click, and a click that a swap
+    // interrupts placed nothing. Announcing an offset there would report a depth
+    // for a plane that is exactly where it was.
+    const vp = cutting()
+    pointerDown(vp, [100, 100])
+
+    vp.endGesture()
+
+    expect(emitted(vp)).not.toContain(EVENT_FACE)
+    expect(vp.state.cutOffset).toBe(0)
   })
 })

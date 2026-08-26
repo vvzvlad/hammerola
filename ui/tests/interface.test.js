@@ -16,13 +16,26 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Only the one call that talks to the hub. Everything else in the module is
+// left real — `buildKey` in particular, because what the poll decides is a
+// comparison of two of its answers, and a stubbed one would let this file agree
+// with itself instead of with the code.
+vi.mock('../src/hub.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  loadMeta: vi.fn(),
+}))
+
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
+import { loadMeta } from '../src/hub.js'
 
 /** A build the banner is offering — meta.json as the poll would have read it. */
 const NEXT = {
   commit: 'abc1234def',
   variants: [{ id: 'assembled', file: 'assembled.json', parts: 3, gzip: 1000 }],
 }
+
+/** ...and the one after it, for the poll that arrives while NEXT is on offer. */
+const NEWER = { ...NEXT, commit: 'def5678abc' }
 
 /**
  * The component as `takePending` sees it.
@@ -53,6 +66,9 @@ function component({ busy = false, answer = null } = {}) {
   })
   c.sync = vi.fn()
   c.toast = vi.fn()
+  // The poll re-arms itself; what is under test is the decision it makes, not
+  // the timer it leaves behind.
+  c.schedulePoll = vi.fn()
   return c
 }
 
@@ -165,5 +181,106 @@ describe('takePending', () => {
     c.state = { ...c.state, view: 'printables' }
     c.takePending()
     expect(c.state.view).toBe('assembled')
+  })
+})
+
+describe('dismissPending', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('cancels a swap the reader is still waiting for', () => {
+    // THE SEQUENCE THAT MADE LATER MEAN NOTHING: Switch defers while the
+    // viewport is in the reader's hands, the banner stays up because
+    // `bannerGone` is only set inside the swap itself, and a reader who sees no
+    // reaction presses Later — which used to hide the banner and leave the timer
+    // running, so the model changed a quarter of a second after being refused.
+    const c = offering({ busy: true })
+    c.takePending()
+    expect(vi.getTimerCount()).toBe(1)
+
+    c.dismissPending()
+    expect(c.state.bannerGone).toBe(true)
+
+    c.busy = false
+    vi.advanceTimersByTime(60000)
+    expect(swapped(c)).toBe(false)
+    expect(c.state.meta.commit).toBe('oldbuild')
+    expect(c.sync).not.toHaveBeenCalled()
+  })
+
+  it('leaves the offer itself standing, so nothing is lost', () => {
+    // Only the banner goes. `pending` is what the poll compares against to know
+    // it has already offered this build, and it is what a later Switch would
+    // still take.
+    const c = offering()
+    c.dismissPending()
+    expect(c.state.pending).toBe(NEXT)
+  })
+})
+
+describe('poll', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('does not raise the banner again for a build already refused', async () => {
+    // The same build comes back on EVERY poll for as long as nobody takes it, so
+    // lifting `bannerGone` unconditionally would put the banner up again three
+    // seconds after Later took it down — which is the same button doing nothing,
+    // spelled slower.
+    const c = offering()
+    c.dismissPending()
+    loadMeta.mockResolvedValue(NEXT)
+
+    await c.poll()
+
+    expect(c.state.bannerGone).toBe(true)
+    expect(c.state.pending).toBe(NEXT)
+  })
+
+  it('raises it for a build this page has not offered yet', async () => {
+    const c = offering()
+    c.dismissPending()
+    loadMeta.mockResolvedValue(NEWER)
+
+    await c.poll()
+
+    expect(c.state.bannerGone).toBe(false)
+    expect(c.state.pending).toBe(NEWER)
+  })
+
+  it('offers a build nobody has been shown one before', async () => {
+    // Nothing pending yet — the ordinary case, and the one where `bannerGone`
+    // has to be lifted whatever it was left at.
+    const c = component()
+    c.state = { ...c.state, bannerGone: true }
+    loadMeta.mockResolvedValue(NEXT)
+
+    await c.poll()
+
+    expect(c.state.pending).toBe(NEXT)
+    expect(c.state.bannerGone).toBe(false)
+  })
+})
+
+describe('retryView', () => {
+  it('asks the viewport for the view again and takes the panel down', () => {
+    // The only way back from a view that did not render: the viewport remembers
+    // a failed load so the state event this interface sends on every click
+    // cannot re-fetch it forever, and nothing else on this page clears that
+    // memory. `__retry` is an imperative flag on the one state event, exactly
+    // like the three resets beside it.
+    const c = component()
+    c.state = { ...c.state, viewError: 'a.json -> HTTP 503' }
+
+    c.retryView()
+
+    expect(c.state.viewError).toBeNull()
+    expect(c.sync).toHaveBeenCalledWith({ __retry: true })
   })
 })

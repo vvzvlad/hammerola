@@ -548,7 +548,13 @@ export default class HammerolaViewer extends React.Component {
         const key = buildKey(next);
         if (key && key !== buildKey(this.state.meta)
             && Array.isArray(next.variants) && next.variants.length) {
-          this.setState({ pending: next, bannerGone: false });
+          // `bannerGone` is lifted only for a build this page has not offered
+          // yet. The same build is seen again on every poll for as long as
+          // nobody takes it, so clearing the flag unconditionally would put the
+          // banner back three seconds after Later took it down and leave that
+          // button meaning nothing at all.
+          const offered = key === buildKey(this.state.pending);
+          this.setState({ pending: next, ...(offered ? null : { bannerGone: false }) });
         }
       }
     } catch (error) {
@@ -586,9 +592,13 @@ export default class HammerolaViewer extends React.Component {
       console.warn('viewport busy', error);
     }
     if (busy && Date.now() - asked < BUSY_WAIT_MS) {
-      // `pending` is left standing, so the banner stays up and the offer
-      // survives whatever happens to this timer — including the page being
-      // closed, or the reader pressing Later instead.
+      // `pending` is left standing, so the banner stays up and Switch keeps its
+      // meaning while the wait runs. The TIMER, meanwhile, is owned by exactly
+      // two other places, and both of them cancel it rather than letting it
+      // arrive: `componentWillUnmount` (it would come back on a component that
+      // is gone) and `dismissPending` (Later is an answer, and a swap that
+      // happened a quarter of a second after it would be this page overruling
+      // the reader).
       this._swap = setTimeout(() => this.takePending(asked), BUSY_RETRY_MS);
       return;
     }
@@ -604,6 +614,28 @@ export default class HammerolaViewer extends React.Component {
       this.sync();
       this.toast(`Now viewing ${shortId(next.commit)} — your frame and tree are kept`);
     });
+  }
+
+  /** Later: this build is not wanted now.
+   *
+   * IT HAS TO CANCEL THE WAIT, and that is the whole of why this is a method
+   * rather than a `setState` at the call site. Switch defers while the reader's
+   * hand is on the model (`takePending` above), and hiding the banner does not
+   * reach the timer that deferral left running — so a reader who pressed Switch,
+   * saw nothing happen and pressed Later got the swap anyway, a quarter of a
+   * second after refusing it. On a real prototype, with fake timers: `after
+   * Later: meta = abc, pending = null`.
+   *
+   * THE OFFER ITSELF IS KEPT on `pending` and only the banner goes, so nothing
+   * is lost and `poll` has something to compare against: it lifts `bannerGone`
+   * for a build this page has not offered yet and leaves it standing for the one
+   * that was just refused. Dismissing a build therefore lasts until a NEWER one
+   * lands, rather than until the next poll three seconds later — which would
+   * make this button a no-op that looks like a broken one.
+   */
+  dismissPending() {
+    clearTimeout(this._swap);
+    this.setState({ bannerGone: true });
   }
 
   // -- measurements ---------------------------------------------------------
@@ -747,6 +779,31 @@ export default class HammerolaViewer extends React.Component {
   showView(id) {
     if (id === this.state.view) return;
     this.set({ view: id });
+  }
+
+  /**
+   * Ask the viewport for this view again — the button in block 11's panel.
+   *
+   * THE ONLY WAY BACK from a view that did not render, and it had to be added
+   * rather than found: the viewport remembers a failed load so that the state
+   * event this interface sends on every click does not re-fetch a missing file
+   * forever (viewport/element.js, `loadFailed`), and nothing on this page could
+   * clear that memory. Choosing a revision is a whole navigation, `showView`
+   * returns immediately when the id is the one already chosen, and the panel
+   * itself was text with nothing to press — so on a build with a single view a
+   * blip in the network was a dead end until somebody thought to reload the page.
+   *
+   * `__retry` and not a method call on the element, because it IS a one-shot
+   * command and the element already takes three of those the same way
+   * (`__resetMove`, `__resetCut`, `__clearMeasure`): it rides the one state
+   * event, is acted on, and is deleted rather than left standing in a field.
+   *
+   * `viewError` is cleared here so the panel goes while the fetch runs. Nothing
+   * else has to put it back — a second failure emits `hmr:error` again, and a
+   * success clears it through the model handler.
+   */
+  retryView() {
+    this.set({ viewError: null }, { __retry: true });
   }
 
   /** All derived values and handlers. render() below only lays them out. */
@@ -1012,6 +1069,7 @@ export default class HammerolaViewer extends React.Component {
 
       viewError: s.viewError || '',
       viewErrorStyle: 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:420px;padding:14px 16px;background:#fff;border:1px solid #e0bcbc;border-radius:9px;box-shadow:0 8px 28px rgba(20,24,28,.14);z-index:14;text-align:center;display:' + (s.viewError ? 'block' : 'none'),
+      retryView: () => this.retryView(),
 
       notCompare: !s.compare, compare: s.compare,
       hasTree: !!tree,
@@ -1066,7 +1124,7 @@ export default class HammerolaViewer extends React.Component {
       bannerStyle: chip(!!s.pending && !s.bannerGone, '#fff', '#d3d8de', '#1c1f23') + ';padding:8px 8px 8px 14px',
       bannerId: s.pending ? shortId(s.pending.commit) : '',
       bannerSwitch: () => this.takePending(),
-      bannerLater: () => this.setState({ bannerGone: true }),
+      bannerLater: () => this.dismissPending(),
 
       movedChipStyle: chip(!!s.moved, '#fdf0d8', '#f0dcae', '#6b5210'),
       movedText: s.moved ? `${s.moved.name} moved ${s.moved.mag} mm` : '',
@@ -1464,10 +1522,14 @@ export default class HammerolaViewer extends React.Component {
               <div style={css(`font:400 11.5px/1.5 ${SANS};color:#4a4436;margin-top:4px`)}>{v.noteText}</div>
             </div>
 
-            {/* the viewport could not draw this view — block 11 */}
+            {/* the viewport could not draw this view — block 11. The button is
+                the only way back: the viewport remembers a failed load so an
+                ordinary click cannot re-fetch it, and nothing else on this page
+                clears that memory. */}
             <div style={css(v.viewErrorStyle)}>
               <div style={css(`font:600 12.5px ${SANS};margin-bottom:5px`)}>This view did not render</div>
               <div style={css(`font:400 11.5px/1.6 ${MONO};color:#5b6470`)}>{v.viewError}</div>
+              <div onClick={v.retryView} style={css(`display:inline-block;margin-top:11px;padding:6px 14px;background:#1f7ae0;color:#fff;border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`)}>Try again</div>
             </div>
 
             <div style={css('position:absolute;left:16px;bottom:14px;pointer-events:none;opacity:.8')}>
