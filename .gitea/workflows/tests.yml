@@ -189,6 +189,54 @@ jobs:
         # fires. Unnamed it would then be unreachable by anything at all, because the cleanup
         # step below (like every cleanup in these workflows) removes containers BY NAME. One
         # timed-out test step would leak a container onto the shared daemon permanently.
+        # `--memory` / `--memory-swap` are a MEASURED ceiling, and without them this container
+        # can take the whole runner: 19 GB shared with every other repository's jobs, so a
+        # runaway allocation here stops being this job's failure and becomes everybody's.
+        #
+        # MEASURE THIS BY PASS/FAIL AT A LIMIT, NEVER BY `memory.peak`. That reading is the
+        # trap, and it is written down here because the first version of this ceiling fell
+        # into it. `memory.peak` in a cgroup counts reclaimable PAGE CACHE, which this run
+        # generates in quantity — apt, pip and untarring the workspace — and the kernel keeps
+        # that cache for as long as the limit leaves room for it, so the peak RISES WITH THE
+        # LIMIT and then saturates somewhere BELOW it. Measured on cirunner-docker (Debian
+        # 13, x86_64, 8 vcpu, 19 GB) with this exact command: 2.86 GB under a 4g limit,
+        # 2.00 GB under 2g, 769 MB under 768m. It does not merely fill whatever it is given —
+        # 2.86 is well short of 4 — and that is what makes the number so plausible and so
+        # useless: it says how much the run was ALLOWED to cache, not how much it needs, so
+        # it can be made to say almost anything by changing the very flag it would justify.
+        #
+        # What the suite actually needs, by running it: it PASSES (pytest rc 0, OOMKilled
+        # false) at 2g and at 768m, and the kernel really kills it (exit 137,
+        # `OOMKilled=true`) at 512m. The floor is therefore above 512 MB and no higher than
+        # 768 MB, which puts 2g somewhere between 2.7× and 4× it — the interval is the honest
+        # figure, and a single multiple would state the floor more precisely than the
+        # measurement does. The margin is deliberately a MULTIPLE rather than a percentage: a
+        # suite that grows a fixture, a dependency or a parallel worker must not start
+        # failing CI for a reason that has nothing to do with the commit, while an allocation
+        # that runs away still dies inside this job instead of on the host.
+        #
+        # ONE CONTAINER OF SEVERAL CARRIES A CEILING, and that is a statement about what has
+        # been measured rather than a finding that the rest do not need one. The argument for
+        # having a ceiling at all is a property of the RUNNER — 19 GB shared with every other
+        # repository's jobs — so it holds word for word for the JS suite's
+        # node:22-bookworm-slim container (`npm ci` plus vitest), for the `docker build` step
+        # in the build job, and for the containers ci/smoke.py starts. None of those has been
+        # put through a pass/fail sweep, and a number here comes from a measurement rather
+        # than from a guess, so none of them gets one until it has. That sweep is a backlog
+        # entry of its own in docs/SPEC.md §8.
+        #
+        # Measured AFTER 473ca4c, and that matters: before it the process ceilings were
+        # applied to the pytest process itself, RLIMIT_CPU killed the run part way through,
+        # and every number taken then describes a suite that never reached the end. Any
+        # re-measurement has to be on a run that completes. Re-measure when the container's
+        # contents change — installing the CAD kernel's system libraries here would
+        # invalidate this outright, because nothing in this run imports OCP today.
+        #
+        # The two flags MUST STAY EQUAL. `--memory-swap` is the memory+swap TOTAL, and leaving
+        # it unset gives the container swap equal to the limit, so a process that ran away
+        # would thrash to twice the number instead of being killed at it — the ceiling would
+        # still be written here while no longer being enforced, which is worse than not having
+        # one, and the measurements above would no longer describe what happens.
         # GIT IS INSTALLED INSIDE THE CONTAINER, and for exactly one test.
         # tests/test_no_conflict_markers.py enumerates the tracked files with `git ls-files` and
         # greps each one for a merge marker; python:3.11-slim carries no git at all, so without
@@ -220,6 +268,7 @@ jobs:
           --exclude=./data --exclude=./.env --exclude=./.pytest_cache \
           --exclude=__pycache__ . \
           | docker run --rm -i --pull always --name "$TEST_NAME" \
+          --memory=2g --memory-swap=2g \
           -e PUBLISH_TOKEN=fake-test-publish-token-not-real \
           -e COMMENT_READ_TOKEN=fake-test-comment-read-token-not-real \
           -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -390,10 +439,13 @@ jobs:
       # trigger, which is the thing this file exists to avoid.
       timeout-minutes: 20
       run: |
-        # --pull is required here: unlike GitHub's ephemeral runners, cirunner-hatbox
+        # --pull is required here: unlike GitHub's ephemeral runners, cirunner-docker
         # is self-hosted with a persistent docker daemon, so a once-pulled base image
         # would sit in its cache for months and every build would inherit an
         # unpatched base layer.
+        # cirunner-docker is the runner VM and the name its own `docker info` reports; the
+        # `hatbox` this comment used to say is the Proxmox hypervisor underneath it, not the
+        # daemon — one machine, two levels, and only the inner one runs anything here.
         docker build --pull . --file Dockerfile --tag "$SMOKE_IMAGE"
 
     - name: Smoke-test the built image
