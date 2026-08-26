@@ -5,17 +5,39 @@ than calling handler methods directly. That is deliberate: half of what this
 service promises is in the RESPONSE — status codes, `Cache-Control`, `Location` —
 and a test that reached past the HTTP layer could not observe any of it, which is
 exactly the layer SPEC 7.4 makes claims about.
+
+TWO THINGS HERE STAND IN FOR THE BUILD, and both are load-bearing enough to say
+out loud, because they are what lets the rest of the suite go on being about
+publication rather than about geometry.
+
+`copying_builder` replaces `src.buildproc.run_build`: it publishes the pushed
+tree unchanged. Every test written before the hub built anything pushes a
+FINISHED artefact — a meta.json and a view — so with this builder those pushes
+mean exactly what they always meant, and the archive is still the thing under
+test. The suite has no CadQuery, and a real build would be minutes per test.
+
+`Hub.publish` posts and then WAITS, reconstructing the answer the endpoint gave
+before the push became asynchronous (SPEC 8A.2 step 5). Almost every test in this
+suite is about what ends up on disk, not about the handover; making each of them
+poll a job would be two hundred copies of the same loop. The handover itself —
+the 202, the job record, the log, the queue — is tested through `publish_async`
+and the job helpers below, in test_jobs.py.
 """
 
 import io
 import json
+import shutil
 import tarfile
 import threading
+import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 
 from src.app import create_server
+from src.buildproc import STATUS_FAILED, STATUS_OK, BuildOutcome
+from src.jobs import STATE_DONE, STATE_FAILED
 
 TOKEN = "test-publish-token"
 READ_TOKEN = "test-comment-read-token"
@@ -96,12 +118,48 @@ class Hub:
         return httpx.request(method, self.url + path, timeout=10, **kw)
 
     def publish(self, pid, commit, body, token=TOKEN):
+        """Push, wait for the build, and answer as the synchronous endpoint did.
+
+        201/200/409/422/413/401 come back exactly as they used to. A 202 is
+        followed to its job and turned back into the answer that job reached,
+        which is the one nearly every test in this suite is asking about. Use
+        `publish_async` when the handover itself is the subject.
+        """
+        reply = self.publish_async(pid, commit, body, token=token)
+        if reply.status_code != 202:
+            return reply
+        return self.await_job(reply.json()["job"], token=token)
+
+    def publish_async(self, pid, commit, body, token=TOKEN):
+        """POST the push and return whatever the endpoint said, 202 included."""
         headers = {"Content-Type": "application/gzip"}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
         return httpx.post(f"{self.url}/api/v1/publish/{pid}/{commit}",
                           content=body, headers=headers, timeout=30,
                           trust_env=self.TRUST_ENV)
+
+    def job(self, job_id, token=TOKEN):
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        return httpx.get(f"{self.url}/api/v1/jobs/{job_id}", headers=headers,
+                         timeout=10, trust_env=self.TRUST_ENV)
+
+    def job_log(self, job_id, token=TOKEN):
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        return httpx.get(f"{self.url}/api/v1/jobs/{job_id}/log", headers=headers,
+                         timeout=10, trust_env=self.TRUST_ENV)
+
+    def await_job(self, job_id, token=TOKEN, timeout=30):
+        """Poll one job to a terminal state and report it as a publish reply."""
+        deadline = time.monotonic() + timeout
+        record = None
+        while time.monotonic() < deadline:
+            record = self.job(job_id, token=token).json()
+            if record["state"] in (STATE_DONE, STATE_FAILED):
+                return PublishReply(record)
+            time.sleep(0.005)
+        raise AssertionError(
+            f"job {job_id} never finished within {timeout}s: {record}")
 
     def publish_dev(self, pid, body, token=TOKEN):
         """POST /api/v1/publish/<pid>/dev — into the local slot (SPEC 7.6).
@@ -209,9 +267,72 @@ def comment_payload(**extra):
     return payload
 
 
-def start_hub(data_dir, **kw):
+class PublishReply:
+    """A finished job, shaped like the reply the push used to get.
+
+    Not an httpx response and deliberately not pretending to be one: it carries
+    the three things a test asks a publish reply for — the status, the JSON body
+    and its text — and nothing else, so a test that wants a HEADER off the push
+    has to use `publish_async` and look at the real one.
+    """
+
+    def __init__(self, record):
+        self.record = record
+        self.status_code = record["code"]
+        self.payload = ({"url": record["build_url"]}
+                        if record["build_url"] is not None
+                        else {"error": record["error"]})
+        self.text = json.dumps(self.payload)
+
+    def json(self):
+        return self.payload
+
+
+def copying_builder(project_dir, out_dir, *, pid, **_kw):
+    """Stand in for `src.buildproc.run_build`: ship the pushed tree unchanged.
+
+    The push carries a source tree that a real build turns into artefacts. This
+    suite pushes the ARTEFACTS — that is what every test written before the hub
+    built anything sends, and it is what keeps those tests about the archive and
+    the publication rather than about geometry — so the stand-in copies the tree
+    into the output directory and declares every file in it.
+
+    `copytree` and not a move: the sources belong to the job, which removes them
+    when it is done, and a build that consumed its own input would hide the fact
+    that the two directories are separate on purpose.
+    """
+    shutil.copytree(project_dir, out_dir)
+    names = tuple(
+        str(path.relative_to(out_dir))
+        for path in sorted(Path(out_dir).rglob("*"))
+        if path.is_file() and not path.is_symlink())
+    return BuildOutcome(
+        status=STATUS_OK, pid=pid, files=names,
+        log=f"copying builder: {len(names)} files\n", log_truncated=False,
+        exit_code=0, signal=None, duration_seconds=0.0)
+
+
+def failing_builder(status=STATUS_FAILED, log="build failed: no printables\n",
+                    exit_code=3):
+    """A builder that refuses, the way a broken model does. -> a runner."""
+    def run(project_dir, out_dir, *, pid, **_kw):
+        # The output directory is created and left EMPTY, because that is what a
+        # build that got part way and gave up leaves behind — and the point of
+        # the test using this is that nothing of it is ever published.
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        return BuildOutcome(
+            status=status, pid=pid, files=(), log=log, log_truncated=False,
+            exit_code=exit_code, signal=None, duration_seconds=0.25)
+    return run
+
+
+def start_hub(data_dir, build_runner=None, build_workers=None,
+              build_queue_size=None, **kw):
     """Bind, serve on a daemon thread, and hand back a Hub. Caller stops it."""
-    server = create_server(settings_for(data_dir, **kw))
+    server = create_server(
+        settings_for(data_dir, **kw),
+        build_runner=copying_builder if build_runner is None else build_runner,
+        build_workers=build_workers, build_queue_size=build_queue_size)
     # `shutdown()` blocks until serve_forever notices, which it only does once per
     # poll interval — the 0.5 s default would add half a second to every test that
     # uses a hub, which is most of them.

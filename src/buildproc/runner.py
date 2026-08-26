@@ -10,9 +10,9 @@ outlives it, it reads the environment for a token) is a property of the
 machinery and is tested against small programs that do exactly one of those
 things, on a python with no CAD stack in it.
 
-NOT WIRED TO HTTP, deliberately. Taking a push asynchronously is SPEC 8A.2 step
-5 and the gate firing on this side is step 6; this is the mechanism both of
-them will call.
+CALLED FROM A BUILD WORKER, never from a request thread (SPEC 8A.2 step 5):
+`src/jobs.py` owns the queue and the pool, and everything here happens on one of
+its threads. The gate firing on this side is still step 6.
 
 WHAT "SPAWN, NOT FORK" MEANS HERE, since `subprocess` does technically fork.
 The prohibition is on a child that CONTINUES AS A COPY of this interpreter --

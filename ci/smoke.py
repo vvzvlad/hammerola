@@ -144,7 +144,16 @@ REQUIRED_VARIABLES = ["PUBLISH_TOKEN", "COMMENT_READ_TOKEN"]
 # today the Dockerfile also copies its files one by one rather than with a blanket `COPY . .`
 # — so this check is defence in depth for the day somebody widens that copy list, which is a
 # one-line change that looks harmless in review.
-EXCLUDED_PATHS = ["/app/tests", "/app/.env", "/app/.venv"]
+#
+# `/app/src/__pycache__` is the one entry here that is NOT covered by the "widened COPY list"
+# sentence above: `COPY src/ src/` already carries it today, and it stays out only because
+# .dockerignore says `**/__pycache__/`. The `**/` is load-bearing and does not look it — a
+# pattern here is matched with Go's filepath.Match rules, where `*` does not cross a `/`, so
+# the bare `__pycache__/` this file used to carry matched the context root and nothing below
+# it. Anyone "simplifying" that pattern back reintroduces the leak, and nothing else in the
+# pipeline can see it: the image builds, starts and serves with the laptop's bytecode inside,
+# including .pyc files whose .py no longer exists.
+EXCLUDED_PATHS = ["/app/tests", "/app/.env", "/app/.venv", "/app/src/__pycache__"]
 
 # Paths that MUST be inside the image — the mirror of the list above, and it exists because the
 # two failures are not symmetrical in how loudly they announce themselves. A file that should

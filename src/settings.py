@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     #
     # PUBLISH_TOKEN is the single shared secret CI presents as `Authorization:
     # Bearer <token>` when it pushes a build. The public SITE has no read-side
-    # auth at all (SPEC 5.5); the comment queue is the one thing that does.
+    # auth at all (SPEC 5.4); the comment queue is the one thing that does.
     publish_token: str = Field(min_length=1)
 
     # COMMENT_READ_TOKEN guards everything about the comment queue except writing

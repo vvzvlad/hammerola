@@ -11,6 +11,8 @@ because the volume would shadow them.
                                            on every laptop push (SPEC 7.6)
     <data>/project/<pid>/<commit>/         one immutable build
     <data>/project/<pid>/.tmp-<commit>-<uuid>/   staging, never served
+    <data>/jobs/<id>/                      one build job (src/jobs.py)
+    <data>/.src-<uuid>/                    one pushed SOURCE tree, being built
 
 `latest` and `dev` are the two names a build directory may not claim, for
 different reasons: `latest` is a symlink the store moves, and `dev` is the local
@@ -42,6 +44,7 @@ import threading
 import time
 import uuid
 import zlib
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -154,18 +157,32 @@ PAYLOAD_DIGEST_FILE = ".payload.sha256"
 # Every transient name the store writes. All dot-prefixed, so none of them is ever
 # served or picked up by `builds_of` — which is exactly why nothing notices when
 # one is left behind by a SIGKILL, and why they are swept explicitly at startup.
-STAGING_PREFIX = ".tmp-"        # a build being unpacked
+STAGING_PREFIX = ".tmp-"        # a build's OUTPUT, on its way to <pid>/<commit>
 LATEST_LINK_PREFIX = ".latest-"  # a symlink about to be renamed over `latest`
 UPLOAD_PREFIX = ".upload-"      # one spooled request body, up to MAX_BUILD_BYTES
 TRASH_PREFIX = ".trash-"        # a build renamed out of the way before deletion
 JSON_TMP_PREFIX = ".wip-"       # builds.json / index.json mid-write
+# One pushed SOURCE tree, from the moment it is unpacked until its build ends.
+# At the root and not inside the project directory, and that is deliberate: it is
+# not a build, it is never renamed anywhere, and a project directory that exists
+# means the project has been pushed to. It also survives the request that created
+# it — the worker owns it (src/jobs.py) — so it is the one transient here that is
+# expected to outlive its creator.
+SOURCE_PREFIX = ".src-"
 
 LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, UPLOAD_PREFIX,
-                     TRASH_PREFIX, JSON_TMP_PREFIX)
+                     TRASH_PREFIX, JSON_TMP_PREFIX, SOURCE_PREFIX)
 
 # A leftover younger than this may belong to a publish running RIGHT NOW, in this
 # process or another one sharing the volume. An hour is far longer than any push
 # takes and short enough that a killed 64 MiB upload does not sit there for days.
+#
+# `.src-` stretched that assumption and still fits under it, which is worth
+# writing down because the next change to either number could break it silently:
+# a source tree now lives from the request until its build ENDS, so the longest
+# it can honestly be in use is the queue wait plus one build — jobs.MAX_QUEUED_JOBS
+# times buildproc's `wall_seconds`, divided by the workers. At today's 16, 120 s
+# and 2 that is sixteen minutes.
 LEFTOVER_MAX_AGE_SECONDS = 3600
 
 
@@ -181,6 +198,19 @@ class PublishError(Exception):
         super().__init__(message)
         self.status = status
         self.message = message
+
+
+@dataclass(frozen=True)
+class AcceptedPush:
+    """A pushed source tree the hub has taken responsibility for.
+
+    `sources` is unpacked and validated; whoever holds this owns that directory
+    and has to remove it. `digest` is over those sources, and is the number every
+    later "is this the same push?" question is answered with.
+    """
+
+    sources: Path
+    digest: str
 
 
 def utcnow_iso() -> str:
@@ -464,85 +494,211 @@ class Store:
         """
         return self.root / f"{UPLOAD_PREFIX}{uuid.uuid4().hex}"
 
-    def publish(self, pid: str, commit: str, body_path: Path,
-                body_size: int) -> tuple[int, dict]:
-        """Accept one build from a spooled body. Returns (status, response body).
+    # -- accepting a push (in the request thread) ---------------------------
+    def accept_sources(self, pid: str, commit: str, body_path: Path,
+                       body_size: int) -> "AcceptedPush":
+        """Unpack one pushed SOURCE tree and hash it. Raises PublishError.
 
-        201 published, 200 identical retry, 409 same commit / different content.
-        Anything else is raised as PublishError.
+        The first half of what `publish` used to do in one go. It stays in the
+        REQUEST because everything it can refuse is a property of the upload
+        itself — the ids, the size, the archive — and an archive that is not an
+        archive has to be a 4xx on the push, not a job the pusher has to poll to
+        find out about. What it deliberately does NOT do is touch the project's
+        directory: nothing here is published, and a push that never builds must
+        leave no trace of a project that was never pushed to successfully.
 
         Takes a PATH, not bytes: the body is already on disk by the time it gets
         here, and reading it back into memory to hand it over would undo exactly
         the peak this avoids.
+
+        The digest is of the SOURCES, and it is what tells an identical retry
+        from a colliding one from here on. It has to be, now that the hub builds:
+        the built output carries the wall clock of the build (`meta.json` and
+        `metrics.json` both stamp `built`), so hashing THAT would make every
+        rebuild of the same commit a 409 and take away CI's ability to retry —
+        the exact failure `_payload_digest` already refuses to walk into with the
+        rewritten meta.json. What the pusher supplied is the sources; that is
+        what "the same push" can honestly mean.
         """
         if not self.valid_pid(pid):
             raise PublishError(422, f"invalid project id: {pid!r}")
-        if not self.valid_build_id(commit):
+        # `dev` is the one commit name the URL may carry that is not a build id:
+        # it is the local slot (SPEC 7.6), and it is validated by being exactly
+        # that constant rather than by the build-id rule, which reserves it.
+        if commit != DEV_LINK and not self.valid_build_id(commit):
             raise PublishError(422, f"invalid commit id: {commit!r}")
         if body_size > self.max_build_bytes:
             raise PublishError(
                 413, f"body is {body_size} bytes, limit is {self.max_build_bytes}")
 
+        sources = self.root / f"{SOURCE_PREFIX}{uuid.uuid4().hex}"
+        sources.mkdir()
+        try:
+            files = self._unpack(body_path, sources)
+        except BaseException:
+            # Every way out of `_unpack` except the ordinary one, BaseException
+            # included: a KeyboardInterrupt here would otherwise leave an
+            # unpacked tree that only the hourly sweep would ever remove.
+            shutil.rmtree(sources, ignore_errors=True)
+            raise
+        return AcceptedPush(sources=sources, digest=_payload_digest(files))
+
+    def settled(self, pid: str, commit: str,
+                digest: str) -> tuple[int, dict] | None:
+        """Has this exact push already been published? (status, body), or None.
+
+        Raises PublishError(409) when the name is taken by different content.
+
+        Asked BEFORE a build is queued, which is the whole point: rebuilding a
+        commit that is already on disk costs minutes of CPU to arrive at an
+        answer that was on disk all along, and answering 200 or 409 from the
+        request keeps both of those codes where CI already expects them —
+        immediately, rather than through a job it would have to poll.
+
+        Not under the project lock, on purpose. It is a read whose answer can
+        only go stale in one direction — another push landing the same commit
+        between here and the rename — and `publish_built` makes exactly the same
+        comparison again, under the lock, where it is authoritative.
+        """
+        pdir = self.projects_dir / pid
+        if commit == DEV_LINK:
+            # The slot has no 409: it is overwritten by every push by design
+            # (SPEC 7.6). The comparison is here only so an unchanged rebuild
+            # does no work — and now that the hub builds, "no work" means the
+            # build itself, not just the swap.
+            if _read_digest(pdir / DEV_LINK) == digest:
+                logger.info(f"publish {pid}/{DEV_LINK}: identical, kept")
+                return 200, _build_url(pid, DEV_LINK)
+            return None
+
+        final = pdir / commit
+        if not final.exists():
+            return None
+        existing = _read_digest(final)
+        if existing is not None and existing == digest:
+            logger.info(f"publish {pid}/{commit}: identical retry, kept")
+            return 200, _build_url(pid, commit)
+        # The build directory is immutable and was served with a one-year
+        # immutable cache, so silently replacing it would make every cached copy
+        # a lie (SPEC 7).
+        raise PublishError(
+            409, f"build {commit} already exists with different content")
+
+    def build_staging(self, pid: str, commit: str) -> Path:
+        """Where a build writes: the directory that becomes `<pid>/<commit>`.
+
+        Returned rather than created, because the build creates it itself (see
+        `cadbuild.build`, which insists on a clean output directory). What this
+        DOES create is the project directory, which has to exist before anything
+        inside it can be renamed into place.
+
+        Inside the project directory and not beside the sources, so publication
+        is a rename within one filesystem directory — the atomic step the whole
+        of SPEC 7.2 rests on.
+        """
+        pdir = self.projects_dir / pid
+        pdir.mkdir(parents=True, exist_ok=True)
+        return pdir / f"{STAGING_PREFIX}{commit}-{uuid.uuid4().hex}"
+
+    # -- publishing what a build produced (in a worker thread) --------------
+    def publish_built(self, pid: str, commit: str, staging: Path, names,
+                      digest: str) -> tuple[int, dict]:
+        """Put one built tree at `<pid>/<commit>`. Returns (status, response).
+
+        201 published, 200 identical retry, 409 same commit / different content.
+        Anything else is raised as PublishError.
+
+        `staging` is the directory the build wrote into and `names` are the files
+        it declared it ships (`BuildOutcome.files`, every one of them already
+        checked by the parent to be a regular file under `staging`). The caller
+        owns `staging`: on the success path it is renamed away and there is
+        nothing left, and on every other path the caller removes it.
+        """
+        files = _hash_output(staging, names)
         pdir = self.projects_dir / pid
         with self._lock_for(pid):
             pdir.mkdir(parents=True, exist_ok=True)
-            staging = pdir / f"{STAGING_PREFIX}{commit}-{uuid.uuid4().hex}"
-            staging.mkdir()
+            final = pdir / commit
+
+            # The same comparison `settled` already made in the request, made
+            # again here because THIS is the one that is authoritative: it is
+            # under the project lock and immediately before the rename, so a
+            # second push of the same commit that arrived while this one was
+            # building cannot slip between the two.
+            if final.exists():
+                existing = _read_digest(final)
+                if existing is not None and existing == digest:
+                    logger.info(f"publish {pid}/{commit}: identical retry, kept")
+                    return 200, _build_url(pid, commit)
+                raise PublishError(
+                    409, f"build {commit} already exists with different content")
+
+            meta = self._finish_staging(pid, commit, staging, files, digest)
             try:
-                files = self._unpack(body_path, staging)
-                digest = _payload_digest(files)
-                final = pdir / commit
-
-                # Idempotency BEFORE the rename: the build directory is immutable
-                # and was served with a one-year immutable cache, so silently
-                # replacing it would make every cached copy a lie (SPEC 7).
-                if final.exists():
-                    existing = _read_digest(final)
-                    if existing is not None and existing == digest:
-                        logger.info(f"publish {pid}/{commit}: identical retry, kept")
-                        return 200, _build_url(pid, commit)
+                os.rename(staging, final)
+            except OSError as error:
+                # Lost a race with another writer, or the directory appeared
+                # between the check above and here. Re-run the same comparison
+                # rather than reporting a filesystem error CI cannot act on.
+                if not final.exists():
                     raise PublishError(
-                        409,
-                        f"build {commit} already exists with different content")
+                        422, f"could not publish build: {error}") from error
+                existing = _read_digest(final)
+                if existing is not None and existing == digest:
+                    return 200, _build_url(pid, commit)
+                raise PublishError(
+                    409,
+                    f"build {commit} already exists with different content",
+                ) from error
 
-                meta = self._finish_staging(pid, commit, staging, files, digest)
-                try:
-                    os.rename(staging, final)
-                except OSError as error:
-                    # Lost a race with another writer, or the directory appeared
-                    # between the check above and here. Re-run the same comparison
-                    # rather than reporting a filesystem error CI cannot act on.
-                    if not final.exists():
-                        raise PublishError(
-                            422, f"could not publish build: {error}") from error
-                    existing = _read_digest(final)
-                    if existing is not None and existing == digest:
-                        return 200, _build_url(pid, commit)
-                    raise PublishError(
-                        409,
-                        f"build {commit} already exists with different content",
-                    ) from error
-                staging = None  # renamed away; nothing left to clean up
-            finally:
-                if staging is not None:
-                    shutil.rmtree(staging, ignore_errors=True)
+            # PAST THE POINT OF NO RETURN. The rename above IS the publication
+            # (SPEC 7.2): the build is at its permanent URL and anyone can
+            # already fetch it. Everything from here on is bookkeeping DERIVED
+            # from what is now on disk — which build `latest` names, which old
+            # ones retention drops, what the picker lists, what the index shows —
+            # and every one of those is recomputed from scratch by the next
+            # publish of this project, so a failure is recoverable and a lie is
+            # not. Reporting failure here would tell CI the push did not land
+            # while its URL serves the build; since step 5 it would also mark a
+            # job `failed` for a build that is live, which is the worst answer
+            # available.
+            #
+            # RECOVERABLE IS NOT REPAIRED, and the difference is worth being
+            # exact about. What repairs it is the next publish OF THIS PROJECT
+            # and nothing else: startup recomputes none of this, and another
+            # project's publish never touches these files. So a project that was
+            # pushed to once and then abandoned keeps whatever this leaves —
+            # `latest` on the previous build, a picker missing the newest one,
+            # an old build retention did not drop — for as long as nobody pushes
+            # to it again, which for an abandoned project is for ever.
+            #
+            # Order still matters on the success path: the symlink moves first so
+            # a reader is never sent to a build that is about to be pruned,
+            # retention then runs with the pointer already on its final target,
+            # and the picker is written last so it lists exactly what survived.
+            try:
+                self._switch_latest(pid)
+                self._prune(pid)
+                self._write_builds_json(pid)
+            except Exception:
+                logger.exception(
+                    f"publish {pid}/{commit}: the build is published, but the "
+                    f"bookkeeping after it did not finish; the next publish of "
+                    f"this project rebuilds all of it")
 
-            # Order matters: the symlink moves first so a reader is never sent to
-            # a build that is about to be pruned, retention then runs with the
-            # pointer already on its final target, and the picker is written last
-            # so it lists exactly what survived.
-            self._switch_latest(pid)
-            self._prune(pid)
-            self._write_builds_json(pid)
-
-        self._refresh_index()
+        try:
+            self._refresh_index()
+        except Exception:
+            logger.exception(
+                f"publish {pid}/{commit}: the build is published, but the site "
+                f"index was not refreshed")
         logger.info(
             f"publish {pid}/{commit}: {len(files)} files, "
-            f"{len(meta['variants'])} views, {body_size} bytes compressed")
+            f"{len(meta['variants'])} views")
         return 201, _build_url(pid, commit)
 
-    def publish_dev(self, pid: str, body_path: Path,
-                    body_size: int) -> tuple[int, dict]:
+    def publish_dev_built(self, pid: str, staging: Path, names,
+                          digest: str) -> tuple[int, dict]:
         """Overwrite the project's ONE local slot, `<pid>/dev/` (SPEC 7.6).
 
         The author is editing model.py on a laptop and wants to see the result
@@ -557,48 +713,42 @@ class Store:
         retention window, no local entries in `builds.json`. The commit route
         keeps its 409 and its year of `immutable` untouched — the two never meet.
 
-        Returns 201 when the slot changed and 200 when the same bytes are already
-        in it. The digest comparison is kept purely so an unchanged rebuild does
-        no work and does not disturb a reader; it is an internal detail and
-        nothing in the URL is derived from it.
+        Returns 201 when the slot changed and 200 when the same sources are
+        already in it — the second answer normally comes from `settled` before a
+        build is even queued, and is repeated here for the push that arrived
+        while an identical one was building.
         """
-        if not self.valid_pid(pid):
-            raise PublishError(422, f"invalid project id: {pid!r}")
-        if body_size > self.max_build_bytes:
-            raise PublishError(
-                413, f"body is {body_size} bytes, limit is {self.max_build_bytes}")
-
+        files = _hash_output(staging, names)
         pdir = self.projects_dir / pid
         url = _build_url(pid, DEV_LINK)
         with self._lock_for(pid):
             pdir.mkdir(parents=True, exist_ok=True)
-            staging = pdir / f"{STAGING_PREFIX}{DEV_LINK}-{uuid.uuid4().hex}"
-            staging.mkdir()
-            try:
-                files = self._unpack(body_path, staging)
-                digest = _payload_digest(files)
-                if _read_digest(pdir / DEV_LINK) == digest:
-                    # Same bytes as the slot already holds. Nothing to write, and
-                    # nothing SHOULD be written: a swap here would take the page
-                    # the author has open through a needless re-render.
-                    logger.info(f"publish {pid}/{DEV_LINK}: identical, kept")
-                    return 200, url
-                meta = self._finish_staging(pid, DEV_LINK, staging, files, digest)
-                self._swap_dev_slot(pdir, staging)
-                staging = None  # renamed into place; nothing left to clean up
-            finally:
-                if staging is not None:
-                    shutil.rmtree(staging, ignore_errors=True)
+            if _read_digest(pdir / DEV_LINK) == digest:
+                # Same sources as the slot already holds. Nothing to write, and
+                # nothing SHOULD be written: a swap here would take the page the
+                # author has open through a needless re-render.
+                logger.info(f"publish {pid}/{DEV_LINK}: identical, kept")
+                return 200, url
+            meta = self._finish_staging(pid, DEV_LINK, staging, files, digest)
+            self._swap_dev_slot(pdir, staging)
 
             # `latest` is not touched and neither is retention: a local build is
             # not a commit, so it cannot be the newest one, and nothing about it
             # accumulates. `builds.json` is rewritten because the picker shows
-            # whether the slot is occupied at all.
-            self._write_builds_json(pid)
+            # whether the slot is occupied at all — and, like the tail of
+            # `publish_built`, it runs AFTER the swap that publishes and so
+            # cannot be allowed to unpublish it by raising. The next push
+            # rewrites the file from scratch.
+            try:
+                self._write_builds_json(pid)
+            except Exception:
+                logger.exception(
+                    f"publish {pid}/{DEV_LINK}: the slot is published, but the "
+                    f"build picker was not rewritten")
 
         logger.info(
             f"publish {pid}/{DEV_LINK}: {len(files)} files, "
-            f"{len(meta['variants'])} views, {body_size} bytes compressed")
+            f"{len(meta['variants'])} views")
         return 201, url
 
     @staticmethod
@@ -846,7 +996,14 @@ class Store:
 
     # -- staging -> publishable directory ----------------------------------
     def _finish_staging(self, pid, commit, staging: Path, files, digest) -> dict:
-        """Validate meta.json and write everything the build page needs."""
+        """Validate meta.json and write everything the build page needs.
+
+        `staging` is what the BUILD wrote (SPEC 8A.2 step 5), so the meta.json
+        read here is the build's own — the same wire format the archive used to
+        carry, produced one step closer to the model. Nothing else about this
+        changed, which is the point of pointing the build at the directory that
+        gets renamed into place.
+        """
         raw = self._read_meta(staging)
         try:
             meta = render.build_meta(
@@ -871,7 +1028,7 @@ class Store:
     def _read_meta(staging: Path) -> dict:
         path = staging / "meta.json"
         if not path.is_file():
-            raise PublishError(422, "archive has no meta.json")
+            raise PublishError(422, "the build produced no meta.json")
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (ValueError, UnicodeDecodeError) as error:
@@ -1109,10 +1266,15 @@ def _usable_meta(meta, dir_name: str) -> bool:
 def _payload_digest(files: dict) -> str:
     """A digest of WHAT WAS UPLOADED, independent of tar order and timestamps.
 
-    Deliberately covers only the archive's own members, not the meta.json we
-    rewrite from them. That one is normalized by code which changes when the
-    service is updated, so hashing it would turn a hub release into a spurious
-    409 on every CI retry of an already-published commit.
+    What is uploaded is the model's SOURCE tree (SPEC 8A.2 step 5), so this is a
+    digest of the source and not of the build: the same commit pushed twice is
+    the same push, whatever wall clock the two builds happened to stamp into
+    their output.
+
+    Deliberately covers only the archive's own members, not the meta.json the
+    hub rewrites from the build. That one is normalized by code which changes
+    when the service is updated, so hashing it would turn a hub release into a
+    spurious 409 on every CI retry of an already-published commit.
     """
     digest = hashlib.sha256()
     for name in sorted(files):
@@ -1121,6 +1283,35 @@ def _payload_digest(files: dict) -> str:
         digest.update(files[name].encode("ascii"))
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _hash_output(directory: Path, names) -> dict:
+    """`{relative path: sha256}` for the files a build declared it ships.
+
+    The same shape `_unpack` produces, because it feeds the same consumer:
+    `render.build_meta` decides whether a view or a download names a file that
+    is really there by asking whether it is a KEY of this mapping.
+
+    The names come from `BuildOutcome.files`, which the build process claimed and
+    the PARENT then checked one by one — inside `directory`, in normal form, no
+    symlink in any component, a regular file that exists (`runner._verified_files`).
+    That check is why this can open them directly. Taking the list rather than
+    walking the tree is also what keeps the mapping to what the build SHIPS: an
+    output directory holds working files too (the preview renderer writes PNGs
+    nothing in meta.json points at), and a view file that was never declared has
+    no business validating.
+    """
+    files: dict[str, str] = {}
+    for name in names:
+        digest = hashlib.sha256()
+        with open(directory / name, "rb") as handle:
+            while True:
+                chunk = handle.read(CHUNK)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        files[name] = digest.hexdigest()
+    return files
 
 
 def _read_digest(build_dir: Path) -> str | None:
@@ -1135,7 +1326,7 @@ def _atomic_write_json(path: Path, payload) -> None:
     atomic_write_bytes(path, json.dumps(payload, indent=1).encode("utf-8"))
 
 
-def atomic_write_bytes(path: Path, data: bytes) -> None:
+def atomic_write_bytes(path: Path, data: bytes, *, tmp_dir: Path = None) -> None:
     """Write bytes so a reader sees the old file or the new one, never a torn one.
 
     The fsync before the rename is what makes that true across a power loss as
@@ -1147,8 +1338,34 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
     comment queue (SPEC 7A.3) lives outside a build directory but has exactly the
     same requirement: a reader must never see half a comment. One implementation
     of "temp file, fsync, rename" rather than two that drift apart.
+
+    `tmp_dir` puts the temporary file somewhere other than beside the target. It
+    has to be ON THE SAME FILESYSTEM or the rename stops being a rename — it
+    becomes EXDEV, and this function raises rather than silently copying. The
+    caller is `src/jobs.py`, which keeps its temporaries in `data/jobs/` instead
+    of inside each job directory, so that the one thing that collects strays
+    from that tree — `JobStore._sweep_strangers`, at startup — is looking where
+    a leftover of a killed write actually lands. Inside a live job's directory
+    nothing ever collects one.
+
+    NOT `_sweep_leftovers`, which is the near miss worth naming: the sweep above
+    this one walks `self.root` and the project directories, and `data/jobs/` is
+    neither, so a `.wip-` file under it is invisible here however familiar the
+    prefix looks. `JobStore._sweep_strangers` carries its own short cutoff for
+    that prefix for exactly this reason.
+
+    WHAT IT IS NOT is a defence against a build making one write fail. That was
+    the reason it was first proposed and it does not work, so it is written down
+    here to stop it being proposed again: `rename(tmp, dir/name)` needs write
+    permission on the DESTINATION directory, exactly as `open(dir/tmp)` did, so
+    `chmod 0500` on a job directory refuses both. Measured, not reasoned:
+    PermissionError either way. The only layout that would defuse it is one
+    where no per-job directory exists at all, and what makes a pointwise
+    failure survivable here is instead that nothing shared between records is
+    written per record any more (see `ORDER_NAME` in `src/jobs.py`).
     """
-    tmp = path.parent / f"{JSON_TMP_PREFIX}{path.name}-{uuid.uuid4().hex}"
+    parent = path.parent if tmp_dir is None else Path(tmp_dir)
+    tmp = parent / f"{JSON_TMP_PREFIX}{path.name}-{uuid.uuid4().hex}"
     try:
         with open(tmp, "wb") as handle:
             handle.write(data)
