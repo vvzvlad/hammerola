@@ -115,7 +115,11 @@ export class HmrViewport extends HTMLElement {
     this.measureLabel = null;
     this.moved = new Map();
     this.partHome = new Map();
-    this.pointerHeld = false;
+    // THE IDS OF THE POINTERS CURRENTLY DOWN ON THE CANVAS, and not a flag: two
+    // fingers on the glass are two presses, and one bit meant the first release
+    // answered for the second — see `installIdleClock`, which is the only thing
+    // that writes this.
+    this.pointersDown = new Set();
     // -Infinity AND NOT 0, because `lastTouch` holds a `performance.now()`
     // reading and that clock is zeroed at the START OF THE NAVIGATION: 0 does
     // not mean "long ago", it means "the instant this page opened". A viewport

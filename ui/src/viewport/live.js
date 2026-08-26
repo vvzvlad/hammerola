@@ -121,38 +121,118 @@ export function restoreLive(vp, keep) {
  * that asks for the swap included.
  */
 export function isBusy(vp) {
-  if (vp.pointerHeld) return true;
+  // A SET OF POINTER IDS AND NOT A FLAG, because one bit cannot count fingers —
+  // `installIdleClock` carries the whole story. Read for its SIZE and never for
+  // its truthiness: an EMPTY Set is truthy, so the boolean-shaped test this line
+  // used to be would report "busy" for ever. The field was renamed along with
+  // its shape for that reason alone — the old name resolves nowhere now, so no
+  // such test can survive the change unnoticed.
+  if (vp.pointersDown.size > 0) return true;
   return performance.now() - vp.lastTouch < IDLE_MS;
 }
 
 export function installIdleClock(vp) {
-  // These only ever write a timestamp or a flag. PASSIVE, so they can never call
-  // preventDefault, and they must stay that way: the trackball and the tools own
-  // these same events and neither may notice this exists. `stopPropagation` in a
-  // tool does not silence them either — it stops the bubble phase, not the other
-  // listeners on the element it was called on.
+  // These only ever write a timestamp or a pointer id. PASSIVE, so they can
+  // never call preventDefault, and they must stay that way: the trackball and
+  // the tools own these same events and neither may notice this exists.
+  // `stopPropagation` in a tool does not silence them either — it stops the
+  // bubble phase, not the other listeners on the element it was called on.
   const opts = { capture: true, passive: true };
   const touched = () => { vp.lastTouch = performance.now(); };
-  const onDown = () => { vp.pointerHeld = true; touched(); };
-  // ONLY A RELEASE THAT ENDS A PRESS OF OUR OWN, which is what `pointerHeld`
-  // says: this listener is on the window (see below) and therefore hears every
-  // release on the page, and a stamp for one of those would make `isBusy` mean
-  // "somebody clicked something recently" instead of "the model is being held".
-  // The reader's press on "Switch" is such a release, and it reaches the window
-  // BEFORE React dispatches the click that acts on it — so the swap the button
-  // asks for found the viewport busy every single time and deferred for the
-  // whole of IDLE_MS, on a page nobody had touched the model on.
-  //
-  // The guard costs the flag nothing, and that matters: ANY release still
-  // clears it, because the only case it skips is the one where there is nothing
-  // to clear. A press whose release went to another window leaves the flag
-  // standing with nobody left to clear it, and the reader's next click
-  // anywhere — on the page, not necessarily on the model — is what recovers it.
-  const onUp = () => {
-    if (!vp.pointerHeld) return;
-    vp.pointerHeld = false;
+
+  // Whether `onBlur` emptied the set while presses were still outstanding — see
+  // the two comments that use it. Kept in this closure and not on `vp`: it is
+  // one clock's bookkeeping about its own recovery, and nothing outside asks.
+  let clearedMidGesture = false;
+
+  // THE ID AND NOT A FLAG, because one bit cannot count fingers. With two down,
+  // the FIRST `pointerup` cleared the flag while the second was still on the
+  // glass, and the answer fell through to the IDLE_MS window — which
+  // `pointermove` does not refresh, only a press or a wheel does. A pinch or a
+  // drag that ran on for longer than IDLE_MS past that first lift therefore
+  // reported "not busy", and the swap it let through re-seated the camera under
+  // the fingers still doing it. A mouse never showed it: one pointer, and a set
+  // of one is a flag.
+  const onDown = (event) => {
+    vp.pointersDown.add(event.pointerId);
     touched();
   };
+
+  // ONLY A RELEASE THAT ENDS A PRESS OF OUR OWN, which is now "an id this clock
+  // recorded" — `delete` says whether it was one and removes it in the same
+  // call. This listener is on the window (see below) and therefore hears every
+  // release on the page, and TWO different things arrive here as an id nobody
+  // pressed the canvas with. The reader's press on "Switch" is the first: it
+  // reaches the window BEFORE React dispatches the click that acts on it, so a
+  // stamp for it made `isBusy` mean "somebody clicked something recently" and
+  // the swap the button asks for deferred for the whole of IDLE_MS on a page
+  // nobody had touched the model on. The second exists only on a touchscreen — a
+  // finger that came down on the interface rather than the canvas, lifting while
+  // a finger of ours is still down — and it is the one the id buys: under the
+  // flag it took our finger's press with it.
+  //
+  // AND ONE UNPAIRED RELEASE IS LET BACK IN, exactly one, and only after a blur
+  // that found presses outstanding. That is the tail `onBlur` would otherwise
+  // take away in the middle of a gesture — read its comment for the sequence.
+  // The id guard still holds for everything else, the "Switch" button included:
+  // no blur, no exemption.
+  const onUp = (event) => {
+    if (!vp.pointersDown.delete(event.pointerId)) {
+      if (!clearedMidGesture) return;
+      clearedMidGesture = false;
+      touched();
+      return;
+    }
+    touched();
+  };
+
+  // THE RECOVERY FOR A PRESS WHOSE RELEASE NEVER ARRIVES — a drag let go of over
+  // another window, a tab that lost focus mid-press. It used to be free: the
+  // flag was global, so any release anywhere cleared it. Ids take that away
+  // exactly where it was worth having, because a finger is given a FRESH id per
+  // touch and nothing on the page ever names the stranded one again. (A mouse
+  // keeps one id for the life of the page and so still clears itself on the next
+  // click, but a mouse is not what strands a press for long.) The interface's
+  // BUSY_WAIT_MS deadline is still the backstop; this is the cheap way out.
+  //
+  // `blur` ALONE of the candidates, because it is the only one that fires for
+  // both cases above: a tab sent to the background blurs the window, and so does
+  // another window taking the focus while this page stays perfectly visible —
+  // which is precisely what `visibilitychange` would NOT report.
+  // `lostpointercapture` cannot help by construction, since the capture is
+  // released by the very `pointerup` that went missing.
+  //
+  // NOT REGISTERED WITH `opts`, and that is the trap: `blur` does not bubble,
+  // but it does propagate in the CAPTURE phase, so a capturing listener on the
+  // window would also hear the element-level blur that an ordinary press causes
+  // when focus leaves whatever had it — clearing the press at the start of the
+  // gesture this exists to protect. Passive it stays, like everything else here.
+  //
+  // NO `lastTouch` STAMP HERE, AND THAT IS A TRADE RATHER THAN A PURE WIN. The
+  // reason for it stands: this is the clock admitting it lost track of a press,
+  // not a gesture ending, and the release it stands in for may have happened
+  // long before the focus moved. What it costs is the case where the focus left
+  // WHILE THE GESTURE WAS STILL RUNNING — alt-tab with a button held, an OS
+  // notification, devtools opening. The set empties, the drag carries on,
+  // `pointermove` refreshes nothing, and `isBusy()` answers false for the rest
+  // of it; the final `pointerup` then matches no recorded id, so under the id
+  // guard alone it made no stamp either. A live swap arriving in that window
+  // re-seats the camera under fingers still dragging it — the very failure the
+  // set was introduced to remove, reached through a focus change instead of a
+  // second finger.
+  //
+  // So the two cases are told apart rather than merged: the flag says the clock
+  // lost a press it had, and the next UNPAIRED release — the missing half of
+  // that gesture — stamps after all and forgets the flag (`onUp`). The residue
+  // is one deferred swap of IDLE_MS in the sequence "blur mid-press, come back,
+  // press something in the interface", which is a delay rather than a camera
+  // pulled out from under a hand.
+  const blurOpts = { passive: true };
+  const onBlur = () => {
+    if (vp.pointersDown.size > 0) clearedMidGesture = true;
+    vp.pointersDown.clear();
+  };
+
   vp.box.addEventListener("pointerdown", onDown, opts);
   vp.box.addEventListener("wheel", touched, opts);
   // On the WINDOW: the trackball captures the pointer, so a drag that starts on
@@ -160,11 +240,13 @@ export function installIdleClock(vp) {
   // would leave the viewport "busy" for good.
   addEventListener("pointerup", onUp, opts);
   addEventListener("pointercancel", onUp, opts);
+  addEventListener("blur", onBlur, blurOpts);
   return () => {
     vp.box.removeEventListener("pointerdown", onDown, opts);
     vp.box.removeEventListener("wheel", touched, opts);
     removeEventListener("pointerup", onUp, opts);
     removeEventListener("pointercancel", onUp, opts);
+    removeEventListener("blur", onBlur, blurOpts);
   };
 }
 
