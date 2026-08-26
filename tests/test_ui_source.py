@@ -1,0 +1,540 @@
+"""What the browser UI cannot check about itself, checked from Python.
+
+There is no JavaScript test runner in this repository and this file does not
+introduce one. It answers a narrower question instead: WHERE TWO FILES HAVE TO
+AGREE AND NOTHING MAKES THEM. Every check below is a silent-failure class — the
+build is green, the page loads, and one feature is quietly inert:
+
+  * the interface (`ui/src/`) and the viewport (`ui/src/viewport/`) talk over
+    window events, and a name spelled differently at the two ends is not an error
+    anywhere: `addEventListener` for a name nobody dispatches is silence, and the
+    symptom is a button that does nothing. The names therefore have exactly one
+    source — `ui/src/viewport/events.js` — which the interface imports under
+    aliases of its own; what is checked here is that no second spelling has
+    appeared, because nothing in the browser can tell "the other side is not
+    listening" from "the other side had nothing to do";
+
+  * the comment form posts to a route and with field names the hub decides. A
+    rename on either side gets a 404 or a 422 with the text already typed;
+
+  * the bundle must stay ONE output file, because five files outside this build
+    copy it by name (ui/vite.config.mjs says so at length). A dynamic import or
+    an imported stylesheet adds a second one, and the only report is a 404 in
+    somebody's browser;
+
+  * the page is served under `default-src 'self'` (src/app.py). An external font
+    or CDN reference does not fail a build — it is simply blocked in the browser,
+    on production, with the layout falling back to something that still looks
+    plausible.
+
+Every check DERIVES both halves from the files. A test carrying its own copy of a
+name would be one more place to forget, and it would pass while agreeing only
+with itself.
+"""
+
+import re
+from pathlib import Path
+
+import pytest
+
+from src.comments import PHOTO_KIND, SHOT_KIND, validate_payload
+
+ROOT = Path(__file__).resolve().parent.parent
+UI = ROOT / "ui" / "src"
+VIEWPORT = UI / "viewport"
+
+# The interface's own sources: everything under ui/src that is not the viewport
+# adapter. Discovered rather than listed, so a module added tomorrow is covered
+# by every check here without anybody remembering to add it.
+INTERFACE_FILES = sorted(p for p in UI.glob("*.js*") if p.is_file())
+ADAPTER_FILES = sorted(VIEWPORT.glob("*.js")) if VIEWPORT.is_dir() else []
+
+# Every source that reaches the bundle, however deep, and WITHOUT the halves the
+# two lists above keep apart. The rule about where a name may be spelled has no
+# exceptions by directory, so the check that enforces it must not have a list
+# that stops at one.
+ALL_UI_FILES = sorted(p for p in UI.rglob("*.js*") if p.is_file())
+
+EVENTS_JS = UI / "events.js"
+ADAPTER_EVENTS_JS = VIEWPORT / "events.js"
+COMPONENT = UI / "HammerolaViewer.jsx"
+
+# `const NAME = "hmr:thing";` — the shape the ONE event module is written in.
+EVENT_DECL = re.compile(r"""(?:export\s+)?const\s+(\w+)\s*=\s*["'](hmr:[a-z]+)["']""")
+
+# `EVENT_PICK as PICK` — how the interface takes a name it did not spell.
+EVENT_ALIAS = re.compile(r"\b(EVENT_[A-Z]+)\s+as\s+(\w+)\b")
+
+
+def read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def strip_comments(source: str) -> str:
+    """Source with `//` and `/* */` comments removed.
+
+    Comments are where this file's rules are ALLOWED to be broken: a URL named in
+    a sentence explaining why it is not fetched is not a fetch, and `innerHTML`
+    named in a note about the library's own behaviour is not an assignment. Every
+    content check below therefore runs on what actually executes.
+
+    LINE NUMBERS ARE PRESERVED — a block comment becomes the same lines of
+    spaces rather than collapsing — so a check may report a line number, and so a
+    check may look at the RAW line beside the stripped one. `test_nothing_splits_
+    the_bundle` needs exactly that: the thing making a dynamic import legitimate
+    is `/* @vite-ignore */`, which lives in a comment on that same line, so
+    stripping first and asking afterwards would flag the one deliberate case.
+
+    Only WHOLE-LINE `//` comments go, never a trailing one: `https://` inside a
+    string would otherwise be read as the start of a comment and take the rest of
+    the line — including the URL this file exists to notice — with it.
+    """
+    source = re.sub(r"/\*.*?\*/",
+                    lambda m: re.sub(r"[^\n]", " ", m.group(0)), source, flags=re.S)
+    return re.sub(r"^\s*//.*$", "", source, flags=re.M)
+
+
+def declared_events(path: Path) -> dict:
+    """{constant name: event name} for the module that declares them."""
+    return {name: value for name, value in EVENT_DECL.findall(read(path))}
+
+
+def interface_events() -> dict:
+    """{the name the interface uses: the `hmr:` string behind it}.
+
+    The interface declares no names of its own — it imports the adapter's
+    constants under shorter aliases (`EVENT_PICK as PICK`) — so the value is
+    looked up where it is actually written. Derived, like everything else here:
+    an alias for a constant the adapter does not export is a failure rather than
+    a missing key.
+    """
+    literals = declared_events(ADAPTER_EVENTS_JS)
+    aliases = EVENT_ALIAS.findall(strip_comments(read(EVENTS_JS)))
+    assert aliases, "ui/src/events.js no longer imports any event name"
+    unknown = sorted(const for const, _ in aliases if const not in literals)
+    assert not unknown, (
+        f"ui/src/events.js imports {unknown} from the adapter and the adapter "
+        "declares no such event")
+    return {local: literals[const] for const, local in aliases}
+
+
+def js_array(source: str, name: str) -> list:
+    """The identifiers in `export const NAME = [ ... ];`."""
+    match = re.search(rf"const\s+{name}\s*=\s*\[(.*?)\]", source, flags=re.S)
+    assert match, f"{name} is not an array literal any more"
+    return [item.strip() for item in match.group(1).split(",") if item.strip()]
+
+
+skip_without_adapter = pytest.mark.skipif(
+    not ADAPTER_FILES,
+    reason="ui/src/viewport/ is empty — the adapter has not landed yet",
+)
+
+
+# -- the lists everything else iterates --------------------------------------
+
+def test_the_discovery_found_the_files():
+    """Every check below sweeps a DISCOVERED list, and an empty list passes them all.
+
+    That is this file's own worst failure and it is the one it is least able to
+    notice: a renamed directory, a changed extension, and the whole suite goes
+    green by looking at nothing. So the modules the checks are actually about are
+    named once, here, and their absence is a failure rather than a quiet skip.
+    """
+    names = {path.name for path in INTERFACE_FILES}
+    assert {"HammerolaViewer.jsx", "events.js", "hub.js", "main.jsx",
+            "store.js"} <= names, f"ui/src no longer holds the interface: {sorted(names)}"
+    if not ADAPTER_FILES:
+        pytest.skip("ui/src/viewport/ is empty — the cross-checks skip honestly")
+    assert (VIEWPORT / "events.js").exists(), "the adapter is there but names no events"
+
+
+# -- the event contract ------------------------------------------------------
+
+@skip_without_adapter
+def test_one_module_spells_every_event_name():
+    """No `hmr:` literal ANYWHERE under ui/src except viewport/events.js.
+
+    This replaced a check that compared two lists of literals — the interface
+    kept its own copy of the names and the test reported when the copies drifted.
+    That premise is gone: `ui/src/events.js` now imports the adapter's constants
+    under aliases, so there is nothing left to drift. A detector is worth having
+    when the error class cannot be removed; here it could be, and what is left to
+    guard is that a SECOND source does not come back — a literal typed at a call
+    site, which is invisible to the reader of the other file and to everything
+    else in this one.
+
+    COMMENTS ARE EXEMPT, deliberately and consistently with the rest of this
+    file: the modules on both sides explain their own events at length and by
+    name, and prose about `hmr:model` is not a dispatch. The failure being
+    prevented is a name that EXECUTES, and a comment executes nothing.
+    """
+    assert ALL_UI_FILES, f"{UI} has no sources in it at all"
+    assert set(INTERFACE_FILES) | set(ADAPTER_FILES) <= set(ALL_UI_FILES), (
+        "the recursive sweep no longer covers the files the other checks use")
+    strays = {}
+    for path in ALL_UI_FILES:
+        if path == ADAPTER_EVENTS_JS:
+            continue
+        found = re.findall(r"['\"`]hmr:[a-z]*['\"`]", strip_comments(read(path)))
+        if found:
+            strays[str(path.relative_to(UI))] = found
+    assert not strays, (
+        f"event names spelled outside {ADAPTER_EVENTS_JS.relative_to(UI)}: "
+        f"{strays}")
+
+
+@skip_without_adapter
+def test_the_up_events_lists_agree():
+    """Both sides enumerate the same events as coming UP from the viewport.
+
+    Direction is the half of the contract a shared import does NOT settle: the
+    two lists are written independently — `UP_EVENTS` is what the interface
+    attaches listeners for, `EVENTS_UP` is what the viewport says it sends — and
+    an event on one and not the other is a handler that is never called, or a
+    dispatch nothing hears.
+    """
+    ours = interface_events()
+    theirs = declared_events(ADAPTER_EVENTS_JS)
+    listed = js_array(read(EVENTS_JS), "UP_EVENTS")
+    unknown = [name for name in listed if name not in ours]
+    assert not unknown, f"UP_EVENTS names {unknown}, which this file never imports"
+    up_ours = {ours[name] for name in listed}
+    up_theirs = {theirs[name] for name in js_array(read(ADAPTER_EVENTS_JS), "EVENTS_UP")}
+    assert up_ours == up_theirs, (
+        f"the interface listens for {sorted(up_ours - up_theirs)} which the "
+        f"viewport never sends; the viewport sends "
+        f"{sorted(up_theirs - up_ours)} which nothing listens for")
+
+
+def test_every_up_event_has_a_handler():
+    """Each name in UP_EVENTS is a key of the component's handler map.
+
+    Declaring an event and never listening for it is the same failure from the
+    other end, and it looks exactly like a feature that was never wired up —
+    which, at that point, it is.
+    """
+    component = strip_comments(read(COMPONENT))
+    missing = [name for name in js_array(read(EVENTS_JS), "UP_EVENTS")
+               if f"[{name}]:" not in component]
+    assert not missing, f"declared but never listened for: {missing}"
+
+
+def test_every_handled_event_is_imported_from_events_js():
+    """The handler map's keys are the constants, never anything local.
+
+    A `[SOMETHING]:` key that resolves to a local variable would sail past the
+    check above while listening for whatever that variable happened to hold.
+    """
+    component = read(COMPONENT)
+    clause = re.search(r"\bimport\s*\{([^}]+)\}\s*from\s*'\./events\.js'",
+                       component, flags=re.S)
+    assert clause, "the component no longer imports its event names"
+    imported = {part.strip() for part in clause.group(1).split(",") if part.strip()}
+    used = set(re.findall(r"\[(\w+)\]:", strip_comments(component)))
+    assert used <= imported, f"handler keys that are not event constants: {used - imported}"
+
+
+# -- the element itself ------------------------------------------------------
+
+@skip_without_adapter
+def test_the_element_tag_is_spelled_in_one_place():
+    """The tag the interface renders IS the tag the adapter defines, by import.
+
+    The component renders it by name and waits on
+    `customElements.whenDefined(...)`. A second spelling that disagreed would
+    give an unknown element — an ordinary inline box with no error of any kind —
+    and a promise that never settles, so the interface would wait forever without
+    a symptom to search for. `ui/src/events.js` takes the name from the adapter,
+    which makes that impossible; what is checked is that a second literal has not
+    come back somewhere else.
+
+    THE MODULE IT IS TAKEN FROM IS ALSO CHECKED, and that is a separate property
+    from where the string is written. `viewport/events.js` declares names and
+    runs nothing; `viewport/index.js` calls `customElements.define` at module
+    scope. Sourcing the tag from the second one works perfectly and costs the
+    guarantee below it — the registration stops depending on main.jsx's explicit
+    import alone and starts depending on a re-export chain nothing announces.
+    """
+    declared = re.search(r"TAG\s*=\s*['\"]([\w-]+)['\"]", read(ADAPTER_EVENTS_JS))
+    assert declared, "the adapter no longer names the tag"
+    assert re.search(r"\bTAG\s+as\s+VIEWPORT_TAG\b.*?'\./viewport/events\.js'",
+                     strip_comments(read(EVENTS_JS)), flags=re.S), (
+        "ui/src/events.js no longer takes VIEWPORT_TAG from "
+        "ui/src/viewport/events.js — either it spells the tag itself again, in "
+        "which case the two can disagree silently, or it takes it from the "
+        "module that defines the element, which drags the registration into "
+        "every component that only wanted the name")
+    strays = [str(path.relative_to(UI)) for path in ALL_UI_FILES
+              if path != ADAPTER_EVENTS_JS
+              and re.search(rf"""['"`]{re.escape(declared.group(1))}['"`]""",
+                            strip_comments(read(path)))]
+    assert not strays, f"the tag is spelled a second time in {strays}"
+
+
+@skip_without_adapter
+def test_the_adapter_is_imported_for_its_side_effect():
+    """Something has to import the module that calls `customElements.define`.
+
+    Nothing REFERENCES that import — it is there for the registration alone — so
+    it looks removable to a reader and to any tool that prunes unused imports.
+    Removing it breaks no build and throws nothing: the tag stays unknown, the
+    frame stays empty, `whenDefined` never resolves.
+
+    AND IT IS THE ONLY IMPORT OF THAT MODULE, which is what makes the line above
+    worth defending. While the interface took the tag out of `viewport/index.js`
+    there was a second path to the registration, so deleting this line looked
+    harmless and WAS harmless — until the re-export it had come to depend on got
+    rearranged, at which point the element stopped being defined for a reason
+    nothing in either file mentions.
+    """
+    entry = strip_comments(read(UI / "main.jsx"))
+    assert re.search(r"import\s+'\./viewport/index\.js'", entry), (
+        "main.jsx no longer imports ./viewport/index.js, so nothing defines the element")
+    others = [str(path.relative_to(UI)) for path in ALL_UI_FILES
+              if path not in (UI / "main.jsx", VIEWPORT / "index.js")
+              and re.search(r"""from\s+['"][^'"]*viewport/index\.js['"]""",
+                            strip_comments(read(path)))]
+    assert not others, (
+        f"{others} import ui/src/viewport/index.js, so the element is registered "
+        "as a side effect of wanting something else out of it. Whatever they are "
+        "after belongs in a module that does not call customElements.define")
+
+
+@skip_without_adapter
+def test_every_class_the_viewport_sets_is_styled_here():
+    """The viewport positions its elements; this stylesheet is what makes them visible.
+
+    A pin is an empty `<div>` with a class on it. If the interface stops defining
+    that class the pin is still created, still positioned, still clickable — and
+    zero pixels across, which reads as "comments are not showing" rather than as
+    a stylesheet that lost a rule.
+    """
+    styled = read(COMPONENT)
+    wanted = {name for path in ADAPTER_FILES
+              for value in re.findall(r"className\s*=\s*\"([^\"]+)\"", read(path))
+              for name in value.split()}
+    # Without this the check passes by finding nothing, which is how it would
+    # behave the day the adapter sets its classes some other way.
+    assert wanted, "no className assignments found in the adapter — has the shape changed?"
+    missing = sorted(name for name in wanted if f".{name}" not in styled)
+    assert not missing, f"the viewport sets these classes and nothing styles them: {missing}"
+
+
+def test_the_library_stylesheet_is_still_on_the_page():
+    """The viewer library ships its own CSS and the page must keep linking it.
+
+    Neither half of the bundle can add it: the CSP forbids nothing here, but an
+    `import` of it would make this build emit a second output file, which is the
+    one thing ui/vite.config.mjs is built to prevent.
+    """
+    url = re.search(r"VIEWER_MODULE_URL\s*=\s*\"([^\"]+)\"",
+                    read(VIEWPORT / "library.js")) if ADAPTER_FILES else None
+    stylesheet = url.group(1).replace(".esm.js", ".css") if url else "/_v/three-cad-viewer.css"
+    assert stylesheet in read(ROOT / "templates" / "build.html"), (
+        f"templates/build.html no longer links {stylesheet}")
+
+
+# -- the comment endpoint ----------------------------------------------------
+
+def test_the_comment_post_goes_where_the_hub_listens():
+    """The route in the component is the one src/app.py dispatches on.
+
+    app.py matches on a list of path segments, so the URL the browser has to use
+    is that list joined — derived here rather than repeated.
+    """
+    app = read(ROOT / "src" / "app.py")
+    match = re.search(r'segments\[:3\]\s*==\s*\[([^\]]+)\]', app)
+    assert match, "app.py no longer dispatches comments on a segment prefix"
+    prefix = "/" + "/".join(re.findall(r'"([^"]+)"', match.group(1)))
+    assert f"`{prefix}/" in read(COMPONENT), (
+        f"the component does not post to {prefix}/<pid>/<commit>")
+
+
+def test_the_attachment_field_names_are_the_hubs():
+    """`photo` and `shot` are read out of src/comments.py by name.
+
+    A part the hub does not recognise is not an error: `parts.get(kind)` simply
+    returns None, the comment is stored without it, and the reader is told it
+    was sent.
+    """
+    component = strip_comments(read(COMPONENT))
+    for kind in (PHOTO_KIND, SHOT_KIND):
+        assert f"'{kind}'" in component, f"nothing is appended as `{kind}`"
+
+
+def test_the_comment_payload_only_uses_fields_the_hub_keeps():
+    """`validate_payload` DROPS unknown keys without saying so.
+
+    That is the quietest failure on this page: a field added to the payload
+    reaches the hub, is discarded, and the sender sees a 201. Anything that has
+    to survive the trip belongs in `text`.
+    """
+    kept = set(validate_payload({"text": "x"}, 100))
+    body = re.search(r"form\.append\('comment',\s*JSON\.stringify\(\{(.*?)\}\)\)",
+                     read(COMPONENT), flags=re.S)
+    assert body, "the comment body is no longer one object literal"
+    sent = set(re.findall(r"^\s*(\w+):", body.group(1), flags=re.M))
+    assert sent <= kept, f"fields the hub will silently drop: {sorted(sent - kept)}"
+
+
+# -- what the hub actually publishes -----------------------------------------
+
+def test_every_meta_field_the_ui_reads_is_one_render_writes():
+    """`meta.<field>` on the UI side against the keys src/render.py emits.
+
+    A field that is not there reads as `undefined`, which renders as an empty
+    string and formats as `NaN` — never as an error.
+    """
+    render = read(ROOT / "src" / "render.py")
+    written = set(re.findall(r'"(\w+)":', render))
+    read_by_ui = set()
+    for path in (COMPONENT, UI / "hub.js"):
+        # `meta.json` is the FILE the fields come out of, not one of them, and it
+        # is spelled the same way a field access is. Dropped by name rather than
+        # by excluding the word `json`, so a field genuinely called `json` would
+        # still be checked.
+        source = strip_comments(read(path)).replace("meta.json", "")
+        read_by_ui |= set(re.findall(r"\bmeta\.(\w+)", source))
+    assert read_by_ui, "the UI stopped reading meta.json"
+    assert read_by_ui <= written, (
+        f"the UI reads fields render.py does not write: "
+        f"{sorted(read_by_ui - written)}")
+
+
+def test_the_build_picker_reads_the_fields_builds_json_carries():
+    """The picker's fallback object names exactly what builds.json has.
+
+    It is the shape the component falls back to when builds.json is missing, so
+    it is also the list of fields it expects when it is not.
+    """
+    render = read(ROOT / "src" / "render.py")
+    written = set(re.findall(r'"(\w+)":', render))
+    fallback = re.search(r"const info = s\.builds \|\| \{([^}]+)\}", read(COMPONENT))
+    assert fallback, "the build picker no longer has a fallback shape"
+    fields = set(re.findall(r"(\w+):", fallback.group(1)))
+    assert fields <= written, (
+        f"the picker expects fields builds.json does not carry: "
+        f"{sorted(fields - written)}")
+
+
+# -- one output file ---------------------------------------------------------
+
+def test_nothing_splits_the_bundle():
+    """No dynamic import and no imported stylesheet, either of which adds a file.
+
+    The one exception is marked in the source with `@vite-ignore`, which is what
+    turns an unanalysable specifier into a deliberate one: vite leaves it as a
+    runtime URL rather than emitting a chunk for it.
+    """
+    offenders = []
+    for path in INTERFACE_FILES + ADAPTER_FILES:
+        raw = read(path).splitlines()
+        # Detect on the stripped line so prose about imports is not an import;
+        # look for the exemption on the RAW one, because the exemption IS a
+        # comment. strip_comments keeps the two in step line for line.
+        for number, line in enumerate(strip_comments(read(path)).splitlines()):
+            marker = raw[number] if number < len(raw) else ""
+            if re.search(r"(?<![\w.])import\s*\(", line) and "@vite-ignore" not in marker:
+                offenders.append(f"{path.name}:{number + 1} dynamic import")
+            if re.search(r"import\s+['\"][^'\"]+\.css['\"]", line):
+                offenders.append(f"{path.name}:{number + 1} stylesheet import")
+    assert not offenders, f"these would make the build emit a second file: {offenders}"
+
+
+# -- the page's own CSP ------------------------------------------------------
+
+def test_no_external_urls_in_the_ui():
+    """`default-src 'self'` — an absolute URL to another host is blocked.
+
+    The mock-up this was ported from linked IBM Plex from Google Fonts. It does
+    not fail anything at build time; it simply never loads, and the page falls
+    back to a system font that looks deliberate.
+    """
+    offenders = {}
+    for path in INTERFACE_FILES + ADAPTER_FILES:
+        found = re.findall(r"https?://[^\s'\"`)]+", strip_comments(read(path)))
+        if found:
+            offenders[path.name] = found
+    assert not offenders, f"absolute URLs the CSP will block: {offenders}"
+
+
+def test_no_fonts_are_fetched_at_all():
+    """Not even in a comment, for this one host.
+
+    `fonts.googleapis.com` is the specific thing the mock-up carried, so the
+    check that it did not survive the port is worth being blunt about.
+    """
+    for path in INTERFACE_FILES + ADAPTER_FILES:
+        assert "fonts.googleapis" not in read(path), f"{path.name} pulls Google Fonts"
+
+
+def test_nothing_fetches_a_data_url():
+    """`connect-src` inherits `default-src 'self'`, and `data:` is not 'self'.
+
+    Decoding one by hand is fine and the viewport does exactly that; handing one
+    to `fetch` is what fails, and it fails only in the browser.
+    """
+    for path in INTERFACE_FILES + ADAPTER_FILES:
+        source = strip_comments(read(path))
+        assert not re.search(r"fetch\(\s*['\"`]data:", source), (
+            f"{path.name} fetches a data: URL")
+        assert not re.search(r"(?:src|href)\s*=\s*['\"`]?\{?\s*['\"`]data:", source), (
+            f"{path.name} points an element at a data: URL")
+
+
+# -- markup is never built from a string -------------------------------------
+
+def test_nothing_writes_markup():
+    """No `innerHTML`, no `dangerouslySetInnerHTML`, anywhere in the UI.
+
+    Everything on this page comes out of a PUSHED meta.json or view file — a part
+    name, a title, a filename — and every project on this host shares one origin.
+    React escaping text is the whole defence, and it holds only as long as nobody
+    builds markup out of a string.
+    """
+    offenders = []
+    for path in INTERFACE_FILES + ADAPTER_FILES:
+        source = strip_comments(read(path))
+        if re.search(r"\.innerHTML\s*=", source):
+            offenders.append(f"{path.name}: innerHTML")
+        if "dangerouslySetInnerHTML" in source:
+            offenders.append(f"{path.name}: dangerouslySetInnerHTML")
+        if re.search(r"insertAdjacentHTML|document\.write\(", source):
+            offenders.append(f"{path.name}: writes markup")
+    assert not offenders, f"markup built from a string: {offenders}"
+
+
+# -- browser storage ---------------------------------------------------------
+
+def test_localstorage_is_touched_in_one_place_only():
+    """One module, so there is one place to audit for the try/catch below.
+
+    The viewport keeps its own answer (the pointing device) and is exempt: it is
+    a separate module with its own guard, and the rule is one place PER SIDE, not
+    one place in the repository.
+    """
+    users = [p.name for p in INTERFACE_FILES
+             if "localStorage" in strip_comments(read(p))]
+    assert users == ["store.js"], (
+        f"localStorage is reached from {users} — it belongs in store.js")
+
+
+def test_every_localstorage_access_is_guarded():
+    """A private window THROWS on the property itself, not on the call.
+
+    So this cannot be checked by looking at the return value anywhere: an
+    unguarded read happens during render and takes the whole interface down over
+    a remembered preference.
+    """
+    for path in INTERFACE_FILES + ADAPTER_FILES:
+        lines = strip_comments(read(path)).splitlines()
+        for number, line in enumerate(lines):
+            if "localStorage" not in line:
+                continue
+            # The nearest `try {` above, within the block a guard can plausibly
+            # cover. Deliberately short: a `try` twenty lines up is not a guard
+            # anybody can see from the access.
+            window = lines[max(0, number - 6):number]
+            assert any("try {" in earlier for earlier in window), (
+                f"{path.name}:{number + 1} touches localStorage outside a try")

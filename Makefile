@@ -51,7 +51,7 @@ UI_FILES := hammerola.js
 .PHONY: help
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 # --- Environment -------------------------------------------------------------
 # The project ALWAYS runs inside a local .venv. Every Python target depends on
@@ -105,9 +105,40 @@ env: ## Create .env from the template if it does not exist
 	@test -f .env || cp .env.example .env
 
 # --- Develop -----------------------------------------------------------------
+# BOTH suites, and the JS half is conditional on npm being installed — a machine
+# without node must still be able to test and run the service (the `ui` target
+# below has the full reasoning: node is not part of this project's toolchain, the
+# image builds the bundle in a stage of its own, and nothing under src/ imports
+# anything from ui/).
+#
+# THE SKIP IS ANNOUNCED, and that is the entire reason this is written out rather
+# than as `-cd ui && npm test`. A suite that quietly disappears makes the run
+# GREEN BECAUSE IT CHECKED LESS, which is the failure this project chases
+# everywhere else — it is why ci/smoke.py counts its own verdicts and why the two
+# workflows keep a whitelist of identical step bodies. The message therefore names
+# what did not run, where it lives and how to get it back; "skipped" on its own
+# would be another way of saying nothing.
+#
+# `$(MAKE) ui-test` rather than a prerequisite, because a prerequisite is exactly
+# what cannot work here: `ui-test` needs ui/node_modules, whose rule begins with
+# $(REQUIRE_NPM) and exits 1 — make would try to BUILD it on a machine with no
+# npm and fail before the branch below ever ran.
+define RUN_JS_TESTS
+if command -v npm >/dev/null 2>&1; then \
+		$(MAKE) --no-print-directory ui-test; \
+	else \
+		echo ""; \
+		echo "make test: SKIPPED the JS suite in ui/tests — npm was not found."; \
+		echo "           The Python suite above ran in full; the browser half did"; \
+		echo "           not run at all. Install Node.js (>= 22.12) and re-run, or"; \
+		echo "           run 'make ui-test' where it is available. CI runs both."; \
+	fi
+endef
+
 .PHONY: test
-test: install ## Run the test suite (auto-creates .venv if missing)
+test: install ## Run both test suites: pytest always, the JS suite when npm is present
 	$(PYTEST)
+	@$(RUN_JS_TESTS)
 
 .PHONY: run
 run: install ## Run the application (auto-creates .venv if missing)
@@ -133,11 +164,21 @@ run: install ## Run the application (auto-creates .venv if missing)
 # written once and invoked from each of them — it has to be the FIRST thing any of
 # them does, because the alternative failure is npm's own "command not found",
 # which says nothing about node being optional in this project.
+#
+# `$@` rather than a fixed target name: the same check now guards `ui`, `ui-test`
+# and the node_modules rule, and a message naming the wrong one of them sends the
+# reader to the wrong place.
+#
+# This is a REFUSAL, and `make test` deliberately does not use it — asking for a
+# frontend target on a machine with no node is an error, while running the whole
+# suite there is not. That difference is the reason RUN_JS_TESTS above exists as a
+# separate block instead of calling this one.
 define REQUIRE_NPM
 command -v npm >/dev/null 2>&1 || { \
-		echo "make ui: npm not found. Install Node.js (>= 22.12) to build the frontend."; \
-		echo "         Only this target needs it — the docker image builds the bundle in"; \
-		echo "         a stage of its own, and 'make run' / 'make test' do not use node."; \
+		echo "make $@: npm not found. Install Node.js (>= 22.12) for the frontend targets."; \
+		echo "         Only they need it — the docker image builds the bundle in a stage of"; \
+		echo "         its own, 'make run' does not use node, and 'make test' runs the Python"; \
+		echo "         suite and says out loud that it skipped the JS one."; \
 		exit 1; }
 endef
 
@@ -215,6 +256,49 @@ ui: ui/node_modules/.package-lock.json ## Build the browser bundle from ui/ into
 		trap 'rm -f "$$tmp"' EXIT; \
 		cp ui/dist/$$f "$$tmp" && mv -f "$$tmp" $(UI_OUT)/$$f || exit 1; \
 	done
+
+# The JS suite: vitest over ui/tests, in jsdom. It covers the halves of the
+# `<hmr-viewport>` adapter that have no GPU in them — the camera arithmetic, the
+# zoom law, the section plane's algebra, the part tree, the state diffing and the
+# hold key — plus the one thing the interface stores for somebody else to read,
+# the remembered pointer in ui/src/store.js. What only a GPU can answer for (does
+# the pixel under the cursor stay put, does the cut land on the face that was
+# clicked) is not here and is not meant to be.
+#
+# A REFUSAL rather than a skip when npm is missing, unlike `make test`: this
+# target was asked for by name, so it cannot silently do nothing.
+#
+# It reads ui/tests/fixtures/assembled.json, which is COMMITTED — see
+# `ui-fixture` below for why, and for how to regenerate it.
+.PHONY: ui-test
+ui-test: ui/node_modules/.package-lock.json ## Run the JS test suite (vitest + jsdom)
+	@$(REQUIRE_NPM)
+	cd ui && npm test
+
+# The fixture the JS suite reads, regenerated by the REAL exporter — the same
+# `prepare_views()` / `export_views()` a push runs through, so the payload under
+# test is output rather than an impression of it. Committed rather than generated
+# at test time, because the JS suite runs in a node container in CI where there
+# is no Python and no CAD kernel; the generator's docstring has the rest.
+#
+# Needs the kernel, so it hangs off `install` — and this is the only target in
+# the frontend section that needs no node at all.
+#
+# Run it, read the diff, then commit the result. A diff bigger than a few floats
+# after an unrelated change is the drift the whole arrangement exists to make
+# visible, and is worth reading rather than committing blind.
+.PHONY: ui-fixture
+ui-fixture: install ## Regenerate the JS test fixture with the real exporter
+	$(PY) ui/tests/fixtures/make_fixture.py
+
+# The same generation, plus a real build published into data/ through the hub's
+# own Store, so `make run` has something to show at
+# http://<host>/project/fixture0000/dev/ — the direct URL, because the `dev` slot
+# is deliberately kept out of the index (SPEC 7.6) and the front page will not
+# list it. For looking at the interface by hand; the JS suite does not use it.
+.PHONY: ui-fixture-data
+ui-fixture-data: install ## ...and publish it into data/ as a build `make run` can serve
+	$(PY) ui/tests/fixtures/make_fixture.py --data data
 
 # --- Housekeeping ------------------------------------------------------------
 .PHONY: clean

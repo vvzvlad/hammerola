@@ -1,0 +1,149 @@
+// How the library is started, and the constants the tools around it are tuned
+// to. Ported from the page viewer this interface replaced; every value that
+// carries a reason carries it here too, because a number whose reason lives
+// somewhere else is a number the next person will "simplify". The measured ones
+// are pinned again, with their derivations, in tests/test_viewport_adapter.py.
+
+/**
+ * `tools: false` is the whole point of this port: the library keeps the scene
+ * and we draw the interface.
+ *
+ * It is CSS and nothing else (docs/viewer-api.md §1) — the tree, the toolbar,
+ * the orientation marker and the animation slider get `style.display = "none"`,
+ * while every object behind them is built and stays live. So `setStates`,
+ * `setClipNormal`, the id picker and the mesh measurement backend all work
+ * exactly as they do with the panel up, and switching the library's own tabs
+ * from code keeps working too — which the section tool depends on.
+ *
+ * Everything that edits APPEARANCE stays off, and the reason is the page rather
+ * than the library: a build page is a snapshot, the model is whatever the commit
+ * says it is, and a viewer setting a reader changes is lost on the next reload
+ * anyway. `studioTool`
+ * is the expensive one — it drags in a postprocessing composer — and it is also
+ * the one that would break per-part transparency, because Studio shares
+ * materials between parts (docs/viewer-api.md §3).
+ */
+export const displayOptions = {
+  glass: true,
+  tools: false,
+  theme: "dark",
+  treeWidth: 240,
+  cadWidth: 800,
+  height: 600,
+  measureTools: false,
+  selectTool: false,
+  explodeTool: false,
+  zscaleTool: false,
+  zebraTool: false,
+  studioTool: false,
+};
+
+export const renderOptions = {
+  ambientIntensity: 1.0,
+  directIntensity: 1.1,
+  metalness: 0.3,
+  roughness: 0.65,
+  edgeColor: 0x707070,
+  defaultOpacity: 0.5,
+  normalLen: 0,
+};
+
+export const viewerOptions = {
+  // ORTHOGRAPHIC, and this is load-bearing rather than a look. Under an ortho
+  // projection every world point on the ray through a pixel has the same offset
+  // from the camera once the component along the view axis is dropped, so a
+  // gesture that has to keep a point under the cursor — the wheel zoom, the
+  // swipe pan, the cursor pivot — needs no depth and therefore no picking at
+  // all. `wheelInternals` checks `isOrthographicCamera` and hands everything
+  // back to the library under perspective, because none of that maths holds
+  // there and the fallback (the library's own centre zoom) is a working viewer.
+  ortho: true,
+  // `trackball`, not `orbit`. OrbitControls keeps a fixed up axis and clamps the
+  // polar angle, so rotation stops dead at the poles — you cannot get under a
+  // part, which is exactly the view somebody wants when something looks wrong.
+  // CADTrackballControls sets `holroyd = true` by default, which is the
+  // non-tumbling projection, so this needs no second option.
+  control: "trackball",
+  up: "Z",
+  axes: false,
+  axes0: false,
+  grid: [false, false, false],
+  transparent: false,
+  blackEdges: false,
+  collapse: 1,
+};
+
+/** Pointer travel below which a press counts as a click rather than a drag. */
+export const CLICK_PX = 4;
+
+/** Ring radii, in CSS pixels, for sampling a face around the cursor.
+ *
+ * NOT to be retuned by eye. `IdPicker.pickAt` renders its target at
+ * `width * dpr * 0.5` — HALF resolution — so these radii are already coarser on
+ * the buffer than they look on screen, and the smallest of them is a couple of
+ * texels at dpr 1. Shrinking them collapses the ring onto the centre pixel and
+ * the cross product it feeds becomes noise.
+ */
+export const PROBE_PX = [7, 14, 26];
+
+/** Sine between two ring samples below which the pair is too collinear to trust. */
+export const MIN_SPREAD = 0.2;
+
+/** ~8.6 degrees. Below this the clip normal points nearly straight at the
+ *  camera, its screen projection collapses and the px -> world factor runs away
+ *  to infinity; no drag is better than a plane that teleports. */
+export const MIN_SINE = 0.15;
+
+/** Depth bias when laying the plane on a face, as a fraction of the grid.
+ *
+ * A plane laid EXACTLY on a face is coplanar with it, and the library's stencil
+ * cap quad then z-fights the face over every pixel: measured in a browser, the
+ * whole part comes back covered in moving stripes and reads as broken. A
+ * ten-thousandth of the grid puts the plane just inside the surface, which
+ * clears it completely — 0.009 mm on a 90 mm part. Relative to the grid so it
+ * scales with the model instead of being right for one size of part.
+ */
+export const SECTION_BIAS = 1e-4;
+
+/** Which of the library's three clip planes this tool drives. */
+export const SECTION_INDEX = 0;
+
+/**
+ * Pixels of `deltaY` the browser emits per e-fold of PINCH SCALE. A measurement,
+ * not a taste setting.
+ *
+ * macOS hands the browser a pinch as a gesture carrying a SCALE and the browser
+ * turns it into ctrl+wheel before the page sees it. Measured (Chrome 151, driven
+ * through CDP `Input.synthesizePinchGesture` with `gestureSourceType: "mouse"`,
+ * the same code path a real trackpad takes):
+ *
+ *     gesture scale   events   sum of deltaY      -100 * ln(scale)
+ *          2.00         11         -69.31             -69.31
+ *          1.50         10         -40.55             -40.55
+ *          1.25          6         -22.31             -22.31
+ *          0.50         17         +69.31             +69.31
+ *
+ * — exact to five digits, and the same total however fast the gesture is run;
+ * speed only changes how many events it is chopped into. So `sum(deltaY)` is
+ * `-100 * ln(scale)` and `zoom *= exp(-deltaY / 100)` follows the gesture's own
+ * scale exactly: spread the fingers until the gesture says "twice as big" and
+ * the model is twice as big. Exponential and not linear, because the same finger
+ * travel has to mean the same RATIO wherever the reader already is.
+ *
+ * WHY NOT THE LIBRARY'S ZOOM. Its wheel path is `deltaY * 0.00025 * zoomSpeed`,
+ * calibrated for the ~100 px notch of a mouse wheel; at the trackball's
+ * `zoomSpeed` of 2.0 that is an e-fold every ~2000 px, TWENTY TIMES slower than
+ * the browser's own pinch scale — measured, the whole scale-2 gesture above
+ * moved the zoom by x1.035. That is the bug this constant replaces.
+ */
+export const PINCH_DELTA_PER_E_FOLD = 100;
+
+/** localStorage key for the one pointing-device answer. */
+export const INPUT_KEY = "hammerola.pointing_device";
+
+/** How long after the last press or wheel the viewport still counts as busy.
+ *
+ * A live swap re-renders the scene and re-seats the camera; doing that between a
+ * mousedown and the mouseup is pulling the model out from under the pointer.
+ */
+export const IDLE_MS = 1200;

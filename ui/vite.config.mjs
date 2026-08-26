@@ -18,9 +18,9 @@
 // of them and the file simply never reaches the image, while the gate goes on
 // reporting green about a bundle that no longer runs on its own.
 //
-// The output is copied into static/_v/ -- FLAT, beside viewer.js and the
-// vendored three-cad-viewer bundle, not into a subdirectory of its own. That is
-// forced by the hub rather than chosen: `_serve_asset()` in src/app.py serves
+// The output is copied into static/_v/ -- FLAT, beside the committed page
+// scripts and the vendored three-cad-viewer bundle, not into a subdirectory of
+// its own. That is forced by the hub rather than chosen: `_serve_asset()` in src/app.py serves
 // `/_v/<one path component>` and `_safe_name()` rejects anything containing a
 // slash, which is a path-traversal defence and not an accident. A subdirectory
 // would mean loosening it to buy nothing but a tidier layout, so the file lives
