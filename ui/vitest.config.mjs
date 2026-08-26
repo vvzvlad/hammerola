@@ -12,11 +12,17 @@
 // everything here lives under `tests/`, which nothing in `src/` imports. The
 // tests reach INTO src, never the other way round.
 //
-// NO REACT PLUGIN, because nothing under test is JSX: `ui/src/viewport/**` and
-// `ui/src/store.js` are plain ES modules, and the interface's own COMPONENTS are
-// checked from Python, against their source. Adding the plugin here would buy a
-// transform nothing needs and a second place for the build's plugin list to
-// disagree with itself.
+// NO REACT PLUGIN, and it is not needed even though one test now imports the
+// interface itself (`tests/interface.test.js`, for the one decision in it that
+// is a state machine rather than a layout): vite's own esbuild step transforms
+// `.jsx` on its own, and what the plugin adds on top of that — Fast Refresh and
+// a babel pass — is for a dev server this runner never starts. Adding it here
+// would buy nothing and give the build's plugin list a second place to disagree
+// with itself.
+//
+// Nothing else about the components is checked from here: their layout is
+// checked from Python, against their source (tests/test_ui_source.py), which is
+// the half a runner with no GPU and no hub can actually answer for.
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({

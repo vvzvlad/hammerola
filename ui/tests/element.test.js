@@ -9,10 +9,15 @@
 // THE ELEMENT IS NEVER UPGRADED HERE. `connectedCallback` builds a real
 // three-cad-viewer against a real canvas, and there is no GPU in a test runner;
 // the instance below is the prototype with exactly the fields these two methods
-// read. `load()` and `show()` are left out for the same reason — they fetch a
-// view file and build the widget out of it, which is the half that needs the
-// library — and `load` is stubbed wherever a test only cares that it was
-// reached.
+// read. `show()` is left out for the same reason — it builds the widget out of a
+// payload, which is the half that needs the library — and `load` is stubbed
+// wherever a test only cares that it was reached.
+//
+// `load` ITSELF IS EXERCISED in one place, and only as far as it gets without
+// the library: its two early exits, the view that names no file and the fetch
+// that comes back 404. Both are about what the element REMEMBERS afterwards, and
+// that memory is what stops the interface's next patch — one arrives on every
+// click in the tree — from asking the hub for the same missing file again.
 //
 // The library calls are mocked, and this is the one file where that is the right
 // answer rather than a shortcut: what is being asked is "was `applyHidden`
@@ -38,6 +43,7 @@ vi.mock('../src/viewport/section.js', () => ({
 }))
 
 import { HmrViewport } from '../src/viewport/element.js'
+import { EVENT_ERROR } from '../src/viewport/events.js'
 import {
   applyGhost, applyHidden, applySelected, resetMoves,
 } from '../src/viewport/parts.js'
@@ -69,9 +75,18 @@ function element(state = {}, viewer = fakeViewer()) {
   vp.measurePicks = []
   vp.measureLabel = null
   vp.loadToken = 0
+  vp.loadFailed = null
   vp.overlay = { setPins: vi.fn(), refresh: vi.fn() }
+  // The up-events go through `dispatchEvent`, which is a real DOM method on a
+  // real element and refuses to run on an object the DOM never built — the same
+  // reason the note above `calledWithViewport` gives about `getAttributeNames`.
+  vp.dispatchEvent = vi.fn()
   return vp
 }
+
+/** The one up-event a call emitted, or null. */
+const emitted = (vp) => (vp.dispatchEvent.mock.calls.length === 1
+  ? vp.dispatchEvent.mock.calls[0][0] : null)
 
 /** A viewport that has already been reconciled once, so the next call is a diff. */
 function settled(state, viewer) {
@@ -339,6 +354,75 @@ describe('setState', () => {
       vp.load = vi.fn()
       vp.setState({ view: 'b', hidden: ['/Group/a'] })
       expect(applyHidden).not.toHaveBeenCalled()
+    })
+  })
+})
+
+describe('load', () => {
+  const views = [{ id: 'a', file: 'a.json' }, { id: 'b', file: 'b.json' }]
+
+  describe('the exits that never reach the library', () => {
+    it('says so when the chosen view names no file', async () => {
+      // Reachable with a perfectly ordinary `views` list — one entry of it
+      // simply carries no file. Nothing is fetched, so the scene stays empty;
+      // without an event the interface's `viewError` stays null and block 11's
+      // panel is not drawn, which leaves the reader looking at a frame around a
+      // hole with nothing anywhere saying why.
+      const vp = element({ views: [{ id: 'a' }], view: 'a' }, null)
+      await vp.load()
+      const event = emitted(vp)
+      expect(event.type).toBe(EVENT_ERROR)
+      expect(event.detail.stage).toBe('load')
+      expect(event.detail.view).toBe('a')
+    })
+
+    it('says so when the build lists no views at all', async () => {
+      const vp = element({ views: [], view: 'a' }, null)
+      await vp.load()
+      expect(emitted(vp).type).toBe(EVENT_ERROR)
+    })
+  })
+
+  describe('a failure the element remembers', () => {
+    it('is not fetched a second time by an ordinary patch', async () => {
+      // The storm this closes: the interface sends `hmr:state` on every `set()`
+      // — a node opened in the tree, a view tab, a pin — and the first-load
+      // branch fires on `view && !viewer`, which a failed load leaves true.
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const fetching = vi.fn(async () => ({ ok: false, status: 404 }))
+      vi.stubGlobal('fetch', fetching)
+
+      const vp = element({ views, view: 'a', base: '/project/p/dev/' }, null)
+      await vp.load()
+      expect(fetching).toHaveBeenCalledTimes(1)
+      expect(vp.loadFailed).toBe('a.json')
+
+      vp.setState({ hidden: ['/Group/a'] })
+      vp.setState({ selected: '/Group/a' })
+      expect(fetching).toHaveBeenCalledTimes(1)
+
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    })
+
+    it('stops counting when the reader asks for a different view', () => {
+      const vp = element({ views, view: 'a', buildKey: 'k1' }, null)
+      vp.loadFailed = 'a.json'
+      vp.load = vi.fn()
+      vp.setState({ view: 'b' })
+      expect(vp.load).toHaveBeenCalledWith({ live: false })
+      expect(vp.loadFailed).toBeNull()
+    })
+
+    it('stops counting when a new build lands', () => {
+      // The likeliest recovery of all: the push that failed to produce a view
+      // file is followed by one that did.
+      const vp = element({ views, view: 'a', buildKey: 'k1' }, null)
+      vp.loadFailed = 'a.json'
+      vp.load = vi.fn()
+      vp.setState({ buildKey: 'k2' })
+      expect(vp.load).toHaveBeenCalledWith({ live: true })
+      expect(vp.loadFailed).toBeNull()
     })
   })
 })

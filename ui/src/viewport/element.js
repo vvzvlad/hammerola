@@ -120,6 +120,15 @@ export class HmrViewport extends HTMLElement {
     this.trackpad = false;
     this.hoverText = "";
     this.loadToken = 0;
+    // Both of these are patches applied to something the element no longer has
+    // after a `destroy()`, so a re-attached element has to start over on them.
+    // `statusPatched` guards `muteStatusLine`, which patches a method on the
+    // library's `Display` — a new attach builds a NEW display, and a flag left
+    // standing means its badge is never silenced and sits over the canvas for
+    // good. `loadFailed` is the view that could not be shown; keeping it would
+    // stop the fresh element ever loading one.
+    this.statusPatched = false;
+    this.loadFailed = null;
     this.holdActive = false;
 
     this.overlay = createOverlay(this);
@@ -250,7 +259,22 @@ export class HmrViewport extends HTMLElement {
     const reload = patch.view !== undefined && patch.view !== before.view;
     const swap = patch.buildKey !== undefined && patch.buildKey !== before.buildKey
       && before.buildKey !== null;
-    if (reload || swap || (this.state.view && !this.viewer)) {
+    // A new view or a new build is a new thing to try, so whatever failed last
+    // time stops counting. Anything else does not: the third disjunction below
+    // is the FIRST load — a view named and no scene yet — and it is NOT
+    // one-shot on its own. A fetch that 404s leaves `this.viewer` null, so
+    // without `loadFailed` every later `hmr:state` would go straight back into
+    // `load()`, and the interface sends one on every `set()`: opening a node in
+    // the tree, a view tab, a pin. That is a request to the hub and a
+    // `console.error` per click, for as long as the reader stays on the page.
+    //
+    // IT IS NOT A LOOP TODAY, and what stops it is one line on the other side
+    // rather than anything here: the interface's `hmr:error` handler uses
+    // `setState` and not its own `set()`, so nothing dispatches `hmr:state` back
+    // at us (HammerolaViewer.jsx, the ERROR handler, where the same thing is
+    // written down). Change that one call and the storm closes into a real loop.
+    if (reload || swap) this.loadFailed = null;
+    if (reload || swap || (this.state.view && !this.viewer && !this.loadFailed)) {
       // A build that changed under the same view is a LIVE RELOAD and keeps the
       // frame; a different view is a different arrangement of the same parts,
       // whose own extent and orientation the camera has to be re-fitted to
@@ -280,7 +304,21 @@ export class HmrViewport extends HTMLElement {
     const { views, view } = this.state;
     const list = Array.isArray(views) ? views : [];
     const chosen = list.find((v) => v && v.id === view) || list[0] || null;
-    if (!chosen || !chosen.file) return;
+    if (!chosen || !chosen.file) {
+      // THE EXIT THAT USED TO SAY NOTHING. There is no file to fetch, so the
+      // scene stays empty — and with no event the interface's `viewError` stays
+      // null, block 11's panel is not drawn, and the reader is left looking at a
+      // frame around a hole. Same `stage` as the failures below, because from
+      // where they are sitting it is the same event: this view did not arrive.
+      this.loadFailed = (chosen && chosen.id) || true;
+      emit(this, EVENT_ERROR, {
+        stage: "load", view: (chosen && chosen.id) || view || null,
+        message: chosen
+          ? `the view ${JSON.stringify(chosen.id || null)} names no file`
+          : "this build lists no views",
+      });
+      return;
+    }
     const base = this.state.base
       || location.pathname.replace(/[^/]*$/, "");
     try {
@@ -296,6 +334,10 @@ export class HmrViewport extends HTMLElement {
       await this.show(shapes, { live, view: chosen.id, token });
     } catch (error) {
       if (token !== this.loadToken) return;
+      // Remembered so the next `hmr:state` does not fetch it all over again —
+      // see the note at the call site in `setState`. Cleared there too, when a
+      // different view or a new build makes it worth another try.
+      this.loadFailed = chosen.file;
       console.error("viewport load", error);
       emit(this, EVENT_ERROR, {
         stage: "load", view: chosen.id,
@@ -372,6 +414,11 @@ export class HmrViewport extends HTMLElement {
       });
     } catch (error) {
       if (token !== this.loadToken) return;
+      // Same reason as in `load`: a failure before the widget exists — the
+      // library's own module not loading is the likely one — leaves `viewer`
+      // null, and the first-load branch in `setState` would come straight back
+      // here on the next patch.
+      this.loadFailed = view === undefined ? this.state.view : view;
       console.error("viewport render", error);
       emit(this, EVENT_ERROR, {
         stage: "render", view: view === undefined ? this.state.view : view,
@@ -463,7 +510,14 @@ export class HmrViewport extends HTMLElement {
     return isBusy(this);
   }
 
-  /** Visibility, as the library holds it — for a live swap the interface drives. */
+  /** Visibility, as the library holds it. NOTHING CALLS THIS YET.
+   *
+   * Kept rather than deleted because it costs one line over a module function
+   * that stays either way, and because the swap it was written for is the one
+   * the viewport currently performs for itself (`captureLive`): the day the
+   * interface has a reason to drive one — comparing two revisions is plan step 8
+   * — this is the question it will have to ask.
+   */
   getStates() {
     return statesOf(this.viewer);
   }
@@ -473,7 +527,14 @@ export class HmrViewport extends HTMLElement {
     return this.holdActive ? "cut" : (this.state.tool || null);
   }
 
-  /** Re-fit to the container, for a layout change no ResizeObserver sees. */
+  /** Re-fit to the container. NOTHING CALLS THIS YET either.
+   *
+   * The `ResizeObserver` in `connectedCallback` covers every layout change the
+   * interface makes today, the comments rail included — it observes this
+   * element, and the element is what those changes resize. This is for the kind
+   * that never reaches the element's own box: a transform on an ancestor, a
+   * device pixel ratio that changed under a window moved between screens.
+   */
   refit() {
     refit(this);
   }

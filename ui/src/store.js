@@ -1,10 +1,10 @@
 // Everything this page remembers in the browser, and nothing else.
 //
 // Three things are kept, all under the `hammerola.` prefix the rest of the site
-// already uses (`hammerola.live`, `hammerola.pointer.<pid>`), and all keyed BY
-// PROJECT for the reason pointer_pref.js gives about its own key: somebody
-// editing one model and merely looking at another must not have the two answers
-// collide.
+// already uses — `hammerola.pointing_device`, the viewport's own answer
+// (viewport/options.js) — and all keyed BY PROJECT for the reason
+// pointer_pref.js gives about its own key: somebody editing one model and merely
+// looking at another must not have the two answers collide.
 //
 // EVERY access goes through the two functions at the top. `localStorage` is not
 // a property that is always there — a private window, a browser set to block

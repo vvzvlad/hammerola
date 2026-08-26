@@ -46,11 +46,12 @@ const distance = (g, point) => g.plane.distanceToPoint(vec3(point))
 /** The sliver the placement deliberately sinks the plane by, in world units. */
 const bias = (viewer) => sectionLimit(viewer) * SECTION_BIAS
 
-/** How far apart two scenes' answers may be: one placement bias each, and a
- *  hair for the arithmetic. The bias is a fraction of the GRID, so two scenes
- *  with different grids sink their planes by different amounts — that is the
- *  only difference a capture/restore is allowed to introduce. */
-const budgetBetween = (a, b) => bias(a) + bias(b) + 1e-9
+/** How far a capture/restore may leave the plane from where it was aimed: ONE
+ *  placement bias, the sliver the scene it lands in sinks it by, plus a hair for
+ *  the arithmetic. One and not two, however different the grids are: the capture
+ *  takes its own scene's sliver back out (section.js, `sectionBias`), which is
+ *  what stops this budget growing by another on every live reload. */
+const budgetIn = (viewer) => bias(viewer) + 1e-9
 
 /** A direction, compared component by component.
  *
@@ -265,12 +266,14 @@ describe('dragSection', () => {
 
 describe('sectionOffset', () => {
   it('reports the distance from the FACE, not the slider from the grid centre', () => {
-    // Freshly placed, the plane is the bias away from the face and nowhere near
-    // zero on the library's own slider — which is what the interface would show
-    // if it read that number instead.
+    // Freshly placed, the reader has asked for no depth at all, and that is what
+    // this reads: the placement bias is a sliver the renderer needs and not a
+    // depth anybody chose, so it is not in here (section.js, `sectionBias`).
+    // The library's own slider, meanwhile, is nowhere near zero — which is what
+    // the interface would be showing if it read that number instead.
     const { viewer, vp, g } = scene()
     placeSectionPlane(vp, g, [0, 0, -1], [0, 0, 20])
-    expect(sectionOffset(vp)).toBeCloseTo(bias(viewer), 9)
+    expect(sectionOffset(vp)).toBeCloseTo(0, 9)
     // The slider is a wholly different number: it counts from the centre of the
     // grid, and the face is 20 away from it.
     expect(Math.abs(viewer.getClipSlider(SECTION_INDEX))).toBeGreaterThan(1)
@@ -283,6 +286,24 @@ describe('sectionOffset', () => {
     const before = sectionOffset(vp)
     const travelled = dragSection(vp, g, axis, 30, 0)
     expect(sectionOffset(vp) - before).toBeCloseTo(travelled, 9)
+  })
+
+  it('reads back a number `applySection` can re-apply without moving the plane', () => {
+    // What the end of a drag does (tools.js, `onUp`): the depth is read off the
+    // scene and written into `state.cutOffset`, which is the field the next
+    // `reconcile` feeds straight back into `applySection`. So the two have to
+    // count in the SAME frame — a readout carrying the placement bias would sink
+    // the plane one more sliver on every drag-then-reconcile, without limit.
+    const { viewer, vp, g } = scene()
+    const face = [0, 0, 0]
+    placeSectionPlane(vp, g, [1, 0, 0], face)
+    const axis = sectionAxis(viewer, g, face)
+    dragSection(vp, g, axis, 30, 0)
+    const dragged = distance(g, face)
+
+    vp.state.cutOffset = sectionOffset(vp)
+    applySection(vp, g)
+    expect(distance(g, face)).toBeCloseTo(dragged, 9)
   })
 })
 
@@ -355,9 +376,11 @@ describe('captureSection', () => {
     const b = captureSection(large.vp)
 
     expect(a.normal).toEqual(b.normal)
-    const budget = budgetBetween(small.viewer, large.viewer)
+    // To the arithmetic and no further: each capture takes its OWN scene's
+    // sliver back out, so what is left is the plane itself and the two grids
+    // have nothing left to disagree about.
     for (let axis = 0; axis < 3; axis += 1) {
-      expect(Math.abs(a.point[axis] - b.point[axis])).toBeLessThanOrEqual(budget)
+      expect(a.point[axis]).toBeCloseTo(b.point[axis], 9)
     }
     // ...while the library's own number for it is a different number entirely.
     expect(small.viewer.getClipSlider(SECTION_INDEX))
@@ -377,30 +400,45 @@ describe('captureSection -> restoreSection', () => {
     const after = scene({ gridSize: 130, clipCenter: [3, -2, 1] })
     expect(restoreSection(after.vp, keep)).toBe(true)
 
-    const budget = budgetBetween(before.viewer, after.viewer)
-    expect(Math.abs(distance(after.g, face))).toBeLessThanOrEqual(budget)
+    expect(Math.abs(distance(after.g, face)))
+      .toBeLessThanOrEqual(budgetIn(after.viewer))
     expect(after.vp.sectionSeed.normal).toEqual(keep.normal)
   })
 
-  it('does not apply the reader\'s offset a second time', () => {
-    // The captured point is where the plane REALLY was, offset included, so the
-    // seed goes back with an offset of zero relative to it — and the state's
-    // own `cutOffset` is left exactly as it was for the interface to keep
-    // showing.
+  it('applies neither the reader\'s offset nor the placement bias a second time', () => {
+    // THE SEQUENCE PRODUCTION RUNS, and the whole reason this test goes past the
+    // restore: what follows a swap on the real page is `reconcile()`, which every
+    // `hmr:state` reaches — a click in the tree, a view tab, a pin — and which
+    // calls `applySection` with `state.cutOffset` still standing. A seed carrying
+    // the offset already would walk the plane those five millimetres a second
+    // time on the first of them, and the placement bias rides along on the
+    // restore itself, once per live reload.
+    //
+    // BOTH SCENES ARE THE SAME SIZE on purpose. The bias is a fraction of the
+    // grid, so equal grids make every bias in here equal, and then ANY movement
+    // at all is drift rather than the sliver a differently-sized scene is
+    // allowed to sink its plane by. That is what lets the tolerance be a
+    // billionth instead of the budget the two tests above spend: one bias is
+    // 0.005 world units on this grid, a million times what is allowed below, so
+    // neither defect can hide inside it.
     const before = scene()
     placeSectionPlane(before.vp, before.g, [1, 0, 0], [0, 0, 0])
     before.vp.state.cutOffset = 5
     applySection(before.vp, before.g)
     const keep = captureSection(before.vp)
-    const where = keep.point
+    const stood = distance(before.g, keep.point)
 
     const after = scene()
     after.vp.state.cutOffset = 5
     restoreSection(after.vp, keep)
+    expect(distance(after.g, keep.point)).toBeCloseTo(stood, 9)
+    applySection(after.vp, after.g)          // what `reconcile()` does next
+    expect(distance(after.g, keep.point)).toBeCloseTo(stood, 9)
+    applySection(after.vp, after.g)          // ...and every reconcile after it
+    expect(distance(after.g, keep.point)).toBeCloseTo(stood, 9)
 
+    // ...while the number the interface shows is left exactly as it was.
     expect(after.vp.state.cutOffset).toBe(5)
-    expect(Math.abs(distance(after.g, where)))
-      .toBeLessThanOrEqual(budgetBetween(before.viewer, after.viewer))
   })
 
   it('forgets the seed again when the cut was not one the reader placed', () => {

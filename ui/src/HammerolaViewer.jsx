@@ -163,9 +163,20 @@ const PIN_CSS = `
 }
 `;
 
-// The hub's own ceiling on comment text (src/comments.py via settings) is
-// larger; this is the shorter one the page has always applied, so a comment is
-// refused while it is still being typed rather than after it is sent.
+// The same number as the hub's ceiling on comment text — `comment_max_text_chars`
+// in src/settings.py — spelled a second time here, because there is no way for
+// the page to be told the hub's: `templates/build.html` is written into the build
+// directory at PUBLISH time (src/render.py) and carries no per-hub values, and
+// meta.json is written then too, while the setting is read per request and can
+// change under a page that is already open.
+//
+// So this is a copy that can go stale, and it is worth being precise about which
+// direction hurts. Raised on the hub, the form is merely stricter than it needs
+// to be. LOWERED on the hub — the only reason anyone would touch it — and the
+// textarea keeps accepting text the hub will refuse, which arrives back as a 422
+// and the toast about photo formats. What this ceiling does buy, at every
+// setting, is that the browser stops a runaway paste before it becomes a
+// multipart upload.
 const MAX_COMMENT_CHARS = 4000;
 
 // How often a pointer page asks whether a newer build has landed. Below a
@@ -175,6 +186,22 @@ const MAX_COMMENT_CHARS = 4000;
 // value, only on it staying inside that window.
 const POLL_MS = 3000;
 const POLL_MAX_MS = 60000;
+
+// How long a swap waits for the reader's hand, and how often it looks again.
+//
+// The viewport answers `isBusy()` for a drag in progress and for a moment after
+// one (viewport/live.js), and a swap re-renders the scene and re-seats the
+// camera — doing that between a press and its release pulls the model out from
+// under the pointer. So the swap waits, and `pending` stays exactly where it is
+// while it does, which is what keeps the offer from being lost.
+//
+// AND IT HAS A DEADLINE, because "busy" hangs on a `pointerup` this page is not
+// guaranteed to see: a release over another window, or a tab that lost focus
+// mid-drag, leaves the flag set with nobody left to clear it. The reader pressed
+// Switch; a button that quietly does nothing for ever is worse than a model that
+// jumps under a hand that is no longer there.
+const BUSY_RETRY_MS = 250;
+const BUSY_WAIT_MS = 5000;
 
 /** The letter the viewport holds the cut tool up on. Shown, never bound here. */
 const HOLD_KEY_LABEL = 'C';
@@ -298,6 +325,14 @@ export default class HammerolaViewer extends React.Component {
       },
       // Block 11: a page that shows nothing has to say why. A silent viewport
       // leaves this interface drawing a frame around a hole.
+      //
+      // `setState` AND NOT `set()`, and that is load-bearing rather than a
+      // shorthand: `set()` ends in `sync()`, which dispatches `hmr:state`, which
+      // is what the viewport decides a load on. Reporting a failed load through
+      // it would answer the report with another attempt at the same fetch —
+      // forever, at whatever rate the errors come back. The viewport keeps its
+      // own half of this (`loadFailed` in viewport/element.js); this line is the
+      // other half, and neither one alone is enough.
       [ERROR]: (e) => this.setState({
         viewError: (e.detail && e.detail.message) || 'the viewport could not render this view',
       }),
@@ -340,6 +375,9 @@ export default class HammerolaViewer extends React.Component {
     window.removeEventListener('keydown', this._kd);
     clearTimeout(this._tt);
     clearTimeout(this._poll);
+    // The deferred swap goes with them: it holds `this` and would come back on a
+    // component that is gone, to `setState` on it.
+    clearTimeout(this._swap);
     this._gone = true;
   }
 
@@ -523,10 +561,37 @@ export default class HammerolaViewer extends React.Component {
     this.schedulePoll(delay);
   }
 
-  /** Take the build the banner is offering, keeping the frame and the tree. */
-  takePending() {
+  /** Take the build the banner is offering, keeping the frame and the tree.
+   *
+   * NOT WHILE THE VIEWPORT IS IN THE READER'S HANDS. `isBusy()` is the one
+   * question the viewport can answer and this side cannot — a drag in progress,
+   * and the moment just after one — and the swap it guards is the whole scene
+   * being rebuilt under the pointer. The wait is bounded (BUSY_WAIT_MS above);
+   * `since` is how a retry tells this call when the reader pressed the button,
+   * and nothing else passes it.
+   */
+  takePending(since) {
     const next = this.state.pending;
-    if (!next || !Array.isArray(next.variants) || !next.variants.length) return;
+    if (this._gone || !next || !Array.isArray(next.variants) || !next.variants.length) return;
+    // At most one wait at a time: a second press must not leave two timers
+    // racing to swap the same build.
+    clearTimeout(this._swap);
+    const asked = since || Date.now();
+    let busy = false;
+    try {
+      const el = this.el();
+      busy = !!(el && typeof el.isBusy === 'function' && el.isBusy());
+    } catch (error) {
+      // A viewport that cannot answer is not a reason to refuse the build.
+      console.warn('viewport busy', error);
+    }
+    if (busy && Date.now() - asked < BUSY_WAIT_MS) {
+      // `pending` is left standing, so the banner stays up and the offer
+      // survives whatever happens to this timer — including the page being
+      // closed, or the reader pressing Later instead.
+      this._swap = setTimeout(() => this.takePending(asked), BUSY_RETRY_MS);
+      return;
+    }
     const keep = next.variants.some((v) => v.id === this.state.view);
     this.setState({
       meta: next, pending: null, bannerGone: true,
@@ -1017,6 +1082,15 @@ export default class HammerolaViewer extends React.Component {
       measChipStyle: chip(!!s.measure && !s.composer, '#fff', '#d3d8de', '#1c1f23'),
       measText: s.measure ? s.measure.text : '',
       measNote: s.measure ? s.measure.note : '',
+      // Measuring is open to everyone, so the CHIP stays; filing a comment is
+      // not, so the link goes — the same gate the move tool, the comment tool,
+      // the note box and the composer carry. Without it the link opens a
+      // composer that `composerStyle` keeps at `display:none`: nothing appears,
+      // the chip goes grey because it hides itself while a composer stands, and
+      // there is no close button on screen to take it back. The composer then
+      // opens with that stale measurement in it the moment a token is entered.
+      measAddStyle: 'cursor:pointer;text-decoration:underline'
+        + (viewer ? ';display:none' : ''),
       measAdd: () => {
         const node = this.node(s.sel);
         this.set({
@@ -1306,10 +1380,12 @@ export default class HammerolaViewer extends React.Component {
 
           {/* ── the model, and everything laid over it ── */}
           <div style={css('flex:1;position:relative;min-width:0;background:linear-gradient(165deg,#f2f4f6 0%,#e2e5e9 60%,#d4d8dd 100%)')}>
-            {/* The custom element the adapter registers. Rendered by name rather
-                than imported: until `ui/src/viewport/` is wired into main.jsx
-                this stays an inert unknown tag, and everything around it still
-                works. */}
+            {/* The custom element the adapter registers. RENDERED BY NAME rather
+                than by a reference to the class, and that is the point: what
+                defines the tag is `import './viewport/index.js'` in main.jsx,
+                where evaluating the module IS the registration. Naming the class
+                here would pull `customElements.define` into the import graph of
+                a component that only wanted to draw a box. */}
             {React.createElement(VIEWPORT_TAG, {
               ref: this.host,
               style: { position: 'absolute', inset: 0, width: '100%', height: '100%' },
@@ -1373,7 +1449,7 @@ export default class HammerolaViewer extends React.Component {
                 {/* The qualifier the brief insists on: a distance taken between
                     parts that have been laid apart is not the assembled one. */}
                 {v.measNote && <span style={css(`font:500 10.5px ${MONO};color:#8a6a1f;background:#fdf0d8;padding:3px 7px;border-radius:4px`)}>{v.measNote}</span>}
-                <span onClick={v.measAdd} style={css('cursor:pointer;text-decoration:underline')}>add to comment</span>
+                <span onClick={v.measAdd} style={css(v.measAddStyle)}>add to comment</span>
                 <span onClick={v.measClear} style={css('cursor:pointer;opacity:.6')}>&#10005;</span>
               </div>
             </div>

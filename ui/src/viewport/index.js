@@ -25,11 +25,10 @@ if (typeof customElements !== "undefined" && !customElements.get(TAG)) {
 
 export { HmrViewport };
 
-// The hold key is exported because its `typingTarget` rule and its three
-// stuck-key nets are worth exactly as much to a React-side shortcut as they are
-// here, and a second, simpler implementation beside it would be the one that
-// leaves a mode stuck on.
-export { installHoldKey, isHoldKey, typingTarget } from "./holdkey.js";
-
-// Where the library is loaded from, for a preload hint or a health check.
-export { VIEWER_MODULE_URL } from "./library.js";
+// AND NOTHING ELSE. There used to be four more names here — the hold key's
+// three, and the library's URL — each with a plausible caller in mind and none
+// with a real one, which is exactly the shape the rule above warns about: a name
+// nobody asked for still puts `customElements.define` into the import graph of
+// whoever eventually does, and by then it looks like the ordinary way to reach
+// it. Their modules are `./holdkey.js` and `./library.js`, importable directly
+// by anything that turns out to need them.

@@ -22,6 +22,25 @@ function sectionValue(viewer, v) {
   return lim === null ? v : clamp(v, -lim, lim);
 }
 
+/** The sliver the plane is sunk into the part by, in world units.
+ *
+ * A RENDER NUDGE, NOT A DEPTH: it exists so the library's stencil cap quad does
+ * not z-fight the face it would otherwise be coplanar with (options.js,
+ * `SECTION_BIAS`), and nobody asked for it. So exactly one function adds it —
+ * `applySection`, on the way to the slider — and every function that READS where
+ * the plane stands takes it back out again: `sectionOffset`, whose answer the
+ * interface stores in `state.cutOffset`, and `captureSection`, whose answer a
+ * live reload restores from. A reading that kept it would be handed straight
+ * back to `applySection` by its caller and sunk one sliver deeper, every time,
+ * without limit.
+ *
+ * `|| 1` covers a scene with no grid yet, and is written once here so a reading
+ * cannot fall out of step with the write.
+ */
+function sectionBias(viewer) {
+  return (sectionLimit(viewer) || 1) * SECTION_BIAS;
+}
+
 /** Ceiling on one pointermove's worth of travel.
  *
  * The angle guard already keeps the px -> world factor finite, but "finite" is
@@ -124,9 +143,9 @@ export function applySection(vp, given) {
                 seed.point[2] + n[2] * offset];
     // The bias: a larger `value` holds the plane further back, so taking it away
     // slides the plane the sliver INTO the part that keeps the library's stencil
-    // cap quad off the face it would otherwise z-fight with.
-    const value = slideSectionTo(viewer, g, at,
-                                 (sectionLimit(viewer) || 1) * SECTION_BIAS);
+    // cap quad off the face it would otherwise z-fight with. THE ONLY PLACE IT
+    // IS ADDED — see `sectionBias` for why every reader subtracts it again.
+    const value = slideSectionTo(viewer, g, at, sectionBias(viewer));
     if (value === null) return false;
     seed.value = value;
     // A plane placed while some other tab is open would be a cut nobody can see.
@@ -275,7 +294,8 @@ export function showTab(vp, name) {
   }
 }
 
-/** Where the cutting plane stands, in WORLD coordinates, or null for no cut.
+/** Where the cutting plane the reader AIMED AT stands, in WORLD coordinates, or
+ *  null for no cut. The render sliver is not in it — see below.
  *
  * What a live reload must NOT carry across is the SLIDER VALUE: its zero is the
  * centre of the clipping region, which is the centre of the grid, and the grid
@@ -322,8 +342,16 @@ export function captureSection(vp) {
   if (!Number.isFinite(d)) return null;
   // `distanceToPoint` is signed along the unit normal, so stepping the point
   // back by it lands it on the plane, with every drag since the seed folded in.
-  const point = [src[0] - normal[0] * d, src[1] - normal[1] * d,
-                 src[2] - normal[2] * d];
+  //
+  // AND THEN THE RENDER SLIVER COMES BACK OUT, which is the difference between
+  // where the plane IS and the plane the reader aimed at. It has to: the restore
+  // goes through `applySection`, which puts a sliver back, so carrying this one
+  // across would land the plane two slivers deep — and deeper again on the next
+  // reload, since nothing ever takes them off. It is a fraction of the GRID as
+  // well, so the one that belongs here is the new scene's, not this scene's.
+  const back = d + sectionBias(viewer);
+  const point = [src[0] - normal[0] * back, src[1] - normal[1] * back,
+                 src[2] - normal[2] * back];
   // The captured normal is the one currently in force, flip included, so the
   // seed it restores into is recorded UNFLIPPED — otherwise a restore would
   // apply the flip a second time.
@@ -354,14 +382,32 @@ export function restoreSection(vp, keep) {
   const g = internals(vp.viewer);
   if (!g) return false;
   try {
-    // The offset is already folded into the captured point — it is where the
-    // plane REALLY was — so the seed goes back with an offset of zero relative
-    // to it. Anything else would apply the reader's slider twice.
-    vp.sectionSeed = { normal: keep.normal, point: keep.point, value: null };
-    const offset = vp.state.cutOffset;
-    vp.state.cutOffset = 0;
+    // The reader's offset is already folded into the captured point — it is
+    // where the plane was — while a SEED is the point an offset counts FROM. So
+    // it comes back out here, and what follows is an ordinary apply, with
+    // `state.cutOffset` standing exactly as it was.
+    //
+    // THE OTHER ARRANGEMENT IS THE BUG: seeding with the captured point and
+    // applying at a temporary offset of zero restores the plane perfectly and
+    // leaves `applySection` NOT IDEMPOTENT with the state it will next be called
+    // with. `reconcile` calls it on every `hmr:state` — a click in the tree, a
+    // view tab, a pin — and the first of those would walk the plane the reader's
+    // millimetres a second time, silently, on a scene nobody had touched.
+    //
+    // Along the FLIPPED normal, because that is the one the offset was walked
+    // with; `keep.normal` is recorded unflipped (see `captureSection`).
+    const offset = Number.isFinite(vp.state.cutOffset) ? vp.state.cutOffset : 0;
+    const n = vp.state.cutFlip
+      ? [-keep.normal[0], -keep.normal[1], -keep.normal[2]]
+      : keep.normal;
+    vp.sectionSeed = {
+      normal: keep.normal,
+      point: [keep.point[0] - n[0] * offset,
+              keep.point[1] - n[1] * offset,
+              keep.point[2] - n[2] * offset],
+      value: null,
+    };
     const ok = applySection(vp, g);
-    vp.state.cutOffset = offset;
     if (!keep.placed) vp.sectionSeed = null;
     return ok;
   } catch (error) {
@@ -375,6 +421,13 @@ export function restoreSection(vp, keep) {
  * The number the interface's own offset control has to show after a drag: the
  * drag moves the library's slider, and the slider counts from the grid centre
  * rather than from the face the reader clicked.
+ *
+ * WITHOUT THE RENDER SLIVER, and that is not cosmetic. This answer is written
+ * straight into `state.cutOffset` (tools.js, `onUp`), which is the field
+ * `applySection` adds a sliver to — so a readout carrying one would sink the
+ * plane a sliver deeper on the reconcile that follows, and another on the next
+ * drag, for as long as the reader keeps dragging. A freshly placed plane also
+ * reads 0 here rather than a sliver, which is what the reader asked for.
  */
 export function sectionOffset(vp) {
   const viewer = vp.viewer;
@@ -383,7 +436,7 @@ export function sectionOffset(vp) {
   const g = internals(viewer);
   if (!g) return 0;
   const d = g.plane.distanceToPoint(vec3(seed.point));
-  return Number.isFinite(d) ? -d : 0;
+  return Number.isFinite(d) ? -d - sectionBias(viewer) : 0;
 }
 
 /** How far the offset can usefully run, for the interface's slider. */

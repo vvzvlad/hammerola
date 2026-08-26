@@ -22,8 +22,9 @@
 /** The two moving names. A commit id is neither, and is never remembered. */
 export const POINTER_NAMES = ["latest", "dev"];
 
-// Namespaced like the other two keys this site stores (`.pointing_device`,
-// `.live`), and suffixed with the project id, which is why it is a PREFIX.
+// Namespaced like the other keys this site stores (`.pointing_device`, and the
+// interface's `.token.<pid>` and `.notes.<pid>`), and suffixed with the project
+// id, which is why it is a PREFIX.
 const KEY_PREFIX = "hammerola.pointer.";
 
 const key = (pid) => KEY_PREFIX + pid;
