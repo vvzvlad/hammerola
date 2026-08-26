@@ -38,9 +38,11 @@ class Settings(BaseSettings):
     # and templates deliberately live OUTSIDE it: the volume would shadow them.
     data_dir: str = "data"
 
-    # Retention: keep this many newest builds per project (SPEC 7.3). The build
-    # `latest` points at is never pruned, even when it falls out of the window.
-    retention_builds: int = Field(default=20, ge=1)
+    # NO RETENTION SETTING, and its absence is deliberate rather than an
+    # omission (SPEC 5.3, 7.3, decision of 2026-08-27): nothing published is ever
+    # deleted, so there is no window to configure. Anything that looks like it
+    # belongs here — a build count, an age — would be a knob that decides which
+    # builds to destroy, and that decision is not one this service makes.
 
     # Hard ceiling on one uploaded build, applied to the compressed body AND to
     # the total uncompressed size — the second one is what stops a gzip bomb.

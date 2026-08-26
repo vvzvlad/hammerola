@@ -1,4 +1,14 @@
-"""On-disk layout, safe unpacking, atomic publication and retention.
+"""On-disk layout, safe unpacking and atomic publication.
+
+NOTHING HERE EVER DELETES A PUBLISHED BUILD. There is no retention window and no
+age ceiling: a build that landed stays until somebody removes it by hand
+(decision of 2026-08-27, SPEC 5.3 and 7.3). A revision is tens of megabytes and
+disk is cheaper than a mechanism that has to be written, tested, explained and
+that can delete the wrong thing — and what the absence buys is exact: every
+build URL is served with a year of `immutable`, so a link that was pasted into
+chat goes on resolving for as long as the volume does. The cost is that the
+volume grows monotonically, and the day it runs out is manual work rather than
+automatic.
 
 Layout under DATA_DIR (SPEC 3, 7.2). Everything here is runtime state and lives on
 the docker volume; templates and viewer assets deliberately live outside it,
@@ -13,6 +23,35 @@ because the volume would shadow them.
     <data>/project/<pid>/.tmp-<commit>-<uuid>/   staging, never served
     <data>/jobs/<id>/                      one build job (src/jobs.py)
     <data>/.src-<uuid>/                    one pushed SOURCE tree, being built
+    <data>/.body-<uuid>                    the BODY that tree came out of, kept
+                                           until its build says whether to store it
+    <data>/sources/<digest>/source.tar.gz  that body, kept: the code of one revision
+    <data>/sources/<digest>/log.txt        what the build of that revision printed
+
+`sources/` IS THE CODE OF EVERY PUBLISHED REVISION, and three things about it are
+decisions rather than arrangement (SPEC 8, entry 17).
+
+It is OUTSIDE the build directory. A build directory is served publicly and with
+a year of `immutable`, so a mistake there cannot be taken back — the copies are
+already handed out. This tree is served by nothing: the only way out of it is
+`GET /api/v1/sources/<revision>`, behind PUBLISH_TOKEN, and the file server's
+`_safe_name` never reaches this far anyway.
+
+It is CONTENT-ADDRESSED, and that is not a second naming scheme to keep in step
+with anything: `<digest>` is `_payload_digest` of the sources, which is exactly
+what `mint_revision` names the revision after. The address of the code and the
+name of the revision are one string. It follows that pushing the same tree twice
+cannot produce a second archive — the second push resolves to the same name — and
+that a revision published under a name the CALLER chose (the route that still
+takes a `<commit>`) is stored under its digest instead, i.e. not at the name in
+its own URL.
+
+It is written ONLY AFTER A PUBLISH LANDS. The sources of a build that failed are
+not kept: the author is looking at the failure the moment the command returns and
+the tree is on their own disk, so the hub would be storing what nobody comes back
+for — and a stored tree that belongs to no published revision is a revision this
+store cannot answer for. Nothing prunes it afterwards; a revision's code lives
+exactly as long as the revision (SPEC 5.3).
 
 `latest` and `dev` are the two names a build directory may not claim, for
 different reasons: `latest` is a symlink the store moves, and `dev` is the local
@@ -155,13 +194,37 @@ CHUNK = 64 * 1024
 # Dot-prefixed: the file server refuses to serve dot entries.
 PAYLOAD_DIGEST_FILE = ".payload.sha256"
 
+# The store of pushed SOURCES, one directory per revision, named by the digest of
+# what was pushed. See the module docstring for why it is here and not inside the
+# build directory. Not dot-prefixed and it does not need to be: nothing serves
+# this tree by path, `builds_of` only ever looks inside `project/`, and a name
+# that is plainly visible in a `ls data/` is the honest one for a tree somebody
+# will one day go looking for by hand.
+SOURCES_DIR_NAME = "sources"
+# The pushed body, byte for byte. `.tar.gz` because that is what it IS: the
+# request body of the push, unmodified, which is what makes it possible to say
+# the code of a revision is the code that built it rather than a repacking of it.
+SOURCE_ARCHIVE_NAME = "source.tar.gz"
+# The build log, beside the code rather than only at the job (SPEC 8, entry 17).
+# The job's copy is not going anywhere — no job is ever deleted — but it is
+# addressed by a JOB id, which is per attempt and recorded against nothing, so a
+# month later the log of a revision is unreachable from the revision. This copy is
+# the one half of "how did this revision come about" that would otherwise be
+# reachable only by whoever still had the id from the push.
+SOURCE_LOG_NAME = "log.txt"
+
 # Every transient name the store writes. All dot-prefixed, so none of them is ever
 # served or picked up by `builds_of` — which is exactly why nothing notices when
 # one is left behind by a SIGKILL, and why they are swept explicitly at startup.
 STAGING_PREFIX = ".tmp-"        # a build's OUTPUT, on its way to <pid>/<commit>
 LATEST_LINK_PREFIX = ".latest-"  # a symlink about to be renamed over `latest`
 UPLOAD_PREFIX = ".upload-"      # one spooled request body, up to MAX_BUILD_BYTES
-TRASH_PREFIX = ".trash-"        # a build renamed out of the way before deletion
+# The `dev` slot renamed out of the way while a new one takes its name. POSIX
+# cannot replace a non-empty directory under a fixed name in one step, so the old
+# slot has to go somewhere before the new one can arrive — see `_swap_dev_slot`.
+# This is the ONLY thing that parks a directory now: a published build is never
+# deleted (see the top of this module), so nothing else ever moves one aside.
+TRASH_PREFIX = ".trash-"
 JSON_TMP_PREFIX = ".wip-"       # builds.json / index.json mid-write
 # One pushed SOURCE tree, from the moment it is unpacked until its build ends.
 # At the root and not inside the project directory, and that is deliberate: it is
@@ -170,20 +233,32 @@ JSON_TMP_PREFIX = ".wip-"       # builds.json / index.json mid-write
 # it — the worker owns it (src/jobs.py) — so it is the one transient here that is
 # expected to outlive its creator.
 SOURCE_PREFIX = ".src-"
+# The BODY the tree above was unpacked from, from the moment the push is accepted
+# until the build says whether the revision was published. The same lifetime as
+# `.src-` and the same owner, and it is a second name rather than the spool's
+# because ownership changes at exactly that point: `.upload-` belongs to the
+# request thread, which deletes it whatever happens, and this belongs to the push.
+#
+# Kept at all only because a repacked tree is not the same artefact: what makes
+# `sources/` worth having is that it holds the bytes that were pushed, and those
+# exist only while this file does. It is NOT put beside the unpacked tree, which
+# would be the obvious place — the tree is handed to the build as its input, so an
+# archive inside it would be one more file the model gets to see and to read.
+BODY_PREFIX = ".body-"
 
 LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, UPLOAD_PREFIX,
-                     TRASH_PREFIX, JSON_TMP_PREFIX, SOURCE_PREFIX)
+                     TRASH_PREFIX, JSON_TMP_PREFIX, SOURCE_PREFIX, BODY_PREFIX)
 
 # A leftover younger than this may belong to a publish running RIGHT NOW, in this
 # process or another one sharing the volume. An hour is far longer than any push
 # takes and short enough that a killed 64 MiB upload does not sit there for days.
 #
-# `.src-` stretched that assumption and still fits under it, which is worth
-# writing down because the next change to either number could break it silently:
-# a source tree now lives from the request until its build ENDS, so the longest
-# it can honestly be in use is the queue wait plus one build — jobs.MAX_QUEUED_JOBS
-# times buildproc's `wall_seconds`, divided by the workers. At today's 16, 120 s
-# and 2 that is sixteen minutes.
+# `.src-` and `.body-` stretched that assumption and still fit under it, which is
+# worth writing down because the next change to either number could break it
+# silently: both now live from the request until the build ENDS, so the longest
+# either can honestly be in use is the queue wait plus one build —
+# jobs.MAX_QUEUED_JOBS times buildproc's `wall_seconds`, divided by the workers.
+# At today's 16, 120 s and 2 that is sixteen minutes.
 LEFTOVER_MAX_AGE_SECONDS = 3600
 
 
@@ -207,11 +282,21 @@ class AcceptedPush:
 
     `sources` is unpacked and validated; whoever holds this owns that directory
     and has to remove it. `digest` is over those sources, and is the number every
-    later "is this the same push?" question is answered with.
+    later "is this the same push?" question is answered with. `commit` is the
+    name it will be published under: the segment the caller put in the URL, or —
+    on the route that has no such segment — the digest itself (`mint_revision`).
+
+    `archive` is the request body those sources came out of, moved somewhere the
+    request thread does not delete. It is owned exactly like `sources` — the same
+    holder, removed at the same moment — with one extra ending: a build that
+    publishes hands it to `keep_sources` instead, and it is then the code of a
+    revision rather than a transient (see the module docstring).
     """
 
     sources: Path
+    archive: Path
     digest: str
+    commit: str
 
 
 def utcnow_iso() -> str:
@@ -400,21 +485,26 @@ def _create_member_file(parent_fd: int, leaf: str, raw_name: str) -> int:
 class Store:
     """Everything that touches DATA_DIR.
 
-    One instance per process. `retention_builds` and `max_build_bytes` are passed
-    in rather than read from the settings singleton so tests can build a Store on
-    a tmp_path without touching the process environment.
+    One instance per process. `max_build_bytes` is passed in rather than read
+    from the settings singleton so tests can build a Store on a tmp_path without
+    touching the process environment.
     """
 
-    def __init__(self, data_dir, retention_builds: int, max_build_bytes: int):
+    def __init__(self, data_dir, max_build_bytes: int):
         self.root = Path(data_dir).resolve()
-        self.retention_builds = retention_builds
         self.max_build_bytes = max_build_bytes
         self.projects_dir = self.root / "project"
-        # Publication is serialized per project: builds.json, the `latest` symlink
-        # and retention all read the full set of builds and then rewrite it, so two
-        # concurrent pushes to the SAME project could interleave into a builds.json
-        # that lists a build retention has just deleted. Different projects never
-        # touch each other's state and are free to run in parallel.
+        # NOT created here, unlike `projects_dir`. It is created by the first
+        # publish that puts something in it, so a hub that has never published a
+        # revision has no `sources/` at all — which is what makes "a build that
+        # failed leaves nothing behind" an observable fact rather than an empty
+        # directory somebody has to interpret.
+        self.sources_dir = self.root / SOURCES_DIR_NAME
+        # Publication is serialized per project: builds.json and the `latest`
+        # symlink are both derived from the full set of builds, so two concurrent
+        # pushes to the SAME project could interleave into a builds.json and a
+        # pointer that describe different moments. Different projects never touch
+        # each other's state and are free to run in parallel.
         self._locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
         # The root index spans every project, so it gets its own global lock.
@@ -427,9 +517,9 @@ class Store:
         """Delete transient entries an earlier run died in the middle of.
 
         Nothing else ever will. Every name here is dot-prefixed, so `builds_of`
-        skips it, the file server refuses to serve it and retention never sees
-        it — a SIGKILL during a push therefore leaves up to MAX_BUILD_BYTES of
-        spooled body plus a half-unpacked staging tree on the volume, permanently.
+        skips it and the file server refuses to serve it — a SIGKILL during a
+        push therefore leaves up to MAX_BUILD_BYTES of spooled body plus a
+        half-unpacked staging tree on the volume, permanently.
 
         Only entries older than an hour are touched, because a concurrent publish
         in this very process is using names of exactly the same shape.
@@ -473,12 +563,54 @@ class Store:
 
         Only the two reserved names are out. The `dev-` PREFIX is deliberately not
         reserved any more: it used to be, because dev ids were `dev-<digest>` and
-        a commit called `dev-1234` would have landed in the local retention bucket
-        and been dropped after two pushes. There is no local bucket now — there is
-        one slot, with no history — so `dev-1234` is just a commit id like any
-        other and gets the same permanent URL.
+        a commit called `dev-1234` would have been filed with the local builds
+        rather than with the commit ones. There is no bucket of local builds now
+        — there is one slot, with no history — so `dev-1234` is just a commit id
+        like any other and gets the same permanent URL.
         """
         return bool(SAFE_ID.match(name)) and name not in RESERVED_BUILD_NAMES
+
+    @staticmethod
+    def mint_revision(digest: str) -> str:
+        """The name the hub gives a revision it names itself: the payload digest.
+
+        THE IDENTIFIER IS THE CONTENT, and every property the revision route
+        needs falls out of that rather than being enforced on top of it:
+
+          * "the same sources are the same revision" is an identity, not a
+            check — an unchanged tree cannot be given a second address;
+          * "this name is taken by different content" cannot arise, because
+            different content hashes to a different name (the 409 that answers
+            it survives for the reason `settled` gives, which is about a
+            directory that has lost its digest file, not about a colliding id);
+          * nothing has to be stored to hand out the next one, so two pushes
+            racing each other need no coordination at all.
+
+        NOT TRUNCATED, and that is the one number worth writing down. A sha256
+        in hex is exactly 64 characters and `SAFE_ID` allows exactly 64, so the
+        whole digest fits with nothing to spare and nothing to gain by cutting
+        it: the URL was already carrying 40 hex characters when the id came from
+        git, it is pasted rather than typed, and 24 more characters cost
+        nothing. A truncated prefix would cost something real — with n published
+        revisions and b bits kept, the chance that some pair collides is about
+        n²/2^(b+1), so a 64-bit (16-character) prefix over a million revisions is
+        ~3e-8. Small, but the FAILURE it buys is not small and not repairable:
+        two different source trees would map to one URL, the second would be
+        refused 409 for ever, and the pusher has no other name to publish under
+        because the pusher does not choose the name any more.
+
+        `digest` comes from `_payload_digest`, so this can only fail if that
+        function's output shape changes — base64 (`+`, `/`), a prefix, a longer
+        hash. It is checked rather than assumed because the failure would
+        otherwise be a directory created under a name the file server refuses to
+        serve, i.e. a build that publishes and then 404s.
+        """
+        if not Store.valid_build_id(digest):
+            raise PublishError(
+                500,
+                "the hub could not name this revision: its digest is not a "
+                "usable build id")
+        return digest
 
     def _lock_for(self, pid: str) -> threading.Lock:
         with self._locks_guard:
@@ -492,11 +624,16 @@ class Store:
         container's writable layer is not where that belongs, and the dot prefix
         keeps it out of `builds_of` and out of the file server. Swept by
         `_sweep_leftovers` if the process dies before deleting it.
+
+        This name belongs to the REQUEST THREAD, which deletes it whatever
+        happens. A body that is accepted leaves under another name — see the
+        rename at the end of `accept_sources` — because from that point it is
+        owned by the push and may outlive the request by a whole build.
         """
         return self.root / f"{UPLOAD_PREFIX}{uuid.uuid4().hex}"
 
     # -- accepting a push (in the request thread) ---------------------------
-    def accept_sources(self, pid: str, commit: str, body_path: Path,
+    def accept_sources(self, pid: str, commit: str | None, body_path: Path,
                        body_size: int) -> "AcceptedPush":
         """Unpack one pushed SOURCE tree and hash it. Raises PublishError.
 
@@ -520,13 +657,21 @@ class Store:
         retry — the exact failure `_payload_digest` already refuses to walk into
         with the rewritten meta.json. What the pusher supplied is the sources; that is
         what "the same push" can honestly mean.
+
+        `commit` is None when the URL carried no name for this push, which is
+        how a pusher asks the hub to name the revision: the digest computed here
+        BECOMES that name (`mint_revision`). It is the same number either way —
+        what changes is only whether it is also the address.
         """
         if not self.valid_pid(pid):
             raise PublishError(422, f"invalid project id: {pid!r}")
         # `dev` is the one commit name the URL may carry that is not a build id:
         # it is the local slot (SPEC 7.6), and it is validated by being exactly
         # that constant rather than by the build-id rule, which reserves it.
-        if commit != DEV_LINK and not self.valid_build_id(commit):
+        # None is not a name at all — there is nothing to validate until the
+        # sources have been hashed, further down.
+        if commit is not None and commit != DEV_LINK \
+                and not self.valid_build_id(commit):
             raise PublishError(422, f"invalid commit id: {commit!r}")
         if body_size > self.max_build_bytes:
             raise PublishError(
@@ -536,13 +681,25 @@ class Store:
         sources.mkdir()
         try:
             files = self._unpack(body_path, sources)
+            digest = _payload_digest(files)
+            name = self.mint_revision(digest) if commit is None else commit
+            # LAST, and the order is what decides who owns the body. Until this
+            # rename the spool is the request thread's and its `finally` deletes
+            # it, which is what every failure above wants; after it, the spool
+            # path no longer exists, that same `finally` is a no-op, and the body
+            # travels with the push. So an exception between the two can only
+            # leave the body where the request was already going to remove it.
+            archive = self.root / f"{BODY_PREFIX}{uuid.uuid4().hex}"
+            os.rename(body_path, archive)
         except BaseException:
-            # Every way out of `_unpack` except the ordinary one, BaseException
-            # included: a KeyboardInterrupt here would otherwise leave an
-            # unpacked tree that only the hourly sweep would ever remove.
+            # Every way out of the block above except the ordinary one,
+            # BaseException included: a KeyboardInterrupt here would otherwise
+            # leave an unpacked tree that only the hourly sweep would ever
+            # remove.
             shutil.rmtree(sources, ignore_errors=True)
             raise
-        return AcceptedPush(sources=sources, digest=_payload_digest(files))
+        return AcceptedPush(sources=sources, archive=archive, digest=digest,
+                            commit=name)
 
     def settled(self, pid: str, commit: str,
                 digest: str) -> tuple[int, dict] | None:
@@ -582,6 +739,18 @@ class Store:
         # The build directory is immutable and was served with a one-year
         # immutable cache, so silently replacing it would make every cached copy
         # a lie (SPEC 7).
+        #
+        # STILL REACHABLE ON A MINTED NAME, which is worth saying because the
+        # arithmetic looks like it cannot be. When the hub names the revision the
+        # name IS this digest, so "same name, different content" would take a
+        # sha256 collision — but that is not the only way to get here. The other
+        # way is a directory at that name whose `.payload.sha256` is missing or
+        # unreadable, and `data/` is a volume every build can write anywhere in
+        # (SPEC 8A.4): a half-written directory, a file removed by another
+        # build, an unlink that lost its race. There is nothing to compare
+        # against then, and answering 200 would claim a publication that may
+        # never have finished. On the NAMED route — the one a caller still uses
+        # with an id of its own — this is the ordinary case it always was.
         raise PublishError(
             409, f"build {commit} already exists with different content")
 
@@ -655,11 +824,11 @@ class Store:
             # PAST THE POINT OF NO RETURN. The rename above IS the publication
             # (SPEC 7.2): the build is at its permanent URL and anyone can
             # already fetch it. Everything from here on is bookkeeping DERIVED
-            # from what is now on disk — which build `latest` names, which old
-            # ones retention drops, what the picker lists, what the index shows —
-            # and every one of those is recomputed from scratch by the next
-            # publish of this project, so a failure is recoverable and a lie is
-            # not. Reporting failure here would tell the pusher the push did not land
+            # from what is now on disk — which build `latest` names, what the
+            # picker lists, what the index shows — and every one of those is
+            # recomputed from scratch by the next publish of this project, so a
+            # failure is recoverable and a lie is not. Reporting failure here
+            # would tell the pusher the push did not land
             # while its URL serves the build; since step 5 it would also mark a
             # job `failed` for a build that is live, which is the worst answer
             # available.
@@ -669,17 +838,16 @@ class Store:
             # and nothing else: startup recomputes none of this, and another
             # project's publish never touches these files. So a project that was
             # pushed to once and then abandoned keeps whatever this leaves —
-            # `latest` on the previous build, a picker missing the newest one,
-            # an old build retention did not drop — for as long as nobody pushes
-            # to it again, which for an abandoned project is for ever.
+            # `latest` on the previous build, a picker missing the newest one —
+            # for as long as nobody pushes to it again, which for an abandoned
+            # project is for ever.
             #
-            # Order still matters on the success path: the symlink moves first so
-            # a reader is never sent to a build that is about to be pruned,
-            # retention then runs with the pointer already on its final target,
-            # and the picker is written last so it lists exactly what survived.
+            # Order still matters on the success path: the symlink moves first,
+            # so a reader following `latest` is on the new build before the
+            # picker starts offering it, and the picker is written last, from
+            # what is on disk once the pointer has settled.
             try:
                 self._switch_latest(pid)
-                self._prune(pid)
                 self._write_builds_json(pid)
             except Exception:
                 logger.exception(
@@ -710,9 +878,9 @@ class Store:
         slot, like there is exactly one `latest`, and every push rewrites it.
 
         Rewriting a URL in place is only safe because that URL is served
-        `no-cache`, which is what buys the simplicity: no minted ids, no second
-        retention window, no local entries in `builds.json`. The commit route
-        keeps its 409 and its year of `immutable` untouched — the two never meet.
+        `no-cache`, which is what buys the simplicity: no minted ids, no local
+        entries in `builds.json`. The commit route keeps its 409 and its year of
+        `immutable` untouched — the two never meet.
 
         Returns 201 when the slot changed and 200 when the same sources are
         already in it — the second answer normally comes from `settled` before a
@@ -733,9 +901,8 @@ class Store:
             meta = self._finish_staging(pid, DEV_LINK, staging, files, digest)
             self._swap_dev_slot(pdir, staging)
 
-            # `latest` is not touched and neither is retention: a local build is
-            # not a commit, so it cannot be the newest one, and nothing about it
-            # accumulates. `builds.json` is rewritten because the picker shows
+            # `latest` is not touched: a local build is not a commit, so it
+            # cannot be the newest one. `builds.json` is rewritten because the picker shows
             # whether the slot is occupied at all — and, like the tail of
             # `publish_built`, it runs AFTER the swap that publishes and so
             # cannot be allowed to unpublish it by raising. The next push
@@ -783,6 +950,81 @@ class Store:
             raise
         if occupied:
             shutil.rmtree(parked, ignore_errors=True)
+
+    # -- the code of a revision --------------------------------------------
+    def source_archive(self, revision: str) -> Path:
+        """Where one revision's pushed body lives. It may not be there.
+
+        Existence of THIS file is what "the hub has the code of that revision"
+        means, and the log below is not part of the question: a directory holding
+        only a log is what a rename killed half way through leaves, and it must
+        read as absent rather than as half a revision.
+        """
+        return self.sources_dir / revision / SOURCE_ARCHIVE_NAME
+
+    def source_log(self, revision: str) -> Path:
+        """Where the build log of one revision lives. It may not be there."""
+        return self.sources_dir / revision / SOURCE_LOG_NAME
+
+    def keep_sources(self, digest: str, archive: Path) -> bool:
+        """Store the body of a push as the code of the revision it published.
+
+        True when this call is what put it there. False when the archive was
+        already stored, which is the ordinary outcome of publishing the same
+        sources a second time and is not an error: the address is the digest of
+        the SOURCES, so what is already there unpacks to the very tree this body
+        does. The two bodies need not be byte-identical to each other — the same
+        tree tarred twice differs in its gzip header alone — and the one kept is
+        the one that got there first, which is the only choice that keeps a
+        stored archive from changing under a revision that is already published.
+
+        The caller still owns `archive` either way — on the False path it is
+        untouched, and on the True path it has been renamed away, so the caller's
+        unconditional cleanup finds nothing and does nothing.
+
+        NOT ATOMIC AS A PAIR, deliberately: the directory is created first and
+        the body is renamed into it second, so a hub killed between the two
+        leaves an empty directory. That reads as "no code for this revision"
+        (see `source_archive`) and the next publish of the same sources fills it
+        in, so nothing has to collect it — which is the whole reason the failure
+        is arranged this way round rather than through a staging name that would
+        need sweeping.
+        """
+        target = self.sources_dir / digest / SOURCE_ARCHIVE_NAME
+        if target.exists():
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # On the descriptor-less path, but for the same reason `_open_member_dir`
+        # does it on one: `mkdir`'s mode is filtered through the process umask,
+        # so a hub started under `umask 077` would create a directory it can
+        # write and nothing else can read.
+        os.chmod(target.parent, 0o755)
+        os.rename(archive, target)
+        os.chmod(target, 0o644)
+        return True
+
+    def keep_build_log(self, digest: str, raw: bytes) -> None:
+        """Put the build log beside the code of a revision. Bytes, already capped.
+
+        Bytes rather than text because the ceiling belongs to whoever captured
+        the log (`jobs.MAX_LOG_BYTES`, derived from what a build is allowed to
+        print), and applying a second, different one here is how the two would
+        drift into disagreeing about the same file.
+
+        Written only into a directory that already holds the code. A log on its
+        own would be a revision this store cannot answer for — and on the one
+        path that gets here, `keep_sources` has just run.
+
+        The temporary file goes at the DATA ROOT rather than beside the target,
+        for the reason `atomic_write_bytes` spells out: `_sweep_leftovers` walks
+        the root and the project directories, so that is where a `.wip-` left by
+        a killed write is actually collected. Beside the target it would sit in
+        `sources/<digest>/` for the life of the volume.
+        """
+        directory = self.sources_dir / digest
+        if not directory.is_dir():
+            return
+        atomic_write_bytes(directory / SOURCE_LOG_NAME, raw, tmp_dir=self.root)
 
     # -- unpacking ---------------------------------------------------------
     def _unpack(self, body_path: Path, dest: Path) -> dict:
@@ -1045,17 +1287,17 @@ class Store:
         """Every published COMMIT build of one project, newest first.
 
         The `dev` slot is skipped, and skipping it here is what keeps it out of
-        `builds.json`, out of `/index.json`, out of `latest` and out of retention
-        in one place instead of four (SPEC 7.6). It is a directory with a real
-        meta.json — it would otherwise be listed like any build — but it is not a
-        version of the project, and history is a history of commits.
+        `builds.json`, out of `/index.json` and out of `latest` in one place
+        instead of three (SPEC 7.6). It is a directory with a real meta.json — it
+        would otherwise be listed like any build — but it is not a version of the
+        project, and history is a history of commits.
 
         Reads each build's own meta.json rather than a project-level list, so the
-        directory tree stays the single source of truth: a build that was pruned,
+        directory tree stays the single source of truth: a build removed by hand,
         or one restored by hand, needs no bookkeeping anywhere else.
 
         Which is exactly why a meta.json here cannot be assumed to be one WE
-        wrote. Everything downstream — `_switch_latest`, `_prune`,
+        wrote. Everything downstream — `_switch_latest`,
         `render.builds_json`, `render.index_card` — subscripts these dicts
         directly, so one `{}` left by a half-finished restore used to take out the
         next publish of that project with a 500, after the build was already on
@@ -1130,11 +1372,10 @@ class Store:
     def _write_builds_json(self, pid: str) -> None:
         """Rewrite the build picker from what is actually on disk.
 
-        Called AFTER retention, not before. Writing it first — the order SPEC 7.2
-        lists the steps in — publishes a list that still names the builds pruning
-        is about to delete, so the picker offers commits that 404 when clicked.
-        Temp file plus rename, so a reader sees the old list or the new one and
-        never a half-written file.
+        Called AFTER the pointer has moved, so `latest` in the file names the
+        build a reader following that link will actually land on. Temp file plus
+        rename, so a reader sees the old list or the new one and never a
+        half-written file.
 
         The local slot is not one of the entries and never will be — that is the
         point of it being a slot (SPEC 7.6) — but the picker still has to be able
@@ -1167,55 +1408,6 @@ class Store:
             return None
         return meta if _usable_meta(meta, DEV_LINK) else None
 
-    def _prune(self, pid: str) -> None:
-        """Keep the newest RETENTION_BUILDS builds of a project (SPEC 7.3).
-
-        One window, because there is only one kind of build to count: the local
-        slot is a single directory that never accumulates, so it is not in
-        `builds_of` and there is nothing here for it to compete with.
-
-        The build `latest` points at is never removed, even when it has fallen
-        out of the window: it is the URL people keep, and a dangling symlink
-        there would take a live page offline to save 2 MB.
-        """
-        metas = self.builds_of(pid)
-        pinned = self.latest_commit(pid)
-        # `builds_of` returns newest first, so everything past the limit is out
-        # of the window.
-        for meta in metas[self.retention_builds:]:
-            commit = meta["commit"]
-            if commit == pinned:
-                continue
-            victim = self.projects_dir / pid / commit
-            self._delete_build(pid, commit, victim)
-
-    def _delete_build(self, pid: str, commit: str, victim: Path) -> None:
-        """Take a build out of service first, then delete it.
-
-        `rmtree(ignore_errors=True)` gets this backwards. A partial failure leaves
-        a directory that still has files in it — so it is still SERVED — but has
-        lost its meta.json, so `builds_of` no longer lists it, retention never
-        considers it again and nothing will ever finish the job. The rename is the
-        atomic step that makes it unreachable; whether the recursive delete then
-        succeeds only decides how long the bytes linger, and a failure is logged
-        instead of swallowed so it is at least visible.
-        """
-        parked = victim.parent / f"{TRASH_PREFIX}{uuid.uuid4().hex}"
-        try:
-            os.rename(victim, parked)
-        except OSError as error:
-            logger.warning(f"retention: could not retire {pid}/{commit}: {error}")
-            return
-        logger.info(f"retention: dropped {pid}/{commit}")
-        try:
-            shutil.rmtree(parked)
-        except OSError as error:
-            # Already out of service and named for the sweeper, so this costs
-            # disk space until the next start and nothing else.
-            logger.warning(
-                f"retention: {pid}/{commit} retired but not yet removed "
-                f"({parked.name}): {error}")
-
     def _refresh_index(self) -> None:
         """Rebuild the root index.json from every project's newest COMMIT build.
 
@@ -1242,7 +1434,7 @@ class Store:
 def _usable_meta(meta, dir_name: str) -> bool:
     """Can everything downstream read this meta.json without a KeyError?
 
-    The fields listed here are the ones `_switch_latest`, `_prune` and the two
+    The fields listed here are the ones `_switch_latest` and the two
     renderers subscript directly; a build whose meta cannot answer for all of them
     is not servable, so it is better left out of the list than allowed to break
     the next publish of the whole project.
@@ -1365,7 +1557,7 @@ def atomic_write_bytes(path: Path, data: bytes, *, tmp_dir: Path = None) -> None
     PermissionError either way. The only layout that would defuse it is one
     where no per-job directory exists at all, and what makes a pointwise
     failure survivable here is instead that nothing shared between records is
-    written per record any more (see `ORDER_NAME` in `src/jobs.py`).
+    written per record at all (see `JobStore._rewrite_locked` in `src/jobs.py`).
     """
     parent = path.parent if tmp_dir is None else Path(tmp_dir)
     tmp = parent / f"{JSON_TMP_PREFIX}{path.name}-{uuid.uuid4().hex}"

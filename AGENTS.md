@@ -21,7 +21,7 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
 
 | Репозиторий | Что оттуда берётся |
 | --- | --- |
-| `/Users/vvzvlad/Data/Projects/cad_snapshot_hub` | раздача снапшотов, вьювер, приём пуша, ретенция, комментарии |
+| `/Users/vvzvlad/Data/Projects/cad_snapshot_hub` | раздача снапшотов, вьювер, приём пуша, комментарии |
 | `/Users/vvzvlad/Data/Projects/3d/cad_builder` | образ с CadQuery — ядро геометрии |
 | `/Users/vvzvlad/Data/Projects/3d/cad_publish` | сборка модели, гейт на геометрию, публикация |
 
@@ -105,11 +105,13 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       терминального состояния: запись в памяти обновляется независимо от тома,
       оба обращения к диску best effort, а ошибка ПОСЛЕ `rename` не помечает
       задачу провалившейся, потому что `rename` и есть публикация. Порядок задач
-      хранится СПИСКОМ ID в одном файле `data/jobs/order.json`, а не числом в
-      каждой записи и не по `created` (секундная точность не переживает рестарт):
-      порядок — свойство набора, а не записи, и размазанный по N файлам он не
-      переживал записи, доехавшей наполовину. Каталог, которого файл порядка не
-      называет, читается как самый старый. SIGTERM обрабатывается в `main.py` — будит
+      не хранится вообще — ни числом в записи, ни отдельным файлом: единственным
+      его потребителем была ретенция («кого подрезать первым»), а ретенции нет
+      (решение 2026-08-27, SPEC §5.3), задачи же читаются по id. Правило, которое
+      эта история оставила, шире файла и остаётся в силе: то, что является
+      свойством НАБОРА записей, нельзя хранить по записи — проход, доехавший
+      наполовину, смешивает два поколения, и место остановки выбирает сборка
+      (`chmod 0500` на одном каталоге). SIGTERM обрабатывается в `main.py` — будит
       заранее созданный поток, а не запускает новый из обработчика, — остановка
       сначала закрывает сокет, потом дренирует очередь вместе с исходниками, а
       воркеров ждёт по ОБЩЕМУ бюджету (`WORKER_JOIN_SECONDS` на весь пул, не на
@@ -173,25 +175,67 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   side imports it — the gate on the receiving side is step 6
 - `src/jobs.py` — the asynchronous half of a push (SPEC 8A.2 step 5): `JobStore`
   is the registry (a directory per job under `data/jobs/`, `job.json` and
-  `log.txt` beside it, plus `order.json` for the registry as a whole),
-  `BuildTask` is what the request hands over, `BuildQueue` is the bounded queue
-  and the worker threads that build and then publish. Read its docstring before
-  touching it: `data/jobs/` is on a volume every build can write, so everything
-  the registry reads back is rebuilt into a known shape, capped on the way in
-  and on the way out — and whatever that normalization changed is WRITTEN BACK,
-  because a correction that stays in memory leaves the planted value on disk for
-  the next start to read again. The second rule is the one that cost three
-  rounds: anything shared BETWEEN records must not be stored per record. The
-  write-back writes them one at a time, a build chooses which of those writes
-  fails (`chmod 0500` on one directory, no vulnerability needed), and a
-  half-applied pass then leaves a state the hub was never in. The creation order
-  used to be stored that way and is now one atomically written file. Read what
-  that file buys narrowly, because the generous reading is wrong: it stops a
-  POINTWISE write failure from reordering the registry, and nothing more. A
-  build can write `order.json` outright — real ids, permuted — and the hub
-  believes it without a word, exactly as it does a `log.txt` a build overwrote.
-  That is accepted rather than fixed: the same build can `rmtree` another job's
-  directory, which is strictly more
+  `log.txt` beside it), `BuildTask` is what the request hands over, `BuildQueue`
+  is the bounded queue and the worker threads that build and then publish. Read
+  its docstring before touching it: `data/jobs/` is on a volume every build can
+  write, so NOTHING there is evidence about who wrote it, and everything the
+  registry reads back is rebuilt into a known shape and capped in size on the
+  way in and on the way out — and whatever that normalization changed is WRITTEN
+  BACK, because a correction that stays in memory leaves the planted value on
+  disk for the next start to read again. A build can overwrite another job's
+  `log.txt`, or `rmtree` its directory outright, and the hub believes what is
+  left; that is accepted rather than fixed, because there is no boundary on the
+  volume to fix it with (SPEC 8A.4). Records are never deleted — no retention,
+  by decision of 2026-08-27 (SPEC §5.3) — so no count ceiling decides which jobs
+  to throw away; only strangers get swept, and only by age. The second rule is
+  the one that cost three rounds and outlives the file that taught it: anything
+  that is a property of the SET of records must not be stored per record. A pass
+  writes them one at a time, a build chooses which of those writes fails
+  (`chmod 0500` on one directory, no vulnerability needed), and a half-applied
+  pass then leaves a state the hub was never in. Creation order used to be
+  stored that way; it is now stored nowhere at all, because retention was its
+  only reader
+- `src/client/` — the OTHER side of the wire: the `hammerola` command an author
+  runs in a model's directory (SPEC §8, entry 26). `build` publishes the `dev`
+  slot, `commit` publishes an immutable revision; both pack the
+  source tree, POST it, poll the job from step 5 and print the build log. THE
+  REVISION IS NAMED BY THE HUB, not by the client and not by git (SPEC §7.7):
+  the id is the digest of the sources, so `commit` means "publish a version of
+  this" and a directory that is not a repository publishes exactly like one that
+  is. git is touched once, afterwards: `gitsuggest` prints a `git commit` line
+  that RECORDS what was published, for a person to run or ignore — the tool
+  never stages and never commits. It is
+  in THIS repository on purpose — the client and the hub share one contract (the
+  archive shape, the path alphabet, the ceilings, the codes, the job states), and
+  publication broke precisely because the two halves used to live in two
+  repositories where no test could see both. `tests/client/` now drives the real
+  hub over a real socket, and `tests/client/test_limits.py` compares the client's
+  copy of the ceilings (`src/client/limits.py`) against `src/store.py` and
+  `src/settings.py`. STDLIB ONLY, every module of it: the tool runs under
+  whatever python3 a laptop has, so it imports nothing from `requirements.txt` —
+  not loguru, not pydantic, not `src.store` — and talks HTTP with
+  `urllib.request`. Around the two publishing verbs sit the four that need
+  nothing new from the hub: `login` (`setup.py`, writes the machine's `KEY=value`
+  file 0600 after checking the password against the hub — ONE secret for the
+  whole system, no second key for comments), `create` (`project.py`, mints the
+  twelve hex characters of SPEC §3.1 and refuses to write over an existing id),
+  `status` (`status.py`, assembled out of `builds.json` and the dev slot's own
+  `meta.json`, i.e. what the project page already fetches) and `comments`
+  (`queue.py`, the queue and its `resolve`). Still unwritten: `rename` and `rm`
+  need routes the hub does not serve, and `source`, `artifacts`, `diff` and
+  `log <revision>` are ordinary work now that the hub keeps a revision's sources
+  (SPEC §8 entry 17) — they were blocked before that, and are not any more.
+  Self-update waits on the tool having a distribution name. Two gaps are of a
+  different kind and are worth knowing before reaching for them: "the last build
+  job" cannot be shown at all, because a job is addressable only by its id and
+  job order is stored nowhere (see `src/jobs.py`); and the comment routes still
+  check the hub's separate `COMMENT_READ_TOKEN` until step 0, so a deployment
+  sets both hub variables to the one secret
+- `bin/hammerola` — the console command, a plain script `make client` symlinks
+  into `~/.local/bin`. Deliberately not a packaging entry point yet: this repo's
+  one importable top-level name is `src`, and `pip install`ing that onto a laptop
+  would shadow every other project's `src`. Giving the tool a distribution name
+  belongs with the self-update work
 - `checklib.py` — at the ROOT, and not a stray file: `import checklib` is part
   of the contract with every model.py in the fleet, exactly like `views()` and
   `printables()`. It re-exports `src/cadbuild/checklib.py` under that name, and
@@ -201,7 +245,12 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   (g) is what proves it reached the image
 - `tests/` — pytest. `tests/cadbuild/` is the moved suite and has a `conftest.py`
   of its own: its `isolated_project` fixture is autouse and would otherwise
-  chdir every hub test into a scratch project
+  chdir every hub test into a scratch project. `tests/client/` has one too, and
+  it takes two things AWAY from every test in it: the `PUBLISH_TOKEN` that
+  `tests/conftest.py` puts in the environment for `src.settings` (the client
+  reads the same name and would push with the wrong secret), and the developer's
+  real `~/.config/hammerola/env` (a suite that read it could pass only on a
+  configured machine — or push at a live hub)
 - `data/` — runtime state: builds, pointers, comments and build JOBS as a
   directory tree with JSON alongside, no database (gitignored, mounted as a
   docker volume). Note what that last one means: `data/jobs/` is on a volume

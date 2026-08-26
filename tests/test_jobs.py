@@ -37,16 +37,16 @@ from loguru import logger
 from src import jobs as jobs_module
 from src.buildproc import (STATUS_FAILED, STATUS_LIMITS_ERROR, STATUS_OK,
                            Limits, run_build)
-from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_JOBS,
-                      MAX_LOG_BYTES, MAX_RECORD_BYTES, ORDER_NAME,
+from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE,
+                      MAX_LOG_BYTES, MAX_RECORD_BYTES,
                       QUEUE_FULL_RETRY_AFTER_SECONDS, RESTART_CODE,
                       STATE_BUILDING, STATE_DONE, STATE_FAILED, STATE_QUEUED,
                       STOPPED_ERROR, SUBMIT_ACCEPTED, SUBMIT_STOPPED,
                       WORKER_THREAD_PREFIX, BuildQueue, BuildTask, JobStore,
                       build_arguments)
 from src import store as store_module
-from src.store import (JSON_TMP_PREFIX, LEFTOVER_PREFIXES, SOURCE_PREFIX,
-                       PublishError, Store, utcnow_iso)
+from src.store import (BODY_PREFIX, JSON_TMP_PREFIX, LEFTOVER_PREFIXES,
+                       SOURCE_PREFIX, PublishError, Store, utcnow_iso)
 
 TOKEN = "test-publish-token"
 READ_TOKEN = "test-comment-read-token"
@@ -84,19 +84,8 @@ def _plant_job(data, job_id, **fields):
     return directory
 
 
-def _volume_order(data):
-    """The creation order AS IT IS ON THE VOLUME: the ids, oldest first.
-
-    The one object that expresses the order — there is no ordering field in a
-    record any more, deliberately (see `ORDER_NAME` in src/jobs.py). Read
-    straight off the volume rather than through the store, because the whole
-    question these tests ask is what the NEXT start will read.
-    """
-    return json.loads((Path(data) / "jobs" / ORDER_NAME).read_text())["jobs"]
-
-
 def _job_dirs(data):
-    """The job directories on the volume, by name. Not the order file."""
+    """The job directories on the volume, by name."""
     return sorted(entry.name for entry in (Path(data) / "jobs").iterdir()
                   if entry.is_dir())
 
@@ -137,8 +126,20 @@ def _await_no_workers(timeout=10):
 
 def _bare_store(data):
     """A Store on `data`, without a server around it."""
-    return Store(data_dir=data, retention_builds=20,
-                 max_build_bytes=8 * 1024 * 1024)
+    return Store(data_dir=data, max_build_bytes=8 * 1024 * 1024)
+
+
+def _accepted_body(data, index):
+    """The pushed BODY a task owns beside its unpacked tree.
+
+    Not a real archive: nothing on the paths these tests drive ever reads it.
+    What matters is that the file EXISTS, because every ending in `BuildQueue`
+    promises either to remove it or to hand it to the store, and a test passing a
+    name that points at nothing could not tell a removal from a no-op.
+    """
+    body = data / f"{BODY_PREFIX}{index:032x}"
+    body.write_bytes(b"a pushed body")
+    return body
 
 
 def _staged(store, pid, commit, marker):
@@ -334,8 +335,8 @@ def test_the_local_slot_goes_through_the_same_job(hub):
     # the slot route and having taken the commit one. The URL alone cannot tell
     # them apart — a commit build called `dev` would answer at the same address
     # — so what is checked is the machinery only `publish` runs: `latest` moves,
-    # retention counts, the project gets an index card and the build appears in
-    # the picker's list. None of that may happen for the local slot (SPEC 7.6).
+    # the project gets an index card and the build appears in the picker's
+    # list. None of that may happen for the local slot (SPEC 7.6).
     assert not (hub.project_dir("proj1") / "latest").exists()
     assert not (hub.data / "index.json").exists()
     picker = json.loads((hub.project_dir("proj1") / "builds.json").read_text())
@@ -474,9 +475,9 @@ def test_a_job_the_handover_threw_under_is_failed_not_left_queued(
     the queue was full, the pool was stopping, a worker took it. This one used
     to answer only the pusher — with a 500, or with nothing at all when the
     socket had already gone — and neither is something a job can read. The
-    record stayed `queued`; `_prune_locked` never drops a job that has not
-    finished, so it held a MAX_JOBS slot until the hub restarted, while the
-    status endpoint went on saying `queued` about a build nobody was running.
+    record stayed `queued`, and nothing here ever fails a job on its own, so the
+    status endpoint went on saying `queued` about a build nobody was running
+    until the hub restarted.
 
     BOTH HANDLERS, because both are on that path and the disconnect one is the
     easier to overlook: it re-raises rather than replying, so there is no answer
@@ -501,8 +502,8 @@ def test_a_job_the_handover_threw_under_is_failed_not_left_queued(
         assert len(issued) == 1, issued
         record = hub.server.jobs.get(issued[0])
         assert record["state"] == STATE_FAILED, (
-            "the job stayed queued, so it holds a MAX_JOBS slot until the hub "
-            "restarts and answers `queued` about a build that does not exist")
+            "the job stayed queued, so until the hub restarts the status "
+            "endpoint answers `queued` about a build that does not exist")
         assert record["code"] == 500
         assert record["error"] == HANDOVER_ERROR
         assert record["finished"]
@@ -772,107 +773,6 @@ def test_a_stranded_job_is_reported_over_http_too(tmp_path):
         stop_hub(hub)
 
 
-def test_jobs_are_pruned_by_count_when_a_new_one_arrives(tmp_path, monkeypatch):
-    """And all six share one `created`, pinned rather than hoped for.
-
-    `created` has second resolution, so a burst of pushes ties — and a prune
-    ordered by the timestamp then has its TIEBREAK decide which one survives
-    instead of the age. Freezing the clock is what makes this test about that
-    case every run: left to the real one, whether the six land inside a second
-    is a coin flip, and the test would quietly stop exercising the burst.
-    """
-    # Frozen at whatever the clock says NOW rather than at a literal date: a
-    # hardcoded stamp would drift past MAX_JOB_AGE_SECONDS one day and this test
-    # would start failing for the entirely unrelated reason that its jobs got too
-    # old to keep.
-    frozen = utcnow_iso()
-    monkeypatch.setattr(jobs_module, "utcnow_iso", lambda: frozen)
-    store = JobStore(tmp_path / "data", max_jobs=3)
-    created = []
-    for index in range(6):
-        record = store.create("proj1", f"c{index}")
-        store.finish(record["id"], state=STATE_DONE, code=201,
-                     build_url=f"/project/proj1/c{index}/")
-        created.append(record["id"])
-        assert record["created"] == frozen
-
-    kept = [job_id for job_id in created if store.get(job_id) is not None]
-    assert len(kept) == 3
-    assert set(kept) == set(created[-3:])
-    # Off the volume as well as out of memory — the log is the bulk of a job.
-    assert _job_dirs(tmp_path / "data") == sorted(created[-3:])
-    # ...and the order file names exactly those three, newest last.
-    assert _volume_order(tmp_path / "data") == created[-3:]
-
-
-def test_the_order_retention_counts_by_survives_a_restart(tmp_path, monkeypatch):
-    """The same burst as the test above, read back by a fresh JobStore.
-
-    `_prune_locked` documents why it cannot sort by `created` — second
-    resolution, so a CI burst ties — and a restart has to restore the SAME
-    order or the ceiling drops a different three of the six than the running hub
-    would have. Sorting by `(created, id)` did not restore it: the id is 128
-    random bits, so the survivors were an arbitrary three. This is the test for
-    the restart specifically; the one above never reopens the store and could
-    not see it.
-    """
-    frozen = utcnow_iso()
-    monkeypatch.setattr(jobs_module, "utcnow_iso", lambda: frozen)
-    data = tmp_path / "data"
-    store = JobStore(data)
-    created = []
-    for index in range(6):
-        record = store.create("proj1", f"c{index}")
-        store.finish(record["id"], state=STATE_DONE, code=201,
-                     build_url=f"/project/proj1/c{index}/")
-        created.append(record["id"])
-    assert {store.get(job_id)["created"] for job_id in created} == {frozen}
-
-    reopened = JobStore(data, max_jobs=3)
-    kept = [job_id for job_id in created if reopened.get(job_id) is not None]
-    assert kept == created[-3:]
-    # And the next job created after the restart still sorts after all of them,
-    # rather than in front of them with an order that started from scratch.
-    fresh = reopened.create("proj1", "c6")["id"]
-    assert _volume_order(data) == kept + [fresh]
-
-
-def test_a_job_that_is_still_running_is_never_pruned(tmp_path):
-    """Retention clears old evidence; a live build is not evidence yet.
-
-    Dropping it would take the status and the log out from under the pusher who
-    is at that moment polling them — and a 404 for a build that is running is
-    indistinguishable from a job id that was never issued.
-    """
-    store = JobStore(tmp_path / "data", max_jobs=1)
-    running = store.create("proj1", "slow")["id"]
-    store.start(running)
-    for index in range(4):
-        done = store.create("proj1", f"c{index}")["id"]
-        store.finish(done, state=STATE_DONE, code=201, build_url="/project/x/")
-
-    assert store.get(running)["state"] == STATE_BUILDING
-    assert (tmp_path / "data" / "jobs" / running).is_dir()
-
-
-def test_jobs_are_pruned_by_age(tmp_path):
-    """An age ceiling as well as a count: a hub nobody pushes to would otherwise
-    keep a job from two years ago because it never reached the count."""
-    data = tmp_path / "data"
-    store = JobStore(data, max_age_seconds=3600)
-    fresh = store.create("proj1", "fresh")["id"]
-    stale = store.create("proj1", "stale")["id"]
-
-    record = json.loads((data / "jobs" / stale / "job.json").read_text())
-    record["created"] = "2020-01-01T00:00:00Z"
-    (data / "jobs" / stale / "job.json").write_text(json.dumps(record))
-
-    reopened = JobStore(data, max_age_seconds=3600)
-    assert reopened.get(stale) is None
-    assert not (data / "jobs" / stale).exists()
-    assert reopened.get(fresh) is not None
-
-
 def test_a_pushed_job_survives_a_restart_and_is_still_readable(tmp_path):
     """The log is on the volume, so it outlives the process that captured it."""
     data = tmp_path / "data"
@@ -912,34 +812,20 @@ def test_the_default_ceilings_are_the_documented_ones(tmp_path):
     assert jobs_module.MAX_CONCURRENT_BUILDS == 2
     assert jobs_module.MAX_CONCURRENT_BUILDS != MAX_CONCURRENT_PUBLISHES
     assert jobs_module.MAX_QUEUED_JOBS >= jobs_module.MAX_CONCURRENT_BUILDS
-    assert MAX_JOBS == 200
-    assert jobs_module.MAX_JOB_AGE_SECONDS == 14 * 24 * 3600
     assert jobs_module.MAX_STRANGERS_SWEPT == 1024
+    assert jobs_module.STRANGER_MAX_AGE_SECONDS == 14 * 24 * 3600
 
-    # THE ORDER FILE THIS HUB CAN WRITE HAS TO FIT UNDER THE CEILING IT WILL
-    # REFUSE TO READ, and the two are computed from different numbers, so
-    # nothing else keeps them on the same side of each other. The failure is
-    # silent in the worst way: every start reads the file the previous one
-    # wrote, refuses it as oversized, announces the order as lost and reads
-    # every job as a stranger — retention then keeps whichever ones the volume
-    # happened to list last. Pinned as the inequality rather than as today's
-    # bytes, because what would break it is somebody trimming
-    # ORDER_ENTRY_BYTES to "what an id actually costs" (28 bytes today, against
-    # 64 declared — the headroom is 2.3x and it is deliberate).
-    entries = (MAX_JOBS + jobs_module.MAX_QUEUED_JOBS
-               + jobs_module.MAX_CONCURRENT_BUILDS)
-    widest = jobs_module._order_bytes([f"{index:022d}" for index in range(entries)])
-    order_ceiling = (jobs_module.ORDER_ENVELOPE_BYTES
-                     + jobs_module.ORDER_ENTRY_BYTES * entries)
-    assert len(widest) <= order_ceiling, (
-        f"the fullest order file this hub can write is {len(widest)} bytes "
-        f"against a read ceiling of {order_ceiling}; every start would refuse "
-        f"the file the one before it wrote")
-    # And the registry itself agrees on both halves of that number, rather than
-    # keeping its own copy of the arithmetic.
-    registry = JobStore(tmp_path / "data")
-    assert registry._max_order_entries == entries
-    assert registry._max_order_bytes == order_ceiling
+    # AND THERE IS NO CEILING ON THE REGISTRY ITSELF, which is a fact about this
+    # module rather than about a number, so it is asserted as one: no job is
+    # ever deleted for being old or for being one too many (SPEC 5.3, 7.4).
+    # Named explicitly because a ceiling is exactly the kind of thing that comes
+    # back as an obvious improvement — and the day it does, it has to be a
+    # decision, not a constant somebody added while tidying.
+    for gone in ("MAX_JOBS", "MAX_JOB_AGE_SECONDS", "ORDER_NAME"):
+        assert not hasattr(jobs_module, gone), (
+            f"{gone} is back; retention was removed deliberately")
+    assert not [name for name in vars(JobStore) if "prune" in name]
+
     # And the WHOLE stop fits inside docker's default stop grace period (10 s;
     # the compose file sets no `stop_grace_period`). Pinned as the arithmetic it
     # is, not as a bare "under ten": the stop costs one `serve_forever` poll
@@ -1005,10 +891,10 @@ def test_a_record_the_hub_cannot_write_back_does_not_stop_it_starting(tmp_path):
 def test_a_record_this_hub_did_not_write_is_skipped_rather_than_believed(tmp_path):
     """Three shapes, three reasons, one answer: it is not a record.
 
-    A state outside the four is the worst of them — retention only ever drops a
-    TERMINAL job and `_load` only ever fails a `queued`/`building` one, so a
-    fifth word is a record no rule can reach, counting against MAX_JOBS for the
-    life of the volume.
+    A state outside the four is the worst of them — `_load` only ever fails a
+    `queued`/`building` one, so a fifth word is a record no rule can reach, and
+    the status endpoint would serve it to a client that has no branch for it,
+    for the life of the volume.
     """
     data = tmp_path / "data"
     JobStore(data)
@@ -1025,497 +911,13 @@ def test_a_record_this_hub_did_not_write_is_skipped_rather_than_believed(tmp_pat
         assert (data / "jobs" / planted).is_dir(), planted
 
 
-def test_a_directory_the_order_file_does_not_name_sorts_oldest(tmp_path):
-    """A record the hub did not put in the order is read at the end retention eats.
-
-    The volume is writable by every build, so a directory holding a perfectly
-    well-formed record is no evidence that this hub ever created the job. The
-    registry therefore trusts exactly one statement about the order — the file
-    it wrote itself — and reads everything else as older than all of it. Oldest
-    is the end that cannot be used: `_prune_locked` drops it first, so planting
-    directories crowds out no real job however the record inside is filled in.
-
-    THE VERSION THIS REPLACES kept the order as a number in each record, so it
-    had to trust the number FOR ITS ORDER — and a planted record simply claimed
-    to be the newest job there is and outlived the real ones. There is nothing
-    to claim any more: a list of ids carries no magnitude.
-    """
-    data = tmp_path / "data"
-    store = JobStore(data, max_jobs=3)
-    real = []
-    for index in range(3):
-        record = store.create("proj1", f"c{index}")
-        store.finish(record["id"], state=STATE_DONE, code=201,
-                     build_url=f"/project/proj1/c{index}/")
-        real.append(record["id"])
-    # `z` * 22 sorts last in the id alphabet AND the planted record claims the
-    # largest ordering number the old reader would accept: whichever tiebreak is
-    # left over, this is the record that wins it.
-    planted = "z" * 22
-    _plant_job(data, planted, state=STATE_DONE, seq=2 ** 31)
-
-    reopened = JobStore(data, max_jobs=3)
-    assert [job_id for job_id in real
-            if reopened.get(job_id) is not None] == real, (
-        "a planted directory displaced a job this hub really created")
-    assert reopened.get(planted) is None
-    # Left where it is rather than deleted: the ceiling had no room to read it,
-    # and being unnamed by the order file is not proof of who wrote it.
-    assert (data / "jobs" / planted).is_dir()
-
-    # With room under the ceiling it IS adopted — the hub does not throw away a
-    # job whose order entry never reached the volume — but at the oldest end, so
-    # the very next push is what pushes it out, ahead of every real job.
-    roomy = JobStore(data, max_jobs=4)
-    assert roomy.get(planted) is not None
-    fresh = roomy.create("proj1", "c3")
-    roomy.finish(fresh["id"], state=STATE_DONE, code=201,
-                 build_url="/project/proj1/c3/")
-    assert roomy.get(planted) is None
-    assert all(roomy.get(job_id) is not None for job_id in real)
-
-
-def test_the_creation_order_a_restart_reads_is_the_one_the_running_hub_had(
-        tmp_path):
-    """Across a restart, a prune, and a restart after it.
-
-    Two restarts with a prune between them, because one restart with nothing
-    dropped cannot see the failure this pins: with nothing dropped, any
-    mechanism at all looks correct. What broke before was exactly the second
-    step — the running hub's order reached the volume for SOME records and not
-    others, so the third start read an order the hub had never been in, and the
-    visible symptom was retention keeping an arbitrary three of six.
-    """
-    data = tmp_path / "data"
-    first = JobStore(data, max_jobs=3)
-    made = []
-    for index in range(6):
-        record = first.create("proj1", f"c{index}")
-        first.finish(record["id"], state=STATE_DONE, code=201,
-                     build_url=f"/project/proj1/c{index}/")
-        made.append(record["id"])
-    # Three survived the ceiling, and the volume says so in one place.
-    survivors = made[3:]
-    assert _volume_order(data) == survivors
-    assert _job_dirs(data) == sorted(survivors)
-
-    # A roomier ceiling on the way back up, so nothing is pruned and the order
-    # this start writes is the whole of what it read plus what it made.
-    second = JobStore(data, max_jobs=10)
-    fresh = []
-    for index in range(3):
-        record = second.create("proj1", f"n{index}")
-        second.finish(record["id"], state=STATE_DONE, code=201,
-                      build_url=f"/project/proj1/n{index}/")
-        fresh.append(record["id"])
-    assert _volume_order(data) == survivors + fresh, (
-        "the order the volume holds is not the order this hub created the jobs "
-        "in, so the next start will keep the wrong ones")
-
-    # And the consequence, stated as the thing anybody would notice: the three
-    # newest jobs are the three that survive a tighter ceiling.
-    third = JobStore(data, max_jobs=3)
-    assert _job_dirs(data) == sorted(fresh), (
-        "retention kept jobs that were made before the ones it dropped")
-    assert all(third.get(job_id) is not None for job_id in fresh)
-
-
-def test_one_record_the_volume_refuses_cannot_reorder_the_registry(tmp_path):
-    """The write-back pass has one stopping place per record. None is the order.
-
-    `_rewrite_locked` writes the records ONE AT A TIME, and a build chooses
-    which of those writes fails without needing a bug anywhere: `chmod 0500` on
-    one job directory refuses exactly that record's write and no other.
-    `atomic_write_bytes` cannot create its temporary file in there — and could
-    not rename one in from outside either, because `rename` needs the same write
-    permission on the destination directory that `open` needed.
-
-    WHEN THE ORDER WAS A NUMBER IN EACH RECORD that was enough to reorder the
-    registry. The pass renumbered 4,5,6 into 1,2,3, the middle write failed, and
-    the volume was left holding 1,5,3: two numbering spaces at once, an order
-    the running hub had never been in (c3 < c5 < c4 instead of c3 < c4 < c5),
-    and — with the counter restarted at len+1 — numbers the hub then handed out
-    again, to be broken by 128 random bits of id. The order is one file now, so
-    a record the volume refuses costs that record's normalization and nothing
-    else.
-    """
-    data = tmp_path / "data"
-    first = JobStore(data, max_jobs=3)
-    made = []
-    for index in range(6):
-        record = first.create("proj1", f"c{index}")
-        first.finish(record["id"], state=STATE_DONE, code=201,
-                     build_url=f"/project/proj1/c{index}/")
-        made.append(record["id"])
-    kept = made[3:]                       # c3, c4, c5 — oldest to newest
-    assert _volume_order(data) == kept
-
-    # A build makes exactly the MIDDLE record unwritable, and nothing else.
-    middle = data / "jobs" / kept[1]
-    os.chmod(middle, 0o500)
-    try:
-        partial = JobStore(data, max_jobs=3)
-        # Still served, out of memory: a record that could not be written back
-        # is not a record that is forgotten.
-        assert partial.get(kept[1])["state"] == STATE_DONE
-    finally:
-        os.chmod(middle, 0o700)
-
-    # The order on the volume is still, exactly, the order the running hub had.
-    assert _volume_order(data) == kept, (
-        "a single unwritable job directory changed the order of the registry")
-    # ...and the consequence somebody would actually see: the next start with
-    # room for one keeps the job that really was the newest.
-    tightest = JobStore(data, max_jobs=1)
-    assert [job_id for job_id in kept
-            if tightest.get(job_id) is not None] == [kept[2]]
-
-
-def test_an_order_the_volume_refuses_leaves_the_previous_one_whole(
-        tmp_path, monkeypatch):
-    """One write, so there is no half of it to be left behind.
-
-    This is the property the whole arrangement exists for, stated as the failure
-    rather than the success: the order that reaches the volume is either the new
-    one entire or the old one entire. `atomic_write_bytes` writes a temporary
-    file and renames it, and a rename does not half-happen — so a refused order
-    write costs the changes since the last one that landed, and costs nothing
-    the changes before it.
-
-    What the next start then does with the jobs the order does not name is the
-    documented fallback and not a scramble: they go to the OLDEST end, and every
-    job the order DOES name keeps its place relative to every other.
-    """
-    data = tmp_path / "data"
-    store = JobStore(data, max_jobs=10)
-    made = []
-    for index in range(3):
-        record = store.create("proj1", f"c{index}")
-        store.finish(record["id"], state=STATE_DONE, code=201,
-                     build_url=f"/project/proj1/c{index}/")
-        made.append(record["id"])
-    assert _volume_order(data) == made
-
-    landed = jobs_module.atomic_write_bytes
-
-    def refuse_the_order(path, payload, *args, **keywords):
-        if Path(path).name == ORDER_NAME:
-            raise OSError(errno.EACCES, "Permission denied")
-        return landed(path, payload, *args, **keywords)
-
-    monkeypatch.setattr(jobs_module, "atomic_write_bytes", refuse_the_order)
-    later = []
-    for index in range(2):
-        # The push is still ACCEPTED: the order is not what a push needs to
-        # succeed, and refusing one because a 5 KiB file did not land would
-        # fail a build that is about to run.
-        record = store.create("proj1", f"n{index}")
-        store.finish(record["id"], state=STATE_DONE, code=201,
-                     build_url=f"/project/proj1/n{index}/")
-        later.append(record["id"])
-        assert store.get(record["id"])["state"] == STATE_DONE
-    monkeypatch.undo()
-
-    # The file is exactly what the last write that LANDED put there — the three
-    # original ids in their original order. Not a mixture, not a truncation, and
-    # not one of the two new jobs half inserted.
-    assert _volume_order(data) == made
-
-    reopened = JobStore(data, max_jobs=10)
-    # Nothing was lost: the two jobs the order never heard about are adopted.
-    assert all(reopened.get(job_id) is not None for job_id in made + later)
-    # And they went to the oldest end, while the three the order names kept
-    # their order among themselves exactly.
-    order = _volume_order(data)
-    assert order[-3:] == made
-    assert set(order[:2]) == set(later)
-
-
-# -- reading the order file itself -------------------------------------------
-# `_read_order` is the load-bearing half of everything above: the registry
-# trusts exactly one statement about the creation order, and this is the reader
-# of it. It is also entirely reachable by a build, so its ceilings and its
-# rebuilding matter as much as `_read_record`'s do.
-def test_the_order_ceiling_keeps_the_newest_ids_not_the_oldest(tmp_path):
-    """The TAIL survives the entry ceiling, and which end is not cosmetic.
-
-    The newest jobs are at the end of the file and they are the ones retention
-    keeps. A ceiling that kept the HEAD would hand `_load` the oldest ids, so
-    every recent job would be a directory the order does not name — read as a
-    stranger, put at the OLDEST end, and dropped first. The symptom is a hub
-    that throws away precisely the jobs somebody just pushed, while behaving
-    perfectly otherwise.
-    """
-    path = tmp_path / ORDER_NAME
-    ids = [f"o{index:02d}".ljust(22, "y") for index in range(8)]
-    path.write_bytes(json.dumps({"jobs": ids}).encode("utf-8"))
-
-    assert jobs_module._read_order(path, 3, 4096) == ids[-3:]
-    # ...and under the ceiling nothing is cut at all.
-    assert jobs_module._read_order(path, 8, 4096) == ids
-
-
-def test_a_repeated_id_in_the_order_file_is_read_once(tmp_path):
-    """Distinct ids, and a repeat keeps the OLDEST position it appeared at.
-
-    Oldest is the safe end — the same one `_load` puts a stranger at — so a
-    build that repeats an id cannot use the repeat to move a job later in the
-    queue than it really is.
-    """
-    path = tmp_path / ORDER_NAME
-    first, second, third = "a" * 22, "b" * 22, "c" * 22
-    path.write_bytes(json.dumps(
-        {"jobs": [first, second, first, third, second]}).encode("utf-8"))
-
-    assert jobs_module._read_order(path, 10, 4096) == [first, second, third]
-
-
-def test_a_padded_order_file_cannot_crowd_out_a_job_of_this_hubs(tmp_path):
-    """What the de-duplication above is actually holding up.
-
-    `known` is what the room for strangers is measured against, and a stranger
-    here is this hub's OWN job whose order entry never reached the volume —
-    adopted at the oldest end rather than thrown away. Repeats inflate `known`
-    without naming anything new, so a file padded with copies of one real id
-    leaves no room to adopt, and a job the hub really created is read as
-    somebody else's directory and left to the age sweep.
-    """
-    data = tmp_path / "data"
-    store = JobStore(data, max_jobs=5)
-    real = []
-    for index in range(2):
-        record = store.create("proj1", f"c{index}")
-        store.finish(record["id"], state=STATE_DONE, code=201,
-                     build_url=f"/project/proj1/c{index}/")
-        real.append(record["id"])
-    # A job of this hub's whose order write never landed: a well-formed record
-    # in a directory the order file does not name.
-    unnamed = "U" * 22
-    _plant_job(data, unnamed, state=STATE_DONE)
-
-    # ...and an order file padded to the ceiling with copies of a real id.
-    (data / "jobs" / ORDER_NAME).write_bytes(json.dumps(
-        {"jobs": [real[0]] * 4 + [real[1]]}).encode("utf-8"))
-
-    reopened = JobStore(data, max_jobs=5)
-    assert reopened.get(unnamed) is not None, (
-        "an order file padded with repeats took the room this hub keeps for "
-        "adopting a job whose order entry never landed")
-    assert all(reopened.get(job_id) is not None for job_id in real)
-
-
-def test_a_permuted_order_file_is_believed_and_that_is_the_accepted_cost(
-        tmp_path):
-    """A build can write this file, so it can write a WELL-FORMED one.
-
-    Real ids, permuted: every name is valid, every directory exists, the size is
-    under the ceiling. There is nothing left for the reader to object to and it
-    does not object — retention's order is then whatever the build said, and the
-    hub says nothing about it.
-
-    ACCEPTED RATHER THAN FIXED, and the reason is that it is not an escalation:
-    the same build can `rmtree` another job's directory outright, which is
-    strictly more than moving it up the queue it is deleted from. What the file
-    buys is the narrower claim `ORDER_NAME` makes — a build that fails ONE
-    record's write no longer reorders the registry — and this test is here so
-    the wider claim is not read into it by mistake.
-    """
-    data = tmp_path / "data"
-    store = JobStore(data, max_jobs=3)
-    made = []
-    for index in range(3):
-        record = store.create("proj1", f"c{index}")
-        store.finish(record["id"], state=STATE_DONE, code=201,
-                     build_url=f"/project/proj1/c{index}/")
-        made.append(record["id"])
-    assert _volume_order(data) == made
-
-    (data / "jobs" / ORDER_NAME).write_bytes(json.dumps(
-        {"jobs": list(reversed(made))}).encode("utf-8"))
-
-    said = []
-    sink = logger.add(said.append, level="WARNING")
-    try:
-        reopened = JobStore(data, max_jobs=1)
-    finally:
-        logger.remove(sink)
-
-    # The job the FILE calls newest is the one that survived — which is the one
-    # the running hub created FIRST.
-    assert [job_id for job_id in made
-            if reopened.get(job_id) is not None] == [made[0]]
-    assert said == [], (
-        "a permuted order file was announced; nothing here can tell one from a "
-        "real order, so a warning would fire on every ordinary start too")
-
-
-def test_an_order_file_larger_than_the_hub_writes_is_refused_unread(
-        tmp_path, monkeypatch):
-    """The byte ceiling, and the half of it that is about memory.
-
-    `data/jobs/` is writable by every build, so the SIZE of this file is not a
-    number this hub decides — and it is read on the startup path, where a hub
-    that dies for memory never gets to sweep the thing that killed it. Refusing
-    it is only half the answer: the refusal has to happen without the bytes
-    reaching memory first, which is what the read size below pins.
-    """
-    path = tmp_path / ORDER_NAME
-    ceiling = 4096
-    ids = [f"o{index:02d}".ljust(22, "y") for index in range(4)]
-    # Well formed and enormous: the shape is right, so nothing but the ceiling
-    # can turn it down.
-    path.write_bytes(json.dumps(
-        {"jobs": ids, "pad": "x" * (ceiling * 8)}).encode("utf-8"))
-    assert path.stat().st_size > ceiling * 8
-
-    sizes = []
-    real_open = builtins.open
-
-    def watched_open(target, *args, **keywords):
-        handle = real_open(target, *args, **keywords)
-        return (_CountedHandle(handle, sizes) if Path(target) == path
-                else handle)
-
-    said = []
-    sink = logger.add(said.append, level="WARNING")
-    monkeypatch.setattr(builtins, "open", watched_open)
-    try:
-        assert jobs_module._read_order(path, 8, ceiling) is None
-    finally:
-        monkeypatch.undo()
-        logger.remove(sink)
-
-    assert sizes == [ceiling + 1], (
-        f"the reader asked for {sizes} bytes of a file a build chose the size "
-        f"of; one byte over the ceiling is all it may ever hold")
-    assert len(said) == 1 and "not read" in said[0]
-
-
-def test_an_empty_order_beside_job_directories_is_announced(tmp_path):
-    """Planting `{"jobs": []}` must not be quieter than deleting the file.
-
-    Both are the same loss — every directory becomes a stranger and retention
-    drops them in whatever sequence the volume lists — and the file was the only
-    thing that expressed the order, so nothing else notices. `_read_order` still
-    tells "empty" from "unreadable"; that distinction is about whether to
-    believe a damaged order, not about whether to say the order is gone.
-    """
-    data = tmp_path / "data"
-    store = JobStore(data)
-    made = []
-    for index in range(3):
-        record = store.create("proj1", f"c{index}")
-        store.finish(record["id"], state=STATE_DONE, code=201,
-                     build_url=f"/project/proj1/c{index}/")
-        made.append(record["id"])
-
-    (data / "jobs" / ORDER_NAME).write_bytes(
-        json.dumps({"jobs": []}).encode("utf-8"))
-
-    said = []
-    sink = logger.add(said.append, level="WARNING")
-    try:
-        reopened = JobStore(data)
-    finally:
-        logger.remove(sink)
-
-    lost = [line for line in said if "no order to put them in" in line]
-    assert len(lost) == 1 and "3 job" in lost[0], said
-    # ...and the jobs themselves are adopted, at the oldest end, as they are
-    # when the file is missing outright.
-    assert all(reopened.get(job_id) is not None for job_id in made)
-
-
-def test_an_empty_order_on_an_empty_registry_says_nothing(tmp_path):
-    """The other half: an empty order is what a registry with no jobs HAS.
-
-    This is the state every fresh hub writes for itself, so a warning here would
-    fire on the first start of every deployment and teach whoever reads the logs
-    to ignore the line that matters.
-    """
-    data = tmp_path / "data"
-    JobStore(data)
-    assert _volume_order(data) == []
-
-    said = []
-    sink = logger.add(said.append, level="WARNING")
-    try:
-        JobStore(data)
-    finally:
-        logger.remove(sink)
-    assert said == []
-
-
-def test_a_record_dated_in_the_future_cannot_outlive_the_age_ceiling(
-        tmp_path, monkeypatch):
-    """The age ceiling measures a string every build can write.
-
-    A record dated 2999 is never older than any cutoff, so retention could not
-    reach it and it counted against MAX_JOBS for the life of the volume — the
-    ceiling defeated by a date rather than by anything the hub did. Pulled back
-    to now, it ages like every other record; the clock is frozen at a date long
-    past so "ages like every other record" is observable in one step.
-
-    THE FROZEN CLOCK IS WHAT MAKES THIS ONE READABLE AND ALSO WHAT MAKES IT
-    INCOMPLETE, which is why the test below exists beside it: `utcnow_iso` is
-    mocked here and `time.time` is not, so the stamp lands in 2020 and the
-    cutoff is measured from today. With the real clock the correction lands on
-    "now" and this test would pass on a hub where nothing was corrected at all.
-    """
-    data = tmp_path / "data"
-    JobStore(data)
-    planted = "F" * 22
-    _plant_job(data, planted, state=STATE_DONE,
-               created="2999-01-01T00:00:00Z")
-
-    monkeypatch.setattr(jobs_module, "utcnow_iso",
-                        lambda: "2020-01-01T00:00:00Z")
-    store = JobStore(data, max_age_seconds=3600)
-
-    assert store.get(planted) is None
-    assert not (data / "jobs" / planted).exists()
-
-
-def test_the_stamp_pulled_back_from_the_future_lands_on_the_volume(tmp_path):
-    """The same defence, on the real clock, across a restart.
-
-    `_created` pulls a date in the future back to "now" — in MEMORY. For a
-    record that is already terminal nothing used to write that back, so the
-    volume kept 2999 and the next start read it and pulled it back to a fresh
-    "now" all over again. The age ceiling could therefore never reach the
-    record as long as the hub restarted more often than once every
-    MAX_JOB_AGE_SECONDS, which is to say always — a fourteen-day ceiling
-    defeated by an ordinary redeploy.
-
-    No clock is mocked here on purpose. Freezing `utcnow_iso` in the past hides
-    the failure completely: the correction then lands in 2020 while the cutoff
-    is measured from today, so the record ages out whether or not the volume
-    ever heard about it.
-    """
-    data = tmp_path / "data"
-    JobStore(data)
-    planted = "F" * 22
-    _plant_job(data, planted, state=STATE_DONE,
-               created="2999-01-01T00:00:00Z")
-
-    # Adopted rather than dropped — "now" is the truthful reading of a date this
-    # hub cannot believe — and, the half that matters, corrected ON DISK.
-    first = JobStore(data, max_age_seconds=1)
-    assert first.get(planted) is not None
-    assert _volume_records(data)[planted]["created"] != "2999-01-01T00:00:00Z"
-
-    # Two seconds is past a one-second ceiling by a whole second, whichever way
-    # the stamp's truncation to seconds went.
-    time.sleep(2)
-    second = JobStore(data, max_age_seconds=1)
-    assert second.get(planted) is None, (
-        "the record is still counted, so the volume still says 2999 and every "
-        "start pulls it back to a fresh now")
-    assert not (data / "jobs" / planted).exists()
+# -- what is under data/jobs/ and is not a job -------------------------------
+# No job is ever swept, whatever its age (SPEC 5.3): the sweep below is about
+# everything ELSE in that directory, which is writable by every build.
 
 
 def test_a_directory_with_no_record_in_it_is_swept_once_it_ages_out(tmp_path):
-    """MAX_JOBS bounds what the hub can READ; this bounds the rest.
+    """A job directory is kept for ever; a directory that is not one is not.
 
     A directory under `data/jobs/` is not necessarily a job — the volume is
     writable by every build — and the hub makes one itself a moment before it
@@ -1540,7 +942,7 @@ def test_a_directory_with_no_record_in_it_is_swept_once_it_ages_out(tmp_path):
     for directory in (old_empty, old_garbage):
         os.utime(directory, (stale, stale))
 
-    reopened = JobStore(data, max_age_seconds=3600)
+    reopened = JobStore(data, stranger_max_age_seconds=3600)
 
     assert not old_empty.exists()
     assert not old_garbage.exists()
@@ -1551,21 +953,20 @@ def test_a_directory_with_no_record_in_it_is_swept_once_it_ages_out(tmp_path):
 
 
 def test_the_startup_sweep_reaches_everything_that_is_not_a_job(tmp_path):
-    """"MAX_JOBS bounds what the hub can READ; this bounds the rest" — all of it.
+    """The sweep reaches every SHAPE of stranger, not just one.
 
-    The previous version of that sentence was a claim the sweep could not back,
-    and it missed in two directions at once. By NAME: only directories whose
+    The previous version of it missed in two directions at once. By NAME: only directories whose
     name was a well-formed job id ever reached the sweep, so a stray file, a
     directory called anything else, or a symlink was skipped before the age
     ceiling could look at it and stayed for the life of the volume. By TIME: the
     mtime is a value a build sets freely, and one dated in the future is never
-    past any cutoff — `created`-in-2999 for a directory.
+    past any cutoff, so a directory carrying one would be immune for the life of
+    the volume.
 
-    The mtime cannot be answered the way `_created` answers the stamp, and that
-    is worth saying rather than working around: writing a corrected mtime back
-    would destroy the evidence the sweep is being careful about, because the
-    mtime IS the evidence. So it is not corrected — a date in the future simply
-    buys no immunity.
+    The mtime is not CORRECTED, and that is worth saying rather than working
+    around: writing a corrected one back would destroy the evidence the sweep is
+    being careful about, because the mtime IS the evidence. So a date in the
+    future simply buys no immunity.
     """
     data = tmp_path / "data"
     store = JobStore(data)
@@ -1590,7 +991,7 @@ def test_the_startup_sweep_reaches_everything_that_is_not_a_job(tmp_path):
     future.mkdir()
     os.utime(future, (time.time() + 10 * 365 * 24 * 3600,) * 2)
 
-    reopened = JobStore(data, max_age_seconds=3600)
+    reopened = JobStore(data, stranger_max_age_seconds=3600)
 
     assert not odd_name.exists(), "a directory outside the id alphabet was skipped"
     assert not stray_file.exists(), "a stray file was skipped"
@@ -1600,7 +1001,6 @@ def test_the_startup_sweep_reaches_everything_that_is_not_a_job(tmp_path):
     # was pointing at, which must go with the LINK and not with its target.
     assert reopened.get(kept) is not None
     assert (jobs_dir / kept / "job.json").is_file()
-    assert (jobs_dir / ORDER_NAME).is_file()
 
 
 def test_a_half_written_record_lands_where_the_sweep_looks(tmp_path,
@@ -1650,7 +1050,7 @@ def test_a_half_written_record_lands_where_the_sweep_looks(tmp_path,
     for leftover in (shared, inside):
         os.utime(leftover, (stale, stale))
 
-    reopened = JobStore(data, max_age_seconds=3600)
+    reopened = JobStore(data, stranger_max_age_seconds=3600)
     assert not shared.exists()
     assert inside.exists()
     assert reopened.get(job_id) is not None
@@ -1722,103 +1122,32 @@ def test_a_flooded_registry_does_not_flood_the_log(tmp_path):
     finally:
         logger.remove(sink)
 
-    # TWO lines, and neither of them counts up: the sweep's aggregate, and the
-    # one saying the order names none of these thirty directories. Both are
-    # per-START rather than per-entry, which is the property under test — the
+    # ONE line, and it does not count up: the sweep's aggregate, written
+    # per-START rather than per-entry. That is the property under test — the
     # number of warnings must not be a number a build gets to choose.
-    assert len(said) == 2, (
+    assert len(said) == 1, (
         f"the start wrote {len(said)} warnings for 30 planted directories; a "
         f"build gets to choose that number")
-    swept = [line for line in said if "past the job age ceiling" in line]
-    orderless = [line for line in said if "no order to put them in" in line]
-    assert len(swept) == 1 and "30" in swept[0]
-    assert len(orderless) == 1 and "30" in orderless[0]
-
-
-def test_the_number_of_records_one_start_reads_is_bounded(tmp_path,
-                                                          monkeypatch):
-    """MAX_RECORD_BYTES bounded ONE record; nothing bounded how many.
-
-    `data/jobs/` is writable by every build, so how many directories are in it
-    is decided by whatever last wrote to the volume — and the load used to read
-    every one of them into memory before the first prune ran. 2000 planted
-    records at the largest size the reader accepts came to 128 MiB of heap on a
-    start, an amplification of roughly 1:1 with the disk they occupied. A build
-    that filled the volume would therefore decide how much memory the hub needs
-    to come up, which is the one outcome this registry may not have: a hub that
-    does not start, from the same volume, every time.
-
-    The bound is `_max_order_entries` — `max_jobs` plus the jobs in flight that
-    `_prune_locked` exempts — and NOT `max_jobs`, which is the narrower number
-    this used to be cut at. Both are numbers the hub picks and the volume cannot
-    move, which is all the memory argument needs; what the wider one buys is in
-    the test below this one.
-    """
-    data = tmp_path / "data"
-    ceiling = 5
-    entries = (ceiling + jobs_module.MAX_QUEUED_JOBS
-               + jobs_module.MAX_CONCURRENT_BUILDS)
-    total = entries + 7          # longer than any order this hub could write
-    roomy = JobStore(data, max_jobs=total + 1)
-    made = []
-    for index in range(total):
-        record = roomy.create("proj1", f"c{index}")
-        roomy.finish(record["id"], state=STATE_DONE, code=201,
-                     build_url=f"/project/proj1/c{index}/")
-        made.append(record["id"])
-    # ...and twenty directories a build made up, each holding a record that is
-    # entirely well formed. They are not in the order file, which is the only
-    # thing that separates them from the real ones.
-    planted = [f"p{index:02d}".ljust(22, "x") for index in range(20)]
-    for job_id in planted:
-        _plant_job(data, job_id, state=STATE_DONE)
-
-    read = []
-    real_read = jobs_module._read_record
-    monkeypatch.setattr(
-        jobs_module, "_read_record",
-        lambda path: (read.append(path), real_read(path))[1])
-    reopened = JobStore(data, max_jobs=ceiling)
-    monkeypatch.undo()
-
-    unnamed = made[:total - entries]     # dropped by the ORDER entry ceiling
-    assert len(read) == entries, (
-        f"the start read {len(read)} records with {total + len(planted)} "
-        f"directories on the volume; how many are there is not a number this "
-        f"hub decides")
-    assert not any(Path(path).parent.name in set(planted) for path in read)
-    assert [job_id for job_id in made
-            if reopened.get(job_id) is not None] == made[-ceiling:]
-    # The jobs past the ceiling are gone from the volume, not merely unread —
-    # retention has always removed them, and reading fewer must not turn that
-    # into a leak.
-    assert _job_dirs(data) == sorted(unnamed + made[-ceiling:] + planted)
-    # The planted ones are left for the age sweep, which is where a directory
-    # that is not a job of this registry has always gone: retention deletes this
-    # hub's OWN surplus, never somebody's evidence. So are the real jobs the
-    # order file was too short to name — being unnamed is what makes them
-    # strangers, and a stranger is collected by age.
-    assert _volume_order(data) == made[-ceiling:]
+    assert "past the stranger age ceiling" in said[0]
+    assert "30" in said[0]
 
 
 def test_a_corrupted_record_does_not_take_a_real_job_down_with_it(tmp_path):
-    """The cut before the read is by POSITION, so it cannot see a bad record.
+    """A build that corrupts N records costs the registry exactly those N.
 
-    "Everything past the cut is what `_prune_locked` would drop anyway" is true
-    of records that can be READ. One that cannot never reaches `self._records`,
-    so `_prune_locked` counts one fewer and keeps one fewer, while the cut has
-    already deleted by position. Cut at `max_jobs`, corrupting N records at the
-    newest end therefore cost up to N real jobs at the oldest end — and the
-    build chose both N and which ones. Twenty jobs, a ceiling of five and five
-    broken `job.json` emptied the registry completely: the fifteen oldest were
-    deleted unread, and the five that were read were the five that were broken.
+    This used to be false, and the way it was false is worth keeping a test for.
+    A count ceiling was applied BEFORE the records were read, by position, so it
+    could not know which of them would turn out to be unreadable: corrupting
+    five records at one end deleted five real jobs at the other, and the build
+    chose both the number and which ones. Twenty jobs, a ceiling of five and
+    five broken `job.json` emptied the registry completely.
 
-    The cut is `_max_order_entries` wide now, which is the longest order this
-    hub could have written, so it can never remove an entry the hub itself put
-    there and `_prune_locked` does the whole of retention after the read.
+    There is no count ceiling at all now (SPEC 5.3), so the arithmetic that made
+    that possible is gone — but the property it was supposed to have is the one
+    to assert, because it is what any future ceiling would have to preserve.
     """
     data = tmp_path / "data"
-    store = JobStore(data, max_jobs=20)
+    store = JobStore(data)
     made = []
     for index in range(20):
         record = store.create("proj1", f"c{index}")
@@ -1830,12 +1159,11 @@ def test_a_corrupted_record_does_not_take_a_real_job_down_with_it(tmp_path):
     for job_id in broken:
         (data / "jobs" / job_id / "job.json").write_bytes(b"not a record")
 
-    reopened = JobStore(data, max_jobs=5)
+    reopened = JobStore(data)
 
     survivors = [job_id for job_id in made if reopened.get(job_id) is not None]
-    assert survivors == made[-10:-5], (
-        "the registry did not keep the five newest READABLE jobs; a build that "
-        "corrupted five records chose which real jobs went with them")
+    assert survivors == made[:-5], (
+        "a build that corrupted five records took real jobs down with them")
     # The broken ones are not believed and not deleted on the spot either —
     # being unreadable is not proof of who wrote it, so they go by age like any
     # other stranger.
@@ -1852,8 +1180,8 @@ def test_a_job_the_volume_refuses_to_record_leaves_nothing_in_memory(
     memory and memory is what every status poll is answered from. `create` has
     nobody to serve: the push is answered 500 and the id never reaches the
     pusher. A record inserted before a write that then failed would therefore
-    sit in memory until the process ends — `_prune_locked` only ever drops a
-    TERMINAL job, and nothing is ever going to finish this one.
+    sit in memory until the process ends, `queued`, for a build nobody is
+    running.
     """
     store = JobStore(tmp_path / "data")
     issued = "K" * 22
@@ -2008,40 +1336,6 @@ def test_a_registry_the_volume_will_not_list_does_not_stop_the_hub_starting(
     assert JobStore(data).get(kept)["state"] == STATE_DONE
 
 
-def test_a_stamp_the_platform_cannot_convert_does_not_stop_the_hub_starting(
-        tmp_path, monkeypatch):
-    """The same shape as the planted `NaN`, one function further down.
-
-    `_epoch` runs from `_prune_locked` <- `_load` <- `JobStore.__init__` <-
-    `create_server` <- `main()`, so anything it lets escape is a hub that does
-    not come up — from the same volume, on every start, for ever. Parsing is not
-    the only step that can fail: `datetime.timestamp()` raises `OverflowError`
-    or `OSError` on the extreme years, depending on the platform doing the
-    conversion, and the years come off a volume every build can write.
-    """
-    data = tmp_path / "data"
-    JobStore(data)
-    _plant_job(data, "T" * 22, state=STATE_DONE,
-               created="0001-01-01T00:00:00Z")
-
-    class ExplodingDatetime:
-        """A conversion that fails the way a platform's own can."""
-
-        @staticmethod
-        def strptime(*_args, **_kw):
-            return ExplodingDatetime()
-
-        def replace(self, **_kw):
-            return self
-
-        def timestamp(self):
-            raise OverflowError("timestamp out of range for platform time_t")
-
-    monkeypatch.setattr(jobs_module, "datetime", ExplodingDatetime)
-    # The assertion is that this returns at all.
-    JobStore(data)
-
-
 def test_the_biggest_log_a_build_can_hand_over_is_served_whole(tmp_path):
     """The read ceiling has to fit what the WRITE path can produce.
 
@@ -2166,7 +1460,7 @@ def test_a_failure_after_the_rename_still_reports_the_build_as_published(
         hub_factory, monkeypatch):
     """The rename IS the publication; what follows it is bookkeeping.
 
-    `latest`, retention, the picker and the index are all recomputed from disk
+    `latest`, the picker and the index are all recomputed from disk
     by the next publish, so a failure in them is recoverable. Reporting the job
     as failed is not: the build is at its permanent URL and `latest` may already
     name it, and CI would be told to push a commit that is live.
@@ -2259,16 +1553,21 @@ def test_stopping_the_pool_takes_the_queued_sources_with_it(tmp_path):
         sources = data / f"{SOURCE_PREFIX}{index:032x}"
         sources.mkdir(parents=True)
         (sources / "model.py").write_text("# a pushed source tree\n")
+        body = _accepted_body(data, index)
         record = jobs.create("proj1", f"c{index}")
         assert pool.submit(BuildTask(
             job_id=record["id"], pid="proj1", commit=f"c{index}",
-            sources=sources, digest=f"digest-{index}")) == SUBMIT_ACCEPTED
-        queued.append((record["id"], sources))
+            sources=sources, archive=body,
+            digest=f"digest-{index}")) == SUBMIT_ACCEPTED
+        queued.append((record["id"], sources, body))
 
     pool.shutdown()
 
-    for job_id, sources in queued:
+    for job_id, sources, body in queued:
         assert not sources.exists(), "an unpacked source tree outlived the stop"
+        # And the body it came out of, which is owned exactly the same way: this
+        # task never published, so it is not the code of any revision.
+        assert not body.exists(), "a pushed body outlived the stop"
         record = jobs.get(job_id)
         assert record["state"] == STATE_FAILED, job_id
         # 503 and "push again": nothing was wrong with the push.
@@ -2401,6 +1700,7 @@ def test_a_task_a_worker_already_took_is_not_torn_down_by_the_stop(tmp_path):
     try:
         assert pool.submit(BuildTask(
             job_id=record["id"], pid="proj1", commit="c2", sources=sources,
+            archive=_accepted_body(data, 2),
             digest="digest-2")) == SUBMIT_ACCEPTED, (
             "the stop reported a refusal for a task a worker already had, so "
             "the request thread is about to delete a live build's sources")
@@ -2491,7 +1791,7 @@ def test_a_push_handed_over_after_the_stop_began_is_refused(tmp_path):
 
     assert pool.submit(BuildTask(
         job_id=record["id"], pid="proj1", commit="c0", sources=sources,
-        digest="digest-0")) == SUBMIT_STOPPED
+        archive=_accepted_body(data, 0), digest="digest-0")) == SUBMIT_STOPPED
     # Answered by `submit` itself: the task never entered the queue, so no drain
     # is ever going to find it and say so.
     answered = jobs.get(record["id"])
@@ -2525,17 +1825,19 @@ def test_a_push_that_races_the_drain_is_taken_back_out_of_the_queue(tmp_path):
     sources = data / f"{SOURCE_PREFIX}{1:032x}"
     sources.mkdir(parents=True)
     (sources / "model.py").write_text("# a pushed source tree\n")
+    body = _accepted_body(data, 1)
     record = jobs.create("proj1", "c1")
 
     assert pool.submit(BuildTask(
         job_id=record["id"], pid="proj1", commit="c1", sources=sources,
-        digest="digest-1")) == SUBMIT_STOPPED
+        archive=body, digest="digest-1")) == SUBMIT_STOPPED
     # And the task was answered rather than merely refused: its sources are gone
     # and its job says what happened, which is the last thing the hub can say.
     # Note WHO answered it: `shutdown`'s drain, running inside `put_nowait`, not
     # the drain `submit` runs afterwards — which by then finds an empty queue.
     # That is the case the shared record of dropped ids exists for.
     assert not sources.exists()
+    assert not body.exists()
     assert jobs.get(record["id"])["state"] == STATE_FAILED
     assert jobs.get(record["id"])["error"] == STOPPED_ERROR
 
@@ -2550,9 +1852,9 @@ def test_a_submit_whose_drain_throws_still_answers_its_job(tmp_path,
     things at once, and the second is the permanent one. The pusher gets a 500
     out of the request handler — recoverable, they retry. The task stays in a
     queue no worker will read again, so its job stays `queued` FOR EVER: nothing
-    else answers a task the drain did not take, retention drops only terminal
-    jobs (`_prune_locked`), and the slot it holds against MAX_JOBS therefore
-    comes back only with a restart.
+    else answers a task the drain did not take, and nothing here ever fails a
+    job on its own, so the `queued` it is left in comes back only with a
+    restart.
 
     So a drain that threw is not read as "a worker has it". It cannot be — the
     drain did not finish, so the task may equally be sitting in a queue nobody
@@ -2584,10 +1886,9 @@ def test_a_submit_whose_drain_throws_still_answers_its_job(tmp_path,
     # The assertion is first of all that this RETURNS rather than raising.
     assert pool.submit(BuildTask(
         job_id=record["id"], pid="proj1", commit="c1", sources=sources,
-        digest="digest-2")) == SUBMIT_STOPPED
-    # And that the job is terminal, so it neither holds a MAX_JOBS slot for the
-    # life of the process nor leaves a pusher polling a status that will never
-    # change again.
+        archive=_accepted_body(data, 2), digest="digest-2")) == SUBMIT_STOPPED
+    # And that the job is terminal, so it does not leave a pusher polling a
+    # status that will never change again.
     answered = jobs.get(record["id"])
     assert answered["state"] == STATE_FAILED
     assert answered["code"] == RESTART_CODE

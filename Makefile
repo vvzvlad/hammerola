@@ -144,6 +144,28 @@ test: install ## Run both test suites: pytest always, the JS suite when npm is p
 run: install ## Run the application (auto-creates .venv if missing)
 	$(PY) main.py
 
+# --- The client --------------------------------------------------------------
+# `hammerola` on PATH, so a model directory can be published without knowing
+# where this checkout is. A SYMLINK and not a copy: the tool then moves with the
+# checkout, which is the whole point until self-update exists (SPEC §8, 26).
+#
+# NOT a prerequisite of anything, and it does not touch $(VENV): src/client/
+# imports nothing outside the standard library — see bin/hammerola for why the
+# shebang is the system python3 and why there is no pyproject entry point yet.
+#
+# ~/.local/bin because that is the per-user directory on PATH on both platforms
+# this is used from; the echo says so rather than assuming, since a shell that
+# does not have it on PATH gives "command not found" with nothing pointing at
+# the cause.
+CLIENT_BIN ?= $(HOME)/.local/bin
+
+.PHONY: client
+client: ## Symlink the `hammerola` command into ~/.local/bin
+	mkdir -p $(CLIENT_BIN)
+	ln -sf $(CURDIR)/bin/hammerola $(CLIENT_BIN)/hammerola
+	@echo "hammerola -> $(CURDIR)/bin/hammerola"
+	@echo "Make sure $(CLIENT_BIN) is on your PATH, then: hammerola build --help"
+
 # --- Frontend ----------------------------------------------------------------
 # The browser bundle is BUILT, never committed — see .gitignore for why — so it
 # has to be produced twice, by two toolchains that must not disagree: here for a

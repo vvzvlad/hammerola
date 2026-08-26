@@ -16,10 +16,17 @@ Routing (SPEC 3, 7.4):
     GET  /project/<pid>/dev/<file>            the local slot, no-cache
     GET  /project/<pid>/<commit>/<file>       one build's files, immutable forever
     GET  /project/<pid>/<commit>/             the page shell, from the template
-    POST /api/v1/publish/<pid>/<commit>       accept a push, 202 + a job
+    POST /api/v1/publish/<pid>                accept a push, 202 + a job; the
+                                              HUB names the revision and the
+                                              reply says which name
+    POST /api/v1/publish/<pid>/<commit>       same, under a name the caller
+                                              chose
     POST /api/v1/publish/<pid>/dev            same, into the local slot
     GET  /api/v1/jobs/<id>                    how that build is going  PUBLISH_TOKEN
     GET  /api/v1/jobs/<id>/log                what the build printed   PUBLISH_TOKEN
+
+    GET  /api/v1/sources/<revision>           the code that built it   PUBLISH_TOKEN
+    GET  /api/v1/sources/<revision>/log       and what it printed      PUBLISH_TOKEN
 
     POST /api/v1/comments/<pid>/<commit>      leave a comment — PUBLIC, no token
     GET  /api/v1/comments                     the queue          COMMENT_READ_TOKEN
@@ -31,6 +38,12 @@ Routing (SPEC 3, 7.4):
 The comment endpoints are the only asymmetric ones on the service: writing is open
 to anyone with the URL and reading is not (SPEC 7A.2). Everything unusual about
 `_handle_comment_post` below follows from that one fact.
+
+THE CODE OF A REVISION IS THE ONE THING THE SITE SERVES THAT IS NOT PUBLIC. A
+build directory is world-readable and cached for a year; the sources that
+produced it are behind PUBLISH_TOKEN and live in a tree the file server cannot
+reach at all (SPEC 8, entry 17). The hub is a forge, so it has to HOLD the code —
+that is not the same as showing it.
 
 A PUSH IS TWO THINGS NOW, and the split runs right through `_handle_post`. What
 arrives is a model's SOURCE, and the hub builds it (SPEC 8A.2 step 5), which is
@@ -340,6 +353,8 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     return self._serve_comments(segments[3:], query, with_body)
                 if segments[:3] == ["api", "v1", "jobs"]:
                     return self._serve_jobs(segments[3:], with_body)
+                if segments[:3] == ["api", "v1", "sources"]:
+                    return self._serve_sources(segments[3:], with_body)
             except (BrokenPipeError, ConnectionResetError):
                 # The browser navigated away mid-download, or the client reset
                 # the connection. Ordinary during a 2 MB view fetch, not an error
@@ -374,7 +389,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             return bool(name) and not name.startswith(".") and "/" not in name
 
         def _send_file(self, path: Path, cache: str, with_body: bool,
-                       uploaded: bool = False):
+                       uploaded: bool = False, content: tuple | None = None):
             """Stream a file, refusing anything that resolves outside the store.
 
             The path was already assembled from whitelisted segments, so this
@@ -385,7 +400,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             question is not "is there a symlink" but "where did it land".
 
             `uploaded` says whether the bytes came out of a push, which decides
-            how narrowly the content type is whitelisted.
+            how narrowly the content type is whitelisted. `content` overrides
+            both the type and the extra headers outright, for the one file whose
+            type is not a property of its NAME: a revision's source archive is
+            served as an opaque attachment whatever it is called.
             """
             try:
                 resolved = path.resolve(strict=True)
@@ -394,9 +412,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 return self._error(404, "not found", with_body=with_body)
 
             # Opened BEFORE the first header goes out. stat-then-open leaves a
-            # window in which retention deletes the build between the two, and
-            # the client then gets a Content-Length with nothing behind it while
-            # the log gets a traceback for a situation that is entirely normal.
+            # window in which the file disappears between the two — the `dev`
+            # slot being swapped, or somebody clearing space by hand — and the
+            # client then gets a Content-Length with nothing behind it while the
+            # log gets a traceback for a situation that is entirely normal.
             try:
                 handle = open(resolved, "rb")
             except OSError:
@@ -405,7 +424,9 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 info = os.fstat(handle.fileno())
                 if not stat.S_ISREG(info.st_mode):
                     return self._error(404, "not found", with_body=with_body)
-                if uploaded:
+                if content is not None:
+                    ctype, extra = content
+                elif uploaded:
                     ctype, extra = build_content_type(resolved.name)
                 else:
                     ctype, extra = content_type_for(resolved.name), {}
@@ -500,8 +521,9 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
 
             404 for a project nobody has ever pushed, rather than a page that
             resolves to a 404 one navigation later. The directory is the test,
-            not a build inside it: a project whose builds retention has taken is
-            still a project, and `latest` is the honest thing to answer with.
+            not a build inside it: a project whose builds somebody has cleared
+            out by hand is still a project, and `latest` is the honest thing to
+            answer with.
             """
             if not (store.projects_dir / pid).is_dir():
                 return self._error(404, "not found", with_body=with_body)
@@ -717,7 +739,8 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     return self._handle_comment_resolve(segments[3])
                 return self._handle_comment_post(segments[3], segments[4])
 
-            if segments[:3] != ["api", "v1", "publish"] or len(segments) != 5:
+            if segments[:3] != ["api", "v1", "publish"] or \
+                    len(segments) not in (4, 5):
                 return self._error(404, "not found", {"Connection": "close"})
 
             # Auth BEFORE the body is read: an unauthenticated caller must not be
@@ -748,7 +771,22 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     f"body is {length} bytes, limit is {max_build_bytes}",
                     {"Connection": "close"})
 
-            pid, commit = segments[3], segments[4]
+            pid = segments[3]
+            # FOUR SEGMENTS IS THE MINTING ROUTE and five is the named one, and
+            # the missing segment is the whole difference: the pusher has no name
+            # for this revision, so the hub makes one out of the sources it
+            # receives (`Store.mint_revision`). `dev` arrives as a name like any
+            # other and stays the local slot (SPEC 7.6).
+            #
+            # A path segment rather than a query parameter or a header, because
+            # the ABSENCE of the id is what is being expressed and a URL says
+            # that by not having it. It also keeps the one rule this endpoint has
+            # always had: where a build lands is decided by the URL, never by the
+            # body.
+            commit = segments[4] if len(segments) == 5 else None
+            # For the log lines BEFORE the sources are hashed, where there is no
+            # name yet on the minting route.
+            target = f"{pid}/{commit}" if commit is not None else f"{pid} (new)"
 
             # Reading the body, unpacking it and hashing it all cost real memory
             # and disk, and nothing above this point limits how many connections
@@ -757,7 +795,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             # cannot do.
             if not publish_slots.acquire(timeout=PUBLISH_WAIT_SECONDS):
                 logger.warning(
-                    f"publish {pid}/{commit} refused: no free slot after "
+                    f"publish {target} refused: no free slot after "
                     f"{PUBLISH_WAIT_SECONDS}s")
                 return self._error(
                     503, "too many publishes in flight, retry later",
@@ -769,7 +807,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     if problem is not None:
                         status, message = problem
                         logger.warning(
-                            f"publish {pid}/{commit} refused: {message}")
+                            f"publish {target} refused: {message}")
                         # Closed, like every other refusal that leaves bytes
                         # unread: on a keep-alive connection the remains of the
                         # body would be parsed as the next request.
@@ -786,7 +824,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     accepted = store.accept_sources(pid, commit, spool, length)
                 except PublishError as error:
                     logger.warning(
-                        f"publish {pid}/{commit} refused: {error.message}")
+                        f"publish {target} refused: {error.message}")
                     return self._error(error.status, error.message)
                 except (BrokenPipeError, ConnectionResetError):
                     # Handed to do_POST above rather than to `except Exception`
@@ -795,15 +833,15 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     # traceback from trying to answer on the closed socket.
                     raise
                 except Exception:
-                    logger.exception(f"publish {pid}/{commit} failed")
+                    logger.exception(f"publish {target} failed")
                     return self._error(500, "internal error")
                 finally:
                     spool.unlink(missing_ok=True)
-                return self._queue_build(pid, commit, accepted)
+                return self._queue_build(pid, accepted, minted=commit is None)
             finally:
                 publish_slots.release()
 
-        def _queue_build(self, pid: str, commit: str, accepted):
+        def _queue_build(self, pid: str, accepted, *, minted: bool):
             """Hand an accepted source tree to the build pool. 200, 202 or 503.
 
             200 rather than 202 when this exact push is already published: the
@@ -825,7 +863,21 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             called, so answering inside the `try` left a window — short, and real
             — in which the pusher had its 200, 409 or 503 and an unpacked source
             tree was still sitting on the volume with nobody owning it.
+
+            `minted` says the hub chose the name, and it decides one thing: the
+            reply then carries `revision`, because the pusher has no other way to
+            learn it. TWO IDENTIFIERS LEAVE HERE ON A 202 AND THEY ARE NOT THE
+            SAME KIND OF THING — `job` addresses this BUILD (its progress, its
+            log; it is unpredictable and per-attempt), `revision` addresses what
+            the build will PUBLISH (permanent, immutable, the thing that gets
+            pasted into a chat). A second push of the same sources gets a
+            different job and the same revision, which is the whole point.
             """
+            commit = accepted.commit
+            # Only on the minting route: on the named one the caller already
+            # knows the id it chose, and adding it would change a reply every
+            # existing pusher parses.
+            named = {"revision": commit} if minted else {}
             handed_over = False
             job_id = None
             reply = None            # (status, payload, extra headers)
@@ -833,13 +885,14 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 settled = store.settled(pid, commit, accepted.digest)
                 if settled is not None:
                     status, payload = settled
-                    reply = (status, payload, None)
+                    reply = (status, {**payload, **named}, None)
                 else:
                     record = jobs.create(pid, commit)
                     job_id = record["id"]
                     outcome = builds.submit(BuildTask(
                         job_id=job_id, pid=pid, commit=commit,
-                        sources=accepted.sources, digest=accepted.digest))
+                        sources=accepted.sources, archive=accepted.archive,
+                        digest=accepted.digest))
                     if outcome == SUBMIT_ACCEPTED:
                         handed_over = True
                         status_url = f"/api/v1/jobs/{job_id}"
@@ -850,7 +903,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                         # created is over there.
                         reply = (202,
                                  {"job": job_id, "status_url": status_url,
-                                  "log_url": f"{status_url}/log"},
+                                  "log_url": f"{status_url}/log", **named},
                                  {"Location": status_url})
                     elif outcome == SUBMIT_QUEUE_FULL:
                         # Refused rather than queued, and the job says so rather
@@ -896,11 +949,24 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 self._fail_handover(job_id, handed_over)
                 reply = (500, {"error": "internal error"}, None)
             finally:
-                # The worker owns the tree from the moment it is submitted, and
-                # nobody does before that — including on the paths where this
-                # answered 200, 409 or 503.
+                # The worker owns the tree AND the body it came out of from the
+                # moment the task is submitted, and nobody does before that —
+                # including on the paths where this answered 200, 409 or 503.
+                # None of those paths builds anything, so none of them publishes
+                # a revision, so the body is not the code of one: it goes.
                 if not handed_over:
                     shutil.rmtree(accepted.sources, ignore_errors=True)
+                    try:
+                        accepted.archive.unlink(missing_ok=True)
+                    except OSError:
+                        # Swallowed like `rmtree`'s failures right above it: this
+                        # is a `finally` whose caller still has a reply to send,
+                        # and a volume that will not take the unlink must not
+                        # turn a 200 into a dropped connection. The leftover is
+                        # dot-prefixed and swept by `Store._sweep_leftovers`.
+                        logger.exception(
+                            f"publish {pid}: the accepted body could not be "
+                            f"removed after the push was answered")
 
             status, payload, extra = reply
             return self._json(status, payload, CACHE_NONE, extra)
@@ -910,10 +976,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
 
             The window is two statements wide — `jobs.create` returns, and
             `builds.submit` is next — and the invariant it protects has no
-            window in it: a job that never becomes terminal is one
-            `_prune_locked` will not drop (it only ever drops a FINISHED job),
-            so it holds a MAX_JOBS slot until the hub restarts while the status
-            endpoint answers `queued` about a build nobody is running. Every
+            window in it: a job that never becomes terminal is one nothing can
+            reclaim — the status endpoint answers `queued` about a build nobody
+            is running, and goes on doing so until the hub restarts and `_load`
+            fails it. Every
             other outcome of `_queue_build` already answers its job — the queue
             was full, the pool was stopping, a worker took it — and this is the
             one that used to answer nothing, because both handlers were written
@@ -978,6 +1044,70 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             payload["log_url"] = f"/api/v1/jobs/{job_id}/log"
             return self._json(200, payload, CACHE_NONE, with_body=with_body)
 
+        # -- the code of a revision ------------------------------------
+        def _serve_sources(self, rest: list[str], with_body: bool):
+            """GET /api/v1/sources/<revision>[/log] (SPEC 8, entry 17).
+
+            THE CODE IS NOT PUBLIC, and this is the only way out of the store.
+            Behind PUBLISH_TOKEN — the same secret that publishes, because there
+            is one secret on this service and holding it means being allowed to
+            do anything — and checked BEFORE the revision is looked at, so the
+            difference between 401 and 404 cannot be used to find out which
+            revisions the hub has the code of.
+
+            EVERY MISS IS THE SAME 404: a revision that was never published, one
+            whose build failed, one this hub stored before somebody removed the
+            file by hand, and a segment that is not a revision id at all. The
+            hub does not confirm what it holds — a build page is public, so
+            "which revisions exist" is already known, but "whose code is on
+            disk" is a different question and this endpoint answers it only by
+            handing the code over.
+
+            The archive decides existence, not the directory (`source_archive`):
+            a directory holding only a log is what a rename killed half way
+            through leaves, and it must read as absent rather than as half a
+            revision.
+            """
+            if not self._require_token(publish_token, with_body):
+                return None
+            if not rest or len(rest) > 2:
+                return self._error(404, "not found", with_body=with_body)
+            if len(rest) == 2 and rest[1] != "log":
+                return self._error(404, "not found", with_body=with_body)
+
+            revision = rest[0]
+            # The same alphabet a build directory is named with, and for the same
+            # reason: a revision id IS a build id (SPEC 7.7 — the hub names a
+            # revision after the digest of its sources). So nothing here can
+            # carry a separator or a dot component, and the path below is one
+            # segment deep by construction.
+            if not store.valid_build_id(revision):
+                return self._error(404, "not found", with_body=with_body)
+            archive = store.source_archive(revision)
+            if not archive.is_file():
+                return self._error(404, "not found", with_body=with_body)
+
+            if len(rest) == 2:
+                # text/plain for the same reason the job log is: this is output
+                # the MODEL produced, on an origin that serves everybody's
+                # builds. An empty body rather than a 404 when the log is
+                # missing — the code is there, so the revision is, and 404 would
+                # say something different and untrue.
+                log = store.source_log(revision)
+                body = log.read_bytes() if log.is_file() else b""
+                return self._send(200, body, "text/plain; charset=utf-8",
+                                  CACHE_NONE, with_body=with_body)
+
+            # An opaque attachment, never a type a browser will act on: these are
+            # bytes a pusher supplied, handed back whole. The filename is built
+            # from the revision, which has just been through the id whitelist, so
+            # there is nothing in it to quote or escape.
+            return self._send_file(
+                archive, CACHE_NONE, with_body,
+                content=(OCTET_TYPE, {
+                    "Content-Disposition":
+                        f'attachment; filename="{revision}.tar.gz"'}))
+
         # -- comment queue, write side ---------------------------------
         def _handle_comment_resolve(self, cid: str):
             """POST /api/v1/comments/<id>/resolve — the agent closing an item."""
@@ -1040,9 +1170,9 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 return self._error(404, "not found", {"Connection": "close"})
             # The build has to exist. A comment on a build that was never
             # published is spam by construction — nobody can have been looking at
-            # it. The reverse is explicitly fine: a comment whose build retention
-            # later deletes stays in the queue (SPEC 7A.3), because the check is
-            # here, at write time, and nothing revisits it.
+            # it. The reverse is explicitly fine: a comment whose build somebody
+            # later removes by hand stays in the queue (SPEC 7A.3), because the
+            # check is here, at write time, and nothing revisits it.
             if not (store.projects_dir / pid / commit / "meta.json").is_file():
                 return self._error(404, "not found", {"Connection": "close"})
 
@@ -1220,12 +1350,11 @@ def create_server(settings, *, build_runner=None, build_workers=None,
     """
     store = Store(
         data_dir=settings.data_dir,
-        retention_builds=settings.retention_builds,
         max_build_bytes=settings.max_build_bytes,
     )
-    # A separate tree under the same data directory, and a separate object: the
-    # comment queue outlives the builds it points at, so retention must have no
-    # way to reach it (SPEC 7A.3).
+    # A separate tree under the same data directory, and a separate object: a
+    # comment is not part of the build it is about, so it must not inherit that
+    # directory's year of `immutable` or its public reach (SPEC 7A.3).
     comment_store = CommentStore(
         data_dir=settings.data_dir,
         max_per_build=settings.comment_max_per_build,

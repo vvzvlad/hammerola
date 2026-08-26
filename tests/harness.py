@@ -49,12 +49,11 @@ READ_TOKEN = "test-comment-read-token"
 NOTHING = object()
 
 
-def settings_for(data_dir, retention_builds=20,
-                 max_build_bytes=8 * 1024 * 1024, **overrides):
+def settings_for(data_dir, max_build_bytes=8 * 1024 * 1024, **overrides):
     """A settings-shaped object, without touching the process environment.
 
     src.settings builds its singleton at import time from real env vars; a test
-    that needed to vary retention would have to re-import the module. Everything
+    that needed to vary a ceiling would have to re-import the module. Everything
     downstream only reads attributes, so a namespace is a faithful stand-in.
 
     `overrides` carries the comment ceilings (SPEC 7A.4). They are keyword
@@ -68,7 +67,6 @@ def settings_for(data_dir, retention_builds=20,
         host="127.0.0.1",
         port=0,  # ask the OS for a free port, then read back which one
         data_dir=str(data_dir),
-        retention_builds=retention_builds,
         max_build_bytes=max_build_bytes,
         comment_max_text_chars=4000,
         comment_max_photo_bytes=1024 * 1024,
@@ -124,6 +122,11 @@ class Hub:
         followed to its job and turned back into the answer that job reached,
         which is the one nearly every test in this suite is asking about. Use
         `publish_async` when the handover itself is the subject.
+
+        `commit=None` posts to the MINTING route — the URL with no name in it,
+        where the hub makes one out of the sources. The reply of a finished job
+        carries the name it chose in `record["commit"]`; the reply of the PUSH
+        carries it in `revision`, which only `publish_async` can show.
         """
         reply = self.publish_async(pid, commit, body, token=token)
         if reply.status_code != 202:
@@ -135,7 +138,10 @@ class Hub:
         headers = {"Content-Type": "application/gzip"}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
-        return httpx.post(f"{self.url}/api/v1/publish/{pid}/{commit}",
+        path = f"/api/v1/publish/{pid}"
+        if commit is not None:
+            path = f"{path}/{commit}"
+        return httpx.post(f"{self.url}{path}",
                           content=body, headers=headers, timeout=30,
                           trust_env=self.TRUST_ENV)
 

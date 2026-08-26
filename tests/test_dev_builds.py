@@ -61,8 +61,8 @@ def test_three_pushes_leave_one_directory_and_no_history(hub):
 
     Minting an id per payload made every local attempt a build of its own: they
     landed in `builds.json`, showed up in the build picker as `dev-e9a448df778c`
-    next to real commits, and piled up until a retention window nobody wanted to
-    tune knocked them off. A working copy is not a version of anything.
+    next to real commits, and piled up there for good. A working copy is not a
+    version of anything.
     """
     for marker in ("v1", "v2", "v3"):
         assert hub.publish_dev("proj1", _build(marker)).status_code == 201
@@ -185,15 +185,15 @@ def test_a_project_with_only_a_local_build_has_no_latest(hub):
     assert hub.get("/project/proj1/dev/meta.json").status_code == 200
 
 
-def test_local_pushes_never_reach_commit_retention(hub_factory):
+def test_local_pushes_never_touch_the_commit_history(hub):
     """An evening at the laptop is twenty-odd pushes, and none of them count.
 
-    There is nothing left to count them against: the slot is one directory that
-    is overwritten, so it can neither fill a retention window nor be pushed out
-    of one. That is what removed RETENTION_DEV_BUILDS along with the second
-    bucket it existed to size.
+    The slot is one directory that every push overwrites, so thirty local
+    pushes leave the commit side of the project exactly as they found it: the
+    same directories, the same `latest`, the same picker. That is what removed
+    RETENTION_DEV_BUILDS long before retention itself went; there was never a
+    second bucket for it to size.
     """
-    hub = hub_factory(retention_builds=5)
     commits = [f"c{i}" for i in range(1, 5)]
     for i, commit in enumerate(commits, start=1):
         hub.publish("proj1", commit, _build(f"c{i}", f"2026-08-0{i}T00:00:00Z"))
@@ -258,10 +258,9 @@ def test_a_commit_may_now_be_called_dev_1234(hub):
     """The `dev-` PREFIX is no longer reserved, and nothing needs it to be.
 
     It was reserved for exactly one reason: local ids were `dev-<digest>`, so a
-    commit called `dev-1234` would have been counted in the local retention
-    bucket and dropped after two pushes — a permanent URL quietly turned into a
-    temporary one. There is no local bucket now, so the rule went with it and
-    `dev-1234` is an ordinary commit id.
+    commit called `dev-1234` would have been filed with the throwaway local
+    builds instead of with the real ones. There is no bucket of local builds
+    now, so the rule went with it and `dev-1234` is an ordinary commit id.
     """
     assert hub.publish("proj1", "dev-1234", good_build("one")).status_code == 201
     assert hub.get("/project/proj1/dev-1234/assembled.json").content == \

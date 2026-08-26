@@ -111,7 +111,9 @@ services:
       # only where the deployment disagrees with it. DATA_DIR must match the mount
       # point of the volume declared above.
       DATA_DIR: /app/data
-      # RETENTION_BUILDS: 20      # newest commit builds kept per project (SPEC 7.3)
+      # No retention variable exists: a published build is never deleted
+      # (SPEC 5.3, 7.3), so the volume below grows monotonically and is cleared
+      # by hand when it has to be.
       # MAX_BUILD_BYTES: 67108864 # 64 MiB ceiling on one uploaded build
       # The ceilings on the PUBLIC comment endpoint (SPEC 7A.4). Defaults are in
       # src/settings.py; set them here only to tighten a specific one.

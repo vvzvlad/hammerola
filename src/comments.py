@@ -8,10 +8,16 @@ under COMMENT_READ_TOKEN. Layout (SPEC 7A.3):
     <data>/comments/<pid>/<id>.<ext>         the photo, if one came with it
     <data>/comments/<pid>/<id>.shot.<ext>    the viewer's own render of the frame
 
-Deliberately OUTSIDE the build directory. Retention (SPEC 7.3) deletes old builds
-and a comment outlives its build: a part name and a coordinate still mean
-something ten commits later. A comment on a deleted build stays readable; only the
-link back to the frame stops opening.
+Deliberately OUTSIDE the build directory (SPEC 7A.3), and for two reasons that
+both stand on their own. ACCESS: a build directory is served to anybody who has
+the URL, with a year of `immutable`, so a comment placed in one would be public
+and irrevocably cached — and this queue takes text from a stranger's keyboard.
+LIFETIME: a comment is about the PROJECT more than about one revision — a part
+name and a coordinate still mean something ten commits later — so it must not be
+a file that goes wherever the build goes. Nothing deletes a build on its own any
+more (SPEC 5.3), but somebody clearing space on the volume does, and a comment on
+a build that is gone stays readable; only the link back to the frame stops
+opening.
 
 Writing is PUBLIC — no token, by design — so everything in this module that looks
 paranoid is load-bearing (SPEC 7A.4):

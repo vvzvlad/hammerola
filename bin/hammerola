@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""The `hammerola` command, as a file that can simply be symlinked onto PATH.
+
+`make client` links this into ~/.local/bin. `Path(__file__).resolve()` follows
+that symlink back to the checkout, which is what lets one line of `ln -s` stand
+in for an installed console script.
+
+DELIBERATELY NOT A PACKAGING ENTRY POINT (`[project.scripts]` in a
+pyproject.toml), and not yet. This repository is an application, not a
+distribution: its one importable top-level name is `src`, and `pip install`ing
+that onto a laptop would put a package called `src` on the machine's path, where
+it would shadow every other project's. Giving the tool a real distribution name
+and layout is part of the self-update work in SPEC §8 entry 26, and doing half
+of it now would mean doing it twice.
+
+`#!/usr/bin/env python3` and not the checkout's `.venv`: `src/client/` imports
+nothing outside the standard library, on purpose, so the system interpreter is
+enough — and a shebang naming a virtualenv is a shebang that breaks the moment
+the checkout moves.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.client.cli import main  # noqa: E402  (needs the path above first)
+
+if __name__ == "__main__":
+    sys.exit(main())

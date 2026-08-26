@@ -168,7 +168,7 @@ def hub(tmp_path):
 
 @pytest.fixture
 def hub_factory(tmp_path):
-    """For tests that need a hub configured differently (retention, size caps)."""
+    """For tests that need a hub configured differently (size caps, mostly)."""
     started = []
 
     def make(**kw):

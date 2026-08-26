@@ -12,6 +12,7 @@ promises being checked are made in status codes.
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import httpx
@@ -449,22 +450,29 @@ def test_the_rate_limit_window_expires():
 
 
 # -- storage: outside the build, atomic ------------------------------------
-def test_a_comment_outlives_the_build_retention_deletes(hub_factory):
-    """SPEC 7A.3. The queue is not under the build directory, deliberately."""
-    tight = hub_factory(retention_builds=1)
-    _publish(tight, commit="aaa", marker="a")
-    posted = tight.post_comment("proj1", "aaa", comment_payload())
+def test_a_comment_outlives_the_build_it_is_about(hub):
+    """SPEC 7A.3. The queue is not under the build directory, deliberately.
+
+    The build is removed BY HAND here, which is the only way a build goes now
+    (SPEC 5.3): retention used to make this happen on its own, and the test
+    stood on a window of one. The property is the same either way — a comment
+    is not a file inside the build it names, so nothing that removes the build
+    can take it — and doing it by hand is if anything the more faithful
+    rehearsal, because that is what will really happen the day somebody clears
+    space on the volume.
+    """
+    _publish(hub, commit="aaa", marker="a")
+    posted = hub.post_comment("proj1", "aaa", comment_payload())
     assert posted.status_code == 201
     cid = posted.json()["id"]
 
-    # Two more builds: `aaa` is neither in the window nor `latest` any more.
-    _publish(tight, commit="bbb", marker="b")
-    _publish(tight, commit="ccc", marker="c")
-    assert not (tight.project_dir("proj1") / "aaa").exists()
+    _publish(hub, commit="bbb", marker="b")
+    shutil.rmtree(hub.project_dir("proj1") / "aaa")
+    assert not (hub.project_dir("proj1") / "aaa").exists()
 
-    record = json.loads((tight.comment_dir("proj1") / f"{cid}.json").read_text())
+    record = json.loads((hub.comment_dir("proj1") / f"{cid}.json").read_text())
     assert record["commit"] == "aaa"
-    listed = tight.read_comments().json()["comments"]
+    listed = hub.read_comments().json()["comments"]
     assert [c["id"] for c in listed] == [cid]
 
 

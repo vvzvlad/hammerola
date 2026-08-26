@@ -18,7 +18,9 @@ Everything it does before `build()` is in a deliberate order:
      cadquery and creates the pool at its default size -- every core on the
      host;
   3. chdir into the model's tree and pin it as the project root;
-  4. only then import the build half and run it.
+  4. import the build half;
+  5. re-arm the hang watchdog, so its budget measures the MODEL rather than
+     the age of this process, and only then run the build.
 
 Standard output and standard error are the build log and nothing else: the
 parent captures them together, caps them and hands them back to whoever pushed
@@ -86,6 +88,9 @@ def main(argv):
         return EXIT_INVOCATION
 
     # 1. The second echelon against a hang, and the only one that says where.
+    # This arming covers the START -- steps 2 to 4 below; step 5 arms it a
+    # second time for the model itself, and the two windows are separate on
+    # purpose (see there).
     #
     # `faulthandler` is implemented in C and does not take the GIL, so it fires
     # where a watchdog thread and a signal handler both cannot: a native call
@@ -130,6 +135,44 @@ def main(argv):
     # from the working directory looking for a project.json, and one directory
     # above an unpacked upload is the hub's own staging area.
     paths.set_project_root(opts["project"])
+
+    # 5. Re-arm the watchdog, now that nothing preparatory is left and the next
+    # call goes into the build half -- which reads project.json and then
+    # IMPORTS model.py, the first line of somebody else's code in this process.
+    #
+    # `hang_dump_seconds` has to mean "the model has been stuck this long", not
+    # "this process has existed this long", and the arming in step 1 measures
+    # the second: it starts before the two expensive things above it. The OCP
+    # import inside `_cap_occt_threads` costs 2-3 s on a workstation with the
+    # CAD stack (measured; the build half's own import is 0.1 s), and the hub
+    # is now the builder, so several of these start at once. Left on the first
+    # arming, the deadline is reached during the START, and what the dump
+    # prints is a stack inside runpy and the import machinery -- a build log
+    # that accuses the model of a hang that never happened, handed to whoever
+    # pushed (SPEC 8A.2 step 5).
+    #
+    # THE FIRST ARMING STAYS, and not as belt and braces: it is the only cover
+    # for a hang in the start ITSELF -- a thread pool that never comes back, an
+    # import that deadlocks -- and nothing else is watching that window. So
+    # there are two windows, each getting the whole budget, rather than one
+    # budget split between them.
+    #
+    # Calling it a second time REPLACES the pending timer instead of adding
+    # one: `dump_traceback_later` cancels the previous one before arming. So
+    # nothing has to be cancelled here, and no dump can arrive twice.
+    #
+    # WHAT IT COSTS, because it is not free. The model's deadline now falls at
+    # `start + hang_dump_seconds` on the parent's clock rather than at
+    # `hang_dump_seconds`, so it eats into the gap between the budget and the
+    # parent's `wall_seconds` -- 10 s as the two are configured (limits.py:
+    # 110 against 120). A start slower than that gap loses the dump: the
+    # parent's SIGKILL lands first and the build is reported as a timeout with
+    # no stack. Measured starts are 0.8-7.6 s on a workstation, the top of that
+    # range at a load average of 300 on ten cores, so the gap covers everything
+    # short of a host that has stopped working -- and losing the stack there is
+    # the lesser harm next to printing one that blames the wrong code.
+    if opts["hang_dump_seconds"] is not None:
+        faulthandler.dump_traceback_later(opts["hang_dump_seconds"], exit=True)
 
     try:
         pid, _meta, files = build(Path(opts["out"]), preview_mode=opts["preview_mode"])

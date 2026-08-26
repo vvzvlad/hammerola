@@ -379,8 +379,8 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
     project = _plain_text(str(raw.get("project") or pid), "project")
     title = _plain_text(str(raw.get("title") or project), "title")
 
-    # `built` is the model's own timestamp and is what retention and the build
-    # picker order by. It is optional: a project that does not set it gets the
+    # `built` is the model's own timestamp and is what the build picker and
+    # `latest` order by. It is optional: a project that does not set it gets the
     # moment the hub accepted the push, which is monotonic in practice and keeps a
     # missing field from being a publish failure.
     #
