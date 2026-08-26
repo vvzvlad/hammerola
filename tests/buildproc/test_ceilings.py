@@ -208,6 +208,14 @@ def test_a_ceiling_that_will_not_go_on_raises_rather_than_warns(monkeypatch):
     code. A `setrlimit` that refuses has to end the process, and this is the
     only place that decision can be tested without a platform that happens to
     refuse something.
+
+    The monkeypatch is load-bearing twice over, and the second reason is the one
+    that is easy to miss: the spec here is perfectly GOOD, so this call reaches
+    `resource.setrlimit` and would really apply `TEST_LIMITS` to the pytest
+    process -- for the whole rest of the suite, one-way. `refuse` standing in for
+    `setrlimit` is what makes that harmless. Never remove it "because the call is
+    refused anyway"; see `_applied_in_a_process_of_its_own` below for what it
+    costs.
     """
     import resource
 
@@ -218,6 +226,69 @@ def test_a_ceiling_that_will_not_go_on_raises_rather_than_warns(monkeypatch):
     with pytest.raises(LimitsUnavailable) as caught:
         apply_process_limits(TEST_LIMITS.replace(cpu_seconds=5).rlimit_spec())
     assert "RLIMIT_CPU" in str(caught.value)
+
+
+def _applied_in_a_process_of_its_own(spec):
+    """`apply_process_limits(spec)` somewhere it is safe to succeed, its report back.
+
+    IN A CHILD, and this is the one call in this file that has to be. Every other
+    `apply_process_limits` here is safe in-process, but for two DIFFERENT reasons
+    and it matters which:
+
+      * the four in `test_a_spec_that_does_not_name_every_ceiling_is_refused`
+        BELOW never reach `setrlimit` at all -- each is refused on the SHAPE of
+        the spec, which is what that test is about;
+      * the one in `test_a_ceiling_that_will_not_go_on_raises_rather_than_warns`
+        ABOVE does reach it, with a spec that would go on perfectly well. It is
+        safe only because `resource.setrlimit` is monkeypatched to raise. Read
+        as "nothing here gets that far anyway", that monkeypatch looks removable
+        and is not.
+
+    This one is the negative control -- the spec that goes on without complaint
+    -- so the ceilings really land on whichever process makes the call, and
+    in-process that process is pytest.
+
+    What that cost when it was in-process, because the failure gives no hint of
+    its cause: `TEST_LIMITS.cpu_seconds` became the CPU budget of the ENTIRE
+    remaining suite, which then died mid-test with `Killed`, exit 137 and no
+    traceback -- indistinguishable from an OOM, and reproducible only on a
+    machine slow enough to reach the budget (CI, three pushes running).
+
+    A fixture with a teardown cannot undo it, which is why the answer is a
+    process boundary rather than cleanup: `apply_process_limits` deliberately
+    sets soft == hard (limits.py, so a SIGXCPU handler cannot buy time), and an
+    unprivileged process may not raise its own hard limit back --
+    `setrlimit(RLIMIT_CPU, (RLIM_INFINITY, RLIM_INFINITY))` answers `ValueError:
+    not allowed to raise maximum limit`. The ceiling is one-way for the life of
+    the process.
+
+    `tests/conftest.py::guard_process_limits` is what now fails the NEXT test
+    that makes the same call in-process, instead of letting the suite be killed
+    somewhere else entirely.
+    """
+    program = textwrap.dedent("""
+        import json, sys
+        from src.buildproc.limits import apply_process_limits
+        print(json.dumps(apply_process_limits(json.loads(sys.argv[1]))))
+    """)
+    finished = subprocess.run(
+        [sys.executable, "-s", "-c", program, json.dumps(spec)],
+        cwd=str(HUB_ROOT), capture_output=True, text=True, timeout=60,
+    )
+    assert finished.returncode == 0, finished.stderr
+    # Both streams into the failure, because a `JSONDecodeError` carries neither and the
+    # likeliest cause is not in the program above at all: `from src.buildproc.limits import
+    # ...` imports the whole package -- runner, child, hardening and its ctypes -- so any
+    # `print` anywhere on that path lands on stdout ahead of the JSON and turns this into a
+    # parse error a page away from what caused it.
+    try:
+        return json.loads(finished.stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"the child exited 0 but did not answer with JSON ({exc}). Something on the "
+            "import path of `src.buildproc.limits` printed to stdout, most likely.\n"
+            f"--- its stdout ---\n{finished.stdout}\n"
+            f"--- its stderr ---\n{finished.stderr}") from exc
 
 
 def test_a_spec_that_does_not_name_every_ceiling_is_refused():
@@ -236,6 +307,9 @@ def test_a_spec_that_does_not_name_every_ceiling_is_refused():
     """
     full = TEST_LIMITS.rlimit_spec()
 
+    # These four are safe in-process precisely because they never get as far as
+    # `setrlimit`: each one is refused on the SHAPE of the spec, which is the
+    # thing being tested here.
     with pytest.raises(LimitsUnavailable, match="missing: .*cpu_seconds"):
         apply_process_limits({})
     with pytest.raises(LimitsUnavailable, match="missing: core_bytes"):
@@ -246,8 +320,9 @@ def test_a_spec_that_does_not_name_every_ceiling_is_refused():
         apply_process_limits([("cpu_seconds", 5)])
 
     # The negative control: the real spec, complete, goes on without complaint
-    # and says so -- including the deliberately-off one.
-    applied = apply_process_limits(full)
+    # and says so -- including the deliberately-off one. In a process of its own
+    # because this is the call that SUCCEEDS; the helper above has the reasoning.
+    applied = _applied_in_a_process_of_its_own(full)
     assert any(line.startswith("RLIMIT_CPU=") for line in applied), applied
     assert "RLIMIT_NPROC=off" in applied, (
         "a ceiling that is None must be reported as off rather than omitted: "

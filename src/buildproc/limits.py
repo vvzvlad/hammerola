@@ -80,6 +80,17 @@ _RLIMIT_TABLE = (
 # and passing those along would only invite somebody to enforce them twice.
 RLIMIT_FIELDS = tuple(field for field, _name, _unit in _RLIMIT_TABLE)
 
+# The resource attributes those fields land on, exported for the same reason
+# RLIMIT_FIELDS is: the table above is private, and anything OUTSIDE this module
+# that has to know which ceilings can be applied must read the answer from here
+# instead of keeping a second copy. The standing consumer is the test suite's
+# rlimit guard -- tests/process_limits.py, feeding
+# tests/conftest.py::guard_process_limits -- which watches exactly these names
+# for a test that fences the pytest process in. A copied list is the failure
+# that guard exists to prevent, one level up: add a seventh row to the table and
+# the copy goes on watching six, silently, with every test still green.
+RLIMIT_NAMES = tuple(name for _field, name, _unit in _RLIMIT_TABLE)
+
 
 def memory_limit_supported():
     """Whether this platform lets a process cap its own address space.
