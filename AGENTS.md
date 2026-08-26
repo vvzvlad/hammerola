@@ -71,7 +71,7 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       хаб создаёт сам. Обоснования — SPEC §7.1, тесты — `tests/test_archive_security.py`.
 - [x] **Шаг 3. Перенос `cad_publish` внутрь** — сделано. Сборочная половина живёт
       в `src/cadbuild/` (19 модулей), её тесты — в `tests/cadbuild/` (9 файлов,
-      169 тестов, свой `conftest.py`). Клиентская половина осталась в
+      174 теста, свой `conftest.py`). Клиентская половина осталась в
       `cad_publish` и НЕ переезжала: `cli`, `__main__`, `settings`, `hub`,
       `remote`, `gitinfo`, `init_project`, `preview` (локальный HTTP-сервер
       предпросмотра — у хаба свой), `archive` (клиент пакует, хаб распаковывает).

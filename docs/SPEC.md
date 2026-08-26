@@ -2310,7 +2310,7 @@ libexpat нет вовсе; сегодня он приезжает только 
 `src/cadbuild/` — 19 модулей: `artifacts`, `assembly`, `build`, `checklib`, `errors`,
 `gate`, `geometry`, `hubspec`, `legacy`, `matching`, `metrics`, `modelchecks`,
 `palette`, `paths`, `preview_png`, `printables`, `project`, `project_title`, `views`.
-Тесты — `tests/cadbuild/`, 9 файлов и свой `conftest.py`, 169 тестов.
+Тесты — `tests/cadbuild/`, 9 файлов и свой `conftest.py`, 174 теста.
 
 Клиентская половина ОСТАЛАСЬ в `cad_publish` и переезжать ей незачем: `cli`,
 `__main__`, `settings`, `hub` (HTTP-пуш), `remote` (машинерия build-node), `gitinfo`,
