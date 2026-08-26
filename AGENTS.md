@@ -10,8 +10,10 @@
 рендерит вьювер и держит очередь комментариев, тесты и шаблоны с ассетами на месте.
 Ядро CadQuery уже в образе: пины в `requirements.txt`, системные библиотеки в
 Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`, проверка (f)).
-Чего ещё нет — второй половины: хаб принимает готовый артефакт и не считает геометрию
-сам. Поэтому шаги плана начинаются с приёма ДЕРЕВА исходников (шаг 2), а не с нуля.
+Со сборкой хаб уже соединён: с шага 5 пуш принимается асинхронно и модель считается в
+отдельном процессе на пути запроса (`src/jobs.py` → `src/buildproc/`). Чего ещё нет —
+гейта на приёмной стороне (шаг 6) и снятого CI-обвеса вокруг старой схемы (шаг 7).
+Именно поэтому шаги плана начинаются с приёма ДЕРЕВА исходников (шаг 2), а не с нуля.
 
 **Что это за проект.** `hammerola` (от «пианола» — механизм, который играет сам)
 собирает CAD-модели из кода и раздаёт их браузерным вьювером. Он ПОГЛОЩАЕТ три
@@ -99,9 +101,39 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       `SIGKILL` в родителе, ограниченный тредпул OCCT. СДЕЛАНО: `src/buildproc/`
       (`limits`, `wrapper`, `child`, `runner`), тесты — `tests/buildproc/`, 36 штук.
       Подробности и намеренные решения — SPEC 8A.2, шаг 4.
-- [ ] **Шаг 5. Асинхронный приём** — 202, идентификатор задачи, эндпоинт статуса и
-      отдача лога сборки тому, кто пушил. Параллелизм сборки — отдельное число от
-      параллелизма приёма.
+- [x] **Шаг 5. Асинхронный приём** — 202, идентификатор задачи, эндпоинт статуса и
+      отдача лога сборки тому, кто пушил. **Сделано.** Живёт в `src/jobs.py`
+      (`JobStore`, `BuildTask`, `BuildQueue`), тесты — `tests/test_jobs.py`.
+      Граница проходит по «нужна ли сборка»: токен, размер, архив и «этот пуш уже
+      опубликован» отвечаются НА ПУШЕ (401/413/411/408/400/422/409/200), а всё
+      остальное уезжает в задачу и узнаётся через `GET /api/v1/jobs/<id>` и
+      `/log` — оба под `PUBLISH_TOKEN`, оба отвечают одинаковым 404 на чужой,
+      несуществующий и кривой id. Параллелизм сборки — отдельное число
+      (`MAX_CONCURRENT_BUILDS = 2` против `MAX_CONCURRENT_PUBLISHES = 4`),
+      обоснования всех потолков — SPEC §7.5. Задача не может остаться без
+      терминального состояния: запись в памяти обновляется независимо от тома,
+      оба обращения к диску best effort, а ошибка ПОСЛЕ `rename` не помечает
+      задачу провалившейся, потому что `rename` и есть публикация. Порядок задач
+      хранится СПИСКОМ ID в одном файле `data/jobs/order.json`, а не числом в
+      каждой записи и не по `created` (секундная точность не переживает рестарт):
+      порядок — свойство набора, а не записи, и размазанный по N файлам он не
+      переживал записи, доехавшей наполовину. Каталог, которого файл порядка не
+      называет, читается как самый старый. SIGTERM обрабатывается в `main.py` — будит
+      заранее созданный поток, а не запускает новый из обработчика, — остановка
+      сначала закрывает сокет, потом дренирует очередь вместе с исходниками, а
+      воркеров ждёт по ОБЩЕМУ бюджету (`WORKER_JOIN_SECONDS` на весь пул, не на
+      поток). Реестр лежит на томе, писчем для сборки: запись приводится к
+      известной схеме, у `job.json` и `log.txt` — потолки на размер и при чтении,
+      и при записи (SPEC §7.4).
+- [ ] **Долг гейта: проверка (h) в `ci/smoke.py`** — что потолки действительно
+      встают ВНУТРИ образа под учёткой `app` и что `-m src.buildproc.*`
+      резолвится от `/app`. Долг стал реальным на шаге 5: до него хаб ничего не
+      собирал и ломаться было нечему, а теперь сборка стоит на пути запроса, и
+      образ, в котором обёртка не запускается, выглядит совершенно здоровым до
+      первого пуша. Набор тестов этого не увидит структурно — он гоняется по
+      чекауту и в артефакт не смотрит. Закрывать вместе с шагом 6, когда гейт
+      переезжает: писать в него сейчас код, который нечем проверить локально,
+      хуже, чем держать долг записанным.
 - [ ] **Шаг 6. Гейт переезжает и меняет знак** — срабатывает ПОСЛЕ приёма: staging
       выбрасывается, `latest` и `dev` не двигаются, наружу код ошибки с логом.
 - [ ] **Шаг 7. Убрать и переписать** — образ `cad_builder`, `publish.yml`, секреты
@@ -149,9 +181,32 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   3): take a model's source, compute the geometry, gate it, export the
   artefacts and the viewer payload. Kept as a subpackage rather than spread
   through `src/` because it is a different job from serving: nothing in it
-  touches HTTP, the data volume or a credential, and nothing under `src/`
-  imports it YET — running a model is step 4, the gate on the receiving side is
-  step 6
+  touches HTTP, the data volume or a credential. Two things import it, and both
+  are deliberate: `src/buildproc/child.py` does it INSIDE the build process
+  (step 4), and the root `checklib.py` shim re-exports one module of it under
+  the name every model.py imports (see the next entry). Nothing on the serving
+  side imports it — the gate on the receiving side is step 6
+- `src/jobs.py` — the asynchronous half of a push (SPEC 8A.2 step 5): `JobStore`
+  is the registry (a directory per job under `data/jobs/`, `job.json` and
+  `log.txt` beside it, plus `order.json` for the registry as a whole),
+  `BuildTask` is what the request hands over, `BuildQueue` is the bounded queue
+  and the worker threads that build and then publish. Read its docstring before
+  touching it: `data/jobs/` is on a volume every build can write, so everything
+  the registry reads back is rebuilt into a known shape, capped on the way in
+  and on the way out — and whatever that normalization changed is WRITTEN BACK,
+  because a correction that stays in memory leaves the planted value on disk for
+  the next start to read again. The second rule is the one that cost three
+  rounds: anything shared BETWEEN records must not be stored per record. The
+  write-back writes them one at a time, a build chooses which of those writes
+  fails (`chmod 0500` on one directory, no vulnerability needed), and a
+  half-applied pass then leaves a state the hub was never in. The creation order
+  used to be stored that way and is now one atomically written file. Read what
+  that file buys narrowly, because the generous reading is wrong: it stops a
+  POINTWISE write failure from reordering the registry, and nothing more. A
+  build can write `order.json` outright — real ids, permuted — and the hub
+  believes it without a word, exactly as it does a `log.txt` a build overwrote.
+  That is accepted rather than fixed: the same build can `rmtree` another job's
+  directory, which is strictly more
 - `checklib.py` — at the ROOT, and not a stray file: `import checklib` is part
   of the contract with every model.py in the fleet, exactly like `views()` and
   `printables()`. It re-exports `src/cadbuild/checklib.py` under that name, and
@@ -162,8 +217,11 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
 - `tests/` — pytest. `tests/cadbuild/` is the moved suite and has a `conftest.py`
   of its own: its `isolated_project` fixture is autouse and would otherwise
   chdir every hub test into a scratch project
-- `data/` — runtime state: builds, pointers and comments as a directory tree with
-  JSON alongside, no database (gitignored, mounted as a docker volume)
+- `data/` — runtime state: builds, pointers, comments and build JOBS as a
+  directory tree with JSON alongside, no database (gitignored, mounted as a
+  docker volume). Note what that last one means: `data/jobs/` is on a volume
+  every build can write anywhere in, so nothing there is evidence about who
+  wrote it — see the docstring of `src/jobs.py` and SPEC §7.4
 - `templates/` — page templates that ship inside the image: `index.html`,
   `build.html`, `pointer.html`, one per URL the hub serves
 - `static/` — the viewer payload that ships inside the image (`static/_v/`):

@@ -10,6 +10,7 @@ test module has already been imported.
 """
 
 import os
+import threading
 
 # Provide the required credentials BEFORE any test module imports src.settings
 # (Settings() is instantiated at import time and would otherwise fail). CI arrives at the same
@@ -28,6 +29,40 @@ os.environ.setdefault("COMMENT_READ_TOKEN", "test-read-token")
 import pytest  # noqa: E402  (must come after the env assignment above)
 
 from harness import start_hub, stop_hub  # noqa: E402
+from src.jobs import WORKER_THREAD_PREFIX  # noqa: E402
+
+
+def _live_build_workers():
+    return sorted(thread.name for thread in threading.enumerate()
+                  if thread.name.startswith(WORKER_THREAD_PREFIX))
+
+
+@pytest.fixture(autouse=True)
+def guard_build_workers():
+    """Fail the test that leaves a build pool running, not the one after it.
+
+    The convention this implements is the project's rule about module-level
+    mutable state, pointed at the only thing in `src/jobs.py` that HAS process
+    scope. The registry and the queue deliberately do not: both are built per
+    server, exactly like `Store` and `CommentStore`, so two hubs in one test
+    process share neither. The worker THREADS are the exception — they belong to
+    the interpreter, they outlive the fixture that made them if nobody stops
+    them, and a hub that is never closed leaves two of them polling a queue
+    nothing will ever put anything into.
+
+    Before AND after, because before-only is the version that puts the blame in
+    the wrong place: a test that leaks a pool passes, and the failure surfaces
+    later, in whichever test happened to run next.
+    """
+    assert _live_build_workers() == [], (
+        "build workers were already running when this test started, so an "
+        "EARLIER test left a hub open; this test is where it surfaced, not "
+        "where it was caused")
+    yield
+    assert _live_build_workers() == [], (
+        "this test left build workers running — a hub was started and never "
+        "closed. Without this assertion the failure would have landed on some "
+        "unrelated test later, in another file, under one collection order")
 
 
 @pytest.fixture

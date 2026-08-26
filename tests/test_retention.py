@@ -1,4 +1,4 @@
-"""Retention (SPEC 5.4, 7.3).
+"""Retention (SPEC 5.3, 7.3).
 
 Every build is ~2 MB per view, so without a ceiling the volume grows linearly with
 the number of pushes forever. The rule has two halves and the second one is the

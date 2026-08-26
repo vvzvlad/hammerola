@@ -16,8 +16,10 @@ Routing (SPEC 3, 7.4):
     GET  /project/<pid>/dev/<file>            the local slot, no-cache
     GET  /project/<pid>/<commit>/<file>       one build's files, immutable forever
     GET  /project/<pid>/<commit>/             the page shell, from the template
-    POST /api/v1/publish/<pid>/<commit>       accept a build
-    POST /api/v1/publish/<pid>/dev            overwrite the local slot
+    POST /api/v1/publish/<pid>/<commit>       accept a push, 202 + a job
+    POST /api/v1/publish/<pid>/dev            same, into the local slot
+    GET  /api/v1/jobs/<id>                    how that build is going  PUBLISH_TOKEN
+    GET  /api/v1/jobs/<id>/log                what the build printed   PUBLISH_TOKEN
 
     POST /api/v1/comments/<pid>/<commit>      leave a comment — PUBLIC, no token
     GET  /api/v1/comments                     the queue          COMMENT_READ_TOKEN
@@ -30,6 +32,15 @@ The comment endpoints are the only asymmetric ones on the service: writing is op
 to anyone with the URL and reading is not (SPEC 7A.2). Everything unusual about
 `_handle_comment_post` below follows from that one fact.
 
+A PUSH IS TWO THINGS NOW, and the split runs right through `_handle_post`. What
+arrives is a model's SOURCE, and the hub builds it (SPEC 8A.2 step 5), which is
+minutes of CPU and does not belong in a request: the socket timeout is 30 s and
+a `ThreadingHTTPServer` holds one thread per connection. So everything that can
+be decided FROM THE UPLOAD is decided here and answered here — the token, the
+size, the archive, and whether this exact push is already published — and the
+build itself becomes a job (`src/jobs.py`) the answer points at with a 202. The
+two job endpoints are what replaces the CI job log the pusher used to read.
+
 Cache-Control is not a detail here, it is the load-bearing half of the URL scheme:
 a commit directory is immutable by construction, so it gets a year; `latest` and
 `dev` move, so they get none. `dev` is the only URL whose CONTENT is rewritten in
@@ -40,6 +51,7 @@ it must never be able to fall through to the immutable branch.
 import hmac
 import json
 import os
+import shutil
 import stat
 import threading
 import time
@@ -53,6 +65,10 @@ from src import render
 from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
                           RateLimiter, client_address, normalize_since,
                           validate_payload)
+from src.jobs import (HANDOVER_ERROR, QUEUE_FULL_ERROR,
+                      QUEUE_FULL_RETRY_AFTER_SECONDS, STATE_FAILED,
+                      STOPPED_ERROR, SUBMIT_ACCEPTED, SUBMIT_QUEUE_FULL,
+                      BuildQueue, BuildTask, JobStore)
 from src.multipart import MultipartError, parse_multipart
 from src.store import DEV_LINK, POINTER_NAMES, PublishError, Store
 
@@ -126,6 +142,13 @@ BODY_DEADLINE_SECONDS = 300
 # retries of several projects at once are exactly the case that would otherwise
 # multiply it. Publishing is rare and slow; queueing behind a permit is fine,
 # being refused is not.
+#
+# It is the ceiling on RECEIVING and nothing else. What a push costs to BUILD has
+# its own number, `jobs.MAX_CONCURRENT_BUILDS`, because the two are sized by
+# different things: this one by a body on disk and a tar reader, that one by
+# cores and memory. Merging them would tie two unrelated ceilings together, and
+# the day either is retuned the other would move for no reason anybody could
+# reconstruct.
 MAX_CONCURRENT_PUBLISHES = 4
 
 # Ceiling on the body of a resolve, which is one optional `note`. Not an env var:
@@ -197,7 +220,8 @@ def build_content_type(name: str) -> tuple[str, dict]:
     return OCTET_TYPE, {"Content-Disposition": "attachment"}
 
 
-def make_handler(store: Store, comment_store: CommentStore, settings):
+def make_handler(store: Store, comment_store: CommentStore, settings,
+                 jobs: JobStore, builds: BuildQueue):
     """Build the request handler class bound to one store and one settings object.
 
     A closure rather than class attributes so a test can stand up several
@@ -314,6 +338,8 @@ def make_handler(store: Store, comment_store: CommentStore, settings):
                                                with_body)
                 if segments[:3] == ["api", "v1", "comments"]:
                     return self._serve_comments(segments[3:], query, with_body)
+                if segments[:3] == ["api", "v1", "jobs"]:
+                    return self._serve_jobs(segments[3:], with_body)
             except (BrokenPipeError, ConnectionResetError):
                 # The browser navigated away mid-download, or the client reset
                 # the connection. Ordinary during a 2 MB view fetch, not an error
@@ -754,11 +780,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings):
                     # one local slot, overwriting whatever was there — the same
                     # name, the same meaning as in the URL people read. It is a
                     # reserved build name, so this can never shadow a commit that
-                    # could otherwise have been published.
-                    if commit == DEV_LINK:
-                        status, payload = store.publish_dev(pid, spool, length)
-                    else:
-                        status, payload = store.publish(pid, commit, spool, length)
+                    # could otherwise have been published. Both routes are
+                    # accepted identically; only the last step differs, and that
+                    # step happens in the worker.
+                    accepted = store.accept_sources(pid, commit, spool, length)
                 except PublishError as error:
                     logger.warning(
                         f"publish {pid}/{commit} refused: {error.message}")
@@ -774,9 +799,184 @@ def make_handler(store: Store, comment_store: CommentStore, settings):
                     return self._error(500, "internal error")
                 finally:
                     spool.unlink(missing_ok=True)
+                return self._queue_build(pid, commit, accepted)
             finally:
                 publish_slots.release()
-            return self._json(status, payload)
+
+        def _queue_build(self, pid: str, commit: str, accepted):
+            """Hand an accepted source tree to the build pool. 200, 202 or 503.
+
+            200 rather than 202 when this exact push is already published: the
+            answer is on disk, and rebuilding minutes of geometry to arrive at it
+            would be work done to learn nothing. 409 leaves here as a
+            PublishError for the same reason — both codes stay where CI has
+            always seen them, on the push itself, instead of moving into a job
+            the pusher would have to poll to be told no.
+
+            The permit is still held while this runs. It is a queue insertion and
+            three writes, and holding it means the number of source trees on the
+            volume with no worker yet is bounded by the accept slots plus the
+            queue rather than by how fast a client can open connections.
+
+            WHAT TO ANSWER IS DECIDED FIRST AND SENT LAST, below the cleanup,
+            for the reason `_build_and_publish` gives for the same order: a
+            client that has been answered is entitled to assume the hub has
+            finished with its push. `_json` writes to the socket where it is
+            called, so answering inside the `try` left a window — short, and real
+            — in which the pusher had its 200, 409 or 503 and an unpacked source
+            tree was still sitting on the volume with nobody owning it.
+            """
+            handed_over = False
+            job_id = None
+            reply = None            # (status, payload, extra headers)
+            try:
+                settled = store.settled(pid, commit, accepted.digest)
+                if settled is not None:
+                    status, payload = settled
+                    reply = (status, payload, None)
+                else:
+                    record = jobs.create(pid, commit)
+                    job_id = record["id"]
+                    outcome = builds.submit(BuildTask(
+                        job_id=job_id, pid=pid, commit=commit,
+                        sources=accepted.sources, digest=accepted.digest))
+                    if outcome == SUBMIT_ACCEPTED:
+                        handed_over = True
+                        status_url = f"/api/v1/jobs/{job_id}"
+                        logger.info(
+                            f"publish {pid}/{commit}: queued as job {job_id}")
+                        # 202 with `Location`, which is what the code means: the
+                        # request was understood and accepted, and the thing it
+                        # created is over there.
+                        reply = (202,
+                                 {"job": job_id, "status_url": status_url,
+                                  "log_url": f"{status_url}/log"},
+                                 {"Location": status_url})
+                    elif outcome == SUBMIT_QUEUE_FULL:
+                        # Refused rather than queued, and the job says so rather
+                        # than sitting in `queued` for ever: a job nothing will
+                        # ever pick up is a status endpoint that never changes
+                        # its answer.
+                        jobs.finish(job_id, state=STATE_FAILED, code=503,
+                                    error=QUEUE_FULL_ERROR)
+                        logger.warning(
+                            f"publish {pid}/{commit} refused: the build queue "
+                            f"is full")
+                        reply = (503, {"error": QUEUE_FULL_ERROR},
+                                 {"Retry-After":
+                                  str(QUEUE_FULL_RETRY_AFTER_SECONDS)})
+                    else:
+                        # The hub is stopping. A DIFFERENT refusal from the one
+                        # above, and told apart here because both halves of the
+                        # answer differ. The pusher is not waiting for a queue to
+                        # empty, so there is no Retry-After to give — the hub is
+                        # going away and coming back — and the JOB has already
+                        # been answered, by the drain inside `shutdown` or by
+                        # `submit` itself. Writing over it with "the build queue
+                        # is full" replaced the one true sentence the hub had
+                        # left to say with a sentence that was not true.
+                        logger.warning(
+                            f"publish {pid}/{commit} refused: the hub is "
+                            f"stopping")
+                        reply = (503, {"error": STOPPED_ERROR}, None)
+            except PublishError as error:
+                logger.warning(
+                    f"publish {pid}/{commit} refused: {error.message}")
+                reply = (error.status, {"error": error.message}, None)
+            except (BrokenPipeError, ConnectionResetError):
+                # The JOB outlives the socket, so it is answered before this
+                # goes on its way to `do_POST`. Every other clause here answers
+                # the PUSHER; a job left `queued` by an exception between
+                # `jobs.create` and the handover is answered by nobody at all —
+                # see `_fail_handover`.
+                self._fail_handover(job_id, handed_over)
+                raise
+            except Exception:
+                logger.exception(f"publish {pid}/{commit} failed")
+                self._fail_handover(job_id, handed_over)
+                reply = (500, {"error": "internal error"}, None)
+            finally:
+                # The worker owns the tree from the moment it is submitted, and
+                # nobody does before that — including on the paths where this
+                # answered 200, 409 or 503.
+                if not handed_over:
+                    shutil.rmtree(accepted.sources, ignore_errors=True)
+
+            status, payload, extra = reply
+            return self._json(status, payload, CACHE_NONE, extra)
+
+        def _fail_handover(self, job_id, handed_over: bool) -> None:
+            """Answer a job the handover threw underneath. Never raises.
+
+            The window is two statements wide — `jobs.create` returns, and
+            `builds.submit` is next — and the invariant it protects has no
+            window in it: a job that never becomes terminal is one
+            `_prune_locked` will not drop (it only ever drops a FINISHED job),
+            so it holds a MAX_JOBS slot until the hub restarts while the status
+            endpoint answers `queued` about a build nobody is running. Every
+            other outcome of `_queue_build` already answers its job — the queue
+            was full, the pool was stopping, a worker took it — and this is the
+            one that used to answer nothing, because both handlers were written
+            about the PUSHER and a 500 is not something a job can read.
+
+            `handed_over` is what keeps this from lying in the other direction.
+            Once `submit` has returned SUBMIT_ACCEPTED the task belongs to a
+            worker, which is going to finish that job itself; anything thrown
+            after that point — a logger, the reply tuple — must not fail a build
+            that is at that moment running.
+
+            The failure is recorded as a 500 because it is the hub's, not the
+            push's: nothing about the sources was wrong, and the honest advice
+            is the same one a restart gives, which is to push again.
+            """
+            if job_id is None or handed_over:
+                return
+            try:
+                jobs.finish(job_id, state=STATE_FAILED, code=500,
+                            error=HANDOVER_ERROR)
+            except Exception:
+                # `finish` is written not to raise; this runs from an exception
+                # handler that must reach its own `raise` or its own reply, so
+                # it cannot be the thing that replaces one failure with another.
+                logger.exception(
+                    f"job {job_id}: could not be failed after the handover "
+                    f"threw; it stays queued until the hub restarts")
+
+        # -- build jobs ------------------------------------------------
+        def _serve_jobs(self, rest: list[str], with_body: bool):
+            """GET /api/v1/jobs/<id>[/log] — for whoever pushed (SPEC 8A.2 step 5).
+
+            Behind PUBLISH_TOKEN, and checked BEFORE the id is looked at, so a
+            caller without it cannot use the difference between 401 and 404 to
+            find out which jobs exist. An id this hub never issued and an id
+            belonging to somebody else's push get the SAME 404: the id is the
+            only thing separating one pusher's build log from another's, so a
+            reply that confirms existence would hand out half of it.
+            """
+            if not self._require_token(publish_token, with_body):
+                return None
+            if not rest or len(rest) > 2:
+                return self._error(404, "not found", with_body=with_body)
+            if len(rest) == 2 and rest[1] != "log":
+                return self._error(404, "not found", with_body=with_body)
+
+            job_id = rest[0]
+            record = jobs.get(job_id)
+            if record is None:
+                return self._error(404, "not found", with_body=with_body)
+
+            if len(rest) == 2:
+                # text/plain, because it is a build log and it is read by a
+                # person or printed by CI. Never text/html — this is output the
+                # model produced, on an origin that serves other people's builds.
+                return self._send(
+                    200, (jobs.log(job_id) or "").encode("utf-8"),
+                    "text/plain; charset=utf-8", CACHE_NONE,
+                    with_body=with_body)
+
+            payload = dict(record)
+            payload["log_url"] = f"/api/v1/jobs/{job_id}/log"
+            return self._json(200, payload, CACHE_NONE, with_body=with_body)
 
         # -- comment queue, write side ---------------------------------
         def _handle_comment_resolve(self, cid: str):
@@ -1003,11 +1203,20 @@ def make_handler(store: Store, comment_store: CommentStore, settings):
     return HubHandler
 
 
-def create_server(settings) -> ThreadingHTTPServer:
+def create_server(settings, *, build_runner=None, build_workers=None,
+                  build_queue_size=None) -> ThreadingHTTPServer:
     """Bind the listening socket and return the server, not yet serving.
 
     Binding here rather than inside serve_forever() is what lets a test ask for
     port 0 and then read back the port the OS actually chose.
+
+    `build_runner` replaces `src.buildproc.run_build` for the build pool. It is a
+    parameter rather than a setting because it is not configuration: a deployment
+    has exactly one way to build a model, and the only caller that passes
+    anything is a test that has to drive the whole pipeline without CadQuery, a
+    subprocess or a real model — none of which the pipeline is about. Same for
+    the two sizes: they have module defaults in `src.jobs` and are here so a test
+    can stand up a one-worker pool with a queue of one and observe a full one.
     """
     store = Store(
         data_dir=settings.data_dir,
@@ -1024,7 +1233,18 @@ def create_server(settings) -> ThreadingHTTPServer:
         max_text_chars=settings.comment_max_text_chars,
         max_photo_bytes=settings.comment_max_photo_bytes,
     )
-    handler = make_handler(store, comment_store, settings)
+    # Constructed HERE and not lazily, because its constructor is what fails the
+    # jobs a previous run left in flight: a hub that has started has no build
+    # running, so anything still `queued` or `building` on the volume is stale by
+    # definition and must stop claiming otherwise before the first status poll.
+    job_store = JobStore(settings.data_dir)
+    extra = {}
+    if build_workers is not None:
+        extra["workers"] = build_workers
+    if build_queue_size is not None:
+        extra["queue_size"] = build_queue_size
+    builds = BuildQueue(store, job_store, build_runner=build_runner, **extra)
+    handler = make_handler(store, comment_store, settings, job_store, builds)
 
     class Server(ThreadingHTTPServer):
         # Threads die with the process: a hung 2 MB download must never keep the
@@ -1032,7 +1252,39 @@ def create_server(settings) -> ThreadingHTTPServer:
         daemon_threads = True
         allow_reuse_address = True
 
+        def server_close(self):
+            # The build workers are stopped by the same call that closes the
+            # socket, so there is one way to shut a hub down rather than two.
+            # A worker that is mid-build is waited for: it is holding a staging
+            # directory and is about to rename it into place, and killing it
+            # there is how a half-published build happens.
+            #
+            # THE SOCKET GOES FIRST — and be precise about what that buys,
+            # because the obvious reading is wrong. It is NOT that the hub would
+            # otherwise accept a push during the stop: `serve_forever` has
+            # already returned by the time this runs, so nothing is calling
+            # `accept()` any more and no connection is being served from the
+            # loop. The listening socket is unattended, not active.
+            #
+            # What it buys is that the socket stops LISTENING. An unattended
+            # listening socket still completes handshakes in the kernel and
+            # stacks them in the accept backlog, so for the whole of the stop —
+            # the drain, then the join budget — a client that connects gets a
+            # connection that looks established, sends its push into it and
+            # waits for an answer nobody will ever write, until the process exits
+            # and the connection dies unexplained. Closed first, the same client
+            # is refused at once and can retry against whatever comes up next,
+            # which is what a stopping service owes it. Nothing is waited for any
+            # less: the join below still covers a worker in the middle of
+            # publishing.
+            super().server_close()
+            builds.shutdown()
+
     server = Server((settings.host, settings.port), handler)
     server.store = store
     server.comment_store = comment_store
+    server.jobs = job_store
+    server.builds = builds
+    # Last, so a bind that fails leaves no threads behind to be joined by nobody.
+    builds.start()
     return server

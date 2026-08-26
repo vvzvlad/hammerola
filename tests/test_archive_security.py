@@ -39,6 +39,28 @@ def _payload_build() -> bytes:
     return raw_tar_gz(_payload())
 
 
+def _leftovers(hub, pid):
+    """Every transient a refused push could have left behind, by name.
+
+    There are two places to look since the push became asynchronous (SPEC 8A.2
+    step 5), and a test that checked only one would go on passing while the other
+    filled the volume: `.src-<uuid>` at the ROOT of the data directory, which is
+    where a push is unpacked, and `.tmp-<commit>-<uuid>` inside the PROJECT,
+    which is where a build writes its output.
+
+    A project directory that does not exist at all is the strongest form of the
+    same answer, not a hole in this check: a push refused before its build was
+    ever queued never creates one, which is why it is not asserted to be there.
+    """
+    found = [p.name for p in hub.data.iterdir()
+             if p.name.startswith(store_module.LEFTOVER_PREFIXES)]
+    project = hub.project_dir(pid)
+    if project.is_dir():
+        found += [p.name for p in project.iterdir()
+                  if p.name.startswith(store_module.LEFTOVER_PREFIXES)]
+    return found
+
+
 def test_parent_traversal_member_is_refused(hub):
     body = raw_tar_gz(_payload() + [file_entry("../escaped.txt", b"pwned")])
     r = hub.publish("proj1", "abc123", body)
@@ -713,8 +735,7 @@ def test_a_full_disk_during_the_directory_walk_is_not_a_bad_archive(
 def test_a_corrupt_archive_leaves_no_staging_tree(hub):
     whole = raw_tar_gz(_payload() + [file_entry("big.json", b"{}" + b" " * 200_000)])
     hub.publish("proj1", "abc123", whole[: len(whole) // 2])
-    assert [p for p in hub.project_dir("proj1").iterdir()
-            if p.name.startswith(".tmp-")] == []
+    assert _leftovers(hub, "proj1") == []
 
 
 def test_gzip_bomb_is_refused_without_filling_the_disk(hub_factory):
@@ -738,9 +759,8 @@ def test_gzip_bomb_is_refused_without_filling_the_disk(hub_factory):
     assert len(body) < 256 * 1024, "the compressed body must pass the size gate"
     assert small.publish("proj1", "abc123", body).status_code == 413
     assert not (small.project_dir("proj1") / "abc123").exists()
-    # And the staging directory it was writing into is gone with it.
-    assert [p for p in small.project_dir("proj1").iterdir()
-            if p.name.startswith(".tmp-")] == []
+    # And the tree it was unpacking into is gone with it.
+    assert _leftovers(small, "proj1") == []
 
 
 def _tar_blocks(info, data: bytes) -> bytes:
@@ -786,8 +806,7 @@ def test_a_header_understating_its_size_cannot_smuggle_bytes_past_the_cap(
         assert written <= cap, (
             f"a lying header put {written} bytes on disk against a {cap} cap")
     # Whatever happened, no staging tree was left holding the megabyte either.
-    assert [p for p in small.project_dir("proj1").iterdir()
-            if p.name.startswith(".tmp-")] == []
+    assert _leftovers(small, "proj1") == []
 
 
 def test_a_member_larger_than_the_cap_is_refused_while_extracting(hub_factory):
@@ -866,8 +885,7 @@ def test_a_tree_that_expands_past_the_cap_is_refused(hub_factory):
 
     assert small.publish("proj1", "abc123", body).status_code == 413
     assert not (small.project_dir("proj1") / "abc123").exists()
-    assert [p for p in small.project_dir("proj1").iterdir()
-            if p.name.startswith(".tmp-")] == []
+    assert _leftovers(small, "proj1") == []
 
 
 def test_empty_archive_is_refused(hub):
