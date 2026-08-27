@@ -51,8 +51,25 @@ and `comments` are spelled out of what the browser already fetches:
     GET  /project/<pid>/<name>/meta.json  PUBLIC. One build's own record;
                                           `<name>` is `dev`, `latest` or a
                                           revision.
+    GET  /project/<pid>/<name>/<file>     PUBLIC. Any file the build ships —
+                                          the STL and STEP the `downloads` of
+                                          meta.json name, and metrics.json.
     GET  /api/v1/comments?project=<pid>   Bearer -> `{"comments": [...]}`
     POST /api/v1/comments/<id>/resolve    Bearer, `{"note": ...}` -> the record
+
+The code of a revision, and the two routes that unmake something:
+
+    GET    /api/v1/sources/<revision>     Bearer -> the pushed body, byte for
+                                          byte, as an opaque attachment
+    GET    /api/v1/sources/<revision>/log Bearer -> what that build printed
+    POST   /api/v1/projects/<pid>/title   Bearer, `{"title": ...}` -> renames
+    DELETE /api/v1/projects/<pid>         Bearer -> removes the project whole
+
+WHICH SIDE OF THE TOKEN A THING IS ON IS THE WHOLE REASON `source` AND
+`artifacts` ARE TWO VERBS. The build a revision produced is public — it is what
+the site is for — and the code that produced it is not (SPEC 8, entry 17). One
+verb with a flag would put the two behind one word and make the difference a
+matter of remembering.
 
 THE TOKEN THE LAST TWO CHECK IS NOT THE ONE THE PUSH ROUTES CHECK — not yet.
 The hub still has two variables, PUBLISH_TOKEN and COMMENT_READ_TOKEN, and this
@@ -299,6 +316,109 @@ class Hub:
                 f"the hub answered HTTP {status} for {path}: "
                 f"{raw[:200].decode('utf-8', 'replace')}")
         return self._payload(status, raw)
+
+    def build_file(self, pid: str, name: str, filename: str):
+        """One file out of a published build, or None when it is not there.
+
+        PUBLIC, and no token is presented for it — this is the same URL the
+        viewer fetches. That asymmetry is the point of `artifacts` being a verb
+        of its own next to `source`: a build's STL is served to the world, while
+        the code that produced it is not (SPEC 8, entry 26).
+
+        None for a 404 rather than an exception, because "this revision ships no
+        such file" is an answer several callers act on: a build published before
+        the model wrote metrics.json is an ordinary thing to run into.
+        """
+        code, raw = self._call(
+            f"/project/{urllib.parse.quote(pid)}/{urllib.parse.quote(name)}"
+            f"/{urllib.parse.quote(filename)}")
+        if code == 404:
+            return None
+        if code != 200:
+            raise HubError(
+                f"the hub answered HTTP {code} for {name}/{filename} of {pid}")
+        return raw
+
+    # -- the code of a revision --------------------------------------------
+    def revision_archive(self, revision: str) -> bytes:
+        """The body that was pushed to produce one revision (SPEC 7.8).
+
+        Byte for byte what the pusher sent, so this is the code that built the
+        revision rather than a repacking of it.
+        """
+        code, raw = self._call(
+            f"/api/v1/sources/{urllib.parse.quote(revision)}")
+        return self._sources_reply(code, raw, revision)
+
+    def revision_log(self, revision: str) -> str:
+        """What the build of one revision printed."""
+        code, raw = self._call(
+            f"/api/v1/sources/{urllib.parse.quote(revision)}/log")
+        return self._sources_reply(code, raw, revision).decode("utf-8", "replace")
+
+    def _sources_reply(self, code: int, raw: bytes, revision: str) -> bytes:
+        """The two answers this endpoint gives, told apart for the reader.
+
+        The hub answers the SAME 404 for a revision that was never published,
+        one whose build failed, one whose code somebody removed by hand and a
+        segment that is not a revision id at all — deliberately, so the reply
+        confirms nothing about what is on the volume. The message therefore has
+        to name all of them rather than guess at one.
+        """
+        if code == 401:
+            raise HubError(UNAUTHORIZED_PUSH)
+        if code == 404:
+            raise HubError(
+                f"the hub has no stored code for revision {revision}.\n"
+                f"  It answers the same for a revision that was never "
+                f"published, one whose build\n"
+                f"  failed, and one published before the hub started keeping "
+                f"sources. `hammerola status`\n"
+                f"  lists the revisions this project has.")
+        if code != 200:
+            raise HubError(
+                f"the hub answered HTTP {code} for the code of {revision}")
+        return raw
+
+    # -- the project itself ------------------------------------------------
+    def rename_project(self, pid: str, title: str, missing_ok: bool = False):
+        """Give the project a new TITLE. Never an id — there is no route for it.
+
+        `missing_ok` answers None instead of raising when the hub has no such
+        project, because for a rename that is not a failure: a project exists on
+        the hub from its first successful push, and renaming one that has not
+        been pushed yet is an ordinary thing to do — the new name is in
+        `project.json` and the first push will carry it.
+        """
+        body = json.dumps({"title": title}).encode("utf-8")
+        code, raw = self._call(
+            f"/api/v1/projects/{urllib.parse.quote(pid)}/title",
+            method="POST", body=body, content_type="application/json")
+        if code == 404 and missing_ok:
+            return None
+        return self._project_reply(code, raw, pid, "rename")
+
+    def remove_project(self, pid: str) -> dict:
+        """Delete the project and everything under it. -> what the hub removed."""
+        code, raw = self._call(
+            f"/api/v1/projects/{urllib.parse.quote(pid)}", method="DELETE")
+        return self._project_reply(code, raw, pid, "remove")
+
+    def _project_reply(self, code: int, raw: bytes, pid: str,
+                       verb: str) -> dict:
+        if code == 401:
+            raise HubError(UNAUTHORIZED_PUSH)
+        if code == 404:
+            raise HubError(
+                f"the hub has no project {pid}.\n"
+                f"  A project exists on the hub from its first successful push; "
+                f"until then there is\n"
+                f"  nothing there to {verb}.")
+        if code != 200:
+            raise HubError(
+                f"the hub refused to {verb} {pid} with HTTP {code}: "
+                f"{self._payload(code, raw).get('error', '')}")
+        return self._payload(code, raw)
 
     # -- the comment queue -------------------------------------------------
     def comments(self, pid: str, *, status: str = None, since: str = None):

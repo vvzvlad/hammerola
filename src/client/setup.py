@@ -140,6 +140,7 @@ def _ask(prompt: str, default=None) -> str:
 def create(args) -> int:
     """Write a `project.json` with a fresh id. -> exit code."""
     root = Path(args.directory).expanduser() if args.directory else Path.cwd()
+    _refuse_inside_a_project(root)
     payload = project.create_project(root, getattr(args, "title", None))
 
     print(f"created {root / project.PROJECT_FILE}")
@@ -154,3 +155,41 @@ def create(args) -> int:
           "instead, never the id.")
     print("next: `hammerola build` publishes the working copy into dev.")
     return 0
+
+
+def _refuse_inside_a_project(root: Path) -> None:
+    """Refuse when a project.json already stands ABOVE this directory.
+
+    `create_project` refuses to overwrite the file in `root` itself, and that
+    covers `hammerola create` run twice in the same place. It does not cover the
+    case that actually costs something, because there is nothing to overwrite
+    there: `cd scripts/ && hammerola create`. The id is minted in a
+    SUBDIRECTORY of a project that already has one, nothing fails, and from then
+    on every command run from that directory addresses the new, empty project —
+    `find_project_root` walks up and stops at the NEAREST project.json, which is
+    now the inner one. The next `build` publishes a subtree of the model under
+    an id nobody meant to create, and the loss is invisible until somebody goes
+    looking for the history (`project.create_project` says the same thing about
+    the case it does catch).
+
+    Looked up rather than assumed: the message names the project that is already
+    here, because "you are inside one" is only actionable if it says which.
+    """
+    try:
+        existing = project.find_project_root(root)
+    except project.ProjectError:
+        return
+    if existing == Path(root).expanduser().resolve():
+        # `create_project` owns this one and says it better — it is about the
+        # file it is holding rather than about the directory being inside
+        # something.
+        return
+    raise project.ProjectError(
+        f"{root} is already inside the project in {existing}.\n"
+        f"  A second {project.PROJECT_FILE} below that one would not fail "
+        f"anything: it would quietly take over\n"
+        f"  every command run from here, and the next `hammerola build` would "
+        f"publish this subtree as\n"
+        f"  a project of its own. Run this outside "
+        f"{existing}, or pass a directory that is."
+    )

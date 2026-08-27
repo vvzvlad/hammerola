@@ -231,8 +231,7 @@ def publish_to_data(out_dir, entries, data_dir):
     body = out_dir / "body.tar.gz"
     body.write_bytes(blob.getvalue())
 
-    store = Store(data_dir, retention_builds=20,
-                  max_build_bytes=64 * 1024 * 1024)
+    store = Store(data_dir, max_build_bytes=64 * 1024 * 1024)
     status, answer = store.publish_dev(FIXTURE_PID, body, body.stat().st_size)
     print(f"published {status} into {data_dir}: {answer.get('url', '')}")
 

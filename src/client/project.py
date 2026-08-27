@@ -23,6 +23,7 @@ different purpose: `gitsuggest` offers a commit that RECORDS what was published.
 """
 
 import json
+import os
 import secrets
 from pathlib import Path
 
@@ -52,6 +53,27 @@ def find_project_root(start=None) -> Path:
         f"  Run this in a model's directory: {PROJECT_FILE} is what says which "
         f"project the hub should publish under."
     )
+
+
+def optional_project_root(start=None):
+    """The project root, or None when there is none. Never raises.
+
+    For the commands that address something by its own id — `source <revision>`,
+    `log <revision>`, `diff <a> <b>`. A revision is named by the hub out of its
+    sources and is unique across the whole service, so fetching one needs no
+    project at all, and refusing to run outside a model directory would be a
+    rule with nothing behind it. (`comments resolve` already works this way, for
+    the same reason.)
+
+    The root is still WORTH having when it is there: it is what `latest`
+    resolves against, and it is the directory whose `.env` may override the
+    machine's settings (`config.resolve`). So this asks, and the caller decides
+    whether the answer was needed.
+    """
+    try:
+        return find_project_root(start)
+    except ProjectError:
+        return None
 
 
 def read_project_id(root: Path) -> str:
@@ -159,6 +181,50 @@ def _clean_title(title: str, root: Path) -> str:
                 "the project title contains a control character; it is shown "
                 "verbatim on the site and has to be one printable line")
     return title
+
+
+def write_project_title(root: Path, title: str) -> str:
+    """Change the `title` in project.json, and NOTHING else. -> the title written.
+
+    THE ID IS NEVER TOUCHED, and this function is where that is enforced on the
+    local side: it reads the file, replaces one key and writes it back, so an id
+    cannot be changed by a command that says `rename`. Renaming an id would
+    detach the directory from everything the hub has published for it and break
+    every permanent URL of the project (SPEC 3.1) — which is why there is no
+    command for it here and no route for it there.
+
+    Every other key survives, including ones this tool does not know about: a
+    project.json is a file people put things in, and a rename must not be a
+    quiet way of dropping them.
+
+    Written through a temporary file and renamed, so an interrupted rename leaves
+    the previous file intact rather than a truncated one. This file carries the
+    project id; a half-written one is a directory that can no longer publish.
+    """
+    path = root / PROJECT_FILE
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise ProjectError(f"cannot read {path}: {error}") from error
+    except ValueError as error:
+        raise ProjectError(f"{path} is not valid JSON: {error}") from error
+    if not isinstance(payload, dict):
+        raise ProjectError(f"{path} must hold a JSON object")
+
+    payload["title"] = _clean_title(title, root)
+    tmp = path.parent / f".{path.name}.wip"
+    try:
+        with open(tmp, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, indent=1, ensure_ascii=False)
+            stream.write("\n")
+        os.replace(tmp, path)
+    except OSError as error:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise ProjectError(f"cannot write {path}: {error}") from error
+    return payload["title"]
 
 
 def read_project_title(root: Path) -> str:

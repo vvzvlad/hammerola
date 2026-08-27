@@ -28,6 +28,9 @@ Routing (SPEC 3, 7.4):
     GET  /api/v1/sources/<revision>           the code that built it   PUBLISH_TOKEN
     GET  /api/v1/sources/<revision>/log       and what it printed      PUBLISH_TOKEN
 
+    POST   /api/v1/projects/<pid>/title       rename the project       PUBLISH_TOKEN
+    DELETE /api/v1/projects/<pid>             remove it entirely       PUBLISH_TOKEN
+
     POST /api/v1/comments/<pid>/<commit>      leave a comment — PUBLIC, no token
     GET  /api/v1/comments                     the queue          COMMENT_READ_TOKEN
     GET  /api/v1/comments/<id>                one comment        COMMENT_READ_TOKEN
@@ -44,6 +47,14 @@ build directory is world-readable and cached for a year; the sources that
 produced it are behind PUBLISH_TOKEN and live in a tree the file server cannot
 reach at all (SPEC 8, entry 17). The hub is a forge, so it has to HOLD the code —
 that is not the same as showing it.
+
+THE TWO PROJECT ROUTES ARE THE ONLY ONES THAT UNMAKE SOMETHING, and what each of
+them may touch is fixed by SPEC 3.1 rather than by convenience. `title` renames
+the project and NOTHING ELSE: the id is what every permanent URL is built from,
+those URLs serve builds cached for a year that cannot be recalled, so there is no
+route that changes an id and there is not going to be one. `DELETE` removes the
+whole project — never one build, because removing a build breaks a permanent URL
+while removing the project takes away the thing the URL was about.
 
 A PUSH IS TWO THINGS NOW, and the split runs right through `_handle_post`. What
 arrives is a model's SOURCE, and the hub builds it (SPEC 8A.2 step 5), which is
@@ -78,10 +89,10 @@ from src import render
 from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
                           RateLimiter, client_address, normalize_since,
                           validate_payload)
-from src.jobs import (HANDOVER_ERROR, QUEUE_FULL_ERROR,
-                      QUEUE_FULL_RETRY_AFTER_SECONDS, STATE_FAILED,
-                      STOPPED_ERROR, SUBMIT_ACCEPTED, SUBMIT_QUEUE_FULL,
-                      BuildQueue, BuildTask, JobStore)
+from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
+                      QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
+                      STATE_FAILED, STOPPED_ERROR, SUBMIT_ACCEPTED,
+                      SUBMIT_QUEUE_FULL, BuildQueue, BuildTask, JobStore)
 from src.multipart import MultipartError, parse_multipart
 from src.store import DEV_LINK, POINTER_NAMES, PublishError, Store
 
@@ -169,6 +180,12 @@ MAX_CONCURRENT_PUBLISHES = 4
 # hundred characters by `comments.MAX_FIELD_CHARS`, and this only exists so the
 # endpoint cannot be handed a megabyte to parse.
 MAX_RESOLVE_BODY_BYTES = 8 * 1024
+
+# The rename body: one JSON object with one short string in it. Deliberately
+# smaller than the resolve ceiling above — a note explains what was done about a
+# comment and can be a paragraph, while a title is a caption and `render` refuses
+# anything past MAX_TEXT characters a moment later.
+MAX_TITLE_BODY_BYTES = 2 * 1024
 
 # How long a publish waits for a permit before giving up. Long enough to outlast
 # a normal push, short enough that a wedged one turns into a 503 CI can retry
@@ -739,6 +756,11 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     return self._handle_comment_resolve(segments[3])
                 return self._handle_comment_post(segments[3], segments[4])
 
+            if segments[:3] == ["api", "v1", "projects"]:
+                if len(segments) == 5 and segments[4] == "title":
+                    return self._handle_rename(segments[3])
+                return self._error(404, "not found", {"Connection": "close"})
+
             if segments[:3] != ["api", "v1", "publish"] or \
                     len(segments) not in (4, 5):
                 return self._error(404, "not found", {"Connection": "close"})
@@ -1093,9 +1115,36 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 # builds. An empty body rather than a 404 when the log is
                 # missing — the code is there, so the revision is, and 404 would
                 # say something different and untrue.
+                #
+                # READ WITH A CEILING, for the reason `JobStore.log` spells out
+                # about its own copy: `data/` is one volume and every build can
+                # write anywhere in it, so the size of the file that comes back
+                # is not a number this hub gets to decide. A model can plant a
+                # multi-gigabyte `log.txt` beside an empty archive and this
+                # branch would pull all of it into the request thread — the
+                # container carries no memory ceiling on purpose (step 0).
+                #
+                # `MAX_LOG_BYTES` rather than a number of our own:
+                # `Store.keep_build_log` already says the ceiling belongs to
+                # whoever captured the log, and a second constant is how the
+                # two come apart. Truncation is not written back, again as the
+                # job copy reasons — the oversized file is evidence about a
+                # build that misbehaved, and rewriting it destroys what
+                # somebody came to read.
                 log = store.source_log(revision)
-                body = log.read_bytes() if log.is_file() else b""
-                return self._send(200, body, "text/plain; charset=utf-8",
+                try:
+                    with open(log, "rb") as handle:
+                        raw = handle.read(MAX_LOG_BYTES + 1)
+                except OSError:
+                    raw = b""
+                if len(raw) > MAX_LOG_BYTES:
+                    logger.warning(
+                        f"revision {revision}: its stored log is over "
+                        f"{MAX_LOG_BYTES} bytes, which is more than a "
+                        f"build can produce; serving it truncated")
+                    raw = (raw[:MAX_LOG_BYTES]
+                           + LOG_TRUNCATED_NOTE.encode("utf-8"))
+                return self._send(200, raw, "text/plain; charset=utf-8",
                                   CACHE_NONE, with_body=with_body)
 
             # An opaque attachment, never a type a browser will act on: these are
@@ -1107,6 +1156,117 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 content=(OCTET_TYPE, {
                     "Content-Disposition":
                         f'attachment; filename="{revision}.tar.gz"'}))
+
+        # -- the project itself: rename, and remove ---------------------
+        def _handle_rename(self, pid: str):
+            """POST /api/v1/projects/<pid>/title — the TITLE and nothing else.
+
+            A project has an id and a name, and they are separate on purpose
+            (SPEC 3.1): the id may not be derived from the name, because it would
+            then change at exactly the moment it exists to survive. So this route
+            renames and there is no route that re-identifies — every permanent
+            URL of the project is built from the id, and the builds behind those
+            URLs went out with a year of `immutable` and cannot be recalled.
+
+            Behind PUBLISH_TOKEN, checked BEFORE anything about the project is
+            looked at or touched. A project that does not exist and an id that is
+            not one this hub could ever have get the SAME 404 with the same body,
+            so the reply says nothing about which projects are on the volume that
+            the public index does not already say.
+            """
+            if not self._require_token(publish_token, close=True):
+                return None
+            if self.headers.get("Transfer-Encoding"):
+                # Nothing here decodes chunked, and answering while leaving an
+                # unread body on the socket would turn its remains into the next
+                # request on a keep-alive connection.
+                return self._error(411, "Content-Length is required",
+                                   {"Connection": "close"})
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                return self._error(411, "Content-Length is required",
+                                   {"Connection": "close"})
+            if length < 0 or length > MAX_TITLE_BODY_BYTES:
+                return self._error(413, "title body is too large",
+                                   {"Connection": "close"})
+            body, problem = self._read_body(length)
+            if problem is not None:
+                status, message = problem
+                return self._error(status, message, {"Connection": "close"})
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                return self._error(422, "body is not valid JSON")
+            if not isinstance(payload, dict):
+                return self._error(422, "body must be a JSON object")
+            try:
+                # The same rule a build's own title goes through on the way in,
+                # asked of the same function: a title set here is shown in the
+                # same two places, so a second, looser rule here would be a way
+                # to put on the index page what a push cannot.
+                title = render.project_title(payload.get("title"))
+            except ValueError as error:
+                return self._error(422, str(error))
+
+            # The body is read and validated BEFORE the project is looked for, so
+            # that every refusal above happens without this hub saying whether
+            # the project is there.
+            if not store.valid_pid(pid) or not store.set_title(pid, title):
+                return self._error(404, "not found")
+            logger.info(f"project {pid} renamed")
+            return self._json(200, {"pid": pid, "title": title})
+
+        def do_DELETE(self):
+            try:
+                return self._handle_delete()
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
+                return None
+
+        def _handle_delete(self):
+            """DELETE /api/v1/projects/<pid> — the whole project, all of it.
+
+            THE ONLY WAY ANYTHING LEAVES THE VOLUME. There is no retention
+            (SPEC 5.3) and no route that removes a single build, and the second
+            of those is the deliberate half: a build's URL is permanent and
+            immutable, so removing one build turns a promise into a 404 while
+            leaving the project standing. Removing the PROJECT takes the promise
+            away together with everything it was about — its builds, its
+            pointers, its comment queue and the stored code of its revisions —
+            which is the honest shape for "I made a test project and I am done
+            with it" (SPEC 8, entry 26).
+
+            Behind PUBLISH_TOKEN and checked first, so nothing about a project is
+            read or touched without it, and every miss is the same 404.
+            """
+            if not self._require_token(publish_token, close=True):
+                return None
+            path = self.path.split("?", 1)[0]
+            segments = self._split(path)
+            if segments[:3] != ["api", "v1", "projects"] or len(segments) != 4:
+                return self._error(404, "not found", {"Connection": "close"})
+            # A body would sit unread on the socket and be parsed as the next
+            # request. Nothing about this route takes one, so it is refused
+            # rather than drained.
+            if self.headers.get("Transfer-Encoding") or \
+                    (self.headers.get("Content-Length") or "0").strip() not in \
+                    ("", "0"):
+                return self._error(400, "this endpoint takes no body",
+                                   {"Connection": "close"})
+
+            pid = segments[3]
+            if not store.valid_pid(pid):
+                return self._error(404, "not found")
+            removed = store.remove_project(pid)
+            if removed is None:
+                return self._error(404, "not found")
+            # After the project, and only for a project that existed: the queue
+            # anchors to <pid>/<commit> (SPEC 7A.1), so once the builds are gone
+            # every entry in it points at something nobody can open.
+            removed["comments"] = comment_store.remove_project(pid)
+            logger.info(f"project {pid} removed: {removed}")
+            return self._json(200, removed)
 
         # -- comment queue, write side ---------------------------------
         def _handle_comment_resolve(self, cid: str):

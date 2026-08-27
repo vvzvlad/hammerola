@@ -15,6 +15,23 @@ takes the baseline as an argument), and the second guards against a copied
 project.json pointing at a stranger's id -- a question the hub answers from its
 own store, not from a build's own numbers. Everything that is pure -- the
 fingerprints, the diff, the summary and the printing -- came across unchanged.
+
+THE COMPARISON ITSELF NOW LIVES IN `src/metricsdiff.py` and is imported back
+here, so this module still exposes every name it always did. It moved because
+metrics.json gained a SECOND reader that cannot import this one: `hammerola
+diff` prints what moved between two published revisions, and the client is
+stdlib-only and never imports the build half. Read that module's docstring for
+why a shared module beat a second copy -- the short version is that a copy is
+what broke publication once already.
+
+WHY THE IMPORT IS ABSOLUTE where every other import in this package is
+relative. `src.metricsdiff` is outside the package, so there is no relative
+spelling; naming `src` is safe HERE because of when this module is imported. A
+model is loaded with its own directory first on `sys.path` (`geometry.load_model`),
+so a project with a `src/` directory of its own can shadow the name -- but that
+happens inside `build()`, and `src.cadbuild.build` imports this module at its
+own import time, which is before the child process reaches any model. Same
+spelling `src/buildproc/` already uses throughout.
 """
 
 from datetime import datetime, timezone
@@ -24,23 +41,47 @@ import io
 import json
 import tokenize
 
+from src.metricsdiff import (
+    METRIC_FIELDS,
+    METRICS_NAME,
+    METRICS_REL_TOL,
+    _field_moved,
+    _moved,
+    _part_summary,
+    _shown,
+    metrics_diff,
+    metrics_summary,
+    unchanged_code_moved_geometry,
+)
+
 from . import checklib
 from .hubspec import DEV_LABEL
 from .paths import project_root
 
+# Re-exported on purpose: `from .metrics import METRICS_NAME` and
+# `from src.cadbuild.metrics import metrics_diff` are what the build and its
+# tests are written against, and moving the implementation must not move the
+# names. Listed explicitly so a linter cannot decide the imports above are
+# unused and delete the module's public surface.
+__all__ = [
+    "METRIC_FIELDS", "METRICS_NAME", "METRICS_REL_TOL", "METRICS_VERSION",
+    "collect_metrics", "metrics_diff", "metrics_summary", "report_metrics",
+    "source_fingerprints", "unchanged_code_moved_geometry", "write_metrics",
+]
 
-# The numbers this build measured, shipped in the archive next to the geometry
-# (see collect_metrics). Nothing on the hub has to know about it: the name
-# passes the member rule, `.json` is a type the hub serves, and every member is
-# reachable at its own URL -- which is how the NEXT build reads this one back.
-METRICS_NAME = "metrics.json"
+
+# METRICS_NAME -- the file this writes and both readers fetch -- is imported
+# above, from the module the readers share. Nothing on the hub has to know about
+# it: the name passes the member rule, `.json` is a type the hub serves, and
+# every member is reachable at its own URL, which is how the next build and
+# `hammerola diff` read it back.
+#
 # Bumped when a reader of an older file would misread it. A build refuses to
 # compare against a version it does not know and says so, rather than diffing
-# fields that have quietly changed meaning.
+# fields that have quietly changed meaning. It stays HERE, with the writer: the
+# readers do not enforce it (`metrics_diff` compares fields it recognises and
+# ignores the rest), so a shared constant would only look as though they did.
 METRICS_VERSION = 1
-# Below this a volume difference is arithmetic noise, not a change. Relative,
-# because the parts these run on span three orders of magnitude of volume.
-METRICS_REL_TOL = 1e-9
 
 
 # --------------------------------------------------------------------------
@@ -56,10 +97,6 @@ METRICS_REL_TOL = 1e-9
 # What it prints is ONLY the difference, and only when there is one. A block
 # that appears after every build, saying the same numbers, is a block that
 # stops being read some builds before the one where it mattered.
-
-# The fields compared between two builds, in the order they are printed.
-METRIC_FIELDS = ("volume_mm3", "bbox_mm", "faces", "edges", "solids",
-                 "triangles", "watertight")
 
 
 def _comment_free(text):
@@ -153,148 +190,6 @@ def write_metrics(out_dir, metrics):
         json.dumps(trim(metrics), indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-
-
-def _moved(old, new):
-    """True when two measured values really differ."""
-    if isinstance(old, bool) or isinstance(new, bool):
-        return bool(old) != bool(new)
-    if isinstance(old, (int, float)) and isinstance(new, (int, float)):
-        return abs(new - old) > METRICS_REL_TOL * max(1.0, abs(old), abs(new))
-    if isinstance(old, list) and isinstance(new, list):
-        return len(old) != len(new) or any(_moved(a, b) for a, b in zip(old, new))
-    return old != new
-
-
-def _shown(field, value):
-    """One measured value, in the unit a person thinks in."""
-    if field == "volume_mm3":
-        return f"{value / 1000.0:.2f} cm3"
-    if field == "bbox_mm":
-        return "x".join(f"{axis:.2f}" for axis in value) + " mm"
-    if field == "watertight":
-        return "watertight" if value else "NOT watertight"
-    # `1 solid`, not `1 solids`: these lines are read at a glance and the
-    # plural on a count of one reads as a typo in the number.
-    return f"{value} {field[:-1] if value == 1 else field}"
-
-
-def _field_moved(field, old, new):
-    """`volume 33.06 -> 31.90 cm3 (-3.5%)` and friends."""
-    if field == "volume_mm3":
-        share = f" ({(new - old) / old * 100.0:+.1f}%)" if old else ""
-        return f"volume {old / 1000.0:.2f} -> {new / 1000.0:.2f} cm3{share}"
-    if field in ("bbox_mm", "watertight"):
-        label = "bbox " if field == "bbox_mm" else ""
-        return f"{label}{_shown(field, old)} -> {_shown(field, new)}"
-    return f"{field} {old} -> {new}"
-
-
-def _part_summary(part):
-    """Everything measured about one part, on one line."""
-    bits = []
-    for field in METRIC_FIELDS:
-        if field in part:
-            bits.append(_shown(field, part[field]))
-    return ", ".join(bits)
-
-
-def metrics_summary(metrics):
-    """Every number this build measured, for when there is nothing to diff."""
-    lines = []
-    for name, part in sorted((metrics.get("parts") or {}).items()):
-        lines.append(f"{name}: {_part_summary(part)}")
-    shared = ((metrics.get("assembly") or {}).get("interference_mm3")) or {}
-    for pair, volume in sorted(shared.items()):
-        lines.append(f"{pair}: {volume:.3f} mm3 shared")
-    if metrics.get("checks_passed") is not None:
-        lines.append(f"checks passed: {metrics['checks_passed']}")
-    return lines
-
-
-def metrics_diff(old, new):
-    """What moved between two builds. Empty when nothing did -- print nothing."""
-    lines = []
-    was = old.get("parts") or {}
-    now = new.get("parts") or {}
-    for name in sorted(set(was) | set(now)):
-        before, after = was.get(name), now.get(name)
-        if before is None:
-            lines.append(f"{name}: new part, {_part_summary(after)}")
-            continue
-        if after is None:
-            lines.append(f"{name}: gone (was {_part_summary(before)})")
-            continue
-        moved = [_field_moved(field, before[field], after[field])
-                 for field in METRIC_FIELDS
-                 if field in before and field in after
-                 and _moved(before[field], after[field])]
-        if moved:
-            lines.append(f"{name}: " + ", ".join(moved))
-
-    was_shared = ((old.get("assembly") or {}).get("interference_mm3")) or {}
-    now_shared = ((new.get("assembly") or {}).get("interference_mm3")) or {}
-    for pair in sorted(set(was_shared) | set(now_shared)):
-        before, after = was_shared.get(pair), now_shared.get(pair)
-        if before is None:
-            lines.append(f"{pair}: now share {after:.3f} mm3")
-        elif after is None:
-            lines.append(f"{pair}: no longer measured (shared {before:.3f} mm3)")
-        elif _moved(before, after):
-            lines.append(f"{pair}: shared volume {before:.3f} -> {after:.3f} mm3")
-
-    if old.get("checks_passed") != new.get("checks_passed"):
-        lines.append(f"checks passed: {old.get('checks_passed')} -> "
-                     f"{new.get('checks_passed')}")
-    return lines
-
-
-# There used to be a SECOND alarm next to the one below, printing a `!` line
-# that guessed at what an edit had MEANT to do: "material is gone and the face
-# count did not move -- so this was a face shifting, not a feature cut".
-# Widening an existing hole or pocket, deepening a slot, thinning a wall,
-# growing a chamfer -- all of them remove volume and leave the face count
-# exactly where it was, and all of them are ordinary edits. An alarm that fires
-# on ordinary work gets skipped over, and it takes the lines around it with it.
-#
-# A diff between two builds is the wrong place for that question anyway. "The
-# boolean cut nothing away" is answerable exactly where the boolean happens,
-# against the shapes going into it, with no dependence on what was published
-# last week -- so it belongs in the model's own checks(), not here.
-
-
-def unchanged_code_moved_geometry(old, new):
-    """Parts whose measurements moved while the model's code did not.
-
-    The one comparison here that says something a person cannot read off the
-    numbers, and it is not a guess about intent: it reports that the SAME
-    SOURCE produced a DIFFERENT SOLID. No ordinary edit can do that -- editing
-    is what changes the code hash -- so when it fires, the difference came from
-    outside the source, and there are only a few candidates: the geometry was
-    computed somewhere else (a build on the node against a build with LOCAL=1),
-    the CAD stack moved under it (a rebuilt builder image, a different
-    CadQuery/OCCT than the venv here), or the model is not deterministic.
-
-    That is why it stays while the other one went. It cannot fire on a normal
-    edit, and the two-places-to-build arrangement this template uses -- node by
-    default, LOCAL=1 whenever the node is down -- is exactly the arrangement
-    that makes a silent divergence between them possible.
-
-    It reads `source.code`, the hash of the root *.py with comments stripped:
-    the same source with a comment rewritten is still the same source, so a
-    reformatted comment must not raise this and does not. An empty hash means
-    the source did not tokenize and nothing is claimed at all.
-    """
-    was_code = (old.get("source") or {}).get("code")
-    now_code = (new.get("source") or {}).get("code")
-    if not was_code or was_code != now_code:
-        return []
-    was = old.get("parts") or {}
-    now = new.get("parts") or {}
-    return [name for name in sorted(set(was) & set(now))
-            if any(field in was[name] and field in now[name]
-                   and _moved(was[name][field], now[name][field])
-                   for field in METRIC_FIELDS)]
 
 
 def report_metrics(out_dir, baseline, why):

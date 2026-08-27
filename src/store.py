@@ -213,6 +213,20 @@ SOURCE_ARCHIVE_NAME = "source.tar.gz"
 # reachable only by whoever still had the id from the push.
 SOURCE_LOG_NAME = "log.txt"
 
+# The project's own title, when somebody has renamed it (`hammerola rename`).
+# PROJECT-LEVEL STATE, beside `builds.json` and for the same reason: a title is a
+# property of the PROJECT, not of any one build (SPEC 3.1 separates the id from
+# the name for exactly this). Renaming could not be done by rewriting the builds
+# instead — a published build is immutable and served with a year of `immutable`,
+# so the copies already handed out would never see the change and the ones on
+# disk would stop matching what was published.
+#
+# Dot-free, and unreachable from the outside anyway: `_serve_project` only
+# accepts a second segment that is a pointer name or passes `valid_build_id`, and
+# `SAFE_ID` has no dot in it, so `/project/<pid>/title.json` is a 404 by the same
+# rule that makes `builds.json` reachable only because it is spelled out.
+PROJECT_TITLE_FILE = "title.json"
+
 # Every transient name the store writes. All dot-prefixed, so none of them is ever
 # served or picked up by `builds_of` — which is exactly why nothing notices when
 # one is left behind by a SIGKILL, and why they are swept explicitly at startup.
@@ -847,6 +861,11 @@ class Store:
             # picker starts offering it, and the picker is written last, from
             # what is on disk once the pointer has settled.
             try:
+                # A rename is superseded by the push that follows it: the build
+                # carries the project's own title, and that is the newer
+                # statement of what the project is called. Before the picker is
+                # written, so the file is rebuilt from the state that survives.
+                self.clear_title(pid)
                 self._switch_latest(pid)
                 self._write_builds_json(pid)
             except Exception:
@@ -908,6 +927,9 @@ class Store:
             # cannot be allowed to unpublish it by raising. The next push
             # rewrites the file from scratch.
             try:
+                # Same as the commit route: this push carries the project's own
+                # title, so an earlier rename has been answered.
+                self.clear_title(pid)
                 self._write_builds_json(pid)
             except Exception:
                 logger.exception(
@@ -1387,11 +1409,13 @@ class Store:
         dev_meta = self._dev_meta(pid)
         if not metas and dev_meta is None:
             return
-        _atomic_write_json(
-            self.projects_dir / pid / "builds.json",
-            render.builds_json(pid, metas, dev=dev_meta is not None,
-                               latest=self.latest_commit(pid),
-                               fallback=dev_meta))
+        picker = render.builds_json(pid, metas, dev=dev_meta is not None,
+                                    latest=self.latest_commit(pid),
+                                    fallback=dev_meta)
+        renamed = self.project_title(pid)
+        if renamed is not None:
+            picker["title"] = renamed
+        _atomic_write_json(self.projects_dir / pid / "builds.json", picker)
 
     def _dev_meta(self, pid: str) -> dict | None:
         """The local slot's meta.json, or None if the slot is empty.
@@ -1426,9 +1450,180 @@ class Store:
                     continue
                 metas = self.builds_of(pdir.name)
                 if metas:
-                    cards.append(render.index_card(metas[0]))
+                    card = render.index_card(metas[0])
+                    renamed = self.project_title(pdir.name)
+                    if renamed is not None:
+                        card["title"] = renamed
+                    cards.append(card)
             cards.sort(key=lambda c: c["built"], reverse=True)
             _atomic_write_json(self.root / "index.json", cards)
+
+    # -- rename, and remove ------------------------------------------------
+    def project_title(self, pid: str) -> str | None:
+        """The title a rename gave this project, or None if nobody renamed it.
+
+        None rather than the build's own title, so every caller can tell the two
+        apart: an override REPLACES what the newest build says, and a caller that
+        got a string back either way could not know whether it was doing that.
+
+        Read off the volume on every call rather than cached. It is one small
+        file, read on the two paths that rewrite `builds.json` and `index.json`
+        — both already reading every build's meta.json — so a cache would buy
+        nothing and would have to be invalidated from the publish path, which is
+        the sort of coupling `data/` is deliberately free of.
+        """
+        try:
+            payload = json.loads(
+                (self.projects_dir / pid / PROJECT_TITLE_FILE
+                 ).read_text(encoding="utf-8"))
+        except (ValueError, OSError, RecursionError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        title = payload.get("title")
+        return title if isinstance(title, str) and title else None
+
+    def set_title(self, pid: str, title: str) -> bool:
+        """Rename the project. True when it was renamed, False when there is no
+        such project.
+
+        THE ID IS NOT TOUCHED AND CANNOT BE. Every permanent URL of the project
+        is built from the id (SPEC 3.1), the builds behind those URLs are served
+        with a year of `immutable` and cannot be recalled, so renaming an id
+        would break exactly the promise this service exists to keep. There is no
+        route for it and there is not going to be one.
+
+        Existence is decided by the project DIRECTORY, which is what every other
+        project-level answer here uses (`_serve_pointer_page`, `builds_of`): a
+        project whose builds somebody cleared out by hand is still a project.
+
+        The picker and the index are rewritten from what is on disk, in that
+        order and for the reason `publish_built` gives: the per-project file
+        first, the site-wide one after it.
+        """
+        pdir = self.projects_dir / pid
+        with self._lock_for(pid):
+            if not pdir.is_dir():
+                return False
+            _atomic_write_json(pdir / PROJECT_TITLE_FILE,
+                               {"title": title, "renamed": utcnow_iso()})
+            self._write_builds_json(pid)
+        self._refresh_index()
+        return True
+
+    def clear_title(self, pid: str) -> None:
+        """Forget a rename, because a push has just said what the project is called.
+
+        A build carries the title out of the project's own `project.json`
+        (`cadbuild.project.load_project`), so a push is a fresh statement of the
+        name and it is the more recent one. Without this, a rename made once
+        would outrank every future push for ever — and the client's `rename`
+        writes the new title into `project.json` as well, so the ordinary
+        sequence keeps the name rather than reverting it.
+
+        Best effort, and called from inside the publish path: a volume that will
+        not take the unlink must not turn a published build into a failed one.
+        """
+        try:
+            (self.projects_dir / pid / PROJECT_TITLE_FILE).unlink()
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            logger.warning(f"could not clear the renamed title of {pid}: {error}")
+
+    def remove_project(self, pid: str) -> dict | None:
+        """Delete one project ENTIRELY. -> what was removed, or None if absent.
+
+        THE WHOLE PROJECT AND NEVER ONE BUILD. Removing a single build breaks a
+        permanent URL, which is the one thing the service promises; removing the
+        project takes the promise away with the thing it was about. This is for
+        "I made a test project and I am done with it", and it is meant to be the
+        big rare hammer rather than a tidying tool (SPEC 8, entry 26).
+
+        THE CODE OF THE REMOVED REVISIONS GOES TOO, AND ONLY IF NOTHING ELSE
+        POINTS AT IT. `sources/` is addressed by the digest of a source tree and
+        not by project (SPEC 7.8), so the same tree published in two projects is
+        one directory serving both. The invariant that store keeps is "an archive
+        exists exactly when a published revision does", so leaving these behind
+        would break it in the direction SPEC 7.8 names as the bad one: a stored
+        tree with no revision behind it is code the hub cannot answer for.
+
+        THE ORDER IS WHAT MAKES THE SCAN SAFE against a publish running at the
+        same moment. The project tree goes first, then the digests still
+        referenced by OTHER projects are collected, and only unreferenced ones
+        are deleted. A concurrent publish of the same sources elsewhere either
+        has already renamed its build directory into place — in which case the
+        scan sees it and the archive stays — or has not, in which case it has not
+        stored the archive either (`jobs._keep_the_code` runs after the publish)
+        and stores it once we are done.
+
+        The comment queue is NOT removed here: it lives under `data/comments/`,
+        which belongs to CommentStore, and app.py removes both.
+        """
+        pdir = self.projects_dir / pid
+        with self._lock_for(pid):
+            if not pdir.is_dir():
+                return None
+            mine = self._digests_of(pid)
+            builds = len(self.builds_of(pid))
+            shutil.rmtree(pdir)
+
+        referenced = set()
+        try:
+            for other in self.projects_dir.iterdir():
+                if other.name.startswith(".") or not other.is_dir():
+                    continue
+                referenced |= self._digests_of(other.name)
+        except OSError as error:
+            # Nothing may be deleted on a scan that did not finish: an
+            # incomplete answer to "what else points at this" is indistinguishable
+            # from "nothing does", and acting on it removes the code of somebody
+            # else's live revision.
+            logger.warning(
+                f"remove {pid}: the source store was left alone, because the "
+                f"scan for other projects' revisions failed: {error}")
+            mine = set()
+
+        removed_sources = 0
+        for digest in sorted(mine - referenced):
+            try:
+                shutil.rmtree(self.sources_dir / digest)
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                logger.warning(f"remove {pid}: could not remove the code of "
+                               f"revision {digest}: {error}")
+                continue
+            removed_sources += 1
+
+        self._refresh_index()
+        logger.info(f"removed project {pid}: {builds} builds, "
+                    f"{removed_sources} stored source trees")
+        return {"pid": pid, "builds": builds, "sources": removed_sources}
+
+    def _digests_of(self, pid: str) -> set:
+        """Every payload digest recorded in one project's build directories.
+
+        The `dev` slot is included. Its sources are never stored, so its digest
+        normally matches nothing in `sources/` — but if the same tree was also
+        published as a revision, that revision's directory carries the digest
+        too, so including it changes no answer and leaving it out would be a
+        special case to explain.
+        """
+        digests = set()
+        try:
+            entries = list((self.projects_dir / pid).iterdir())
+        except OSError:
+            return digests
+        for entry in entries:
+            if entry.name.startswith(".") or not entry.is_dir():
+                continue
+            if entry.is_symlink():
+                continue
+            digest = _read_digest(entry)
+            if digest:
+                digests.add(digest)
+        return digests
 
 
 def _usable_meta(meta, dir_name: str) -> bool:

@@ -102,7 +102,18 @@ def collect(root: Path) -> list:
 
 
 def _walk(root: Path, directory: Path, prefix: tuple, found: list) -> None:
-    for entry in sorted(directory.iterdir(), key=lambda path: path.name):
+    try:
+        entries = sorted(directory.iterdir(), key=lambda path: path.name)
+    except OSError as error:
+        # A directory this account cannot list, or one that went away between
+        # the parent's listing and this call. Turned into a PackError because
+        # that is the only family `cli.main` prints as a sentence: an
+        # unconverted PermissionError leaves a traceback on the terminal of
+        # somebody whose real problem is one `chmod`, and the traceback does not
+        # say which directory.
+        raise PackError(
+            f"cannot read {_shown(root, directory)}: {error}") from error
+    for entry in entries:
         name = entry.name
         if name.startswith("."):
             continue

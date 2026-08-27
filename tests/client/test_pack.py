@@ -13,6 +13,7 @@ opens it with, so what is asserted is the bytes that would be sent.
 """
 
 import io
+import os
 import tarfile
 
 import pytest
@@ -150,6 +151,30 @@ def test_a_tree_over_the_size_ceiling_is_refused(tmp_path):
     with pytest.raises(PackError) as caught:
         pack(root, max_bytes=1024)
     assert "ceiling" in str(caught.value)
+
+
+@pytest.mark.skipif(os.geteuid() == 0,
+                    reason="root reads a 0000 directory regardless of its mode")
+def test_a_directory_that_cannot_be_listed_is_refused_by_name(tmp_path):
+    """An unreadable subdirectory is a message, not a traceback.
+
+    `cli.main` prints exactly five exception families as a sentence, and an
+    `OSError` out of `iterdir` is not one of them — so before this the whole
+    command ended in a traceback that did not even name the directory, for
+    somebody whose real problem is one `chmod`.
+    """
+    root = make_model(tmp_path / "demo")
+    locked = root / "ref"
+    locked.mkdir()
+    (locked / "part.step").write_text("ISO-10303-21;\n")
+    locked.chmod(0o000)
+    try:
+        with pytest.raises(PackError) as caught:
+            collect(root)
+        assert "ref" in str(caught.value)
+    finally:
+        # Restored whatever the assertion did, or pytest cannot clean tmp_path.
+        locked.chmod(0o755)
 
 
 def test_an_empty_tree_is_refused(tmp_path):

@@ -11,8 +11,19 @@ publish; the other four are the ones that need nothing new from the hub.
                                   answers with the revision id it minted
     hammerola status           -> GET /project/<pid>/builds.json, plus the dev
                                   slot's own meta.json
+    hammerola source <rev>     -> GET /api/v1/sources/<rev>, unpacked into a
+                                  directory of its own
+    hammerola artifacts <rev>  -> GET /project/<pid>/<rev>/<file> for each entry
+                                  of the build's `downloads`
+    hammerola diff <a> <b>     -> both builds' metrics.json and both stored
+                                  archives, compared
+    hammerola log [dev|<rev>]  -> GET /api/v1/sources/<rev>/log
     hammerola comments         -> GET /api/v1/comments?project=<pid>, and
                                   `resolve` POSTs to .../<id>/resolve
+    hammerola rename "..."     -> project.json, and POST
+                                  /api/v1/projects/<pid>/title
+    hammerola rm               -> DELETE /api/v1/projects/<pid>, after the id is
+                                  typed
 
 NOTHING HERE READS GIT TO DECIDE WHAT TO PUBLISH. `commit` means "publish a
 version of this", the hub names that version out of the sources it receives, and
@@ -45,25 +56,42 @@ this machine" and not "authenticate this person". Per-person keys — issuing,
 revoking, expiry — do not exist, and calling this a login should not make them
 look as though they do.
 
-WHAT IS NOT HERE, and for three different reasons that are worth telling apart.
+THREE VERBS ARE SHAPED BY WHAT THEY ARE NOT ALLOWED TO DO, and the shape is the
+decision rather than a limitation of what was written:
 
-  * `rename` and `rm` need routes `src/app.py` does not serve at all. Note that
-    `rename` is the TITLE only, never the id: renaming an id would break every
-    permanent URL the project has, which is the one thing this service promises
-    (SPEC §3.1, and entry 26 says so explicitly).
-  * `source`, `artifacts`, `diff` and `log <revision>` are simply not written
-    yet. They used to be impossible — a revision's sources were deleted the
-    moment its build ended — and that changed with SPEC §8 entry 17: the hub now
-    keeps them and serves `GET /api/v1/sources/<revision>` and `.../log` behind
-    the same secret. So these are ordinary work, not a blocked design.
-  * `status` shows no "last job", and that one is NOT waiting on anybody: a job
-    is addressable by its id alone, and the order jobs were created in is stored
-    nowhere at all, deliberately (`src/jobs.py`). Self-update is its own case
-    again — it waits on the tool having a distribution name (`bin/hammerola`).
+  * `source` and `artifacts` are two verbs over one build because the RIGHTS
+    differ: the artefacts are public, the code is behind the secret (SPEC §8
+    entry 17). A single verb with a flag would put both behind one word.
+    `source` also unpacks into a directory of its own — writing over the working
+    copy is a flag, and that flag additionally requires git to call the tree
+    clean, because a clean tree is the only thing that can undo it.
+  * `rename` changes the TITLE. There is no command and no flag that changes an
+    id, and there is no route for one either: every permanent URL of the project
+    is built from the id, and the builds behind those URLs went out with a year
+    of `immutable` (SPEC §3.1).
+  * `rm` removes the whole project and asks for its id first. There is no way to
+    remove one build: that breaks a permanent URL while leaving the project
+    standing.
+
+WHAT IS STILL NOT HERE, and for two different reasons worth telling apart.
+
+  * `status` shows no "last job", and `log dev` cannot be answered at all.
+    Neither is waiting on anybody's next commit: a job is addressable by its id
+    alone and job order is stored nowhere (`src/jobs.py`), and the hub stores
+    nothing for the local slot on purpose (SPEC §7.8), so the log of a `dev`
+    build exists only at the job that produced it. Both are said out loud by the
+    code that would otherwise have to guess — see `status.py` and
+    `sources._dev_log`.
+  * Self-update waits on the tool having a distribution name (`bin/hammerola`).
 
 STDLIB ONLY, EVERY MODULE BELOW. This runs on the author's machine, under
 whatever python3 is there, so it takes nothing from `requirements.txt` — not
-loguru, not pydantic, and not the hub's own `src.store`. What that costs is one
-copy of the hub's ceilings (`limits.py`); what pays for the copy is a test that
-compares it against the modules that enforce them.
+loguru, not pydantic, and not the hub's own `src.store` or `src.cadbuild`.
+`tests/client/test_stdlib_only.py` is what enforces that, because the test
+environment has every dependency installed and would never notice on its own.
+What the rule costs is one copy of the hub's ceilings (`limits.py`), paid for by
+a test that compares it against the modules that enforce them; where a copy
+could be avoided entirely it was — `src/metricsdiff.py` is the comparison
+`hammerola diff` and the build both import, moved out of `src/cadbuild/` rather
+than duplicated.
 """

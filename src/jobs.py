@@ -60,10 +60,11 @@ enough to make the hub fail to start, permanently, on every run after it.
 AND THE CORRECTION HAS TO REACH THE VOLUME. A value normalized only in MEMORY
 leaves the planted one on disk, so the next start reads it again and begins from
 scratch, and the record on disk goes on being a shape this module does not
-write. `_load` therefore writes back every record it keeps, not only the ones it
-had to fail — and the one that MUST land is the failure itself: a job stranded
-`queued` or `building` by a restart has to be recorded terminal, or every
-subsequent start finds it in flight again and warns about it again.
+write. `_load` therefore writes back every record it CHANGED — not only the ones
+it had to fail, and not the ones it did not touch, which on a volume with no
+retention is nearly all of them. The one that MUST land is the failure itself: a
+job stranded `queued` or `building` by a restart has to be recorded terminal, or
+every subsequent start finds it in flight again and warns about it again.
 
 NOTHING SHARED BETWEEN RECORDS IS STORED PER RECORD, and that is a rule to hold
 every change here to rather than an observation about today's fields. A pass
@@ -469,6 +470,22 @@ class JobStore:
         it is allowed to be: `_rewrite_locked` stopping half way damages the
         records it did not reach and nothing between them.
 
+        AND NOTHING ELSE IS WRITTEN BACK, which is a startup budget rather than
+        tidiness. One write is an `atomic_write_bytes`: two fsyncs and a rename.
+        There is no retention (see the module docstring), so the number of
+        records is the number of pushes over the volume's whole life rather than
+        anything bounded — and this runs from `JobStore.__init__`, which runs
+        from `create_server` BEFORE the socket is bound, so each of those fsyncs
+        is time in which `/health` does not answer at all. At ten thousand jobs
+        a write-everything pass is tens of seconds, against a `start_period` of
+        30 s in the compose file and an auto-update rollback gate that gives up
+        at about 120. A record the rebuild did not change is byte-for-byte what
+        this module would write anyway, so writing it buys nothing and costs
+        that. `_read_record` is what answers "did it change", by comparing the
+        bytes this module WOULD write against the bytes that are there — a
+        comparison that cannot miss a correction the way a per-field check
+        could.
+
         NOTHING IN HERE MAY RAISE. It runs from `JobStore.__init__`, which runs
         from `create_server`, which runs from `main()` — so an exception escaping
         this loop is a hub that does not come up, and it comes up next time from
@@ -480,9 +497,9 @@ class JobStore:
         hub that starts with no job history.
         """
         candidates, others, unscanned = self._scan()
-        loaded, unreadable = [], []
+        loaded, unreadable, corrected = [], [], set()
         for job_id in candidates:
-            record = _read_record(self.root / job_id / RECORD_NAME)
+            record, differs = _read_record(self.root / job_id / RECORD_NAME)
             if record is None or record["id"] != job_id:
                 # Not one we wrote, or written by a hand that got it wrong, or
                 # one this hub itself failed half way through creating. Not
@@ -491,6 +508,8 @@ class JobStore:
                 unreadable.append(job_id)
                 continue
             loaded.append(record)
+            if differs:
+                corrected.add(job_id)
         stranded = set()
         for record in loaded:
             if record["state"] in (STATE_QUEUED, STATE_BUILDING):
@@ -500,7 +519,10 @@ class JobStore:
             self._records[record["id"]] = record
         self._sweep_strangers(unreadable + others, unscanned=unscanned)
         with self._lock:
-            self._rewrite_locked(stranded)
+            # The failed ones are in the set by construction: this method just
+            # changed them, and the read that answered `differs` happened before
+            # it did.
+            self._rewrite_locked(corrected | stranded, stranded)
         # Counted from what is still here rather than from what was found: a
         # record the volume refused to take the failure for is not one this hub
         # is keeping.
@@ -561,13 +583,22 @@ class JobStore:
                 f"starts with no job history rather than not at all")
         return candidates, others, unscanned
 
-    def _rewrite_locked(self, stranded: set) -> None:
-        """Put every record just read back on the volume. Caller holds the lock.
+    def _rewrite_locked(self, dirty: set, stranded: set) -> None:
+        """Put the records this start CHANGED back on the volume. Caller locks.
 
         BEST EFFORT, one record at a time, because this runs on the path that
         must not raise — but not optional: everything `_read_record` normalized
         lives only in memory until this writes it, and memory is not what the
         next start reads.
+
+        `dirty` IS THE WHOLE LIST, and a record outside it is not written at
+        all. It holds the records `_read_record` corrected plus the ones this
+        start just failed, which is exactly the set whose disk copy disagrees
+        with memory; the rest are byte-for-byte what `_write` would produce, so
+        the two fsyncs of writing one would buy nothing. `_load`'s docstring has
+        the cost that makes the distinction worth drawing — this loop runs
+        before the socket is bound, and nothing bounds how many records a volume
+        with no retention accumulates.
 
         WHAT MAY BE FIXED HERE IS PER-RECORD, and that is a rule rather than an
         observation about today's fields. This loop has one stopping place per
@@ -592,15 +623,18 @@ class JobStore:
         of it, which is what the next start will normalize again, and forgetting
         it here would 404 a job whose log is still there.
         """
-        for record in list(self._records.values()):
+        for job_id in list(dirty):
+            record = self._records.get(job_id)
+            if record is None:
+                continue
             try:
                 self._write(record)
             except (OSError, ValueError):
                 logger.exception(
-                    f"job {record['id']}: the record read off the volume could "
+                    f"job {job_id}: the record read off the volume could "
                     f"not be written back in the shape this hub uses")
-                if record["id"] in stranded:
-                    self._records.pop(record["id"], None)
+                if job_id in stranded:
+                    self._records.pop(job_id, None)
 
     def _sweep_strangers(self, names, *, unscanned: int = 0) -> None:
         """Remove what is under `data/jobs/` and is not a job, once it is old.
@@ -889,6 +923,12 @@ class JobStore:
 
     # -- disk --------------------------------------------------------------
     def _write(self, record: dict) -> None:
+        # THE BYTES COME FROM `_record_bytes`, which `_read_record` also uses to
+        # decide whether a record needs writing at all. One function, so the two
+        # answers cannot drift: a serialization detail changed here without
+        # changing there would make every record on the volume look corrected,
+        # and the whole registry would be rewritten at every start again.
+        #
         # `indent=1` costs about 16 bytes against the compact separators, and
         # that is not free at the very top of the range: a record of 65521..65536
         # bytes is one `_read_record` accepts and one this write turns into a
@@ -901,8 +941,7 @@ class JobStore:
         # headroom in a band only an attacker can reach.
         atomic_write_bytes(
             self.root / record["id"] / RECORD_NAME,
-            json.dumps(record, indent=1, ensure_ascii=False,
-                       allow_nan=False).encode("utf-8"),
+            _record_bytes(record),
             # The temporary file goes in `data/jobs/`, not in the job's own
             # directory: same filesystem, so the rename is still a rename, and
             # a leftover from a write this process was killed in the middle of
@@ -1391,9 +1430,29 @@ def _discard(path: Path) -> None:
         pass
 
 
-def _read_record(path: Path) -> dict | None:
-    """One `job.json`, rebuilt into the shape this module writes. None if it is
-    not one.
+def _record_bytes(record: dict) -> bytes:
+    """One record as this module writes it. The ONLY spelling of that.
+
+    Shared by `JobStore._write` and by the comparison in `_read_record` below,
+    which is the point: "what would be written" and "what is on disk" have to be
+    the same question, or the second one answers about a format the first does
+    not produce.
+    """
+    return json.dumps(record, indent=1, ensure_ascii=False,
+                      allow_nan=False).encode("utf-8")
+
+
+def _read_record(path: Path) -> tuple:
+    """One `job.json` rebuilt into the shape this module writes, and whether the
+    rebuild CHANGED it -> `(record, differs)`. `(None, False)` if it is not one.
+
+    `differs` IS A BYTE COMPARISON, not a list of the fields that were touched:
+    what this module would write against what the file holds. That is the only
+    form that cannot go stale — a field added to the rebuild below, a key that
+    moved, a spelling `_record_bytes` changed are all covered without anybody
+    remembering to cover them, and the caller needs the answer for exactly one
+    purpose (`_load`: writing back the records nothing corrected is what makes a
+    hub with a long-lived volume slow to come up).
 
     EVERY field is rebuilt rather than taken, because this file sits on a volume
     every build can write (see the top of this module). Three shapes in
@@ -1429,7 +1488,9 @@ def _read_record(path: Path) -> dict | None:
     measures a stamp on this volume again, it has to answer that first.
 
     Everything corrected here is corrected in memory; `_load` is what puts it
-    back on disk. Anything added to this rebuild inherits that requirement.
+    back on disk. Anything added to this rebuild inherits that requirement — and
+    inherits it automatically, because `differs` is computed from the finished
+    record rather than declared field by field.
 
     None means "not a record this hub wrote". The caller does not delete the
     directory on the spot — it is somebody's evidence, and being unreadable is
@@ -1439,19 +1500,19 @@ def _read_record(path: Path) -> dict | None:
     """
     raw = _read_capped(path, MAX_RECORD_BYTES)
     if raw is None:
-        return None
+        return None, False
     try:
         loaded = json.loads(raw)
     except (ValueError, RecursionError):
-        return None
+        return None, False
     if not isinstance(loaded, dict):
-        return None
+        return None, False
     job_id = loaded.get("id")
     if not isinstance(job_id, str) or not SAFE_JOB_ID.match(job_id):
-        return None
+        return None, False
     if loaded.get("state") not in KNOWN_STATES:
-        return None
-    return {
+        return None, False
+    record = {
         "id": job_id,
         "pid": _text(loaded.get("pid")),
         "commit": _text(loaded.get("commit")),
@@ -1472,6 +1533,17 @@ def _read_record(path: Path) -> dict | None:
         # reads an order any more, and a field that would need the same
         # all-or-nothing must not be added here.
     }
+    try:
+        return record, _record_bytes(record) != raw
+    except ValueError:
+        # Unreachable with the fields above — `_number` is what removes the only
+        # values `allow_nan=False` refuses, and every other field here is a
+        # string, an int, a bool or None. Answered as "differs" rather than
+        # guarded away so that if a field is ever added that CAN fail to
+        # serialize, the write-back attempts it and the failure is logged where
+        # every other write failure of this registry is, instead of the record
+        # silently never being written again.
+        return record, True
 
 
 def _read_capped(path: Path, limit: int) -> bytes | None:

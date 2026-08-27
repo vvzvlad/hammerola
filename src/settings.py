@@ -17,9 +17,17 @@ class Settings(BaseSettings):
     # COMMENT_READ_TOKEN guards everything about the comment queue except writing
     # to it (SPEC 7A.2). The queue is raw input from anyone at all, so reading it
     # back out needs a secret: an open read endpoint turns the project showcase
-    # into a public message board. A DIFFERENT secret from PUBLISH_TOKEN because
-    # the two go to different places: PUBLISH_TOKEN lives in CI, this one in the
-    # agent's MCP server, and either can be rotated without touching the other.
+    # into a public message board.
+    #
+    # SET IT TO THE SAME VALUE AS PUBLISH_TOKEN. It used to say the opposite —
+    # that the two should differ, one living in CI and one in the agent's MCP
+    # server, each rotatable alone. That was decided against on 2026-08-27: the
+    # system has ONE secret, an editing password, and the same string is what
+    # the web page is given to turn "View only" into "Editing on" and what
+    # `hammerola login` stores. Collapsing the two variables into one is step 0;
+    # until it lands, a deployment that sets them differently answers 401 to
+    # `hammerola comments` while publishing works perfectly, which reads as a
+    # broken client rather than as a configuration choice somebody made.
     #
     # WRITING a comment takes no token TODAY. That is the state this project
     # INHERITED from cad_snapshot_hub, ported verbatim, and not a property it

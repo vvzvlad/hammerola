@@ -39,6 +39,7 @@ reading JSON.
 import ipaddress
 import json
 import re
+import shutil
 import threading
 import time
 import unicodedata
@@ -538,6 +539,37 @@ class CommentStore:
             f"comment {cid} on {pid}/{commit}: {len(payload['text'])} chars, "
             f"attachments {sorted(stored) or 'none'}")
         return record
+
+    def remove_project(self, pid: str) -> int:
+        """Delete one project's whole queue. -> how many comments went.
+
+        Called only when the PROJECT is being removed (`DELETE
+        /api/v1/projects/<pid>`). There is deliberately no route that removes one
+        comment: a queue entry is closed with `resolve`, which keeps the record
+        and the note, and nothing anywhere else deletes a comment (SPEC 5.3 —
+        there is no retention).
+
+        Leaving the queue behind would be worse than a leak: the comments anchor
+        to `<pid>/<commit>` (SPEC 7A.1), so every one of them would point at a
+        build that no longer exists, and the agent reading the queue would be
+        handed work about a project nobody can open.
+
+        The id is checked before it is joined onto the root — nothing that could
+        describe a path may reach `rmtree` — and the counters are rebuilt from
+        the volume afterwards rather than decremented, because they are a
+        property of the SET of records and the set has just changed.
+        """
+        if not SAFE_ID.match(pid or ""):
+            return 0
+        directory = self.root / pid
+        with self._lock:
+            if not directory.is_dir():
+                return 0
+            gone = sum(1 for _ in directory.glob("*.json"))
+            shutil.rmtree(directory)
+            self._recount()
+        logger.info(f"removed the comment queue of {pid}: {gone} comments")
+        return gone
 
     def resolve(self, cid: str, note: str | None) -> dict | None:
         """Mark a comment handled so the agent does not process it twice."""

@@ -5,23 +5,42 @@
     build                     sources -> the dev slot, and print the build log
     commit -m "..."           sources -> an immutable revision the hub names
     status                    latest, dev, and the revisions that exist
+    source <revision>         fetch the CODE of a revision, under the secret
+    artifacts <revision>      fetch the STL/STEP/3MF, which are public
+    diff <rev> <rev>          what moved: the geometry, and the source
+    log [dev|<revision>]      read a build log again
     comments                  the project's comment queue
     comments resolve <id>     close one, with an optional note
+    rename "New title"        change the project's TITLE — never its id
+    rm                        remove the project from the hub, whole
 
 WHERE THE WORK LIVES. This module parses, dispatches and owns the publishing
-flow (`build` and `commit`, which are one operation with one thing varying); the
-other four verbs are a module each, because none of them shares anything with
+flow (`build` and `commit`, which are one operation with one thing varying);
+every other verb is a module, because none of them shares anything with
 publishing but the configuration: `setup.py` (login, create), `status.py`,
-`queue.py` (the comment queue). Every one of them RAISES on refusal rather than
-printing and exiting, so there is exactly one place in the tool that decides
-what a failure looks like — `main` below.
+`queue.py` (the comment queue), `sources.py` (source, log), `artifacts.py`,
+`revdiff.py` (diff), `admin.py` (rename, rm). Every one of them RAISES on
+refusal rather than printing and exiting, so there is exactly one place in the
+tool that decides what a failure looks like — `main` below.
 
-WHAT IS NOT HERE, and is unwritten rather than forgotten (SPEC §8 entry 26):
-`rename` and `rm` need routes the hub does not serve; `source`, `artifacts`,
-`diff` and `log <revision>` are now possible and merely unwritten, since the hub
-keeps a revision's sources (SPEC §8 entry 17); self-update waits on the tool
-having a distribution name of its own. `status` shows no "last job" for a reason
-that is not going to lift on its own — see `status.py`.
+FOUR OF THE VERBS ABOVE ARE WORTH READING TWICE, because the obvious reading of
+each is the wrong one:
+
+  * `source` and `artifacts` are two verbs over one build for one reason: the
+    artefacts are PUBLIC and the code is not (SPEC §8 entry 17). A flag would
+    put both behind one word.
+  * `source` unpacks into a directory of its own. Writing over the working copy
+    is a flag, and that flag additionally requires git to call the tree clean.
+  * `rename` changes the TITLE. There is no command and no flag that changes an
+    id, because every permanent URL of the project is built from it and the
+    builds behind those URLs cannot be recalled (SPEC §3.1).
+  * `rm` removes the whole project and asks first. There is no way to remove one
+    build: that would break a permanent URL and leave the project standing.
+
+WHAT IS STILL NOT HERE. Self-update waits on the tool having a distribution name
+of its own. `status` shows no "last job", and `log dev` cannot be answered at
+all — both for reasons that are not going to lift on their own, see `status.py`
+and `sources._dev_log`.
 
 THE PUBLISHING FLOW, which is what the rest of this file is about. Pack the
 working directory, POST it, poll the job, print what the build printed, and
@@ -57,7 +76,9 @@ one it was — and, when the build ran at all, with its log.
 import argparse
 import sys
 
-from src.client import config, gitsuggest, project, queue, setup, status
+from src.client import (admin, artifacts, config, gitsuggest, project, queue,
+                        revdiff, setup, sources, status)
+from src.client.errors import ClientError
 from src.client.hub import JOB_TIMEOUT, UNAUTHORIZED_PUSH, Hub, HubError
 from src.client.limits import DEV_SLOT
 from src.client.pack import PackError, pack
@@ -126,6 +147,44 @@ def build_parser() -> argparse.ArgumentParser:
         "-n", "--limit", type=int, default=status.DEFAULT_LIMIT, metavar="COUNT",
         help=f"how many revisions to list (default: {status.DEFAULT_LIMIT})")
 
+    code = commands.add_parser(
+        "source", help="fetch the source tree a revision was built from")
+    code.add_argument(
+        "revision",
+        help="a revision id, or `latest` for the newest one this project has")
+    code.add_argument(
+        "-o", "--output", metavar="DIR", default=None,
+        help="unpack here instead of into `source-<revision>` (the directory "
+             "has to be empty or absent)")
+    code.add_argument(
+        "--into-working-copy", action="store_true",
+        help="write over the working copy instead. Refused unless this is a "
+             "git repository with nothing uncommitted in it — that is the only "
+             "thing that can undo it")
+
+    models = commands.add_parser(
+        "artifacts", help="fetch the STL/STEP/3MF files a build published")
+    models.add_argument(
+        "revision",
+        help="a revision id, `latest`, or `dev` for the local slot")
+    models.add_argument(
+        "-o", "--output", metavar="DIR", default=None,
+        help="write here instead of into `artifacts-<revision>`")
+
+    changes = commands.add_parser(
+        "diff", help="what changed between two revisions, in geometry and code")
+    changes.add_argument("old", metavar="REVISION",
+                         help="the older revision, or `latest`")
+    changes.add_argument("new", metavar="REVISION",
+                         help="the newer revision, or `latest`")
+
+    logs = commands.add_parser(
+        "log", help="print a build log again")
+    logs.add_argument(
+        "revision", nargs="?", default=None,
+        help="a revision id, or `dev` for the local slot. Default: the newest "
+             "revision this project has published")
+
     notes = commands.add_parser(
         "comments", help="read this project's comment queue")
     notes.add_argument(
@@ -147,6 +206,21 @@ def build_parser() -> argparse.ArgumentParser:
         "-m", "--note", default=None,
         help="what was done about it; stored with the comment")
 
+    # THE TITLE IS THE ONLY THING THIS TAKES, and there is deliberately no
+    # `--id` beside it: an id that could be renamed would break every permanent
+    # URL of the project on the day it was used (SPEC §3.1).
+    title = commands.add_parser(
+        "rename", help="change the project's title (never its id)")
+    title.add_argument(
+        "title", help="the new name, as it appears on the site")
+
+    drop = commands.add_parser(
+        "rm", help="remove this project from the hub, with everything in it")
+    drop.add_argument(
+        "--yes", action="store_true",
+        help="do not ask. Without it the project id has to be typed at the "
+             "prompt — this cannot be undone and the hub keeps no copy")
+
     return parser
 
 
@@ -161,7 +235,7 @@ def main(argv=None) -> int:
     try:
         return HANDLERS[args.command](args)
     except (config.ConfigError, project.ProjectError, PackError,
-            HubError) as error:
+            ClientError, HubError) as error:
         # One handler for every refusal the tool makes on purpose. Each of those
         # exceptions carries a finished sentence — sometimes several lines of
         # one — so there is nothing to add here but the program's name.
@@ -345,5 +419,11 @@ HANDLERS = {
     "build": _publish,
     "commit": _publish,
     "status": status.run,
+    "source": sources.run_source,
+    "artifacts": artifacts.run,
+    "diff": revdiff.run,
+    "log": sources.run_log,
     "comments": queue.run,
+    "rename": admin.rename,
+    "rm": admin.remove,
 }

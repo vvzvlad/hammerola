@@ -116,6 +116,31 @@ def test_the_revision_list_is_capped_and_says_what_is_left(hub, model, capsys):
     assert "and 1 older" in out
 
 
+@pytest.mark.parametrize("count", ["0", "-3"])
+def test_a_count_a_slice_would_misread_is_refused(model, capsys, count):
+    """Both used to be silent, and neither printed what was asked for.
+
+    `0` is falsy, so it fell through to the default and listed ten revisions to
+    somebody who asked for none; a negative one goes into `builds[:limit]`,
+    which Python reads from the other end — `-3` drops the three OLDEST and then
+    reports three more "older" ones than exist.
+    """
+    assert run(model, "status", "-n", count) == 1
+    error = capsys.readouterr().err
+    assert "1 or more" in error
+
+
+def test_a_count_is_checked_before_the_hub_is_asked_anything(tmp_path, capsys,
+                                                             monkeypatch):
+    """No project, no reachable hub, and the refusal is still about `-n`: the
+    check happens on the argument, before anything is looked up."""
+    monkeypatch.setenv("HUB_URL", "http://127.0.0.1:1")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    assert main(["-C", str(elsewhere), "status", "-n", "0"]) == 1
+    assert "1 or more" in capsys.readouterr().err
+
+
 # -- failures ----------------------------------------------------------------
 def test_an_unreachable_hub_is_a_clean_failure(model, monkeypatch, capsys):
     monkeypatch.setenv("HUB_URL", "http://127.0.0.1:1")

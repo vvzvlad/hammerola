@@ -4,15 +4,17 @@
      BOOTSTRAP — удали эту секцию целиком, когда её пункты закрыты.
      ====================================================================== -->
 
-## ⚠️ Проект в середине переезда: хаб уже билдер, старая схема ещё не снята
+## ⚠️ Проект в середине переезда: хаб уже билдер, гейт на приёме ещё не стоит
 
 Код сервиса из `cad_snapshot_hub` уже перенесён — `src/` раздаёт сайт, принимает пуш,
 рендерит вьювер и держит очередь комментариев, тесты и шаблоны с ассетами на месте.
 Ядро CadQuery уже в образе: пины в `requirements.txt`, системные библиотеки в
 Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`, проверка (f)).
 Со сборкой хаб уже соединён: с шага 5 пуш принимается асинхронно и модель считается в
-отдельном процессе на пути запроса (`src/jobs.py` → `src/buildproc/`). Чего ещё нет —
-гейта на приёмной стороне (шаг 6) и снятого CI-обвеса вокруг старой схемы (шаг 7).
+отдельном процессе на пути запроса (`src/jobs.py` → `src/buildproc/`). Публиковаться
+тоже уже есть чем: клиент живёт здесь же (`src/client/`), ревизию именует хаб по хешу
+её исходников, и они хранятся (шаг 7). Чего ещё нет — гейта на приёмной стороне
+(шаг 6): сборка с негодной геометрией сегодня публикуется, а не отвергается.
 Именно поэтому шаги плана начинаются с приёма ДЕРЕВА исходников (шаг 2), а не с нуля.
 
 **Что это за проект.** `hammerola` (от «пианола» — механизм, который играет сам)
@@ -120,14 +122,35 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       и при записи (SPEC §7.4).
 - [ ] **Шаг 6. Гейт переезжает и меняет знак** — срабатывает ПОСЛЕ приёма: staging
       выбрасывается, `latest` и `dev` не двигаются, наружу код ошибки с логом.
-- [ ] **Шаг 7. Убрать и переписать** — образ `cad_builder`, `publish.yml`, секреты
-      `HUB_URL` и `PUBLISH_TOKEN` в организации, `remote.py`, пины `cad_publish`;
-      переписать README, AGENTS, спеку и подписи во вьювере.
+- [ ] **Шаг 7. Дать новую дорогу и убрать за собой — В ХАБЕ.** Переформулирован
+      2026-08-27, и прежняя редакция здесь названа, чтобы её не восстановили:
+      она велела ходить в ЧУЖИЕ репозитории — снести `publish.yml` у каждой
+      модели, убрать секреты в организации, отвязать `cad_builder` и
+      `cad_publish`. Это не работа хаба. Хаб даёт способ публиковаться; что
+      после этого сделают у себя одиннадцать репозиториев моделей — их дело, и
+      следующий агент не должен читать этот пункт как задание туда идти.
+      Убирать к тому же было нечего: публикация УЖЕ не работала с шага 5 — хаб
+      принимал дерево исходников и отвечал 202, а клиент паковал плоскую сборку
+      и ждал 201, — и связку не проверял ни один тест, потому что половины жили
+      в разных репозиториях. Так что шаг оказался не уборкой, а стройкой.
+      **Сделано:** `src/client/` — команда `hammerola`, только stdlib, в ЭТОМ
+      репозитории намеренно (контракт у клиента и хаба один, а расходится он
+      молча, если обе половины не видит ни один тест); идентификатор ревизии —
+      хеш её исходников, git ни при чём (§7.7); исходники и лог хранятся по
+      ревизии и отдаются под тем же секретом, что публикует (§7.8); ретенции нет
+      ни у сборок, ни у задач (§5.3, §7.3); вычищены утверждения, которые переезд
+      сделал ложными — подпись `CadQuery → Gitea Actions` на главной, «`latest` —
+      это из CI», «пакет никем не импортируется». **Что осталось — в SPEC 8A.2,
+      шаг 7**, и список там живой: набор команд дописывается прямо сейчас, а
+      единственный пункт, который не закроется работой, — именованный маршрут
+      публикации `<pid>/<commit>`: он живёт, пока по нему кто-то пушит.
 - [ ] **Шаг 8. Сравнение ревизий** — последним, когда у хаба есть и ядро, и
-      исходники, и внепроцессное убийство зависшей задачи из шага 4. Упирается в
-      запись беклога «Хранение исходников по ревизиям» (SPEC §8): сравнивать
-      геометрию можно и сейчас, буферы лежат, а сказать «деталь изменилась,
-      потому что изменилась вот эта строка модели» — нельзя, кода нет.
+      исходники, и внепроцессное убийство зависшей задачи из шага 4. То, во что
+      он упирался, шаг 7 снял: код ревизии теперь лежит на томе и отдаётся по её
+      имени (§7.8), так что «деталь изменилась, потому что изменилась вот эта
+      строка модели» стало вопросом, на который есть чем ответить. Осталось само
+      сравнение геометрии по буферам — детали в записи беклога «Сравнение двух
+      ревизий» (SPEC §8).
 - [x] ~~Завести репозиторий в Gitea и спушить~~ — сделано 2026-08-24:
       `projects/hammerola`, ветка по умолчанию `main`, `origin` настроен.
       `REGISTRY_TOKEN` отдельно не заводился: он есть на уровне организации
@@ -213,24 +236,49 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   copy of the ceilings (`src/client/limits.py`) against `src/store.py` and
   `src/settings.py`. STDLIB ONLY, every module of it: the tool runs under
   whatever python3 a laptop has, so it imports nothing from `requirements.txt` —
-  not loguru, not pydantic, not `src.store` — and talks HTTP with
-  `urllib.request`. Around the two publishing verbs sit the four that need
-  nothing new from the hub: `login` (`setup.py`, writes the machine's `KEY=value`
+  not loguru, not pydantic, not `src.store`, not `src.cadbuild` — and talks HTTP
+  with `urllib.request`; `tests/client/test_stdlib_only.py` is what enforces
+  that, since the test environment has every dependency installed and would
+  never notice on its own. Around the two publishing verbs sit the rest:
+  `login` (`setup.py`, writes the machine's `KEY=value`
   file 0600 after checking the password against the hub — ONE secret for the
   whole system, no second key for comments), `create` (`project.py`, mints the
   twelve hex characters of SPEC §3.1 and refuses to write over an existing id),
   `status` (`status.py`, assembled out of `builds.json` and the dev slot's own
-  `meta.json`, i.e. what the project page already fetches) and `comments`
-  (`queue.py`, the queue and its `resolve`). Still unwritten: `rename` and `rm`
-  need routes the hub does not serve, and `source`, `artifacts`, `diff` and
-  `log <revision>` are ordinary work now that the hub keeps a revision's sources
-  (SPEC §8 entry 17) — they were blocked before that, and are not any more.
-  Self-update waits on the tool having a distribution name. Two gaps are of a
-  different kind and are worth knowing before reaching for them: "the last build
+  `meta.json`, i.e. what the project page already fetches), `comments`
+  (`queue.py`, the queue and its `resolve`), and the six added once the hub
+  began keeping a revision's sources (SPEC §8 entry 17): `source` and `log`
+  (`sources.py`), `artifacts` (`artifacts.py`), `diff` (`revdiff.py`), `rename`
+  and `rm` (`admin.py`, over the two routes `src/app.py` grew for them). FOUR
+  OF THOSE ARE SHAPED BY WHAT THEY MAY NOT DO, and the shape is the decision:
+  `source` and `artifacts` are two verbs because the code is behind the secret
+  and the artefacts are public; `source` unpacks into a directory of its own and
+  writes over the working copy only behind a flag AND a clean git tree; `rename`
+  moves the TITLE and there is no way to rename an id, because every permanent
+  URL is built from it; `rm` removes the project whole and never one build, and
+  asks for the id to be typed first. What each of those fetches lands under
+  `.hammerola/` in the project — hidden, so `pack` drops it and the next push
+  cannot publish a copy of an older push. Self-update waits on the tool having a
+  distribution name. Three gaps are of a different kind and are worth knowing
+  before reaching for them: "the last build
   job" cannot be shown at all, because a job is addressable only by its id and
-  job order is stored nowhere (see `src/jobs.py`); and the comment routes still
+  job order is stored nowhere (see `src/jobs.py`); `hammerola log dev` cannot be
+  answered either, because nothing is stored for the local slot on purpose
+  (SPEC §7.8) — the command says so rather than answering with `latest`'s log,
+  which would be a different build; and the comment routes still
   check the hub's separate `COMMENT_READ_TOKEN` until step 0, so a deployment
   sets both hub variables to the one secret
+- `src/metricsdiff.py` — reading `metrics.json`: what a build measured, and what
+  moved between two of them. It is NOT a copy of anything and that is the point:
+  the document has one writer (the build) and two readers — `cadbuild.metrics`,
+  printing what moved since `dev`, and `hammerola diff`, printing what moved
+  between two revisions — and the client cannot import the build half. Rather
+  than duplicate the comparison (which is exactly the shape of
+  `cad_publish/hubspec.py`, the copy that broke publication), the pure half was
+  MOVED here and both sides import it; `src/cadbuild/metrics.py` re-exports every
+  name it used to define. `tests/test_metricsdiff.py` asserts the two sides hold
+  the same objects (`is`, not `==`) and that this module imports only the
+  standard library, which is what lets the client have it at all
 - `bin/hammerola` — the console command, a plain script `make client` symlinks
   into `~/.local/bin`. Deliberately not a packaging entry point yet: this repo's
   one importable top-level name is `src`, and `pip install`ing that onto a laptop

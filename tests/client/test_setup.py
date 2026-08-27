@@ -222,6 +222,36 @@ def test_create_refuses_over_an_existing_project(tmp_path, capsys):
     assert payload["id"] == "demo0001"
 
 
+def test_create_refuses_inside_an_existing_project(tmp_path, capsys):
+    """The case the refusal above cannot see, and the one that costs something.
+
+    In a SUBDIRECTORY there is no file to overwrite, so nothing fails: a second
+    id is minted, `find_project_root` walks up and stops at the nearest
+    project.json — now the inner one — and every command run from there
+    addresses a project the hub has nothing for. The next `build` publishes a
+    subtree of the model under it.
+    """
+    root = make_model(tmp_path / "demo", pid="demo0001")
+    inner = root / "scripts"
+    inner.mkdir()
+
+    assert main(["-C", str(inner), "create"]) == 1
+    error = capsys.readouterr().err
+    assert "already inside the project" in error
+    # Names WHICH project, because "you are inside one" is only actionable if it
+    # says which one.
+    assert str(root.resolve()) in error
+    assert not (inner / "project.json").exists()
+
+
+def test_create_still_works_in_a_directory_that_is_not_inside_a_project(tmp_path):
+    """The refusal above must not spread to the ordinary case: a new project
+    next to an old one, sharing nothing but a parent directory."""
+    make_model(tmp_path / "old", pid="demo0001")
+    assert main(["-C", str(tmp_path / "new"), "create"]) == 0
+    assert (tmp_path / "new" / "project.json").is_file()
+
+
 def test_a_created_project_is_one_the_hub_accepts(hub, tmp_path, monkeypatch):
     """End to end, because the alphabet is the hub's: an id this tool minted
     and the hub refuses would break the first push of every new project."""

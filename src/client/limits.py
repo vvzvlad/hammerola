@@ -22,8 +22,11 @@ MAX_BUILD_BYTES.
 
 import re
 
-# `<pid>` from project.json and `<commit>` from git, both of which end up as a
-# path segment of the publish URL. Authority: `src.store.SAFE_ID`.
+# `<pid>` from project.json and the revision the HUB mints out of the sources it
+# received (SPEC 7.7) — both end up as a path segment of the publish URL. git is
+# not in either of them: the client stopped reading HEAD when the hub started
+# naming revisions, so the only id this tool spells itself is the project's.
+# Authority: `src.store.SAFE_ID`.
 SAFE_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 
 # ONE `/`-separated component of a file's path inside the archive. Authority:
@@ -42,9 +45,12 @@ MAX_MEMBERS = 1024
 
 # The publish route reserves these as build names: `latest` is a symlink the
 # store moves and `dev` is the local slot itself. Authority:
-# `src.store.RESERVED_BUILD_NAMES`. A git sha can never collide with either, but
-# a hand-passed revision id could, and the refusal is worth more here than the
-# hub's 422 minutes later.
+# `src.store.RESERVED_BUILD_NAMES`. Nothing this tool publishes can collide with
+# either, and that is now true by construction rather than by luck: the client
+# names no revision at all — the hub mints one out of the sources, 64 hex
+# characters wide (SPEC 7.7). What the two names are still needed FOR is
+# ADDRESSING, because a command that fetches takes a revision or one of these,
+# and `dev` is the one the client spells itself.
 DEV_SLOT = "dev"
 RESERVED_BUILD_NAMES = frozenset({"latest", DEV_SLOT})
 

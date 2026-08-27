@@ -76,8 +76,8 @@ def test_a_file_git_ignores_does_not_count(project):
 
 
 def test_the_message_and_the_trailer_are_two_separate_arguments(project):
-    """Two `-m` flags, so git joins them with the blank line a trailer paragraph
-    needs while the command stays on one pasteable line."""
+    """Two `-m` flags, so the blank line a trailer paragraph needs is git's own
+    doing rather than something the printed command has to spell out."""
     git_repo(project)
     (project / "model.py").write_text("# edited\n")
 

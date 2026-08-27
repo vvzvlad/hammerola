@@ -758,6 +758,55 @@ def test_a_job_stranded_by_a_restart_is_failed_at_startup(tmp_path):
     assert after.get(finished)["build_url"] == "/project/proj1/ccc333/"
 
 
+def test_a_start_rewrites_only_the_records_it_changed(tmp_path):
+    """Every write back is two fsyncs, and no retention bounds how many there are.
+
+    The number of job records is the number of pushes over the volume's whole
+    life (SPEC 5.3), and `_load` runs from `JobStore.__init__`, which runs from
+    `create_server` BEFORE the socket is bound. A pass that rewrote all of them
+    would put that whole cost in front of the first `/health` on an old volume —
+    against a `start_period` of 30 s in the compose file and an auto-update
+    rollback gate that gives up around 120. So a record the rebuild did not
+    change must not be written at all.
+
+    Measured by INODE rather than by mtime: `atomic_write_bytes` writes a
+    temporary file and renames it over the target, so a rewrite always changes
+    the inode, while two writes inside one clock tick can share an mtime.
+    """
+    data = tmp_path / "data"
+    first = JobStore(data)
+    untouched = []
+    for index in range(5):
+        job_id = first.create("proj1", f"ccc{index}")["id"]
+        first.finish(job_id, state=STATE_DONE, code=201,
+                     build_url=f"/project/proj1/ccc{index}/")
+        untouched.append(job_id)
+    # One record this start really does have to correct, so the test cannot pass
+    # by the write-back having stopped happening at all.
+    planted = "P" * 22
+    _plant_job(data, planted, state=STATE_BUILDING,
+               duration_seconds=float("nan"))
+
+    def inode(job_id):
+        return (data / "jobs" / job_id / "job.json").stat().st_ino
+
+    before = {job_id: inode(job_id) for job_id in [*untouched, planted]}
+    again = JobStore(data)
+
+    for job_id in untouched:
+        assert again.get(job_id)["state"] == STATE_DONE
+        assert inode(job_id) == before[job_id], (
+            f"{job_id} was written again although nothing about it changed")
+
+    # And the one that DID change reached the volume, which is the guarantee
+    # this must not trade away: a correction left in memory is read back off the
+    # volume at the next start and corrected again, for the life of the volume.
+    assert inode(planted) != before[planted]
+    on_disk = _volume_records(data)[planted]
+    assert on_disk["state"] == STATE_FAILED
+    assert on_disk["duration_seconds"] is None
+
+
 def test_a_stranded_job_is_reported_over_http_too(tmp_path):
     data = tmp_path / "data"
     store = JobStore(data)

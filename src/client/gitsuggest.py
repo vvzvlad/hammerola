@@ -29,7 +29,16 @@ so every string that reaches the printed line goes through `shlex.quote` first.
 A quote, a newline, a `$(...)` or a backtick in `-m` has to survive as text; the
 one thing it must never do is execute. Two `-m` arguments rather than one with
 an embedded blank line, because git joins them with exactly the blank line a
-trailer paragraph needs and the command stays on one pasteable line.
+trailer paragraph needs — the separation is git's own doing rather than
+something the printed command has to spell out, which is what keeps
+`git interpret-trailers` and `git log --grep` seeing a real trailer.
+
+WHAT IT IS NOT is a way of keeping the command on one line, and the difference
+matters to anything that parses this output. A newline inside the message stays
+a newline through `shlex.quote` — it is quoted, not escaped — so a multi-line
+`-m` prints as a command spanning as many lines, still one shell argument and
+still exactly what the author typed. `tests/client/test_gitsuggest.py` pins that
+survival, so nothing downstream may assume the block ends in a single line.
 """
 
 import shlex
@@ -91,6 +100,33 @@ def uncommitted(root) -> list:
     return [line for line in out.splitlines() if line.strip()]
 
 
+def is_repository(root) -> bool:
+    """Is this directory inside a git work tree?
+
+    Asked by `hammerola source --into-working-copy`, which is the one command
+    that writes over files somebody is working on and therefore has to know
+    whether anything could undo it. `uncommitted` above cannot answer it: it
+    returns an empty list both for a clean tree and for a directory with no git
+    in it, which is exactly the distinction that matters there and exactly the
+    one it was written not to make.
+    """
+    return (_git(root, "rev-parse", "--is-inside-work-tree") or "").strip() == "true"
+
+
+def tracked_files(root) -> list:
+    """Every path git tracks, relative to `root`, `/`-separated.
+
+    "Tracked" is the property that makes a file safely removable: `git checkout`
+    can put it back. An empty list for a directory with no git in it, which is
+    the same answer as "tracks nothing" and is safe in both readings — the
+    caller removes only files that appear HERE.
+    """
+    out = _git(root, "ls-files", "-z")
+    if out is None:
+        return []
+    return [name for name in out.split("\0") if name]
+
+
 def command(root, revision: str, message: str = None) -> str | None:
     """The `git commit` line to offer, or None when there is nothing to offer.
 
@@ -102,7 +138,7 @@ def command(root, revision: str, message: str = None) -> str | None:
     files, and `-a` stages only modifications to tracked ones — the commit would
     silently record less than the push did.
     """
-    if (_git(root, "rev-parse", "--is-inside-work-tree") or "").strip() != "true":
+    if not is_repository(root):
         return None
     if not uncommitted(root):
         return None

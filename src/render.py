@@ -93,6 +93,24 @@ def _plain_text(value: str, field: str, limit: int = MAX_TEXT) -> str:
     return value
 
 
+def project_title(value) -> str:
+    """A project's name, checked exactly as a build's own title is.
+
+    Public where `_plain_text` is not, because a title now arrives from two
+    directions — inside a build's meta.json, and from `POST
+    /api/v1/projects/<pid>/title` — and both end up in the same two captions, on
+    the index card and on the build page. A second rule for the second door would
+    be a way to put on the site what a push cannot.
+
+    A non-string is refused rather than coerced: `str(None)` is a perfectly
+    printable title reading "None", and a caller that sent the wrong field has to
+    hear about it instead of renaming a project to that.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("`title` must be a non-empty string")
+    return _plain_text(value.strip(), "title")
+
+
 @lru_cache(maxsize=None)
 def _template(name: str) -> str:
     """Read a page template once per process.

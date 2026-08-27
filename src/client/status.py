@@ -24,6 +24,7 @@ THE THREE THINGS IT ANSWERS, in the order somebody asks them:
 """
 
 from src.client import config, project
+from src.client.errors import ClientError
 from src.client.hub import QUERY_TIMEOUT, Hub
 from src.client.limits import DEV_SLOT
 
@@ -35,6 +36,7 @@ DEFAULT_LIMIT = 10
 
 def run(args) -> int:
     """Print what the hub has for the project in this directory. -> exit code."""
+    limit = _limit(getattr(args, "limit", None))
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
     # The token is required even though `builds.json` is public, and that is a
@@ -59,8 +61,30 @@ def run(args) -> int:
     print(f"  {hub.absolute(f'/project/{pid}/')}")
     print()
     _print_pointers(hub, pid, picker)
-    _print_builds(picker, getattr(args, "limit", None) or DEFAULT_LIMIT)
+    _print_builds(picker, limit)
     return 0
+
+
+def _limit(given) -> int:
+    """How many revisions to list, refusing the numbers a slice would misread.
+
+    CHECKED RATHER THAN CLAMPED, and checked BEFORE the hub is asked anything,
+    because both bad values are silent: `-n 0` is falsy, so it used to fall
+    through to the default and print ten revisions to somebody who asked for
+    none, and a negative one goes straight into `builds[:limit]`, where Python
+    reads it from the OTHER end — `-n -3` drops the three oldest and lists the
+    rest, then reports `len(builds) + 3` more "older" ones that do not exist.
+    Neither fails, and neither is what was asked for.
+    """
+    if given is None:
+        return DEFAULT_LIMIT
+    if not isinstance(given, int) or isinstance(given, bool) or given < 1:
+        raise ClientError(
+            f"-n takes a count of revisions to list, so it has to be 1 or more; "
+            f"{given!r} is not.\n"
+            f"  Without it the newest {DEFAULT_LIMIT} are listed and the rest "
+            f"are summarised as a count.")
+    return given
 
 
 def _print_pointers(hub: Hub, pid: str, picker: dict) -> None:
