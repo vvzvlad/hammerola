@@ -1,12 +1,18 @@
-// Entry point of the hub's browser UI.
+// Entry point of the hub's browser UI, for BOTH pages that have one.
 //
-// Mounting is conditional on purpose. Only templates/build.html carries the
-// mount point, but a bundle is a bundle: the day another page loads it -- the
-// project list, the pointer page -- a hard `createRoot(null)` would turn into a
-// console error on a page that has nothing wrong with it. Absence of #hmr_root
-// means "not this page", not "something broke".
+// One bundle, two mount points, and which one the document carries is what says
+// which page this is. Mounting stays conditional on each of them for the reason
+// it always was: a bundle is a bundle, and the pointer page loads none of this
+// but could tomorrow, so a hard `createRoot(null)` would be a console error on a
+// page with nothing wrong with it. An absent id means "not this page", never
+// "something broke".
+//
+// The ids are the only coupling between this file and the templates, and nothing
+// in either would report a mismatch — a page whose id was renamed simply renders
+// nothing, silently. `tests/test_ui_bundle.py` is what checks the two agree.
 import { createRoot } from 'react-dom/client'
 
+import HammerolaEntry from './HammerolaEntry.jsx'
 import HammerolaViewer from './HammerolaViewer.jsx'
 
 // The registration of `<hmr-viewport>`, said out loud. `customElements.define`
@@ -26,12 +32,17 @@ import HammerolaViewer from './HammerolaViewer.jsx'
 // name is already in the DOM is upgraded on the spot.
 import './viewport/index.js'
 
-// The only condition left is the one the header explains: is this a page that
-// asked for the interface at all. There used to be a second one, an opt-in flag,
-// which existed while this bundle was mounted BESIDE the viewer that served the
-// build page; the template no longer carries that viewer, so there is nothing
-// left to opt into.
-const mount = document.getElementById('hmr_root')
-if (mount) {
-  createRoot(mount).render(<HammerolaViewer />)
+// The only condition left is the one the header explains: which page asked for
+// an interface. There used to be a second one, an opt-in flag, which existed
+// while this bundle was mounted BESIDE the viewer that served the build page;
+// the template no longer carries that viewer, so there is nothing left to opt
+// into.
+const build = document.getElementById('hmr_root')
+if (build) {
+  createRoot(build).render(<HammerolaViewer />)
+}
+
+const index = document.getElementById('hmr_index')
+if (index) {
+  createRoot(index).render(<HammerolaEntry />)
 }

@@ -206,6 +206,111 @@ def test_body_that_is_not_a_gzipped_tar_is_422(hub):
     assert hub.publish("proj1", "abc123", b"just some bytes").status_code == 422
 
 
+# -- the route where the HUB names the revision ------------------------------
+# `POST /api/v1/publish/<pid>`, with no id in the URL at all. Everything below
+# is about the one thing that route adds: the name, where it comes from, and
+# what follows from it being the content rather than a counter.
+def test_a_push_with_no_name_is_published_under_its_payload_digest(hub):
+    reply = hub.publish_async("proj1", None, good_build())
+    assert reply.status_code == 202
+
+    revision = reply.json()["revision"]
+    assert len(revision) == 64
+    assert hub.await_job(reply.json()["job"]).status_code == 201
+
+    build = hub.project_dir("proj1") / revision
+    # The name IS the digest, so the build carries its own name in the file the
+    # store compares pushes with. Nothing has to be remembered anywhere else.
+    assert (build / ".payload.sha256").read_text().strip() == revision
+    assert hub.get(f"/project/proj1/{revision}/").status_code == 200
+
+
+def test_the_minted_name_reaches_the_job_record_too(hub):
+    """The 202 and the job agree about which revision this build publishes —
+    the pusher can get it from either, and neither is the JOB id."""
+    reply = hub.publish_async("proj1", None, good_build())
+    payload = reply.json()
+    record = hub.await_job(payload["job"]).record
+
+    assert record["commit"] == payload["revision"]
+    assert record["commit"] != payload["job"]
+    assert record["build_url"] == f"/project/proj1/{payload['revision']}/"
+
+
+def test_the_same_sources_mint_the_same_revision(hub):
+    """Idempotence and identity are the same fact here: an unchanged tree
+    cannot be given a second address, so the retry is 200 and there is exactly
+    one directory.
+
+    And the two archives are built SEPARATELY, so their member order and their
+    mtimes differ — which is the property the address depends on. The digest is
+    over `{path: sha256 of content}` sorted by path, so nothing about the
+    machine that packed the tree reaches the name; two laptops publishing the
+    same sources land on the same URL."""
+    first = hub.publish_async("proj1", None, good_build())
+    assert hub.await_job(first.json()["job"]).status_code == 201
+
+    again = hub.publish_async("proj1", None, good_build())
+    assert again.status_code == 200
+    assert again.json()["revision"] == first.json()["revision"]
+    assert again.json()["url"] == f"/project/proj1/{first.json()['revision']}/"
+
+    builds = [entry.name for entry in (hub.project_dir("proj1")).iterdir()
+              if entry.is_dir() and not entry.is_symlink()]
+    assert builds == [first.json()["revision"]]
+
+
+def test_different_sources_mint_a_different_revision(hub):
+    one = hub.publish_async("proj1", None, good_build("a"))
+    two = hub.publish_async("proj1", None, good_build("DIFFERENT"))
+    assert one.json()["revision"] != two.json()["revision"]
+
+    assert hub.await_job(one.json()["job"]).status_code == 201
+    assert hub.await_job(two.json()["job"]).status_code == 201
+    # Two names, so the 409 that answers "this name, other content" on the
+    # NAMED route cannot arise here: different content is a different address.
+    assert os.readlink(hub.project_dir("proj1") / "latest") in (
+        one.json()["revision"], two.json()["revision"])
+
+
+def test_a_minted_revision_is_served_immutable_like_any_other(hub):
+    reply = hub.publish_async("proj1", None, good_build())
+    revision = reply.json()["revision"]
+    hub.await_job(reply.json()["job"])
+
+    served = hub.get(f"/project/proj1/{revision}/assembled.json")
+    assert served.status_code == 200
+    assert "immutable" in served.headers["Cache-Control"]
+
+
+def test_the_named_route_still_answers_and_reports_no_revision(hub):
+    """A caller that brings its own id gets the reply it always got — no
+    `revision` key, because it is not the hub that chose the name."""
+    reply = hub.publish_async("proj1", "abc123", good_build())
+    assert reply.status_code == 202
+    assert "revision" not in reply.json()
+
+
+def test_the_minting_route_refuses_a_bad_project_id(hub):
+    assert hub.publish_async("proj1%0A", None, good_build()).status_code == 422
+
+
+def test_the_minting_route_needs_the_token(hub):
+    r = hub.publish_async("proj1", None, good_build(), token=None)
+    assert r.status_code == 401
+
+
+def test_the_local_slot_is_still_a_named_route(hub):
+    """`dev` did not move. It is a name like any other in the URL, and the hub
+    does not mint anything for it (SPEC 7.6)."""
+    reply = hub.publish_async("proj1", "dev", good_build())
+    assert reply.status_code == 202
+    assert "revision" not in reply.json()
+    assert hub.await_job(reply.json()["job"]).status_code == 201
+    assert (hub.project_dir("proj1") / "dev" / "meta.json").is_file()
+    assert not (hub.project_dir("proj1") / "latest").exists()
+
+
 def test_reserved_commit_name_is_refused(hub):
     # `latest` is the symlink. A build allowed to take that name would either
     # collide with it or replace it, and /latest/ would stop tracking anything.
@@ -243,7 +348,7 @@ def test_an_over_long_title_is_refused(hub):
 def test_an_over_long_built_is_refused(hub):
     # `built` is displayed exactly like `title` — index card, page header, and the
     # <option> caption in the picker — but it also goes into the SHARED
-    # /index.json, which every visitor of `/` downloads with no-cache. A single
+    # /index.json, which everyone who opens `/` downloads with no-cache. A single
     # project pushing half a megabyte of `built` degrades the index for everyone,
     # so it is capped on the way in like every other displayed string.
     body = tar_gz({"meta.json": meta_bytes(built="B" * 500_000),
@@ -424,8 +529,8 @@ def test_second_build_moves_latest_and_keeps_the_old_one(hub):
 
 
 def test_latest_follows_built_not_arrival_order(hub):
-    # Retention and the build picker order by `built` (SPEC 7.3), so a build that
-    # arrives late but is OLDER must not steal `latest`.
+    # `latest` and the build picker order by `built`, so a build that arrives
+    # late but is OLDER must not steal `latest`.
     hub.publish("proj1", "newer", tar_gz({
         "meta.json": meta_bytes(built="2026-08-22T10:00:00Z"),
         "assembled.json": view_bytes("newer")}))

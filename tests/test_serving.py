@@ -84,38 +84,111 @@ def test_the_vendored_bundle_is_immutable(hub):
 
 
 def test_our_own_assets_are_not_immutable(hub):
-    # index.js, pointer.js and site.css DO change with the image under a stable
-    # name. An immutable year on them means a deploy reaches nobody who has
-    # already loaded the site, and there is no way to recall the cached copy.
-    for path in ("/_v/site.css", "/_v/index.js", "/_v/pointer.js"):
+    # pointer.js and site.css DO change with the image under a stable name. An
+    # immutable year on them means a deploy reaches nobody who has already loaded
+    # the site, and there is no way to recall the cached copy.
+    #
+    # The browser BUNDLE is the same kind of file and is not named here, because
+    # it cannot be: it is built rather than committed, so a checkout does not have
+    # one and this suite runs against a checkout. What covers it is the rule
+    # rather than the list -- `_serve_asset` decides the header from the path, and
+    # `static/_v/` is `no-cache` whatever is in it.
+    for path in ("/_v/site.css", "/_v/pointer.js"):
         r = hub.get(path)
         assert r.status_code == 200, path
         assert r.headers["Cache-Control"] == "no-cache", path
     assert hub.get("/_v/site.css").headers["Content-Type"].startswith("text/css")
     # A wrong Content-Type makes the browser refuse an ES module outright, and
     # every script this site loads is one (`<script type="module">`).
-    for path in ("/_v/index.js", "/_v/pointer.js"):
+    for path in ("/_v/pointer.js", "/_v/pointer_pref.js"):
         assert hub.get(path).headers["Content-Type"].startswith("text/javascript"), path
 
 
 def test_index_page_and_index_json_are_not_cached(hub):
-    for path in ("/", "/index.json"):
-        assert hub.get(path).headers["Cache-Control"] == "no-cache", path
+    assert hub.get("/").headers["Cache-Control"] == "no-cache"
+    assert hub.index().headers["Cache-Control"] == "no-cache"
 
 
 def test_index_json_is_an_empty_list_before_any_push(hub):
     # The index page fetches this on first load; a 404 would render an error box
     # on a hub that is simply new.
-    r = hub.get("/index.json")
+    r = hub.index()
     assert r.status_code == 200
     assert r.json() == []
 
 
+def test_the_list_of_projects_needs_the_token(hub):
+    """`/index.json` is the one READ on this service that is guarded.
+
+    It is the only document that answers "what is on this hub", and every id in
+    it is the prefix of every permanent URL that project will ever have. The
+    front page draws the sign-in screen on the 401 — but the refusal is here,
+    not there: a page that fetched the cards and declined to render them would
+    be a decoration one devtools tab wide.
+    """
+    hub.publish("proj1", "abc123", good_build())
+    assert hub.index(token=None).status_code == 401
+    assert hub.index(token="wrong-token").status_code == 401
+    assert hub.index().status_code == 200
+
+
+def test_the_refusal_says_nothing_about_what_is_behind_it(hub):
+    """A 401 before the file is read, so a full hub answers like an empty one.
+
+    Reading `index.json` first and refusing afterwards would leave the answer
+    identical and the TIMING different, on the one route whose whole subject is
+    whether anything exists here at all.
+    """
+    empty = hub.index(token=None)
+    hub.publish("proj1", "abc123", good_build())
+    hub.publish("proj2", "def456", good_build())
+    full = hub.index(token=None)
+    assert empty.status_code == full.status_code == 401
+    assert empty.content == full.content
+
+
+def test_a_build_stays_public_while_the_list_does_not(hub):
+    """The line, stated as a test, because the two halves look inconsistent.
+
+    A build URL is a permanent link somebody was GIVEN and pasted into a chat;
+    asking its recipient for a secret is not a thing this product can do. The
+    enumeration is the opposite — nobody is handed it. Closing these by accident
+    while closing the list is the mistake this stops.
+    """
+    hub.publish("proj1", "abc123", good_build())
+    for path in ("/", "/project/proj1/", "/project/proj1/abc123/",
+                 "/project/proj1/abc123/meta.json",
+                 "/project/proj1/abc123/assembled.json",
+                 "/project/proj1/builds.json",
+                 "/project/proj1/latest/meta.json",
+                 "/_v/site.css"):
+        assert hub.get(path).status_code == 200, path
+
+
+def test_the_front_page_shell_needs_no_token(hub):
+    # It carries no data at all — a div and a <script>. Guarding it would mean
+    # the browser had nothing to draw the sign-in screen WITH.
+    r = hub.get("/")
+    assert r.status_code == 200
+    assert "hmr_index" in r.text
+
+
 def test_index_page_is_served_from_templates(hub):
+    """The shell comes from templates/, and it names the PROJECT.
+
+    It used to assert on `3d.vvzvlad.xyz`, which is what the page said before
+    the move — a hostname, and by then a hostname the service had already left.
+    Asserting on one is how a template ends up carrying somebody's DNS: the
+    test makes the wrong thing load-bearing, and the next reader keeps it
+    because a test depends on it.
+    """
     r = hub.get("/")
     assert r.status_code == 200
     assert r.headers["Content-Type"].startswith("text/html")
-    assert "3d.vvzvlad.xyz" in r.text
+    assert "hammerola" in r.text
+    assert "vvzvlad" not in r.text, (
+        "a hostname is not the name of this service, and this one has moved "
+        "once already")
 
 
 def test_project_root_serves_the_pointer_resolver(hub):
@@ -288,8 +361,12 @@ def test_the_policy_allows_inline_style_attributes(hub):
 
 def test_the_index_page_has_no_inline_script(hub):
     # An inline script would be blocked by our own CSP, i.e. a blank index page.
+    # The front page is drawn by the React bundle now, exactly like the build
+    # page; which file it must be is checked in tests/test_ui_bundle.py, so all
+    # this asks is that the page reaches for a script FILE rather than carrying
+    # one.
     r = hub.get("/")
-    assert "/_v/index.js" in r.text
+    assert re.search(r'<script[^>]*\bsrc="/_v/[^"]+"', r.text), r.text
     assert "<script type=\"module\">" not in r.text
 
 
@@ -339,13 +416,62 @@ def test_publish_route_rejects_get(hub):
 def test_index_json_lists_projects_after_pushes(hub):
     hub.publish("proj1", "abc123", good_build())
     hub.publish("proj2", "def456", good_build())
-    cards = hub.get("/index.json").json()
+    cards = hub.index().json()
     assert {c["pid"] for c in cards} == {"proj1", "proj2"}
     for card in cards:
         # Everything the index page renders must be present, or the card shows
         # "undefined" and nothing in the console says why.
-        assert set(card) >= {"pid", "title", "commit", "built", "parts",
-                             "variants", "mb"}
+        assert set(card) >= {"pid", "project", "title", "commit", "built",
+                             "first_built", "dev", "parts", "variants", "mb"}
+
+
+def test_a_card_says_whether_the_project_has_a_dev_slot(hub):
+    """`dev` on the card — that the slot is occupied, and nothing about it.
+
+    The front page shows a chip from this, and the chip is the whole of what the
+    front page is allowed to say about the local slot: the card still describes
+    the newest COMMIT (SPEC 7.6), because that is what the link promises.
+    """
+    hub.publish("proj1", "abc123", good_build())
+    hub.publish("proj2", "def456", good_build())
+    hub.publish_dev("proj2", good_build(marker="b"))
+
+    cards = {c["pid"]: c for c in hub.index().json()}
+    assert cards["proj1"]["dev"] is False
+    assert cards["proj2"]["dev"] is True
+    # The slot is not a build: it moves neither the commit on the card nor the
+    # timestamp, or the front page would start describing somebody's laptop.
+    assert cards["proj2"]["commit"] == "def456"
+
+
+def test_a_card_carries_the_oldest_build_as_well_as_the_newest(hub):
+    """`first_built` — as close to "since when" as this hub can honestly get.
+
+    Nothing records when a project was created (`hammerola create` mints an id in
+    the author's own directory), so the card carries the earliest build it holds
+    and the page labels it "first built" rather than "created". It is stable
+    because there is no retention: builds are never swept (SPEC 5.3), so the
+    oldest one stays the oldest.
+    """
+    # Two builds, deliberately published newest-first, so that a card reading
+    # "the first one I saw" instead of "the oldest one there is" fails here.
+    hub.publish("proj2", "newer", good_build(extra_files={
+        "meta.json": meta_bytes(built="2026-08-21T04:16:00Z")}))
+    hub.publish("proj2", "older", good_build(extra_files={
+        "meta.json": meta_bytes(built="2024-01-02T03:04:00Z")}))
+
+    card = {c["pid"]: c for c in hub.index().json()}["proj2"]
+    assert card["commit"] == "newer"
+    assert card["built"] == "2026-08-21T04:16:00Z"
+    assert card["first_built"] == "2024-01-02T03:04:00Z"
+
+
+def test_a_single_build_is_its_own_first(hub):
+    # The ordinary case, and the one where the two fields agreeing is right
+    # rather than a bug: one build is both the newest and the oldest.
+    hub.publish("proj1", "abc123", good_build())
+    card = hub.index().json()[0]
+    assert card["first_built"] == card["built"]
 
 
 def test_served_meta_matches_the_file_on_disk(hub):

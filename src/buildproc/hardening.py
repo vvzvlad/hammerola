@@ -9,12 +9,13 @@ THE HOLE. `runner.child_environment` builds the build's environment key by key,
 so no token is ever passed to it -- and that is true and still not enough. The
 build runs under the SAME uid as the hub (both are `app`; the entrypoint drops
 to it once and every process descends from there) and in the SAME pid namespace
-(one container, no nesting). The hub's own environment holds PUBLISH_TOKEN and
-COMMENT_READ_TOKEN because compose delivers them through `environment:`, and on
+(one container, no nesting). The hub's own environment holds EDIT_TOKEN --
+the one secret of the whole system -- because compose delivers it through
+`environment:`, and on
 Linux `/proc/<pid>/environ` is readable by a process that passes
 `PTRACE_MODE_READ_FSCREDS` -- which same-uid, same-userns satisfies. It is NOT
 the `PTRACE_MODE_ATTACH` check that Yama's `ptrace_scope=1` restricts, so the
-usual hardening does not apply. A model therefore reads the hub's tokens with
+usual hardening does not apply. A model therefore reads the hub's token with
 `open("/proc/<pid>/environ")`, and no line of `child_environment` is wrong.
 
 THE CLOSE. `prctl(PR_SET_DUMPABLE, 0)` clears the task's dumpable flag. Linux

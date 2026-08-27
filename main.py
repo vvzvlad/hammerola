@@ -83,8 +83,8 @@ def main():
 
     # Before the socket, before anything a build could ever reach: the hub's own
     # /proc entry stops being readable by its own uid. Builds run as the same
-    # user in the same pid namespace, and the tokens arrive through compose's
-    # `environment:`, so without this a model reads them straight out of
+    # user in the same pid namespace, and the token arrives through compose's
+    # `environment:`, so without this a model reads it straight out of
     # /proc/<hub pid>/environ -- see src/buildproc/hardening.py, which is where
     # the whole argument lives.
     try:
@@ -97,10 +97,9 @@ def main():
         logger.error(f"Refusing to start: {exc}")
         raise SystemExit(1) from exc
     # This exact string is the CI smoke gate's STARTUP_MARKER (ci/smoke.py). It is
-    # the proof that settings parsed — i.e. BOTH required credentials arrived,
-    # PUBLISH_TOKEN and COMMENT_READ_TOKEN — and that logging came up at the
-    # configured level. Rename it only together with that constant, in the same
-    # commit.
+    # the proof that settings parsed — i.e. the one required credential arrived,
+    # EDIT_TOKEN — and that logging came up at the configured level. Rename it
+    # only together with that constant, in the same commit.
     logger.info("Starting hammerola")
 
     server = create_server(settings)

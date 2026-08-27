@@ -125,10 +125,10 @@ COPY static/ static/
 #
 # ONE COPY PER FILE, NAMED ON BOTH SIDES, and not `COPY --from=ui /ui/dist
 # static/_v`. The directory form would MERGE the build output into a directory
-# that already holds this project's own assets — site.css, index.js,
-# pointer.js, the vendored three-cad-viewer bundle — where a name collision is a
-# silent overwrite. `index.js` is an entirely ordinary name for a bundler to
-# emit, and the gate could not see it happen: check (g) asks whether a path
+# that already holds this project's own assets — site.css, pointer.js,
+# pointer_pref.js, the vendored three-cad-viewer bundle — where a name collision
+# is a silent overwrite. `pointer.js` is an entirely ordinary name for a bundler
+# to emit as a chunk, and the gate could not see it happen: check (g) asks whether a path
 # EXISTS, and after such an overwrite it still does. Copying by name means
 # nothing the build emits can reach the image unless a line here asks for it.
 #

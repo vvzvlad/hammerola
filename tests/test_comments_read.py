@@ -1,17 +1,25 @@
-"""The TOKEN-GUARDED half of the comment queue (SPEC 7A.2).
+"""The READ side of the comment queue (SPEC 7A.2).
 
-Writing is public and reading is not, and that asymmetry is the point: the queue
-is raw input from anyone at all — it can be junk, duplicated or abusive — so
-handing it back to every visitor would turn a showcase of projects into a message
-board. These tests are mostly about the door: which endpoints demand the token,
-that the PUBLISH token is not it, and that a caller without one cannot learn
-anything from the difference between 401 and 404.
+The queue is not public to read, and that has not changed: it is raw input — it
+can be junk, duplicated or abusive — so handing it back to every visitor would
+turn a showcase of projects into a message board. What DID change is that
+writing is not public either (step 0 of the plan, SPEC 8A.1), so the asymmetry
+these tests were once about is gone and one secret opens both sides.
+
+These tests are mostly about the door: which endpoints demand the token, that a
+near miss is refused, and that a caller without one cannot learn anything from
+the difference between 401 and 404. The test that used to sit here proving the
+PUBLISH token is refused on this route was DELETED with the second variable —
+its premise was that the two tokens rotate separately, and they no longer exist
+to rotate. `test_the_same_secret_opens_both_sides` is what stands in its place,
+and it asserts the opposite property on purpose: the collapse is a decision
+(SPEC §8 entry 26), so it is pinned rather than merely uncontradicted.
 """
 
 import json
 from datetime import datetime, timedelta, timezone
 
-from harness import (JPEG_BYTES, PNG_BYTES, READ_TOKEN, TOKEN, comment_payload,
+from harness import (JPEG_BYTES, PNG_BYTES, TOKEN, comment_payload,
                      good_build)
 
 READ_ENDPOINTS = ("", "?project=proj1", "/{cid}", "/{cid}/photo", "/{cid}/shot")
@@ -35,16 +43,25 @@ def test_every_read_endpoint_refuses_a_missing_token(hub):
         assert r.headers["WWW-Authenticate"] == "Bearer"
 
 
-def test_every_read_endpoint_refuses_the_publish_token(hub):
-    """The two tokens live in different places and are not interchangeable.
+def test_the_same_secret_opens_both_sides(hub):
+    """ONE secret for the whole system (SPEC §8 entry 26, step 0 of the plan).
 
-    PUBLISH_TOKEN is in CI, COMMENT_READ_TOKEN is in the agent's MCP server. A
-    hub that accepted either for both would make rotating one pointless.
+    The value that publishes a build is the value that reads the queue and the
+    value that writes to it. This replaces a test asserting the reverse — that
+    the publish token is refused here — which was true while the hub declared
+    COMMENT_READ_TOKEN and became false the moment it stopped.
     """
-    cid = _setup(hub)
+    assert hub.publish("proj1", "abc123", good_build(), token=TOKEN
+                       ).status_code == 201
+    written = hub.post_comment("proj1", "abc123", comment_payload(),
+                               token=TOKEN)
+    assert written.status_code == 201
+    cid = written.json()["id"]
     for path in READ_ENDPOINTS:
         r = hub.read_comments(path.format(cid=cid), token=TOKEN)
-        assert r.status_code == 401, path
+        # The two attachment routes 404 because this comment carries neither;
+        # what matters is that none of them answers 401.
+        assert r.status_code in (200, 404), path
 
 
 def test_resolve_refuses_a_missing_token(hub):
@@ -56,7 +73,7 @@ def test_resolve_refuses_a_missing_token(hub):
 
 def test_a_token_prefix_is_not_accepted(hub):
     _setup(hub)
-    r = hub.read_comments("", token=READ_TOKEN[:-1])
+    r = hub.read_comments("", token=TOKEN[:-1])
     assert r.status_code == 401
 
 
@@ -99,8 +116,10 @@ def test_the_photo_comes_back_as_an_image_attachment(hub):
     """Uploaded bytes handed back, so the content type is ours and not the sender's.
 
     `attachment` and `nosniff` together: the reader is a tool, nothing about this
-    needs to render in a browser, and a stranger's file that renders in a browser
-    is the whole class of problem this feature was designed around.
+    needs to render in a browser, and an uploaded file that renders in a browser
+    is the whole class of problem this feature was designed around — the bytes
+    come back on the same origin as every project's builds, which is true
+    whatever credential put them there.
     """
     cid = _setup(hub)
     r = hub.read_comments(f"/{cid}/photo")

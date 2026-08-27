@@ -23,13 +23,13 @@ attack surface for cosmetics. A nested bundle would build, ship, satisfy the
 publish gate and then 404 in the browser.
 
 The consequence is that built files share a directory with committed ones —
-`site.css`, `index.js`, `pointer.js`, `pointer_pref.js`,
+`site.css`, `pointer.js`, `pointer_pref.js`,
 `three-cad-viewer.esm.js` —
 so **everything that copies this build copies it BY NAME**, one file per line:
 `UI_FILES` in the `Makefile`, `COPY --from=ui /ui/dist/hammerola.js
 static/_v/hammerola.js` in the `Dockerfile`. Never a directory copy. A directory
-copy merges, and a merge means a chunk that vite happened to call `index.js`
-replaces the hub's own `index.js` — silently, with the publish gate still green,
+copy merges, and a merge means a chunk that vite happened to call `pointer.js`
+replaces the hub's own `pointer.js` — silently, with the publish gate still green,
 because the gate asks whether a path exists and after such an overwrite it
 still does.
 

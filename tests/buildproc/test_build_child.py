@@ -13,7 +13,9 @@ half never gets to, and those are the cases worth pinning cheaply.
 """
 
 import json
+import re
 import sys
+import textwrap
 
 import pytest
 
@@ -26,7 +28,13 @@ from src.buildproc import (
 )
 from src.buildproc import child
 
-from probes import BUILD_LIMITS, block_import, needs_cadquery, needs_occt
+from probes import (
+    BUILD_LIMITS,
+    block_import,
+    needs_cadquery,
+    needs_occt,
+    payload,
+)
 
 
 # --------------------------------------------------------------------------
@@ -129,8 +137,25 @@ def test_the_hang_dump_names_the_line_of_the_model_it_stuck_on(project):
     implemented in C and does not take the GIL: a hang inside a native OCCT
     call never returns to the interpreter, so a watchdog thread and a signal
     handler both stay unscheduled while this one still prints.
+
+    THE BUDGET HAS TO BE BIGGER THAN A LEGITIMATE START, and that is why the
+    number here is twelve seconds rather than the 1.5 it used to be. The child
+    arms the watchdog TWICE (child.py, steps 1 and 5) and each arming gets the
+    whole budget, so a budget under the cost of the start is spent by the
+    START's window: the dump then prints a stack inside runpy and the import
+    machinery, which is a true report of a start that took longer than a build
+    may hang for -- and not the thing this test is about.
+
+    Measured on this workstation, a start costs 0.8-1.8 s quiet, 2.4-3.9 s with
+    the cores oversubscribed, and 4.2-7.6 s at a load average of 300 on ten
+    cores; nearly all of it is the OCP import inside `_cap_occt_threads`. At
+    1.5 s that lost the race two runs in three under ordinary load. Twelve is
+    three times the realistic worst and still over the pathological one, and the
+    test costs about that long on every run, because a watchdog can only be
+    observed by waiting for it. The cheap half of the same change is the test
+    below, which pins the arming ORDER without waiting for anything.
     """
-    limits = BUILD_LIMITS.replace(wall_seconds=30.0, hang_dump_seconds=1.5)
+    limits = BUILD_LIMITS.replace(wall_seconds=30.0, hang_dump_seconds=12.0)
     outcome = project.build("""
         import time
 
@@ -144,6 +169,110 @@ def test_the_hang_dump_names_the_line_of_the_model_it_stuck_on(project):
     assert "Timeout (" in outcome.log
     assert "a_boolean_that_never_finishes" in outcome.log
     assert "model.py" in outcome.log
+
+
+def test_the_hang_budget_is_armed_again_where_the_model_starts(
+        project, run_program, tmp_path):
+    """`hang_dump_seconds` means "the model has been stuck this long".
+
+    It used to mean "this process has existed this long", because the only
+    arming was the first line of `child.main` -- before the OCP import in
+    `_cap_occt_threads`, before the chdir, before the build half is imported.
+    Whatever that start cost came out of the model's budget, and on a hub that
+    is now the builder and runs several of these at once it can cost more than
+    the budget outright: the dump then fires during the child's OWN start and
+    the pusher is handed a build log accusing their model of a hang that never
+    happened.
+
+    Written against the ORDER of the two armings rather than against a stack,
+    because the order is the whole change and it can be pinned without waiting
+    for a timer: the budget here is deliberately smaller than the start and is
+    never allowed to go off. That the SECOND arming is the one in force is a
+    property of `faulthandler` itself -- `dump_traceback_later` cancels the
+    pending timer before arming a new one, so calling it twice replaces rather
+    than accumulates -- and the end-to-end proof that a dump really does name
+    the model's line is the test above.
+
+    The slow start is injected rather than waited for. On this workstation the
+    real one costs 0.8-3.9 s (see the test above) and would make the point on
+    its own; in the CI container there is no usable OCP at all, so without the
+    injection the start is fast enough that a test written here would pass
+    against the broken code.
+    """
+    budget = 0.5
+    slow = 1.0
+    (project.root / "model.py").write_text(
+        "import time\n"
+        "raise ValueError('MODEL_STARTED %r' % time.time())\n",
+        encoding="utf-8")
+
+    result = run_program(textwrap.dedent("""
+        import json, sys, time
+
+        hub_root, project_dir, out_dir, result_file, budget, slow = sys.argv[1:]
+        sys.path.insert(0, hub_root)
+
+        import faulthandler
+        from src.buildproc import child
+
+        # Armed, never fired. A real timer with this budget would end the
+        # process during the slow start below -- which is exactly the bug, and
+        # a dead process cannot report when it was armed.
+        armed = []
+        faulthandler.dump_traceback_later = lambda timeout, **kw: armed.append(
+            {"at": time.time(), "timeout": timeout, "exit": kw.get("exit")})
+
+        # Stands in for the OCP import the real one does, which is where a
+        # start spends its seconds.
+        capped, prep = child._cap_occt_threads, {}
+        def slow_start(count):
+            prep["started"] = time.time()
+            time.sleep(float(slow))
+            try:
+                return capped(count)
+            finally:
+                prep["finished"] = time.time()
+        child._cap_occt_threads = slow_start
+
+        code = child.main(["child", "--project", project_dir, "--out", out_dir,
+                           "--result", result_file,
+                           "--hang-dump-seconds", budget])
+        print("PAYLOAD " + json.dumps({"armed": armed, "prep": prep, "code": code}))
+    """), limits=BUILD_LIMITS, args=(
+        str(child.HUB_ROOT), str(project.root), str(project.out),
+        str(tmp_path / "result.json"), str(budget), str(slow)))
+
+    data = payload(result)
+    assert data["code"] == child.EXIT_BUILD_FAILED, result.log
+    started = re.search(r"MODEL_STARTED ([0-9.]+)", result.log)
+    assert started, result.log
+    model_started = float(started.group(1))
+
+    armed, prep = data["armed"], data["prep"]
+    assert len(armed) == 2, (
+        "the watchdog was armed once, at the birth of the process, so its "
+        "budget was already being spent while the child was still starting")
+    # Both windows get the WHOLE budget: the first covers the start, which is
+    # the one place a hang has nothing else watching it, and the second covers
+    # the model. Sharing one budget between them would give the model less of
+    # it the slower the host is.
+    assert [one["timeout"] for one in armed] == [budget, budget]
+    assert [one["exit"] for one in armed] == [True, True]
+
+    # The start, all of it, sits between the two -- and it outlasts the budget,
+    # so on the first arming alone the deadline had passed before model.py was
+    # so much as read.
+    assert armed[0]["at"] <= prep["started"]
+    assert armed[1]["at"] >= prep["finished"]
+    assert model_started - armed[0]["at"] > budget
+
+    # ...and the second arming is the model's own: nothing but `load_project`
+    # and the import of model.py stands between it and the first line of
+    # somebody else's code. Measured against the start rather than against a
+    # constant, because everything here stretches together on a loaded host and
+    # a constant would be this test's own flake.
+    assert armed[1]["at"] <= model_started
+    assert model_started - armed[1]["at"] < prep["finished"] - prep["started"]
 
 
 def test_a_model_that_exits_zero_without_building_is_not_a_success(project):
@@ -170,7 +299,7 @@ def test_a_model_that_exits_zero_without_building_is_not_a_success(project):
 # what the model can and cannot see
 # --------------------------------------------------------------------------
 
-def test_the_model_cannot_read_the_hubs_tokens(project, hub_secrets):
+def test_the_model_cannot_read_the_hubs_token(project, hub_secrets):
     """The environment test of test_isolation.py, from inside a real model.
 
     Worth having twice: that one proves `child_environment` composes the right
@@ -179,14 +308,13 @@ def test_the_model_cannot_read_the_hubs_tokens(project, hub_secrets):
     """
     outcome = project.build("""
         import os
-        raise RuntimeError("token=%r read=%r decoy=%r" % (
-            os.environ.get("PUBLISH_TOKEN"),
-            os.environ.get("COMMENT_READ_TOKEN"),
+        raise RuntimeError("token=%r decoy=%r" % (
+            os.environ.get("EDIT_TOKEN"),
             os.environ.get("AWS_SECRET_ACCESS_KEY")))
     """)
 
     assert outcome.status == STATUS_FAILED
-    assert "token=None read=None decoy=None" in outcome.log
+    assert "token=None decoy=None" in outcome.log
     for value in hub_secrets.values():
         assert value not in outcome.log
 

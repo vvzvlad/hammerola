@@ -12,7 +12,8 @@ JOB.
 
     JobStore    the registry: one directory per job under data/jobs/, with the
                 record in job.json and the build log beside it in log.txt
-    BuildTask   what the request hands over: a job id and an unpacked tree
+    BuildTask   what the request hands over: a job id, an unpacked tree and the
+                pushed body it came out of
     BuildQueue  the pool: a bounded queue and N worker threads that run the
                 build and then publish its output
 
@@ -30,13 +31,22 @@ name the hub then serves. What the parent captures is already capped and already
 decoded (`runner._Drain`), so writing it here is the only place the hub is
 repeating something it measured itself.
 
+A PUBLISHED BUILD ALSO LEAVES ITS CODE BEHIND, and the worker is where that is
+decided because it is the only place that knows whether a revision happened.
+`_keep_the_code` hands the pushed body to the store as the code of the revision
+it just published, with a second copy of this same captured log beside it (SPEC
+8, entry 17); every other ending deletes the body. So the sources of a build that
+FAILED are not kept — a stored tree belonging to no published revision is one
+nothing can answer for, and the author is looking at that failure with the tree
+still on their own disk.
+
 THAT IS ABOUT THE WRITE PATH ONLY, and must not be read as a reason to trust
 what comes back. `data/jobs/` is under the data volume, and the volume is FULLY
 WRITABLE BY EVERY BUILD — `src/buildproc/__init__.py` says so in as many words,
 and SPEC 8A.4 explains why no boundary is available from inside this container.
 So a model can overwrite another job's `log.txt`, read one off the volume
 without an id and without a token, and create job directories of its own that
-count against MAX_JOBS. What the unguessable id and PUBLISH_TOKEN separate is
+the next start reads through. What the unguessable id and EDIT_TOKEN separate is
 one PUSHER from another OVER HTTP; neither is a boundary on the volume, and this
 module cannot make one.
 
@@ -47,32 +57,37 @@ one. The failure that motivates this is not subtle — `json.loads` accepts `NaN
 while `json.dumps(allow_nan=False)` refuses it, so one planted record used to be
 enough to make the hub fail to start, permanently, on every run after it.
 
-AND THE CORRECTION HAS TO REACH THE VOLUME. This is the rule to check every
-change here against, because it has been got wrong twice in the same way: a
-value normalized only in MEMORY leaves the planted one on disk, so the next
-start reads it again and begins from scratch — and a defence that has to be
-re-applied on every start is not a defence, it is a loop. `_load` therefore
-writes back every record it keeps, not only the ones it had to fail; the
-exceptions are named where they are made (`JobStore.log`, `_created`) and each
-one is an exception because nothing about it accumulates across a restart.
+AND THE CORRECTION HAS TO REACH THE VOLUME. A value normalized only in MEMORY
+leaves the planted one on disk, so the next start reads it again and begins from
+scratch, and the record on disk goes on being a shape this module does not
+write. `_load` therefore writes back every record it CHANGED — not only the ones
+it had to fail, and not the ones it did not touch, which on a volume with no
+retention is nearly all of them. The one that MUST land is the failure itself: a
+job stranded `queued` or `building` by a restart has to be recorded terminal, or
+every subsequent start finds it in flight again and warns about it again.
 
-AND THE RULE ABOVE HAS A SECOND HALF, which the write-back itself taught: a pass
+NOTHING SHARED BETWEEN RECORDS IS STORED PER RECORD, and that is a rule to hold
+every change here to rather than an observation about today's fields. A pass
 that writes N files has N places to stop, so anything spread ACROSS those files
 comes out of a partial write half old and half new — with the halves chosen by
 whoever made one write fail. On this volume that is the model, and it needs no
 bug to do it: `chmod 0500` on one job directory fails exactly one record's write
-and no other. The creation ORDER used to be spread that way, a number per
-record, and one unwritable directory was therefore enough to leave the registry
-holding two numbering spaces at once — an order the running hub had never been
-in, plus duplicate numbers for the reader to break with 128 random bits of id.
-So the order is not in the records any more. It is ONE file (`ORDER_NAME`),
-written with ONE rename, and that is a claim about the failure rather than about
-the success: a write that does not land leaves the PREVIOUS order intact, whole.
-The property to hold every change here to is not "the order is correct" — no
-write can promise that — but "the order the next start reads is never worse than
-the one before the attempt, and nobody gets to choose how it is worse". What is
-left in the records is per-record only, so a pass that stops half way now
-damages exactly the records it did not reach and nothing between them.
+and no other. The creation ORDER was once spread that way, a number per record,
+and one unwritable directory was enough to leave the registry holding two
+numbering spaces at once. It is not stored at all now — nothing reads it (see
+`_load`) — but a field whose meaning depends on another record's field would
+bring the same failure back, and it belongs in something written with one rename
+rather than in a record.
+
+NO JOB IS EVER DELETED BECAUSE OF ITS AGE OR ITS NUMBER (decision of 2026-08-27,
+SPEC 5.3 and 7.4). There is no count ceiling and no age ceiling on the registry:
+a record and its log stay until somebody removes the directory. The one thing
+that still deletes is `_sweep_strangers`, and it deletes what is NOT a job of
+this registry — a directory with no readable record, a stray file, a symlink, a
+temporary file of a write that was killed. That is garbage collection on a
+volume every build can write into, not retention, and the distinction is the one
+to keep: a ceiling on the NUMBER of jobs is a decision about which of the
+pusher's builds to destroy, and this module does not make one.
 
 BUILD PARALLELISM IS ITS OWN NUMBER, deliberately not `MAX_CONCURRENT_PUBLISHES`.
 The four accept slots in app.py are sized by what RECEIVING costs — a body on
@@ -97,7 +112,6 @@ import secrets
 import shutil
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
@@ -127,17 +141,21 @@ STATE_BUILDING = "building"
 STATE_DONE = "done"
 STATE_FAILED = "failed"
 
+# The two a poller may stop on. Nothing inside this module reads it any more —
+# no rule here selects jobs by whether they have finished — but it is the wire
+# contract `src/client/hub.py` mirrors, so it is stated once, here, on the side
+# that issues the states.
 TERMINAL_STATES = (STATE_DONE, STATE_FAILED)
 # The four, as a set to check a record against. A state outside it is not a
-# harmless typo: retention only ever drops a TERMINAL job and `_load` only ever
-# fails a job that is `queued` or `building`, so a fifth word is a record no
-# rule here can reach — permanent, and counting against every ceiling.
+# harmless typo: `_load` only ever fails a job that is `queued` or `building`,
+# so a fifth word is a record no rule here can reach, served to whoever polls it
+# as a status no client has a branch for.
 KNOWN_STATES = frozenset((STATE_QUEUED, STATE_BUILDING, STATE_DONE, STATE_FAILED))
 
 # 16 bytes from `secrets`, base64url-encoded: 22 characters out of the alphabet
 # below. UNGUESSABLE rather than sequential, because the id is the only thing
 # guarding a job — the status and the log are readable by anyone holding
-# PUBLISH_TOKEN, and a counter would let one pusher walk every other project's
+# EDIT_TOKEN, and a counter would let one pusher walk every other project's
 # build logs by subtracting one.
 JOB_ID_BYTES = 16
 SAFE_JOB_ID = re.compile(r"\A[A-Za-z0-9_-]{22}\Z")
@@ -146,52 +164,19 @@ SAFE_JOB_ID = re.compile(r"\A[A-Za-z0-9_-]{22}\Z")
 RECORD_NAME = "job.json"
 LOG_NAME = "log.txt"
 
-# ...and the one file the REGISTRY owns: the ids of every job it holds, oldest
-# first. Retention counts by creation order (`_prune_locked`), so the order has
-# to survive a restart, and this is the only thing on the volume that expresses
-# it — the records carry no ordering field at all.
+# THE REGISTRY OWNS NO FILE OF ITS OWN, and the one it used to own is worth
+# naming here so the question is not reopened: `data/jobs/order.json` held the
+# ids of every job, oldest first, because RETENTION counted by creation order
+# and had to decide which end to drop. Retention is gone (see the module
+# docstring), and with it the order's only reader — the two job endpoints look a
+# record up by id, nothing lists jobs, and a restart no longer has to reproduce
+# a sequence. So the order is not written, not read and not reconstructed.
 #
-# A FILE RATHER THAN A NUMBER PER RECORD, and the reason is the second paragraph
-# of the module docstring: a number per record makes the order a property of N
-# files, so a write that lands only partly mixes two orders and the model
-# chooses where the mixing happens. This is one atomic rename, which has no
-# half. It is also why the order is a LIST OF IDS and not a list of numbers:
-# a number read off this volume has to be clamped into some range to keep it
-# from being absurd, the clamp is what collapsed a planted number into a tie
-# with real ones, and the renumbering that answered THAT is what had to reach
-# every record. Ordinal information written down as an order carries no
-# magnitude, so there is nothing left to be absurd.
-#
-# The file is on the same writable volume as everything else here, and that is
-# accepted rather than solved. Be exact about what "accepted" covers, because
-# the generous reading of it is false: a build can WRITE this file, so it can
-# write a well-formed one — real ids, permuted — and `_load` takes it without a
-# word. Arbitrary rewriting of the order is available to a build and is
-# indistinguishable from the hub's own, exactly as it is for a `log.txt` (the
-# top of this module says so about the log already, and this is the same
-# sentence about a different file). There is no escalation in it: the same build
-# can `rmtree` another job's directory outright, which is strictly more than
-# reordering the queue that directory is deleted from.
-#
-# WHAT THIS FILE BUYS IS NARROWER, and it is about a POINTWISE failure rather
-# than about a write: a build that makes ONE record's write fail — `chmod 0500`
-# on one job directory, no vulnerability needed — no longer reorders the
-# registry, because there is no per-record order left for a pass that stops half
-# way to mix two generations of. That is the whole claim, and it is the one the
-# rest of this file is arranged around.
-ORDER_NAME = "order.json"
-
-# What `_read_order` will take off the volume, both derived rather than picked.
-#
-# The entry ceiling is what the hub itself can have written: retention bounds
-# the registry at `max_jobs`, plus the jobs in flight that `_prune_locked`
-# deliberately exempts — the pool plus the queue, and nothing else. The byte
-# ceiling follows from it with room to spare, because an id is 22 characters and
-# a line of this file is about 27: generous per entry on purpose, so that no
-# file this hub could have written is ever refused, while a planted one still
-# cannot be read into memory unbounded.
-ORDER_ENTRY_BYTES = 64
-ORDER_ENVELOPE_BYTES = 256
+# What the order file taught survives as the rule in the module docstring:
+# anything that is a property of the SET of records must not be stored per
+# record. Reintroducing such a field is what would bring the file back, and it
+# would have to come back as one atomic rename rather than as a number in each
+# `job.json`.
 
 # How many entries under `data/jobs/` that are NOT a job of this registry are
 # remembered in one start, for the age sweep to look at.
@@ -264,17 +249,17 @@ SUBMIT_ACCEPTED = "accepted"
 SUBMIT_QUEUE_FULL = "queue-full"
 SUBMIT_STOPPED = "stopped"
 
-# Jobs accumulate: one per push, for ever, each with a log next to it. Both
-# ceilings exist because either one alone leaves a hole — a count with no age
-# keeps a job from 2026 alive on a hub nobody pushes to, and an age with no
-# count lets a CI loop gone wrong write ten thousand of them in a day. Swept
-# when a new job is created, which is the only moment anything here changes.
+# How old an entry under `data/jobs/` that is NOT a job of this registry has to
+# be before the startup sweep removes it. NOT a retention window: no job record
+# and no log is ever deleted by age or by count (see the module docstring). What
+# this measures is garbage — a directory with no readable record, a stray file,
+# a symlink, anything a build left in a directory it can write freely.
 #
-# 200 is roughly ten times RETENTION_BUILDS: the interesting jobs are the recent
-# ones and the FAILED ones, and a failed build publishes nothing, so the job list
-# has to be longer than the build list to still hold them.
-MAX_JOBS = 200
-MAX_JOB_AGE_SECONDS = 14 * 24 * 3600
+# Fourteen days rather than at once, because such a directory may be somebody's
+# evidence about a build that misbehaved, and being unreadable is not proof of
+# who put it there. `.wip-` names are the exception and get an hour instead; see
+# `_sweep_strangers`.
+STRANGER_MAX_AGE_SECONDS = 14 * 24 * 3600
 
 # The name every worker thread carries. Tests assert on it — a pool that is not
 # shut down is otherwise invisible until an unrelated test hangs.
@@ -361,10 +346,10 @@ STOPPED_ERROR = "the hub was stopped before this build started; push again"
 # handing it to the pool, so nothing downstream exists to answer it. A narrow
 # window — `create` returns, `submit` is the next statement — and the invariant
 # at the top of `finish` has no window in it, deliberately. A job left `queued`
-# is the one state nothing here can reclaim: `_prune_locked` never drops a job
-# that has not finished, so it holds a MAX_JOBS slot until the hub restarts,
-# while the status endpoint goes on saying `queued` about a build that does not
-# exist. Used by `app._queue_build`, which is the only place that gap is.
+# is the one state nothing here can reclaim: only a restart's `_load` ever fails
+# one, so until then the status endpoint goes on saying `queued` about a build
+# that does not exist. Used by `app._queue_build`, which is the only place that
+# gap is.
 HANDOVER_ERROR = "the hub failed while handing this build to the pool; push again"
 
 # One line per way a build can end badly, because "the build failed" is not an
@@ -392,12 +377,19 @@ class BuildTask:
     `digest` is of those sources and travels with the task because it is what
     tells an identical retry from a colliding one, and it has to be the same
     number the request compared against.
+
+    `archive` is the request body the tree came out of, owned exactly the same
+    way and removed at the same moment — with one exception, which is the point
+    of carrying it at all: a build that PUBLISHES gives it to the store instead,
+    and it becomes the code of that revision (SPEC 8, entry 17). Everything else
+    deletes it, so the sources of a build that failed are never kept.
     """
 
     job_id: str
     pid: str
     commit: str
     sources: Path
+    archive: Path
     digest: str
 
 
@@ -430,39 +422,20 @@ class JobStore:
     what survives a restart, and the restart is the one moment it is read.
     """
 
-    def __init__(self, data_dir, *, max_jobs=MAX_JOBS,
-                 max_age_seconds=MAX_JOB_AGE_SECONDS):
+    def __init__(self, data_dir, *,
+                 stranger_max_age_seconds=STRANGER_MAX_AGE_SECONDS):
         self.root = Path(data_dir).resolve() / "jobs"
-        # At least one, or `create` would sweep away the job it just made.
-        self.max_jobs = max(1, int(max_jobs))
-        self.max_age_seconds = max_age_seconds
+        # ONLY for `_sweep_strangers`, which collects what is not a job of this
+        # registry. There is deliberately no ceiling beside it on how many jobs
+        # the registry holds or how old they may be: nothing here deletes a job.
+        self.stranger_max_age_seconds = stranger_max_age_seconds
         # Workers write, request threads read. Every access to `_records` and
         # every write to the volume happens under this.
         self._lock = threading.Lock()
-        # The order jobs were created in IS this dict's order, and that is the
-        # whole of it in memory — retention counts by it (`_prune_locked`) and
-        # nothing else needs a number. `ORDER_NAME` is the same list on the
-        # volume, which is what carries it across a restart.
+        # Keyed by id and read by id — the ONLY query this registry answers. The
+        # dict's own ordering is incidental and nothing depends on it: a restart
+        # reads the directory in whatever order the volume lists it.
         self._records: dict[str, dict] = {}
-        # Derived from this store's own ceiling rather than from the module's,
-        # so a registry configured smaller does not go on accepting an order
-        # file larger than it could ever write.
-        #
-        # THE OTHER TWO TERMS ARE THE MODULE CONSTANTS ON PURPOSE, and the
-        # asymmetry is worth stating because it looks like an oversight: the
-        # jobs `_prune_locked` exempts are the pool plus the queue, and
-        # `BuildQueue` takes both as PARAMETERS. Those parameters exist for
-        # tests and only ever go DOWN (`create_server` passes them through for
-        # `tests/harness.py` to stand up a one-worker pool with a queue of one);
-        # a deployment gets the defaults, because there is nothing to configure
-        # them from — no setting, no environment variable. A pool built larger
-        # than the defaults would make the hub refuse its own `order.json` on
-        # every start, so if either ever becomes configurable, this has to be
-        # derived from the real pool instead of from these names.
-        self._max_order_entries = (self.max_jobs + MAX_QUEUED_JOBS
-                                   + MAX_CONCURRENT_BUILDS)
-        self._max_order_bytes = (ORDER_ENVELOPE_BYTES
-                                 + ORDER_ENTRY_BYTES * self._max_order_entries)
         self.root.mkdir(parents=True, exist_ok=True)
         self._load()
 
@@ -477,31 +450,41 @@ class JobStore:
         changed it is not running any more. There is nothing to resume: the
         sources were unpacked into a directory `Store._sweep_leftovers` removes.
 
-        THE ORDER IS READ, NOT RECONSTRUCTED. `ORDER_NAME` gives the ids oldest
-        first and this method keeps that sequence exactly — there is no sort
-        here and no ordering field in a record to sort on. That is what makes
-        the guarantee at the top of this module hold: the order this start reads
-        is the order the last successful write put there, whole, and a write
-        that did not land left the one before it, also whole.
+        EVERY JOB DIRECTORY IS READ, and there is no ceiling on how many. That
+        is the direct consequence of there being no retention (see the module
+        docstring): a cut by count would have to choose which of the pusher's
+        jobs to destroy, and every ordering this could sort them by is a value
+        off a volume the build writes. What IS bounded is one record —
+        MAX_RECORD_BYTES — and what stays streaming is the listing itself, so a
+        flooded directory costs this start time rather than a hub that cannot
+        come up. Time at the next start is recoverable; a hub killed for memory
+        while starting is not.
 
-        A DIRECTORY THE ORDER FILE DOES NOT NAME sorts OLDEST, and that end is
-        chosen rather than convenient. It is the end retention drops first, so a
-        build planting directories can crowd out no real job; the same rule
-        covers a job of this hub whose order entry never reached the volume, and
-        for that one being swept early is the honest outcome — the volume never
-        heard it was created.
-
-        WHATEVER THIS NORMALIZED IS WRITTEN BACK, and that is the half the loop
-        is really for. `_read_record` rebuilds every field into a known shape —
-        but in MEMORY, and the volume is writable by every build. A
-        normalization that does not reach the volume leaves the value the
-        attacker chose sitting on disk, so the next start begins from it again:
-        the date in 2999 is pulled back to "now" once per start and never ages,
-        and the record is failed and counted but never swept. So the write-back
-        covers EVERY record that survives, not only the ones this run had to
-        fail. It is per-record, and after the order moved out of the records
-        that is all it is: `_rewrite_locked` stopping half way now damages the
+        WHATEVER THIS NORMALIZED IS WRITTEN BACK. `_read_record` rebuilds every
+        field into a known shape — but in MEMORY, and the volume is writable by
+        every build, so without the write-back the volume keeps the planted
+        value and the next start reads it again. The one write-back that is not
+        merely tidiness is the FAILURE above: a job left `queued` or `building`
+        must be recorded terminal, or the same warning is printed at every start
+        for the rest of the volume's life. The loop is per-record, which is all
+        it is allowed to be: `_rewrite_locked` stopping half way damages the
         records it did not reach and nothing between them.
+
+        AND NOTHING ELSE IS WRITTEN BACK, which is a startup budget rather than
+        tidiness. One write is an `atomic_write_bytes`: two fsyncs and a rename.
+        There is no retention (see the module docstring), so the number of
+        records is the number of pushes over the volume's whole life rather than
+        anything bounded — and this runs from `JobStore.__init__`, which runs
+        from `create_server` BEFORE the socket is bound, so each of those fsyncs
+        is time in which `/health` does not answer at all. At ten thousand jobs
+        a write-everything pass is tens of seconds, against a `start_period` of
+        30 s in the compose file and an auto-update rollback gate that gives up
+        at about 120. A record the rebuild did not change is byte-for-byte what
+        this module would write anyway, so writing it buys nothing and costs
+        that. `_read_record` is what answers "did it change", by comparing the
+        bytes this module WOULD write against the bytes that are there — a
+        comparison that cannot miss a correction the way a per-field check
+        could.
 
         NOTHING IN HERE MAY RAISE. It runs from `JobStore.__init__`, which runs
         from `create_server`, which runs from `main()` — so an exception escaping
@@ -513,87 +496,10 @@ class JobStore:
         an EIO or an EACCES out of it is a hub that never starts rather than a
         hub that starts with no job history.
         """
-        order = _read_order(self.root / ORDER_NAME, self._max_order_entries,
-                            self._max_order_bytes)
-        present, orphans, others, unscanned = self._scan(frozenset(order or ()))
-        if not order and orphans:
-            # Said out loud because losing the order WHOLESALE is what makes
-            # retention go on working on an order nobody put there — quietly,
-            # unless this line is here.
-            #
-            # `not order` AND NOT `order is None`, which is the whole of the
-            # difference and was got wrong once: an empty order is what a
-            # registry holding no jobs has, but an empty order NEXT TO job
-            # directories is the same total loss spelled differently, and a
-            # planted `{"jobs": []}` must not be quieter than a deleted file.
-            # `_read_order` still tells the two apart — that distinction is
-            # about believing a damaged order, not about announcing an empty
-            # one.
-            #
-            # There is exactly one false positive, and it is worth the line too:
-            # a `create` on an empty registry whose record landed and whose
-            # order write did not. The volume genuinely never heard that job was
-            # created, and the next start genuinely reads it as the oldest.
-            logger.warning(
-                f"{self.root} holds {len(orphans)} job directory(ies) and no "
-                f"order to put them in; their creation order is lost, and "
-                f"until new jobs arrive retention drops them in the order the "
-                f"volume happens to list them")
-        order = order or []
-        # The creation order as the order file gives it, restricted to what is
-        # really on the volume: an id whose directory is gone was pruned by an
-        # earlier run, and is simply not here to be counted.
-        known = [job_id for job_id in order if job_id in present]
-        # A COUNT IS CUT BEFORE ANYTHING IS READ, and that is what bounds this
-        # method. Every record loaded below is terminal by the time the loop
-        # after it has run — a job in flight at the last stop cannot be resumed
-        # — so `_prune_locked` would drop these and more anyway, and dropping
-        # them here costs one `rmtree` each instead of one read of up to
-        # MAX_RECORD_BYTES each. Without it, that ceiling bounded ONE record
-        # and nothing bounded their NUMBER: 2000 planted records at the largest
-        # size the reader accepts came to 128 MiB of heap before the first prune
-        # ran — a build that filled the volume deciding how much memory the next
-        # start needs, which is the one outcome this registry may not have.
-        #
-        # AND THE CUT IS `_max_order_entries` WIDE, NOT `max_jobs`, because the
-        # argument above holds for a record that can be READ and for no other.
-        # An unreadable one never reaches `self._records`, so `_prune_locked`
-        # counts one fewer and keeps one fewer — while a cut at `max_jobs`
-        # deleted by POSITION, before the read, and could not know. Corrupting N
-        # records at the newest end therefore cost up to N REAL jobs at the
-        # oldest end, with the build choosing both N and which ones: measured at
-        # 20 jobs, `max_jobs` of 5 and five broken `job.json`, the registry came
-        # up EMPTY. The slack is what makes the sentence true again, and the
-        # number is derived rather than picked — the widest order this hub can
-        # have written is `max_jobs` plus the jobs in flight that
-        # `_prune_locked` exempts, which is exactly `_max_order_entries`, so a
-        # cut there can never remove an entry the hub itself put in the file.
-        #
-        # `_read_order` caps its own output at the same number, so in the
-        # ordinary case this removes nothing and `_prune_locked` below does the
-        # whole job, after the read, where it can count what it actually has.
-        # That coincidence is deliberate rather than redundant: `_load`'s bound
-        # on how much it reads is then stated HERE, in `_load`, instead of being
-        # inherited from an argument passed to a helper — and the cut still
-        # fires the day the two are given different numbers.
-        overflow = max(0, len(known) - self._max_order_entries)
-        surplus, known = known[:overflow], known[overflow:]
-        # Read as far into the strangers as there is room under the ceiling and
-        # no further. The rest wait for the age sweep like any other stranger:
-        # adopting them only to prune them in the same call would spend the
-        # reads this ceiling exists to avoid, and delete by COUNT what the sweep
-        # deliberately deletes by AGE.
-        #
-        # THE CEILING HERE AND THE WIDER CUT ABOVE, deliberately not the same
-        # number. The slack up there exists because a record past the cut is
-        # DELETED unread; a stranger left out is not deleted by anything, it
-        # simply waits for the age sweep, so widening this would buy nothing and
-        # spend reads.
-        room = max(0, self.max_jobs - len(known))
-        adopted, spare = orphans[:room], orphans[room:]
-        loaded, unreadable = [], []
-        for job_id in adopted + known:
-            record = _read_record(self.root / job_id / RECORD_NAME)
+        candidates, others, unscanned = self._scan()
+        loaded, unreadable, corrected = [], [], set()
+        for job_id in candidates:
+            record, differs = _read_record(self.root / job_id / RECORD_NAME)
             if record is None or record["id"] != job_id:
                 # Not one we wrote, or written by a hand that got it wrong, or
                 # one this hub itself failed half way through creating. Not
@@ -602,6 +508,8 @@ class JobStore:
                 unreadable.append(job_id)
                 continue
             loaded.append(record)
+            if differs:
+                corrected.add(job_id)
         stranded = set()
         for record in loaded:
             if record["state"] in (STATE_QUEUED, STATE_BUILDING):
@@ -609,42 +517,40 @@ class JobStore:
                               error=RESTART_ERROR, finished=utcnow_iso())
                 stranded.add(record["id"])
             self._records[record["id"]] = record
-        self._drop_surplus(surplus)
-        self._sweep_strangers(unreadable + spare + others, unscanned=unscanned)
+        self._sweep_strangers(unreadable + others, unscanned=unscanned)
         with self._lock:
-            # PRUNED FIRST, so the write-back below does not spend an fsync on a
-            # record this same call is about to remove — and so a planted stamp
-            # that retention can now reach is collected rather than rewritten.
-            self._prune_locked()
-            self._rewrite_locked(stranded)
-            # LAST, and once: everything above may have changed which jobs the
-            # registry holds, and this is the single write that tells the next
-            # start what order they are in.
-            self._commit_order_locked()
-        # Counted from what is still here rather than from what was found, so
-        # the number is the one a reader can go and look at: retention may have
-        # swept a stranded job that was also too old, and a record the volume
-        # refused to take the failure for is not one this hub is keeping.
+            # The failed ones are in the set by construction: this method just
+            # changed them, and the read that answered `differs` happened before
+            # it did.
+            self._rewrite_locked(corrected | stranded, stranded)
+        # Counted from what is still here rather than from what was found: a
+        # record the volume refused to take the failure for is not one this hub
+        # is keeping.
         failed = [job_id for job_id in stranded if job_id in self._records]
         if failed:
             logger.warning(
                 f"{len(failed)} build job(s) were still in flight when the hub "
                 f"last stopped; they are now marked failed")
 
-    def _scan(self, order: frozenset) -> tuple:
+    def _scan(self) -> tuple:
         """What is under `data/jobs/` right now, without holding the listing.
 
-        -> (ids the order file names and that are really here, job-shaped
-        directories it does NOT name, everything else, and how many entries
-        were seen past the ceiling on the last two).
+        -> (job-shaped directories, everything else, and how many of the latter
+        were seen past MAX_STRANGERS_SWEPT).
+
+        EVERY job-shaped directory comes back, without a ceiling, because every
+        one of them is read: no job is ever dropped for being one too many, so
+        there is no number this could cut at that would not be deciding which of
+        the pusher's jobs to destroy. Only the STRANGERS are capped — they are
+        the ones this start is going to DELETE, and a delete list whose length
+        the volume chooses is a different thing entirely.
 
         `os.scandir` rather than `iterdir`, and the difference is the point:
         `iterdir` goes through `os.listdir`, which materializes every name in
-        the directory before the first one is looked at, and the number of
-        names in there is chosen by whatever last wrote to the volume. What is
-        retained here is bounded by construction — the ids the order file names
-        (bounded by the order ceiling) plus MAX_STRANGERS_SWEPT of everything
-        else — while the WALK is not, on purpose (see MAX_STRANGERS_SWEPT).
+        the directory before the first one is looked at. Here the WALK streams,
+        so a flooded directory costs time and O(1) memory on the way through —
+        time at the next start is recoverable, and a hub killed for memory while
+        starting never gets to sweep the flood that killed it.
 
         SYMLINKS ARE NOT FOLLOWED. A symlink to a directory would otherwise read
         as a job directory, be read through, and never be removed —
@@ -652,14 +558,12 @@ class JobStore:
         refusal, so it would sit there for the life of the volume. Not followed,
         it is a stranger like any other and `_sweep_strangers` unlinks it.
         """
-        present, orphans, others = set(), [], []
+        candidates, others = [], []
         unscanned = 0
         try:
             with os.scandir(self.root) as entries:
                 for entry in entries:
                     name = entry.name
-                    if name == ORDER_NAME:
-                        continue
                     try:
                         looks_like_a_job = entry.is_dir(follow_symlinks=False)
                     except OSError:
@@ -668,45 +572,47 @@ class JobStore:
                         # say" — which is not a reason to refuse to start.
                         continue
                     if looks_like_a_job and SAFE_JOB_ID.match(name):
-                        if name in order:
-                            present.add(name)
-                            continue
-                        target = orphans
-                    else:
-                        target = others
-                    if len(orphans) + len(others) < MAX_STRANGERS_SWEPT:
-                        target.append(name)
+                        candidates.append(name)
+                    elif len(others) < MAX_STRANGERS_SWEPT:
+                        others.append(name)
                     else:
                         unscanned += 1
         except OSError:
             logger.exception(
                 f"the job registry in {self.root} could not be listed; this hub "
                 f"starts with no job history rather than not at all")
-        return present, orphans, others, unscanned
+        return candidates, others, unscanned
 
-    def _rewrite_locked(self, stranded: set) -> None:
-        """Put every record just read back on the volume. Caller holds the lock.
+    def _rewrite_locked(self, dirty: set, stranded: set) -> None:
+        """Put the records this start CHANGED back on the volume. Caller locks.
 
         BEST EFFORT, one record at a time, because this runs on the path that
         must not raise — but not optional: everything `_read_record` normalized
         lives only in memory until this writes it, and memory is not what the
         next start reads.
 
+        `dirty` IS THE WHOLE LIST, and a record outside it is not written at
+        all. It holds the records `_read_record` corrected plus the ones this
+        start just failed, which is exactly the set whose disk copy disagrees
+        with memory; the rest are byte-for-byte what `_write` would produce, so
+        the two fsyncs of writing one would buy nothing. `_load`'s docstring has
+        the cost that makes the distinction worth drawing — this loop runs
+        before the socket is bound, and nothing bounds how many records a volume
+        with no retention accumulates.
+
         WHAT MAY BE FIXED HERE IS PER-RECORD, and that is a rule rather than an
         observation about today's fields. This loop has one stopping place per
         job and the model chooses which one it stops at, so anything shared
         BETWEEN records would come back half converted — which is exactly how
-        the creation order was damaged before it was moved out into
-        `ORDER_NAME`. A field whose meaning depends on another record's field
-        does not belong in a record; it belongs in something written with one
-        rename.
+        the creation order was damaged, back when it was a number in each
+        record. A field whose meaning depends on another record's field does not
+        belong in a record; it belongs in something written with one rename.
 
-        The failure that made this loop necessary in the first place was
-        `created`: a stamp dated in the future is pulled back to now by
-        `_created`, but a record that is already terminal was never rewritten,
-        so the volume kept 2999 and the next start pulled it back to the new
-        "now" again. The age ceiling could not reach it as long as the hub
-        restarted more often than once every MAX_JOB_AGE_SECONDS, i.e. always.
+        WHAT MUST LAND is the failure of a job the last stop stranded. Everything
+        else here is the record being put back in the shape this hub writes; that
+        one is the difference between a job that is finished and a job the next
+        start finds `building` all over again, and warns about all over again,
+        for the life of the volume.
 
         A record that cannot be written back is DROPPED from memory only if this
         run is the one that failed it. That asymmetry is deliberate: a job whose
@@ -717,40 +623,18 @@ class JobStore:
         of it, which is what the next start will normalize again, and forgetting
         it here would 404 a job whose log is still there.
         """
-        for record in list(self._records.values()):
+        for job_id in list(dirty):
+            record = self._records.get(job_id)
+            if record is None:
+                continue
             try:
                 self._write(record)
             except (OSError, ValueError):
                 logger.exception(
-                    f"job {record['id']}: the record read off the volume could "
+                    f"job {job_id}: the record read off the volume could "
                     f"not be written back in the shape this hub uses")
-                if record["id"] in stranded:
-                    self._records.pop(record["id"], None)
-
-    def _drop_surplus(self, job_ids) -> None:
-        """Remove the jobs no order this hub wrote could name, without reading.
-
-        These are the OLDEST entries of the order file, past
-        `_max_order_entries` — wider than `max_jobs`, and the width is the
-        point. Deleting by POSITION before the read is only the same removal
-        `_prune_locked` makes if every record can be read; one that cannot never
-        reaches `_prune_locked` to be counted, and a cut at `max_jobs` therefore
-        paid for a corrupted record with a real job at the other end. At
-        `_max_order_entries` it cannot: that is the longest order the hub itself
-        can have produced.
-
-        Which is also why this is normally a no-op — `_read_order` truncates to
-        the same number — and why it stays: `_load`'s bound on what it reads
-        belongs in `_load`, and this is that bound made local.
-        """
-        if not job_ids:
-            return
-        for job_id in job_ids:
-            shutil.rmtree(self.root / job_id, ignore_errors=True)
-        logger.info(
-            f"{len(job_ids)} job(s) past the longest order this hub could have "
-            f"written ({self._max_order_entries} entries) were removed at "
-            f"startup")
+                if job_id in stranded:
+                    self._records.pop(job_id, None)
 
     def _sweep_strangers(self, names, *, unscanned: int = 0) -> None:
         """Remove what is under `data/jobs/` and is not a job, once it is old.
@@ -758,23 +642,24 @@ class JobStore:
         WHAT THIS ACTUALLY COVERS, stated as what it is rather than as a
         guarantee it cannot give: every entry the scan met that this registry
         does not hold as a job — a directory with no readable record in it, a
-        job-shaped directory the order file does not name and the ceiling left
-        no room to adopt, a name of any other shape, a stray file, a symlink.
-        Not `ORDER_NAME`, which is the registry's own. It is what keeps MAX_JOBS
-        from bounding only the records the hub can READ while everything it
-        cannot read accumulates beside them for the life of the volume.
+        name of any other shape, a stray file, a symlink, the leftover of a write
+        this hub was killed inside. It is the ONLY thing in this module that
+        deletes anything, and it deletes no job: a record and its log stay until
+        somebody removes the directory (see the module docstring). What it
+        collects is what a build left in a directory it can write freely, and
+        which would otherwise sit there for the life of the volume.
 
         WHAT IT DOES NOT COVER is the entries past MAX_STRANGERS_SWEPT: they are
         counted and reported, and the next start meets them again. That is a
         rate rather than a hole — a flood is collected over several starts —
         and the alternative was a list whose length the volume chooses.
 
-        BY AGE, and by the same age the records get. Not at once, because a
-        directory with no record may be somebody's evidence about a build that
-        misbehaved, and being unreadable is not proof of who wrote it. At
-        STARTUP only, because that is the one moment this module reads the
-        volume at all — a sweep per `create` would be a directory scan on the
-        push path, and the ceiling this defends is a long-term one.
+        BY AGE, and not at once, because a directory with no record may be
+        somebody's evidence about a build that misbehaved, and being unreadable
+        is not proof of who wrote it. At STARTUP only, because that is the one
+        moment this module reads the volume at all — a sweep per `create` would
+        be a directory scan on the push path, and what this defends against
+        accumulates over months.
 
         WITH ONE EXCEPTION, and it is what makes the temporary files of `_write`
         and `_write_log` safe to keep here (see `_write`). A `JSON_TMP_PREFIX`
@@ -794,23 +679,21 @@ class JobStore:
         because the volume can be shared with another hub, and an hour is what
         that same question was already answered with there.
 
-        AN mtime IN THE FUTURE IS TREATED AS OLD, which is this method's version
-        of `_created` and the reverse of it. The mtime is a value a build sets
-        freely, and one dated 2999 is never past any cutoff, so a directory
-        carrying it would be immune for the life of the volume — the age ceiling
-        beaten by a date rather than by anything the hub did. What cannot be
-        done here is `_created`'s answer: a record's stamp is corrected and the
-        corrected value written back, but the mtime IS the evidence, so writing
-        a corrected one back would destroy the thing this method is being
-        careful about. So it is not corrected — a date in the future simply buys
-        no immunity.
+        AN mtime IN THE FUTURE IS TREATED AS OLD. The mtime is a value a build
+        sets freely, and one dated 2999 is never past any cutoff, so a directory
+        carrying it would be immune for the life of the volume — this sweep
+        beaten by a date rather than by anything the hub did. It is not
+        CORRECTED, because the mtime is the evidence and rewriting it would
+        destroy the thing this method is being careful about; a date in the
+        future simply buys no immunity.
         """
         now = time.time()
-        cutoff = now - self.max_age_seconds
-        # `min`, so a registry configured with an age ceiling SHORTER than the
+        cutoff = now - self.stranger_max_age_seconds
+        # `min`, so a registry configured with a shorter stranger age than the
         # store's hour does not accidentally grant its own half-written files a
-        # longer life than the records they belong to.
-        tmp_cutoff = now - min(self.max_age_seconds, LEFTOVER_MAX_AGE_SECONDS)
+        # longer life than the strangers around them.
+        tmp_cutoff = now - min(self.stranger_max_age_seconds,
+                               LEFTOVER_MAX_AGE_SECONDS)
         removed = kept = 0
         for name in names:
             entry = self.root / name
@@ -841,8 +724,9 @@ class JobStore:
             # somebody would have been reading to find out about them.
             logger.warning(
                 f"{self.root}: {removed} entry(ies) that hold no job of this "
-                f"registry were removed as past the job age ceiling, {kept} "
-                f"kept until they reach it, {unscanned} not examined this start")
+                f"registry were removed as past the stranger age ceiling, "
+                f"{kept} kept until they reach it, {unscanned} not examined "
+                f"this start")
 
     # -- reading -----------------------------------------------------------
     def get(self, job_id) -> dict | None:
@@ -862,22 +746,21 @@ class JobStore:
         """The build log of one job. None for an unknown id, "" for no log yet.
 
         Read off the volume on every request rather than held in memory: a log
-        runs to megabytes and there are up to MAX_JOBS of them, and it is
-        fetched roughly once per push. `_write_log` caps what the hub itself
-        puts there, so what this ceiling is really for is everything else: the
-        directory is writable by every build (see the module docstring), so the
-        size of the file that comes back is not a number this hub gets to
-        decide.
+        runs to megabytes, the registry keeps one per push for ever, and it is
+        fetched roughly once per push. Holding them all would be the volume
+        deciding this process's resident size. `_write_log` caps what the hub
+        itself puts there, so what this ceiling is really for is everything
+        else: the directory is writable by every build (see the module
+        docstring), so the size of the file that comes back is not a number this
+        hub gets to decide.
 
-        THE TRUNCATION IS NOT WRITTEN BACK, and that is the one deliberate
-        exception to the rule `_load` follows for records. It can be, because
-        nothing here accumulates: the cap bounds every single read, and the
-        oversized file itself is bounded by retention, which removes the whole
-        job directory. A record was the opposite case — the planted value came
-        back at the next START and defeated the ceiling that was supposed to
-        collect it. And a log is EVIDENCE about a build that misbehaved, so
+        THE TRUNCATION IS NOT WRITTEN BACK, and that is deliberate. The cap
+        bounds every single read, so nothing is gained by making the file
+        smaller — and a log is EVIDENCE about a build that misbehaved, so
         rewriting one to make a read cheaper would destroy the thing somebody
-        came to look at.
+        came to look at. Nothing else on the volume grows because of it: an
+        oversized `log.txt` sits inside a job directory that is not going
+        anywhere either way.
         """
         if not isinstance(job_id, str) or not SAFE_JOB_ID.match(job_id):
             return None
@@ -925,9 +808,10 @@ class JobStore:
             "error": None,
             "log_truncated": False,
             "duration_seconds": None,
-            # NO ORDERING FIELD, deliberately: which job came first is expressed
-            # by the position of its id in `ORDER_NAME` and nowhere else. See
-            # that constant for why a number per record could not hold it.
+            # NO ORDERING FIELD, deliberately: nothing here reads jobs in the
+            # order they were made, because nothing here chooses one over
+            # another. `created` is a stamp for whoever is looking at the record,
+            # not a key anything sorts by.
         }
         with self._lock:
             # `exist_ok=False`: 128 bits of id do not collide, and if one ever
@@ -941,28 +825,12 @@ class JobStore:
             # status poll is answered from. Here there is nobody to serve: the
             # push is answered 500 and the id never leaves this method, so a
             # record inserted before a write that then failed would sit in
-            # memory until the process ends — `_prune_locked` only ever drops a
-            # TERMINAL job, and nothing is ever going to finish this one. In
-            # this order the caller gets the exception with no trace in memory,
-            # and the empty directory left on the volume is collected by
-            # `_sweep_strangers` at a later start.
+            # memory until the process ends, `queued`, for a build nobody is
+            # running. In this order the caller gets the exception with no trace
+            # in memory, and the empty directory left on the volume is collected
+            # by `_sweep_strangers` at a later start.
             self._write(record)
             self._records[job_id] = record
-            # After the insert, never before: pruning first would leave room for
-            # MAX_JOBS + 1, and pruning after keeps the newest by construction.
-            # This sweep is what bounds a hub nobody pushes to often enough for
-            # the age ceiling to matter; `finish` runs the other one.
-            self._prune_locked()
-            # The set of jobs changed — one added, and possibly some pruned — so
-            # the order on the volume is now a start behind. BEST EFFORT, unlike
-            # the record write above, and the difference is which failure is
-            # survivable: the job now EXISTS, in memory, and a build is about to
-            # run for it, so a 500 here would refuse a push that is already
-            # under way. What the missed write costs is that the next start
-            # finds this job with no place in the order and reads it as the
-            # oldest — the fallback `_load` documents, and the very definition
-            # of "no worse than before the attempt".
-            self._commit_order_locked()
         return dict(record)
 
     def start(self, job_id: str) -> None:
@@ -1031,13 +899,10 @@ class JobStore:
         with self._lock:
             record = self._records.get(job_id)
             if record is None:
-                # Dropped between the two sections above, which takes a second
-                # `finish` for a job that was already terminal — retention never
-                # touches a live one. Nothing is left behind by it: the prune
-                # removed the whole job directory, and `atomic_write_bytes` does
-                # not create a parent, so the log write above either landed
-                # before the prune and went with it, or failed with ENOENT and
-                # was logged. There is no orphaned log.txt on either path.
+                # Gone between the two sections above. Nothing in this module
+                # removes a live record any more, so reaching this needs
+                # something outside it; it is kept because the alternative is
+                # writing through `None` on a path that must not raise.
                 return
             record.update(state=state, code=code, status=status,
                           build_url=build_url, error=error,
@@ -1055,19 +920,15 @@ class JobStore:
                     f"job {job_id}: its record could not be written to the "
                     f"volume; the status served from memory is the true one "
                     f"until the hub restarts")
-            # Here as well as in `create`, and both are needed for the ceiling to
-            # mean what it says. Retention only ever drops FINISHED jobs, so a
-            # sweep at creation cannot count the job that is about to finish —
-            # pruning only there leaves one extra behind per build in flight.
-            if self._prune_locked():
-                # Only when something was actually dropped. `finish` does not
-                # change the ORDER — the record it just updated keeps its place
-                # — so an unconditional write here would be one fsync per build
-                # for a file whose contents did not move.
-                self._commit_order_locked()
 
     # -- disk --------------------------------------------------------------
     def _write(self, record: dict) -> None:
+        # THE BYTES COME FROM `_record_bytes`, which `_read_record` also uses to
+        # decide whether a record needs writing at all. One function, so the two
+        # answers cannot drift: a serialization detail changed here without
+        # changing there would make every record on the volume look corrected,
+        # and the whole registry would be rewritten at every start again.
+        #
         # `indent=1` costs about 16 bytes against the compact separators, and
         # that is not free at the very top of the range: a record of 65521..65536
         # bytes is one `_read_record` accepts and one this write turns into a
@@ -1080,8 +941,7 @@ class JobStore:
         # headroom in a band only an attacker can reach.
         atomic_write_bytes(
             self.root / record["id"] / RECORD_NAME,
-            json.dumps(record, indent=1, ensure_ascii=False,
-                       allow_nan=False).encode("utf-8"),
+            _record_bytes(record),
             # The temporary file goes in `data/jobs/`, not in the job's own
             # directory: same filesystem, so the rename is still a rename, and
             # a leftover from a write this process was killed in the middle of
@@ -1098,96 +958,9 @@ class JobStore:
             # difference between a stray and 3 MiB of one.
             tmp_dir=self.root)
 
-    def _commit_order_locked(self) -> None:
-        """Put the creation order on the volume. ONE write. Caller holds the lock.
-
-        `self._records` is in creation order (`create` appends, `_load` inserts
-        oldest first), so the order is `list(self._records)` and nothing has to
-        be computed to find it.
-
-        BEST EFFORT, like every other write here except `create`'s first one —
-        but unlike the others, its failure mode is the property this module is
-        built around. `atomic_write_bytes` writes a temporary file and renames
-        it, so this either replaces the order completely or leaves the previous
-        one completely: there is no state in which half the registry is ordered
-        by this call and half by the last one. A call that fails costs the
-        registry the changes since the last successful write — the newest job
-        has no place and is read as the oldest, older ones keep the places they
-        had — and costs it nothing else. That is the whole reason the order is
-        here rather than a field in each of N records.
-        """
-        try:
-            atomic_write_bytes(self.root / ORDER_NAME,
-                               _order_bytes(self._records))
-        except (OSError, ValueError):
-            logger.exception(
-                f"the creation order could not be written to {self.root}; the "
-                f"next start reads the last one that landed, and any job "
-                f"created since then as the oldest")
-
     def _write_log(self, job_id: str, log: str) -> None:
-        # Cut on the WAY IN, not only on the way out. MAX_LOG_BYTES is what the
-        # read path is willing to serve, so anything written past it comes back
-        # truncated under a warning about a log larger than a build can produce
-        # — and on this path the hub itself wrote it. The ceiling is derived to
-        # fit the worst case a build can hand over (see MAX_LOG_BYTES), so this
-        # cut is unreachable for a log this hub captured; it is what keeps the
-        # file inside the ceiling anyway on the day either number moves.
-        raw = log.encode("utf-8", errors="replace")
-        if len(raw) > MAX_LOG_BYTES:
-            note = LOG_TRUNCATED_NOTE.encode("utf-8")
-            # A slice of UTF-8 bytes is not necessarily UTF-8: the cut can land
-            # inside a multi-byte sequence. Decoding with `errors="ignore"` and
-            # encoding back drops exactly that stump, so what is stored is
-            # always something a reader can decode.
-            raw = (raw[:MAX_LOG_BYTES - len(note)]
-                   .decode("utf-8", errors="ignore").encode("utf-8")) + note
-        atomic_write_bytes(self.root / job_id / LOG_NAME, raw,
+        atomic_write_bytes(self.root / job_id / LOG_NAME, _capped_log(log),
                            tmp_dir=self.root)
-
-    def _prune_locked(self) -> list:
-        """Drop jobs that are too old or too many. -> the ids it dropped.
-
-        Caller holds the lock. The ids come back because dropping a job changes
-        the registry's ORDER, and the caller is the one that decides whether to
-        put the new one on the volume (`_commit_order_locked`).
-
-        Oldest first is INSERTION ORDER, not the `created` stamp, and the
-        difference is not academic: `utcnow_iso` has second resolution, so a
-        burst of pushes shares one timestamp, and sorting by it would put the
-        tiebreak — whatever it was — in charge of which of them survives. A hub
-        under a CI storm is exactly when that burst happens, and the visible
-        symptom would be the newest job of the second being the one that
-        disappeared. `_load` restores that same order across a restart from
-        `ORDER_NAME`, which is why that file exists at all: `created` provably
-        cannot express the order, so a restart that sorted by the stamp would
-        break retention exactly in the case this paragraph is about.
-
-        A job that has not FINISHED is never dropped, whichever ceiling it falls
-        foul of. Retention is here to stop old evidence accumulating, and a build
-        that is still running is not evidence of anything yet — deleting it would
-        take a live job's status and log out from under the pusher who is at that
-        moment polling them. The cost is that both ceilings can be exceeded by
-        however many jobs are in flight, which is the pool plus the queue and
-        nothing more.
-        """
-        ordered = [record for record in self._records.values()
-                   if record.get("state") in TERMINAL_STATES]
-        cutoff = time.time() - self.max_age_seconds
-        doomed = [record["id"] for record in ordered
-                  if _epoch(record.get("created")) < cutoff]
-        # Built ONCE. Inline in the comprehension below it was rebuilt per
-        # record, which is MAX_JOBS x MAX_JOBS on a full registry — and this runs
-        # on the push path, from `create` and again from `finish`.
-        condemned = set(doomed)
-        keep = [record for record in ordered if record["id"] not in condemned]
-        overflow = len(keep) - self.max_jobs
-        if overflow > 0:
-            doomed += [record["id"] for record in keep[:overflow]]
-        for job_id in doomed:
-            self._records.pop(job_id, None)
-            shutil.rmtree(self.root / job_id, ignore_errors=True)
-        return doomed
 
 
 class BuildQueue:
@@ -1202,11 +975,9 @@ class BuildQueue:
 
     # `workers` and `queue_size` ARE FOR TESTS, and only downward. Nothing
     # configures them — there is no setting and no environment variable behind
-    # `create_server`'s two keyword arguments — and a pool built LARGER than the
-    # module defaults would put more jobs in flight than `JobStore` allows for
-    # when it sizes the ceiling on `order.json`, so the hub would refuse a file
-    # it had written itself, on every start. Made real numbers, they belong in
-    # `Settings` and `JobStore._max_order_entries` has to follow them.
+    # `create_server`'s two keyword arguments — and a test only ever wants a
+    # SMALLER pool: a one-worker pool with a queue of one is what makes a full
+    # queue observable. Made real numbers, they belong in `Settings`.
     def __init__(self, store, jobs: JobStore, *, build_runner=None,
                  workers=MAX_CONCURRENT_BUILDS, queue_size=MAX_QUEUED_JOBS):
         self._store = store
@@ -1298,9 +1069,8 @@ class BuildQueue:
                 # gets to assume nothing about. Escaping, it would come out of
                 # the request handler as a 500 AND leave the task sitting in a
                 # queue no worker will read again — so the job stays `queued`
-                # for ever, which is the one state retention cannot reclaim
-                # (`_prune_locked` drops only terminal jobs) and which therefore
-                # holds a MAX_JOBS slot until the hub is restarted.
+                # for ever, which is the one state nothing here can reclaim
+                # without a restart.
                 drained = False
                 logger.exception(
                     f"job {task.job_id}: the queue could not be drained after "
@@ -1429,6 +1199,10 @@ class BuildQueue:
                 self._dropped.add(task.job_id)
             try:
                 shutil.rmtree(task.sources, ignore_errors=True)
+                # And the body, for the same reason and with no exception to
+                # make: this task is never going to publish, so it is never
+                # going to be the code of a revision.
+                _discard(task.archive)
                 self._jobs.finish(task.job_id, state=STATE_FAILED,
                                   code=RESTART_CODE, error=STOPPED_ERROR)
             finally:
@@ -1461,8 +1235,8 @@ class BuildQueue:
         into the `.tmp-` directory that is later renamed onto `<pid>/<commit>`,
         so a successful build leaves a tree holding its own meta.json — which is
         exactly the shape the publishing half already knew how to take. That is
-        what lets `_finish_staging`, the atomic rename, `latest`, retention and
-        the pickers stay as they are.
+        what lets `_finish_staging`, the atomic rename, `latest` and the pickers
+        stay as they are.
 
         The SOURCES are a different directory, and deliberately: the model must
         not be able to put anything into the tree that gets published except by
@@ -1496,6 +1270,7 @@ class BuildQueue:
                     f"-> {payload['url']}")
                 verdict = {"state": STATE_DONE, "code": status,
                            "build_url": payload["url"]}
+                self._keep_the_code(task, outcome)
             else:
                 reason = BUILD_FAILURE_REASONS.get(
                     outcome.status, "the build did not finish")
@@ -1532,6 +1307,17 @@ class BuildQueue:
             shutil.rmtree(task.sources, ignore_errors=True)
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)
+            # The body, on every path too — and UNCONDITIONALLY rather than "if
+            # this build did not publish", because the publishing path has
+            # already renamed it into the store and this then finds nothing.
+            # Written that way round on purpose: a flag saying whether to keep it
+            # would have to be right on every exit from the block above, while a
+            # rename that happened is a fact this cannot get wrong. What it
+            # collects is every OTHER ending — a build that failed, one the hub
+            # refused to publish, one that threw — and for all of them the answer
+            # is the same: the sources of a build that produced no revision are
+            # not kept (SPEC 8, entry 17).
+            _discard(task.archive)
 
         # BELOW the cleanup, and that order is the observable one: a poller that
         # reads `done` is entitled to assume the hub has finished with the push.
@@ -1558,10 +1344,115 @@ class BuildQueue:
             logger.exception(
                 f"job {task.job_id}: could not record how the build ended")
 
+    def _keep_the_code(self, task: BuildTask, outcome) -> None:
+        """Keep the pushed body and the log as the code of a published revision.
 
-def _read_record(path: Path) -> dict | None:
-    """One `job.json`, rebuilt into the shape this module writes. None if it is
-    not one.
+        Called only from the branch that has just published, which is the whole
+        of the rule: the hub is a forge now and has to hold the code of what it
+        serves, and it holds the code of NOTHING ELSE (SPEC 8, entry 17). A build
+        that failed leaves no archive, no log beside one and no directory — the
+        author is looking at that failure the moment their command returns, with
+        the tree still on their own disk, and a stored tree belonging to no
+        published revision is one this store could not answer for.
+
+        THE LOCAL SLOT IS NOT A REVISION and is skipped for that reason, not for
+        space. `dev` has no history by construction: the next push overwrites it,
+        it is kept out of `builds_of`, `builds.json`, `latest` and the site index,
+        and there is nothing to "go back to". Its sources would be an entry in
+        the store that nothing published ever points at — and the moment the same
+        tree is committed, the digest is the same and the archive lands anyway.
+
+        BEST EFFORT, AND AFTER THE VERDICT. Everything above this call has
+        already happened: the build is at its permanent URL and the job is about
+        to be told so. An exception escaping here would be caught by
+        `_build_and_publish`'s handler and turn a published build into a failed
+        job — the exact reversal `publish_built` refuses to make for its own
+        bookkeeping, for the same reason. So a volume that will not take the code
+        costs the code, and nothing else.
+        """
+        if task.commit == DEV_LINK:
+            return
+        try:
+            self._store.keep_sources(task.digest, task.archive)
+            # Whether or not the archive was already there: the log is of THIS
+            # build, and the one already beside it is of an earlier build of the
+            # same sources.
+            self._store.keep_build_log(task.digest, _capped_log(outcome.log))
+        except Exception:
+            logger.exception(
+                f"job {task.job_id}: {task.pid}/{task.commit} is published, but "
+                f"its sources could not be stored; the revision is served "
+                f"without its code")
+
+
+def _capped_log(log: str) -> bytes:
+    """One build log as bytes, cut to MAX_LOG_BYTES with a note if it did not fit.
+
+    Cut on the WAY IN, not only on the way out. MAX_LOG_BYTES is what the read
+    path is willing to serve, so anything written past it comes back truncated
+    under a warning about a log larger than a build can produce — and on these
+    paths the hub itself wrote it. The ceiling is derived to fit the worst case a
+    build can hand over (see MAX_LOG_BYTES), so the cut is unreachable for a log
+    this hub captured; it is what keeps the file inside the ceiling anyway on the
+    day either number moves.
+
+    ONE function for BOTH copies of the log — the job's and the one stored beside
+    a revision's code — because the alternative is two ceilings on the same text
+    that drift apart, and then a log that the job endpoint serves whole while the
+    revision's copy is missing its tail, or the reverse.
+    """
+    raw = log.encode("utf-8", errors="replace")
+    if len(raw) <= MAX_LOG_BYTES:
+        return raw
+    note = LOG_TRUNCATED_NOTE.encode("utf-8")
+    # A slice of UTF-8 bytes is not necessarily UTF-8: the cut can land inside a
+    # multi-byte sequence. Decoding with `errors="ignore"` and encoding back
+    # drops exactly that stump, so what is stored is always something a reader
+    # can decode.
+    return (raw[:MAX_LOG_BYTES - len(note)]
+            .decode("utf-8", errors="ignore").encode("utf-8")) + note
+
+
+def _discard(path: Path) -> None:
+    """Remove one file that may already be gone. NEVER RAISES.
+
+    The file-shaped twin of `shutil.rmtree(..., ignore_errors=True)`, and it
+    exists for the same reason that call carries that flag: every caller here is
+    in a `finally` on a path whose one duty is to reach a terminal job state.
+    `Path.unlink(missing_ok=True)` covers only the missing file, and "missing" is
+    the ORDINARY outcome on the publishing path — the archive has been renamed
+    into the store — while the rest of what a volume can say still has to not
+    take a job down with it.
+    """
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _record_bytes(record: dict) -> bytes:
+    """One record as this module writes it. The ONLY spelling of that.
+
+    Shared by `JobStore._write` and by the comparison in `_read_record` below,
+    which is the point: "what would be written" and "what is on disk" have to be
+    the same question, or the second one answers about a format the first does
+    not produce.
+    """
+    return json.dumps(record, indent=1, ensure_ascii=False,
+                      allow_nan=False).encode("utf-8")
+
+
+def _read_record(path: Path) -> tuple:
+    """One `job.json` rebuilt into the shape this module writes, and whether the
+    rebuild CHANGED it -> `(record, differs)`. `(None, False)` if it is not one.
+
+    `differs` IS A BYTE COMPARISON, not a list of the fields that were touched:
+    what this module would write against what the file holds. That is the only
+    form that cannot go stale — a field added to the rebuild below, a key that
+    moved, a spelling `_record_bytes` changed are all covered without anybody
+    remembering to cover them, and the caller needs the answer for exactly one
+    purpose (`_load`: writing back the records nothing corrected is what makes a
+    hub with a long-lived volume slow to come up).
 
     EVERY field is rebuilt rather than taken, because this file sits on a volume
     every build can write (see the top of this module). Three shapes in
@@ -1575,32 +1466,31 @@ def _read_record(path: Path) -> dict | None:
         `ValueError` out of `JobStore.__init__`, out of `create_server` and out
         of `main()`: a hub that does not start, from the same volume, every time,
         for ever;
-      * a `state` outside KNOWN_STATES: neither running nor finished, so
-        retention never drops it and `_load` never fails it, and it counts
-        against MAX_JOBS permanently;
+      * a `state` outside KNOWN_STATES: neither running nor finished, so `_load`
+        never fails it, and the status endpoint serves a word no client has a
+        branch for, for ever;
       * an `id` that is not the directory's name, which points one job's record
         at another job's log. The caller compares them; this is what makes the
         comparison possible by guaranteeing the field is a string of the right
         shape at all.
 
-      * a `created` dated in the future, which no cutoff is ever past, so
-        retention could never reach the record and MAX_JOBS would count it for
-        the life of the volume (`_created`).
+    A NUMBER is normalized rather than fatal, while an unusable `state` or `id`
+    throws the whole record away, and the asymmetry is deliberate: `None` is a
+    value every numeric field here already has ("not measured"), so the record
+    can be ADOPTED — failed like any other stranded job and served like any
+    other. A state or an id would have to be guessed instead.
 
-    A NUMBER is normalized rather than fatal — so is that stamp — while an
-    unusable `state` or `id` throws the whole record away, and the asymmetry is
-    deliberate: `None` is a value every numeric field here already has ("not
-    measured") and "now" is the truthful reading of a date this hub cannot
-    believe, so the record can be ADOPTED — failed like any other stranded job,
-    counted by retention and eventually swept, directory and all. A state or an
-    id would have to be guessed instead, so guessing less means collecting more.
+    THE STAMPS ARE NOT VALIDATED, only typed. `created` may say 2999 and nothing
+    here minds: no ceiling measures it, nothing sorts by it, and it is a string
+    shown to whoever is reading the record. That was NOT true while jobs were
+    pruned by age — a date in the future was then immunity from the sweep, and
+    had to be pulled back to "now" and written down — so if anything ever
+    measures a stamp on this volume again, it has to answer that first.
 
-    "ADOPTED" IS A CLAIM ABOUT THE VOLUME, not about this function: everything
-    corrected here is corrected in memory, and `_load` is what puts it back on
-    disk. Without that half the sentence above is false for the age ceiling —
-    the planted stamp is still there at the next start, and a record that is
-    re-corrected on every start is never swept at all. Anything added to this
-    rebuild inherits the same requirement.
+    Everything corrected here is corrected in memory; `_load` is what puts it
+    back on disk. Anything added to this rebuild inherits that requirement — and
+    inherits it automatically, because `differs` is computed from the finished
+    record rather than declared field by field.
 
     None means "not a record this hub wrote". The caller does not delete the
     directory on the spot — it is somebody's evidence, and being unreadable is
@@ -1610,24 +1500,24 @@ def _read_record(path: Path) -> dict | None:
     """
     raw = _read_capped(path, MAX_RECORD_BYTES)
     if raw is None:
-        return None
+        return None, False
     try:
         loaded = json.loads(raw)
     except (ValueError, RecursionError):
-        return None
+        return None, False
     if not isinstance(loaded, dict):
-        return None
+        return None, False
     job_id = loaded.get("id")
     if not isinstance(job_id, str) or not SAFE_JOB_ID.match(job_id):
-        return None
+        return None, False
     if loaded.get("state") not in KNOWN_STATES:
-        return None
-    return {
+        return None, False
+    record = {
         "id": job_id,
         "pid": _text(loaded.get("pid")),
         "commit": _text(loaded.get("commit")),
         "state": loaded["state"],
-        "created": _created(loaded.get("created")),
+        "created": _text(loaded.get("created")),
         "started": _text(loaded.get("started")),
         "finished": _text(loaded.get("finished")),
         "status": _text(loaded.get("status")),
@@ -1638,11 +1528,22 @@ def _read_record(path: Path) -> dict | None:
         "duration_seconds": _number(loaded.get("duration_seconds")),
         # NO ORDERING FIELD. Anything read here is a field of ONE record, so a
         # write-back that stops half way can only leave one record unconverted.
-        # The creation order is not like that — it is a statement ABOUT the set —
-        # and a per-record copy of it made a partial write mix two orders. It
-        # lives in `ORDER_NAME` now, and a field that would need the same
-        # all-or-nothing must go there too rather than be added here.
+        # An order is not like that — it is a statement ABOUT the set — and a
+        # per-record copy of one made a partial write mix two orders. Nothing
+        # reads an order any more, and a field that would need the same
+        # all-or-nothing must not be added here.
     }
+    try:
+        return record, _record_bytes(record) != raw
+    except ValueError:
+        # Unreachable with the fields above — `_number` is what removes the only
+        # values `allow_nan=False` refuses, and every other field here is a
+        # string, an int, a bool or None. Answered as "differs" rather than
+        # guarded away so that if a field is ever added that CAN fail to
+        # serialize, the write-back attempts it and the failure is logged where
+        # every other write failure of this registry is, instead of the record
+        # silently never being written again.
+        return record, True
 
 
 def _read_capped(path: Path, limit: int) -> bytes | None:
@@ -1688,129 +1589,3 @@ def _number(value) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value) if math.isfinite(value) else None
-
-
-def _order_bytes(job_ids) -> bytes:
-    """The creation order as the bytes that go on the volume, oldest first.
-
-    A JSON object rather than a bare array, so a later version of this file can
-    say something else about the registry without the reader having to guess
-    which shape it is looking at.
-
-    `indent=1`, like a record: this is a file somebody will read with `cat` when
-    they are trying to work out why retention dropped what it dropped, and 200
-    ids on one line is not that file. It costs about two bytes per entry against
-    the compact separators, which ORDER_ENTRY_BYTES already covers twice over.
-    """
-    return json.dumps({"jobs": list(job_ids)}, indent=1, ensure_ascii=False,
-                      allow_nan=False).encode("utf-8")
-
-
-def _read_order(path: Path, max_entries: int, max_bytes: int) -> list | None:
-    """The creation order off the volume, oldest first. None if there is none.
-
-    Rebuilt rather than believed, exactly like a record, because this file is on
-    the same volume every build can write. What comes back is a list of
-    well-shaped, DISTINCT ids and nothing else — and the thing worth noticing is
-    what is not in it: a magnitude. That is the whole reason the order is a list
-    rather than a number per record. A number off this volume has to be clamped
-    into some range to stop it being absurd; the clamp is what collapsed a
-    planted number into a tie with real ones; and the renumbering that answered
-    the collapse is what had to reach every record to be true, which is the
-    write that could land only partly. An order written down AS an order carries
-    ordinal information and nothing else, so there is nothing in it to be
-    absurd: an id naming no directory is dropped, a directory named by no id is
-    read as the oldest, and neither moves anything else.
-
-    THE TAIL survives the entry ceiling, not the head: the newest jobs are at the
-    end and they are the ones retention keeps. Duplicates are dropped keeping the
-    OLDEST position, which is the same safe end `_load` puts a stranger at.
-
-    None IS RETURNED FOR EVERY FAILURE — missing file, unreadable, over the byte
-    ceiling, not JSON, not the right shape — rather than a best guess at what
-    the file was trying to say. Losing the order WHOLESALE costs the hub one
-    thing it can recompute the shape of; believing a partly-damaged one is a
-    reordering nobody would find out about, and there is no version of this
-    function that can tell the difference from inside.
-
-    NONE AND THE EMPTY LIST ARE STILL DIFFERENT VALUES, but the difference is
-    narrower than it looks and was once read too widely: it is about whether to
-    BELIEVE a damaged order, not about whether the caller announces one. An
-    empty order beside job directories is the same total loss as a missing file
-    — every one of them becomes a stranger — so `_load` says so for both, and
-    planting `{"jobs": []}` is no quieter than deleting the file.
-
-    WHAT NONE IS NOT is a defence against a build rewriting this file. A
-    well-formed order of real ids, permuted, comes back from here intact and is
-    believed; see `ORDER_NAME` for why that is accepted rather than solved.
-    """
-    raw = _read_capped(path, max_bytes)
-    if raw is None:
-        return None
-    try:
-        loaded = json.loads(raw)
-    except (ValueError, RecursionError):
-        return None
-    if not isinstance(loaded, dict):
-        return None
-    jobs = loaded.get("jobs")
-    if not isinstance(jobs, list):
-        return None
-    order, seen = [], set()
-    for item in jobs[-max_entries:]:
-        if not isinstance(item, str) or not SAFE_JOB_ID.match(item):
-            continue
-        if item in seen:
-            continue
-        seen.add(item)
-        order.append(item)
-    return order
-
-
-def _created(value) -> str | None:
-    """The creation stamp, with one dated in the FUTURE pulled back to now.
-
-    The age ceiling is what bounds `data/jobs/` on a hub nobody pushes to, and
-    the stamp it measures is a string on a volume every build can write. A
-    record dated 2999 is never older than any cutoff, so retention could not
-    reach it and it would count against MAX_JOBS for the life of the volume —
-    the ceiling defeated by a date rather than by anything the hub does.
-
-    Pulled back rather than thrown away, for the same reason a non-finite number
-    is: a record that is dropped stays on the volume for good, while one that is
-    adopted can be failed, counted and eventually swept. "Now" is also the
-    truthful reading — it is when this hub first saw the record.
-
-    AND THE PULL-BACK ONLY WORKS BECAUSE `_load` WRITES IT DOWN. Corrected in
-    memory alone it bought nothing: the volume still said 2999, so the next
-    start read that and pulled it back to a fresh "now" all over again, and the
-    age ceiling could never reach the record as long as the hub restarted more
-    often than once every MAX_JOB_AGE_SECONDS — which is to say always.
-
-    An UNREADABLE stamp is left exactly as it is: `_epoch` already reads it as
-    0.0, the oldest possible, so retention takes it at the first opportunity,
-    which is the right end to fail towards. It reaches the volume unchanged, and
-    that is fine precisely because it does not survive to be read twice.
-    """
-    text = _text(value)
-    if text is None:
-        return None
-    return utcnow_iso() if _epoch(text) > time.time() else text
-
-
-def _epoch(stamp) -> float:
-    """`utcnow_iso` back into seconds. Unreadable sorts oldest, so it is swept.
-
-    The `except` is wide because the argument comes off a volume every build can
-    write, and there is more to a stamp than a parse: `datetime.timestamp()`
-    raises `OverflowError` or `OSError` on the extreme years, depending on the
-    platform's own conversion. This runs from `_prune_locked` <- `_load` <-
-    `JobStore.__init__` <- `create_server` <- `main()`, so anything escaping it
-    is the failure `_read_record` exists to prevent: a hub that does not start,
-    from the same volume, every time.
-    """
-    try:
-        return (datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")
-                .replace(tzinfo=timezone.utc).timestamp())
-    except (TypeError, ValueError, OverflowError, OSError):
-        return 0.0

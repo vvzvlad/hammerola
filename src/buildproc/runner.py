@@ -340,9 +340,9 @@ def child_environment(*, home, tmp, threads):
     "os.environ minus the names we consider secret" -- is a list somebody has
     to remember to extend: the day a variable is added to the compose file, it
     is in the build's environment, and nothing anywhere fails. The hub holds
-    PUBLISH_TOKEN and COMMENT_READ_TOKEN today (src/settings.py) and will hold
-    more; none of them means anything to a build, so the build is handed a
-    dictionary that was empty a moment ago.
+    EDIT_TOKEN today (src/settings.py) and may hold more; none of them means
+    anything to a build, so the build is handed a dictionary that was empty a
+    moment ago.
     """
     return {
         # Fixed, not inherited. Nothing in a build should be resolving a

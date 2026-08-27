@@ -267,8 +267,7 @@ def publish_to_data(out_dir, entries, data_dir):
     views = [entry["file"] for entry in entries]
     names = ["meta.json"] + views
 
-    store = Store(data_dir, retention_builds=20,
-                  max_build_bytes=64 * 1024 * 1024)
+    store = Store(data_dir, max_build_bytes=64 * 1024 * 1024)
     staging = store.build_staging(FIXTURE_PID, DEV_LINK)
     shutil.copytree(out_dir, staging)
     try:

@@ -18,11 +18,14 @@
  *                     builds (plan step 8), so the panel is drawn and says so.
  *   notes          -> localStorage, keyed by part NAME, per project. No
  *                     endpoint exists; the editor says where they live.
- *   comments       -> the write endpoint is real and used. The FEED is not:
- *                     reading the queue is behind COMMENT_READ_TOKEN, an agent
- *                     secret shared across every project, which can never
- *                     travel to a browser. So the rail shows what was sent
- *                     from this session and explains the absence.
+ *   comments       -> the write endpoint is real, used, and since step 0 it
+ *                     REQUIRES the token. The FEED is still not fetched, but the
+ *                     reason has changed and the difference matters to whoever
+ *                     picks this up: reading the queue used to be behind an
+ *                     agent-only secret that could never travel to a browser,
+ *                     and it now takes the same EDIT_TOKEN this page already
+ *                     holds. What is left is a design question, not a
+ *                     permission — the rail says which one.
  *   buildStatus    -> polling meta.json on the two pointer URLs, which answers
  *                     exactly one of the brief's three questions: "has a new
  *                     build arrived while I was looking at this one".
@@ -79,44 +82,18 @@ import {
 import {
   readToken, writeToken, clearToken, readNotes, writeNotes, rememberPointer,
 } from './store.js';
+import { css, FONTS, SANS, MONO } from './style.jsx';
 // The canvas theme lives with the rest of the viewport's options, and so does the
 // storage for it: `tests/test_ui_source.py` allows this side exactly one module
 // that touches localStorage (store.js), and the viewport keeps its own answers
-// under its own guard. Only the two functions come across — importing the option
+// under its own guard. Only the two functions come across -- importing the option
 // objects themselves would be this file deciding how the library is started.
 import { readTheme, writeTheme } from './viewport/options.js';
 
-/* CSS string -> React style object. Only here to keep the mock's markup 1:1. */
-const cssCache = new Map();
-export function css(str) {
-  if (!str) return undefined;
-  if (cssCache.has(str)) return cssCache.get(str);
-  const out = {};
-  str.split(';').forEach((decl) => {
-    const i = decl.indexOf(':');
-    if (i < 0) return;
-    const prop = decl.slice(0, i).trim();
-    const val = decl.slice(i + 1).trim();
-    if (!prop || !val) return;
-    const key = prop.startsWith('--') ? prop : prop.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-    out[key] = val;
-  });
-  cssCache.set(str, out);
-  return out;
-}
-
-// The two families every rule below names, as custom properties on the root.
-// System stacks and not a webfont: the page is served under `default-src 'self'`
-// (src/app.py, CSP_HTML), so a font from another origin is blocked, and
-// self-hosting one would add a binary to static/_v/ plus a line to every file
-// that copies assets by name. A face is worth that when the typography carries
-// meaning; here it does not.
-const FONTS = {
-  '--hmr-sans': 'system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif',
-  '--hmr-mono': 'ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace',
-};
-const SANS = 'var(--hmr-sans)';
-const MONO = 'var(--hmr-mono)';
+// `css()`, the font stacks and the mark now live in style.jsx: this page stopped
+// being the only one drawn with them when the front page landed, and a second
+// copy of the font stacks is two typefaces on one site. That module says why the
+// stacks are what they are.
 
 /**
  * The only rules that cannot be inline styles.
@@ -277,7 +254,9 @@ export default class HammerolaViewer extends React.Component {
       comments: [], activePin: null, composer: null,
       measure: null, moved: null, toast: null,
       // -- who the reader is
-      token: readToken(PAGE.pid), tokenPop: false, tokenDraft: '',
+      // No project id: the secret is one string for the whole hub since step 0,
+      // so keying it per project stored N copies of it (see store.js).
+      token: readToken(), tokenPop: false, tokenDraft: '',
       // -- and what they want to look at the model against. Read here so the
       // first paint is already the reader's answer: the same read seeds the
       // options the viewport starts the library with (viewport/options.js), so
@@ -750,6 +729,13 @@ export default class HammerolaViewer extends React.Component {
     const c = this.state.composer;
     const meta = this.state.meta;
     if (!c || !meta) return;
+    // Refused here rather than only by the hub, since step 0 put the write
+    // behind the token. Not a security check — the hub's is — but the difference
+    // between "you are not signed in" and a 401 arriving after the photo has
+    // been uploaded and the frame grabbed. The composer cannot normally be open
+    // without a token, because clearing one closes it; what this covers is the
+    // token going away between opening the composer and pressing Send.
+    if (this.viewer()) { this.toast('Add the token to comment'); return; }
     const text = (c.text || '').trim();
     if (!text) { this.toast('Write something first'); return; }
 
@@ -773,11 +759,10 @@ export default class HammerolaViewer extends React.Component {
     const shot = await this.frameBlob();
     if (shot) form.append('shot', shot, 'shot.png');
 
-    // Sent whether or not the hub asks for it yet: the write endpoint is still
-    // public (plan step 0 closes it), and a header it ignores today is the
-    // header it will require tomorrow.
-    const headers = {};
-    if (this.state.token) headers.Authorization = `Bearer ${this.state.token}`;
+    // Required by the hub since step 0, and checked there before the body is
+    // parsed at all — so this header is what makes the request a comment rather
+    // than a 401.
+    const headers = { Authorization: `Bearer ${this.state.token}` };
 
     let response = null;
     try {
@@ -820,6 +805,53 @@ export default class HammerolaViewer extends React.Component {
       rail: true,
     }, c.move ? { __resetMove: true } : null);
     this.toast('Sent to the agent — a rebuild will follow');
+  }
+
+  /**
+   * Close an item in the queue.
+   *
+   * A real request since step 0: `POST /api/v1/comments/<id>/resolve` takes the
+   * same EDIT_TOKEN this page is already holding, so what used to be a toast
+   * saying it could not be a button here IS one. Body-less on purpose — the
+   * route reads an optional `note` out of one, and a note is the agent's word
+   * about what it did, not the reader's.
+   *
+   * `local-` is the id `sendComment` falls back to when the hub's 201 could not
+   * be parsed. The comment is really in the queue at that point and this page
+   * simply does not know its name, so the row is marked resolved LOCALLY and
+   * says as much: pretending it reached the hub would be worse than admitting
+   * this one has to be closed from the agent's side.
+   */
+  async resolveComment(id) {
+    if (!id || this.viewer()) return;
+    const mark = () => this.setState({
+      comments: this.state.comments.map(
+        (c) => (c.id === id ? { ...c, resolved: true } : c)),
+    });
+    if (String(id).startsWith('local-')) {
+      mark();
+      this.toast('Marked here only — this one has no id the hub answers to');
+      return;
+    }
+    let response = null;
+    try {
+      response = await fetch(`/api/v1/comments/${encodeURIComponent(id)}/resolve`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.state.token}` },
+      });
+    } catch (error) {
+      console.error('resolve', error);
+      this.toast('Could not reach the hub');
+      return;
+    }
+    if (response.status !== 200) {
+      this.toast(response.status === 401
+        ? 'The hub refused the token'
+        : 'Could not mark it processed');
+      return;
+    }
+    mark();
+    this.toast('Marked processed');
   }
 
   // -- helpers --------------------------------------------------------------
@@ -1022,10 +1054,11 @@ export default class HammerolaViewer extends React.Component {
       pinStyle: `width:20px;height:20px;border-radius:10px 10px 10px 3px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO};` + (c.resolved ? 'background:#e3e6ea;color:#8a9099' : 'background:#1f7ae0;color:#fff'),
       measStyle: c.meas ? `margin-top:6px;display:inline-flex;padding:3px 7px;background:#fdf0d8;border-radius:4px;font:500 10.5px ${MONO};color:#8a6a1f` : 'display:none',
       onOpen: stop(() => this.set({ activePin: c.id })),
-      // Closing an item is the agent's move, through the queue endpoint behind
-      // COMMENT_READ_TOKEN. That token is shared across every project's queue,
-      // so it cannot come to a browser and this cannot become a button here.
-      onResolve: stop(() => this.toast('Marking a comment processed is the agent’s side of the queue')),
+      resolved: !!c.resolved,
+      // A real request since step 0 — see resolveComment. Closing an item is
+      // still mostly the agent's move; what changed is that the person who
+      // raised it can now take it back without one.
+      onResolve: stop(() => { if (!c.resolved) this.resolveComment(c.id); }),
     }));
     const openCount = s.comments.filter((c) => !c.resolved).length;
 
@@ -1166,12 +1199,12 @@ export default class HammerolaViewer extends React.Component {
       tokenSave: stop(() => {
         const value = s.tokenDraft.trim();
         if (!value) { this.toast('Paste the token first'); return; }
-        writeToken(PAGE.pid, value);
+        writeToken(value);
         this.setState({ token: value, tokenPop: false, tokenDraft: '' });
-        this.toast('Editing is on for this project in this browser');
+        this.toast('Editing is on in this browser');
       }),
       tokenClear: stop(() => {
-        clearToken(PAGE.pid);
+        clearToken();
         this.setState({ token: null, tokenPop: false, tokenDraft: '',
                         composer: null, notePop: null });
         this.set({ tool: null });
@@ -1465,8 +1498,8 @@ export default class HammerolaViewer extends React.Component {
               </div>
               <div style={css(`font:400 11.5px/1.6 ${SANS};color:#5b6470;margin-bottom:9px`)}>
                 {v.viewer
-                  ? 'A token opens notes, moving a part and comments. Without one everything else still works: orbiting, the tree, the section, measuring and the downloads. It is kept in this browser, for this project only.'
-                  : 'The token is stored in this browser for this project. Remove it to go back to viewing.'}
+                  ? 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens notes, moving a part, and writing a comment. Without one everything else still works: orbiting, the tree, the section, measuring and the downloads. It is kept in this browser, for the whole site.'
+                  : 'The token is stored in this browser, for the whole site. Remove it to go back to viewing.'}
               </div>
               {v.viewer ? (
                 <>
@@ -1768,13 +1801,23 @@ export default class HammerolaViewer extends React.Component {
               <span style={css('flex:1')} />
               <span onClick={v.railToggle} style={css('color:#9aa1a9;cursor:pointer;font-size:14px')}>&#10005;</span>
             </div>
-            {/* The feed has no source yet, and an empty list would read as "no
-                comments on this build" — which is a different statement. */}
+            {/* The feed still has no source ON THIS PAGE, and an empty list
+                would read as "no comments on this build" — a different
+                statement. The PERMISSION barrier is gone: step 0 put the queue
+                behind the same EDIT_TOKEN this page holds, so
+                `GET /api/v1/comments?project=<pid>` would answer right now. What
+                is left is a question nobody has decided: the queue is per
+                PROJECT and a comment carries the point it was left at, so a
+                comment raised on an older revision has coordinates that may name
+                nothing on the geometry now on screen. Fetching the list is a few
+                lines; deciding what a pin from another revision does is the
+                feature. Until that is answered the rail states what it holds
+                rather than implying the queue is empty. */}
             <div style={css(`flex:none;margin:10px;padding:10px 12px;background:#fdf6e3;border:1px solid #eadfc0;border-radius:7px;font:400 11.5px/1.6 ${SANS};color:#4a4436`)}>
-              The history of comments is not shown yet. Reading the queue is behind
-              the agent&#8217;s own token, which is shared across every project and never
-              travels to a browser; the page will get a key of its own. Until then
-              this lists only what was sent from this session.
+              This lists what was sent from this session. The full queue for the
+              project is not shown here yet — a comment is pinned to a point on
+              the revision it was left on, and what such a pin means on a
+              different revision has not been settled.
             </div>
             <div style={css('flex:1;overflow:auto;padding:0 10px 10px;display:flex;flex-direction:column;gap:10px')}>
               {v.threads.map((c) => (
@@ -1788,7 +1831,9 @@ export default class HammerolaViewer extends React.Component {
                   <div style={css(`font:400 12px/1.5 ${SANS};color:#2a2e33;margin:7px 0 8px`)}>{c.text}</div>
                   <div style={css(c.measStyle)}>&#8596; {c.meas}</div>
                   <div style={css('display:flex;align-items:center;gap:10px;margin-top:8px')}>
-                    <span onClick={c.onResolve} style={css(`font:500 10.5px ${MONO};color:#8a9099;cursor:pointer`)}>mark processed</span>
+                    <span onClick={c.onResolve} style={css(`font:500 10.5px ${MONO};color:#8a9099;` + (c.resolved ? 'cursor:default' : 'cursor:pointer'))}>
+                      {c.resolved ? 'processed' : 'mark processed'}
+                    </span>
                   </div>
                 </div>
               ))}

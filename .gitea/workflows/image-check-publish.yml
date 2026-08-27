@@ -177,12 +177,13 @@ jobs:
         # without it a once-pulled python:3.11-slim would sit in its cache for months and the
         # tests would run against an unpatched base — the same reason `docker build --pull`
         # carries the flag.
-        # PUBLISH_TOKEN and COMMENT_READ_TOKEN are the two variables src/settings.py declares
-        # with no default (the second guards reading the comment queue, SPEC 7A.2):
-        # `settings` is built at import time, so without them importing anything under src/
-        # raises and the whole suite errors during collection. The values are invented here and
-        # reach nothing — both are shared secrets compared for equality against the
-        # Authorization header, so neither has a format to satisfy and any non-empty string
+        # EDIT_TOKEN is the ONE variable src/settings.py declares with no default — one secret
+        # for the whole system (SPEC §8 entry 26), covering publishing, a build's sources, the
+        # project routes and the whole comment queue including writing to it:
+        # `settings` is built at import time, so without it importing anything under src/
+        # raises and the whole suite errors during collection. The value is invented here and
+        # reaches nothing — it is a shared secret compared for equality against the
+        # Authorization header, so it has no format to satisfy and any non-empty string
         # does. A variable that IS format-validated at construction time would need a value of
         # the right shape, or startup fails for a reason that says nothing about the code.
         # `--name` is what makes this container reachable AFTERWARDS, and it does not duplicate
@@ -272,8 +273,7 @@ jobs:
           --exclude=__pycache__ . \
           | docker run --rm -i --pull always --name "$TEST_NAME" \
           --memory=2g --memory-swap=2g \
-          -e PUBLISH_TOKEN=fake-test-publish-token-not-real \
-          -e COMMENT_READ_TOKEN=fake-test-comment-read-token-not-real \
+          -e EDIT_TOKEN=fake-test-edit-token-not-real \
           -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
           -e PYTHONDONTWRITEBYTECODE=1 \
           "$RUNTIME_IMAGE" \

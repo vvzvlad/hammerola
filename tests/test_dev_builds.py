@@ -12,8 +12,11 @@ overwrites it. Four claims carry it and all four are tested here:
   * the slot is served `no-cache`, on the page and on every file under it. That
     is the whole licence to rewrite a URL in place, and the commit route's year
     of `immutable` is never allowed anywhere near it;
-  * `latest` does not move and `/index.json` says nothing. Those are the public
-    surfaces and they go on meaning "the project as of some commit";
+  * `latest` does not move, and the site index gains no CARD for the project.
+    Those are the shared surfaces and they go on meaning "the project as of some
+    commit". The index file is rewritten by a local push — a card carries a
+    `dev` chip saying the slot is occupied — but a project with no commit build
+    still has no card at all;
   * a push is still atomic: the tree is unpacked out of sight and swapped in.
 """
 
@@ -61,8 +64,8 @@ def test_three_pushes_leave_one_directory_and_no_history(hub):
 
     Minting an id per payload made every local attempt a build of its own: they
     landed in `builds.json`, showed up in the build picker as `dev-e9a448df778c`
-    next to real commits, and piled up until a retention window nobody wanted to
-    tune knocked them off. A working copy is not a version of anything.
+    next to real commits, and piled up there for good. A working copy is not a
+    version of anything.
     """
     for marker in ("v1", "v2", "v3"):
         assert hub.publish_dev("proj1", _build(marker)).status_code == 201
@@ -159,16 +162,22 @@ def test_local_builds_stay_out_of_the_public_index(hub):
     same broken promise as a moved `latest`, in the one place everybody looks.
     """
     hub.publish_dev("proj1", _build("d1", "2026-08-09T00:00:00Z"))
-    # Read over HTTP, which is the only thing that matters and is also the
-    # honest check: a local push does not touch the index file at all now, and
-    # the endpoint answers `[]` for a hub that has never had a commit pushed.
-    assert hub.get("/index.json").json() == []
+    # Read over HTTP, which is the only thing that matters. A local push DOES
+    # rewrite the index now — that is how the `dev` chip on a card appears — so
+    # this is a claim about the CARDS and not about the file being untouched: a
+    # project whose only build is a local one gets none.
+    assert hub.index().json() == []
 
     hub.publish("proj1", "abc123", _build("c1", "2026-08-01T00:00:00Z"))
-    assert [c["commit"] for c in hub.get("/index.json").json()] == ["abc123"]
+    cards = hub.index().json()
+    assert [c["commit"] for c in cards] == ["abc123"]
+    # ...and now that there is a card, it says the slot is occupied without
+    # letting the slot describe the project: the commit on the card is the
+    # commit, never `dev`.
+    assert cards[0]["dev"] is True
     # And a later local push does not slip into the card that is now there.
     hub.publish_dev("proj1", _build("d2", "2026-08-10T00:00:00Z"))
-    assert [c["commit"] for c in hub.get("/index.json").json()] == ["abc123"]
+    assert [c["commit"] for c in hub.index().json()] == ["abc123"]
 
 
 def test_a_project_with_only_a_local_build_has_no_latest(hub):
@@ -185,15 +194,15 @@ def test_a_project_with_only_a_local_build_has_no_latest(hub):
     assert hub.get("/project/proj1/dev/meta.json").status_code == 200
 
 
-def test_local_pushes_never_reach_commit_retention(hub_factory):
+def test_local_pushes_never_touch_the_commit_history(hub):
     """An evening at the laptop is twenty-odd pushes, and none of them count.
 
-    There is nothing left to count them against: the slot is one directory that
-    is overwritten, so it can neither fill a retention window nor be pushed out
-    of one. That is what removed RETENTION_DEV_BUILDS along with the second
-    bucket it existed to size.
+    The slot is one directory that every push overwrites, so thirty local
+    pushes leave the commit side of the project exactly as they found it: the
+    same directories, the same `latest`, the same picker. That is what removed
+    RETENTION_DEV_BUILDS long before retention itself went; there was never a
+    second bucket for it to size.
     """
-    hub = hub_factory(retention_builds=5)
     commits = [f"c{i}" for i in range(1, 5)]
     for i, commit in enumerate(commits, start=1):
         hub.publish("proj1", commit, _build(f"c{i}", f"2026-08-0{i}T00:00:00Z"))
@@ -258,10 +267,9 @@ def test_a_commit_may_now_be_called_dev_1234(hub):
     """The `dev-` PREFIX is no longer reserved, and nothing needs it to be.
 
     It was reserved for exactly one reason: local ids were `dev-<digest>`, so a
-    commit called `dev-1234` would have been counted in the local retention
-    bucket and dropped after two pushes — a permanent URL quietly turned into a
-    temporary one. There is no local bucket now, so the rule went with it and
-    `dev-1234` is an ordinary commit id.
+    commit called `dev-1234` would have been filed with the throwaway local
+    builds instead of with the real ones. There is no bucket of local builds
+    now, so the rule went with it and `dev-1234` is an ordinary commit id.
     """
     assert hub.publish("proj1", "dev-1234", good_build("one")).status_code == 201
     assert hub.get("/project/proj1/dev-1234/assembled.json").content == \

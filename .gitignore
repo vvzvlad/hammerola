@@ -36,7 +36,7 @@ data/*
 #
 # A prefix glob rather than a directory: the build output lands FLAT in
 # static/_v/, among committed assets that must stay TRACKED (site.css,
-# index.js, pointer.js, pointer_pref.js, the vendored bundle), so the directory
+# pointer.js, pointer_pref.js, the vendored bundle), so the directory
 # itself cannot be ignored. The glob is deliberately wider than today's single output —
 # it is a net for whatever a future build emits under that prefix, and being too
 # wide here costs nothing, whereas being too narrow means a build artefact gets

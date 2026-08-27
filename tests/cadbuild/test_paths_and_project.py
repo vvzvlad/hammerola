@@ -7,8 +7,9 @@ wrong means building under someone else's id, and every published URL is
 permanent.
 
 One test went back to cad_publish with its subject: `_out/` is also the name
-the source tar excludes, and the list it was checked against lives in
-remote.py, which is build-node machinery and stayed on the client side.
+the source tar excludes, and the list it was checked against lives in remote.py
+-- build-node machinery that stayed on the client side and that step 7 removes,
+now that the hub builds and there is no build node left to drive.
 """
 
 import json

@@ -12,19 +12,19 @@ test module has already been imported.
 import os
 import threading
 
-# Provide the required credentials BEFORE any test module imports src.settings
+# Provide the required credential BEFORE any test module imports src.settings
 # (Settings() is instantiated at import time and would otherwise fail). CI arrives at the same
 # state by a different route, and `setdefault` is what makes the two compose: the test step in
-# both workflows passes `-e PUBLISH_TOKEN=...` on the `docker run` that starts the suite's
+# both workflows passes `-e EDIT_TOKEN=...` on the `docker run` that starts the suite's
 # container, inside the step's `run:` body — so the variable is already in the environment
 # before pytest is invoked and this line leaves CI's value alone. It is NOT injected through a
 # workflow `env:` block: those carry the container names, RUNTIME_IMAGE and the smoke gate's
 # SMOKE_* variables, none of which the suite reads.
-os.environ.setdefault("PUBLISH_TOKEN", "test-token")
-# The second credential, for the same reason and by the same route: the comment
-# queue is public to write and token-guarded to read (SPEC 7A.2), so Settings()
-# requires COMMENT_READ_TOKEN too and importing src.settings without it fails.
-os.environ.setdefault("COMMENT_READ_TOKEN", "test-read-token")
+#
+# ONE line, because there is one secret for the whole system (SPEC §8 entry 26). There were two
+# here — the comment queue used to have a credential of its own for reading, while writing to
+# it took none at all.
+os.environ.setdefault("EDIT_TOKEN", "test-token")
 
 import pytest  # noqa: E402  (must come after the env assignment above)
 
@@ -168,7 +168,7 @@ def hub(tmp_path):
 
 @pytest.fixture
 def hub_factory(tmp_path):
-    """For tests that need a hub configured differently (retention, size caps)."""
+    """For tests that need a hub configured differently (size caps, mostly)."""
     started = []
 
     def make(**kw):

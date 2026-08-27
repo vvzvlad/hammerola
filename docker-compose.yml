@@ -93,35 +93,36 @@ services:
     # 2026-08-17 consolidation; the stacks only deployed again once their env files were copied
     # into the Portainer server's own volume.
     environment:
-      # Replace XXX with the real token before deploying, and give the same value
-      # to CI as the repository secret the publish workflow sends as
-      # `Authorization: Bearer`. The public SITE has no read-side auth at all
-      # (SPEC 5.4); the comment queue below is the one thing that does.
-      PUBLISH_TOKEN: XXX
-      # Guards READING the comment queue (SPEC 7A.2). The queue is raw input from
-      # anyone at all, so it is not readable without this. Give it to the agent's
-      # MCP server and to nothing else; a DIFFERENT value from PUBLISH_TOKEN, so
-      # either can be rotated on its own.
-      # Writing a comment is public and takes no token TODAY — inherited verbatim
-      # from cad_snapshot_hub, not a property this stack keeps. SPEC 8A.1 reverses
-      # it and step 0 of the plan (AGENTS.md) moves the write side behind a token
-      # too; this block gains a variable for it then.
-      COMMENT_READ_TOKEN: XXX
+      # THE secret, and the only one this service declares — one for the whole
+      # system (SPEC §8 entry 26). Replace XXX before deploying. It is what
+      # `Authorization: Bearer` carries on every route that changes something or
+      # reads something private: publishing, a build's sources and log, renaming
+      # a project, removing one, and the whole comment queue including writing to
+      # it (SPEC 7A.2, closed to anonymous writers by step 0 of the plan).
+      # The public SITE still has no read-side auth at all (SPEC 5.4) — this
+      # guards the API, never the pages.
+      # THE SAME VALUE goes to whatever publishes here: a model repository's CI
+      # secret, and `hammerola login` on a laptop. There is no second key.
+      # THERE USED TO BE TWO — PUBLISH_TOKEN and COMMENT_READ_TOKEN. Updating an
+      # existing stack means deleting both lines and adding this one; a CI that
+      # still calls its own secret PUBLISH_TOKEN keeps working, because what
+      # travels is the value.
+      EDIT_TOKEN: XXX
       # Everything below has a default in src/settings.py and is spelled out here
       # only where the deployment disagrees with it. DATA_DIR must match the mount
       # point of the volume declared above.
       DATA_DIR: /app/data
-      # RETENTION_BUILDS: 20      # newest commit builds kept per project (SPEC 7.3)
+      # No retention variable exists: a published build is never deleted
+      # (SPEC 5.3, 7.3), so the volume below grows monotonically and is cleared
+      # by hand when it has to be.
       # MAX_BUILD_BYTES: 67108864 # 64 MiB ceiling on one uploaded build
-      # The ceilings on the PUBLIC comment endpoint (SPEC 7A.4). Defaults are in
-      # src/settings.py; set them here only to tighten a specific one.
+      # The ceilings on the comment endpoint (SPEC 7A.4), all three about SIZE.
+      # Defaults are in src/settings.py; set them here only to tighten one.
+      # There is no count ceiling and no rate limit: writing a comment takes
+      # EDIT_TOKEN, and whoever holds it can delete the project outright.
       # COMMENT_MAX_TEXT_CHARS: 4000
       # COMMENT_MAX_PHOTO_BYTES: 8388608   # 8 MiB per photo or rendered frame
       # COMMENT_MAX_BODY_BYTES: 20971520   # 20 MiB for the whole form
-      # COMMENT_MAX_PER_BUILD: 100
-      # COMMENT_MAX_TOTAL: 5000
-      # COMMENT_RATE_LIMIT: 5              # per address, per window
-      # COMMENT_RATE_WINDOW_SECONDS: 600
       TZ: Europe/Moscow
     networks:
       - docker_main_net

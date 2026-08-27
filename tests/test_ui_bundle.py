@@ -7,7 +7,7 @@ one file owns — it is an agreement between five that never import each other:
     Makefile                names the files a workstation build copies, and where
     Dockerfile              names the same files again, one `COPY --from=ui` each
     ci/smoke.py             asserts the resulting paths are inside the image
-    templates/build.html    fetches the entry over HTTP with a <script src>
+    templates/*.html        the pages fetch the entry with a <script src>
 
 Nothing makes them agree and nothing reports it when they stop. That is the
 whole reason this file exists, because every way of breaking the agreement
@@ -52,10 +52,22 @@ ROOT = Path(__file__).resolve().parent.parent
 # checkout; this is the one constant that converts between them.
 IMAGE_ROOT = "/app"
 
-# The directory templates/build.html reaches static assets through. The hub
-# serves `static/_v/` at the URL `/_v/`, so a path under `static/` becomes a URL
-# by dropping that first component.
+# The directory the templates reach static assets through. The hub serves
+# `static/_v/` at the URL `/_v/`, so a path under `static/` becomes a URL by
+# dropping that first component.
 STATIC_DIR = "static"
+
+# The pages drawn by the bundle, and therefore the ones that must load it and
+# must carry a mount point. WRITTEN OUT rather than discovered, and then checked
+# against what the templates actually do (test_exactly_these_pages_load_the_bundle):
+# a list derived from the templates would agree with whatever they say, including
+# the day one silently stops loading the bundle — which is this file's whole
+# subject. pointer.html is deliberately not here: it loads a committed script of
+# its own and mounts nothing, and a bundle appearing on it would be two hundred
+# kilobytes of React fetched to read one localStorage key.
+BUNDLE_PAGES = ("build.html", "index.html")
+
+TEMPLATES = "templates"
 
 # The directive the bundle must be copied in AFTER — see the ordering test below.
 # Anchored to the start of a line rather than searched for as a substring because
@@ -553,81 +565,135 @@ def test_the_makefile_copies_every_file_the_image_does(bundle_copies, ui_files):
     )
 
 
-def test_the_page_loads_the_bundle_from_that_path(entry_name, out_dir):
-    """templates/build.html against the same derived path.
+def bundle_url(entry_name, out_dir):
+    """The URL a page has to fetch the bundle from, derived like everything here."""
+    return f"/{out_dir.split('/', 1)[1]}/{entry_name}"
+
+
+def script_sources(page):
+    """Every `<script src>` on one template, comments stripped."""
+    return re.findall(r"<script[^>]*\bsrc=[\"']([^\"']+)[\"']",
+                      read_markup(TEMPLATES, page))
+
+
+@pytest.mark.parametrize("page", BUNDLE_PAGES)
+def test_the_page_loads_the_bundle_from_that_path(page, entry_name, out_dir):
+    """Each page drawn by the bundle against the same derived path.
 
     This is the failure with no symptom anywhere but a browser console: the
     build, the image, the gate and the rest of the page are all unaffected by a
     wrong `src`.
     """
-    url = f"/{out_dir.split('/', 1)[1]}/{entry_name}"
-    html = read_markup("templates", "build.html")
-    sources = re.findall(r"<script[^>]*\bsrc=[\"']([^\"']+)[\"']", html)
+    url = bundle_url(entry_name, out_dir)
+    sources = script_sources(page)
 
     assert url in sources, (
-        f"templates/build.html loads no script from {url!r}. It currently loads "
+        f"templates/{page} loads no script from {url!r}. It currently loads "
         f"{sources!r}. Nothing else in this repository would notice: the bundle "
         "is still built, still copied into the image and still found by the "
         "publish gate -- the page just never fetches it."
     )
 
 
-def test_the_page_loads_nothing_but_the_bundle(entry_name, out_dir):
-    """And no second script beside it — the old page viewer above all.
+@pytest.mark.parametrize("page", BUNDLE_PAGES)
+def test_the_page_loads_nothing_but_the_bundle(page, entry_name, out_dir):
+    """And no second script beside it — a page script of its own above all.
 
-    The build page used to be driven by a page script of its own, which built the
-    header, the panels and the comment form out of the markup the template
-    carried. Both are gone: the interface draws all of it, and that script is not
-    in the repository or the image any more.
+    BOTH of these pages used to have one. The build page's built the header, the
+    panels and the comment form out of markup the template carried; the front
+    page's fetched /index.json and built the cards. Both are gone, and neither
+    script is in the repository or the image any more.
 
-    What this guards is the shape of the failure if it comes back. The two would
-    not conflict loudly — the old script mounted into a `#cad_viewer` this
-    template no longer has, so it would fail somewhere in the console while the
-    interface rendered over the top of it and the page LOOKED right. Meanwhile
-    the browser would fetch a 404 on every load, both would bind the library's
-    keymap and the wheel, and the pointer-preference key would get two writers.
-    Nothing else here would notice: the bundle test above only asserts its own
-    `src` is PRESENT, and the publish gate asks whether paths exist rather than
-    which ones the page asks for.
+    What this guards is the shape of the failure if one comes back. The two would
+    not conflict loudly — each old script mounted into an element its template no
+    longer has (`#cad_viewer`, `#grid`), so it would fail somewhere in the console
+    while the interface rendered over the top of it and the page LOOKED right.
+    Meanwhile the browser would fetch a 404 on every load, and on the build page
+    both would bind the library's keymap and the wheel and the pointer-preference
+    key would get two writers. Nothing else here would notice: the test above only
+    asserts its own `src` is PRESENT, and the publish gate asks whether paths
+    exist rather than which ones a page asks for.
 
     So this asserts the whole list rather than the absence of one name: any
-    second `<script src>` on this page is the thing worth stopping, whatever it
+    second `<script src>` on these pages is the thing worth stopping, whatever it
     is called.
     """
-    url = f"/{out_dir.split('/', 1)[1]}/{entry_name}"
-    html = read_markup("templates", "build.html")
-    sources = re.findall(r"<script[^>]*\bsrc=[\"']([^\"']+)[\"']", html)
+    url = bundle_url(entry_name, out_dir)
+    sources = script_sources(page)
 
     assert sources == [url], (
-        f"templates/build.html loads {sources!r}; the only script it may load is "
+        f"templates/{page} loads {sources!r}; the only script it may load is "
         f"{url!r}. A page script beside the bundle is a 404 or a second driver "
-        "for the same viewer, and neither shows up as a broken page."
+        "for the same page, and neither shows up as a broken page."
     )
 
 
-def test_the_page_carries_the_mount_point():
-    """The <div> the bundle looks for, and the reason a wrong `src` is silent.
+def test_exactly_these_pages_load_the_bundle(entry_name, out_dir):
+    """BUNDLE_PAGES is the real list, checked rather than trusted.
 
-    ui/src/main.jsx mounts only when it finds this id and does nothing at all
-    when it does not -- deliberately, so the pages that do not carry it stay
-    clean. That tolerance is exactly what makes a missing mount point invisible
-    from the JavaScript side, so it is checked from the HTML side instead.
+    Every check in this section iterates that tuple, so a page dropping out of it
+    drops out of all of them — silently, and in the direction that matters: the
+    page stops loading the bundle, renders an empty document, and the two tests
+    above pass by looking at the pages that still work.
+
+    The other direction is worth stopping too. pointer.html loads one committed
+    script to read one localStorage key and leave (SPEC 9); putting a React
+    bundle on it would be a couple of hundred kilobytes fetched to do that, on
+    the one page whose entire job is to be quick.
+    """
+    url = bundle_url(entry_name, out_dir)
+    pages = sorted(path.name for path in (ROOT / TEMPLATES).glob("*.html")
+                   if url in script_sources(path.name))
+
+    assert pages == sorted(BUNDLE_PAGES), (
+        f"the templates loading {url!r} are {pages!r}, and BUNDLE_PAGES in this "
+        f"file says {sorted(BUNDLE_PAGES)!r}. Whichever moved, both have to: a "
+        "page that quietly stopped loading the bundle renders nothing at all, "
+        "and every other check here would go on passing over the pages that did "
+        "not move."
+    )
+
+
+def test_every_mount_point_is_on_exactly_one_page():
+    """The ids ui/src/main.jsx looks up against the pages that carry them.
+
+    main.jsx mounts only where it finds an id and does nothing at all where it
+    does not -- deliberately, so that one bundle can serve two pages and leave
+    the third alone. That tolerance is exactly what makes a missing or renamed
+    mount point invisible from the JavaScript side: no error, no warning, an
+    empty page. So it is checked from the HTML side instead.
+
+    EXACTLY ONE PAGE PER ID, not "at least one", because which id a document
+    carries is the only thing telling the bundle which page it is on. Two pages
+    sharing an id is the front page rendering the build interface, or the
+    reverse, and both would be found by opening the site rather than by anything
+    here.
 
     Both reads skip the files' COMMENTS, for the same reason the entry name is read
-    off an anchored line: main.jsx's own header names #hmr_root while explaining why
-    the mount is conditional, so a search that reads prose could agree with a
-    paragraph about the id long after the call below it stopped using it.
+    off an anchored line: main.jsx's own header names the ids while explaining why
+    the mounts are conditional, so a search that reads prose could agree with a
+    paragraph long after the calls below it stopped using them.
     """
-    html = read_markup("templates", "build.html")
-    main = read("ui", "src", "main.jsx")
+    main = re.sub(r"^\s*//.*$", "", read("ui", "src", "main.jsx"), flags=re.M)
+    mount_ids = re.findall(
+        r"\bdocument\.getElementById\(\s*['\"]([^'\"]+)['\"]\s*\)", main)
 
-    match = re.search(
-        r"(?m)^(?!\s*//).*\bdocument\.getElementById\(\s*['\"]([^'\"]+)['\"]\s*\)",
-        main)
-    assert match, "ui/src/main.jsx no longer looks its mount point up by id"
-    mount_id = match.group(1)
-
-    assert re.search(rf"""id=["']{re.escape(mount_id)}["']""", html), (
-        f"ui/src/main.jsx mounts into #{mount_id}, which templates/build.html "
-        "does not contain. The bundle would load and render nothing, silently."
+    assert sorted(mount_ids) == sorted(set(mount_ids)), (
+        f"ui/src/main.jsx looks the same id up twice: {mount_ids!r}")
+    assert len(mount_ids) == len(BUNDLE_PAGES), (
+        f"ui/src/main.jsx mounts into {mount_ids!r} -- {len(mount_ids)} ids for "
+        f"{len(BUNDLE_PAGES)} pages drawn by this bundle ({list(BUNDLE_PAGES)!r}). "
+        "An id with no page is a component nothing renders; a page with no id is "
+        "a blank screen."
     )
+
+    for mount_id in mount_ids:
+        carrying = [page for page in BUNDLE_PAGES
+                    if re.search(rf"""id=["']{re.escape(mount_id)}["']""",
+                                 read_markup(TEMPLATES, page))]
+        assert len(carrying) == 1, (
+            f"ui/src/main.jsx mounts into #{mount_id}, and the pages carrying "
+            f"that id are {carrying!r} -- there has to be exactly one. With none, "
+            "the bundle loads and renders nothing, silently; with two, both pages "
+            "draw the same component."
+        )

@@ -4,15 +4,17 @@
      BOOTSTRAP — удали эту секцию целиком, когда её пункты закрыты.
      ====================================================================== -->
 
-## ⚠️ Проект в середине переезда: хаб уже здесь, билдера ещё нет
+## ⚠️ Проект в середине переезда: хаб уже билдер, гейт на приёме ещё не стоит
 
 Код сервиса из `cad_snapshot_hub` уже перенесён — `src/` раздаёт сайт, принимает пуш,
 рендерит вьювер и держит очередь комментариев, тесты и шаблоны с ассетами на месте.
 Ядро CadQuery уже в образе: пины в `requirements.txt`, системные библиотеки в
 Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`, проверка (f)).
 Со сборкой хаб уже соединён: с шага 5 пуш принимается асинхронно и модель считается в
-отдельном процессе на пути запроса (`src/jobs.py` → `src/buildproc/`). Чего ещё нет —
-гейта на приёмной стороне (шаг 6) и снятого CI-обвеса вокруг старой схемы (шаг 7).
+отдельном процессе на пути запроса (`src/jobs.py` → `src/buildproc/`). Публиковаться
+тоже уже есть чем: клиент живёт здесь же (`src/client/`), ревизию именует хаб по хешу
+её исходников, и они хранятся (шаг 7). Чего ещё нет — гейта на приёмной стороне
+(шаг 6): сборка с негодной геометрией сегодня публикуется, а не отвергается.
 Именно поэтому шаги плана начинаются с приёма ДЕРЕВА исходников (шаг 2), а не с нуля.
 
 **Что это за проект.** `hammerola` (от «пианола» — механизм, который играет сам)
@@ -21,7 +23,7 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
 
 | Репозиторий | Что оттуда берётся |
 | --- | --- |
-| `/Users/vvzvlad/Data/Projects/cad_snapshot_hub` | раздача снапшотов, вьювер, приём пуша, ретенция, комментарии |
+| `/Users/vvzvlad/Data/Projects/cad_snapshot_hub` | раздача снапшотов, вьювер, приём пуша, комментарии |
 | `/Users/vvzvlad/Data/Projects/3d/cad_builder` | образ с CadQuery — ядро геометрии |
 | `/Users/vvzvlad/Data/Projects/3d/cad_publish` | сборка модели, гейт на геометрию, публикация |
 
@@ -45,17 +47,66 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
 **Чеклист незакрытого (шаги плана 8A.2):** здесь только шаги плана — всё
 остальное, что переезд не закрывает, живёт в беклоге, `docs/SPEC.md` §8.
 
-- [ ] **Шаг 0. Комментарии под токен.** Публичная запись комментариев переводится
-      под токен — это то, что закрывает дорожку от анонимного ввода до исполнения
-      кода (SPEC 8A.1).
+- [x] **Шаг 0. Комментарии под токен.** **Сделано.** Публичная запись комментариев
+      переведена под токен — это то, что закрывает дорожку от анонимного ввода до
+      исполнения кода (SPEC 8A.1): комментарий писался без токена → попадал в
+      очередь → агент читал его как задачу → правил `model.py` → хаб исполнял
+      `model.py`. Закрыт первый шаг, единственный из пяти, который можно закрыть,
+      не отменяя саму фичу. Токен проверяется ПЕРВЫМ — до маршрута, до
+      рейт-лимита и до `Content-Length`, — иначе неаутентифицированный
+      по-прежнему заставляет хаб принять и разобрать multipart с вложением.
+
+      **Вместе с этим два секрета схлопнулись в один: `EDIT_TOKEN`** (решение
+      2026-08-27, SPEC §8 запись 26). `PUBLISH_TOKEN` и `COMMENT_READ_TOKEN`
+      исчезли. Имя новое, а не старое, и это отдельное решение: `PUBLISH_TOKEN`
+      врал задолго до того, как лишился пары — им уже открывались исходники
+      ЛЮБОГО проекта (§7.8) и маршрут, УДАЛЯЮЩИЙ проект, — а читался как
+      «креденшл CI на пуш», то есть приглашал отдать его CI общей организации,
+      что после переезда означает выдать исполнение кода. `EDIT_TOKEN` называет
+      право, а не один способ им воспользоваться, и совпадает со словом, которым
+      это значение уже называет интерфейс: `View only` против `Editing on`.
+      «Токен», а не «пароль», — потому что это общая строка, сверяемая на
+      равенство: не на человека, не хешируется, не отзывается по одному, и кто
+      её предъявил, хаб не записывает. Обоснования — SPEC §7.5.
+
+      Ничего не сломалось у тех, кто публикуется: по проводу едет ЗНАЧЕНИЕ в
+      заголовке `Authorization`, а как свой секрет называет чужой workflow — его
+      дело. Миграция деплоя — одна строка в compose.
+
+      **Гейт при этом ослаб, и это записано, а не замолчано.** `ci/smoke.py`,
+      проверка (b), доказывала, что сторож на старте называет КАЖДУЮ недостающую
+      переменную, а не только первую, — и доказывала тем, что переменных было
+      две. С одной второй строки нет. Свойство переехало в
+      `tests/test_config_errors.py` (сторожу подсовывают класс настроек с двумя
+      обязательными полями); гейт, работающий против собранного образа с
+      настоящим `Settings`, так не умеет. Форма списка `REQUIRED_VARIABLES`
+      сохранена, объявленное число проверок — выражение от него, так что вторая
+      переменная вернёт свойство одной строкой. Заодно появился
+      `test_the_gate_knows_every_credential_this_declares`: сверяет список гейта
+      с полями `Settings` без дефолта, потому что «держите их в согласии» было
+      комментарием, а не проверкой.
+
+      **Рейт-лимита комментариев больше НЕТ, и потолков на их число тоже**
+      (решение 2026-08-27, SPEC §7A.4). Шаг 0 сначала оставил рейт-лимит,
+      подняв его с 5/10 мин до 30/10 мин, — единственным доводом было «это
+      самозалечивающийся потолок, он ловит зациклившегося клиента до того, как
+      тот сожжёт сотню слотов сборки насовсем». Довод держался на
+      `COMMENT_MAX_PER_BUILD`; вместе с ним и с `COMMENT_MAX_TOTAL` он ушёл, а
+      без слотов сторожить нечего. Главное же — дверь теперь одна и она под
+      секретом: писать может только обладатель `EDIT_TOKEN`, а он тем же
+      секретом стирает проект целиком (`DELETE /api/v1/projects/<pid>`).
+      Ограничивать частоту тому, кто может стереть проект, бессмысленно.
+      Потолки на РАЗМЕР (тело, вложение, поля), проверка типа вложения по первым
+      байтам и отказ от SVG остались: это про недоверенный ввод, а не про
+      ретенцию. Разбор всех требований 7A.4 — какие пережили смену посылки, а
+      какие отменились — там же, в SPEC §7A.4.
 
       Ресурсных лимитов контейнера в этом шаге НЕТ намеренно, хотя в SPEC 8A.2 они
       записаны рядом. Там они относятся к УЖЕ РАБОТАЮЩЕМУ хабу, у которого
       контейнер живёт без единого потолка; здесь код сервиса уже перенесён, но он
-      ни разу не выкатывался и геометрию пока не считает — снимать числа попросту
-      не с чего, а под сборку моделей их всё равно придётся пересчитывать, когда
-      появится что считать. Лимиты ставятся тогда же, когда сервис впервые
-      выкатывается, — по замерам, а не наугад.
+      ни разу не выкатывался — снимать числа попросту не с чего, а под сборку
+      моделей их всё равно придётся пересчитывать. Лимиты ставятся тогда же,
+      когда сервис впервые выкатывается, — по замерам, а не наугад.
 - [x] **Шаг 1. Ядро в образ.** Пины `cadquery`, `cadquery-ocp`, `ocp-tessellate`,
       `trimesh`; системные библиотеки в Dockerfile (`libgl1`, `libx11-6`, `libexpat1`,
       `libxext6`, `libxrender1`, `libsm6`, `libice6`, и намеренно НЕ `libglu1-mesa`);
@@ -98,18 +149,20 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       Граница проходит по «нужна ли сборка»: токен, размер, архив и «этот пуш уже
       опубликован» отвечаются НА ПУШЕ (401/413/411/408/400/422/409/200), а всё
       остальное уезжает в задачу и узнаётся через `GET /api/v1/jobs/<id>` и
-      `/log` — оба под `PUBLISH_TOKEN`, оба отвечают одинаковым 404 на чужой,
+      `/log` — оба под `EDIT_TOKEN`, оба отвечают одинаковым 404 на чужой,
       несуществующий и кривой id. Параллелизм сборки — отдельное число
       (`MAX_CONCURRENT_BUILDS = 2` против `MAX_CONCURRENT_PUBLISHES = 4`),
       обоснования всех потолков — SPEC §7.5. Задача не может остаться без
       терминального состояния: запись в памяти обновляется независимо от тома,
       оба обращения к диску best effort, а ошибка ПОСЛЕ `rename` не помечает
       задачу провалившейся, потому что `rename` и есть публикация. Порядок задач
-      хранится СПИСКОМ ID в одном файле `data/jobs/order.json`, а не числом в
-      каждой записи и не по `created` (секундная точность не переживает рестарт):
-      порядок — свойство набора, а не записи, и размазанный по N файлам он не
-      переживал записи, доехавшей наполовину. Каталог, которого файл порядка не
-      называет, читается как самый старый. SIGTERM обрабатывается в `main.py` — будит
+      не хранится вообще — ни числом в записи, ни отдельным файлом: единственным
+      его потребителем была ретенция («кого подрезать первым»), а ретенции нет
+      (решение 2026-08-27, SPEC §5.3), задачи же читаются по id. Правило, которое
+      эта история оставила, шире файла и остаётся в силе: то, что является
+      свойством НАБОРА записей, нельзя хранить по записи — проход, доехавший
+      наполовину, смешивает два поколения, и место остановки выбирает сборка
+      (`chmod 0500` на одном каталоге). SIGTERM обрабатывается в `main.py` — будит
       заранее созданный поток, а не запускает новый из обработчика, — остановка
       сначала закрывает сокет, потом дренирует очередь вместе с исходниками, а
       воркеров ждёт по ОБЩЕМУ бюджету (`WORKER_JOIN_SECONDS` на весь пул, не на
@@ -118,14 +171,35 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       и при записи (SPEC §7.4).
 - [ ] **Шаг 6. Гейт переезжает и меняет знак** — срабатывает ПОСЛЕ приёма: staging
       выбрасывается, `latest` и `dev` не двигаются, наружу код ошибки с логом.
-- [ ] **Шаг 7. Убрать и переписать** — образ `cad_builder`, `publish.yml`, секреты
-      `HUB_URL` и `PUBLISH_TOKEN` в организации, `remote.py`, пины `cad_publish`;
-      переписать README, AGENTS, спеку и подписи во вьювере.
+- [ ] **Шаг 7. Дать новую дорогу и убрать за собой — В ХАБЕ.** Переформулирован
+      2026-08-27, и прежняя редакция здесь названа, чтобы её не восстановили:
+      она велела ходить в ЧУЖИЕ репозитории — снести `publish.yml` у каждой
+      модели, убрать секреты в организации, отвязать `cad_builder` и
+      `cad_publish`. Это не работа хаба. Хаб даёт способ публиковаться; что
+      после этого сделают у себя одиннадцать репозиториев моделей — их дело, и
+      следующий агент не должен читать этот пункт как задание туда идти.
+      Убирать к тому же было нечего: публикация УЖЕ не работала с шага 5 — хаб
+      принимал дерево исходников и отвечал 202, а клиент паковал плоскую сборку
+      и ждал 201, — и связку не проверял ни один тест, потому что половины жили
+      в разных репозиториях. Так что шаг оказался не уборкой, а стройкой.
+      **Сделано:** `src/client/` — команда `hammerola`, только stdlib, в ЭТОМ
+      репозитории намеренно (контракт у клиента и хаба один, а расходится он
+      молча, если обе половины не видит ни один тест); идентификатор ревизии —
+      хеш её исходников, git ни при чём (§7.7); исходники и лог хранятся по
+      ревизии и отдаются под тем же секретом, что публикует (§7.8); ретенции нет
+      ни у сборок, ни у задач (§5.3, §7.3); вычищены утверждения, которые переезд
+      сделал ложными — подпись `CadQuery → Gitea Actions` на главной, «`latest` —
+      это из CI», «пакет никем не импортируется». **Что осталось — в SPEC 8A.2,
+      шаг 7**, и список там живой: набор команд дописывается прямо сейчас, а
+      единственный пункт, который не закроется работой, — именованный маршрут
+      публикации `<pid>/<commit>`: он живёт, пока по нему кто-то пушит.
 - [ ] **Шаг 8. Сравнение ревизий** — последним, когда у хаба есть и ядро, и
-      исходники, и внепроцессное убийство зависшей задачи из шага 4. Упирается в
-      запись беклога «Хранение исходников по ревизиям» (SPEC §8): сравнивать
-      геометрию можно и сейчас, буферы лежат, а сказать «деталь изменилась,
-      потому что изменилась вот эта строка модели» — нельзя, кода нет.
+      исходники, и внепроцессное убийство зависшей задачи из шага 4. То, во что
+      он упирался, шаг 7 снял: код ревизии теперь лежит на томе и отдаётся по её
+      имени (§7.8), так что «деталь изменилась, потому что изменилась вот эта
+      строка модели» стало вопросом, на который есть чем ответить. Осталось само
+      сравнение геометрии по буферам — детали в записи беклога «Сравнение двух
+      ревизий» (SPEC §8).
 - [x] ~~Завести репозиторий в Gitea и спушить~~ — сделано 2026-08-24:
       `projects/hammerola`, ветка по умолчанию `main`, `origin` настроен.
       `REGISTRY_TOKEN` отдельно не заводился: он есть на уровне организации
@@ -173,25 +247,94 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   side imports it — the gate on the receiving side is step 6
 - `src/jobs.py` — the asynchronous half of a push (SPEC 8A.2 step 5): `JobStore`
   is the registry (a directory per job under `data/jobs/`, `job.json` and
-  `log.txt` beside it, plus `order.json` for the registry as a whole),
-  `BuildTask` is what the request hands over, `BuildQueue` is the bounded queue
-  and the worker threads that build and then publish. Read its docstring before
-  touching it: `data/jobs/` is on a volume every build can write, so everything
-  the registry reads back is rebuilt into a known shape, capped on the way in
-  and on the way out — and whatever that normalization changed is WRITTEN BACK,
-  because a correction that stays in memory leaves the planted value on disk for
-  the next start to read again. The second rule is the one that cost three
-  rounds: anything shared BETWEEN records must not be stored per record. The
-  write-back writes them one at a time, a build chooses which of those writes
-  fails (`chmod 0500` on one directory, no vulnerability needed), and a
-  half-applied pass then leaves a state the hub was never in. The creation order
-  used to be stored that way and is now one atomically written file. Read what
-  that file buys narrowly, because the generous reading is wrong: it stops a
-  POINTWISE write failure from reordering the registry, and nothing more. A
-  build can write `order.json` outright — real ids, permuted — and the hub
-  believes it without a word, exactly as it does a `log.txt` a build overwrote.
-  That is accepted rather than fixed: the same build can `rmtree` another job's
-  directory, which is strictly more
+  `log.txt` beside it), `BuildTask` is what the request hands over, `BuildQueue`
+  is the bounded queue and the worker threads that build and then publish. Read
+  its docstring before touching it: `data/jobs/` is on a volume every build can
+  write, so NOTHING there is evidence about who wrote it, and everything the
+  registry reads back is rebuilt into a known shape and capped in size on the
+  way in and on the way out — and whatever that normalization changed is WRITTEN
+  BACK, because a correction that stays in memory leaves the planted value on
+  disk for the next start to read again. A build can overwrite another job's
+  `log.txt`, or `rmtree` its directory outright, and the hub believes what is
+  left; that is accepted rather than fixed, because there is no boundary on the
+  volume to fix it with (SPEC 8A.4). Records are never deleted — no retention,
+  by decision of 2026-08-27 (SPEC §5.3) — so no count ceiling decides which jobs
+  to throw away; only strangers get swept, and only by age. The second rule is
+  the one that cost three rounds and outlives the file that taught it: anything
+  that is a property of the SET of records must not be stored per record. A pass
+  writes them one at a time, a build chooses which of those writes fails
+  (`chmod 0500` on one directory, no vulnerability needed), and a half-applied
+  pass then leaves a state the hub was never in. Creation order used to be
+  stored that way; it is now stored nowhere at all, because retention was its
+  only reader
+- `src/client/` — the OTHER side of the wire: the `hammerola` command an author
+  runs in a model's directory (SPEC §8, entry 26). `build` publishes the `dev`
+  slot, `commit` publishes an immutable revision; both pack the
+  source tree, POST it, poll the job from step 5 and print the build log. THE
+  REVISION IS NAMED BY THE HUB, not by the client and not by git (SPEC §7.7):
+  the id is the digest of the sources, so `commit` means "publish a version of
+  this" and a directory that is not a repository publishes exactly like one that
+  is. git is touched once, afterwards: `gitsuggest` prints a `git commit` line
+  that RECORDS what was published, for a person to run or ignore — the tool
+  never stages and never commits. It is
+  in THIS repository on purpose — the client and the hub share one contract (the
+  archive shape, the path alphabet, the ceilings, the codes, the job states), and
+  publication broke precisely because the two halves used to live in two
+  repositories where no test could see both. `tests/client/` now drives the real
+  hub over a real socket, and `tests/client/test_limits.py` compares the client's
+  copy of the ceilings (`src/client/limits.py`) against `src/store.py` and
+  `src/settings.py`. STDLIB ONLY, every module of it: the tool runs under
+  whatever python3 a laptop has, so it imports nothing from `requirements.txt` —
+  not loguru, not pydantic, not `src.store`, not `src.cadbuild` — and talks HTTP
+  with `urllib.request`; `tests/client/test_stdlib_only.py` is what enforces
+  that, since the test environment has every dependency installed and would
+  never notice on its own. Around the two publishing verbs sit the rest:
+  `login` (`setup.py`, writes the machine's `KEY=value`
+  file 0600 after checking the password against the hub — ONE secret for the
+  whole system, `EDIT_TOKEN`, no second key for comments), `create`
+  (`project.py`, mints the
+  twelve hex characters of SPEC §3.1 and refuses to write over an existing id),
+  `status` (`status.py`, assembled out of `builds.json` and the dev slot's own
+  `meta.json`, i.e. what the project page already fetches), `comments`
+  (`queue.py`, the queue and its `resolve`), and the six added once the hub
+  began keeping a revision's sources (SPEC §8 entry 17): `source` and `log`
+  (`sources.py`), `artifacts` (`artifacts.py`), `diff` (`revdiff.py`), `rename`
+  and `rm` (`admin.py`, over the two routes `src/app.py` grew for them). FOUR
+  OF THOSE ARE SHAPED BY WHAT THEY MAY NOT DO, and the shape is the decision:
+  `source` and `artifacts` are two verbs because the code is behind the secret
+  and the artefacts are public; `source` unpacks into a directory of its own and
+  writes over the working copy only behind a flag AND a clean git tree; `rename`
+  moves the TITLE and there is no way to rename an id, because every permanent
+  URL is built from it; `rm` removes the project whole and never one build, and
+  asks for the id to be typed first. What each of those fetches lands under
+  `.hammerola/` in the project — hidden, so `pack` drops it and the next push
+  cannot publish a copy of an older push. Self-update waits on the tool having a
+  distribution name. Three gaps are of a different kind and are worth knowing
+  before reaching for them: "the last build
+  job" cannot be shown at all, because a job is addressable only by its id and
+  job order is stored nowhere (see `src/jobs.py`); `hammerola log dev` cannot be
+  answered either, because nothing is stored for the local slot on purpose
+  (SPEC §7.8) — the command says so rather than answering with `latest`'s log,
+  which would be a different build; and the comment routes check the
+  same `EDIT_TOKEN` as everything else — the hub's second variable went away in
+  step 0, along with the client's sentence explaining a 401 that meant "this
+  deployment set its other variable differently"
+- `src/metricsdiff.py` — reading `metrics.json`: what a build measured, and what
+  moved between two of them. It is NOT a copy of anything and that is the point:
+  the document has one writer (the build) and two readers — `cadbuild.metrics`,
+  printing what moved since `dev`, and `hammerola diff`, printing what moved
+  between two revisions — and the client cannot import the build half. Rather
+  than duplicate the comparison (which is exactly the shape of
+  `cad_publish/hubspec.py`, the copy that broke publication), the pure half was
+  MOVED here and both sides import it; `src/cadbuild/metrics.py` re-exports every
+  name it used to define. `tests/test_metricsdiff.py` asserts the two sides hold
+  the same objects (`is`, not `==`) and that this module imports only the
+  standard library, which is what lets the client have it at all
+- `bin/hammerola` — the console command, a plain script `make client` symlinks
+  into `~/.local/bin`. Deliberately not a packaging entry point yet: this repo's
+  one importable top-level name is `src`, and `pip install`ing that onto a laptop
+  would shadow every other project's `src`. Giving the tool a distribution name
+  belongs with the self-update work
 - `checklib.py` — at the ROOT, and not a stray file: `import checklib` is part
   of the contract with every model.py in the fleet, exactly like `views()` and
   `printables()`. It re-exports `src/cadbuild/checklib.py` under that name, and
@@ -201,7 +344,12 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   (g) is what proves it reached the image
 - `tests/` — pytest. `tests/cadbuild/` is the moved suite and has a `conftest.py`
   of its own: its `isolated_project` fixture is autouse and would otherwise
-  chdir every hub test into a scratch project
+  chdir every hub test into a scratch project. `tests/client/` has one too, and
+  it takes two things AWAY from every test in it: the `EDIT_TOKEN` that
+  `tests/conftest.py` puts in the environment for `src.settings` (the client
+  reads the same name and would push with the wrong secret), and the developer's
+  real `~/.config/hammerola/env` (a suite that read it could pass only on a
+  configured machine — or push at a live hub)
 - `data/` — runtime state: builds, pointers, comments and build JOBS as a
   directory tree with JSON alongside, no database (gitignored, mounted as a
   docker volume). Note what that last one means: `data/jobs/` is on a volume
@@ -210,7 +358,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
 - `templates/` — page templates that ship inside the image: `index.html`,
   `build.html`, `pointer.html`, one per URL the hub serves
 - `static/` — the viewer payload that ships inside the image (`static/_v/`):
-  `three-cad-viewer.esm.js`, the scripts for the index and pointer pages, the
+  `three-cad-viewer.esm.js`, the scripts for the pointer page, the
   site CSS. A separate tree with its own `COPY` line in the Dockerfile and its own smoke
   check (g). NOT EVERYTHING IN `static/_v/` IS COMMITTED: files matching
   `hammerola*` are the browser bundle, produced by `make ui` or by the image's
@@ -226,8 +374,13 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   what keeps them in step; `ui/README.md` has the layout and the pins
 - `ci/smoke.py` — the gate between build and publish: seven checks (a)–(g) the
   test suite structurally cannot make, because it runs against a checkout and
-  never looks at the artefact. (b) proves the startup guard names EVERY missing
-  variable — both credentials, not just the first
+  never looks at the artefact. (b) proves the startup guard fires and NAMES the
+  missing variable. It used to prove more — that the guard names EVERY missing
+  variable, not just the first — and it could, because there were two
+  credentials; with one (`EDIT_TOKEN`, step 0) that property moved to
+  `tests/test_config_errors.py`, which can hand the guard a settings class with
+  several required fields. Read `REQUIRED_VARIABLES` there before assuming the
+  gate still covers it
 - `docs/SPEC.md` — requirements, verified facts and the work plan (section 8A)
 - `main.py` — thin entry point over `src/`
 

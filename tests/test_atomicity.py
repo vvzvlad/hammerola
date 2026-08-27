@@ -16,10 +16,12 @@ every single publish in production.
 import json
 import os
 import threading
+import time
 
 from harness import meta_bytes, tar_gz, view_bytes
 
 from src import store
+from src.store import Store
 
 
 def _build(marker, built, padding=0):
@@ -427,3 +429,57 @@ def test_concurrent_publishes_to_one_project_all_land(hub):
     builds = json.loads((hub.project_dir("proj1") / "builds.json").read_text())
     assert {b["commit"] for b in builds["builds"]} == on_disk
     assert os.readlink(hub.project_dir("proj1") / "latest") == "c6"
+
+
+def test_stale_leftovers_are_swept_at_startup(tmp_path):
+    """A SIGKILL mid-push leaves dot-prefixed debris nothing else ever removes.
+
+    `builds_of` skips it and the file server refuses it, so a spooled 64 MiB
+    body sits on the volume until somebody notices by hand. The sweep runs in
+    Store.__init__, which is the one moment no publish of ours is in flight.
+
+    It lives beside the atomicity tests because it is the other half of the same
+    mechanism (SPEC 7.2): every one of these names exists because a publish is
+    made of a temporary thing plus a rename, and this is what collects the
+    temporary thing when the rename never happened.
+    """
+    data = tmp_path / "data"
+    store = Store(data_dir=data, max_build_bytes=1024 * 1024)
+    pdir = store.projects_dir / "proj1"
+    pdir.mkdir(parents=True, exist_ok=True)
+
+    stale = [
+        data / ".upload-deadbeef",
+        data / ".wip-index.json-deadbeef",
+        pdir / ".wip-builds.json-deadbeef",
+        pdir / ".trash-deadbeef",
+        pdir / ".tmp-abc123-deadbeef",
+    ]
+    for path in stale[:3]:
+        path.write_bytes(b"x" * 16)
+    for path in stale[3:]:
+        path.mkdir()
+        (path / "meta.json").write_text("{}")
+    link = pdir / ".latest-deadbeef"
+    os.symlink("nowhere", link)  # deliberately dangling, like a real leftover
+
+    # Age them past the hour: anything younger might belong to a live publish.
+    old = time.time() - 2 * 3600
+    for path in stale:
+        os.utime(path, (old, old))
+    os.utime(link, (old, old), follow_symlinks=False)
+
+    # Two things that must SURVIVE: a real build, and fresh debris that could
+    # belong to a publish running right now.
+    (pdir / "c1").mkdir()
+    (pdir / "c1" / "meta.json").write_text("{}")
+    fresh = pdir / ".tmp-c9-cafebabe"
+    fresh.mkdir()
+
+    Store(data_dir=data, max_build_bytes=1024 * 1024)
+
+    for path in stale:
+        assert not path.exists(), path
+    assert not link.is_symlink()
+    assert (pdir / "c1" / "meta.json").is_file()
+    assert fresh.is_dir(), "a leftover younger than an hour may still be in use"

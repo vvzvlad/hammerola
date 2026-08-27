@@ -16,12 +16,19 @@ pure.
 THE SETTINGS HALF OF THE ORIGINAL FIXTURE IS GONE, and that is the transfer
 rather than a simplification. In cad_publish this fixture also pointed
 `MACHINE_ENV_FILE` at a file that does not exist, cleared HUB_URL /
-PUBLISH_TOKEN / BUILD_CONTEXT / BUILD_IMAGE out of the environment, emptied the
+EDIT_TOKEN / BUILD_CONTEXT / BUILD_IMAGE out of the environment, emptied the
 settings caches and stubbed out `token_from_vault` -- because that package read
 a developer's ~/.config/3d/env and could unlock a real Vaultwarden. src.cadbuild
 resolves no setting and holds no credential: the whole client side, settings.py
 included, stayed in cad_publish (see src/cadbuild/__init__.py). There is
 nothing left here to isolate from.
+
+Read those four names as history rather than as a contract with anything here.
+They described the CLIENT's world -- the hub it pushed a finished build to, and
+the build node it built on -- and nothing under src/cadbuild reads any of them.
+EDIT_TOKEN is the one worth pointing at, because the hub does read a secret
+by that name: it reads it through src/settings.py, which is a different module
+from the settings.py that stayed behind.
 """
 
 import json

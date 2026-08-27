@@ -96,8 +96,8 @@ def test_the_environment_is_built_key_by_key_and_not_filtered(run_program, hub_s
     """Nothing the hub has in its environment reaches the build.
 
     The decoy in `hub_secrets` is the one that matters: a component that
-    removed the two names it knows about would pass every assertion about
-    PUBLISH_TOKEN and still hand a build every credential added after this file
+    removed the one name it knows about would pass every assertion about
+    EDIT_TOKEN and still hand a build every credential added after this file
     was written.
     """
     result = run_program(textwrap.dedent("""
