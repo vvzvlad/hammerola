@@ -112,10 +112,21 @@ def test_index_json_is_an_empty_list_before_any_push(hub):
 
 
 def test_index_page_is_served_from_templates(hub):
+    """The shell comes from templates/, and it names the PROJECT.
+
+    It used to assert on `3d.vvzvlad.xyz`, which is what the page said before
+    the move — a hostname, and by then a hostname the service had already left.
+    Asserting on one is how a template ends up carrying somebody's DNS: the
+    test makes the wrong thing load-bearing, and the next reader keeps it
+    because a test depends on it.
+    """
     r = hub.get("/")
     assert r.status_code == 200
     assert r.headers["Content-Type"].startswith("text/html")
-    assert "3d.vvzvlad.xyz" in r.text
+    assert "hammerola" in r.text
+    assert "vvzvlad" not in r.text, (
+        "a hostname is not the name of this service, and this one has moved "
+        "once already")
 
 
 def test_project_root_serves_the_pointer_resolver(hub):

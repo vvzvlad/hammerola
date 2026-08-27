@@ -1187,7 +1187,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             except ValueError:
                 return self._error(411, "Content-Length is required",
                                    {"Connection": "close"})
-            if length < 0 or length > MAX_TITLE_BODY_BYTES:
+            if length < 0:
+                return self._error(400, "invalid Content-Length",
+                                   {"Connection": "close"})
+            if length > MAX_TITLE_BODY_BYTES:
                 return self._error(413, "title body is too large",
                                    {"Connection": "close"})
             body, problem = self._read_body(length)
