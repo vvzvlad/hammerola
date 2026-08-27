@@ -142,8 +142,9 @@ def test_the_discovery_found_the_files():
     named once, here, and their absence is a failure rather than a quiet skip.
     """
     names = {path.name for path in INTERFACE_FILES}
-    assert {"HammerolaViewer.jsx", "events.js", "hub.js", "main.jsx",
-            "store.js"} <= names, f"ui/src no longer holds the interface: {sorted(names)}"
+    assert {"HammerolaViewer.jsx", "HammerolaEntry.jsx", "events.js", "hub.js",
+            "main.jsx", "store.js", "style.jsx"} <= names, (
+        f"ui/src no longer holds the interface: {sorted(names)}")
     if not ADAPTER_FILES:
         pytest.skip("ui/src/viewport/ is empty — the cross-checks skip honestly")
     assert (VIEWPORT / "events.js").exists(), "the adapter is there but names no events"
@@ -402,6 +403,42 @@ def test_every_meta_field_the_ui_reads_is_one_render_writes():
         f"{sorted(read_by_ui - written)}")
 
 
+def test_every_index_card_field_the_ui_reads_is_one_render_writes():
+    """`hub.projectCard` against the keys `render.index_card` actually emits.
+
+    The same silent failure as the meta check above, on the other document: a
+    field that is not there reads as `undefined`, renders as an empty string and
+    formats as `NaN`, and nothing anywhere says why a card went blank. The front
+    page is also where it would be least noticed, because a card that is merely
+    missing its size or its date still looks like a card.
+
+    Both halves are DERIVED, and the Python half is narrowed to this one function
+    rather than swept from the whole module. `render.py` writes several documents
+    and a union of all their keys would accept a field that exists on meta.json
+    but never on a card — which is precisely the mistake available here, since
+    the two are built from the same meta and share most of their names.
+    """
+    render = read(ROOT / "src" / "render.py")
+    body = re.search(r"def index_card\(.*?\n    return \{(.*?)\n    \}",
+                     render, flags=re.S)
+    assert body, "src/render.py no longer returns index_card's dict literally"
+    written = set(re.findall(r'"(\w+)":', body.group(1)))
+    assert written, "index_card's returned object has no string keys any more"
+
+    mapping = re.search(r"export function projectCard\(card\) \{(.*?)\n\}",
+                        strip_comments(read(UI / "hub.js")), flags=re.S)
+    assert mapping, (
+        "ui/src/hub.js no longer maps a card in one function. That mapping is "
+        "deliberately in one place so this check has something to read; spread "
+        "through the JSX it cannot be checked against anything")
+    read_by_ui = set(re.findall(r"\bcard\.(\w+)", mapping.group(1)))
+    assert read_by_ui, "projectCard stopped reading any field off the card"
+
+    assert read_by_ui <= written, (
+        f"the front page reads card fields index_card does not write: "
+        f"{sorted(read_by_ui - written)}")
+
+
 def test_the_build_picker_reads_the_fields_builds_json_carries():
     """The picker's fallback object names exactly what builds.json has.
 
@@ -488,16 +525,26 @@ def test_nothing_fetches_a_data_url():
 def test_nothing_writes_markup():
     """No `innerHTML`, no `dangerouslySetInnerHTML`, anywhere in the UI.
 
-    Everything on this page comes out of a PUSHED meta.json or view file — a part
-    name, a title, a filename — and every project on this host shares one origin.
-    React escaping text is the whole defence, and it holds only as long as nobody
-    builds markup out of a string.
+    Everything on these pages comes out of a PUSHED meta.json, view file or
+    index card — a part name, a title, a filename — and every project on this
+    host shares one origin. React escaping text is the whole defence, and it
+    holds only as long as nobody builds markup out of a string.
+
+    THE OTHER HALF OF THIS RULE is
+    tests/test_comments.py::test_the_committed_page_scripts_never_build_markup_from_a_string,
+    which reads the committed page scripts the same way. Two checks because the
+    two halves can only be made differently — this one strips comments from
+    source, that one reads files as they ship — and between them they have to
+    cover every script the site runs. The forbidden list is kept in step with
+    that one deliberately: `.outerHTML` is on it because it is there, not because
+    anything here has ever used it, and a rule that is narrower on one side than
+    the other is a gap nobody would find by reading either file alone.
     """
     offenders = []
     for path in INTERFACE_FILES + ADAPTER_FILES:
         source = strip_comments(read(path))
-        if re.search(r"\.innerHTML\s*=", source):
-            offenders.append(f"{path.name}: innerHTML")
+        if re.search(r"\.(?:inner|outer)HTML\s*=", source):
+            offenders.append(f"{path.name}: innerHTML/outerHTML")
         if "dangerouslySetInnerHTML" in source:
             offenders.append(f"{path.name}: dangerouslySetInnerHTML")
         if re.search(r"insertAdjacentHTML|document\.write\(", source):

@@ -35,7 +35,7 @@ from src.client.cli import main
 @pytest.fixture(autouse=True)
 def configured(monkeypatch, hub):
     monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("PUBLISH_TOKEN", TOKEN)
+    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
 
 
 def run(model, *args):
@@ -223,7 +223,7 @@ def test_source_with_the_wrong_secret_says_which_command_fixes_it(hub, model,
                                                                   capsys,
                                                                   monkeypatch):
     revision = publish(model, capsys)
-    monkeypatch.setenv("PUBLISH_TOKEN", "not-the-token")
+    monkeypatch.setenv("EDIT_TOKEN", "not-the-token")
     assert run(model, "source", revision) == 1
     err = capsys.readouterr().err
     assert "401" in err and "hammerola login" in err

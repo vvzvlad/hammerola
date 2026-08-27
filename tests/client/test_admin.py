@@ -49,7 +49,7 @@ def titling_builder(project_dir, out_dir, *, pid, **kw):
 @pytest.fixture(autouse=True)
 def configured(monkeypatch, hub):
     monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("PUBLISH_TOKEN", TOKEN)
+    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
 
 
 def run(model, *args):
@@ -277,7 +277,7 @@ def test_rm_of_a_project_the_hub_never_had_is_a_failure(hub, tmp_path, capsys,
 
 def test_rm_needs_the_right_secret(hub, model, capsys, monkeypatch):
     publish(model, capsys)
-    monkeypatch.setenv("PUBLISH_TOKEN", "not-the-token")
+    monkeypatch.setenv("EDIT_TOKEN", "not-the-token")
     monkeypatch.setattr("builtins.input", lambda _prompt: "demo0001")
 
     assert run(model, "rm") == 1

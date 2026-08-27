@@ -83,7 +83,7 @@ SCRATCH_GITIGNORE = "# Written by hammerola. Fetched builds and sources.\n*\n"
 
 
 def hub_for(root) -> Hub:
-    return Hub(config.hub_url(root), config.publish_token(root),
+    return Hub(config.hub_url(root), config.edit_token(root),
                timeout=QUERY_TIMEOUT)
 
 

@@ -1,8 +1,8 @@
-"""The comment queue and the guards on its public write path (SPEC 7A).
+"""The comment queue and the guards on its write path (SPEC 7A).
 
-A viewer clicks a part, writes "fix this bit", optionally attaches a photo of the
-printed part. The comment lands in a queue an agent later reads over the HTTP API
-under COMMENT_READ_TOKEN. Layout (SPEC 7A.3):
+Somebody holding the edit token clicks a part, writes "fix this bit", optionally
+attaches a photo of the printed part. The comment lands in a queue an agent later
+reads over the HTTP API under the same EDIT_TOKEN. Layout (SPEC 7A.3):
 
     <data>/comments/<pid>/<id>.json          the comment
     <data>/comments/<pid>/<id>.<ext>         the photo, if one came with it
@@ -11,7 +11,7 @@ under COMMENT_READ_TOKEN. Layout (SPEC 7A.3):
 Deliberately OUTSIDE the build directory (SPEC 7A.3), and for two reasons that
 both stand on their own. ACCESS: a build directory is served to anybody who has
 the URL, with a year of `immutable`, so a comment placed in one would be public
-and irrevocably cached — and this queue takes text from a stranger's keyboard.
+and irrevocably cached — and this queue is not public to read (SPEC 7A.2).
 LIFETIME: a comment is about the PROJECT more than about one revision — a part
 name and a coordinate still mean something ten commits later — so it must not be
 a file that goes wherever the build goes. Nothing deletes a build on its own any
@@ -19,29 +19,40 @@ more (SPEC 5.3), but somebody clearing space on the volume does, and a comment o
 a build that is gone stays readable; only the link back to the frame stops
 opening.
 
-Writing is PUBLIC — no token, by design — so everything in this module that looks
-paranoid is load-bearing (SPEC 7A.4):
+WRITING TAKES EDIT_TOKEN SINCE STEP 0 (SPEC 8A.1). What survived that change and
+what did not is the useful summary, because the two are decided by different
+questions — "is this about the bytes?" survives, "is this about the sender?" does
+not:
 
   * the photo's type is decided by its magic bytes, never by its filename or by
-    the Content-Type the sender chose;
+    the Content-Type the sender chose. The bytes are handed BACK OUT on the same
+    origin as every project's builds, so this is about what the hub serves, not
+    about who sent it;
   * SVG is refused by name in the error, because it is a script container rather
     than an image, and this service already learned that lesson once on build
     files (SPEC 7.4);
-  * text length, photo size, comments per build and comments in total all have
-    ceilings, because a public writer with none of them owns the volume;
-  * the rate limit is keyed on an address the SENDER cannot choose.
+  * text length and photo size still have ceilings, because an unbounded parse
+    and an unbounded store are not made safe by a credential;
+  * NOTHING COUNTS COMMENTS AND NOTHING THROTTLES THEM (decided 2026-08-27, SPEC
+    7A.4). There was a per-build ceiling, a global one and a rate limit keyed on
+    the client's address, and all three existed against a stranger with a script,
+    because the endpoint was open to one. It is not any more. The only caller
+    that can reach this module holds EDIT_TOKEN — the one secret of the system,
+    which also opens `DELETE /api/v1/projects/<pid>` — so a ceiling here would
+    rate-limit somebody who can erase the project in one request. Do not put one
+    back "for safety": a size ceiling bounds work the hub does, a count ceiling
+    only decides how much of their own queue the author may keep, and that
+    question was already answered everywhere else (SPEC 5.3 — no retention).
 
 The text of a comment is never rendered on any page (SPEC 7A.4). That is what
 keeps this whole feature off the XSS surface: the only consumer is an agent
 reading JSON.
 """
 
-import ipaddress
 import json
 import re
 import shutil
 import threading
-import time
 import unicodedata
 import uuid
 from datetime import datetime, timezone
@@ -80,24 +91,6 @@ MAX_FIELD_CHARS = 200
 # and the camera. Fixed shapes, so this is only here to keep a hand-written
 # request from asking for a hundred-element "quaternion".
 MAX_VECTOR_LEN = 4
-
-# Networks a request may be forwarded from. Behind Traefik the peer is always a
-# container on a private docker network; a request arriving from anywhere else did
-# NOT come through the proxy, so its X-Forwarded-For is whatever the sender typed.
-# Not an env var: what a private network is does not vary by deployment, and a
-# ceiling nobody adjusts is one more thing that can be set wrong (SPEC 7.5).
-TRUSTED_PROXY_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
-    "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-    "::1/128", "fc00::/7",
-))
-
-# How many trusted proxies stand in front of this service. Exactly one: Traefik.
-PROXY_HOPS = 1
-
-# How many addresses the rate limiter remembers. Bounded because the table is
-# keyed by something the world supplies: without a cap, a botnet's worth of
-# distinct addresses is an unbounded dict in a long-lived process.
-MAX_TRACKED_ADDRESSES = 4096
 
 # Temp-file prefix left behind by an interrupted write, swept at startup. The same
 # prefix `store` uses, so one sweep rule covers both trees.
@@ -147,123 +140,6 @@ def _looks_like_svg(data: bytes) -> bool:
     """
     head = data[:256].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
     return head.startswith(b"<svg") or head.startswith(b"<?xml")
-
-
-# -- the address a rate limit may be keyed on -------------------------------
-def client_address(peer: str, forwarded: str) -> str:
-    """The address to hold responsible for a request.
-
-    `peer` is what the socket says; `forwarded` is the raw X-Forwarded-For.
-
-    Two rules, and both matter:
-
-    1. The header is read ONLY when the peer is a trusted proxy. Reachable
-       directly — in development, or if the container is ever exposed — the
-       header is whatever the sender typed, and honouring it would make the rate
-       limit a formality: one new header value per request and the ceiling never
-       trips.
-
-    2. From the header, the RIGHTMOST entry wins, not the leftmost. Each proxy
-       APPENDS the address it accepted the connection from, so with exactly one
-       trusted hop in front of us (PROXY_HOPS, i.e. Traefik) the last entry is
-       the address Traefik actually saw. Anything the client puts in the header
-       itself arrives to the LEFT of that and is ignored — which is precisely the
-       spoof the leftmost-entry reading walks into, and the reason SPEC 7A.4 says
-       the header must not be trusted blindly rather than just "read the header".
-    """
-    peer = _normalize_address(peer)
-    if not _is_trusted_proxy(peer):
-        return peer
-    entries = [e.strip() for e in (forwarded or "").split(",") if e.strip()]
-    if not entries:
-        return peer
-    candidate = entries[-PROXY_HOPS] if len(entries) >= PROXY_HOPS else entries[0]
-    candidate = _normalize_address(candidate)
-    if not _is_address(candidate):
-        # A junk entry is not a reason to fall back to the leftmost one — that
-        # would be a way to choose which entry is read. The peer is always real.
-        return peer
-    return candidate
-
-
-def _normalize_address(value: str) -> str:
-    value = (value or "").strip()
-    if value.startswith("[") and "]" in value:
-        # `[2001:db8::1]:443` — the bracketed form, with or without a port.
-        return value[1:value.index("]")]
-    if value.count(":") == 1:
-        # `1.2.3.4:5678`. A bare IPv6 has more than one colon and is left alone.
-        return value.split(":", 1)[0]
-    return value
-
-
-def _is_address(value: str) -> bool:
-    try:
-        ipaddress.ip_address(value)
-    except ValueError:
-        return False
-    return True
-
-
-def _is_trusted_proxy(value: str) -> bool:
-    try:
-        address = ipaddress.ip_address(value)
-    except ValueError:
-        return False
-    if address.version == 6 and address.ipv4_mapped is not None:
-        address = address.ipv4_mapped
-    return any(address in network for network in TRUSTED_PROXY_NETWORKS)
-
-
-class RateLimiter:
-    """At most `limit` events per `window` seconds, per key.
-
-    A sliding window rather than a fixed one: a fixed window lets twice the limit
-    through across a boundary, which on a five-per-ten-minutes ceiling is the
-    difference between a nuisance and a flood.
-    """
-
-    def __init__(self, limit: int, window: float):
-        self.limit = limit
-        self.window = window
-        self._hits: dict[str, list[float]] = {}
-        self._lock = threading.Lock()
-
-    def allow(self, key: str, now: float | None = None) -> tuple[bool, int]:
-        """(allowed, seconds until the next attempt could succeed)."""
-        now = time.monotonic() if now is None else now
-        cutoff = now - self.window
-        with self._lock:
-            self._forget_expired(cutoff)
-            hits = [t for t in self._hits.get(key, ()) if t > cutoff]
-            if len(hits) >= self.limit:
-                self._hits[key] = hits
-                return False, max(1, int(hits[0] - cutoff) + 1)
-            hits.append(now)
-            self._hits[key] = hits
-            self._evict_if_crowded()
-            return True, 0
-
-    def _forget_expired(self, cutoff: float) -> None:
-        for key in [k for k, v in self._hits.items() if not v or v[-1] <= cutoff]:
-            del self._hits[key]
-
-    def _evict_if_crowded(self) -> None:
-        """Keep the table bounded once expiry alone has not done it.
-
-        Evicting the least recently seen key is a concession, not a defence: an
-        attacker with MAX_TRACKED_ADDRESSES spare addresses can flush their own
-        entry out. That attacker already has enough addresses to sit under a
-        per-address ceiling anyway, so the trade is a bounded table against a
-        limit that was not going to hold in that case regardless. The ceilings on
-        comments per build and in total are what still hold there.
-        """
-        excess = len(self._hits) - MAX_TRACKED_ADDRESSES
-        if excess <= 0:
-            return
-        oldest = sorted(self._hits, key=lambda k: self._hits[k][-1])[:excess]
-        for key in oldest:
-            del self._hits[key]
 
 
 # -- validation of the JSON half of a comment -------------------------------
@@ -359,25 +235,21 @@ def validate_payload(raw, max_text_chars: int) -> dict:
 class CommentStore:
     """Everything under <data>/comments.
 
-    One instance per process, like Store. The per-build and total counts are kept
-    in memory and rebuilt by one scan at startup: a POST must not have to read
-    every comment on the volume to find out whether it is allowed, and this
-    service is a single process, so a shared counter is the whole of it.
+    One instance per process, like Store. NOTHING IS COUNTED HERE. There used to
+    be a per-build tally and a global one, kept in memory and rebuilt by a scan
+    at startup so a POST would not have to read the volume to find out whether it
+    was allowed; both ceilings are gone (SPEC 7A.4), so the counters that served
+    them are gone with them and a comment is written without consulting the ones
+    already there.
     """
 
-    def __init__(self, data_dir, max_per_build: int, max_total: int,
-                 max_text_chars: int, max_photo_bytes: int):
+    def __init__(self, data_dir, max_text_chars: int, max_photo_bytes: int):
         self.root = Path(data_dir).resolve() / "comments"
-        self.max_per_build = max_per_build
-        self.max_total = max_total
         self.max_text_chars = max_text_chars
         self.max_photo_bytes = max_photo_bytes
         self._lock = threading.Lock()
-        self._per_build: dict[tuple, int] = {}
-        self._total = 0
         self.root.mkdir(parents=True, exist_ok=True)
         self._sweep_leftovers()
-        self._recount()
 
     # -- startup bookkeeping ------------------------------------------------
     def _sweep_leftovers(self) -> None:
@@ -393,14 +265,6 @@ class CommentStore:
                 logger.warning(f"could not sweep leftover {path}: {error}")
                 continue
             logger.info(f"swept leftover {path}")
-
-    def _recount(self) -> None:
-        self._per_build = {}
-        self._total = 0
-        for record in self._read_all():
-            self._per_build[(record["pid"], record["commit"])] = (
-                self._per_build.get((record["pid"], record["commit"]), 0) + 1)
-            self._total += 1
 
     # -- reading ------------------------------------------------------------
     def _read_all(self) -> list:
@@ -500,17 +364,10 @@ class CommentStore:
         }
 
         with self._lock:
-            # Counted under the same lock that writes, so two simultaneous posts
-            # cannot both read "one below the ceiling" and both land.
-            if self._total >= self.max_total:
-                raise CommentError(
-                    429, f"the queue is full ({self.max_total} comments)")
-            key = (pid, commit)
-            if self._per_build.get(key, 0) >= self.max_per_build:
-                raise CommentError(
-                    429,
-                    f"this build already has {self.max_per_build} comments")
-
+            # The lock no longer guards a counter — nothing counts comments any
+            # more (SPEC 7A.4). It guards the write itself against `resolve` and
+            # `remove_project` running on another request thread at the same
+            # moment, which is a reason of its own and outlives the ceilings.
             directory = self.root / pid
             directory.mkdir(parents=True, exist_ok=True)
             written = []
@@ -533,8 +390,6 @@ class CommentStore:
                     except OSError:
                         pass
                 raise
-            self._per_build[key] = self._per_build.get(key, 0) + 1
-            self._total += 1
         logger.info(
             f"comment {cid} on {pid}/{commit}: {len(payload['text'])} chars, "
             f"attachments {sorted(stored) or 'none'}")
@@ -555,9 +410,7 @@ class CommentStore:
         handed work about a project nobody can open.
 
         The id is checked before it is joined onto the root — nothing that could
-        describe a path may reach `rmtree` — and the counters are rebuilt from
-        the volume afterwards rather than decremented, because they are a
-        property of the SET of records and the set has just changed.
+        describe a path may reach `rmtree`.
         """
         if not SAFE_ID.match(pid or ""):
             return 0
@@ -567,7 +420,6 @@ class CommentStore:
                 return 0
             gone = sum(1 for _ in directory.glob("*.json"))
             shutil.rmtree(directory)
-            self._recount()
         logger.info(f"removed the comment queue of {pid}: {gone} comments")
         return gone
 

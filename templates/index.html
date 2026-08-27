@@ -1,13 +1,21 @@
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>hammerola</title><link rel="stylesheet" href="/_v/site.css">
+<title>hammerola</title>
+<!-- No stylesheet link, and that is the second page to lose one. This page used
+     to be drawn by a script of its own (static/_v/index.js) over the chrome in
+     site.css -- #bar, #grid, .card, #err -- and both are gone: the interface
+     draws the header, the cards and the error box itself, in the same bundle
+     that draws the build page, so the two finally look like one site. Only
+     pointer.html still links site.css; it still has that chrome.
+
+     The library's own stylesheet is not linked either. That one belongs to the
+     3D viewport, which this page does not mount. -->
 </head><body>
-<div id="bar"><b>hammerola</b>
-  <span class="meta" id="count"></span><span class="spacer"></span>
-  <span class="meta">push the source &rarr; CadQuery &rarr; static snapshot</span>
-</div>
-<div id="grid"></div>
-<pre id="err"></pre>
-<script type="module" src="/_v/index.js"></script>
+<!-- The whole page. The bundle looks this id up and does nothing at all when it
+     is absent, which is what keeps pointer.html unaffected by it; build.html
+     carries a different one (#hmr_root), and WHICH id a document has is how one
+     bundle tells the two pages apart -- see ui/src/main.jsx. -->
+<div id="hmr_index"></div>
+<script type="module" src="/_v/hammerola.js"></script>
 </body></html>

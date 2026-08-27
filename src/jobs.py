@@ -46,7 +46,7 @@ WRITABLE BY EVERY BUILD — `src/buildproc/__init__.py` says so in as many words
 and SPEC 8A.4 explains why no boundary is available from inside this container.
 So a model can overwrite another job's `log.txt`, read one off the volume
 without an id and without a token, and create job directories of its own that
-the next start reads through. What the unguessable id and PUBLISH_TOKEN separate is
+the next start reads through. What the unguessable id and EDIT_TOKEN separate is
 one PUSHER from another OVER HTTP; neither is a boundary on the volume, and this
 module cannot make one.
 
@@ -155,7 +155,7 @@ KNOWN_STATES = frozenset((STATE_QUEUED, STATE_BUILDING, STATE_DONE, STATE_FAILED
 # 16 bytes from `secrets`, base64url-encoded: 22 characters out of the alphabet
 # below. UNGUESSABLE rather than sequential, because the id is the only thing
 # guarding a job — the status and the log are readable by anyone holding
-# PUBLISH_TOKEN, and a counter would let one pusher walk every other project's
+# EDIT_TOKEN, and a counter would let one pusher walk every other project's
 # build logs by subtracting one.
 JOB_ID_BYTES = 16
 SAFE_JOB_ID = re.compile(r"\A[A-Za-z0-9_-]{22}\Z")

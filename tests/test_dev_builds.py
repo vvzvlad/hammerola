@@ -12,8 +12,11 @@ overwrites it. Four claims carry it and all four are tested here:
   * the slot is served `no-cache`, on the page and on every file under it. That
     is the whole licence to rewrite a URL in place, and the commit route's year
     of `immutable` is never allowed anywhere near it;
-  * `latest` does not move and `/index.json` says nothing. Those are the public
-    surfaces and they go on meaning "the project as of some commit";
+  * `latest` does not move, and the site index gains no CARD for the project.
+    Those are the shared surfaces and they go on meaning "the project as of some
+    commit". The index file is rewritten by a local push — a card carries a
+    `dev` chip saying the slot is occupied — but a project with no commit build
+    still has no card at all;
   * a push is still atomic: the tree is unpacked out of sight and swapped in.
 """
 
@@ -159,16 +162,22 @@ def test_local_builds_stay_out_of_the_public_index(hub):
     same broken promise as a moved `latest`, in the one place everybody looks.
     """
     hub.publish_dev("proj1", _build("d1", "2026-08-09T00:00:00Z"))
-    # Read over HTTP, which is the only thing that matters and is also the
-    # honest check: a local push does not touch the index file at all now, and
-    # the endpoint answers `[]` for a hub that has never had a commit pushed.
-    assert hub.get("/index.json").json() == []
+    # Read over HTTP, which is the only thing that matters. A local push DOES
+    # rewrite the index now — that is how the `dev` chip on a card appears — so
+    # this is a claim about the CARDS and not about the file being untouched: a
+    # project whose only build is a local one gets none.
+    assert hub.index().json() == []
 
     hub.publish("proj1", "abc123", _build("c1", "2026-08-01T00:00:00Z"))
-    assert [c["commit"] for c in hub.get("/index.json").json()] == ["abc123"]
+    cards = hub.index().json()
+    assert [c["commit"] for c in cards] == ["abc123"]
+    # ...and now that there is a card, it says the slot is occupied without
+    # letting the slot describe the project: the commit on the card is the
+    # commit, never `dev`.
+    assert cards[0]["dev"] is True
     # And a later local push does not slip into the card that is now there.
     hub.publish_dev("proj1", _build("d2", "2026-08-10T00:00:00Z"))
-    assert [c["commit"] for c in hub.get("/index.json").json()] == ["abc123"]
+    assert [c["commit"] for c in hub.index().json()] == ["abc123"]
 
 
 def test_a_project_with_only_a_local_build_has_no_latest(hub):

@@ -4,7 +4,8 @@ Three things are generated here and nothing else writes them:
 
   * the normalized `meta.json` that the viewer fetches for one build,
   * `builds.json`, the per-project build picker,
-  * the root `index.json` that feeds the public index page.
+  * the root `index.json` that feeds the front page (behind EDIT_TOKEN — see
+    `_serve_index_json` in src/app.py for where the line runs and why).
 
 Page HTML is not templated in any interesting sense: both pages are static and get
 everything they show from JSON at runtime, which is exactly why one copy of the
@@ -463,8 +464,28 @@ def builds_json(pid: str, metas: list[dict], dev: bool = False,
     }
 
 
-def index_card(meta: dict) -> dict:
-    """One project's card on the public index, built from its newest build."""
+def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
+    """One project's card on the public index.
+
+    Built from its NEWEST commit build, plus two facts that belong to the project
+    rather than to any single build and are therefore passed in by the caller
+    (`Store._refresh_index`, which is already holding both).
+
+    `dev` is whether the local slot is occupied. The card still describes the
+    newest COMMIT and never the slot — that is SPEC 7.6 and the front page is
+    exactly where it matters — but "there is uncommitted work in this project"
+    is a different statement from "this is what the project looks like", and only
+    the second one is a promise about the link.
+
+    `first_built` is the honest answer to a question the hub cannot answer. It
+    does not know when a project was CREATED: `hammerola create` mints an id in
+    the author's own directory and nothing reaches this side until the first
+    push, so the earliest moment on record is a build. The card therefore carries
+    the OLDEST build still here and the page labels it as that rather than as a
+    creation date. It is a stable answer and not a drifting one only because
+    there is no retention (SPEC 5.3): builds are never swept, so the oldest one
+    stays the oldest.
+    """
     total_gzip = sum(v["gzip"] for v in meta["variants"])
     return {
         "pid": meta["pid"],
@@ -472,6 +493,8 @@ def index_card(meta: dict) -> dict:
         "title": meta["title"],
         "commit": meta["commit"],
         "built": meta["built"],
+        "first_built": first_built,
+        "dev": bool(dev),
         "parts": max(v["parts"] for v in meta["variants"]),
         "variants": len(meta["variants"]),
         "mb": f"{total_gzip / 1e6:.1f}",

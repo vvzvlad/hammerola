@@ -7,14 +7,16 @@ fixture. That matters more here than anywhere else in this suite: the text comes
 from a stranger's keyboard (SPEC 7A.4), and the reason it is safe to print is
 that the hub already refused everything that would not be.
 
-WHY THE HUB IN MOST OF THESE IS BUILT WITH `comment_read_token=TOKEN`. The
-client keeps ONE secret for the whole system (SPEC §8 entry 26, decided
-2026-08-27), and the hub still has two variables until step 0 of the plan
-removes the second, so a deployment sets both to the same value. That is the
-configuration these tests run in. The one test that does NOT — the last one —
-pins the state of the world today: with the two variables set differently, the
-queue refuses the token and the message has to name the variable, because
-nothing else on the machine tells the reader which of the two is wrong.
+ONE SECRET, ON BOTH SIDES. The client always kept one (SPEC §8 entry 26,
+decided 2026-08-27); the hub caught up in step 0 of the plan, so the queue and
+the push now check the same `EDIT_TOKEN`. Two things went away with the second
+variable and are named here so they are not restored: `hub_factory` no longer
+needs `comment_read_token=TOKEN` to make these tests representative, and the
+last test in this file — `test_a_hub_still_running_two_secrets_names_the_second_one`
+— was DELETED along with the sentence in `src/client/hub.py` that it checked.
+That sentence existed for a 401 that did not mean "wrong token" but "this
+deployment set its second variable to something else", and there is no second
+variable to set.
 """
 
 import pytest
@@ -27,10 +29,10 @@ from src.client.cli import main
 @pytest.fixture
 def hub(hub_factory, monkeypatch):
     """A hub running the way SPEC §8 entry 26 says a deployment runs: one
-    secret, spelled into both of the hub's variables."""
-    instance = hub_factory(comment_read_token=TOKEN)
+    secret, and one variable to put it in."""
+    instance = hub_factory()
     monkeypatch.setenv("HUB_URL", instance.url)
-    monkeypatch.setenv("PUBLISH_TOKEN", TOKEN)
+    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
     return instance
 
 
@@ -194,34 +196,14 @@ def test_an_id_the_hub_does_not_have_is_a_clean_failure(hub, model, capsys):
 # -- failures ----------------------------------------------------------------
 def test_an_unreachable_hub_is_a_clean_failure(model, monkeypatch, capsys):
     monkeypatch.setenv("HUB_URL", "http://127.0.0.1:1")
-    monkeypatch.setenv("PUBLISH_TOKEN", TOKEN)
+    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
     assert run(model, "comments") == 1
     assert "cannot reach" in capsys.readouterr().err
 
 
 def test_a_machine_that_has_not_logged_in_is_told_to(hub, model, monkeypatch,
                                                      capsys):
-    monkeypatch.delenv("PUBLISH_TOKEN", raising=False)
+    monkeypatch.delenv("EDIT_TOKEN", raising=False)
     assert run(model, "comments") == 1
     assert "hammerola login" in capsys.readouterr().err
 
-
-def test_a_hub_still_running_two_secrets_names_the_second_one(
-        hub_factory, model, monkeypatch, capsys):
-    """TODAY'S STATE OF THE WORLD, pinned so it is not discovered in the dark:
-    the hub checks COMMENT_READ_TOKEN on this route and PUBLISH_TOKEN on the
-    push, and a deployment that has not set them to the same value refuses a
-    token that publishes perfectly well. Nothing on the machine says which of
-    the two variables is wrong except this message.
-
-    Delete this test — and the sentence it checks — when step 0 of the plan
-    merges the two on the hub.
-    """
-    split = hub_factory(comment_read_token="a-different-secret")
-    monkeypatch.setenv("HUB_URL", split.url)
-    monkeypatch.setenv("PUBLISH_TOKEN", TOKEN)
-
-    assert run(model, "comments") == 1
-    error = capsys.readouterr().err
-    assert "COMMENT_READ_TOKEN" in error
-    assert "401" in error

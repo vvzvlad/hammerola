@@ -1,10 +1,11 @@
-// Everything this page remembers in the browser, and nothing else.
+// Everything these pages remember in the browser, and nothing else.
 //
 // Three things are kept, all under the `hammerola.` prefix the rest of the site
 // already uses — `hammerola.pointing_device`, the viewport's own answer
-// (viewport/options.js) — and all keyed BY PROJECT for the reason
+// (viewport/options.js). Two of them are keyed BY PROJECT for the reason
 // pointer_pref.js gives about its own key: somebody editing one model and merely
-// looking at another must not have the two answers collide.
+// looking at another must not have the two answers collide. The token is the one
+// that is not, and the section below says why that changed.
 //
 // EVERY access goes through the two functions at the top. `localStorage` is not
 // a property that is always there — a private window, a browser set to block
@@ -40,29 +41,35 @@ function write(key, value) {
 // -- the token --------------------------------------------------------------
 // What separates the customer from the viewer (brief, "Что разделяет заказчика
 // и зрителя"). The person types it in; having it opens edits and comments, not
-// having it leaves the interface to look with. It is a KEY that can be revoked,
-// not an account, so it is stored where a key belongs: in this browser, for this
-// project, removable in one click.
+// having it leaves the interface to look with.
 //
-// Note what is NOT here: no verification. The endpoint that would check it does
-// not exist yet — the hub's comment write is still public and its read is behind
-// COMMENT_READ_TOKEN, which is the AGENT's secret and shared across every
-// project's queue, so it can never travel to a browser. Step 0 of the plan is
-// what decides the shape of the human token. Until then this stores what was
-// typed and sends it on the one write that exists; the interface says as much
-// rather than implying the hub agreed to anything.
+// ONE KEY FOR THE WHOLE SITE, and that is a fact about the hub rather than a
+// preference expressed here. Step 0 collapsed the hub's two secrets into a
+// single `EDIT_TOKEN` (SPEC 8, entry 26), so there is exactly one string a
+// person can be holding, and the same value is what `hammerola login` stores on
+// a laptop. This file used to key it per project — written while the shape of
+// the human token was still undecided and deferred to step 0 — and that had two
+// costs the moment step 0 answered: it stored N copies of one string, and it
+// made a front page with a sign-in unwritable, because `/` names no project and
+// so had no key to read or write. It is still a KEY rather than an account: not
+// tied to a person, revoked by changing it on the hub, removable here in one
+// click.
+//
+// Verification is not done here and could not be: the only thing that can say
+// whether a token is good is the hub. The front page writes this key only after
+// `loadIndex` has answered with a list, and clears it when that answers 401
+// (HammerolaEntry.open). This module's whole job is remembering.
 
-const tokenKey = (pid) => `${NS}token.${pid}`;
+const TOKEN_KEY = `${NS}token`;
 
-export const readToken = (pid) => (pid ? read(tokenKey(pid)) : null) || null;
+export const readToken = () => read(TOKEN_KEY) || null;
 
-export function writeToken(pid, value) {
-  if (!pid) return;
+export function writeToken(value) {
   const trimmed = String(value || '').trim();
-  write(tokenKey(pid), trimmed || null);
+  write(TOKEN_KEY, trimmed || null);
 }
 
-export const clearToken = (pid) => write(tokenKey(pid), null);
+export const clearToken = () => write(TOKEN_KEY, null);
 
 // -- notes ------------------------------------------------------------------
 // A note is a PROPERTY OF A PART and belongs to the project, not to a build and

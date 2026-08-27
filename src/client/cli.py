@@ -79,7 +79,7 @@ import sys
 from src.client import (admin, artifacts, config, gitsuggest, project, queue,
                         revdiff, setup, sources, status)
 from src.client.errors import ClientError
-from src.client.hub import JOB_TIMEOUT, UNAUTHORIZED_PUSH, Hub, HubError
+from src.client.hub import JOB_TIMEOUT, UNAUTHORIZED, Hub, HubError
 from src.client.limits import DEV_SLOT
 from src.client.pack import PackError, pack
 
@@ -255,7 +255,7 @@ def _publish(args) -> int:
     # never going to be able to send. AGENTS.md: the address of our own service
     # has no default.
     hub_url = config.hub_url(root)
-    token = config.publish_token(root)
+    token = config.edit_token(root)
 
     pid = project.read_project_id(root)
     # `dev` for the slot, and NOTHING for a revision: the absence of a last path
@@ -300,7 +300,7 @@ def _publish(args) -> int:
         # Named rather than shown as one more refusal code: it is the only one
         # of them the person running this can fix in ten seconds, and the fix is
         # a different command.
-        return _fail(UNAUTHORIZED_PUSH)
+        return _fail(UNAUTHORIZED)
 
     if code != 202:
         return _fail(f"the hub refused the push with HTTP {code}: "

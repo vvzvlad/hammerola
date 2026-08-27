@@ -71,12 +71,13 @@ the site is for — and the code that produced it is not (SPEC 8, entry 17). One
 verb with a flag would put the two behind one word and make the difference a
 matter of remembering.
 
-THE TOKEN THE LAST TWO CHECK IS NOT THE ONE THE PUSH ROUTES CHECK — not yet.
-The hub still has two variables, PUBLISH_TOKEN and COMMENT_READ_TOKEN, and this
-client has one secret by decision (SPEC §8 entry 26, and `config.py`), so a
-deployment sets both to the same value until step 0 of the plan removes the
-second. `UNAUTHORIZED_QUEUE` below is the sentence that says so when it has not
-been done, because the bare 401 sends the reader looking at the wrong thing.
+EVERY ROUTE HERE CHECKS THE SAME SECRET, `EDIT_TOKEN` — one for the whole
+system (SPEC §8 entry 26), on both sides since step 0 of the plan. There used to
+be a second sentence in this file, `UNAUTHORIZED_QUEUE`, for the one 401 that
+did NOT mean "wrong token": the hub checked `COMMENT_READ_TOKEN` on the queue
+and `PUBLISH_TOKEN` on a push, so a deployment that set them differently gave a
+client that published fine and answered 401 on `hammerola comments`. There is
+one variable now, so there is one message.
 
 A 4xx is returned to the caller rather than raised: 200, 202, 409 and 422 are
 all meaningful answers to a push and the caller is the one that knows what to do
@@ -127,24 +128,15 @@ TERMINAL_STATES = ("done", "failed")
 # publishing from inside a corporate network actually needs.
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
 
-# What a 401 from the push routes means. Short, because there is exactly one
-# thing to do about it.
-UNAUTHORIZED_PUSH = (
+# What a 401 means, on any route. ONE sentence for all of them, because there
+# is one secret and therefore exactly one thing to do about it. Do not grow a
+# per-route variant: the only reason the old one existed was that a 401 on the
+# queue could also mean "the deployment set its SECOND variable to something
+# else", and that variable is gone.
+UNAUTHORIZED = (
     "the hub refused the token (HTTP 401).\n"
-    "  Run `hammerola login` to store the right one, or check PUBLISH_TOKEN in "
+    "  Run `hammerola login` to store the right one, or check EDIT_TOKEN in "
     "the environment.")
-
-# What a 401 from the COMMENT routes means, which is the same thing plus one
-# deployment detail the reader cannot guess: the hub has a second variable for
-# this route until step 0 of the plan (AGENTS.md) removes it, so a token that
-# pushes fine can still be refused here.
-UNAUTHORIZED_QUEUE = (
-    "the hub refused the token on the comment queue (HTTP 401).\n"
-    "  This client keeps ONE secret for the whole system, but the hub still "
-    "checks a\n"
-    "  separate COMMENT_READ_TOKEN on this route. Until step 0 of the plan "
-    "merges the\n"
-    "  two, the deployment has to set both hub variables to the same value.")
 
 # An id no job can have. `JobStore.create` names a job with
 # `secrets.token_urlsafe(16)`, so this matches the alphabet and the length the
@@ -366,7 +358,7 @@ class Hub:
         to name all of them rather than guess at one.
         """
         if code == 401:
-            raise HubError(UNAUTHORIZED_PUSH)
+            raise HubError(UNAUTHORIZED)
         if code == 404:
             raise HubError(
                 f"the hub has no stored code for revision {revision}.\n"
@@ -407,7 +399,7 @@ class Hub:
     def _project_reply(self, code: int, raw: bytes, pid: str,
                        verb: str) -> dict:
         if code == 401:
-            raise HubError(UNAUTHORIZED_PUSH)
+            raise HubError(UNAUTHORIZED)
         if code == 404:
             raise HubError(
                 f"the hub has no project {pid}.\n"
@@ -436,7 +428,7 @@ class Hub:
         code, raw = self._call(
             f"/api/v1/comments?{urllib.parse.urlencode(query)}")
         if code == 401:
-            raise HubError(UNAUTHORIZED_QUEUE)
+            raise HubError(UNAUTHORIZED)
         if code != 200:
             raise HubError(
                 f"the hub answered HTTP {code} for the comment queue: "
@@ -460,7 +452,7 @@ class Hub:
             f"/api/v1/comments/{urllib.parse.quote(cid)}/resolve",
             method="POST", body=body, content_type="application/json")
         if code == 401:
-            raise HubError(UNAUTHORIZED_QUEUE)
+            raise HubError(UNAUTHORIZED)
         if code == 404:
             raise HubError(
                 f"the hub has no comment {cid}.\n"

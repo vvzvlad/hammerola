@@ -32,7 +32,7 @@ TOKEN_PROMPT = "hub password (not echoed): "
 
 # Column the two settings line up in when they are reported back — the longer
 # variable name plus a space.
-_LABEL = len(config.PUBLISH_TOKEN_VAR) + 1
+_LABEL = len(config.EDIT_TOKEN_VAR) + 1
 
 # Said after a successful login when the environment ALSO carries one of these.
 # It is the one way a correct login still leads to the wrong hub: `resolve`
@@ -68,7 +68,7 @@ def login(args) -> int:
 
     path = config.write_settings({
         config.HUB_URL_VAR: url,
-        config.PUBLISH_TOKEN_VAR: token,
+        config.EDIT_TOKEN_VAR: token,
     })
 
     print(f"saved to {config.display_path(path)} (mode 0600)")
@@ -76,9 +76,9 @@ def login(args) -> int:
     # The LENGTH and nothing else. It is enough to tell "I pasted the wrong
     # thing" from "I pasted nothing", which is all anybody ever needs from it,
     # and the value itself must not reach a scrollback (see `config.py`).
-    print(f"  {config.PUBLISH_TOKEN_VAR:<{_LABEL}}stored, {len(token)} "
+    print(f"  {config.EDIT_TOKEN_VAR:<{_LABEL}}stored, {len(token)} "
           f"characters")
-    for name in (config.HUB_URL_VAR, config.PUBLISH_TOKEN_VAR):
+    for name in (config.HUB_URL_VAR, config.EDIT_TOKEN_VAR):
         if os.environ.get(name, "").strip():
             print(SHADOWED.format(name=name))
     return 0
@@ -116,7 +116,7 @@ def _password() -> str:
     # value with a line break in it cannot be stored AND cannot be sent as an
     # `Authorization` header, so checking it late would mean the run fails
     # somewhere inside urllib instead of at the question that produced it.
-    config.check_storable(config.PUBLISH_TOKEN_VAR, token)
+    config.check_storable(config.EDIT_TOKEN_VAR, token)
     return token
 
 
@@ -125,7 +125,7 @@ _NOTHING_TO_READ = (
     "nothing to read.\n"
     "  On a machine being set up by a script, pass the two values in the "
     "environment for\n"
-    "  one run instead: `HUB_URL=... PUBLISH_TOKEN=... hammerola status`.")
+    "  one run instead: `HUB_URL=... EDIT_TOKEN=... hammerola status`.")
 
 
 def _ask(prompt: str, default=None) -> str:

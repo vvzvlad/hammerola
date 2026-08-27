@@ -128,17 +128,24 @@ GUARD_FRAGMENT = "Missing required variable(s)"
 # it: SCREAMING_CASE, i.e. the name of the ENVIRONMENT VARIABLE an operator has to set, not the
 # lowercase field name pydantic reports internally.
 #
-# A LIST rather than one name, and check (b) below casts one verdict per entry, because the
-# thing being proved is not "the guard mentioned a variable" — it is that whoever redeploys the
-# stack is told about EACH key they dropped. config_errors.py collects all of them and prints
-# them together, so a guard that regressed to naming only the first one would still satisfy a
-# check that looked for a single name, and the operator would fix PUBLISH_TOKEN, redeploy, and
-# meet the identical failure again over COMMENT_READ_TOKEN. Two variables is exactly where that
-# regression becomes possible and invisible at the same time.
+# ONE ENTRY SINCE STEP 0, AND THAT COST THE GATE SOMETHING — said here rather than left to be
+# rediscovered, because the count below moved with it and a shrinking gate is exactly what the
+# verdict counter exists to make deliberate. This list used to hold PUBLISH_TOKEN and
+# COMMENT_READ_TOKEN, and check (b) casting one verdict PER ENTRY proved something a single
+# name cannot: that the guard names EVERY key an operator dropped, not just the first. A
+# regression to `[0]` or `next(...)` in config_errors.py would have failed the second row.
+# With one credential in the whole system (SPEC §8 entry 26) there is no second row to fail,
+# so that property is no longer covered HERE. It is covered by tests/test_config_errors.py,
+# which can hand the guard a settings class with several missing fields; this gate cannot,
+# because it only ever runs the real image with the real Settings.
+#
+# A LIST STILL, for the day a second no-default field appears: adding it here restores the
+# property in the same edit, and the declared count below follows automatically because it is
+# written as an expression over this list rather than as a number.
 #
 # Keep this in step with the no-default fields in src/settings.py: a credential added there
 # without a line here is a key the gate never proves the guard names.
-REQUIRED_VARIABLES = ["PUBLISH_TOKEN", "COMMENT_READ_TOKEN"]
+REQUIRED_VARIABLES = ["EDIT_TOKEN"]
 
 # Paths that must NOT be inside the image. Every one of them is excluded by .dockerignore, and
 # today the Dockerfile also copies its files one by one rather than with a blanket `COPY . .`
@@ -201,8 +208,8 @@ REQUIRED_PATHS = [
     #
     # That per-file form is what this row is paired with, and the pairing is the point. A
     # `COPY --from=ui /ui/dist static/_v` would MERGE the build output into a directory that
-    # already holds committed assets, so a chunk that vite happened to name `index.js` would
-    # silently replace the hub's own `index.js` — and this check would stay green, because the
+    # already holds committed assets, so a chunk that vite happened to name `pointer.js` would
+    # silently replace the hub's own `pointer.js` — and this check would stay green, because the
     # path it names would still exist. Copying by name makes that impossible: nothing the build
     # emits reaches the image unless a COPY line asks for it. The two failure modes left are both
     # loud or covered — a file listed here but no longer produced fails the BUILD, at the COPY
@@ -433,18 +440,13 @@ EXPECTED_TARGETS = (
 
 # The environment the probe and real-command containers run with. The value is invented here
 # and reaches nothing: this gate has to be runnable on a pull request, where the deployment's
-# real token does not exist and should not. PUBLISH_TOKEN is a shared secret compared for
+# real token does not exist and should not. EDIT_TOKEN is a shared secret compared for
 # equality against the `Authorization: Bearer` header, so it has no format to satisfy and any
 # non-empty string starts the image. If a future variable here DOES get format-validated at
 # construction time, give it a value of the right shape — otherwise startup fails for a reason
 # that has nothing to do with the image this gate is meant to be judging.
 SMOKE_ENV = [
-    "PUBLISH_TOKEN=fake-smoke-token-not-real-0123456789abc",
-    # The second credential, and the same reasoning applies to it: it guards
-    # reading the comment queue (SPEC 7A.2), the hub only ever compares it, and
-    # without it the container declines to start — which would make check (e)
-    # fail for a reason that has nothing to do with the image.
-    "COMMENT_READ_TOKEN=fake-smoke-comment-read-token-not-real",
+    "EDIT_TOKEN=fake-smoke-token-not-real-0123456789abc",
 ]
 
 # The command the probe container runs INSTEAD of the image's own. It still goes through
@@ -462,9 +464,9 @@ SMOKE_ENV = [
 IDLE_COMMAND = ["sleep", "900"]
 
 # The first line `main.py` logs. Its presence proves the settings parsed — i.e. every required
-# variable arrived (both of them: PUBLISH_TOKEN and COMMENT_READ_TOKEN, the two SMOKE_ENV
-# supplies) and validation was satisfied — and that logging was configured at the declared
-# LOG_LEVEL. RENAME THIS TOGETHER WITH main.py when the template is copied.
+# variable arrived (EDIT_TOKEN, the one SMOKE_ENV supplies) and validation was satisfied — and
+# that logging was configured at the declared LOG_LEVEL. RENAME THIS TOGETHER WITH main.py
+# when the template is copied.
 STARTUP_MARKER = "Starting hammerola"
 # The markers check (e) waits for, in the order main.py emits them. There is only one today,
 # and the poll below still waits for the WHOLE list rather than for the first entry. That is
@@ -760,14 +762,14 @@ def check_required_variable_guard(image, name):
       * the NAME of the variable, which is the difference between a five-second fix and
         reading the source of a container that will not start.
 
-    That second bullet is ONE ROW PER VARIABLE rather than one row for the set, and with two
-    credentials that is no longer a formality. config_errors.py collects every missing key and
-    prints them together; a regression to naming only the first — a `[0]`, a `next(...)`, a
-    loop rewritten as a lookup — would still satisfy a check that searched the output for a
-    single name, and the operator would then set PUBLISH_TOKEN, redeploy, and meet the exact
-    same failure again over COMMENT_READ_TOKEN, one round trip per variable. Asking about each
-    one separately is also what makes the failure readable: the row names the key the guard
-    stopped mentioning.
+    That second bullet is ONE ROW PER VARIABLE rather than one row for the set, and with one
+    credential in the system that is a formality TODAY — honestly so, and REQUIRED_VARIABLES
+    says what was lost when the second one went away. The shape is kept because it is what
+    restores the property in a single edit: config_errors.py collects every missing key and
+    prints them together, and a regression to naming only the first — a `[0]`, a `next(...)`,
+    a loop rewritten as a lookup — is invisible to a check that searches the output for one
+    name. The row-per-variable form is also what makes a failure readable: the row names the
+    key the guard stopped mentioning.
 
     With `restart: always` in production the container gets restarted either way, so that
     message is the ONLY signal that separates "somebody dropped a variable" from an image that

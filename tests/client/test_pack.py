@@ -52,7 +52,7 @@ def test_hidden_entries_are_dropped_rather_than_refused(tmp_path):
     (root / ".venv").mkdir()
     (root / ".venv" / "pyvenv.cfg").write_text("home = /usr\n")
     (root / ".gitignore").write_text("_out/\n")
-    (root / ".env").write_text("PUBLISH_TOKEN=super-secret\n")
+    (root / ".env").write_text("EDIT_TOKEN=super-secret\n")
     (root / ".DS_Store").write_bytes(b"\x00\x01")
     # An AppleDouble sidecar: what macOS `tar` adds beside a file carrying an
     # extended attribute, and the reason this tool never shells out to tar.

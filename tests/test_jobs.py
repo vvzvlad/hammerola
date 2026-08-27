@@ -30,8 +30,9 @@ from pathlib import Path
 
 import httpx
 import pytest
-from harness import (PublishReply, copying_builder, failing_builder, good_build,
-                     meta_bytes, start_hub, stop_hub, tar_gz, view_bytes)
+from harness import (TOKEN, PublishReply, copying_builder, failing_builder,
+                     good_build, meta_bytes, start_hub, stop_hub, tar_gz,
+                     view_bytes)
 from loguru import logger
 
 from src import jobs as jobs_module
@@ -48,8 +49,9 @@ from src import store as store_module
 from src.store import (BODY_PREFIX, JSON_TMP_PREFIX, LEFTOVER_PREFIXES,
                        SOURCE_PREFIX, PublishError, Store, utcnow_iso)
 
-TOKEN = "test-publish-token"
-READ_TOKEN = "test-comment-read-token"
+# TOKEN comes from the harness rather than being spelled again here: the hub
+# under test is built with that value, and a copy of it in this file was one
+# rename away from a suite that asserted 401 for the right reason by accident.
 
 
 def _leftovers(hub, pid):
@@ -335,10 +337,15 @@ def test_the_local_slot_goes_through_the_same_job(hub):
     # the slot route and having taken the commit one. The URL alone cannot tell
     # them apart — a commit build called `dev` would answer at the same address
     # — so what is checked is the machinery only `publish` runs: `latest` moves,
-    # the project gets an index card and the build appears in the picker's
+    # the project gets an index CARD and the build appears in the picker's
     # list. None of that may happen for the local slot (SPEC 7.6).
+    #
+    # The index is asserted on its CONTENT and not on the file's absence: a local
+    # push rewrites index.json now, because a card has to be able to say that a
+    # project's slot is occupied. What it may never do is put a card there, and
+    # this project has no commit build, so there is none.
     assert not (hub.project_dir("proj1") / "latest").exists()
-    assert not (hub.data / "index.json").exists()
+    assert json.loads((hub.data / "index.json").read_text()) == []
     picker = json.loads((hub.project_dir("proj1") / "builds.json").read_text())
     assert picker["builds"] == []
     assert picker["has_dev"] is True
@@ -689,7 +696,7 @@ def test_the_log_of_a_job_that_has_not_spoken_yet_is_empty_not_missing(gated_hub
 
 
 # -- who may look ------------------------------------------------------------
-def test_both_job_endpoints_need_the_publish_token(hub):
+def test_both_job_endpoints_need_the_edit_token(hub):
     job_id = hub.publish_async("proj1", "abc123", good_build()).json()["job"]
     hub.await_job(job_id)
 
@@ -697,9 +704,10 @@ def test_both_job_endpoints_need_the_publish_token(hub):
         assert hub.get(path).status_code == 401, path
         assert hub.get(path, headers={"Authorization": "Bearer nope"}
                        ).status_code == 401, path
-        # The comment-read token guards a different thing and must not be
-        # accepted here: the two go to different places and rotate separately.
-        assert hub.get(path, headers={"Authorization": f"Bearer {READ_TOKEN}"}
+        # A near miss, because equality is the whole check: one secret for the
+        # system means the only wrong token is a wrong string, and a prefix of
+        # the right one is the string a timing attack would be building.
+        assert hub.get(path, headers={"Authorization": f"Bearer {TOKEN[:-1]}"}
                        ).status_code == 401, path
         assert hub.get(path, headers={"Authorization": f"Bearer {TOKEN}"}
                        ).status_code == 200, path

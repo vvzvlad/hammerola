@@ -99,10 +99,12 @@ def hub_secrets(monkeypatch):
     implementation, including one that inherits `os.environ` whole.
     """
     secrets = {
-        "PUBLISH_TOKEN": "publish-token-must-not-leak-4a1f",
-        "COMMENT_READ_TOKEN": "comment-token-must-not-leak-9b2e",
+        # The one credential src/settings.py declares (SPEC §8 entry 26).
+        "EDIT_TOKEN": "edit-token-must-not-leak-4a1f",
         # Not ours, and that is the point: a filter is a list of names somebody
-        # maintains, and this is the variable nobody thought to add to it.
+        # maintains, and this is the variable nobody thought to add to it. It
+        # matters MORE now that the hub declares a single secret — with two, a
+        # filter that named both looked complete; with one, it looks trivial.
         "AWS_SECRET_ACCESS_KEY": "decoy-must-not-leak-c7d3",
     }
     for name, value in secrets.items():

@@ -1,4 +1,4 @@
-// ui/src/store.js — everything this page remembers in the browser: the token,
+// ui/src/store.js — everything these pages remember in the browser: the token,
 // the notes, and which pointer the reader was last on.
 //
 // THE STORAGE IS A DOUBLE, AND THE DOUBLE IS THE WHOLE TEST. There is no
@@ -22,7 +22,7 @@
 //     it guards against does not look like a failure: it looks like a passing
 //     suite.
 //
-// That matters most for the TOKEN. It is the one secret this page holds, and
+// That matters most for the TOKEN. It is the one secret these pages hold, and
 // "the token was silently not saved" is indistinguishable from "the token was
 // saved" to any test that does not look at the storage it was saved into.
 //
@@ -41,7 +41,7 @@ import {
 } from '../src/store.js'
 
 const POINTER_KEY = 'hammerola.pointer.proj1'
-const TOKEN_KEY = 'hammerola.token.proj1'
+const TOKEN_KEY = 'hammerola.token'
 const NOTES_KEY = 'hammerola.notes.proj1'
 
 /** The smallest thing store.js can tell from the real one, plus a way to fail. */
@@ -99,57 +99,53 @@ afterEach(() => {
 
 // -- the token ---------------------------------------------------------------
 // What separates the customer from the viewer: having it opens notes, moving a
-// part and comments. It is a key that can be revoked rather than an account, so
-// it lives in this browser, for this project, removable in one click.
+// part and writing a comment. ONE KEY FOR THE WHOLE SITE, because the hub has
+// one secret (EDIT_TOKEN) and the front page — which names no project — is a
+// place to enter it. It is a key that can be revoked rather than an account, so
+// it lives in this browser, removable in one click.
 
 describe('the token', () => {
-  it('is stored under the project\'s own key, and read back', () => {
-    writeToken('proj1', 'sekrit')
+  it('is stored under one site-wide key, and read back', () => {
+    writeToken('sekrit')
     expect(storage.getItem(TOKEN_KEY)).toBe('sekrit')
-    expect(readToken('proj1')).toBe('sekrit')
+    expect(readToken()).toBe('sekrit')
   })
 
-  it('keys by project, so a token for one model never opens another', () => {
-    writeToken('proj1', 'one')
-    writeToken('proj2', 'two')
-    expect(storage.getItem('hammerola.token.proj1')).toBe('one')
-    expect(storage.getItem('hammerola.token.proj2')).toBe('two')
-    expect(readToken('proj2')).toBe('two')
+  it('is not keyed by anything, so signing in once covers every project', () => {
+    // The property this replaced was the opposite one, and it was right while
+    // the shape of the human token was still undecided. It is checked in this
+    // direction now because the regression available is a per-project key coming
+    // back: the front page would then write a cell no project page ever reads,
+    // and signing in there would look like it worked and do nothing.
+    writeToken('sekrit')
+    expect([...storage.cells.keys()]).toEqual([TOKEN_KEY])
   })
 
   it('trims what was pasted', () => {
     // A token arrives by copy and paste, and a selection that took a trailing
     // newline with it would otherwise be sent to the hub as a different string.
-    writeToken('proj1', '  sekrit\n')
+    writeToken('  sekrit\n')
     expect(storage.getItem(TOKEN_KEY)).toBe('sekrit')
   })
 
   it('takes the key away for a blank value rather than storing an empty one', () => {
     // `readToken` reads '' as null anyway, so an empty cell would be a key that
     // says nothing and still shows up in a browser's storage inspector.
-    writeToken('proj1', 'sekrit')
-    writeToken('proj1', '   ')
+    writeToken('sekrit')
+    writeToken('   ')
     expect(storage.cells.has(TOKEN_KEY)).toBe(false)
-    expect(readToken('proj1')).toBeNull()
+    expect(readToken()).toBeNull()
   })
 
   it('is removed by clearToken, which is the "back to viewing" button', () => {
-    writeToken('proj1', 'sekrit')
-    clearToken('proj1')
+    writeToken('sekrit')
+    clearToken()
     expect(storage.cells.has(TOKEN_KEY)).toBe(false)
-    expect(readToken('proj1')).toBeNull()
+    expect(readToken()).toBeNull()
   })
 
-  it('reads null where nothing was stored, and where there is no project', () => {
-    expect(readToken('proj1')).toBeNull()
-    expect(readToken('')).toBeNull()
-    expect(readToken(null)).toBeNull()
-  })
-
-  it('writes nothing at all without a project to key it by', () => {
-    writeToken('', 'sekrit')
-    writeToken(null, 'sekrit')
-    expect(storage.cells.size).toBe(0)
+  it('reads null where nothing was stored', () => {
+    expect(readToken()).toBeNull()
   })
 
   it('survives a browser that refuses storage', () => {
@@ -158,8 +154,8 @@ describe('the token', () => {
     // down over a preference. The token is simply not remembered.
     install(fakeStorage({ failing: true }))
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    expect(() => writeToken('proj1', 'sekrit')).not.toThrow()
-    expect(readToken('proj1')).toBeNull()
+    expect(() => writeToken('sekrit')).not.toThrow()
+    expect(readToken()).toBeNull()
   })
 })
 

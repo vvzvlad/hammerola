@@ -1,4 +1,4 @@
-"""Where HUB_URL and PUBLISH_TOKEN come from, and what happens when they do not.
+"""Where HUB_URL and EDIT_TOKEN come from, and what happens when they do not.
 
 The load-bearing claim is the LAST one in this file: no default for the hub's
 address. It is a project rule (AGENTS.md) rather than a preference — a guessed
@@ -15,7 +15,7 @@ from src.client.config import (
     hub_url,
     machine_env_file,
     parse_env_file,
-    publish_token,
+    edit_token,
 )
 
 
@@ -38,11 +38,11 @@ def test_the_project_env_beats_the_machine_file(monkeypatch, tmp_path):
 
 def test_the_machine_file_is_the_last_resort(monkeypatch, tmp_path):
     machine = tmp_path / "machine-env"
-    machine.write_text("HUB_URL = https://machine.example/  \nPUBLISH_TOKEN='tok'\n")
+    machine.write_text("HUB_URL = https://machine.example/  \nEDIT_TOKEN='tok'\n")
     monkeypatch.setenv("HAMMEROLA_ENV_FILE", str(machine))
     # The trailing slash is removed: every caller appends a path to this.
     assert hub_url() == "https://machine.example"
-    assert publish_token() == "tok"
+    assert edit_token() == "tok"
 
 
 def test_an_empty_value_counts_as_absent(monkeypatch, tmp_path):
@@ -62,12 +62,12 @@ def test_the_env_file_parser_executes_nothing(tmp_path):
         "# a comment\n"
         "\n"
         "export HUB_URL=\"https://quoted.example\"\n"
-        "PUBLISH_TOKEN=$(echo pwned)\n"
+        "EDIT_TOKEN=$(echo pwned)\n"
         "not-an-assignment\n"
     )
     values = parse_env_file(path)
     assert values == {"HUB_URL": "https://quoted.example",
-                      "PUBLISH_TOKEN": "$(echo pwned)"}
+                      "EDIT_TOKEN": "$(echo pwned)"}
 
 
 def test_a_missing_hub_url_names_the_variable_and_the_file(monkeypatch, tmp_path):
@@ -85,8 +85,8 @@ def test_a_missing_hub_url_names_the_variable_and_the_file(monkeypatch, tmp_path
 def test_a_missing_token_names_the_variable(monkeypatch, tmp_path):
     monkeypatch.setenv("HAMMEROLA_ENV_FILE", str(tmp_path / "absent"))
     with pytest.raises(ConfigError) as caught:
-        publish_token()
-    assert "PUBLISH_TOKEN is not set" in str(caught.value)
+        edit_token()
+    assert "EDIT_TOKEN is not set" in str(caught.value)
 
 
 def test_there_is_no_default_hub_address(monkeypatch, tmp_path):

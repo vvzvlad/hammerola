@@ -44,7 +44,7 @@ def run(args) -> int:
     # so a machine that cannot answer "as whom" is a machine that has not been
     # set up — and being told that here, by a command somebody runs first, is
     # better than being told it by the first push.
-    hub = Hub(config.hub_url(root), config.publish_token(root),
+    hub = Hub(config.hub_url(root), config.edit_token(root),
               timeout=QUERY_TIMEOUT)
 
     title = project.read_project_title(root)

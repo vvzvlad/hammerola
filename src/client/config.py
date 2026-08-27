@@ -22,19 +22,21 @@ an unconfigured machine fails in a second instead of after a minute of work.
 
 THE TOKEN IS NEVER PRINTED. Not in an error, not in a banner, not in a
 traceback. Its length and where it was found are printable; its value is not —
-a publish token that reaches a terminal scrollback or a CI log is a publish
-token that has to be rotated. The same rule is why `pack.py` drops `.env` from
+an edit token that reaches a terminal scrollback or a CI log is an edit token
+that has to be rotated, and there is no smaller one to rotate: this is the whole
+system's secret. The same rule is why `pack.py` drops `.env` from
 the archive, why `login` reads it with `getpass` instead of taking it as an
 argument (a command line is in the shell's history and in every `ps` on the
 machine), and why the file it lands in is created 0600.
 
-ONE SECRET FOR THE WHOLE SYSTEM, decided 2026-08-27 (SPEC §8 entry 26): there is
-no second key here for the comment queue and there is not going to be one. The
-hub is still the half that has two variables — `PUBLISH_TOKEN` for pushes and
-`COMMENT_READ_TOKEN` for the queue — until step 0 of the plan merges them, so a
-deployment sets both to the same value and this file stores that value once.
-`hub.py` says the same thing from the other end, in the sentence it prints when
-the queue refuses the token.
+ONE SECRET FOR THE WHOLE SYSTEM, decided 2026-08-27 (SPEC §8 entry 26) and true
+on BOTH SIDES since step 0 of the plan: `EDIT_TOKEN` is the only credential this
+tool knows and the only one the hub declares. There is no second key for the
+comment queue, and there was one — the hub used to check `PUBLISH_TOKEN` on a
+push and `COMMENT_READ_TOKEN` on the queue, which meant a deployment could set
+them differently and get a client that published perfectly while `hammerola
+comments` answered 401. That failure mode is gone, along with the sentence
+`hub.py` used to print about it.
 
 Vaultwarden is deliberately NOT a fourth source. `cad_publish` shelled out to
 `rbw` here; `login` writes the file instead, and the note that used to stand
@@ -46,7 +48,7 @@ import os
 from pathlib import Path
 
 HUB_URL_VAR = "HUB_URL"
-PUBLISH_TOKEN_VAR = "PUBLISH_TOKEN"
+EDIT_TOKEN_VAR = "EDIT_TOKEN"
 
 # Which machine-wide file to read. An override rather than a constant so a test
 # run cannot be steered — or rescued — by the developer's real settings; the
@@ -171,9 +173,10 @@ HUB_URL_HINT = (
     "  {file} once; every model directory on this machine then finds it."
 )
 
-PUBLISH_TOKEN_HINT = (
-    "It is the one secret the hub checks — on a push, and on the comment\n"
-    "  queue. Run `hammerola login` to store it in {file},\n"
+EDIT_TOKEN_HINT = (
+    "It is the one secret the hub checks — on a push, on the comment queue,\n"
+    "  and on everything else that changes something. Run `hammerola login` to\n"
+    "  store it in {file},\n"
     "  or pass it for a single run in the environment."
 )
 
@@ -184,10 +187,10 @@ def hub_url(project_dir=None) -> str:
     return _require(HUB_URL_VAR, hint, project_dir).rstrip("/")
 
 
-def publish_token(project_dir=None) -> str:
+def edit_token(project_dir=None) -> str:
     """The bearer token. The VALUE is returned and never logged or printed."""
-    hint = PUBLISH_TOKEN_HINT.format(file=display_path(machine_env_file()))
-    return _require(PUBLISH_TOKEN_VAR, hint, project_dir)
+    hint = EDIT_TOKEN_HINT.format(file=display_path(machine_env_file()))
+    return _require(EDIT_TOKEN_VAR, hint, project_dir)
 
 
 # -- the write half: what `hammerola login` puts in the machine file ---------

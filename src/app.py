@@ -7,8 +7,8 @@ half is made simpler by a framework.
 Routing (SPEC 3, 7.4):
 
     GET  /health                              liveness for the compose healthcheck
-    GET  /                                    public index page (from templates/)
-    GET  /index.json                          cards feeding that page
+    GET  /                                    the front page shell, from templates/
+    GET  /index.json                          what is on this hub      EDIT_TOKEN
     GET  /_v/<file>                           shared viewer bundle, one per site
     GET  /project/<pid>/                      302 -> latest/
     GET  /project/<pid>/builds.json           build picker
@@ -22,29 +22,47 @@ Routing (SPEC 3, 7.4):
     POST /api/v1/publish/<pid>/<commit>       same, under a name the caller
                                               chose
     POST /api/v1/publish/<pid>/dev            same, into the local slot
-    GET  /api/v1/jobs/<id>                    how that build is going  PUBLISH_TOKEN
-    GET  /api/v1/jobs/<id>/log                what the build printed   PUBLISH_TOKEN
+    GET  /api/v1/jobs/<id>                    how that build is going  EDIT_TOKEN
+    GET  /api/v1/jobs/<id>/log                what the build printed   EDIT_TOKEN
 
-    GET  /api/v1/sources/<revision>           the code that built it   PUBLISH_TOKEN
-    GET  /api/v1/sources/<revision>/log       and what it printed      PUBLISH_TOKEN
+    GET  /api/v1/sources/<revision>           the code that built it   EDIT_TOKEN
+    GET  /api/v1/sources/<revision>/log       and what it printed      EDIT_TOKEN
 
-    POST   /api/v1/projects/<pid>/title       rename the project       PUBLISH_TOKEN
-    DELETE /api/v1/projects/<pid>             remove it entirely       PUBLISH_TOKEN
+    POST   /api/v1/projects/<pid>/title       rename the project       EDIT_TOKEN
+    DELETE /api/v1/projects/<pid>             remove it entirely       EDIT_TOKEN
 
-    POST /api/v1/comments/<pid>/<commit>      leave a comment — PUBLIC, no token
-    GET  /api/v1/comments                     the queue          COMMENT_READ_TOKEN
-    GET  /api/v1/comments/<id>                one comment        COMMENT_READ_TOKEN
-    GET  /api/v1/comments/<id>/photo          its photo          COMMENT_READ_TOKEN
-    GET  /api/v1/comments/<id>/shot           its rendered frame COMMENT_READ_TOKEN
-    POST /api/v1/comments/<id>/resolve        mark it handled    COMMENT_READ_TOKEN
+    POST /api/v1/comments/<pid>/<commit>      leave a comment          EDIT_TOKEN
+    GET  /api/v1/comments                     the queue                EDIT_TOKEN
+    GET  /api/v1/comments/<id>                one comment              EDIT_TOKEN
+    GET  /api/v1/comments/<id>/photo          its photo                EDIT_TOKEN
+    GET  /api/v1/comments/<id>/shot           its rendered frame       EDIT_TOKEN
+    POST /api/v1/comments/<id>/resolve        mark it handled          EDIT_TOKEN
 
-The comment endpoints are the only asymmetric ones on the service: writing is open
-to anyone with the URL and reading is not (SPEC 7A.2). Everything unusual about
-`_handle_comment_post` below follows from that one fact.
+ONE SECRET GUARDS EVERY WRITE AND EVERY PRIVATE READ (SPEC §8 entry 26, step 0
+of the plan), and there is exactly one string on the private side of it. There
+used to be two, PUBLISH_TOKEN and COMMENT_READ_TOKEN, and writing a comment used
+to be on the PUBLIC side; both facts are gone, and `_handle_comment_post` below
+is no longer the odd one out on this service.
+
+WHERE THE LINE RUNS IS NOT "pages public, API private", and it is worth being
+exact because the two halves look inconsistent side by side. A BUILD is public:
+its page, its meta.json, its geometry, all anonymous and cached for a year. That
+is the product — a permanent link somebody was given and pasted into a chat, and
+a link that asks the recipient for a secret is not one. THE LIST OF WHAT EXISTS
+is not: `/index.json` is the only document that answers "what is on this hub",
+nobody is handed it, and every id in it is the prefix of every permanent URL that
+project will ever have. So the rule is that being given a link gets you that
+build, and nothing gets you the enumeration.
+
+WHY THE COMMENT WRITE MOVED (SPEC 8A.1). This hub now BUILDS the code it is
+sent, and an anonymous write was the first step of a path with no vulnerability
+anywhere in it: anyone writes a comment -> it lands in the queue -> an agent
+reads the queue as a task -> the agent edits model.py -> the hub executes
+model.py. Closing the first step is what breaks the chain.
 
 THE CODE OF A REVISION IS THE ONE THING THE SITE SERVES THAT IS NOT PUBLIC. A
 build directory is world-readable and cached for a year; the sources that
-produced it are behind PUBLISH_TOKEN and live in a tree the file server cannot
+produced it are behind EDIT_TOKEN and live in a tree the file server cannot
 reach at all (SPEC 8, entry 17). The hub is a forge, so it has to HOLD the code —
 that is not the same as showing it.
 
@@ -87,8 +105,7 @@ from loguru import logger
 
 from src import render
 from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
-                          RateLimiter, client_address, normalize_since,
-                          validate_payload)
+                          normalize_since, validate_payload)
 from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
                       QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
                       STATE_FAILED, STOPPED_ERROR, SUBMIT_ACCEPTED,
@@ -176,9 +193,9 @@ BODY_DEADLINE_SECONDS = 300
 MAX_CONCURRENT_PUBLISHES = 4
 
 # Ceiling on the body of a resolve, which is one optional `note`. Not an env var:
-# it is behind COMMENT_READ_TOKEN, the note itself is capped at a couple of
-# hundred characters by `comments.MAX_FIELD_CHARS`, and this only exists so the
-# endpoint cannot be handed a megabyte to parse.
+# it is behind EDIT_TOKEN, the note itself is capped at a couple of hundred
+# characters by `comments.MAX_FIELD_CHARS`, and this only exists so the endpoint
+# cannot be handed a megabyte to parse.
 MAX_RESOLVE_BODY_BYTES = 8 * 1024
 
 # The rename body: one JSON object with one short string in it. Deliberately
@@ -260,11 +277,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
     # One per server, for the same reason: two hubs in one test process must not
     # share a concurrency budget.
     publish_slots = threading.BoundedSemaphore(MAX_CONCURRENT_PUBLISHES)
-    # Likewise per server: a rate limiter shared between two hubs would make one
-    # test's comments count against another's ceiling.
-    comment_limiter = RateLimiter(settings.comment_rate_limit,
-                                  settings.comment_rate_window_seconds)
-    publish_token = settings.publish_token
+    edit_token = settings.edit_token
     max_build_bytes = settings.max_build_bytes
 
     class HubHandler(BaseHTTPRequestHandler):
@@ -386,7 +399,25 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             self._send(200, body, content_type, cache, with_body=with_body)
 
         def _serve_index_json(self, with_body: bool):
-            """The project cards. Absent until the first push ever succeeds."""
+            """The project cards — EDIT_TOKEN. Absent until the first push.
+
+            THE ONE LIST OF EVERYTHING ON THIS HUB, and the only document here
+            that answers "what exists". That is what puts it behind the token
+            while a build page stays public, and the distinction is worth stating
+            because it looks inconsistent from the outside: a build URL is a
+            permanent link somebody was GIVEN, shared into a chat and cached for
+            a year, and closing those would break what the service is for. This
+            file is the opposite — nobody is given it, it is how you would find
+            out that a project exists at all, and every id in it is the prefix of
+            every permanent URL that project will ever have.
+
+            Checked BEFORE the file is touched, like every other guarded route
+            here: an unauthenticated caller must not be able to make the hub read
+            anything off the volume, and must not be able to tell a hub with no
+            projects from one with forty by how long the refusal takes.
+            """
+            if not self._require_token(with_body):
+                return None
             path = store.root / "index.json"
             if not path.is_file():
                 return self._json(200, [], CACHE_NONE, with_body=with_body)
@@ -623,7 +654,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             without it cannot use the difference between 401 and 404 to find out
             which comment ids exist.
             """
-            if not self._require_token(settings.comment_read_token, with_body):
+            if not self._require_token(with_body):
                 return None
 
             if not rest:
@@ -664,13 +695,13 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
         def _serve_attachment(self, cid: str, kind: str, with_body: bool):
             """An uploaded photo, or the viewer's render of the frame.
 
-            These are the only bytes on the service that a stranger uploaded and
-            that are then handed back, so the content type comes from the closed
-            set above and never from the request. `Content-Disposition:
-            attachment` on top of it: the queue is read by a tool, not browsed,
-            and an inline image is one content-type mistake away from being a
-            page. Cached not at all — the URL is behind a token and the reader is
-            an agent.
+            These are the only bytes on the service that arrived outside the
+            archive rules and are then handed back, so the content type comes
+            from the closed set above and never from the request.
+            `Content-Disposition: attachment` on top of it: the queue is read by
+            a tool, not browsed, and an inline image is one content-type mistake
+            away from being a page. Cached not at all — the URL is behind a
+            token and the reader is an agent.
             """
             path = comment_store.attachment(cid, kind)
             if path is None:
@@ -686,14 +717,14 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                               {"Content-Disposition": "attachment"}, with_body)
 
         # -- publish ---------------------------------------------------
-        def _authorized(self, expected: str) -> bool:
-            """Constant-time check of a bearer token (SPEC 7, 7A.2).
+        def _authorized(self) -> bool:
+            """Constant-time check of the bearer token (SPEC 7, 7A.2).
 
-            Takes the expected secret rather than reading one from the closure:
-            two different tokens guard two different things here — CI pushes with
-            PUBLISH_TOKEN, the agent reads the comment queue with
-            COMMENT_READ_TOKEN — and neither may be accepted where the other
-            belongs.
+            ONE SECRET, so no parameter. This used to take the expected value
+            because two tokens guarded two different things and neither could be
+            accepted where the other belonged; since step 0 there is one string
+            for the whole system (SPEC §8 entry 26) and a parameter here would
+            only be a place for a second one to reappear.
 
             `hmac.compare_digest` rather than `==` because `==` on bytes short
             circuits at the first differing byte, and the time it takes is
@@ -706,17 +737,17 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             if scheme.lower() != "bearer" or not presented:
                 return False
             return hmac.compare_digest(
-                presented.strip().encode("utf-8"), expected.encode("utf-8"))
+                presented.strip().encode("utf-8"), edit_token.encode("utf-8"))
 
-        def _require_token(self, expected: str, with_body: bool = True,
+        def _require_token(self, with_body: bool = True,
                            close: bool = False) -> bool:
-            """Answer 401 and return False unless the caller presented `expected`.
+            """Answer 401 and return False unless the caller presented the token.
 
             `close` for the verbs that carry a body: refusing before reading it
             leaves the remains on the socket, and on a keep-alive connection
             those would be parsed as the next request.
             """
-            if self._authorized(expected):
+            if self._authorized():
                 return True
             logger.warning(
                 f"refused: bad or missing token from {self.address_string()} "
@@ -751,7 +782,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 # between them, which reserves it as a commit name for the
                 # comment API — a build called `resolve` can still be published
                 # and served, it just cannot be commented on. That is a cheaper
-                # price than a fifth path segment on the public endpoint.
+                # price than a fifth path segment on the comment endpoint.
                 if segments[4] == "resolve":
                     return self._handle_comment_resolve(segments[3])
                 return self._handle_comment_post(segments[3], segments[4])
@@ -767,7 +798,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
 
             # Auth BEFORE the body is read: an unauthenticated caller must not be
             # able to make us receive 64 MiB just to be told no.
-            if not self._authorized(publish_token):
+            if not self._authorized():
                 logger.warning(
                     f"publish refused: bad or missing token from "
                     f"{self.address_string()}")
@@ -1034,14 +1065,14 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
         def _serve_jobs(self, rest: list[str], with_body: bool):
             """GET /api/v1/jobs/<id>[/log] — for whoever pushed (SPEC 8A.2 step 5).
 
-            Behind PUBLISH_TOKEN, and checked BEFORE the id is looked at, so a
+            Behind EDIT_TOKEN, and checked BEFORE the id is looked at, so a
             caller without it cannot use the difference between 401 and 404 to
             find out which jobs exist. An id this hub never issued and an id
             belonging to somebody else's push get the SAME 404: the id is the
             only thing separating one pusher's build log from another's, so a
             reply that confirms existence would hand out half of it.
             """
-            if not self._require_token(publish_token, with_body):
+            if not self._require_token(with_body):
                 return None
             if not rest or len(rest) > 2:
                 return self._error(404, "not found", with_body=with_body)
@@ -1071,7 +1102,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             """GET /api/v1/sources/<revision>[/log] (SPEC 8, entry 17).
 
             THE CODE IS NOT PUBLIC, and this is the only way out of the store.
-            Behind PUBLISH_TOKEN — the same secret that publishes, because there
+            Behind EDIT_TOKEN — the same secret that publishes, because there
             is one secret on this service and holding it means being allowed to
             do anything — and checked BEFORE the revision is looked at, so the
             difference between 401 and 404 cannot be used to find out which
@@ -1090,7 +1121,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             through leaves, and it must read as absent rather than as half a
             revision.
             """
-            if not self._require_token(publish_token, with_body):
+            if not self._require_token(with_body):
                 return None
             if not rest or len(rest) > 2:
                 return self._error(404, "not found", with_body=with_body)
@@ -1168,13 +1199,13 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             URL of the project is built from the id, and the builds behind those
             URLs went out with a year of `immutable` and cannot be recalled.
 
-            Behind PUBLISH_TOKEN, checked BEFORE anything about the project is
+            Behind EDIT_TOKEN, checked BEFORE anything about the project is
             looked at or touched. A project that does not exist and an id that is
             not one this hub could ever have get the SAME 404 with the same body,
             so the reply says nothing about which projects are on the volume that
             the public index does not already say.
             """
-            if not self._require_token(publish_token, close=True):
+            if not self._require_token(close=True):
                 return None
             if self.headers.get("Transfer-Encoding"):
                 # Nothing here decodes chunked, and answering while leaving an
@@ -1240,10 +1271,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             which is the honest shape for "I made a test project and I am done
             with it" (SPEC 8, entry 26).
 
-            Behind PUBLISH_TOKEN and checked first, so nothing about a project is
+            Behind EDIT_TOKEN and checked first, so nothing about a project is
             read or touched without it, and every miss is the same 404.
             """
-            if not self._require_token(publish_token, close=True):
+            if not self._require_token(close=True):
                 return None
             path = self.path.split("?", 1)[0]
             segments = self._split(path)
@@ -1274,7 +1305,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
         # -- comment queue, write side ---------------------------------
         def _handle_comment_resolve(self, cid: str):
             """POST /api/v1/comments/<id>/resolve — the agent closing an item."""
-            if not self._require_token(settings.comment_read_token, close=True):
+            if not self._require_token(close=True):
                 return None
             if self.headers.get("Transfer-Encoding"):
                 # Nothing here decodes chunked, and answering while leaving an
@@ -1309,18 +1340,30 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             return self._json(200, record)
 
         def _handle_comment_post(self, pid: str, commit: str):
-            """POST /api/v1/comments/<pid>/<commit> — PUBLIC (SPEC 7A.2).
+            """POST /api/v1/comments/<pid>/<commit> — EDIT_TOKEN (SPEC 7A.2).
 
-            The only endpoint that reads a body from an unauthenticated caller,
-            so the order of what follows is the substance of the feature, not
-            plumbing. Everything that can refuse without reading the body does so
-            first: the route, the rate limit, then the byte ceiling against
-            Content-Length. Only then is a byte pulled off the socket.
+            THE TOKEN IS CHECKED FIRST, ahead of the route and ahead of
+            Content-Length, and that ordering is the point of step 0 rather than
+            a detail. A caller without the secret must not be able to make this
+            hub receive twenty megabytes and parse them as a multipart document
+            just to be told no — and must not learn from a 404 which builds
+            exist either, though that one is a formality here, because the build
+            page is public anyway.
+
+            This used to be the one endpoint that read a body from an
+            unauthenticated caller, and everything below it was ordered around
+            that. It no longer is (SPEC 8A.1: a hub that EXECUTES what it is
+            sent cannot also take anonymous input into a queue an agent works
+            from), so what remains below is ordinary bounding: refuse everything
+            that can be refused without reading, then read.
 
             Every early refusal closes the connection, for the same reason a
             refused publish does: the unread remains of the body would otherwise
             be parsed as the next request on a keep-alive connection.
             """
+            if not self._require_token(close=True):
+                return None
+
             # The local slot answers here as well as any commit does, and is
             # exactly the thing somebody looking over the author's shoulder wants
             # to comment on (SPEC 7.6). `latest` deliberately does NOT: it means
@@ -1339,18 +1382,13 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             if not (store.projects_dir / pid / commit / "meta.json").is_file():
                 return self._error(404, "not found", {"Connection": "close"})
 
-            # Before the body, not after: a rate limit that first accepts 20 MiB
-            # and then says no has already done the work it exists to prevent.
-            address = client_address(
-                self.client_address[0] if self.client_address else "",
-                self.headers.get("X-Forwarded-For", ""))
-            allowed, retry_after = comment_limiter.allow(address)
-            if not allowed:
-                logger.warning(f"comment refused: rate limit hit by {address}")
-                return self._error(
-                    429, "too many comments from this address, retry later",
-                    {"Connection": "close", "Retry-After": str(retry_after)})
-
+            # NOTHING THROTTLES THIS ROUTE and nothing counts what is already in
+            # the queue (SPEC 7A.4). A rate limit stood exactly here until
+            # 2026-08-27, keyed on the client address read out of Traefik's
+            # X-Forwarded-For; it was written when anybody who knew the URL could
+            # post, and once the door took EDIT_TOKEN the only caller it could
+            # ever refuse was the one holding the secret that also erases the
+            # project. Everything from here down is about SIZE.
             try:
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError:
@@ -1415,9 +1453,12 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     attachments[kind] = part.data
 
             record = comment_store.add(pid, commit, payload, attachments)
-            # Only the id comes back. The text is never echoed to a public caller
+            # Only the id comes back. The text is never echoed to the caller
             # and never rendered on a page (SPEC 7A.4) — that is what keeps this
-            # endpoint off the XSS surface entirely.
+            # endpoint off the XSS surface entirely, and it stays true now that
+            # the writer holds the token: the queue is still read by a tool, and
+            # a page that rendered its own input would be a stored XSS on a
+            # same-origin URL whatever the writer's credentials were.
             return self._json(201, {"id": record["id"]})
 
         def _read_body(self, length: int):
@@ -1520,8 +1561,6 @@ def create_server(settings, *, build_runner=None, build_workers=None,
     # directory's year of `immutable` or its public reach (SPEC 7A.3).
     comment_store = CommentStore(
         data_dir=settings.data_dir,
-        max_per_build=settings.comment_max_per_build,
-        max_total=settings.comment_max_total,
         max_text_chars=settings.comment_max_text_chars,
         max_photo_bytes=settings.comment_max_photo_bytes,
     )

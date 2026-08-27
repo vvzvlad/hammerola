@@ -1,10 +1,22 @@
-"""The PUBLIC half of the comment queue (SPEC 7A.2, 7A.4).
+"""The WRITE half of the comment queue (SPEC 7A.2, 7A.4).
 
-`POST /api/v1/comments/<pid>/<commit>` is the only endpoint on this service that
-reads a body from someone who presented no credential at all. Everything here is
-about what has to hold at that door: the ceilings, the address a rate limit is
-keyed on, and the rule that what a file IS gets decided by its bytes rather than
-by what the sender called it.
+`POST /api/v1/comments/<pid>/<commit>` takes EDIT_TOKEN since step 0 of the plan
+(SPEC 8A.1): a hub that executes the code it is sent cannot also accept anonymous
+input into a queue an agent works from. It used to be the one endpoint here that
+read a body from someone who presented no credential at all, and most of this
+file is unchanged by that, deliberately — the SIZE ceilings and the rule that
+what a file IS gets decided by its bytes are about what the hub does with a body
+and what it later serves, not about who sent it.
+
+What the token DID take away is everything that counted or throttled: the
+per-build ceiling, the global one and the rate limit keyed on the client address
+are gone (SPEC 7A.4, 2026-08-27), along with the tests that pinned them. That the
+ceilings are not merely raised but absent is asserted in
+tests/test_no_retention.py, beside the other absences — an absence that nothing
+tests grows back.
+
+`harness.Hub.post_comment` therefore sends the token by default; the tests about
+the door pass `token=None`.
 
 The tests talk HTTP to a real server, like the rest of the suite, because the
 promises being checked are made in status codes.
@@ -18,8 +30,8 @@ from pathlib import Path
 import httpx
 import pytest
 from harness import (GIF_BYTES, JPEG_BYTES, NOTHING, PNG_BYTES, SVG_BYTES,
-                     WEBP_BYTES, comment_payload, good_build, multipart_body,
-                     start_hub, stop_hub)
+                     TOKEN, WEBP_BYTES, comment_payload, good_build,
+                     multipart_body)
 
 from src import comments, store
 
@@ -89,6 +101,7 @@ def test_a_body_from_an_ordinary_client_encoder_is_accepted(hub):
         f"{hub.url}/api/v1/comments/{pid}/{commit}",
         data={"comment": json.dumps(comment_payload())},
         files={"photo": ("printed.jpg", JPEG_BYTES, "image/jpeg")},
+        headers={"Authorization": f"Bearer {TOKEN}"},
         timeout=10, trust_env=False)
     assert r.status_code == 201
 
@@ -108,15 +121,65 @@ def test_the_reply_carries_the_id_and_nothing_else(hub):
     assert b"script" not in r.content
 
 
-def test_a_comment_needs_no_token(hub):
-    """Stated as a test because it is a decision, not an oversight (SPEC 7A.2)."""
+# -- the door ---------------------------------------------------------------
+def test_a_comment_without_the_token_is_refused(hub):
+    """The reversal of a decision, so it is pinned as one (SPEC 8A.1, step 0).
+
+    Writing here used to be public and this test used to assert the opposite —
+    that no Authorization header was sent and the comment landed anyway. That
+    was the first step of a path with no vulnerability in it: anyone writes a
+    comment, it lands in the queue, an agent reads the queue as a task, the
+    agent edits model.py, the hub executes model.py.
+    """
     pid, commit = _publish(hub)
-    r = hub.post_comment(pid, commit, comment_payload())
-    assert r.status_code == 201
-    assert "Authorization" not in r.request.headers
+    r = hub.post_comment(pid, commit, comment_payload(), token=None)
+    assert r.status_code == 401
+    assert r.headers["WWW-Authenticate"] == "Bearer"
+    assert not _records(hub)
+
+
+def test_a_wrong_token_is_refused_the_same_way(hub):
+    pid, commit = _publish(hub)
+    r = hub.post_comment(pid, commit, comment_payload(), token=TOKEN[:-1])
+    assert r.status_code == 401
+    assert not _records(hub)
+
+
+def test_the_token_is_checked_before_the_body_is_read(hub_factory):
+    """The ordering is the point of the change, not a detail.
+
+    A caller without the secret must not be able to make this hub receive a
+    multipart body and parse it just to be told no. Proved against a hub whose
+    body ceiling is 4 KiB, with a body that is over it AND not multipart at all:
+    either fact would answer 413 or 422 the moment it was looked at, so 401 is
+    the only answer possible if NOTHING below the token check ran.
+    """
+    small = hub_factory(comment_max_body_bytes=4096)
+    pid, commit = _publish(small)
+    r = small.post_comment(pid, commit, body=b"x" * 8192,
+                           content_type="text/plain", token=None)
+    assert r.status_code == 401
+    assert not _records(small)
+
+    # And the same body WITH the token gets the answer it deserves, which is
+    # what proves the two refusals above are not simply the ceiling misreported.
+    r = small.post_comment(pid, commit, body=b"x" * 8192,
+                           content_type="text/plain")
+    assert r.status_code == 413
+
+
+def test_an_unpublished_build_is_404_only_once_the_token_is_shown(hub):
+    """Without the token the answer is 401, with it 404 — so the route says
+    nothing about what exists to a caller who has not identified themselves."""
+    assert hub.post_comment("proj1", "abc123", comment_payload(),
+                            token=None).status_code == 401
+    assert hub.post_comment("proj1", "abc123", comment_payload()
+                            ).status_code == 404
 
 
 # -- what the endpoint refuses ----------------------------------------------
+
+
 def test_a_comment_on_a_build_that_was_never_published_is_404(hub):
     r = hub.post_comment("proj1", "abc123", comment_payload())
     assert r.status_code == 404
@@ -210,7 +273,8 @@ def test_a_body_of_unknown_length_is_411(hub):
         yield multipart_body({"comment": json.dumps(comment_payload())})[0]
 
     r = httpx.post(f"{hub.url}/api/v1/comments/{pid}/{commit}", content=streamed(),
-                   headers={"Content-Type": multipart_body({})[1]},
+                   headers={"Content-Type": multipart_body({})[1],
+                            "Authorization": f"Bearer {TOKEN}"},
                    timeout=10, trust_env=False)
     assert r.status_code == 411
     assert not _records(hub)
@@ -305,7 +369,8 @@ def test_an_oversized_body_is_413_before_it_is_read(hub_factory):
     """The ceiling is applied to Content-Length, like the publish one is.
 
     A 413 issued after reading the body has already done the work it was meant
-    to refuse, which on a PUBLIC endpoint is the whole point of having a ceiling.
+    to refuse, which is the whole point of having a ceiling — the token in front
+    of it decides WHO can make the hub do that work, not how much of it there is.
     """
     small = hub_factory(comment_max_body_bytes=4096)
     pid, commit = _publish(small)
@@ -322,131 +387,6 @@ def test_oversized_text_is_413(hub_factory):
     r = small.post_comment(pid, commit, comment_payload(text="x" * 200))
     assert r.status_code == 413
     assert not _records(small)
-
-
-def test_a_build_stops_accepting_comments_at_its_ceiling(hub_factory):
-    limited = hub_factory(comment_max_per_build=2)
-    pid, commit = _publish(limited)
-    for _ in range(2):
-        assert limited.post_comment(
-            pid, commit, comment_payload()).status_code == 201
-    r = limited.post_comment(pid, commit, comment_payload())
-    assert r.status_code == 429
-    assert len(_records(limited)) == 2
-
-
-def test_the_queue_stops_accepting_comments_at_its_global_ceiling(hub_factory):
-    """Per-build ceilings alone leave a patient writer one build per bucket."""
-    limited = hub_factory(comment_max_total=2, comment_max_per_build=100)
-    _publish(limited, commit="aaa")
-    _publish(limited, commit="bbb", marker="b")
-    assert limited.post_comment("proj1", "aaa",
-                                comment_payload()).status_code == 201
-    assert limited.post_comment("proj1", "bbb",
-                                comment_payload()).status_code == 201
-    assert limited.post_comment("proj1", "bbb",
-                                comment_payload()).status_code == 429
-
-
-def test_the_ceilings_survive_a_restart(tmp_path):
-    """The counters are in memory, so they have to be rebuilt from the volume.
-
-    Without the rescan a restart would reset every ceiling, and "restart the
-    container" is not something an attacker has to arrange — it happens on every
-    deploy. Two hubs on ONE data directory, one after the other, which is why
-    this test cannot use the hub_factory fixture: that gives each hub its own.
-    """
-    data = tmp_path / "shared"
-    first = start_hub(data, comment_max_per_build=1)
-    try:
-        pid, commit = _publish(first)
-        assert first.post_comment(pid, commit,
-                                  comment_payload()).status_code == 201
-    finally:
-        stop_hub(first)
-
-    second = start_hub(data, comment_max_per_build=1)
-    try:
-        assert second.post_comment(pid, commit,
-                                   comment_payload()).status_code == 429
-    finally:
-        stop_hub(second)
-
-
-# -- the rate limit ---------------------------------------------------------
-def test_the_rate_limit_refuses_with_429_and_a_retry_after(hub_factory):
-    limited = hub_factory(comment_rate_limit=2, comment_rate_window_seconds=600)
-    pid, commit = _publish(limited)
-    for _ in range(2):
-        assert limited.post_comment(
-            pid, commit, comment_payload()).status_code == 201
-    r = limited.post_comment(pid, commit, comment_payload())
-    assert r.status_code == 429
-    assert int(r.headers["Retry-After"]) > 0
-    assert len(_records(limited)) == 2
-
-
-def test_the_rate_limit_is_not_bypassed_by_a_forged_forwarded_header(hub_factory):
-    """The invariant of SPEC 7A.4, and the reason the RIGHTMOST entry is read.
-
-    The header sent here is what Traefik actually produces when a client supplies
-    one of its own: the proxy APPENDS the address it saw, so the client's forgery
-    lands on the left and the real address on the right. Reading the leftmost
-    entry — the common way to write this — would give the attacker a fresh bucket
-    per request and no ceiling at all.
-    """
-    limited = hub_factory(comment_rate_limit=1)
-    pid, commit = _publish(limited)
-    first = limited.post_comment(
-        pid, commit, comment_payload(),
-        headers={"X-Forwarded-For": "9.9.9.9, 203.0.113.7"})
-    assert first.status_code == 201
-    second = limited.post_comment(
-        pid, commit, comment_payload(),
-        headers={"X-Forwarded-For": "8.8.8.8, 203.0.113.7"})
-    assert second.status_code == 429
-
-
-def test_two_real_clients_behind_the_proxy_get_their_own_budgets(hub_factory):
-    """The other half of the same claim: the header is USED, not ignored.
-
-    Without it every visitor behind Traefik would share one bucket, because the
-    peer address is the proxy's for all of them.
-    """
-    limited = hub_factory(comment_rate_limit=1)
-    pid, commit = _publish(limited)
-    assert limited.post_comment(
-        pid, commit, comment_payload(),
-        headers={"X-Forwarded-For": "203.0.113.7"}).status_code == 201
-    assert limited.post_comment(
-        pid, commit, comment_payload(),
-        headers={"X-Forwarded-For": "203.0.113.8"}).status_code == 201
-
-
-def test_client_address_unit():
-    # Reachable directly: the header is not the proxy's, so it is not read.
-    assert comments.client_address("203.0.113.5", "9.9.9.9") == "203.0.113.5"
-    # Behind a trusted proxy: the last entry is the one the proxy itself saw.
-    assert comments.client_address("10.0.0.2", "9.9.9.9, 203.0.113.7") \
-        == "203.0.113.7"
-    # No header at all, and a junk one, both fall back to the peer.
-    assert comments.client_address("10.0.0.2", "") == "10.0.0.2"
-    assert comments.client_address("10.0.0.2", "9.9.9.9, not-an-address") \
-        == "10.0.0.2"
-
-
-def test_the_rate_limiter_table_stays_bounded():
-    limiter = comments.RateLimiter(limit=1, window=600)
-    for index in range(comments.MAX_TRACKED_ADDRESSES + 500):
-        limiter.allow(f"10.1.{index // 256}.{index % 256}")
-    assert len(limiter._hits) <= comments.MAX_TRACKED_ADDRESSES
-
-
-def test_the_rate_limit_window_expires():
-    limiter = comments.RateLimiter(limit=1, window=10)
-    assert limiter.allow("a", now=1000.0)[0]
-    assert not limiter.allow("a", now=1005.0)[0]
-    assert limiter.allow("a", now=1011.0)[0]
 
 
 # -- storage: outside the build, atomic ------------------------------------
@@ -495,18 +435,49 @@ def test_the_committed_page_scripts_never_build_markup_from_a_string():
     were assignments to innerHTML, so the absence is asserted rather than
     reviewed.
 
-    The scripts checked here are the COMMITTED ones — the index page and the
-    pointer resolver. The build page's own interface is compiled from `ui/src/`
-    and is held to the same rule there, by
-    tests/test_ui_source.py::test_nothing_writes_markup; there is no point
-    reading `static/_v/hammerola.js` for it, because that file is a build
-    artefact and a fresh checkout does not have one.
+    The scripts checked here are the COMMITTED ones, which today means the
+    pointer resolver and the key it reads. The two pages that used to have one of
+    their own — the build page and then the front page — are drawn by the
+    compiled interface in `ui/src/` instead, and it is held to the same rule
+    there, by tests/test_ui_source.py::test_nothing_writes_markup. Two checks
+    rather than one because they can only be made differently: that side is
+    source with comments stripped, and there is no point reading
+    `static/_v/hammerola.js`, which is a build artefact a fresh checkout does not
+    have.
+
+    THE LIST IS DISCOVERED AND THEN CHECKED AGAINST WHAT IS EXPECTED, so that
+    neither direction is silent. A page script added to this directory is covered
+    without anybody remembering; a page script REMOVED — which is how the front
+    page's `index.js` left — fails here and has to be accounted for in the same
+    commit, rather than quietly leaving this test sweeping a shorter list. That
+    is the failure mode worth the extra assertion: a check that still passes
+    while checking less reads exactly like a check that passed.
     """
+    directory = STATIC / "_v"
+    # The vendored viewer is third-party and DOES build markup from strings; it
+    # is not ours to hold to this rule, and it arrives as an audited drop
+    # (static/_v/PROVENANCE.md). The build artefact is not read for the reason
+    # the docstring gives. Both are named rather than guessed at, so that a
+    # second vendored file is a decision somebody makes here.
+    skipped = {"three-cad-viewer.esm.js"}
+    ours = sorted(path.name for path in directory.glob("*.js")
+                  if path.name not in skipped
+                  and not path.name.startswith("hammerola"))
+
+    assert ours == ["pointer.js", "pointer_pref.js"], (
+        f"the committed page scripts in {directory} are {ours}, and this test "
+        "expects ['pointer.js', 'pointer_pref.js']. If one was added, it is now "
+        "covered and this list needs it. If one was REMOVED, say where its page "
+        "went: a page drawn by the compiled interface is covered by "
+        "tests/test_ui_source.py::test_nothing_writes_markup instead, and one "
+        "that is simply gone needs nothing — but neither may happen silently."
+    )
+
     # The property ACCESS, not the word: these files talk about innerHTML in a
     # comment explaining why they do not use it, and a test that failed on prose
     # would be deleted the first time it cried wolf.
-    for name in ("index.js", "pointer.js", "pointer_pref.js"):
-        source = (STATIC / "_v" / name).read_text(encoding="utf-8")
+    for name in ours:
+        source = (directory / name).read_text(encoding="utf-8")
         for forbidden in (".innerHTML", ".outerHTML", '["innerHTML"]',
                           ".insertAdjacentHTML(", "document.write("):
             assert forbidden not in source, f"{name}: {forbidden}"
@@ -577,5 +548,5 @@ def test_a_write_that_fails_leaves_nothing_behind(hub, monkeypatch):
     monkeypatch.undo()
     assert list(hub.comment_dir(pid).glob("*.json")) == []
     assert list(hub.comment_dir(pid).glob("*.jpg")) == []
-    # And the ceiling did not count a comment that never landed.
+    # And the queue does not list a comment that never landed either.
     assert hub.read_comments().json()["comments"] == []

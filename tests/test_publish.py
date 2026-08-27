@@ -348,7 +348,7 @@ def test_an_over_long_title_is_refused(hub):
 def test_an_over_long_built_is_refused(hub):
     # `built` is displayed exactly like `title` — index card, page header, and the
     # <option> caption in the picker — but it also goes into the SHARED
-    # /index.json, which every visitor of `/` downloads with no-cache. A single
+    # /index.json, which everyone who opens `/` downloads with no-cache. A single
     # project pushing half a megabyte of `built` degrades the index for everyone,
     # so it is capped on the way in like every other displayed string.
     body = tar_gz({"meta.json": meta_bytes(built="B" * 500_000),

@@ -39,8 +39,11 @@ from src.app import create_server
 from src.buildproc import STATUS_FAILED, STATUS_OK, BuildOutcome
 from src.jobs import STATE_DONE, STATE_FAILED
 
-TOKEN = "test-publish-token"
-READ_TOKEN = "test-comment-read-token"
+# The one secret of the whole system (SPEC §8 entry 26). There were two names
+# here — TOKEN for pushes and READ_TOKEN for the comment queue — until step 0 of
+# the plan collapsed them on the hub; a test that wants "a token the hub does not
+# know" spells one out on the spot rather than reaching for a second constant.
+TOKEN = "test-edit-token"
 
 # A sentinel for "this field was not supplied at all", as distinct from
 # `payload=None`, which means "send the JSON literal null". Defined here rather
@@ -56,14 +59,15 @@ def settings_for(data_dir, max_build_bytes=8 * 1024 * 1024, **overrides):
     that needed to vary a ceiling would have to re-import the module. Everything
     downstream only reads attributes, so a namespace is a faithful stand-in.
 
-    `overrides` carries the comment ceilings (SPEC 7A.4). They are keyword
-    arguments rather than named parameters because there are eight of them and a
-    test only ever varies one: a rate-limit test wants `comment_rate_limit=1` and
-    could not care less what the photo ceiling is.
+    `overrides` carries the comment ceilings (SPEC 7A.4) — all three of them
+    about SIZE, since the count ceilings and the rate limit were removed on
+    2026-08-27. They are keyword arguments rather than named parameters because a
+    test only ever varies one: a photo-size test wants
+    `comment_max_photo_bytes=1024` and could not care less what the text ceiling
+    is.
     """
     values = dict(
-        publish_token=TOKEN,
-        comment_read_token=READ_TOKEN,
+        edit_token=TOKEN,
         host="127.0.0.1",
         port=0,  # ask the OS for a free port, then read back which one
         data_dir=str(data_dir),
@@ -71,12 +75,6 @@ def settings_for(data_dir, max_build_bytes=8 * 1024 * 1024, **overrides):
         comment_max_text_chars=4000,
         comment_max_photo_bytes=1024 * 1024,
         comment_max_body_bytes=4 * 1024 * 1024,
-        comment_max_per_build=100,
-        comment_max_total=5000,
-        # High enough that an ordinary test never trips it; the tests that are
-        # ABOUT the limit set it down to 1 or 2 explicitly.
-        comment_rate_limit=1000,
-        comment_rate_window_seconds=600,
         log_level="INFO",
     )
     unknown = set(overrides) - set(values)
@@ -109,6 +107,17 @@ class Hub:
     def get(self, path, **kw):
         kw.setdefault("trust_env", self.TRUST_ENV)
         return httpx.get(self.url + path, follow_redirects=False, timeout=10, **kw)
+
+    def index(self, token=TOKEN):
+        """GET /index.json, which takes the token (SPEC 3, and src/app.py).
+
+        A helper rather than a header spelled out at twenty call sites: the list
+        of what is on this hub is the one READ that is guarded, so every test
+        about the front page's data has to carry it, and `token=None` is how a
+        test asks the interesting question instead.
+        """
+        headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
+        return self.get("/index.json", headers=headers)
 
     def request(self, method, path, **kw):
         """For the verbs the two helpers above do not cover (HEAD, mostly)."""
@@ -182,8 +191,12 @@ class Hub:
 
     # -- comments (SPEC 7A) ------------------------------------------------
     def post_comment(self, pid, commit, payload=NOTHING, photo=None, shot=None,
-                     headers=None, body=None, content_type=None):
-        """POST a comment. Public — no token is sent, and that is the point.
+                     headers=None, body=None, content_type=None, token=TOKEN):
+        """POST a comment. The token goes with it (SPEC 7A.2, step 0).
+
+        `token=None` omits the header, which is what the tests about the door
+        use; every other test here is about what happens AFTER it, so sending
+        the secret is the default.
 
         `body`/`content_type` bypass the encoder entirely, which is what lets a
         test send a body no ordinary client would produce.
@@ -199,12 +212,14 @@ class Hub:
                 files["shot"] = shot
             body, content_type = multipart_body(fields, files)
         sent = {"Content-Type": content_type} if content_type else {}
+        if token is not None:
+            sent["Authorization"] = f"Bearer {token}"
         sent.update(headers or {})
         return httpx.post(f"{self.url}/api/v1/comments/{pid}/{commit}",
                           content=body, headers=sent, timeout=30,
                           trust_env=self.TRUST_ENV)
 
-    def read_comments(self, path="", token=READ_TOKEN, method="GET", **kw):
+    def read_comments(self, path="", token=TOKEN, method="GET", **kw):
         headers = kw.pop("headers", {}) or {}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"

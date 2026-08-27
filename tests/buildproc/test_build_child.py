@@ -299,7 +299,7 @@ def test_a_model_that_exits_zero_without_building_is_not_a_success(project):
 # what the model can and cannot see
 # --------------------------------------------------------------------------
 
-def test_the_model_cannot_read_the_hubs_tokens(project, hub_secrets):
+def test_the_model_cannot_read_the_hubs_token(project, hub_secrets):
     """The environment test of test_isolation.py, from inside a real model.
 
     Worth having twice: that one proves `child_environment` composes the right
@@ -308,14 +308,13 @@ def test_the_model_cannot_read_the_hubs_tokens(project, hub_secrets):
     """
     outcome = project.build("""
         import os
-        raise RuntimeError("token=%r read=%r decoy=%r" % (
-            os.environ.get("PUBLISH_TOKEN"),
-            os.environ.get("COMMENT_READ_TOKEN"),
+        raise RuntimeError("token=%r decoy=%r" % (
+            os.environ.get("EDIT_TOKEN"),
             os.environ.get("AWS_SECRET_ACCESS_KEY")))
     """)
 
     assert outcome.status == STATUS_FAILED
-    assert "token=None read=None decoy=None" in outcome.log
+    assert "token=None decoy=None" in outcome.log
     for value in hub_secrets.values():
         assert value not in outcome.log
 

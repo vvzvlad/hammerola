@@ -8,15 +8,16 @@
      deliberately registers no shadow root so that these `.tcv_*` rules reach the
      widget at all (ui/src/viewport/element.js).
 
-     site.css is deliberately NOT linked here any more, and this page is now the
-     only one of the three that does without it. Everything it gave this page was
-     chrome that has gone -- #bar, the settings and download panels, the comment
-     form, #cad_viewer, #err -- plus one rule aimed at the library
+     site.css is deliberately NOT linked here any more. Everything it gave this
+     page was chrome that has gone -- #bar, the settings and download panels, the
+     comment form, #cad_viewer, #err -- plus one rule aimed at the library
      (.tcv_tab_material), which is moot now that the viewport starts it with
      `tools: false` and the whole panel is display:none. What is left in it is the
      old dark page chrome, and painting that under a light interface would buy a
-     dark flash before the first render. index.html and pointer.html still link
-     it; they still have that chrome. -->
+     dark flash before the first render. index.html has since left it for exactly
+     the same reason -- the front page is drawn by this same bundle now -- so
+     pointer.html is the only page that still links it, and the only one that
+     still has that chrome. -->
 <link rel="stylesheet" href="/_v/three-cad-viewer.css">
 </head><body>
 <!-- The whole page. The interface draws its own header, its own panels and its

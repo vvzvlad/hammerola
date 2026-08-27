@@ -23,8 +23,8 @@ PYTEST := $(PY) -m pytest
 #
 # UI_FILES IS AN EXPLICIT LIST for the same reason the Dockerfile copies by name:
 # built and committed files share this directory, so a `cp -R` of the build
-# output would let a chunk vite happened to call `index.js` overwrite the hub's
-# own. Naming the files means nothing reaches static/_v/ unless it is asked for,
+# output would let a chunk vite happened to call `pointer.js` overwrite the
+# hub's own. Naming the files means nothing reaches static/_v/ unless it is asked for,
 # and a build that stops producing one fails the `cp` loudly — `cp: ui/dist/x: No
 # such file or directory`, then `make: *** [ui] Error 1` — instead of shipping
 # whatever the build did emit under a name nobody chose.

@@ -47,17 +47,66 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
 **Чеклист незакрытого (шаги плана 8A.2):** здесь только шаги плана — всё
 остальное, что переезд не закрывает, живёт в беклоге, `docs/SPEC.md` §8.
 
-- [ ] **Шаг 0. Комментарии под токен.** Публичная запись комментариев переводится
-      под токен — это то, что закрывает дорожку от анонимного ввода до исполнения
-      кода (SPEC 8A.1).
+- [x] **Шаг 0. Комментарии под токен.** **Сделано.** Публичная запись комментариев
+      переведена под токен — это то, что закрывает дорожку от анонимного ввода до
+      исполнения кода (SPEC 8A.1): комментарий писался без токена → попадал в
+      очередь → агент читал его как задачу → правил `model.py` → хаб исполнял
+      `model.py`. Закрыт первый шаг, единственный из пяти, который можно закрыть,
+      не отменяя саму фичу. Токен проверяется ПЕРВЫМ — до маршрута, до
+      рейт-лимита и до `Content-Length`, — иначе неаутентифицированный
+      по-прежнему заставляет хаб принять и разобрать multipart с вложением.
+
+      **Вместе с этим два секрета схлопнулись в один: `EDIT_TOKEN`** (решение
+      2026-08-27, SPEC §8 запись 26). `PUBLISH_TOKEN` и `COMMENT_READ_TOKEN`
+      исчезли. Имя новое, а не старое, и это отдельное решение: `PUBLISH_TOKEN`
+      врал задолго до того, как лишился пары — им уже открывались исходники
+      ЛЮБОГО проекта (§7.8) и маршрут, УДАЛЯЮЩИЙ проект, — а читался как
+      «креденшл CI на пуш», то есть приглашал отдать его CI общей организации,
+      что после переезда означает выдать исполнение кода. `EDIT_TOKEN` называет
+      право, а не один способ им воспользоваться, и совпадает со словом, которым
+      это значение уже называет интерфейс: `View only` против `Editing on`.
+      «Токен», а не «пароль», — потому что это общая строка, сверяемая на
+      равенство: не на человека, не хешируется, не отзывается по одному, и кто
+      её предъявил, хаб не записывает. Обоснования — SPEC §7.5.
+
+      Ничего не сломалось у тех, кто публикуется: по проводу едет ЗНАЧЕНИЕ в
+      заголовке `Authorization`, а как свой секрет называет чужой workflow — его
+      дело. Миграция деплоя — одна строка в compose.
+
+      **Гейт при этом ослаб, и это записано, а не замолчано.** `ci/smoke.py`,
+      проверка (b), доказывала, что сторож на старте называет КАЖДУЮ недостающую
+      переменную, а не только первую, — и доказывала тем, что переменных было
+      две. С одной второй строки нет. Свойство переехало в
+      `tests/test_config_errors.py` (сторожу подсовывают класс настроек с двумя
+      обязательными полями); гейт, работающий против собранного образа с
+      настоящим `Settings`, так не умеет. Форма списка `REQUIRED_VARIABLES`
+      сохранена, объявленное число проверок — выражение от него, так что вторая
+      переменная вернёт свойство одной строкой. Заодно появился
+      `test_the_gate_knows_every_credential_this_declares`: сверяет список гейта
+      с полями `Settings` без дефолта, потому что «держите их в согласии» было
+      комментарием, а не проверкой.
+
+      **Рейт-лимита комментариев больше НЕТ, и потолков на их число тоже**
+      (решение 2026-08-27, SPEC §7A.4). Шаг 0 сначала оставил рейт-лимит,
+      подняв его с 5/10 мин до 30/10 мин, — единственным доводом было «это
+      самозалечивающийся потолок, он ловит зациклившегося клиента до того, как
+      тот сожжёт сотню слотов сборки насовсем». Довод держался на
+      `COMMENT_MAX_PER_BUILD`; вместе с ним и с `COMMENT_MAX_TOTAL` он ушёл, а
+      без слотов сторожить нечего. Главное же — дверь теперь одна и она под
+      секретом: писать может только обладатель `EDIT_TOKEN`, а он тем же
+      секретом стирает проект целиком (`DELETE /api/v1/projects/<pid>`).
+      Ограничивать частоту тому, кто может стереть проект, бессмысленно.
+      Потолки на РАЗМЕР (тело, вложение, поля), проверка типа вложения по первым
+      байтам и отказ от SVG остались: это про недоверенный ввод, а не про
+      ретенцию. Разбор всех требований 7A.4 — какие пережили смену посылки, а
+      какие отменились — там же, в SPEC §7A.4.
 
       Ресурсных лимитов контейнера в этом шаге НЕТ намеренно, хотя в SPEC 8A.2 они
       записаны рядом. Там они относятся к УЖЕ РАБОТАЮЩЕМУ хабу, у которого
       контейнер живёт без единого потолка; здесь код сервиса уже перенесён, но он
-      ни разу не выкатывался и геометрию пока не считает — снимать числа попросту
-      не с чего, а под сборку моделей их всё равно придётся пересчитывать, когда
-      появится что считать. Лимиты ставятся тогда же, когда сервис впервые
-      выкатывается, — по замерам, а не наугад.
+      ни разу не выкатывался — снимать числа попросту не с чего, а под сборку
+      моделей их всё равно придётся пересчитывать. Лимиты ставятся тогда же,
+      когда сервис впервые выкатывается, — по замерам, а не наугад.
 - [x] **Шаг 1. Ядро в образ.** Пины `cadquery`, `cadquery-ocp`, `ocp-tessellate`,
       `trimesh`; системные библиотеки в Dockerfile (`libgl1`, `libx11-6`, `libexpat1`,
       `libxext6`, `libxrender1`, `libsm6`, `libice6`, и намеренно НЕ `libglu1-mesa`);
@@ -100,7 +149,7 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       Граница проходит по «нужна ли сборка»: токен, размер, архив и «этот пуш уже
       опубликован» отвечаются НА ПУШЕ (401/413/411/408/400/422/409/200), а всё
       остальное уезжает в задачу и узнаётся через `GET /api/v1/jobs/<id>` и
-      `/log` — оба под `PUBLISH_TOKEN`, оба отвечают одинаковым 404 на чужой,
+      `/log` — оба под `EDIT_TOKEN`, оба отвечают одинаковым 404 на чужой,
       несуществующий и кривой id. Параллелизм сборки — отдельное число
       (`MAX_CONCURRENT_BUILDS = 2` против `MAX_CONCURRENT_PUBLISHES = 4`),
       обоснования всех потолков — SPEC §7.5. Задача не может остаться без
@@ -242,7 +291,8 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   never notice on its own. Around the two publishing verbs sit the rest:
   `login` (`setup.py`, writes the machine's `KEY=value`
   file 0600 after checking the password against the hub — ONE secret for the
-  whole system, no second key for comments), `create` (`project.py`, mints the
+  whole system, `EDIT_TOKEN`, no second key for comments), `create`
+  (`project.py`, mints the
   twelve hex characters of SPEC §3.1 and refuses to write over an existing id),
   `status` (`status.py`, assembled out of `builds.json` and the dev slot's own
   `meta.json`, i.e. what the project page already fetches), `comments`
@@ -265,9 +315,10 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   job order is stored nowhere (see `src/jobs.py`); `hammerola log dev` cannot be
   answered either, because nothing is stored for the local slot on purpose
   (SPEC §7.8) — the command says so rather than answering with `latest`'s log,
-  which would be a different build; and the comment routes still
-  check the hub's separate `COMMENT_READ_TOKEN` until step 0, so a deployment
-  sets both hub variables to the one secret
+  which would be a different build; and the comment routes check the
+  same `EDIT_TOKEN` as everything else — the hub's second variable went away in
+  step 0, along with the client's sentence explaining a 401 that meant "this
+  deployment set its other variable differently"
 - `src/metricsdiff.py` — reading `metrics.json`: what a build measured, and what
   moved between two of them. It is NOT a copy of anything and that is the point:
   the document has one writer (the build) and two readers — `cadbuild.metrics`,
@@ -294,7 +345,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
 - `tests/` — pytest. `tests/cadbuild/` is the moved suite and has a `conftest.py`
   of its own: its `isolated_project` fixture is autouse and would otherwise
   chdir every hub test into a scratch project. `tests/client/` has one too, and
-  it takes two things AWAY from every test in it: the `PUBLISH_TOKEN` that
+  it takes two things AWAY from every test in it: the `EDIT_TOKEN` that
   `tests/conftest.py` puts in the environment for `src.settings` (the client
   reads the same name and would push with the wrong secret), and the developer's
   real `~/.config/hammerola/env` (a suite that read it could pass only on a
@@ -307,7 +358,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
 - `templates/` — page templates that ship inside the image: `index.html`,
   `build.html`, `pointer.html`, one per URL the hub serves
 - `static/` — the viewer payload that ships inside the image (`static/_v/`):
-  `three-cad-viewer.esm.js`, the scripts for the index and pointer pages, the
+  `three-cad-viewer.esm.js`, the scripts for the pointer page, the
   site CSS. A separate tree with its own `COPY` line in the Dockerfile and its own smoke
   check (g). NOT EVERYTHING IN `static/_v/` IS COMMITTED: files matching
   `hammerola*` are the browser bundle, produced by `make ui` or by the image's
@@ -323,8 +374,13 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   what keeps them in step; `ui/README.md` has the layout and the pins
 - `ci/smoke.py` — the gate between build and publish: seven checks (a)–(g) the
   test suite structurally cannot make, because it runs against a checkout and
-  never looks at the artefact. (b) proves the startup guard names EVERY missing
-  variable — both credentials, not just the first
+  never looks at the artefact. (b) proves the startup guard fires and NAMES the
+  missing variable. It used to prove more — that the guard names EVERY missing
+  variable, not just the first — and it could, because there were two
+  credentials; with one (`EDIT_TOKEN`, step 0) that property moved to
+  `tests/test_config_errors.py`, which can hand the guard a settings class with
+  several required fields. Read `REQUIRED_VARIABLES` there before assuming the
+  gate still covers it
 - `docs/SPEC.md` — requirements, verified facts and the work plan (section 8A)
 - `main.py` — thin entry point over `src/`
 

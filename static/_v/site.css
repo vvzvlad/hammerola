@@ -1,27 +1,26 @@
-/* Shared chrome for the index page and the pointer page — the only two pages
-   that link this file, and now the only two it describes.
-   THE BUILD PAGE NO LONGER LINKS IT: it draws its own interface and its template
-   carries nothing but the div that mounts it. Everything here that served that
-   page has been taken out rather than left standing, because a rule that matches
-   nothing reads exactly like a rule that matters -- the header's buttons,
-   selects, live-reload note and home link, the downloads and settings panels,
-   the comment form, the viewer's own container, and the rule that hid the
-   vendored widget's Material tab (moot either way now: the viewport starts the
-   library with `tools: false` and the whole panel is display:none).
-   What is left is what index.html and pointer.html actually carry: the page
-   frame, #bar with its title, meta text, spacer and link, the project grid with
-   its cards, and the index's error box. */
-/* overflow:hidden stays, and it is not left over from the viewer either. The
-   two pages that link this file are each one screenful of chrome over one
-   scrolling region, so a scrollbar on the PAGE would only ever be a second way
-   to move something that already moves: the header wraps instead of running past
-   the edge (#bar below), and where scrolling is genuinely needed -- a project
-   list longer than the screen -- it is on #grid, not on the document. */
+/* Chrome for the pointer page -- the ONE page that links this file, and now the
+   only one it describes.
+   Two pages have left it, and both for the same reason: they are drawn by the
+   React bundle, which carries its own styling inline and its own light palette.
+   The build page went first; the index followed when the project list became
+   part of that bundle, taking #grid, .card and #err with it -- every rule that
+   served them has been taken out rather than left standing, because a rule that
+   matches nothing reads exactly like a rule that matters. What is left is what
+   pointer.html actually carries: the page frame and #bar with its title, meta
+   text, spacer and link.
+   THE PALETTE IS THE OLD DARK ONE, and that is now a statement about one page
+   rather than about the site. Converting it would be a redesign of a page whose
+   whole content is one sentence and one link, and the two pages that matter no
+   longer share a pixel with it. */
+/* overflow:hidden stays. The one page here is a single line of chrome and
+   nothing inside it scrolls, so a scrollbar on the document could only ever
+   appear for a header that ran past the edge -- and the header wraps instead
+   (#bar below). */
 html,body{margin:0;height:100%;overflow:hidden;background:#1e1e1e;color:#ddd;
   font:13px/1.4 -apple-system,"Segoe UI",sans-serif}
 body{display:flex;flex-direction:column}
 /* wrap, not nowrap: a header that cannot break its line can only overflow, and
-   with overflow:hidden below that means silently cut off rather than scrolled. */
+   with overflow:hidden above that means silently cut off rather than scrolled. */
 #bar{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;
   padding:7px 14px;border-bottom:1px solid #333;position:relative;z-index:10}
 /* min-width:0 is the half that matters: without it a flex item refuses to go
@@ -36,16 +35,3 @@ body{display:flex;flex-direction:column}
    width would push whatever follows it onto a line of its own for nothing. */
 #bar .spacer{flex:1 1 0;min-width:0}
 #bar a{color:#7ab8ff;text-decoration:none;margin-left:10px}
-#err{display:none;margin:20px;padding:14px;border:1px solid #a33;background:#2a1a1a;
-  color:#f99;white-space:pre-wrap;font:12px ui-monospace,Menlo,monospace}
-#grid{flex:1 1 auto;overflow:auto;padding:18px;display:grid;gap:14px;
-  align-content:start;grid-auto-rows:min-content;
-  grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
-.card{border:1px solid #333;border-radius:6px;padding:14px;background:#242424;
-  text-decoration:none;color:#ddd;display:block}
-.card:hover{border-color:#7ab8ff;background:#282828}
-.card h3{margin:0 0 6px;font-size:14px}
-.card .s{color:#888;font-size:12px;font-family:ui-monospace,Menlo,monospace}
-.card .pid{color:#6a6a6a;font-size:11px;font-family:ui-monospace,Menlo,monospace;
-  margin-top:4px}
-.card .t{color:#7a7;font-size:12px;margin-top:6px}

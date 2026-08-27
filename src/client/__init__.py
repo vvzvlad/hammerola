@@ -4,7 +4,7 @@ The single system-wide client described in SPEC §8, entry 26. Two commands
 publish; the other four are the ones that need nothing new from the hub.
 
     hammerola login            -> checks the password, then writes HUB_URL and
-                                  PUBLISH_TOKEN into ~/.config/hammerola/env
+                                  EDIT_TOKEN into ~/.config/hammerola/env
     hammerola create           -> a project.json with a fresh id (SPEC §3.1)
     hammerola build            -> POST /api/v1/publish/<pid>/dev
     hammerola commit -m "..."  -> POST /api/v1/publish/<pid>, and the hub

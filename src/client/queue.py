@@ -88,7 +88,7 @@ def resolve(args) -> int:
 
 
 def _hub(root) -> Hub:
-    return Hub(config.hub_url(root), config.publish_token(root),
+    return Hub(config.hub_url(root), config.edit_token(root),
                timeout=QUERY_TIMEOUT)
 
 

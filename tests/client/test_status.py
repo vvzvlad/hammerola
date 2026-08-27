@@ -22,7 +22,7 @@ from src.client.cli import main
 @pytest.fixture(autouse=True)
 def configured(monkeypatch, hub):
     monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("PUBLISH_TOKEN", TOKEN)
+    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
 
 
 def run(model, *args):
@@ -150,10 +150,10 @@ def test_an_unreachable_hub_is_a_clean_failure(model, monkeypatch, capsys):
 
 def test_a_machine_that_has_not_logged_in_is_told_to(model, monkeypatch,
                                                      capsys):
-    monkeypatch.delenv("PUBLISH_TOKEN", raising=False)
+    monkeypatch.delenv("EDIT_TOKEN", raising=False)
     assert run(model, "status") == 1
     error = capsys.readouterr().err
-    assert "PUBLISH_TOKEN is not set" in error
+    assert "EDIT_TOKEN is not set" in error
     assert "hammerola login" in error
 
 

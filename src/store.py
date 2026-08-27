@@ -14,7 +14,7 @@ Layout under DATA_DIR (SPEC 3, 7.2). Everything here is runtime state and lives 
 the docker volume; templates and viewer assets deliberately live outside it,
 because the volume would shadow them.
 
-    <data>/index.json                      cards for the public index page
+    <data>/index.json                      cards for the front page
     <data>/project/<pid>/builds.json       build picker for one project
     <data>/project/<pid>/latest            SYMLINK -> <commit>, newest build
     <data>/project/<pid>/dev/              THE local slot — one directory, rewritten
@@ -34,7 +34,7 @@ decisions rather than arrangement (SPEC 8, entry 17).
 It is OUTSIDE the build directory. A build directory is served publicly and with
 a year of `immutable`, so a mistake there cannot be taken back — the copies are
 already handed out. This tree is served by nothing: the only way out of it is
-`GET /api/v1/sources/<revision>`, behind PUBLISH_TOKEN, and the file server's
+`GET /api/v1/sources/<revision>`, behind EDIT_TOKEN, and the file server's
 `_safe_name` never reaches this far anyway.
 
 It is CONTENT-ADDRESSED, and that is not a second naming scheme to keep in step
@@ -936,6 +936,26 @@ class Store:
                     f"publish {pid}/{DEV_LINK}: the slot is published, but the "
                     f"build picker was not rewritten")
 
+        # The site index too, and this is the one thing a local push changes
+        # about the front page. The card still describes the newest COMMIT and
+        # never the slot (SPEC 7.6) — what it gains is the `dev` chip, i.e. that
+        # a slot exists. Without this line that chip appears only when the
+        # project is next committed, which is the same class of staleness the
+        # picker is rewritten to avoid; with it, a local push costs one index
+        # rebuild, which is nothing beside the build that produced the push.
+        #
+        # OUTSIDE the project lock and after it, and guarded, exactly like
+        # `publish_built`: `_refresh_index` takes the index lock and walks every
+        # project, so holding a second lock across it is how two publishes to two
+        # projects would deadlock — and it runs after the swap that publishes, so
+        # it must not be able to turn a published slot into a failed push.
+        try:
+            self._refresh_index()
+        except Exception:
+            logger.exception(
+                f"publish {pid}/{DEV_LINK}: the slot is published, but the site "
+                f"index was not refreshed")
+
         logger.info(
             f"publish {pid}/{DEV_LINK}: {len(files)} files, "
             f"{len(meta['variants'])} views")
@@ -1442,6 +1462,13 @@ class Store:
         arrange — `builds_of` already excludes the slot. A project whose only
         build is a local one therefore has no card yet, which is the honest
         answer: nothing has been published from a commit.
+
+        Two of the card's fields are properties of the PROJECT rather than of the
+        build the rest of it comes from, so they are read here and handed over:
+        whether the slot is occupied (the same `_dev_meta` call `_write_builds_json`
+        makes, and the front page says only that it exists — never what is in it),
+        and the oldest build still on disk, which is as close to "since when" as
+        anything here gets. `render.index_card` says what each is for.
         """
         with self._index_lock:
             cards = []
@@ -1450,7 +1477,14 @@ class Store:
                     continue
                 metas = self.builds_of(pdir.name)
                 if metas:
-                    card = render.index_card(metas[0])
+                    # `builds_of` sorts newest first, so the last entry is the
+                    # oldest build — and `built` is required of every meta it
+                    # returns, which is what makes the subscript safe.
+                    card = render.index_card(
+                        metas[0],
+                        dev=self._dev_meta(pdir.name) is not None,
+                        first_built=metas[-1]["built"],
+                    )
                     renamed = self.project_title(pdir.name)
                     if renamed is not None:
                         card["title"] = renamed

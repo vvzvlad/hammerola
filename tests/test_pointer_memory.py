@@ -39,12 +39,17 @@ ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "static" / "_v"
 PREF = ASSETS / "pointer_pref.js"
 RESOLVER = ASSETS / "pointer.js"
-INDEX_JS = ASSETS / "index.js"
 TEMPLATE = ROOT / "templates" / "pointer.html"
 # The recording half, which is the interface: the module that owns this origin's
 # storage, and the component that decides a page is an arrival worth recording.
 STORE_JS = ROOT / "ui" / "src" / "store.js"
 COMPONENT = ROOT / "ui" / "src" / "HammerolaViewer.jsx"
+# The front page, which is where the memory is most easily undone by accident.
+# It used to be a committed script (`static/_v/index.js`); it is drawn by the
+# compiled interface now, so the URL it links to is built in `hub.js` and used in
+# the entry component, and this file follows it there.
+HUB_JS = ROOT / "ui" / "src" / "hub.js"
+ENTRY = ROOT / "ui" / "src" / "HammerolaEntry.jsx"
 
 
 def _code(path):
@@ -272,11 +277,27 @@ def test_the_index_links_to_the_project_and_not_to_a_pointer():
     own projects takes most.
 
     Linking it straight to `latest` would overwrite the remembered choice on
-    every visit to the index — the feature quietly undone by its own front page.
+    every visit to the front page — the feature quietly undone by its own index.
+
+    Checked in two places because the link is now built in one file and used in
+    another, and either half can break it alone: a `projectUrl` that grew a
+    pointer would overwrite the memory everywhere at once, and a card that stopped
+    calling it would do the same on the one page that matters most.
     """
-    code = _code(INDEX_JS)
-    assert "card.href = `/project/${encodeURIComponent(p.pid)}/`;" in code
-    assert "/latest/`" not in code
+    url = _code(HUB_JS)
+    built = re.search(r"export const projectUrl = \(pid\) => (.+);", url)
+    assert built, "ui/src/hub.js no longer builds the card's URL in one place"
+    assert "encodeURIComponent(pid)" in built.group(1), built.group(1)
+    for name in ("latest", "dev"):
+        assert name not in built.group(1), (
+            f"projectUrl names the `{name}` pointer: {built.group(1)}. The URL a "
+            "card points at has to name NO pointer — that is the only one the "
+            "resolver is allowed to apply a remembered choice to.")
+
+    entry = _code(ENTRY)
+    assert "href={projectUrl(" in entry, (
+        "the front page's cards no longer take their href from projectUrl")
+    assert "/latest/" not in entry
 
 
 # -- the house rules ----------------------------------------------------------

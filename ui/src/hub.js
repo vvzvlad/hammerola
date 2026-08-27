@@ -1,8 +1,12 @@
-// What this page is showing, and the three fetches that say what is in it.
+// What the pages are showing, and the fetches that say what is in them.
 //
-// Kept out of the component because none of it is React and all of it is the
+// Kept out of the components because none of it is React and all of it is the
 // hub's contract. The URL scheme is the whole of the addressing (src/app.py):
 //
+//     /index.json                       what is on this hub -- EDIT_TOKEN, the
+//                                       one route on this site that is guarded
+//     /project/<pid>/                   the project, on whichever pointer the
+//                                       reader was last on (SPEC 9)
 //     /project/<pid>/<slot>/            the page, where <slot> is a commit id
 //                                       or one of the two moving names
 //     /project/<pid>/<slot>/meta.json   this build: title, views, downloads
@@ -68,6 +72,87 @@ export const loadMeta = (fresh) =>
 
 /** The build picker: `{pid, project, title, has_dev, latest, builds[]}`. */
 export const loadBuilds = () => getJson(`/project/${PAGE.pid}/builds.json`);
+
+// -- the front page ---------------------------------------------------------
+
+/** The hub said no. Distinguished from every other failure by the caller. */
+export class Unauthorized extends Error {}
+
+/**
+ * Every project's card, as `Store._refresh_index` wrote them — BEHIND THE TOKEN.
+ *
+ * This is the one route the front page needs and the only document on the
+ * service that enumerates what exists, so it is guarded while a build page is
+ * not (src/app.py says why at length). Which makes this function the whole of
+ * the front page's access control AND its sign-in check: there is no separate
+ * "is this token good" endpoint to ask, because the answer to that question and
+ * the answer to "what may I see" are the same response.
+ *
+ * A 401 is raised apart from everything else. "The token is wrong" and "the hub
+ * is unreachable" lead to different screens and different words, and collapsing
+ * them tells somebody to retype a token that was fine.
+ */
+export async function loadIndex(token) {
+  const response = await fetch('/index.json', {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    cache: 'no-store',
+  });
+  if (response.status === 401) throw new Unauthorized('/index.json -> HTTP 401');
+  if (!response.ok) throw new Error(`/index.json -> HTTP ${response.status}`);
+  return response.json();
+}
+
+/**
+ * A card's link: THE PROJECT, and never one of its pointers.
+ *
+ * A card means "open this model", and the URL naming no pointer is the one that
+ * opens whichever of `latest` and `dev` this reader was last on (SPEC 9).
+ * Linking straight at `latest` here would quietly overwrite that memory on every
+ * visit to the front page — which is the route somebody browsing their own
+ * projects takes most.
+ */
+export const projectUrl = (pid) => `/project/${encodeURIComponent(pid)}/`;
+
+/**
+ * One card of `/index.json`, as the front page renders it.
+ *
+ * The mapping is HERE, in one function, rather than spread through the JSX, and
+ * that is what lets `tests/test_ui_source.py` compare the fields read off a card
+ * against the keys `render.index_card` actually writes. A field that is not
+ * there reads as `undefined`, which renders as an empty string and formats as
+ * `NaN` — never as an error.
+ *
+ * Three of the designer's fields have no line here, and each absence is a fact
+ * about the hub rather than an omission:
+ *
+ *   * a PREVIEW image is block 12 of the brief and is not built yet, so every
+ *     card draws the neutral plate. No field is invented to hold one.
+ *   * a STATUS (`idle`/`building`/`failed`) cannot be answered at all. A build
+ *     job is addressable only by its own id, there is no route that lists jobs,
+ *     and job order is stored nowhere — it existed for a retention that no
+ *     longer exists (SPEC 5.3, and the docstring of src/jobs.py). So the card
+ *     carries no status and the page shows none, rather than showing `idle` for
+ *     a project that is rebuilding as you look at it.
+ *   * a REVISION NUMBER does not exist. A revision is named by the digest of its
+ *     sources (SPEC 7.7), so there is no `v241` to show and there is not going
+ *     to be one; the hash is shown at the length the rest of this site reads it.
+ *
+ * `first` is the one field whose NAME differs from what the mock asked for, and
+ * deliberately: the mock wanted a creation date, the hub has the oldest build it
+ * holds, and those are different claims — see `render.index_card`.
+ */
+export function projectCard(card) {
+  return {
+    pid: card.pid,
+    title: card.title || card.project || card.pid,
+    slug: card.project,
+    meta: `${card.parts} parts · ${card.variants} views · ${card.mb} MB`,
+    rev: shortId(card.commit),
+    dev: !!card.dev,
+    built: card.built,
+    first: card.first_built,
+  };
+}
 
 /**
  * What identifies "a different build" under a moving name.

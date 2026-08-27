@@ -100,7 +100,7 @@ def start_fake_hub(tmp_path, name, *, harden):
         cwd=str(HUB_ROOT),
         # Composed rather than inherited so the token is the only interesting
         # thing in there, and so the assertion below is about THIS string.
-        env={"PATH": "/usr/bin:/bin", "PUBLISH_TOKEN": HUB_TOKEN,
+        env={"PATH": "/usr/bin:/bin", "EDIT_TOKEN": HUB_TOKEN,
              "PYTHONUNBUFFERED": "1"},
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
     )
@@ -284,8 +284,8 @@ def test_the_hub_refuses_to_start_when_the_hardening_fails(tmp_path):
     finished = subprocess.run(
         [sys.executable, "-s", str(launcher)],
         cwd=str(HUB_ROOT),
-        env={"PATH": "/usr/bin:/bin", "PUBLISH_TOKEN": "x",
-             "COMMENT_READ_TOKEN": "y", "DATA_DIR": str(tmp_path / "data")},
+        env={"PATH": "/usr/bin:/bin", "EDIT_TOKEN": "x",
+             "DATA_DIR": str(tmp_path / "data")},
         capture_output=True, text=True, timeout=60,
     )
 

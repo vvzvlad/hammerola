@@ -59,7 +59,7 @@ def test_login_stores_both_settings_in_a_file_only_this_account_can_read(
 
     stored = config.parse_env_file(env_file)
     assert stored["HUB_URL"] == hub.url
-    assert stored["PUBLISH_TOKEN"] == TOKEN
+    assert stored["EDIT_TOKEN"] == TOKEN
     # THE POINT OF THE COMMAND, and the thing that is invisible when it breaks:
     # the file holds the one secret of the whole system.
     assert mode_of(env_file) == 0o600
@@ -106,9 +106,9 @@ def test_login_rewrites_an_exported_line_as_an_exported_line(hub, env_file,
                                                              answers):
     """The file is also something a person can `source`."""
     env_file.parent.mkdir(parents=True)
-    env_file.write_text("export PUBLISH_TOKEN=old\n", encoding="utf-8")
+    env_file.write_text("export EDIT_TOKEN=old\n", encoding="utf-8")
     assert main(["login", hub.url]) == 0
-    assert "export PUBLISH_TOKEN=" in env_file.read_text(encoding="utf-8")
+    assert "export EDIT_TOKEN=" in env_file.read_text(encoding="utf-8")
 
 
 def test_the_address_is_asked_for_when_it_is_not_given(hub, env_file, answers):
@@ -156,12 +156,12 @@ def test_a_password_that_would_not_read_back_leaves_the_old_one_alone(
     one layer of them, so a password that is quoted at both ends would come
     back as something else."""
     env_file.parent.mkdir(parents=True)
-    env_file.write_text("PUBLISH_TOKEN=the-old-one\n", encoding="utf-8")
+    env_file.write_text("EDIT_TOKEN=the-old-one\n", encoding="utf-8")
     answers["password"] = "'quoted'"
 
     assert main(["login", hub.url]) == 1
     assert "cannot be stored" in capsys.readouterr().err
-    assert config.parse_env_file(env_file)["PUBLISH_TOKEN"] == "the-old-one"
+    assert config.parse_env_file(env_file)["EDIT_TOKEN"] == "the-old-one"
 
 
 def test_login_says_when_the_environment_will_shadow_what_it_wrote(
@@ -256,7 +256,7 @@ def test_a_created_project_is_one_the_hub_accepts(hub, tmp_path, monkeypatch):
     """End to end, because the alphabet is the hub's: an id this tool minted
     and the hub refuses would break the first push of every new project."""
     monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("PUBLISH_TOKEN", TOKEN)
+    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
 
     root = make_model(tmp_path / "demo")
     (root / "project.json").unlink()

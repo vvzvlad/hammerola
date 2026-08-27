@@ -62,7 +62,7 @@ def test_a_rename_shows_up_where_a_project_is_named(hub):
 
     picker = hub.get("/project/proj1/builds.json").json()
     assert picker["title"] == "The bracket, mk2"
-    card, = hub.get("/index.json").json()
+    card, = hub.index().json()
     assert card["title"] == "The bracket, mk2"
     # And the id is what it always was: the URLs still resolve.
     assert card["pid"] == "proj1"
@@ -153,7 +153,7 @@ def test_removing_a_project_takes_everything_it_had(hub):
     assert not (hub.comment_dir("proj1")).exists()
     assert not _sources(hub, revision).exists()
     # The public surfaces stop naming it in the same breath.
-    assert hub.get("/index.json").json() == []
+    assert hub.index().json() == []
     assert hub.get(f"/project/proj1/{revision}/meta.json").status_code == 404
     assert hub.get("/project/proj1/").status_code == 404
     # And the code is gone from behind the secret too, not merely unlisted.
@@ -191,7 +191,7 @@ def test_removing_one_project_leaves_the_others_alone(hub):
 
     assert hub.get(f"/project/proj2/{kept}/meta.json").status_code == 200
     assert (hub.comment_dir("proj2")).is_dir()
-    assert [c["pid"] for c in hub.get("/index.json").json()] == ["proj2"]
+    assert [c["pid"] for c in hub.index().json()] == ["proj2"]
     # The queue still answers for the surviving project, and the counters were
     # rebuilt rather than decremented.
     listed = hub.read_comments("?project=proj2").json()["comments"]

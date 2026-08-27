@@ -30,7 +30,7 @@ from src.client.cli import main
 def configured(monkeypatch, hub):
     """Point the client at the test hub, with the token that hub checks."""
     monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("PUBLISH_TOKEN", TOKEN)
+    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
 
 
 def run(model, *args):
@@ -72,12 +72,18 @@ def test_build_publishes_the_dev_slot(hub, model, capsys):
     assert out.rstrip().endswith(f"{hub.url}/project/demo0001/dev/")
 
 
-def test_build_leaves_latest_and_the_public_index_alone(hub, model):
-    """`dev` is the working copy, not a version: the public surfaces go on
-    meaning "the project as of some commit" (SPEC 7.6)."""
+def test_build_leaves_latest_and_the_site_index_alone(hub, model):
+    """`dev` is the working copy, not a version: the shared surfaces go on
+    meaning "the project as of some commit" (SPEC 7.6).
+
+    A local build DOES rewrite index.json now — that is how the `dev` chip on a
+    card appears — so what is asserted is the thing that actually matters and
+    always did: a project with no commit build has no CARD. The slot is not a
+    version of the project, so it cannot put one on the front page.
+    """
     assert run(model, "build") == 0
     assert not (hub.project_dir("demo0001") / "latest").exists()
-    assert hub.get("/index.json").json() == []
+    assert hub.index().json() == []
 
 
 def test_the_whole_source_tree_arrives_including_subdirectories(hub, tmp_path):
@@ -280,7 +286,7 @@ def test_a_failed_build_is_a_non_zero_exit_with_its_log(hub_factory, model,
 
 def test_a_bad_token_fails_with_the_hubs_own_answer(hub, model, monkeypatch,
                                                     capsys):
-    monkeypatch.setenv("PUBLISH_TOKEN", "not-the-token")
+    monkeypatch.setenv("EDIT_TOKEN", "not-the-token")
     assert run(model, "build") == 1
     assert "401" in capsys.readouterr().err
 
@@ -294,9 +300,9 @@ def test_a_missing_hub_url_fails_before_anything_is_packed(model, monkeypatch,
 
 def test_a_missing_token_fails_before_anything_is_packed(model, monkeypatch,
                                                          capsys):
-    monkeypatch.delenv("PUBLISH_TOKEN", raising=False)
+    monkeypatch.delenv("EDIT_TOKEN", raising=False)
     assert run(model, "build") == 1
-    assert "PUBLISH_TOKEN is not set" in capsys.readouterr().err
+    assert "EDIT_TOKEN is not set" in capsys.readouterr().err
 
 
 def test_a_tree_the_hub_would_refuse_is_refused_locally(hub, model, capsys):
