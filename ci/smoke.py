@@ -37,6 +37,11 @@ image has a realistic chance of shipping broken while the suite stays green:
       the Dockerfile breaks nothing any other check can see: the image builds, the container
       starts, `/health` answers with a literal string that reads no file, and every check above
       stays green while every page the hub serves is a 404 or a viewer with no viewer in it.
+* (h) the three `/start` files a stranger is handed really are served BY THIS IMAGE. Two of
+      them do not exist as files at all — the client is zipped out of `src/client/` and the
+      template is tarred out of `model_template/` when the request arrives — so they are the
+      one part of this artefact that (g) structurally cannot cover by naming a path, and the
+      route answers 404 rather than 500 when the assembly fails.
 
 Constraints of this runner, which shaped every choice below
 ------------------------------------------------------------
@@ -91,9 +96,11 @@ NAME_ENV = "SMOKE_NAME"
 #           sleeping command rather than the image's own so that it is a stable place to exec
 #           into. Its `sleep` has to outlast the LAST of those four execs — see IDLE_COMMAND.
 #   -guard  the short-lived one started with NO environment for check (b).
-#   -cmd    the one started with the image's REAL command for check (e). Deliberately NOT
-#           started with `--rm`: check (e) reads `docker logs` and `docker inspect` AFTER it
-#           has exited, and `--rm` would have taken it away first.
+#   -cmd    the one started with the image's REAL command for check (e), and the one check (h)
+#           execs into afterwards — the hub it asks has to be the program production runs, which
+#           is this container and not the sleeping one above. Deliberately NOT started with
+#           `--rm`: check (e) reads `docker logs` and `docker inspect` AFTER it has exited, and
+#           `--rm` would have taken it away first.
 # All three are NAMED rather than left to docker's random name generator, and the reason is
 # the one case that matters: `subprocess` hitting its timeout kills the docker CLIENT on the
 # runner, not the container on the daemon. With no name nobody could ever remove the survivor
@@ -221,6 +228,37 @@ REQUIRED_PATHS = [
     # dynamic import or a stylesheet adds the file it produces here and a COPY line for it, in
     # the same commit.
     "/app/static/_v/hammerola.js",
+    # What the hub hands somebody who has just found it (src/onboarding.py): the
+    # agent instructions, and the starter model directory. Both are copied as
+    # whole trees, so one file of each is named here — the one whose absence the
+    # route cannot survive.
+    #
+    # They are here for the reason every other row is: nothing else can see them
+    # go missing. The image starts, drops privileges, serves every page and
+    # passes checks (a) to (f) with neither of them, and what breaks is a 404 on
+    # `/start/skill.md` for somebody who came to the hub precisely because they
+    # did not know what to do next.
+    #
+    # Check (h) asks that same route and would go red too, and the two rows are
+    # kept BOTH because they fail differently: this one names the FILE that went
+    # missing, (h) names the ANSWER a visitor gets. Neither subsumes the other —
+    # a path present but unreadable passes here and fails there, and (h) covers
+    # only what a route touches, while this list is a tripwire on COPY lines.
+    #
+    # SKILL.md has a second, sharper way of disappearing, which is why it is not
+    # enough to trust the COPY line: `.dockerignore` carries a `*.md` rule. It is
+    # root-only as docker matches patterns, so this file survives it today —
+    # widen that line to `**/*.md` and the image builds green with the skill
+    # route dead. This row is what fails instead.
+    "/app/skill/SKILL.md",
+    "/app/model_template/model.py",
+    # The ONE file the template rules were relaxed for, and the only reason
+    # `unpack` has an exception at all. It is hidden, so it is exactly the
+    # kind of file a COPY, an ignore rule or an editor drops silently — and
+    # `/start/template.tar.gz` would go on serving a template without it,
+    # leaving every project created from it with no .gitignore and nothing
+    # anywhere saying so.
+    "/app/model_template/.gitignore",
 ]
 
 # --- check (f): the CAD kernel -------------------------------------------------------------
@@ -381,6 +419,127 @@ print(request["sentinel"])
 print(json.dumps(verdicts))
 """
 
+# --- check (h): the onboarding routes ------------------------------------------------------
+# The three files `/start` hands somebody who has just found the hub, asked for from INSIDE the
+# container that is running the image's own command. They are here because they are the one part
+# of this artefact that check (g) structurally cannot reach.
+#
+# (g) names paths, and two of these three are not paths: `/start/hammerola` is a zipapp built out
+# of every module under `src/client/` when the request arrives, and `/start/template.tar.gz` is a
+# tar built out of `model_template/` the same way (`src/onboarding.py`). A client module that
+# .dockerignore kept out of the image, or a template file whose name no client would unpack,
+# breaks the ROUTE and not any single named file — and `src/app.py` answers that with a logged
+# 404, deliberately, because "this hub does not serve that" is the true answer to the request.
+# So the image builds, starts, drops privileges, passes (a) through (g), and hands a 404 to
+# exactly the person who came here because they did not know what to do next.
+#
+# THAT SENTENCE IS TRUE BECAUSE THE HUB WAS MADE TO MAKE IT TRUE, and it is worth knowing which
+# half is which. A missing client module used to produce a 200: `src/client/*.py` is GLOBBED, so
+# a file that is not there is not an error — it is simply not in the glob, and the archive was
+# built, served with a plausible size, and died with an ImportError on the laptop that
+# downloaded it. `onboarding._refuse_unimportable` is what closed that: the archive now has to
+# carry everything reachable by imports from `src/client/cli.py`, and refuses with the ValueError
+# `_serve_start` turns into the logged 404 this check reads. So the route is now a real witness
+# for the whole client, not only for the two modules named in `CLIENT_EXTRA_MODULES`.
+#
+# The suite cannot see it either, and this is the sharp half: `tests/test_onboarding.py` builds
+# those archives out of the CHECKOUT, where every file is present by construction, so it goes
+# green on a repository whose image serves nothing.
+#
+# `/start` ITSELF IS DELIBERATELY NOT IN THIS LIST. The manifest is three constants and one
+# boolean, it opens no file, and it cannot fail the way the three below can; adding it would be
+# a check on this gate's own arithmetic rather than on the image.
+START_ROUTES = ["/start/skill.md", "/start/hammerola", "/start/template.tar.gz"]
+
+# Where the hub listens inside its own container: `src/settings.py` defaults `host` to 0.0.0.0
+# and `port` to 8000, and SMOKE_ENV sets neither. 127.0.0.1 here is the CONTAINER's loopback,
+# reached by `docker exec` — not the runner's, which the module docstring forbids this file to
+# talk to and which is a different network namespace entirely.
+START_ORIGIN = "http://127.0.0.1:8000"
+
+# The word every verdict line of the probe below starts with. Line-marked output rather than the
+# CAD probe's JSON, and for the same reason PRESENCE_SCRIPT uses it: the answer is one short
+# verdict per path, and marking the lines is what lets them be picked out of a stream that may
+# also carry warnings, since `docker()` folds stderr into stdout. A path the probe did not report
+# on is a THIRD answer, exactly as in sweep_paths(), and is never read as a pass.
+START_MARK = "start-route"
+# Seconds the probe will keep retrying a refused connection before giving up. main.py logs the
+# marker check (e) waits for BEFORE it binds the socket, so "connection refused" here can mean
+# "not bound yet" rather than "broken" — and by the time this runs the container has been up
+# through checks (f) and (g), so the wait is insurance rather than the normal path.
+START_WAIT = 10
+# Per-request timeout inside the container, and how much of each body is read. The bodies are
+# small and local; only "not empty" is being asked, so there is no reason to pull a whole
+# archive through the pipe.
+#
+# THESE THREE HAVE TO FIT INSIDE EXEC_TIMEOUT, which is what bounds the `docker exec` carrying
+# them. The CEILING is the wait spent once plus one read per route — 10 + 3 x 5 = 25 s against
+# 30 — and it is a ceiling rather than the worst case, because the deadline is taken once before
+# the loop and is therefore shared by all three routes: the first route spends the retry budget
+# and every route after it gets one attempt. MEASURED against a socket that accepts and never
+# answers, which is the slow shape: 20.6 s. Against a refused connection: 10.2 s. A probe killed
+# by the outer bound reports NOTHING, so every row would fail over a hub that was merely slow —
+# raise EXEC_TIMEOUT with these, not after them.
+START_READ = 5
+START_READ_BYTES = 4096
+
+# Run by the image's own interpreter inside the container started with the image's REAL command,
+# so the hub it asks is the one production runs. Stdlib only, like everything the client is made
+# of — this is the same interpreter, and asking for anything else would be a fifth dependency
+# nobody declared. One argument of JSON, for the same reason the CAD probe takes one: the
+# constants above stay the single place any of this is written on this side of the boundary.
+#
+# Every reason is collapsed to ONE LINE before it is printed: the parser reads a verdict per
+# line, and a traceback pasted into the middle of it would be read as several verdicts about
+# nothing.
+START_PROBE_SOURCE = r"""
+import json
+import sys
+import time
+import urllib.error
+import urllib.request
+
+request = json.loads(sys.argv[1])
+deadline = time.time() + request["wait"]
+
+
+def one_line(text):
+    return " | ".join(part.strip() for part in str(text).splitlines() if part.strip())
+
+
+def report(path, reason):
+    if reason is None:
+        print("{} ok {}".format(request["mark"], path))
+    else:
+        print("{} bad {} {}".format(request["mark"], path, one_line(reason) or "(no detail)"))
+
+
+for path in request["routes"]:
+    url = request["origin"] + path
+    while True:
+        try:
+            with urllib.request.urlopen(url, timeout=request["read"]) as reply:
+                status = reply.status
+                body = reply.read(request["bytes"])
+        except urllib.error.HTTPError as error:
+            report(path, "the hub answered {} {}".format(error.code, error.reason))
+            break
+        except Exception as error:
+            if time.time() < deadline:
+                time.sleep(0.5)
+                continue
+            report(path, "no answer within {} s: {}: {}".format(
+                request["wait"], type(error).__name__, error))
+            break
+        if status != 200:
+            report(path, "the hub answered {}".format(status))
+        elif not body:
+            report(path, "the hub answered 200 with an empty body")
+        else:
+            report(path, None)
+        break
+"""
+
 # How many verdicts each probe below is REQUIRED to return, compared against what it actually
 # returned before anything is reported. Every probe builds a local `targets` tuple first and
 # returns exactly one row per target on every path it can take — including the paths where the
@@ -417,11 +576,12 @@ print(json.dumps(verdicts))
 # The counts are derived from the source wherever a derivation exists — the excluded-path and
 # required-path sweeps emit one row per path, so they are written as `len(EXCLUDED_PATHS)` and
 # `len(REQUIRED_PATHS)` and cannot go stale when either list grows; (b) is its two fixed rows
-# plus one per required variable, and (f) is one row per declared import plus one per pin for
-# the same reason. The rest are literals because the `targets` tuples they count are literal,
-# and a literal that has to be kept in step is the entire point here.
+# plus one per required variable, (f) is one row per declared import plus one per pin, and (h)
+# one row per onboarding route, for the same reason. The rest are literals because the `targets`
+# tuples they count are literal, and a literal that has to be kept in step is the entire point
+# here.
 #
-# Each label carries the probe's LETTER — the same (a)…(g) the list at the top of the module
+# Each label carries the probe's LETTER — the same (a)…(h) the list at the top of the module
 # docstring uses and each probe's own docstring opens with. That prefix is not decoration: this
 # label is the only thing a self-check failure gives whoever reads the run, and a label phrased
 # in words of its own would make them grep for prose that appears nowhere else in this file.
@@ -436,6 +596,7 @@ EXPECTED_TARGETS = (
     ("(e) startup", 2),
     ("(f) CAD kernel", len(CAD_IMPORTS) + len(PINS)),
     ("(g) required paths", len(REQUIRED_PATHS)),
+    ("(h) onboarding routes", len(START_ROUTES)),
 )
 
 # The environment the probe and real-command containers run with. The value is invented here
@@ -459,7 +620,9 @@ SMOKE_ENV = [
 # into it — check (g), the required-path sweep — and the arithmetic below puts the start of this
 # container at 240 s and the end of that exec at 675 s in the worst case, i.e. 435 s of its own
 # life used out of 900. Adding another exec into this container eats into that margin; adding a
-# call BEFORE it starts does not. The container is removed in a `finally` regardless, and the
+# call BEFORE it starts does not. Check (h) is neither: it runs after (g) but execs into the
+# `-cmd` container, which is running the image's own server and has no `sleep` to outlast, so it
+# costs this margin nothing. The container is removed in a `finally` regardless, and the
 # workflow removes it again under `if: always()`.
 IDLE_COMMAND = ["sleep", "900"]
 
@@ -499,12 +662,13 @@ STARTUP_MARKERS = (STARTUP_MARKER,)
 #  + 30 (inspect cmd state)
 #  + 90 (exec: CAD kernel probe)
 #  + 30 (exec: required-path sweep)
+#  + 30 (exec: /start routes, into the -cmd container)
 #  + 30 (rm probe, finally) + 30 (rm cmd, finally)
-#  = 735 s, a little over 12 minutes. Both workflows allow 14 (840 s), and that headroom was
+#  = 765 s, a little under 13 minutes. Both workflows allow 14 (840 s), and that headroom was
 # raised together with the CAD probe below — a step timeout that does not exceed this sum turns
 # a slow-but-healthy run into a killed step whose own container cleanup never executes. The
-# remaining 105 s of margin is what a further exec into the probe container would spend, so
-# adding one means revisiting `timeout-minutes` in both workflows rather than only this sum.
+# remaining 75 s of margin is what a further exec would spend, so adding one means revisiting
+# `timeout-minutes` in both workflows rather than only this sum.
 # Three of these `rm`s are PRE-run cleanups: every container is removed by name before it is
 # started, so a re-run from the Gitea UI — which keeps the same run id, hence the same
 # $SMOKE_NAME — cannot die on "name already in use".
@@ -1393,6 +1557,113 @@ def check_cad_kernel(name, blocked=None):
     return rows
 
 
+def parse_start_routes(output):
+    """Pull check (h)'s verdicts out of the probe's stdout.
+
+    Returns {path: None or reason} for every route the probe reported on, and reports on
+    nothing else. A route MISSING from that mapping is a third answer — "the probe said nothing
+    about this one" — and the caller treats it as its own failure rather than as either verdict,
+    for the same reason sweep_paths()'s callers do: read as a pass, it would silently un-check
+    the route it is about.
+
+    Unmarked lines are dropped rather than refused. `docker()` folds stderr into stdout, so a
+    python warning or a line from the container's own machinery can land on either side of the
+    verdicts, and a parser that treated any of it as a malformed verdict would fail an image
+    with nothing wrong with it.
+    """
+    seen = {}
+    for line in output.splitlines():
+        fields = line.split(None, 3)
+        if len(fields) < 3 or fields[0] != START_MARK:
+            continue
+        if fields[1] == "ok":
+            seen[fields[2]] = None
+        elif fields[1] == "bad" and len(fields) == 4:
+            seen[fields[2]] = fields[3]
+    return seen
+
+
+def check_start_routes(name):
+    """(h) The `/start` routes answer, asked of the container running the image's own command.
+
+    THE ONLY CHECK HERE THAT MAKES A REQUEST. Everything above asks what the image declares,
+    what is inside it and whether it starts; this one asks the running hub for the three things
+    it hands somebody who has just found it, and it is the only way two of them can be checked
+    at all — the client and the template do not exist as files in the image, they are assembled
+    from `src/client/` and `model_template/` when the request arrives.
+
+    NO `blocked` PARAMETER, unlike (c), (d), (f) and (g). Those exec into a container this file
+    started for them, so "it could not be started" is known before they run and is passed in.
+    This one execs into the container check (e) started, and the honest report for a container
+    that is not there is the one `docker exec` gives on its own: every row fails with the
+    daemon's own words about it. What matters — that all three rows are still returned — holds
+    either way, and the self-check in main() is what that matters to.
+
+    THIS CHECK IS NARROWER THAN (e) BY ONE CASE, and whoever changes the image's command has to
+    know which. (e) calls two shapes healthy: reached the marker and still running, or reached
+    the marker and exited 0. Only the first can be asked a question — a one-shot command that
+    did its job and returned leaves no container to exec into, so all three rows here would go
+    red on an image (e) has just declared sound. Nothing today takes that shape (`main.py` binds
+    the port and serves), which is why this is written down rather than coded around: the day a
+    one-shot entrypoint appears, this check needs a container of its OWN started with a command
+    that stays up, and not a relaxed verdict.
+
+    Reads its verdicts off marked lines rather than out of JSON: see START_MARK.
+    """
+    targets = ["{} answers 200 with a body".format(path) for path in START_ROUTES]
+
+    request = json.dumps({
+        "routes": list(START_ROUTES),
+        "origin": START_ORIGIN,
+        "mark": START_MARK,
+        "wait": START_WAIT,
+        "read": START_READ,
+        "bytes": START_READ_BYTES,
+    })
+
+    status, output = docker(
+        ["exec", name, "python", "-c", START_PROBE_SOURCE, request], EXEC_TIMEOUT)
+    if status is None:
+        return [(target, "not attempted: " + output) for target in targets]
+    if status != 0:
+        reason = (
+            "the onboarding probe could not be run (docker exec exited {}). Either the "
+            "container the image's own command was started in is gone — check (e) above says "
+            "whether it ever came up — or the probe itself died:\n{}".format(
+                status, excerpt(output)))
+        return [(target, reason) for target in targets]
+
+    seen = parse_start_routes(output)
+
+    rows = []
+    for path, target in zip(START_ROUTES, targets):
+        if path not in seen:
+            rows.append((target, (
+                "the probe returned no verdict for this route. Full container output:\n"
+                "{}".format(excerpt(output)))))
+        elif seen[path] is None:
+            rows.append((target, None))
+        else:
+            # ONE OF TWO THINGS, and the reason line above says which — so both are named here
+            # rather than only the interesting one. A verdict that says the hub never answered
+            # is about the hub being down, and sending its reader to .dockerignore would be
+            # sending them to the wrong file entirely.
+            rows.append((target, (
+                "{}.\n"
+                "  If the hub did not answer at all, this says nothing about the route: the "
+                "container is gone or was never listening, and check (e) above is what says "
+                "whether the image's own command came up.\n"
+                "  If it DID answer and the answer was wrong, the route is the finding. These "
+                "two are assembled when they are asked — the client out of the modules "
+                "reachable from src/client/cli.py, the template out of model_template/ — and "
+                "src/app.py answers 404 when that assembly refuses, so a module .dockerignore "
+                "kept out of the image or a template path no client would unpack shows up HERE "
+                "and nowhere else: check (g) names three onboarding paths and cannot see the "
+                "rest, and the suite builds these archives from the checkout, where they are "
+                "all present".format(seen[path]))))
+    return rows
+
+
 def main():
     image = os.environ.get(IMAGE_ENV)
     name = os.environ.get(NAME_ENV)
@@ -1457,6 +1728,13 @@ def main():
         # probe container's `sleep` has to outlast — the arithmetic at IDLE_COMMAND accounts for
         # it, and moving another call after this one means redoing that arithmetic.
         required_rows = check_required_paths(probe_name, blocked=blocked)
+
+        # Into the `-cmd` container, not the probe one: the hub this asks has to be the program
+        # production runs. It is therefore inside this `finally` for the OTHER container's sake
+        # — `cmd_name` is removed there too — and it is last because it is the only check that
+        # makes a request, so everything cheaper has already reported by the time it runs. The
+        # probe container's `sleep` budget is untouched by it; see IDLE_COMMAND.
+        start_rows = check_start_routes(cmd_name)
     finally:
         # Both long-lived containers, removed whatever happened above. The workflow removes
         # them again under `if: always()` for the case where this process itself was killed by
@@ -1467,12 +1745,12 @@ def main():
     # SAME ORDER AS EXPECTED_TARGETS, and that is a requirement rather than a convention: the
     # pairing below is positional, so a group moved here without moving its declaration is
     # compared against somebody else's count. THREE of these groups return 4 verdicts each —
-    # (a), (c) and (g) — so swapping any two of those would still satisfy every check below and
-    # go green while each probe's failures were being reported under another one's name. Nothing
-    # in this file can detect that; keeping the two tuples in step by eye is what prevents it,
-    # which is why the letters are on the labels.
+    # (a), (c) and (d) — and (b) and (h) return 3 each, so swapping either pair would still
+    # satisfy every check below and go green while each probe's failures were being reported
+    # under another one's name. Nothing in this file can detect that; keeping the two tuples in
+    # step by eye is what prevents it, which is why the letters are on the labels.
     produced = (contract_rows, guard_rows, privileges_rows, excluded_rows, startup_rows,
-                cad_rows, required_rows)
+                cad_rows, required_rows, start_rows)
 
     # Three self-checks, and they are three because each one catches a break the others cannot
     # see. They are collected in two lists rather than one because they are REPORTED

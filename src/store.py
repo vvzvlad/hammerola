@@ -2151,6 +2151,63 @@ class Store:
         return raw
 
     # -- project-level state -----------------------------------------------
+    def empty(self) -> bool:
+        """Has anything ever been published here? The ONE fact given anonymously.
+
+        Read by `/start` (src/onboarding.py), which is the only route on this
+        service that answers a question about the deployment without a token —
+        so what this returns is a boolean and there is deliberately nothing here
+        that could turn into a count, a name or a date.
+
+        THE QUESTION IS "IS THERE A PROJECT", NOT "IS THERE A CARD". A project
+        whose only build sits in the `dev` slot has no entry in `index.json` —
+        the index is built from committed revisions (SPEC 7.6) — and this hub is
+        emphatically not empty: somebody has pushed to it and `hammerola status`
+        has something to say about it. Reading the index instead would call that
+        hub empty and hand its owner instructions for a first push they have
+        already made.
+
+        A PROJECT DIRECTORY WITH NOTHING IN IT DOES NOT COUNT, and that is the
+        difference between this and "does `project/` have entries". The reason
+        is `build_staging`: it creates `project/<pid>/` before the build runs,
+        and NOTHING removes that directory when the build then fails the gate —
+        the caller removes the staging tree inside it and leaves the shell. So
+        counting bare directories meant the first push of a new hub turned
+        `empty` false FOREVER by failing, which lands on precisely the person
+        the answer exists for: somebody whose very first build did not pass.
+        The old wording defended the in-flight case with "which is what the
+        answer will be a moment later anyway" — true of a build that succeeds,
+        and false of one that does not.
+
+        A directory in flight still counts, and now for a reason rather than by
+        accident: the staging tree is INSIDE it while the build runs, so it is
+        not empty. A `dev`-only project counts too, because its slot is a
+        directory in there. What is left out is exactly the residue.
+
+        FAILS CLOSED. An unreadable `project/` answers "not empty", so no
+        onboarding block will be shown on a hub that could not be asked; the
+        alternative would be to tell somebody their hub is empty on the strength
+        of an error.
+
+        NOTHING CONSUMES THE ANSWER YET. `/start` serves it and no page fetches
+        it — the browser UI was left alone on the branch that added the route
+        (`src/onboarding.py` has the accounting) — so today this method's only
+        reader is the test suite. That does not make the fail-closed rule
+        premature: it is a property of the answer, and the page that grows will
+        inherit it rather than have to reinvent it.
+        """
+        try:
+            return not any(entry.is_dir() and any(entry.iterdir())
+                           for entry in self.projects_dir.iterdir())
+        except OSError as error:
+            # Both `iterdir()`s are inside this, and the inner one is the reason
+            # it is worth saying: a project directory the hub cannot read is not
+            # evidence that the hub is empty, so it fails closed like the outer
+            # one does.
+            logger.warning(f"cannot tell whether {self.projects_dir} is empty: "
+                           f"{error}")
+            return False
+
     def builds_of(self, pid: str) -> list[dict]:
         """Every published COMMIT build of one project, newest first.
 

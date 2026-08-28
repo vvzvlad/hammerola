@@ -1,0 +1,30 @@
+# What a model directory accumulates, and none of it belongs in the history.
+#
+# Nothing here decides what gets PUBLISHED: `hammerola` packs the source tree by
+# its own rules -- hidden entries are dropped (the hub's path alphabet cannot
+# carry a leading dot), and so are `__pycache__`, `out`, `_out`, `build` and
+# `dist`. So this file is about git, and the two lists agreeing is a
+# coincidence worth not relying on.
+
+# Bytecode, from any local run of the model.
+__pycache__/
+*.pyc
+
+# Exported geometry, in case something writes it beside the source. The hub
+# exports into its own directory and hands the files back over HTTP; a mesh at
+# the root of a model repository is a stray.
+*.stl
+*.step
+*.stp
+*.3mf
+
+# The local environment, and the one file that may hold the hub's secret.
+# `.env` is hidden, so it can never enter a push either -- the token travels in
+# one HTTP header and nowhere else.
+.venv/
+.env
+
+# `.hammerola/` -- what `hammerola source`, `artifacts` and `log` fetch -- is
+# NOT listed here on purpose: the tool writes a `.gitignore` of its own inside
+# that directory the first time it creates it, so it is already covered from
+# the inside and stays covered if the name ever changes.

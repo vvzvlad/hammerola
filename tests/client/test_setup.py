@@ -20,7 +20,7 @@ import pytest
 from harness import TOKEN
 from modeldir import make_model
 
-from src.client import config
+from src.client import config, pack, project, setup
 from src.client.cli import main
 
 
@@ -183,10 +183,14 @@ def test_a_password_the_file_format_cannot_carry_is_refused_without_echoing_it(
 
 
 # -- create ------------------------------------------------------------------
+# EVERY TEST BELOW THAT DOES NOT NAME A HUB PASSES `--no-template`, and that is
+# the shape of the command rather than a convenience for the suite: `create`
+# fetches the starter template, so the flag is what makes it the offline command
+# it used to be. The tests about the download itself are at the bottom.
 def test_create_writes_a_fresh_id_and_takes_the_directory_name_as_the_title(
         tmp_path, capsys):
     root = tmp_path / "t13-ceiling-mount"
-    assert main(["-C", str(root), "create"]) == 0
+    assert main(["-C", str(root), "create", "--no-template"]) == 0
 
     payload = json.loads((root / "project.json").read_text(encoding="utf-8"))
     assert payload["title"] == "t13-ceiling-mount"
@@ -197,8 +201,8 @@ def test_create_writes_a_fresh_id_and_takes_the_directory_name_as_the_title(
 
 
 def test_two_projects_do_not_get_the_same_id(tmp_path):
-    assert main(["-C", str(tmp_path / "a"), "create"]) == 0
-    assert main(["-C", str(tmp_path / "b"), "create"]) == 0
+    assert main(["-C", str(tmp_path / "a"), "create", "--no-template"]) == 0
+    assert main(["-C", str(tmp_path / "b"), "create", "--no-template"]) == 0
     ids = {json.loads((tmp_path / name / "project.json").read_text())["id"]
            for name in ("a", "b")}
     assert len(ids) == 2
@@ -206,7 +210,8 @@ def test_two_projects_do_not_get_the_same_id(tmp_path):
 
 def test_the_title_can_be_given(tmp_path):
     root = tmp_path / "demo"
-    assert main(["-C", str(root), "create", "--title", "T13 ceiling mount"]) == 0
+    assert main(["-C", str(root), "create", "--no-template",
+                 "--title", "T13 ceiling mount"]) == 0
     payload = json.loads((root / "project.json").read_text(encoding="utf-8"))
     assert payload["title"] == "T13 ceiling mount"
 
@@ -216,7 +221,7 @@ def test_create_refuses_over_an_existing_project(tmp_path, capsys):
     has published for it. Replacing it silently would not fail anything — the
     next push would land in a new, empty project."""
     root = make_model(tmp_path / "demo", pid="demo0001")
-    assert main(["-C", str(root), "create"]) == 1
+    assert main(["-C", str(root), "create", "--no-template"]) == 1
     assert "already exists" in capsys.readouterr().err
     payload = json.loads((root / "project.json").read_text(encoding="utf-8"))
     assert payload["id"] == "demo0001"
@@ -235,7 +240,7 @@ def test_create_refuses_inside_an_existing_project(tmp_path, capsys):
     inner = root / "scripts"
     inner.mkdir()
 
-    assert main(["-C", str(inner), "create"]) == 1
+    assert main(["-C", str(inner), "create", "--no-template"]) == 1
     error = capsys.readouterr().err
     assert "already inside the project" in error
     # Names WHICH project, because "you are inside one" is only actionable if it
@@ -248,20 +253,321 @@ def test_create_still_works_in_a_directory_that_is_not_inside_a_project(tmp_path
     """The refusal above must not spread to the ordinary case: a new project
     next to an old one, sharing nothing but a parent directory."""
     make_model(tmp_path / "old", pid="demo0001")
-    assert main(["-C", str(tmp_path / "new"), "create"]) == 0
+    assert main(["-C", str(tmp_path / "new"), "create", "--no-template"]) == 0
     assert (tmp_path / "new" / "project.json").is_file()
 
 
 def test_a_created_project_is_one_the_hub_accepts(hub, tmp_path, monkeypatch):
     """End to end, because the alphabet is the hub's: an id this tool minted
-    and the hub refuses would break the first push of every new project."""
+    and the hub refuses would break the first push of every new project.
+
+    `--no-template` because this directory already HAS a model — it is the
+    "existing repository adopts hammerola" case, and the refusal tested below is
+    what would otherwise stop it."""
     monkeypatch.setenv("HUB_URL", hub.url)
     monkeypatch.setenv("EDIT_TOKEN", TOKEN)
 
     root = make_model(tmp_path / "demo")
     (root / "project.json").unlink()
-    assert main(["-C", str(root), "create", "--title", "Fresh"]) == 0
+    assert main(["-C", str(root), "create", "--no-template",
+                 "--title", "Fresh"]) == 0
 
     pid = json.loads((root / "project.json").read_text(encoding="utf-8"))["id"]
     assert main(["-C", str(root), "build", "--timeout", "60"]) == 0
     assert (hub.project_dir(pid) / "dev" / "model.py").is_file()
+
+
+# -- create, and the template it fetches -------------------------------------
+def test_create_unpacks_the_template_the_hub_serves(hub, tmp_path, monkeypatch):
+    """The whole point of the download: a fresh directory holds a model.
+
+    Against the REAL hub over a real socket, because the two halves of this are
+    a route and a client and they used to live in two repositories where nothing
+    could see both.
+    """
+    monkeypatch.setenv("HUB_URL", hub.url)
+    root = tmp_path / "fresh-part"
+
+    assert main(["-C", str(root), "create", "--title", "Fresh part"]) == 0
+
+    assert (root / "project.json").is_file()
+    assert (root / "model.py").is_file()
+    # The hidden file is the one a push could never carry, and the reason the
+    # template is read with an alphabet of its own.
+    assert (root / ".gitignore").is_file()
+    assert "def views(" in (root / "model.py").read_text(encoding="utf-8")
+
+
+def test_the_template_needs_no_token(hub, tmp_path, monkeypatch):
+    """`create` never reads the secret, so a project can be started against a
+    hub this machine has never logged in to. The conftest here has already
+    removed EDIT_TOKEN from the environment; this states that it stays out."""
+    monkeypatch.setenv("HUB_URL", hub.url)
+    assert main(["-C", str(tmp_path / "part"), "create"]) == 0
+    assert (tmp_path / "part" / "model.py").is_file()
+
+
+def test_create_refuses_rather_than_writing_over_a_file_that_is_there(
+        hub, tmp_path, monkeypatch, capsys):
+    """ALL OR NOTHING, and not even the project.json is written.
+
+    A half-created project holds a permanent id and no model, and the second run
+    then refuses over the project.json the first one left behind — so the
+    refusal has to land before anything is written at all.
+    """
+    monkeypatch.setenv("HUB_URL", hub.url)
+    root = tmp_path / "mine"
+    root.mkdir()
+    (root / "model.py").write_text("# mine\n", encoding="utf-8")
+
+    assert main(["-C", str(root), "create"]) == 1
+
+    error = capsys.readouterr().err
+    assert "model.py" in error
+    assert "--no-template" in error
+    assert not (root / "project.json").exists()
+    assert (root / "model.py").read_text(encoding="utf-8") == "# mine\n"
+
+
+def test_a_dangling_symlink_is_a_collision_and_not_a_way_out_of_the_project(
+        hub, tmp_path, monkeypatch, capsys):
+    """`exists()` follows a link, so a link to NOWHERE was not a collision — and
+    the write that followed opened the link's target, landing the template's
+    file outside the project. Both halves are closed: the check uses `lexists`,
+    and the write uses `O_CREAT|O_EXCL|O_NOFOLLOW`, which cannot open a link at
+    all.
+    """
+    monkeypatch.setenv("HUB_URL", hub.url)
+    root = tmp_path / "part"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    (root / "model.py").symlink_to(outside)
+
+    assert main(["-C", str(root), "create"]) == 1
+
+    assert "model.py" in capsys.readouterr().err
+    assert not outside.exists(), (
+        "the template was written through the symlink, outside the project")
+    assert not (root / "project.json").exists()
+
+
+def test_a_template_written_over_a_symlink_that_appeared_late_is_refused(
+        tmp_path):
+    """THE OTHER HALF OF THE SYMLINK STORY, and the one no `create` can stage.
+
+    The test above plants the link before the command runs, so `lexists` in
+    `_refuse_to_overwrite` sees it and nothing downstream is exercised —
+    replacing the write with a plain `write_bytes` leaves that test green. The
+    window the flags exist for is the one BETWEEN the check and the write, so it
+    is staged the only way it can be: by calling the writer with the link
+    already there, which is the state that check cannot promise anything about
+    by the time the bytes move.
+
+    `O_CREAT|O_EXCL` refuses because the path exists — a symlink is a path that
+    exists, dangling or not — and `O_NOFOLLOW` says the same a second way.
+    Checked at the far end as well: the file OUTSIDE the project is what the
+    write would have landed in, so it is what must be untouched.
+    """
+    root = tmp_path / "part"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("not the template\n", encoding="utf-8")
+    (root / "model.py").symlink_to(outside)
+
+    with pytest.raises(project.ProjectError) as raised:
+        setup._write_template(root, (("model.py", b"# the template\n"),))
+
+    assert "model.py" in str(raised.value)
+    assert outside.read_text(encoding="utf-8") == "not the template\n", (
+        "the write followed the symlink and landed outside the project")
+
+
+def test_a_template_written_over_a_DANGLING_symlink_creates_nothing_anywhere(
+        tmp_path):
+    """The same window with nothing at the other end of the link.
+
+    Worth its own case because the two fail differently in the mutation: a
+    `write_bytes` here CREATES the target rather than overwriting one, so the
+    assertion has to be that the path outside never came into existence.
+    """
+    root = tmp_path / "part"
+    root.mkdir()
+    outside = tmp_path / "nothing-here.py"
+    (root / "model.py").symlink_to(outside)
+
+    with pytest.raises(project.ProjectError):
+        setup._write_template(root, (("model.py", b"# the template\n"),))
+
+    assert not outside.exists(), (
+        "the write followed a dangling link and created a file outside the "
+        "project")
+
+
+def test_a_hub_that_cannot_be_reached_creates_nothing_and_says_what_to_do(
+        tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HUB_URL", "http://127.0.0.1:1")
+    root = tmp_path / "part"
+
+    assert main(["-C", str(root), "create"]) == 1
+
+    error = capsys.readouterr().err
+    assert "cannot reach" in error
+    assert "--no-template" in error
+    assert not (root / "project.json").exists()
+
+
+def test_a_template_the_client_cannot_read_says_what_to_do_as_well(
+        hub, tmp_path, monkeypatch, capsys):
+    """The last refusal of `create` that lost the way forward.
+
+    A corrupt archive, or one naming a member no client will unpack, raises
+    `ClientError` from `read_members` — a different class from the HubError
+    every other failure here carries, and it stood outside the wrapper that
+    appends the sentence. So the ONE reader who most needs "you can start
+    without a hub" was the one who did not get it.
+    """
+    from src.client import setup as setup_module
+
+    monkeypatch.setenv("HUB_URL", hub.url)
+    monkeypatch.setattr(setup_module.Hub, "fetch_path",
+                        lambda self, path: b"not a tar at all")
+    root = tmp_path / "part"
+
+    assert main(["-C", str(root), "create"]) == 1
+
+    error = capsys.readouterr().err
+    assert "--no-template" in error
+    assert not (root / "project.json").exists()
+
+
+@pytest.mark.parametrize("password, why", [
+    ("СЕКРЕТНОЕЗНАЧЕНИЕ", "Cyrillic: the file takes it, an HTTP header cannot"),
+    ("secret\tvalue", "a tab, which this refuses by decision"),
+])
+def test_a_password_that_could_never_be_sent_is_refused_at_the_PROMPT(
+        answers, env_file, tmp_path, capsys, password, why):
+    """The loop this closes: `login` telling somebody to run `login`.
+
+    `check_storable` answers for the FILE, which is UTF-8 and takes a Cyrillic
+    password happily. The `Authorization` header is latin-1 and cannot, so such
+    a password passed the prompt, was tried against the hub, and came back from
+    `Hub.__init__` as "the stored secret ... run `hammerola login`" — said to
+    somebody in the middle of running `hammerola login`, about a secret that had
+    not been stored. The refusal now happens at the question that produced it.
+    """
+    answers["password"] = password
+
+    # The address is an argument so only the password is under test, and it
+    # points at a port nothing answers on: the refusal has to land BEFORE the
+    # hub is asked anything, which is the whole story.
+    assert main(["login", "http://127.0.0.1:1"]) == 1
+
+    error = capsys.readouterr().err
+    assert "EDIT_TOKEN" in error, why
+    assert password not in error, "the refusal echoed the password"
+    assert not env_file.exists(), "a password that cannot be sent was stored"
+
+
+@pytest.mark.parametrize("value", [
+    "plain-token", "ok-token_1", "with.dots-and_dashes",
+    "СЕКРЕТ", "with\ttab", "with\nbreak", "with\x00nul", " padded ",
+    "'quoted'", "",
+])
+def test_nothing_login_would_STORE_is_something_the_hub_would_refuse(value):
+    """THE PROPERTY, and it is one-directional on purpose.
+
+    `login` runs two checks at the prompt; `Hub.__init__` runs a third when a
+    token arrives some other way. Anything the prompt ACCEPTS has to be
+    something the constructor will send — otherwise a password is stored, and
+    then every command including `login`'s own hub check refuses it, advising
+    the reader to run `hammerola login`. That is the loop this closes.
+
+    The converse is deliberately NOT asserted: `login` is allowed to be
+    stricter, and is — surrounding quotes and edge whitespace are refused for
+    the FILE's sake and would travel in a header perfectly well.
+
+    Not a tautology despite the shared predicate: the two sides are reached
+    through different code (`check_storable` runs first at the prompt and
+    rejects things the header check does not), so this compares outcomes rather
+    than one function with itself.
+    """
+    from src.client import hub as hub_module
+
+    try:
+        config.check_storable(config.EDIT_TOKEN_VAR, value)
+        config.check_sendable_as_header(config.EDIT_TOKEN_VAR, value)
+    except config.ConfigError:
+        return  # login refuses it; the hub never sees it
+
+    hub_module._refuse_unsendable_token(value)  # must not raise
+
+
+def test_a_hub_address_that_cannot_be_requested_says_what_to_do_as_well(
+        tmp_path, monkeypatch, capsys):
+    """An address with a typo IN IT, as against one that answers nothing.
+
+    `http://127.0.0.1:8O80` is refused before a socket is opened
+    (`hub._origin`), which is a different code path from the unreachable hub
+    above and reaches `create` as a different exception. It has to arrive with
+    the same way forward: this is the first command somebody runs, and the
+    branch is worthless if it merely reports the typo.
+    """
+    monkeypatch.setenv("HUB_URL", "http://127.0.0.1:8O80")
+    root = tmp_path / "part"
+
+    assert main(["-C", str(root), "create"]) == 1
+
+    error = capsys.readouterr().err
+    assert "HUB_URL" in error
+    assert "--no-template" in error
+    assert not (root / "project.json").exists()
+
+
+def test_without_a_hub_address_the_flag_is_what_starts_a_project(
+        tmp_path, capsys):
+    """The id is minted locally and always was (SPEC §3.1); what needs a hub is
+    the template. So an unconfigured machine is told which of the two it is
+    missing, and the flag gets it a project anyway.
+
+    THE MESSAGE HAS TO NAME THE FLAG, and that is the assertion that matters
+    here rather than the exit code: this is the first command a new person ever
+    runs, on a machine that is not configured yet, so a refusal that only says
+    "HUB_URL is not set" leaves them with the one thing this branch exists to
+    give them — a way to start anyway — undiscoverable.
+    """
+    root = tmp_path / "part"
+    assert main(["-C", str(root), "create"]) == 1
+    error = capsys.readouterr().err
+    assert "HUB_URL" in error
+    assert "--no-template" in error
+    assert not (root / "project.json").exists()
+
+    assert main(["-C", str(root), "create", "--no-template"]) == 0
+    assert (root / "project.json").is_file()
+    assert not (root / "model.py").exists()
+
+
+def test_what_create_unpacked_is_a_tree_that_can_be_pushed_again(
+        hub, tmp_path, monkeypatch):
+    """The round trip: what the hub served, unpacked, packs back up.
+
+    The claim the template makes is that it builds AS IT STANDS, and the first
+    half of that is that it can be sent at all — the names have to survive the
+    hub's own path alphabet on the way up, and `.gitignore` has to be DROPPED
+    rather than refuse the push. (The build itself is `tests/test_template.py`,
+    which needs a CAD kernel; this does not, and runs everywhere.)
+
+    Not driven through `hammerola build`, and the reason is the suite rather
+    than the tool: the stand-in builder publishes the pushed tree unchanged
+    (`harness.copying_builder`), so a SOURCE tree with no meta.json in it is
+    refused at publication for want of one — which says nothing about the
+    template.
+    """
+    monkeypatch.setenv("HUB_URL", hub.url)
+    root = tmp_path / "fresh-part"
+    assert main(["-C", str(root), "create"]) == 0
+
+    packed = pack.pack(root)
+    assert "model.py" in packed.names
+    assert "project.json" in packed.names
+    assert ".gitignore" not in packed.names

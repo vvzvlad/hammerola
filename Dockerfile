@@ -115,6 +115,21 @@ RUN mkdir -p data && chown app:app data
 COPY src/ src/
 COPY templates/ templates/
 COPY static/ static/
+# What the hub hands somebody who has just found it (src/onboarding.py serves
+# both): the agent instructions at /start/skill.md, and the starter model
+# directory at /start/template.tar.gz. Two trees rather than one, because they
+# are two different things with two different readers — and `model_template/` is
+# a real project that the test suite BUILDS (tests/test_template.py), which is
+# what keeps it from going stale against the gate it has to pass.
+#
+# `skill/SKILL.md` reaches the context despite the `*.md` line in .dockerignore:
+# a pattern there is matched with `*` not crossing a `/`, so that line is
+# root-only and takes AGENTS.md, CLAUDE.md and README.md. Check (g) in
+# ci/smoke.py is what proves both of these arrived, because nothing else can:
+# the image starts, serves and passes every other check without them, and the
+# routes simply 404.
+COPY skill/ skill/
+COPY model_template/ model_template/
 # The browser bundle, compiled by the `ui` stage above.
 #
 # It lands FLAT beside the committed assets rather than in a subdirectory of its

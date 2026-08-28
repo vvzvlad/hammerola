@@ -59,23 +59,86 @@ where no test could see both halves, which is exactly how publication came to be
 broken without anyone noticing. It imports nothing outside the standard library,
 so whatever `python3` a laptop already has is enough.
 
+**It is installed from the hub**, which serves the three things a first run
+needs and asks for no token for any of them — they are the software, identical
+on every deployment, and the person downloading them does not have a token yet
+by definition:
+
 ```bash
-make client                          # symlink bin/hammerola into ~/.local/bin
-hammerola login https://hub.example  # once per machine; the password is prompted for
+mkdir -p ~/.local/bin ~/.claude/skills/hammerola
+curl -fsSL <hub>/start/hammerola -o ~/.local/bin/hammerola && chmod +x ~/.local/bin/hammerola
+curl -fsSL <hub>/start/skill.md -o ~/.claude/skills/hammerola/SKILL.md   # for an agent
+hammerola login <hub>   # once per machine; the password is prompted for
 ```
+
+**That is the only install, checkout or no checkout.** There used to be a second
+one — `make client`, which symlinked a `bin/hammerola` script into
+`~/.local/bin` — and the two collided under the one name they share: `curl -o`
+writes THROUGH a symlink, into its target, so the line above quietly landed the
+downloaded zipapp on top of the repository's own file. The link stayed a link,
+the command went on working, and the only sign was `git status` calling the
+client modified. Both the target and the script are gone. Whoever is *working
+on* the client runs it out of the checkout instead — and the whole trick is that
+`python3` has to be able to import `src`, which is a statement about where the
+command is STARTED, not about where the model is:
+
+```bash
+cd <this checkout>
+python3 -m src.client --help                          # the same tool, off the working copy
+python3 -m src.client -C <model dir> status           # the model directory is an argument
+```
+
+`-C` exists because there is no installed script to run from inside a model
+directory: `python3 -m src.client` started there fails with
+`No module named 'src'`, and so does `python3 -m src.client status` started in
+the checkout — the tool resolves, and then finds no `project.json`. The other
+way round works too, if the shell is already in the model:
+
+```bash
+PYTHONPATH=<this checkout> python3 -m src.client status
+```
+
+No venv and nothing to build either way: the package imports the standard
+library and nothing else, which is the same property that lets the hub ship it
+as one file.
+
+The downloaded client is a zipapp built out of `src/client/` — one file, nothing
+installed, python 3.9 and up (`src/onboarding.MIN_PYTHON`, which is also what
+the skill tells the reader and what a test holds the syntax to: a stock
+`/usr/bin/python3` is 3.9 on macOS and on Debian 11, so "newer than that" is a
+first onboarding step that fails on the ordinary machine).
+
+`GET /start` is the manifest that names both of those, plus the starter template
+`create` fetches below — and one boolean, `empty`, which is the only thing on
+this service that says anything about the deployment without the token. It is
+deliberately never a count, a name or a date, and it fails closed: a project
+directory the hub cannot read answers "not empty", rather than telling somebody
+their hub is empty on the strength of an error. It is there so that the front
+page of a hub nobody has pushed to yet will be able to show what to do instead
+of a login form and nothing else. **That page has not been written**: the
+browser UI is untouched here, and the one reader of the manifest today is
+`hammerola create`, which follows `template` and fetches nothing else.
+`src/onboarding.py` carries the argument for the boolean and for why it is
+never a count.
 
 Then, in a model's directory:
 
 ```bash
-hammerola create --title "T13 ceiling mount"   # once per project: mints project.json
+hammerola create --title "T13 ceiling mount"   # once per project: project.json + the template
 hammerola build                                # publish the working copy into `dev`
 hammerola commit -m "thicker plate"            # publish an immutable revision
 ```
 
-Both verbs do the same four things: pack the tree, post it, wait on the build
-job the hub answers with, and print what the build printed — plus, for `commit`,
-the name the hub gave the revision. The exit code is the point, because it
-replaces a forge's job status: zero means a build was published, and a refused
+`create` fetches the starter template from the hub and unpacks it beside the
+`project.json` it mints — a `model.py` that builds as it stands. It never writes
+over anything that is already there, and `--no-template` is the form for a
+directory that already has a model, or for a machine with no hub to reach: the
+id has always been minted locally and still is.
+
+Both publishing verbs do the same four things: pack the tree, post it, wait on
+the build job the hub answers with, and print what the build printed — plus, for
+`commit`, the name the hub gave the revision. The exit code is the point, because
+it replaces a forge's job status: zero means a build was published, and a refused
 push, a model that raised, a gate that said no and a hub that could not be
 reached are each non-zero with the sentence that says which.
 
@@ -97,18 +160,31 @@ for the id to be typed first.
 
 ## What a model.py looks like
 
-<!-- REPLACE THE EXAMPLE BELOW WITH A POINTER TO THE TEMPLATE once
-     model_template/ lands on main (SPEC §8 entry 31, "the template lives on
-     the backend"): the contract has to have ONE source, and a second copy of
-     it sitting here is exactly the silent drift entry 46 warns about. Until
-     then this is the smallest model that publishes, and it is not invented —
-     it was built and published through the real pipeline before it was
-     written down here.
+<!-- THE EXAMPLE BELOW STAYS, AND SO DOES model_template/. An earlier note here
+     asked for this block to be replaced by a pointer to the template the day
+     the template landed (SPEC §8 entry 31), on the argument that a contract
+     must have ONE source or the second copy drifts in silence. The template
+     has landed, and the argument does not apply: NEITHER COPY CAN DRIFT,
+     because both are executed. This block is lifted out of README.md and
+     built the way a push is built (tests/test_readme_example.py), and
+     model_template/ is a working project run through the same build path
+     (tests/test_template.py). Two copies that are both built are two copies
+     that are both true.
 
-     WHAT HOLDS IT TO THAT is tests/test_readme_example.py: it lifts this
-     block out of README.md and builds it the way a push is built. Delete that
-     file in the same commit that deletes the example — it skips itself once
-     the block is gone, and a skip nobody reads is not a test. -->
+     They are also for different readers. The template is where a project
+     STARTS — `hammerola create` fetches it from the hub and unpacks it — and
+     it is 12 KB of commented model. This one is short enough to read on the
+     repository page without downloading anything, which is what somebody
+     deciding whether to use the tool at all is doing.
+
+     So do not delete either, and do not delete tests/test_readme_example.py:
+     it is the only thing holding this block to the contract, and because the
+     block is now meant to stay, that test FAILS rather than skips if the block
+     goes -- a skip nobody reads is not a test. -->
+
+Start a project from the template — `hammerola create` brings it, and it builds
+as it stands. What follows is the same contract at a size that can be read here
+without downloading anything.
 
 Three functions and one import are the whole contract. `printables()` says what
 gets exported and offered for download; `views()` says what the viewer shows,

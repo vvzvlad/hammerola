@@ -293,7 +293,13 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   file 0600 after checking the password against the hub — ONE secret for the
   whole system, `EDIT_TOKEN`, no second key for comments), `create`
   (`project.py`, mints the
-  twelve hex characters of SPEC §3.1 and refuses to write over an existing id),
+  twelve hex characters of SPEC §3.1 and refuses to write over an existing id;
+  `setup.py` then unpacks the starter template beside it, fetching it from
+  `/start` — the ONE route this tool asks for with no token, because the reader
+  of it may not have one. The id is still minted locally and `--no-template`
+  is what keeps that true offline; the download is fetched and its collisions
+  are checked BEFORE anything is written, so a failure leaves the directory
+  untouched rather than holding a permanent id and no model),
   `status` (`status.py`, assembled out of `builds.json` and the dev slot's own
   `meta.json`, i.e. what the project page already fetches), `comments`
   (`queue.py`, the queue and its `resolve`), and the six added once the hub
@@ -330,11 +336,52 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   name it used to define. `tests/test_metricsdiff.py` asserts the two sides hold
   the same objects (`is`, not `==`) and that this module imports only the
   standard library, which is what lets the client have it at all
-- `bin/hammerola` — the console command, a plain script `make client` symlinks
-  into `~/.local/bin`. Deliberately not a packaging entry point yet: this repo's
-  one importable top-level name is `src`, and `pip install`ing that onto a laptop
-  would shadow every other project's `src`. Giving the tool a distribution name
-  belongs with the self-update work
+- `src/onboarding.py` — what the hub hands somebody who has just found it, and
+  the only place the `/start` routes are named: the agent skill, the client as
+  ONE executable file (a zipapp built at request time out of `src/client/` —
+  which works only because the tool is stdlib-only, so a client that grew a
+  compiled dependency breaks here rather than on a laptop), the starter
+  template, and a manifest naming all three. ALL FOUR ARE PUBLIC on purpose:
+  they are the software rather than a statement about what is published here,
+  they are byte-identical on every deployment, and the manifest exists to be
+  read by somebody who does not have the token yet. The manifest carries ONE
+  fact about the deployment — `empty` — and that is the single thing on this
+  service answered without authentication. It is deliberately a boolean and must
+  never become a count, a name or a date: a count leaks the size of the fleet to
+  anyone who polls, and a name is the prefix of every permanent URL that project
+  will ever have, which is exactly what `/index.json` sits behind the token to
+  withhold. "Empty" means no project directory on the volume WITH ANYTHING IN
+  IT (`Store.empty`) — not "no cards on the front page" (a project whose only
+  build is in the `dev` slot has no card and is not an empty hub), and not "no
+  project directory" either: `build_staging` creates one before the build runs
+  and nothing removes it when the build fails the gate, so counting bare
+  directories made a hub permanently non-empty the moment its first push failed
+  — landing on exactly the reader the answer is for. ONE OF THE FOUR MANIFEST FIELDS HAS
+  A READER TODAY — `hammerola create` follows `template` — and `empty` has none
+  at all: the browser UI was deliberately left untouched, so the front page of a
+  hub nobody has pushed to still shows a login form and nothing else. The block
+  that renders the three downloads is the work this route was built for and has
+  not been done; until it is, the argument for answering a question about the
+  deployment anonymously is a debt nothing has collected on
+- **The client has two doors and no installed script.** Out of a checkout it is
+  `python3 -m src.client`, STARTED IN THE CHECKOUT ROOT because that is where
+  `src` is importable — so the model directory is an argument and not the shell's
+  cwd: `python3 -m src.client -C <model dir> status`, or
+  `PYTHONPATH=<checkout> python3 -m src.client status` from inside the model.
+  Plain `python3 -m src.client` run in a model directory fails with
+  `No module named 'src'`, which is the mistake this bullet exists to head off.
+  No venv, nothing to build, because the package
+  imports the standard library and nothing else; everywhere else it is the
+  one-file zipapp the hub serves at `/start/hammerola`. There is no
+  `bin/hammerola` and no `make client` any more, and that is a correction rather
+  than an omission: the target symlinked that file into `~/.local/bin`, which is
+  the very name the hub's bootstrap writes with `curl -o`, and a write through a
+  symlink lands in the link's TARGET — so the download quietly overwrote the
+  repository's own copy while the command went on working, with `git status` as
+  the only symptom. A packaging entry point is not the fix and is deliberately
+  still absent: this repo's one importable top-level name is `src`, and `pip
+  install`ing that onto a laptop would shadow every other project's `src`.
+  Giving the tool a distribution name belongs with the self-update work
 - `checklib.py` — at the ROOT, and not a stray file: `import checklib` is part
   of the contract with every model.py in the fleet, exactly like `views()` and
   `printables()`. It re-exports `src/cadbuild/checklib.py` under that name, and
@@ -415,6 +462,32 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   light everywhere; `mark-on-dark.svg` is wired in by SPEC §8 entry 35, and is
   kept — rather than dropped as dead weight — because its geometry is held to
   the same check meanwhile
+- `model_template/` — the starter project `hammerola create` unpacks, served at
+  `/start/template.tar.gz`: a `model.py` that BUILDS AS IT STANDS, plus a
+  `.gitignore`. It is files rather than a section of documentation for one
+  reason, and that reason is the only thing keeping it honest:
+  `tests/test_template.py` runs it through `run_build` — the same entry point a
+  push takes — so a template that stopped satisfying the gate fails here instead
+  of being handed to somebody who cannot tell whose fault it is. That test skips
+  where the CAD kernel does not import, i.e. in CI; the shape checks beside it
+  do not, and they are what catch the edit that actually happens (a file added
+  under a name the path alphabet refuses, which takes down the whole push of
+  every project made from it). It carries NO `project.json`: `create` mints the
+  id, and an id shared by every project made from a template is the one thing an
+  id may never be. The NAME is not `template/`, deliberately: that is one letter
+  from `templates/` next to it, both are copied to the root of the image by
+  adjacent COPY lines, and two names that differ by a letter are how a COPY or an
+  ignore rule ends up on the wrong one while each still resolves
+- `skill/SKILL.md` — instructions for an agent working in a MODEL's repository,
+  not in this one, served at `/start/skill.md` and installed into
+  `~/.claude/skills/hammerola/`. What it exists to say, and what nothing else
+  says anywhere: `build` fills the draft slot and leaves the project off the
+  front page, `commit` is what makes a version exist, and finished work is
+  committed. The rest is the model contract (pointing at `model_template/` as the
+  example rather than restating it) and the four rules whose breach refuses a
+  push — the path alphabet, a `checklib.py` of one's own, dependencies, and the
+  fact that `model.py` is executed by the hub. It carries no address: the reader
+  substitutes their own hub
 - `ui/` — the React sources for the browser UI, and the only place node is used
   here. Built twice, by two toolchains that must not disagree: `make ui` for a
   workstation and the Dockerfile's `ui` stage for the image. Nothing under
@@ -422,7 +495,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   `make test` work on a machine with no node at all. The output path is written
   in five files that never import each other, and `tests/test_ui_bundle.py` is
   what keeps them in step; `ui/README.md` has the layout and the pins
-- `ci/smoke.py` — the gate between build and publish: seven checks (a)–(g) the
+- `ci/smoke.py` — the gate between build and publish: eight checks (a)–(h) the
   test suite structurally cannot make, because it runs against a checkout and
   never looks at the artefact. (b) proves the startup guard fires and NAMES the
   missing variable. It used to prove more — that the guard names EVERY missing
@@ -430,7 +503,15 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   credentials; with one (`EDIT_TOKEN`, step 0) that property moved to
   `tests/test_config_errors.py`, which can hand the guard a settings class with
   several required fields. Read `REQUIRED_VARIABLES` there before assuming the
-  gate still covers it
+  gate still covers it.
+  (h) is the only check here that makes a REQUEST — it asks the running
+  container for the three `/start` files, two of which are assembled when the
+  request arrives and so cannot be checked by naming a path at all. It is a
+  witness for the whole client only because the assembly REFUSES when a module
+  reachable from `src/client/cli.py` did not reach the image
+  (`onboarding._refuse_unimportable`); the glob that collects those modules
+  cannot see a file that is not there, so without that refusal a stripped image
+  served a 200 and an archive that died on the laptop that downloaded it
 - `docs/SPEC.md` — requirements, verified facts and the work plan (section 8A)
 - `main.py` — thin entry point over `src/`
 

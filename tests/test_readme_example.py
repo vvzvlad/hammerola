@@ -2,11 +2,16 @@
 
 THIS FILE EXISTS BECAUSE THE README CARRIES A SECOND COPY OF THE CONTRACT.
 `printables()`, `views()`, `checks()` and `import checklib` are one agreement
-between a model and the hub, and the right number of places to write it down is
-one -- the template of SPEC §8 entry 31. Until that template lands the README
-has to show something, and a code block nobody executes is exactly the silent
-drift entry 46 warns about: the example goes on looking correct for as long as
-nobody tries it, and the first person to try it is an author copying it.
+between a model and the hub, and it is written down in two places on purpose:
+`model_template/`, which SPEC §8 entry 31 put on the hub and which
+`hammerola create` unpacks, and the block in README.md, which is the one a
+person deciding whether to use the tool at all can read without downloading
+anything. The comment above that block says why both are kept. WHAT MAKES TWO
+COPIES SAFE IS THAT BOTH ARE EXECUTED -- this file builds one and
+tests/test_template.py builds the other -- because a code block nobody executes
+is exactly the silent drift entry 46 warns about: the example goes on looking
+correct for as long as nobody tries it, and the first person to try it is an
+author copying it.
 
 So the block is lifted out of the file and run: written into a scratch project
 beside the smallest legal project.json and handed to `src.buildproc.run_build`
@@ -18,13 +23,20 @@ gate refuses the layout, `checks()` is written so the build cannot call it or
 cannot count it, `import checklib` no longer resolves from inside a model or
 stops being called at all, an export stopped being produced.
 
-IT IS TIED TO THE BLOCK BEING THERE, NOT TO WHAT IS IN IT. When the template
-lands and the example becomes a pointer to it, there is no python block left
-and every test here skips with a reason saying to delete this file. That is
-deliberate: a check on a second copy has to die with the second copy, and it
-must not be the thing that makes removing the copy look like a regression. A
-skip nobody reads is not a test, so deleting this file belongs in the same
-commit as deleting the example.
+IT IS TIED TO THE BLOCK BEING THERE, NOT TO WHAT IS IN IT -- and the block
+going away is a REGRESSION, so it FAILS the run rather than skipping it. That
+is the opposite of what this file used to do, and the reversal is a decision
+rather than an oversight. While the plan was "the template lands, the example
+becomes a pointer to it, this file is deleted in the same commit", a skip was
+right: a check on a second copy has to die with the second copy and must not
+make removing the copy look like a regression. The template landed and the plan
+was cancelled -- the comment above the block asks for the example to STAY -- so
+the disappearance of the block is now the failure this file is here to catch,
+and answering it with a skip would answer it with a GREEN run. Neither
+`-W error` nor `--strict` raises a skip, so the only thing holding the example
+to the contract would go quiet without a red character anywhere. If the
+decision is ever reversed again, change that comment in README.md and delete
+this file in the same commit.
 
 THE CAD KERNEL IS NOT ASSUMED. Both CI workflows run this suite in a bare
 `python:3.11-slim` with requirements.txt installed and none of the system
@@ -73,10 +85,14 @@ LIMITS = (DEFAULT_LIMITS if memory_limit_supported()
 # shell, and this is the one that claims to be a model.
 PYTHON_BLOCK = re.compile(r"^```python\n(.*?)^```", re.DOTALL | re.MULTILINE)
 
-GONE = ("README.md no longer carries a python block, so the model example has "
-        "been replaced -- presumably by the pointer to model_template/ that "
-        "the comment above it asks for. Delete tests/test_readme_example.py: "
-        "there is no second copy of the contract left for it to hold down.")
+GONE = ("README.md no longer carries a python block, so the model example is "
+        "gone -- and the comment above it in README.md asks for it to STAY. "
+        "It is one of the two copies of the contract that are kept precisely "
+        "because both are executed, and this is the execution of that one, so "
+        "its disappearance is a regression rather than a step in some plan: "
+        "put the example back. If the decision really has changed, change that "
+        "comment and delete tests/test_readme_example.py in the same commit -- "
+        "but do not answer this with a skip, which is a green run.")
 
 # Set on the stand-in module below, so the guard can tell THIS file's `checklib`
 # from the real one without importing either.
@@ -128,10 +144,10 @@ def guard_the_checklib_stand_in():
 
 
 def readme_model_source():
-    """The example, or a skip. Exactly one block, or a failure that says why."""
+    """The example. Exactly one block, or a failure that says why."""
     blocks = PYTHON_BLOCK.findall(README.read_text(encoding="utf-8"))
     if not blocks:
-        pytest.skip(GONE)
+        pytest.fail(GONE)
     assert len(blocks) == 1, (
         f"README.md has {len(blocks)} python blocks and this file assumes the "
         "model example is the only one. Whichever of them is the model, say so "
@@ -167,9 +183,11 @@ def built(tmp_path_factory):
     Nothing here is shared state a test can dirty: `BuildOutcome` is a frozen
     dataclass and the output directory is only ever read.
 
-    Both ways out of this file are decided here rather than in each test: no
-    python block in the README means the example is gone and every test skips
-    (see GONE), and no importable CAD kernel means it cannot be built at all.
+    Both ways out of this file are decided here rather than in each test, and
+    they are deliberately not the same kind of exit: no python block in the
+    README means the example is gone, which is a regression and FAILS every
+    test here (see GONE), while no importable CAD kernel means it cannot be
+    built at all, which is a property of the interpreter and skips.
     `exc_type=ImportError` on the second is explicit, because the failure it is
     FOR is an ImportError that is NOT a ModuleNotFoundError: the module is
     found and its extension refuses to load. pytest 9.1 narrows the default to

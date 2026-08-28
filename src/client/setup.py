@@ -6,9 +6,17 @@ after that neither is ever run again. `login` answers WHERE and AS WHOM, and it
 answers it for every model directory on the machine; `create` answers WHICH
 PROJECT, and it answers it for one directory, for the life of that project.
 
-NEITHER OF THEM PUBLISHES ANYTHING, and `create` does not even reach the
-network: an id is a name the repository carries, not a registration (SPEC §3.1),
-so a project can be started on a train and pushed a week later.
+NEITHER OF THEM PUBLISHES ANYTHING, and the ID IS STILL MINTED LOCALLY: it is a
+name the repository carries, not a registration (SPEC §3.1). `create` does now
+reach the hub, for one thing only — the starter template, a model.py that builds
+as it stands. That download is a convenience and the id is not, so the two are
+separated by a flag rather than tangled together: `--no-template` starts a
+project on a train, with no hub, no address and no secret, exactly as before.
+
+WHAT `create` NEVER READS IS THE TOKEN. The template is public (see
+`src/onboarding.py`), so a project can be started against a hub this machine has
+never logged in to — and a command whose whole job is to write a file into a new
+directory has no business touching the one secret of the system.
 
 THE PASSWORD IS ASKED FOR, NEVER PASSED IN. There is no `--token` flag here and
 there will not be one: an argument is in the shell's history file and in every
@@ -22,7 +30,8 @@ import getpass
 import os
 from pathlib import Path
 
-from src.client import config, project
+from src.client import config, project, unpack
+from src.client.errors import ClientError
 from src.client.hub import QUERY_TIMEOUT, Hub, HubError
 
 # Prompts. Written out here rather than inline so the two questions read as one
@@ -112,11 +121,17 @@ def _password() -> str:
         raise config.ConfigError(_NOTHING_TO_READ) from error
     if not token:
         raise config.ConfigError("no password given; nothing was saved")
-    # Asked here, at the prompt, and not left to `write_settings` at the end: a
-    # value with a line break in it cannot be stored AND cannot be sent as an
-    # `Authorization` header, so checking it late would mean the run fails
-    # somewhere inside urllib instead of at the question that produced it.
+    # BOTH CHECKS, HERE, AT THE PROMPT. `check_storable` answers for the file
+    # and `check_sendable_as_header` for the `Authorization` header, and the
+    # second one is not a duplicate of the first: the file is UTF-8 and takes a
+    # Cyrillic password happily, while an HTTP header value is latin-1 and
+    # cannot. With only the first, such a password passed the prompt, was tried
+    # against the hub, and was refused by `Hub.__init__` with "the stored secret
+    # ... run `hammerola login`" — said to somebody in the middle of running
+    # `hammerola login`, about a secret that had not been stored. A loop with no
+    # way out of it, from inside the one command that exists to fix it.
     config.check_storable(config.EDIT_TOKEN_VAR, token)
+    config.check_sendable_as_header(config.EDIT_TOKEN_VAR, token)
     return token
 
 
@@ -137,15 +152,57 @@ def _ask(prompt: str, default=None) -> str:
     return answer or (default or "")
 
 
+# What the template archive is called in messages. It is fetched from a path the
+# hub names, so nothing here spells a URL.
+TEMPLATE_WHERE = "the starter template"
+
+# The manifest key this command follows to find the template. A constant so the
+# two sides of that contract can be COMPARED: `src.onboarding.TEMPLATE_KEY` is
+# the hub's, and a test asserts they are the same string. It was a literal here
+# before, and the test that claimed to check it compared the hub with itself.
+TEMPLATE_KEY = "template"
+
+# Said when the template cannot be fetched. The refusal is total — nothing is
+# written, not even project.json — because the alternative is a directory
+# holding an id and no model, from a command that reported a failure.
+TEMPLATE_UNREACHABLE = (
+    "  Nothing was created. `hammerola create --no-template` writes just the "
+    "project.json\n  and needs no hub at all.")
+
+# ...and the one failure that CAN leave a half-made project: the disk refusing a
+# write after project.json has landed. Everything checkable is checked before
+# anything is written, so what is left is a filesystem error — and the message
+# has to say what state the directory is in, because "cannot write model.py" on
+# its own leaves somebody guessing whether the id was minted.
+PARTLY_WRITTEN = (
+    "\n  The project.json was written first, so this directory now holds an id "
+    "and no model.\n  A re-run of `create` refuses over that file: fix the "
+    "cause and unpack the template by\n  hand, or delete the directory and "
+    "start again.")
+
+
 def create(args) -> int:
-    """Write a `project.json` with a fresh id. -> exit code."""
+    """Write a `project.json` with a fresh id, and unpack the template. -> exit code."""
     root = Path(args.directory).expanduser() if args.directory else Path.cwd()
     _refuse_inside_a_project(root)
+
+    # FETCHED AND CHECKED BEFORE ANYTHING IS WRITTEN, and the order is the whole
+    # of what makes this command safe to run twice. A download that fails, or a
+    # file that is already there, has to stop the command while the directory is
+    # still untouched — a half-created project holds a permanent id and no
+    # model, and the second run then refuses over the project.json the first one
+    # left behind.
+    template = () if getattr(args, "no_template", False) else _template_for(root)
+    _refuse_to_overwrite(root, template)
+
     payload = project.create_project(root, getattr(args, "title", None))
+    written = _write_template(root, template)
 
     print(f"created {root / project.PROJECT_FILE}")
     print(f"  id     {payload['id']}")
     print(f"  title  {payload['title']}")
+    for name in written:
+        print(f"  wrote  {name}")
     # The one rule about the file, said at the one moment somebody is looking at
     # it. Every permanent URL of this project is built from that id, so an edit
     # to it does not rename anything — it starts a different project and leaves
@@ -153,8 +210,155 @@ def create(args) -> int:
     print("commit this file. The id is what every published URL is built from, "
           "and it is\nnot edited by hand (SPEC §3.1) — rename the title "
           "instead, never the id.")
+    if written:
+        print("model.py is a working example and builds as it stands: read the "
+              "contract\nwritten next to the geometry, then replace it.")
     print("next: `hammerola build` publishes the working copy into dev.")
     return 0
+
+
+def _template_for(root: Path):
+    """Fetch the starter template. -> ((member, bytes), ...), or a HubError.
+
+    The hub is asked WHERE the template is rather than told: `/start` names the
+    path and this follows it (`Hub.fetch_path` checks that what came back is a
+    path on that same hub). One string in this tool, one on the other side, and
+    a test compares them.
+    """
+    # THE MISSING SETTING GETS THE SAME SENTENCE AS THE UNREACHABLE HUB, and it
+    # is the more important of the two: "the hub is down" happens to somebody
+    # who has used this before, while "HUB_URL is not set" is the FIRST command
+    # a new person runs, and the whole point of this branch is that they have a
+    # way forward. `config.hub_url` explains what the variable is; only this
+    # knows that the id is minted locally and that a flag gets them a project
+    # without a hub at all.
+    try:
+        hub_url = config.hub_url(root)
+    except config.ConfigError as error:
+        raise config.ConfigError(f"{error}\n{TEMPLATE_UNREACHABLE}") from error
+    try:
+        # INSIDE the try, because building a Hub is where an address that cannot
+        # be requested at all is refused (`hub._origin`) — a `HUB_URL` with a
+        # letter in the port is exactly the shape of typo this command meets,
+        # and it needs the same "here is how to start anyway" sentence as a hub
+        # that is merely down.
+        #
+        # No token, deliberately — see the module docstring.
+        hub = Hub(hub_url, "", timeout=QUERY_TIMEOUT)
+        manifest = hub.start()
+        path = manifest.get(TEMPLATE_KEY)
+        if not isinstance(path, str) or not path:
+            raise HubError(
+                f"{hub_url} answered the start manifest without naming a "
+                f"template.")
+        body = hub.fetch_path(path)
+    except HubError as error:
+        raise HubError(f"{error}\n{TEMPLATE_UNREACHABLE}") from error
+
+    # INSIDE A WRAPPER OF ITS OWN, because reading the archive is the one way
+    # this command can fail without saying how to get past it. A template that
+    # is corrupt, or that names a member no client will unpack, raises
+    # ClientError — a different class from everything above — and it used to be
+    # the single refusal of `create` that lost the `--no-template` sentence,
+    # which is the way forward for a reader stuck at their first command.
+    try:
+        members = unpack.read_members(body, where=TEMPLATE_WHERE,
+                                      rules=unpack.TEMPLATE_RULES)
+    except ClientError as error:
+        raise ClientError(f"{error}\n{TEMPLATE_UNREACHABLE}") from error
+    if not members:
+        raise HubError(f"{hub_url} served an empty template.\n"
+                       f"{TEMPLATE_UNREACHABLE}")
+    return tuple(sorted(members.items()))
+
+
+def _refuse_to_overwrite(root: Path, template) -> None:
+    """Stop if the template would land on top of something already here.
+
+    ALL OR NOTHING, and never a merge: a directory holding half a template and
+    half of somebody's own work is a state neither of them can be recovered
+    from, and this command is run in a directory somebody has just made — so
+    anything already in it was put there on purpose.
+
+    `lexists` and not `exists`, which is the difference between a check and a
+    hole: `exists()` follows a symlink, so a DANGLING one is not a collision to
+    it — and the write that followed opened the link's target, landing a file
+    outside the project entirely. The link itself is what is already there, so
+    the link itself is what this has to see.
+    """
+    clashes = [name for name, _data in template
+               if os.path.lexists(root / Path(name))]
+    if not clashes:
+        return
+    listed = "\n".join(f"    {name}" for name in clashes)
+    raise project.ProjectError(
+        f"{root} already holds file(s) the template would write over:\n"
+        f"{listed}\n"
+        f"  Nothing was written. Run this in an empty directory, or "
+        f"`hammerola create --no-template`\n"
+        f"  to write only the project.json.")
+
+
+def _write_template(root: Path, template) -> list:
+    """Write the template's files. -> the member paths, sorted.
+
+    Every name has already been checked against `unpack.TEMPLATE_RULES`, so no
+    component can be `..`, empty or absolute; the `relative_to` below is defence
+    in depth over that and costs one resolve per file.
+
+    EACH FILE IS CREATED, NEVER OPENED. `O_CREAT|O_EXCL` fails if the path
+    exists at all — a symlink included, dangling or not — and `O_NOFOLLOW` says
+    the same thing a second way. That closes two things at once: the window
+    between the collision check above and this write, and the case that check
+    could not see on its own, where the name is a link and the bytes land at its
+    target. `write_bytes` would have followed it.
+
+    `O_NOFOLLOW` IS FETCHED WITH A DEFAULT because it is the one non-portable
+    constant in the whole client: Windows has no such flag, and naming it
+    directly would make this line an `AttributeError` — a traceback where the
+    tool is supposed to print a sentence — on the first `create` there. Falling
+    back to 0 loses nothing that matters: `O_EXCL` already refuses every path
+    that exists, symlinks included, so the second flag is defence in depth
+    rather than the control, and where it exists it is still passed.
+    """
+    written = []
+    for name, data in template:
+        target = root.joinpath(*name.split("/"))
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.parent.resolve().relative_to(root.resolve())
+        except ValueError as error:
+            raise project.ProjectError(
+                f"{TEMPLATE_WHERE} holds a member that would be written "
+                f"outside {root}: {name!r}") from error
+        except OSError as error:
+            raise project.ProjectError(
+                f"cannot create {target.parent}: {error}{PARTLY_WRITTEN}"
+            ) from error
+        try:
+            flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_NOFOLLOW", 0))
+            handle = os.open(target, flags, 0o644)
+            try:
+                stream = os.fdopen(handle, "wb")
+            except BaseException:
+                # Only until `fdopen` has taken the descriptor over; closing it
+                # afterwards would close one the stream still owns.
+                os.close(handle)
+                raise
+            # Through a file object rather than `os.write`, which is allowed to
+            # write short.
+            with stream:
+                stream.write(data)
+        except FileExistsError as error:
+            raise project.ProjectError(
+                f"{target} appeared while this was running, so the template was "
+                f"not written over it.{PARTLY_WRITTEN}") from error
+        except OSError as error:
+            raise project.ProjectError(
+                f"cannot write {target}: {error}{PARTLY_WRITTEN}") from error
+        written.append(name)
+    return sorted(written)
 
 
 def _refuse_inside_a_project(root: Path) -> None:

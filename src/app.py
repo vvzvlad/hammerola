@@ -10,6 +10,11 @@ Routing (SPEC 3, 7.4):
     GET  /                                    the front page shell, from templates/
     GET  /index.json                          what is on this hub      EDIT_TOKEN
     GET  /_v/<file>                           shared viewer bundle, one per site
+    GET  /start                               how to start: three paths and
+                                              whether this hub is empty
+    GET  /start/skill.md                      the agent instructions
+    GET  /start/hammerola                     the client, as one file
+    GET  /start/template.tar.gz               a model directory that builds
     GET  /project/<pid>/                      302 -> latest/
     GET  /project/<pid>/builds.json           build picker
     GET  /project/<pid>/latest/<file>         newest build of a commit, no-cache
@@ -53,6 +58,18 @@ is not: `/index.json` is the only document that answers "what is on this hub",
 nobody is handed it, and every id in it is the prefix of every permanent URL that
 project will ever have. So the rule is that being given a link gets you that
 build, and nothing gets you the enumeration.
+
+`/start` IS THE ONE EXCEPTION TO THE SECOND HALF OF THAT, at the width of a
+single boolean. It is public because it exists to be read by somebody who has no
+token — the person who has just deployed this and is looking at a login form —
+and it says whether anything has ever been published here, so that a page will
+be able to offer the three downloads a first run needs instead of nothing. That
+page does not exist yet: the browser UI was left untouched here, `create` is the
+one reader of the manifest today and it follows `template` alone, so what `/`
+shows a stranger is still a login form. What the route must never grow is a
+number, a name or a date: `src/onboarding.py` carries that argument in full, and
+`Store.empty` is the only thing on this service that answers a question about
+the deployment without a token.
 
 WHY THE COMMENT WRITE MOVED (SPEC 8A.1). This hub now BUILDS the code it is
 sent, and an anonymous write was the first step of a path with no vulnerability
@@ -103,7 +120,7 @@ from urllib.parse import parse_qs, unquote
 
 from loguru import logger
 
-from src import render
+from src import onboarding, render
 from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
                           normalize_since, validate_payload)
 from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
@@ -123,6 +140,11 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 HTML_TYPE = "text/html; charset=utf-8"
 OCTET_TYPE = "application/octet-stream"
+# The two types the `/start` artefacts are served as. Markdown so the skill can
+# be read in a browser as text — with `nosniff` on every reply, no browser
+# renders it as a document — and gzip for the template, which is a tar.
+MARKDOWN_TYPE = "text/markdown; charset=utf-8"
+GZIP_TYPE = "application/gzip"
 
 # Only the vendored bundle may be cached forever: its name carries the library's
 # identity and it is replaced by a differently named file, never edited. Our own
@@ -381,6 +403,8 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     return self._serve_index_json(with_body)
                 if head == "_v":
                     return self._serve_asset(segments[1:], with_body)
+                if head == onboarding.START_SEGMENT:
+                    return self._serve_start(segments[1:], with_body)
                 if head == "favicon.ico" and len(segments) == 1:
                     # SVG bytes at a `.ico` URL, deliberately. Every page links
                     # the icon by its real name, so this path is only ever taken
@@ -438,6 +462,75 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 return self._json(200, [], CACHE_NONE, with_body=with_body)
             return self._serve_bytes(path.read_bytes(), "application/json",
                                      CACHE_NONE, with_body)
+
+        # -- getting started -------------------------------------------
+        def _serve_start(self, rest: list[str], with_body: bool):
+            """`/start` and the three files it names. PUBLIC, all four.
+
+            The whole argument for that — including why the manifest may say
+            whether this hub is empty and may say nothing else about it — is in
+            `src/onboarding.py`. In one line: these are read by somebody who does
+            not have the token yet, and they are the software rather than a
+            statement about what is published here.
+
+            No cache. The three files change with the image under stable names,
+            exactly like `site.css` and the bundle in `_serve_asset`, and the
+            manifest carries a value that changes with the first push.
+
+            THREE KINDS OF BREAKAGE ARE CAUGHT HERE and they are one thing: a
+            defect of the ARTEFACT rather than of the request. An OSError means
+            the image is missing a file the smoke gate checks for
+            (`ci/smoke.py`, REQUIRED_PATHS). A ValueError means an archive
+            cannot honestly be built out of what is here — the template tree
+            holds a path no client would unpack
+            (`onboarding._refuse_unservable`), or a module the client imports
+            did not reach the image (`onboarding._refuse_unimportable`). An
+            ImportError means the same defect arriving by the other road: the
+            template builder borrows the CLIENT's own unpacking rules at call
+            time, so a client module `.dockerignore` kept out takes this route
+            down as well, and it does it with a ModuleNotFoundError rather than
+            with either of the other two. Without that clause it was the one
+            failure here that reached the socket as a dropped connection
+            instead of an answer.
+
+            All three are logged as such and answered 404 rather than 500,
+            because "this hub does not serve that" is the true and useful answer
+            to whoever asked.
+            """
+            if not rest:
+                return self._json(200,
+                                  onboarding.manifest(empty=store.empty()),
+                                  CACHE_NONE, with_body=with_body)
+            if len(rest) != 1:
+                return self._error(404, "not found", with_body=with_body)
+            builders = {
+                onboarding.SKILL_NAME: (onboarding.skill_bytes, MARKDOWN_TYPE, {}),
+                # Handed over as an attachment, like everything else here whose
+                # bytes are not text: it is a zip with a shebang on it, and a
+                # browser asked to display one has no better idea than to save it.
+                onboarding.CLIENT_NAME: (onboarding.client_bytes, OCTET_TYPE,
+                                         {"Content-Disposition": "attachment"}),
+                onboarding.TEMPLATE_NAME: (onboarding.template_bytes, GZIP_TYPE,
+                                           {"Content-Disposition": "attachment"}),
+            }
+            entry = builders.get(rest[0])
+            if entry is None:
+                return self._error(404, "not found", with_body=with_body)
+            build, ctype, extra = entry
+            try:
+                body = build()
+            except (OSError, ValueError, ImportError) as error:
+                # All three causes the docstring names, because the reader of
+                # this line has nothing else: the image is missing a file the
+                # gate checks for, or holds a template path no client would
+                # unpack, or did not carry a module the client imports. The
+                # third was the one missing here.
+                logger.error(f"cannot serve /start/{rest[0]}: {error}. The "
+                             f"image is missing a file ci/smoke.py checks for, "
+                             f"carries a template path no client would unpack, "
+                             f"or is missing a module the client imports.")
+                return self._error(404, "not found", with_body=with_body)
+            return self._send(200, body, ctype, CACHE_NONE, extra, with_body)
 
         # -- static files ----------------------------------------------
         @staticmethod

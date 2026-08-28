@@ -14,6 +14,11 @@ venv/
 data/
 tests/
 .gitea/
+# ROOT-LEVEL .md files only — AGENTS.md, CLAUDE.md, README.md — because `*` does
+# not cross a `/` here (see the note at the top). `skill/SKILL.md` is therefore
+# NOT excluded, and must not be: the hub serves it at /start/skill.md, and
+# ci/smoke.py's check (g) fails the gate if it is missing from the image. Do not
+# "fix" this line into `**/*.md`.
 *.md
 # The design documents and the README's screenshots. Nothing under docs/ can
 # reach the image in the first place — every COPY line in the Dockerfile names

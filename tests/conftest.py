@@ -30,6 +30,7 @@ import pytest  # noqa: E402  (must come after the env assignment above)
 
 from harness import start_hub, stop_hub  # noqa: E402
 from process_limits import rlimits as _rlimits  # noqa: E402
+from src import onboarding  # noqa: E402
 from src.jobs import WORKER_THREAD_PREFIX  # noqa: E402
 
 
@@ -149,6 +150,126 @@ def rlimit_guard_snapshot():
     `apply_process_limits` applies, or one that has emptied, guards nothing and says nothing.
     """
     return dict(_RLIMITS_AT_IMPORT)
+
+
+# --- Module-level state: the caches in src/onboarding.py -----------------------------------
+# The project's rule about module-level mutable state, pointed at the one module in `src/` that
+# holds an answer a TEST can plant. Three of its four `lru_cache`s are what that module's
+# docstring says they are — pure functions of files inside the image, which cannot change while
+# the process runs. `_import_verdict` is different IN KIND, and it is the reason this guard
+# exists: it caches the REFUSAL, i.e. "this image has no client to serve". Plant that once and
+# every later test in the session gets a 404 from /start/hammerola, in files that never mention
+# onboarding — and `monkeypatch` does not save anybody, because restoring the function the
+# verdict was computed from does not unremember the verdict.
+#
+# It is guarded at the ROOT rather than in tests/test_onboarding.py, where the only test that
+# plants one lives, precisely because the victim is somewhere else: a guard that only ran for
+# that file would watch the culprit and not the damage.
+#
+# DERIVED FROM THE MODULE, not written out here, for the reason `process_limits.WATCHED_RLIMITS`
+# is derived from the table `apply_process_limits` walks: a list kept by hand covers what
+# somebody remembered on the day, and the fifth cache added over there would be guarded by
+# nothing while this block went on looking complete. The names below are a FLOOR, not the list —
+# they are what makes the DERIVATION itself fail loudly the day it stops finding things (a
+# rename, an `@lru_cache` dropped), which is the failure a derived list has and a written one
+# does not. A cache ADDED there needs no edit here and is watched from its first commit.
+_ONBOARDING_CACHES_AT_LEAST = frozenset(
+    {"skill_bytes", "client_bytes", "template_bytes", "_import_verdict"})
+
+_ONBOARDING_PLANTED = (
+    "{names} in src.onboarding {verb} a cached value that was NOT computed from this "
+    "checkout, so something handed one of those functions a doctored input and the answer "
+    "STUCK. `monkeypatch` cannot undo that: putting the function back does not unremember "
+    "what it returned, and `_import_verdict` in particular then answers 'this image has no "
+    "client' for the rest of the session — every later /start/hammerola is a 404. A test that "
+    "plants one deliberately asks for the `onboarding_cache_sandbox` fixture, whose teardown "
+    "clears them; this guard has cleared them now so that the blame stops here instead of "
+    "landing on the next twenty tests.")
+
+
+def _onboarding_caches():
+    """{name: wrapper} for every `lru_cache` src.onboarding exposes, whatever they are."""
+    found = {name: value for name, value in vars(onboarding).items()
+             if hasattr(value, "cache_clear") and hasattr(value, "cache_info")}
+    missing = _ONBOARDING_CACHES_AT_LEAST - set(found)
+    assert not missing, (
+        f"src.onboarding no longer exposes {sorted(missing)} as an lru_cache, so this guard is "
+        f"watching less than it claims to and would go on passing in silence. If the change "
+        f"was deliberate, edit _ONBOARDING_CACHES_AT_LEAST in the same commit.")
+    return found
+
+
+@pytest.fixture(scope="session")
+def _onboarding_truth():
+    """What each of those caches holds when it is filled from the real checkout.
+
+    Taken ONCE, with the caches cleared first so that nothing already remembered when the
+    session started can be mistaken for the truth. Comparing every test against a snapshot,
+    rather than recomputing, is what makes the guard affordable: a filled cache answers from
+    its own hit, so the check costs one comparison and no archive is ever built twice.
+    """
+    caches = _onboarding_caches()
+    for cache in caches.values():
+        cache.cache_clear()
+    truth = {name: cache() for name, cache in caches.items()}
+    yield truth
+    for cache in caches.values():
+        cache.cache_clear()
+
+
+def _planted_onboarding_caches(truth):
+    """The names holding something other than the real image's answer."""
+    return sorted(
+        name for name, cache in _onboarding_caches().items()
+        # An EMPTY cache cannot be holding a wrong answer, and asking it would FILL it —
+        # from whatever the test still has patched, which is how a guard plants the very
+        # thing it watches for.
+        if cache.cache_info().currsize and cache() != truth[name])
+
+
+@pytest.fixture(autouse=True)
+def guard_onboarding_caches(_onboarding_truth):
+    """Fail the test that plants a wrong answer in those caches, not the one that reads it.
+
+    Before AND after, for the reason written above `guard_build_workers`: without the
+    after-check the test that planted it goes green and the failure surfaces in an unrelated
+    test later — and here "later" means any test in any file that touches `/start`, since the
+    poison is one string in a process-wide cache.
+    """
+    planted = _planted_onboarding_caches(_onboarding_truth)
+    assert not planted, (
+        "an EARLIER test left this behind and escaped its own after-check; this test is where "
+        "it surfaced, not where it was caused.\n"
+        + _ONBOARDING_PLANTED.format(names=planted, verb="held"))
+    yield
+    planted = _planted_onboarding_caches(_onboarding_truth)
+    if planted:
+        for cache in _onboarding_caches().values():
+            cache.cache_clear()
+    assert not planted, (
+        "THIS test planted it.\n"
+        + _ONBOARDING_PLANTED.format(names=planted, verb="hold"))
+
+
+@pytest.fixture
+def onboarding_cache_sandbox():
+    """For a test that fills those caches from a doctored image ON PURPOSE.
+
+    Requesting it is how a test says so. It hands over cleared caches — which such a test needs
+    anyway, since a cache already holding the real archive would answer before the doctored
+    input was ever reached — and clears them again on the way out, so `guard_onboarding_caches`
+    finds what it demands. The ordering that makes that work is pytest's own: the guard is
+    autouse and therefore set up FIRST, so it finalises LAST, after this teardown.
+
+    A test that plants a value without this fixture fails its own after-check, which is the
+    entire point — the blame lands on the test that did it rather than on whichever one
+    happened to run next.
+    """
+    for cache in _onboarding_caches().values():
+        cache.cache_clear()
+    yield
+    for cache in _onboarding_caches().values():
+        cache.cache_clear()
 
 
 @pytest.fixture

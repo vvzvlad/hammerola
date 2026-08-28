@@ -80,9 +80,18 @@ def read_project_id(root: Path) -> str:
     """The `id` out of project.json, checked against the hub's alphabet.
 
     Checked HERE rather than left to the hub's 422 because the answer is the
-    same either way and this one arrives before a megabyte is uploaded — and
-    because the template ships an EMPTY id, so a project nobody ran `make init`
-    on gets told that instead of "invalid project id: ''".
+    same either way and this one arrives before a megabyte is uploaded.
+
+    THE EMPTY ID IS A HAND-WRITTEN FILE and no longer a stage of the workflow.
+    This used to say the template ships one and that a project nobody ran
+    `make init` on lands here — both were true of `cad_publish`, whose template
+    carried a `project.json` with `"id": ""` for a Makefile target to fill in.
+    Neither survives: the id is minted by `hammerola create`
+    (`new_project_id`), and `model_template/` carries no `project.json` at all —
+    `tests/test_template.py` asserts that, because an id shared by every project
+    made from a template is the one thing an id may never be. So what reaches
+    this branch is a file somebody wrote or edited themselves, and the message
+    below says so.
     """
     path = root / PROJECT_FILE
     try:
@@ -100,8 +109,11 @@ def read_project_id(root: Path) -> str:
     if not isinstance(pid, str) or not pid:
         raise ProjectError(
             f"{path} carries no project id.\n"
-            f"  A fresh model directory has an empty one until the project is "
-            f"given a name; fill in \"id\" before publishing."
+            f"  `hammerola create` writes one and never leaves it blank, so "
+            f"this file was written or edited\n"
+            f"  by hand. Fill in \"id\" before publishing — every permanent URL "
+            f"of this project is built\n"
+            f"  from it, so it must not change afterwards."
         )
     if not SAFE_ID.match(pid):
         raise ProjectError(

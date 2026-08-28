@@ -295,6 +295,84 @@ def check_storable(name: str, value) -> None:
             f"{name} cannot be stored: it begins and ends with a quote "
             f"character, and this file format takes one layer of those off "
             f"again when it reads a value back")
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        # Wider than the line-break rule above and kept separate from it because
+        # the reason differs: a NUL or a form feed is not a line the parser
+        # would mis-split, it is a byte nothing downstream handles predictably.
+        # This file holds one secret; a value with a C0 control in it is a paste
+        # that went wrong, whatever the parser would do with it.
+        raise ConfigError(
+            f"{name} cannot be stored: it contains a control character")
+
+
+def header_value_problem(value):
+    """Why `value` cannot travel as an HTTP header value, or None. No echo.
+
+    THE PREDICATE, SHARED BY THE TWO PLACES THAT ASK IT, and shared rather than
+    written twice because they answer for the same wire: `check_sendable_as_header`
+    below is what `login` asks at the prompt, and `hub._refuse_unsendable_token`
+    is what catches a token that never went through `login` — out of the
+    environment, or out of a hand-edited file. Two copies of this would have
+    drifted into the state that made the split necessary in the first place,
+    where a password the prompt accepted was refused by the constructor a few
+    lines later.
+
+    The reason is returned rather than raised so each caller can put it in its
+    own sentence: the advice differs completely, and "run `hammerola login`" is
+    wrong when said to somebody who is running `hammerola login`.
+
+    THE WIDTH IS A DECISION, not a limit of the wire. A TAB is legal in a header
+    value and http.client would send one; it is refused here anyway, because a
+    secret with a tab in it is a paste that went wrong. Latin-1 is the limit of
+    the wire: `http.client` encodes header values with it, so anything outside
+    it cannot be sent at all.
+    """
+    if not isinstance(value, str):
+        return f"it is a {type(value).__name__} rather than a string"
+    if "\r" in value or "\n" in value:
+        return "it contains a line break, which is where an HTTP header ends"
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return ("it contains a control character (a tab included, which the "
+                "wire would carry — this refuses it anyway)")
+    try:
+        value.encode("latin-1")
+    except UnicodeEncodeError:
+        return ("it contains a character outside latin-1, which is the "
+                "encoding an HTTP header value is written in")
+    return None
+
+
+def check_sendable_as_header(name: str, value) -> None:
+    """Refuse a secret that could never be presented to the hub. No echo.
+
+    THE COMPANION TO `check_storable`, AND SEPARATE FROM IT ON PURPOSE. That one
+    is about this FILE and is asked of everything written to it, `HUB_URL`
+    included; this one is about the `Authorization` header and is asked only of
+    the secret. They stay apart because the two values are answerable to
+    different things, and the answers are not the same shape: a token has to
+    survive one header, while an ADDRESS has to survive three encodings in a row
+    — the request line's ASCII, the `Host` header's latin-1 and the host's IDNA,
+    which also bounds every dotted label at 63 characters. `hub._origin` is
+    where that is asked, by performing the encodings rather than describing
+    them, and it is strictly stricter than a latin-1 rule would be.
+
+    THE JUSTIFICATION THAT USED TO STAND HERE WAS FALSE and is named so it is
+    not restored: it said `https://хаб.example` is a legal address urllib
+    resolves through IDNA, so a latin-1 rule in `check_storable` would reject a
+    working hub. It is not legal for this client — it reaches the wire and dies
+    on the `Host` header — and `_origin` now refuses it outright. The split is
+    right for the reason above; that example was not a reason for anything.
+
+    `login` asks both, at the prompt, which is what makes the constructor's
+    check in `hub.py` unreachable from inside `login` — it advises running
+    `hammerola login`, and saying that to somebody already running it was a loop
+    with no way out of it.
+    """
+    problem = header_value_problem(value)
+    if problem is not None:
+        raise ConfigError(
+            f"{name} cannot be used as the hub's password: {problem}.\n"
+            f"  Nothing was saved. (The value is not shown here.)")
 
 
 def _merge_env_text(text: str, values: dict) -> str:
