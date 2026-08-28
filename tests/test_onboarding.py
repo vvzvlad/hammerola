@@ -171,11 +171,11 @@ def test_emptiness_is_reported_rather_than_guessed_when_the_volume_is_unreadable
         hub, monkeypatch, level):
     """Fails CLOSED: an error must not be reported as "your hub is empty".
 
-    An onboarding block is what an empty hub will show, so a store that cannot
-    be read has to answer "not empty" — telling somebody with forty projects
-    that they have none, on the strength of an EACCES, is the worse of the two.
-    Pinned now rather than when that block is built: it is a property of the
-    answer, and the page that grows will inherit it.
+    An onboarding block is what an empty hub shows, so a store that cannot be
+    read has to answer "not empty" — telling somebody with forty projects that
+    they have none, on the strength of an EACCES, is the worse of the two.
+    Pinned before that block was built rather than after: it is a property of
+    the answer, and the door inherited it.
 
     BOTH LEVELS, because there are now two `iterdir`s and only the outer one was
     covered: counting what is INSIDE each project directory (which is what keeps
