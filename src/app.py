@@ -62,14 +62,17 @@ build, and nothing gets you the enumeration.
 `/start` IS THE ONE EXCEPTION TO THE SECOND HALF OF THAT, at the width of a
 single boolean. It is public because it exists to be read by somebody who has no
 token — the person who has just deployed this and is looking at a login form —
-and it says whether anything has ever been published here, so that a page will
-be able to offer the three downloads a first run needs instead of nothing. That
-page does not exist yet: the browser UI was left untouched here, `create` is the
-one reader of the manifest today and it follows `template` alone, so what `/`
-shows a stranger is still a login form. What the route must never grow is a
-number, a name or a date: `src/onboarding.py` carries that argument in full, and
-`Store.empty` is the only thing on this service that answers a question about
-the deployment without a token.
+and it says whether anything has ever been published here, so that the sign-in
+page offers what a first run needs instead of nothing. That page is written
+(`ui/src/HammerolaEntry.jsx`, SPEC 8 entry 48): when the boolean says the hub is
+empty, the form carries five lines somebody hands to their agent, built out of
+`skill` and `client` and the browser's own origin. Every one of the manifest's
+four fields is read now, where the route once had no reader at all —
+`hammerola create` follows `template`, and the door reads `empty` (the gate on
+whether it draws the block) and then `skill` and `client`. What the
+route must never grow is a number, a name or a date: `src/onboarding.py` carries
+that argument in full, and `Store.empty` is the only thing on this service that
+answers a question about the deployment without a token.
 
 WHY THE COMMENT WRITE MOVED (SPEC 8A.1). This hub now BUILDS the code it is
 sent, and an anonymous write was the first step of a path with no vulnerability

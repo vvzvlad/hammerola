@@ -5,6 +5,10 @@
 //
 //     /index.json                       what is on this hub -- EDIT_TOKEN, the
 //                                       one route on this site that is guarded
+//     /start                            where to get the skill and the client,
+//                                       and whether anything is published here
+//                                       yet -- PUBLIC, and the only route this
+//                                       bundle asks for without a token
 //     /project/<pid>/                   the project, on whichever pointer the
 //                                       reader was last on (SPEC 9)
 //     /project/<pid>/<slot>/            the page, where <slot> is a commit id
@@ -152,6 +156,108 @@ export function projectCard(card) {
     built: card.built,
     first: card.first_built,
   };
+}
+
+// -- getting started --------------------------------------------------------
+// The one route here that is asked WITHOUT a token, because whoever needs the
+// answer does not have one yet (src/onboarding.py). It carries three relative
+// paths and one boolean about this deployment, and the door renders a block out
+// of them when the boolean says the hub is empty.
+
+const START_URL = '/start';
+
+/**
+ * This hub's address, as the browser has it — read, never written down.
+ *
+ * The block the door draws is a set of addresses somebody hands to an agent, and
+ * the hub's own is one of them. It cannot come from a constant: this repository
+ * carries the address of no deployment (AGENTS.md), the same rule the skill is
+ * held to (`test_the_skill_names_no_deployment`), and a page served BY the hub
+ * already knows where it is.
+ *
+ * Called at the moment the answer is stored rather than read at module scope,
+ * because this bundle also serves the build page, which draws no block.
+ */
+export const hubOrigin = () => String(window.location.origin || '');
+
+/**
+ * A path the block can print, or '' for anything else.
+ *
+ * ROBUSTNESS, NOT A GUARD, and the distinction is the whole of why this is two
+ * lines. There is no boundary here to defend: `/start` is served by the SAME hub
+ * that served this page and this bundle, so a hub inclined to send an agent
+ * somewhere else writes the address into the HTML and never touches its own
+ * manifest — and anyone who could rewrite the manifest in flight is rewriting
+ * the page and the script on the same connection. Checking this field against
+ * the hub that supplied it would be a door standing in an open field.
+ *
+ * What it IS for is a manifest that is no good for ordinary reasons: a broken
+ * image, a proxy answering HTML, a route that grew a field of another type. A
+ * line reading `Skill: undefined` helps nobody, so a field that is not a string
+ * beginning with `/` takes the whole block down instead (`startHint`).
+ */
+function hubPath(value) {
+  if (typeof value !== 'string') return '';
+  if (value[0] !== '/') return '';
+  return value;
+}
+
+/**
+ * What the door may offer out of a `/start` document — or nothing at all.
+ *
+ * `empty !== true` and not a falsy test, because what arrives here need not be
+ * the manifest at all — a string, a number, a missing key and an object are all
+ * "truthy-ish" answers to a question that has exactly one affirmative, and the
+ * cost of reading one of them as yes is a "nothing published here yet" block on
+ * a hub with forty projects. A hub with projects on it and
+ * a document this cannot read are the same answer here — `null`, meaning no
+ * block — and collapsing them is deliberate: the block is a hint, and there is
+ * nothing a reader of the door could do about either.
+ */
+export function startHint(manifest) {
+  if (!manifest || typeof manifest !== 'object') return null;
+  if (manifest.empty !== true) return null;
+  const skill = hubPath(manifest.skill);
+  const client = hubPath(manifest.client);
+  if (!skill || !client) return null;
+  return { skill, client };
+}
+
+/**
+ * `GET /start`, as the door reads it. IT RESOLVES FOR EVERY FAILURE.
+ *
+ * The one function here that answers `null` instead of throwing, and the
+ * asymmetry with `loadIndex` beside it is the whole point. That fetch IS the
+ * page — a refusal is what the reader came to see. This one is a hint on top of
+ * a form that works without it, so a hub that did not answer, a proxy that
+ * returned HTML and a document with the wrong fields must all end as "no block"
+ * and nothing else. A rejected promise would put that obligation on every call
+ * site instead, and the failure of forgetting it is a sign-in page taken down by
+ * an unhandled rejection over a decoration.
+ *
+ * No `Authorization` header, deliberately: the route is public and the reader of
+ * it has no token — sending one would make the block's arrival depend on the
+ * very thing it exists to help somebody get.
+ *
+ * ONLY THE WIRE IS INSIDE THE `try`, and `startHint` is deliberately after it.
+ * What the promise above is for is somebody ELSE's failure — an unreachable hub,
+ * a captive portal answering HTML — and `startHint` is neither: it is pure, it
+ * touches nothing outside its argument, and the only way it throws is a defect
+ * in this bundle. Under the wider `try` such a defect showed as "no block" on
+ * every hub forever, with nothing anywhere saying so; outside it, it is a stack
+ * trace on the console of the person who wrote it. Silence is the contract for
+ * the network, never for this file.
+ */
+export async function loadStart() {
+  let manifest = null;
+  try {
+    const response = await fetch(START_URL, { cache: 'no-store' });
+    if (!response.ok) return null;
+    manifest = await response.json();
+  } catch (error) {
+    return null;
+  }
+  return startHint(manifest);
 }
 
 /**

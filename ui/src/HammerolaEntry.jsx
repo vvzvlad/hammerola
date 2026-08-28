@@ -50,6 +50,18 @@
  * would be one devtools tab away, and the check would live on the wrong side of
  * the wire.
  *
+ * AND ON A HUB WITH NOTHING ON IT THE DOOR CARRIES ONE MORE THING: five lines a
+ * person copies and hands to their agent — where the skill is, where the client
+ * is, what this hub's address is, install the skill and follow it, ask the owner
+ * for the token. It is on the DOOR and not on the list, because the list is
+ * behind the very token somebody opening an empty hub does not have yet: a block
+ * living past the form would only ever be read by whoever no longer needs it.
+ * `agentBrief` below is the whole of the text and `/start` (src/onboarding.py)
+ * is where the paths come from; the two properties that make it safe to add to a
+ * page whose job is elsewhere are that it is fetched LAZILY — a reader with a
+ * token goes straight to the list and pays for no second request — and that
+ * every failure of that fetch is silence. See `loadStart` in hub.js.
+ *
  * A CARD IS AN `<a>`, not a div with a click handler, which is the one place the
  * mock's markup was not taken literally. The page it replaced used a real link
  * and the reasons hold: middle-click, copy-link-address and the status bar all
@@ -66,7 +78,7 @@
 import React from 'react';
 
 import {
-  loadIndex, projectCard, projectUrl, stamp, Unauthorized,
+  hubOrigin, loadIndex, loadStart, projectCard, projectUrl, stamp, Unauthorized,
 } from './hub.js';
 import {
   PROJECT_SORTS, PROJECT_VIEWS, clearToken, readProjectSort, readProjectView,
@@ -303,6 +315,58 @@ const DESCRIPTION = '3D models built from code. Every link is pinned to a revisi
   + 'and always shows the exact same geometry.';
 
 /**
+ * The block a hub with nothing on it offers, as the lines it is made of.
+ *
+ * IT IS ADDRESSED TO AN AGENT, not to the person copying it — imperative, no
+ * greeting, no explanation of what this service is. That is the shape of the
+ * requirement (SPEC 8, entry 48) and it is also what makes it short: everything
+ * about hammerola is already written in the skill, which is the first address
+ * here, so a second account of it on this page would be a copy that goes stale
+ * and a wall of text an agent has to read before it can get the real one.
+ *
+ * FIVE LINES, AND THE THIRD IS THE ONE THAT COULD ONLY BE WRITTEN HERE. The
+ * skill carries no deployment's address on purpose (entry 47, and
+ * `test_the_skill_names_no_deployment` holds it to that) — it says the hub is
+ * whichever one you were given. This is where it is given, and it is a line of
+ * its own rather than something to be cut out of the two above it because that
+ * is how it is used: as the argument to `hammerola login`.
+ *
+ * NO TOKEN, AND NO FIELD FOR ONE. The secret travels another way, from a person
+ * to a person; what stands here is the sentence that says so. A block that
+ * carried it would be a credential in whatever the reader pasted it into.
+ *
+ * Everything addressable is BUILT from what the caller passes: `origin` is the
+ * browser's own (`hubOrigin`), the two paths are the manifest's. Nothing in this
+ * file names a host.
+ *
+ * `Client:` AND NOT `Helper:`, which is what the second line said first. This
+ * repository has one word for that file and uses it everywhere — `src/client/`,
+ * "the client" in AGENTS.md and the SPEC, `hammerola` once it is on a PATH — and
+ * a third name invented on this one page leaves the agent that reads the block
+ * and then the skill working out that the two are the same thing.
+ */
+export function agentBrief({ origin, skill, client }) {
+  return [
+    `Skill: ${origin}${skill}`,
+    `Client: ${origin}${client}`,
+    `Hub: ${origin}`,
+    'Install the skill and follow it.',
+    'Ask the owner of this instance for the token.',
+  ];
+}
+
+/**
+ * What the copy button says once it knows, keyed by what happened.
+ *
+ * `none` is the case worth the table: `navigator.clipboard` is absent in an
+ * insecure context, and a hub reached over plain http on a local network is
+ * exactly that — a perfectly ordinary deployment of this service. The button
+ * still answers, and what it must not do is say the text was copied when
+ * nothing was: the person would paste whatever was in the buffer before.
+ */
+const COPY_LABELS = { done: 'Copied', failed: 'Copy failed', none: 'Copy by hand' };
+
+/**
  * The door. Everything on the other side of it is one fetch away, and this
  * screen is what a refusal looks like.
  *
@@ -322,17 +386,108 @@ export class HammerolaLogin extends React.Component {
     animate: true,
     busy: false,
     error: '',
+    // `{origin, skill, client}` when this hub has nothing published on it, and
+    // null every other time — including when the hub could not be asked. The
+    // page above decides; this screen only draws what it was handed.
+    start: null,
   };
 
-  state = { token: '', hover: false, focus: false };
+  state = { token: '', hover: false, focus: false, copied: '' };
+
+  /**
+   * A verdict on the clipboard is about the text that was in it, so it does not
+   * outlive that text.
+   *
+   * `Copied` under a block whose lines have since changed is a claim about a
+   * clipboard holding something else; `Copy failed` under new lines reports a
+   * failure that happened to different ones. Neither can be corrected by the
+   * reader, because the button says nothing until it is pressed again.
+   */
+  componentDidUpdate(previous) {
+    if (previous.start !== this.props.start && this.state.copied) {
+      this.setState({ copied: '' });
+    }
+  }
 
   submit = () => {
     if (this.props.busy) return;
     if (this.props.onSubmit) this.props.onSubmit(this.state.token);
   };
 
+  /**
+   * The whole block into the clipboard, in one piece.
+   *
+   * The lines exist to be handed over together — three addresses and two
+   * instructions are one message, and a person selecting them out of the box by
+   * hand drops a character off an address about as often as not, which is the
+   * reason this button exists at all.
+   *
+   * THE TEXT COMES FROM `agentBrief`, the same call the screen draws from, so
+   * what is copied cannot differ from what is read.
+   */
+  copy = () => {
+    const { start } = this.props;
+    if (!start) return Promise.resolve();
+    // The last verdict was about the press before this one. Clearing it first is
+    // what keeps a retry from reading as its own result for however long the
+    // clipboard takes to answer.
+    if (this.state.copied) this.setState({ copied: '' });
+    const clipboard = typeof navigator === 'undefined' ? null : navigator.clipboard;
+    if (!clipboard || typeof clipboard.writeText !== 'function') {
+      this.setState({ copied: 'none' });
+      return Promise.resolve();
+    }
+    return clipboard.writeText(agentBrief(start).join('\n')).then(
+      () => this.setState({ copied: 'done' }),
+      // Rejected rather than absent: the document was not focused, or the
+      // permission was refused. Same rule as the branch above — say what
+      // happened, never "Copied".
+      () => this.setState({ copied: 'failed' }),
+    );
+  };
+
+  /**
+   * The block, INSIDE the card and under a hairline, rather than a panel of its
+   * own beside it.
+   *
+   * A reader arriving at an empty hub is being shown one thing with two halves —
+   * sign in if this is yours, hand this over if you are setting it up — and a
+   * second card would make them two screens competing for the middle of the
+   * page. Same card, same fonts, same palette; the mono box is the interface's
+   * own input colour, so it reads as text to be taken rather than as a warning.
+   */
+  drawStart(start) {
+    return (
+      <div style={css('width:100%;margin-top:24px;padding-top:18px;border-top:1px solid #e9ecef')}>
+        <div style={css('display:flex;align-items:center;gap:8px')}>
+          <span style={css(`font:600 11.5px ${SANS};color:#2a2e33`)}>Nothing published here yet</span>
+          <span style={css('flex:1')} />
+          <div
+            onClick={this.copy}
+            style={css('padding:4px 9px;border-radius:5px;cursor:pointer;user-select:none;'
+              + `font:600 10.5px ${SANS};border:1px solid #d3d8de;background:#fff;color:#2a2e33`)}
+          >
+            {COPY_LABELS[this.state.copied] || 'Copy'}
+          </div>
+        </div>
+        <div style={css(`font:400 11px/1.55 ${SANS};color:#8a9099;margin-top:5px`)}>
+          Hand this to your agent.
+        </div>
+        <div style={css('margin-top:9px;padding:10px 11px;border-radius:6px;'
+          + 'border:1px solid #d3d8de;background:#f7f8fa;display:flex;flex-direction:column;gap:3px')}
+        >
+          {agentBrief(start).map((line) => (
+            <span key={line} style={css(`font:400 11px/1.55 ${MONO};color:#1c1f23;overflow-wrap:anywhere`)}>
+              {line}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   render() {
-    const { title, description, animate, busy, error } = this.props;
+    const { title, description, animate, busy, error, start } = this.props;
     const s = this.state;
     return (
       <div style={{
@@ -396,6 +551,8 @@ export class HammerolaLogin extends React.Component {
               opens without it; the list of what is here does not.
             </div>
           </div>
+
+          {start && this.drawStart(start)}
 
           <div style={css(`font:400 11px ${MONO};color:#b0b6bd;margin-top:22px`)}>rev-pinned · agent-built</div>
         </div>
@@ -792,11 +949,97 @@ export default class HammerolaEntry extends React.Component {
       token: readToken(),
       busy: false,
       refused: '',
+      // The block the door draws when this hub has nothing on it: `{origin,
+      // skill, client}`, or null for "not asked", "not empty" and "could not be
+      // asked" alike. Those three are one state on purpose — see `askStart`.
+      start: null,
     };
+    // Whether the hub has ANSWERED — not whether it has been asked. Two fields
+    // rather than one because "no answer yet" and "being asked right now" want
+    // opposite things: the first has to be asked again at the next arrival, the
+    // second must not be asked over the top of itself. Instance fields rather
+    // than state: nothing renders differently for either, and a re-render on the
+    // answer is what `start` is for.
+    this.answered = false;
+    this.asking = null;
   }
 
   componentDidMount() {
-    if (this.state.token) this.open(this.state.token);
+    // THE REQUEST IS LAZY, and the branch is the whole of it: somebody who
+    // already has a token is going to the list, and asking a hub with forty
+    // projects whether it is empty answers a question nothing on that screen
+    // asks. The door is the only screen that reads it, so the door is what pays.
+    if (this.state.token) {
+      this.open(this.state.token);
+      return;
+    }
+    this.askStart();
+  }
+
+  /**
+   * Ask the hub whether it has anything published — once it has ANSWERED.
+   *
+   * Called from every arrival AT THE DOOR: a page load with no token, signing
+   * out, and a stored token the hub refused. The last two are how a reader ends
+   * up looking at the form without ever having been shown it, and the block has
+   * to be there — a hub is at its emptiest for the person who just signed out of
+   * one they had nothing in.
+   *
+   * THE FLAG IS SET ON THE ANSWER AND NOT ON THE REQUEST, which is the whole of
+   * what `this.answered` is worth saying about. Set on the way in, one failed
+   * ask spent the only one there was: the door's first arrival is a page load,
+   * `/start` did not come back, and the 401 a moment later — the arrival the
+   * block is most written for, since somebody typing a token into an empty hub
+   * is usually its owner — found the question already asked and drew nothing
+   * until a reload. That is the ordinary sequence, not a corner of it.
+   *
+   * A `null` therefore leaves the flag down, and a hub with projects on it is
+   * asked again at the next arrival, because `loadStart` collapses "not empty"
+   * and "could not ask" into one value on purpose (hub.js). The cost of that is
+   * one public, uncached GET per sign-out or mistyped token, which is nothing;
+   * the alternative is telling the two apart, and there is nothing the door
+   * would do differently if it could. `this.asking` covers the other direction —
+   * two arrivals inside one flight ask once between them.
+   *
+   * The answer cannot go stale in the direction that matters: what turns `empty`
+   * false is a push, and the person who pushes reloads to see it.
+   *
+   * NO `catch`, and that is a property of `loadStart` rather than an oversight:
+   * it resolves for every failure it can have, so there is nothing here to
+   * catch and no way for a hint to take the sign-in form down. hub.js says why
+   * at length, and `ui/tests/start.test.js` is what holds it to it.
+   *
+   * THE FLIGHT IS CLEARED ON BOTH BRANCHES ALL THE SAME, and the reason is the
+   * sentence above rather than a case it misses: "there is nothing to catch" is
+   * a fact about `loadStart` TODAY, and it is the first thing here that goes
+   * stale — the paragraph above says why the rejecting path was deliberately
+   * left open (a defect in this bundle has to arrive as a stack trace, not as a
+   * hub that silently never has a block). Clearing on the fulfilled branch
+   * ALONE makes that day cost two failures instead of one: the rejected promise
+   * stays in `this.asking`, and every later arrival at the door is handed it
+   * back unasked — the block never appears again for the life of the page, on a
+   * hub that would have answered. The rejection is re-thrown rather than
+   * swallowed so the stack trace the docstring promises still reaches the
+   * console.
+   */
+  askStart() {
+    if (this.answered) return Promise.resolve();
+    if (this.asking) return this.asking;
+    this.asking = loadStart().then(
+      (hint) => {
+        this.asking = null;
+        if (hint) this.answered = true;
+        // The origin is read HERE, from the browser, and joined to the
+        // manifest's relative paths. Neither half is written down anywhere in
+        // this bundle.
+        this.setState({ start: hint ? { origin: hubOrigin(), ...hint } : null });
+      },
+      (error) => {
+        this.asking = null;
+        throw error;
+      },
+    );
+    return this.asking;
   }
 
   /**
@@ -831,9 +1074,16 @@ export default class HammerolaEntry extends React.Component {
             token: null, busy: false, projects: null,
             refused: 'The hub refused that token.',
           });
+          // The reader is at the door and may well be its owner setting the hub
+          // up with the wrong string in the browser. The hub answered, so it is
+          // there to ask.
+          this.askStart();
           return;
         }
         console.error('index', error);
+        // NOT asked here, and the difference from the branch above is the whole
+        // reason: this one means the hub did not answer at all, so a second
+        // question would be one more request nobody can get an answer to.
         this.setState({
           busy: false,
           refused: 'Could not reach the hub. Try again in a moment.',
@@ -854,6 +1104,10 @@ export default class HammerolaEntry extends React.Component {
   signOut() {
     clearToken();
     this.setState({ token: null, projects: null, refused: '' });
+    // Back at the door, and it is a door like any other: if there is nothing on
+    // this hub, whoever is looking at it needs the block. This is also the only
+    // arrival that never passes through a page load.
+    this.askStart();
   }
 
   render() {
@@ -867,6 +1121,7 @@ export default class HammerolaEntry extends React.Component {
         <HammerolaLogin
           busy={s.busy}
           error={s.refused}
+          start={s.start}
           onSubmit={(value) => this.submit(value)}
         />
       );

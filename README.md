@@ -113,11 +113,14 @@ first onboarding step that fails on the ordinary machine).
 this service that says anything about the deployment without the token. It is
 deliberately never a count, a name or a date, and it fails closed: a project
 directory the hub cannot read answers "not empty", rather than telling somebody
-their hub is empty on the strength of an error. It is there so that the front
-page of a hub nobody has pushed to yet will be able to show what to do instead
-of a login form and nothing else. **That page has not been written**: the
-browser UI is untouched here, and the one reader of the manifest today is
-`hammerola create`, which follows `template` and fetches nothing else.
+their hub is empty on the strength of an error. It is what the SIGN-IN PAGE of a
+hub nobody has pushed to reads: instead of a login form and nothing else, it
+draws five lines to hand an agent — where the skill is, where the client is,
+what this hub's address is, install the skill and follow it, ask the owner for
+the token. The addresses in it are built from the browser's own origin and the
+manifest's paths, so nothing here names a deployment; the request is made only
+when the form is what is on the screen, and every failure of it is silence.
+`hammerola create` is the other reader, and it follows `template`.
 `src/onboarding.py` carries the argument for the boolean and for why it is
 never a count.
 

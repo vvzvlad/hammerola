@@ -2185,16 +2185,16 @@ class Store:
         directory in there. What is left out is exactly the residue.
 
         FAILS CLOSED. An unreadable `project/` answers "not empty", so no
-        onboarding block will be shown on a hub that could not be asked; the
+        onboarding block is shown on a hub that could not be asked; the
         alternative would be to tell somebody their hub is empty on the strength
         of an error.
 
-        NOTHING CONSUMES THE ANSWER YET. `/start` serves it and no page fetches
-        it — the browser UI was left alone on the branch that added the route
-        (`src/onboarding.py` has the accounting) — so today this method's only
-        reader is the test suite. That does not make the fail-closed rule
-        premature: it is a property of the answer, and the page that grows will
-        inherit it rather than have to reinvent it.
+        WHAT CONSUMES THE ANSWER is the sign-in page: `/start` serves this
+        boolean and the door draws its block for an agent when it is true
+        (`ui/src/HammerolaEntry.jsx`, SPEC 8 entry 48; `src/onboarding.py` has
+        the accounting). The fail-closed rule was pinned before that page
+        existed, and it held: it is a property of the answer, so the page
+        inherited it rather than having to reinvent it.
         """
         try:
             return not any(entry.is_dir() and any(entry.iterdir())

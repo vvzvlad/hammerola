@@ -156,7 +156,7 @@ def export_printables(printables, out_dir):
             )
 
         print(f"  {name}: valid, volume {volume / 1000.0:.2f} cm3, watertight, "
-              f"one body, {mesh.faces.shape[0]} faces")
+              f"one body, {mesh.faces.shape[0]} triangles")
 
         measured["watertight"] = bool(watertight)
         measured["triangles"] = int(mesh.faces.shape[0])
