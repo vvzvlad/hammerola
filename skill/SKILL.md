@@ -152,26 +152,28 @@ Elsewhere a carbide drill bit, struck out as useless in aerated concrete, was
 back in the parts list fourteen minutes later out of sheer momentum.)
 
 **A picture the person sent is already on disk** — base64, in the session
-transcript — so asking the person to save it for you is work you did not do.
-Pull it out yourself, in the same turn, into `ref/`, name it for what it shows,
-and add a line to `ref/README.md`: what is visible and what constraint follows
-from it. Then scale the images down before the first `build`: `ref/` is pushed
-whole every time, and one session's paste runs to tens of megabytes. On macOS
-that is `sips -Z 1600 ref/*.png`, always present and resizing in place; elsewhere
-test `python3 -c "import PIL"` and use Pillow. With neither no photograph enters
-`ref/` at all: its number goes to `ref/measurements.md`, the file stays out. (Asked
-outright to file five photographs into the refs, an agent answered "save them
-yourself" while sitting on the file that held them; in another session the same
-agent spent 41 minutes digging base64 out of other people's transcripts to
-recover what had been lost.) The transcript is one JSON object per line — 100 MB
-and more, so read it a line at a time — under `~/.claude/projects/`, in a
-directory named for the working directory with every non-alphanumeric character
-replaced by `-`; your own session id is not in your context, so take the newest
-`*.jsonl` by mtime, and a `None` means the slug is not what you guessed — list
-`~/.claude/projects/` and find the one holding your work. Images sit in the
-`user` records **and** in the `type: "attachment"` records, whose
-`attachment.prompt` holds everything pasted while you were working — often the
-only place it appears, so `message.content` alone misses it:
+transcript — so asking the person to save it for you is work you did not do. Pull
+it out yourself, in the same turn, into `ref/`, name it for what it shows, and add
+a line to `ref/README.md`: what is visible and what constraint follows from it.
+Then scale them down before the first `build`: `ref/` is pushed whole every time,
+and one session's paste runs to tens of megabytes. Settle the resizer before you
+run the snippet below, which fills `ref/` regardless. On macOS,
+`find ref -type f -exec sips -Z 1600 {} \; 2>/dev/null`: it takes the `.jpeg` the
+snippet names from `media_type`, and survives an empty `ref/`, where `ref/*.png`
+is a zsh error that runs nothing. Elsewhere test `python3 -c "import PIL"` and use
+Pillow. With neither, do not run the snippet: no photograph enters `ref/`, its
+number goes to `ref/measurements.md`. (Asked outright to file five photographs
+into the refs, an agent answered "save them yourself" while sitting on the file
+that held them; in another session the same agent spent 41 minutes digging base64
+out of other people's transcripts to recover what had been lost.) The transcript
+is one JSON object per line — 100 MB and more, so read it a line at a time — under
+`~/.claude/projects/`, in a directory named for the working directory with every
+non-alphanumeric character replaced by `-`; your own session id is not in your
+context, so take the newest `*.jsonl` by mtime, and a `None` means the slug is not
+what you guessed — list `~/.claude/projects/` and find the one holding your work.
+Images sit in the `user` records **and** in the `type: "attachment"` records,
+whose `attachment.prompt` holds everything pasted while you were working — often
+the only place it appears, so `message.content` alone misses it:
 
 ```python
 import base64, hashlib, json, pathlib, re
@@ -264,14 +266,16 @@ section: a working model with the rules written next to the geometry. In short:
   `name.step` and `name.3mf`. The gate reads `.val()`, the first body on the
   stack and only that one: it alone is validated, measured, written to the STL
   and rendered, and the log's `valid, volume … cm3, watertight, one body` is
-  about it. So a Workplane holding several unfused bodies —
-  `pushPoints(...).box(..., combine=False)` — publishes green with everything
-  after the first missing from that part's own STL and preview, while the 3MF and
-  the STEP are written from the whole object. `assembled` is glued from every body
-  of every object, so `assembled.stl: N parts` — in the log and in that picture's
-  footer — counts bodies: more than the view should hold is a printable not fused
-  (three loose bosses beside a plate said `4 parts`). Only the other half is refused, one
-  body in disconnected pieces: `N disconnected pieces, not one body`. Fuse the
+  about it. So a Workplane holding several unfused bodies — `plate.add(bosses)` —
+  publishes green with everything after the first missing from that part's own STL
+  and preview, while the 3MF and the STEP are written from the whole object.
+  `pushPoints(...).box(..., combine=False)` is worse: it REPLACES the stack, so the
+  base itself is the body that goes missing. `assembled` is glued from every body of
+  every object, so `assembled.stl: N parts` in the log, `N parts` in that picture's
+  footer, counts bodies: more than the view should hold is a printable not fused (a
+  plate with three bosses added logs `volume 9.60 cm3` and `4 parts`; with them
+  replacing it, `0.22 cm3` and `3 parts`). Only the other half is refused, one body
+  in disconnected pieces: `N disconnected pieces, not one body`. Fuse the
   part, or hand each piece back under a name of its own. **Each part is built
   in the orientation it is printed in, and the views move copies of it into
   place**: the orientation that counts is the one on the bed, not the one in
