@@ -1,11 +1,13 @@
 // Everything these pages remember in the browser, and nothing else.
 //
-// Three things are kept, all under the `hammerola.` prefix the rest of the site
+// Four things are kept, all under the `hammerola.` prefix the rest of the site
 // already uses — `hammerola.pointing_device`, the viewport's own answer
 // (viewport/options.js). Two of them are keyed BY PROJECT for the reason
 // pointer_pref.js gives about its own key: somebody editing one model and merely
-// looking at another must not have the two answers collide. The token is the one
-// that is not, and the section below says why that changed.
+// looking at another must not have the two answers collide. The token is one of
+// the two that are not, and the section below says why that changed; the
+// arrangement of the project list is the other, and it never could be — the page
+// that has it names no project.
 //
 // EVERY access goes through the two functions at the top. `localStorage` is not
 // a property that is always there — a private window, a browser set to block
@@ -132,3 +134,86 @@ export function rememberPointer(pid, name) {
   if (!pid || !POINTER_NAMES.includes(name)) return;
   write(pointerKey(pid), name);
 }
+
+// -- how the project list is arranged ----------------------------------------
+// Which way the front page draws its projects — tiles or rows — and what order
+// they are in. Both were state of the component until now, which meant they were
+// re-chosen on every visit: a reader who works from the dense list by name got
+// tiles by last-built again on the next page load, with nothing to say why.
+//
+// ONE KEY EACH FOR THE WHOLE SITE, and here that is not even a choice. A hub has
+// ONE list of projects, on the page at `/`, and that URL names no project to key
+// anything by — the same fact that took the per-project key off the token above.
+// Per BROWSER rather than per anything else, like the canvas theme
+// (viewport/options.js): it is a property of the person in front of the screen,
+// and somebody who asked for rows meant rows on the next model too.
+//
+// TWO KEYS RATHER THAN ONE JSON OBJECT, so that a value nobody can read costs
+// only itself. Together they would be one cell to parse, and a cell that fails
+// to parse takes both answers with it; apart, an unreadable view still leaves
+// the remembered order standing.
+//
+// WHAT COMES BACK IS CHECKED AGAINST A LIST, never trusted. Storage holds
+// whatever any version of this page ever wrote there, plus whatever anything
+// else on this origin wrote, plus whatever was typed into a browser's storage
+// inspector — so an id that no longer exists is an ordinary arrival rather than
+// an attack. An unknown one is answered with `null`, which reads as "nothing was
+// remembered", and the page then draws its own default.
+//
+// THIS CHECK IS THE ONLY ONE ON THAT PATH, and it is worth being exact about
+// why, because the page has no runtime fallback behind it. The four tables in
+// HammerolaEntry.jsx are looked up directly — the `||` that used to sit there
+// could not fire, since the only way the page reaches an id the tables lack is a
+// DEFAULT naming one, and the fallback re-read that same key.
+//
+// WHAT MAKES THOSE LOOKUPS TOTAL IS NOT THAT A MISS WOULD BE LOUD. Only half of
+// one is: `VIEW_BODIES[unknown]` is `undefined` and throws where the page calls
+// it, while `SORT_CMP[unknown]` is `undefined` handed to
+// `Array.prototype.sort`, which is a legal call that compares rows by their
+// string conversion — every row equal, arrival order kept, nothing thrown, the
+// list looking sorted. Totality is held at the ends instead: this function
+// filters everything a reader's storage can contribute, `choose()` filters
+// everything a caller can, and `ui/tests/vocabulary.test.js` holds the four key
+// sets equal to the two lists here and pins `defaultProps` to them. So
+// everything the code contributes is checked at build time, and nothing else
+// reaches a lookup unfiltered.
+//
+// THE DEFAULT IS NOT HERE, deliberately. This module remembers; what the page
+// opens on when nothing was remembered is the page's own statement
+// (`HammerolaProjects.defaultProps`), and a second copy of it here would make
+// "which default won" a question with two answers.
+
+const VIEW_KEY = `${NS}projects_view`;
+const SORT_KEY = `${NS}projects_sort`;
+
+// FROZEN, and these two matter more than the four tables in HammerolaEntry.jsx
+// that are frozen for symmetry. Those are the ANSWERS — an extra key in one is
+// an entry nothing looks up. These are the QUESTIONS: they are the filter every
+// stored value and every caller's patch is checked against, AND the list the
+// tabs are drawn from, so `PROJECT_VIEWS.push('kanban')` from anywhere on the
+// page mints a tab, lets `choose` accept it, lets storage keep it, and then
+// hands `VIEW_BODIES[…]` an id it has never had.
+
+/** The two ways the list is drawn, in the order the switch offers them. */
+export const PROJECT_VIEWS = Object.freeze(['grid', 'list']);
+
+/** The orders it can be in — exactly the ids `sorted()` has a comparator for. */
+export const PROJECT_SORTS = Object.freeze(['name', 'modified', 'first']);
+
+const recall = (key, known) => {
+  const saved = read(key);
+  return known.includes(saved) ? saved : null;
+};
+
+// Refused rather than corrected, which is what `rememberPointer` above does with
+// a name it does not know and for the same reason: what was remembered is a real
+// answer somebody gave, and overwriting it with a default would lose it to a
+// caller's typo. The read side is where an unknown value stops mattering.
+const remember = (key, known, value) => {
+  if (known.includes(value)) write(key, value);
+};
+
+export const readProjectView = () => recall(VIEW_KEY, PROJECT_VIEWS);
+export const readProjectSort = () => recall(SORT_KEY, PROJECT_SORTS);
+export const writeProjectView = (value) => remember(VIEW_KEY, PROJECT_VIEWS, value);
+export const writeProjectSort = (value) => remember(SORT_KEY, PROJECT_SORTS, value);

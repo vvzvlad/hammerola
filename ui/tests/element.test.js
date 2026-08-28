@@ -25,7 +25,7 @@
 // through a scene. Each of those functions has its own tests in parts.test.js
 // and section.test.js, against the real thing.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 vi.mock('../src/viewport/parts.js', () => ({
   applyGhost: vi.fn(),
@@ -42,6 +42,14 @@ vi.mock('../src/viewport/section.js', () => ({
   suspendSectionCut: vi.fn(),
 }))
 
+// The hatch, mocked for ONE question this file can answer and hatch.test.js
+// cannot: is it reached at all. What it DOES with a scene, and that a throw from
+// it never leaves it, are properties of the module and are tested against the
+// real thing over there.
+vi.mock('../src/viewport/hatch.js', () => ({
+  safeHatch: vi.fn(() => 0),
+}))
+
 // The library's own loader, replaced so `show()` can be driven as far as its
 // FAILURE path — which is the only part of it that runs without a GPU. Nothing
 // else here reaches it: every other test either stops before `show` or never
@@ -55,7 +63,9 @@ vi.mock('../src/viewport/library.js', () => ({
 // build an HmrViewport rather than an unknown inline box.
 import '../src/viewport/index.js'
 import { HmrViewport } from '../src/viewport/element.js'
-import { EVENT_ERROR, TAG } from '../src/viewport/events.js'
+import { EVENT_ERROR, EVENT_MODEL, TAG } from '../src/viewport/events.js'
+import { safeHatch } from '../src/viewport/hatch.js'
+import { loadViewerLibrary } from '../src/viewport/library.js'
 import {
   applyGhost, applyHidden, applySelected, resetMoves,
 } from '../src/viewport/parts.js'
@@ -482,6 +492,112 @@ describe('load', () => {
 
 describe('show', () => {
   const views = [{ id: 'a', file: 'a.json' }]
+
+
+  /** A `show()` that runs to the END, and the only one in this file.
+   *
+   * Every other test here stops at one of the early exits, because the loader is
+   * mocked into throwing — right for them, and useless for the one question
+   * below: IS THE HATCH REACHED AT ALL. Nothing else can ask it. The hatch is
+   * applied on exactly one line, on the far side of `render()`, and a viewport
+   * that stopped calling it renders a perfect page with a flat fill where the
+   * cut should be hatched — no error, no warning, nothing to notice.
+   *
+   * `new Viewer(...)` handing back a prepared object is not a trick: a
+   * constructor that returns an object returns that object, which is what lets
+   * the real pipeline run against `fakeViewer()` — the same fake `internals()`,
+   * `reconcile()` and the whole section suite already drive. Only the two
+   * methods `show()` itself calls are added on top of it.
+   */
+  function rendering() {
+    const viewer = fakeViewer()
+    viewer.render = vi.fn()
+    viewer.resizeCadView = vi.fn()
+    // THE UNDO IS REGISTERED BY THE FUNCTION THAT FILLS THE QUEUE, before it
+    // fills it. `vi.clearAllMocks` (the beforeEach at the top of this file)
+    // clears CALLS and not queued implementations, so a `mockImplementationOnce`
+    // that nothing consumed — a test that failed before reaching `show`, or one
+    // added later that stops calling it — is taken by whichever test runs NEXT,
+    // which then silently drives a library that loads instead of one that
+    // throws. `onTestFinished` runs per test at the point of use, so the cleanup
+    // cannot be separated from what it cleans up and no test's safety depends on
+    // which test sits after it in the file. An `afterEach` elsewhere in the
+    // describe would do the same job while being exactly that: positional.
+    onTestFinished(() => loadViewerLibrary.mockReset())
+    loadViewerLibrary.mockImplementationOnce(async () => ({
+      Viewer: function Viewer() { return viewer },
+      Display: function Display() {},
+    }))
+    const vp = element({ views, view: 'a' }, null)
+    // What `connectedCallback` would have set. The box carries no
+    // `.tcv_cad_viewer`, so `measureChrome` returns before touching a layout
+    // jsdom does not compute.
+    vp.box = document.createElement('div')
+    vp.chrome = [0, 0]
+    return { vp, viewer }
+  }
+
+  it('hatches the cut faces of the scene it has just rendered', async () => {
+    const { vp, viewer } = rendering()
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+
+    // It really reached the end — the model event, not the error panel. Without
+    // this the assertions below could all hold on a `show()` that threw before
+    // the hatch and told the reader so.
+    const types = vp.dispatchEvent.mock.calls.map(([event]) => event.type)
+    expect(types).toContain(EVENT_MODEL)
+    expect(types).not.toContain(EVENT_ERROR)
+    expect(vp.loadFailed).toBeNull()
+
+    // The guarded entry point, once, on THIS scene's internals.
+    expect(safeHatch).toHaveBeenCalledTimes(1)
+    expect(safeHatch.mock.calls[0][0].clipping).toBe(viewer.clipping)
+    // ...and AFTER `render()`, which is the whole of when it is possible: the
+    // library builds the cap meshes in there and throws them away on `clear()`,
+    // so the same call one line earlier would patch nothing and say nothing.
+    expect(safeHatch.mock.invocationCallOrder[0])
+      .toBeGreaterThan(viewer.render.mock.invocationCallOrder[0])
+  })
+
+  it('colours each cut face with the part it cuts', async () => {
+    // THE FEATURE, and the only place anything can check it: the flag is handed
+    // to the library and everything it does with it is on a GPU. Asserted on the
+    // options object that REACHES `render()` rather than on the constant in
+    // options.js, so it covers the delivery as well as the value — a `render`
+    // that stopped being given `viewerOptions` would pass a pin on the constant.
+    //
+    // What is lost without it is not subtle. The library's default colours a cap
+    // by `PLANE_COLORS[theme][index]` — by WHICH CLIP PLANE cut it — so every
+    // cut this viewport makes comes back the same red, and a plate, a post and a
+    // cap read as one material, which is the one thing a section drawing is for.
+    // The hatch inherits the same loss: its ink is mixed from `diffuse`, which is
+    // the cap's colour, so the lines would go red with the fill.
+    const { vp, viewer } = rendering()
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+
+    expect(viewer.render).toHaveBeenCalledTimes(1)
+    const [, , options] = viewer.render.mock.calls[0]
+    expect(options.clipObjectColors).toBe(true)
+  })
+
+  it('undoes the loader it queued, with nothing in the test doing it by hand', () => {
+    // THE MINE AND ITS UNDO, in one test and without ordering: `rendering()`
+    // queues a one-shot implementation, and this deliberately never calls
+    // `show()` — exactly what a test that failed early would leave behind.
+    //
+    // The assertion is registered BEFORE `rendering()` on purpose. Vitest runs
+    // `onTestFinished` hooks in REVERSE registration order (verified, not
+    // assumed), so the helper's own undo — registered second — runs first, and
+    // this then observes whatever it left. That is what makes this test execute
+    // the real cleanup instead of a copy of it: calling `mockReset()` here by
+    // hand would have proved only that vitest's `mockReset` works.
+    //
+    // Both failures it catches are silent and both land in an unrelated test: a
+    // cleanup that never ran leaves a loader that LOADS, and a `mockClear` in
+    // place of `mockReset` leaves the queue untouched while looking like tidying.
+    onTestFinished(() => expect(loadViewerLibrary()).rejects.toThrow('no library here'))
+    rendering()
+  })
 
   it('says so when the payload is not a model at all', async () => {
     // A view file that parsed into a JSON scalar. This exit used to say nothing,

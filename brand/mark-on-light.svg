@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- THE MARK, INKED FOR A LIGHT BACKGROUND. The designer sent this file and
+       brand/mark-on-dark.svg as a pair, named by the colour of the INK; both are
+       renamed here after the BACKGROUND they go on, because "dark" as a file
+       name is a coin toss that costs an invisible logo when it lands wrong.
+       "on-light" cannot be read backwards: you put it ON a light page.
+
+       This one is what the interface uses today - the interface is light
+       (SPEC 8, entry 21) - and `Mark` in ui/src/style.jsx is its inline copy,
+       as is the <svg> in templates/pointer.html. Neither can import a file: the
+       first would make the bundle emit a second output, the second is on the
+       one page whose whole job is to leave quickly. So there are three copies of
+       one drawing, and ui/tests/chrome.test.js holds all three to THIS file.
+
+       The holes are punched, i.e. they are painted in the colour of the page
+       BEHIND the mark rather than left transparent. #fff and not the header's
+       #f7f8fa: that is what the designer drew, the difference is under one part
+       in a hundred, and the sign-in card the mark also sits on really is white. -->
+  <rect x="11" y="5" width="9" height="38" fill="#1c1f23"/>
+  <path d="M20 23.5h8a8.5 8.5 0 018.5 8.5v11" fill="none" stroke="#1c1f23" stroke-width="6.5"/>
+  <circle cx="15.5" cy="12" r="1.9" fill="#fff"/>
+  <circle cx="15.5" cy="20" r="1.9" fill="#fff"/>
+  <circle cx="15.5" cy="28" r="1.9" fill="#fff"/>
+  <circle cx="15.5" cy="36" r="1.9" fill="#fff"/>
+</svg>

@@ -392,12 +392,62 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   `build.html`, `pointer.html`, one per URL the hub serves
 - `static/` — the viewer payload that ships inside the image (`static/_v/`):
   `three-cad-viewer.esm.js`, the scripts for the pointer page, the
-  site CSS. A separate tree with its own `COPY` line in the Dockerfile and its own smoke
-  check (g). NOT EVERYTHING IN `static/_v/` IS COMMITTED: files matching
+  site CSS and `favicon.svg`. A separate tree with its own `COPY` line in the
+  Dockerfile and its own smoke
+  check (g). FOUR OF THESE FILES ARE READ BY `ui/tests/chrome.test.js`, so all
+  four are named on the JS tar line of both workflows: `site.css` (the resolver's
+  copy of the header) at module scope, `favicon.svg` through a walk of this
+  directory for `.svg`, and `pointer.js` / `pointer_pref.js` through the walk
+  that sweeps for a second copy of the mark. `favicon.svg` is held to two
+  document-level checks and nothing about geometry — the icon is a related
+  drawing, not the mark (see `brand/`). It is found by WALKING this directory
+  for `*.svg` rather than by being named, but that walk only ever sees what CI
+  put on the runner, and the JS tar names files here ONE AT A TIME (the viewer
+  bundle in this directory is 3.5 MB, which is why). So a new `.svg` dropped in
+  here is checked on a workstation and INVISIBLE to both workflows until the two
+  tar lines name it as well — the asymmetry is deliberate and worth knowing:
+  `brand/` travels whole, so a new drawing there is checked everywhere at once.
+  NOT EVERYTHING IN `static/_v/`
+  IS COMMITTED: files matching
   `hammerola*` are the browser bundle, produced by `make ui` or by the image's
   `ui` stage, and they are in `.gitignore` and `.dockerignore` both. Never
   commit one, and do not expect one in a fresh checkout — an asset that belongs
   in the repository has to be a name outside that prefix
+- `brand/` — the mark as the designer drew it, and the SOURCE the two inline
+  copies of it are transcribed from: `Mark` in `ui/src/style.jsx` and the
+  `<svg>` in `templates/pointer.html`, neither of which can import a file (one
+  would make the bundle emit a second output, the other is on the page whose
+  whole job is to leave quickly). `ui/tests/chrome.test.js` compares all three
+  element for element, so these are derived copies rather than similar ones —
+  every attribute as the union of both sides, the `<svg>` ROOT included, with a
+  named exception list that itself has to keep excusing something. Two of its
+  checks are about a file being a VALID drawing rather than the same one, and
+  both close a way of rendering wrong while comparing equal: every attribute
+  name has to be spelled the way SVG spells it (`strokewidth` draws the ribbon
+  as a hairline, `CX` slides a hole off it to the left edge), and nothing may
+  sit inside the `<svg>` but shapes (a `<style>` block — which is what an editor
+  exports by default, and what the old favicon had — repaints the drawing past
+  every comparison there is). Those two apply to `static/_v/favicon.svg` as
+  well, which is otherwise held to nothing here: the icon is a RELATED drawing,
+  not this one, so comparing its geometry would be wrong — but it is the SVG
+  that ships in the image and is served to browsers, and it is where the
+  `<style>` block came from. Every one of those per-document lists is itself
+  checked by name against a single naming of the four files, because a list
+  entry deleted is a check that vanishes with the suite still green — the same
+  failure `ci/smoke.py` counts its verdicts to avoid.
+  Nothing here is served or copied into the image: it is a source asset, named
+  in `.dockerignore` so that stays true the day somebody widens a `COPY`, and
+  the site icon it shares a design with is a served one, so that lives at
+  `static/_v/favicon.svg` and is deliberately NOT duplicated here.
+  **THE TWO FILES ARE NAMED AFTER THE BACKGROUND, NOT THE INK** —
+  `mark-on-light.svg` is the DARK ink, for a light page. They arrived named the
+  other way (`-dark` for dark ink) and that reading is a coin toss whose losing
+  side is an invisible logo, so the test asserts the naming: each file's ribbon
+  has to be on the opposite side of mid-grey from the background its name
+  promises. Only `mark-on-light.svg` is rendered today, because the interface is
+  light everywhere; `mark-on-dark.svg` is wired in by SPEC §8 entry 35, and is
+  kept — rather than dropped as dead weight — because its geometry is held to
+  the same check meanwhile
 - `model_template/` — the starter project `hammerola create` unpacks, served at
   `/start/template.tar.gz`: a `model.py` that BUILDS AS IT STANDS, plus a
   `.gitignore`. It is files rather than a section of documentation for one

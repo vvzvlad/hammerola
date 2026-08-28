@@ -68,8 +68,13 @@ import React from 'react';
 import {
   loadIndex, projectCard, projectUrl, stamp, Unauthorized,
 } from './hub.js';
-import { readToken, writeToken, clearToken } from './store.js';
-import { css, FONTS, SANS, MONO, Mark } from './style.jsx';
+import {
+  PROJECT_SORTS, PROJECT_VIEWS, clearToken, readProjectSort, readProjectView,
+  readToken, writeProjectSort, writeProjectView, writeToken,
+} from './store.js';
+import {
+  css, FONTS, SANS, MONO, Mark, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
+} from './style.jsx';
 
 /**
  * The only two rules that cannot be inline styles.
@@ -92,7 +97,7 @@ import { css, FONTS, SANS, MONO, Mark } from './style.jsx';
  * the document also holds a vendored stylesheet nobody here maintains.
  */
 const ENTRY_CSS = `
-html, body { margin: 0; background: #eceef1; }
+html, body { margin: 0; background: ${PAGE_BG}; }
 @keyframes hmr_spin { to { transform: rotate(360deg) } }
 `;
 
@@ -332,7 +337,7 @@ export class HammerolaLogin extends React.Component {
     return (
       <div style={{
         ...css('width:100%;min-height:100vh;position:relative;overflow:hidden;'
-          + `background:#eceef1;font-family:${SANS};color:#1c1f23;`
+          + `background:${PAGE_BG};font-family:${SANS};color:${PAGE_FG};`
           + 'display:flex;align-items:center;justify-content:center'),
         ...FONTS,
       }}
@@ -345,7 +350,7 @@ export class HammerolaLogin extends React.Component {
           + 'box-shadow:0 14px 44px rgba(20,24,28,.10);padding:40px 36px 32px;'
           + 'display:flex;flex-direction:column;align-items:center')}
         >
-          <Mark size={44} width={1.2} />
+          <Mark size={44} />
           <div style={css(`font:700 22px ${SANS};letter-spacing:-.3px;margin-top:14px`)}>{title}</div>
           <div style={css(`font:400 12.5px/1.55 ${SANS};color:#787f87;text-align:center;margin-top:8px;text-wrap:pretty`)}>
             {description}
@@ -466,31 +471,211 @@ const RevLine = ({ p }) => (
   </React.Fragment>
 );
 
+/**
+ * EVERYTHING AN ARRANGEMENT'S ID REACHES, IN TABLES KEYED BY THAT ID.
+ *
+ * A sort is three things — a tab, a comparator, and a value store.js will keep
+ * — and a view is three too: a tab, a body that draws the list, and the same
+ * stored value. Two of the six used to be written as code rather than as a
+ * table: the comparators lived in an object literal inside `sorted()`, and the
+ * two bodies were `{grid && …}` / `{!grid && …}` in the middle of `render()`.
+ * That is four sets of names that have to be the same set, and nothing made
+ * them one.
+ *
+ * It is not a hypothetical. Adding a sort to store.js and to `SORT_LABELS`
+ * without touching the comparator passes the whole suite and, in a browser,
+ * hands `Array.prototype.sort` an `undefined` comparator: the list comes back in
+ * whatever order it arrived in, the new tab is lit, and the choice is remembered
+ * for ever. The negated-tiles branch was worse in a quieter way — it drew the
+ * dense list for every id that was not the tile view, so an unknown view looked
+ * like a working answer.
+ *
+ * The two views are named in prose here rather than quoted, and that is the
+ * house rule rather than shyness: `tests/test_ui_source.py` forbids a view id
+ * appearing anywhere in this file except its defaultProps, in any of the three
+ * quote characters, precisely so that no branch on one can hide from the tables
+ * — and a rule with an exception for comments is a rule that reads the same
+ * text two ways.
+ *
+ * So each of the four is a table now and all four are EXPORTED, which is the
+ * part that makes the check trustworthy: `ui/tests/vocabulary.test.js` imports
+ * them and compares `Object.keys` against store.js's two lists. The first
+ * version of that check read this file as text and matched braces and commas —
+ * and it passed on the very defect it was written for, because a trailing `//`
+ * comment holding a comma made the parser take the next word for a key. A set of
+ * keys is a thing the language computes exactly; there is no reason to guess at
+ * it from the source, and every reason not to.
+ *
+ * FROZEN, because exporting them made "who may add a key" a question at all.
+ * The key sets are checked once, at import time, against store.js's two lists;
+ * an importer writing a fifth entry afterwards would put the page in an
+ * arrangement no check ever saw. Freezing costs nothing and answers it here.
+ */
+export const SORT_LABELS = Object.freeze({ name: 'Name', modified: 'Last built', first: 'First built' });
+
+export const SORT_CMP = Object.freeze({
+  // No locale argument: a title comes out of the model's own project.json and
+  // can be in any language, and the reader's is not knowable here.
+  name: (a, b) => String(a.title).localeCompare(String(b.title)),
+  modified: (a, b) => ts(b.built) - ts(a.built),
+  first: (a, b) => ts(b.first) - ts(a.first),
+});
+
+export const VIEW_ICONS = Object.freeze({
+  grid: 'M1 1h4.5v4.5H1zM7.5 1H12v4.5H7.5zM1 7.5h4.5V12H1zM7.5 7.5H12V12H7.5z',
+  list: 'M1 1.5h11v2H1zM1 5.5h11v2H1zM1 9.5h11v2H1z',
+});
+
+/** How each view draws the rows. `page` is the component: hover and card style. */
+export const VIEW_BODIES = Object.freeze({
+  grid: (page, rows) => (
+    <div style={css('display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px')}>
+      {rows.map((p) => (
+        <a
+          key={p.pid}
+          href={projectUrl(p.pid)}
+          {...page.hover(p.pid)}
+          style={css(`${page.cardStyle(p.pid)}overflow:hidden;display:flex;flex-direction:column`)}
+        >
+          <div style={css('position:relative;height:190px;flex:none')}>
+            <Preview />
+          </div>
+          <div style={css('display:flex;flex-direction:column;gap:8px;padding:12px 14px 13px')}>
+            <div style={css('display:flex;flex-direction:column;gap:2px;min-width:0')}>
+              <span style={css(`font:600 13.5px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>
+              <span style={css(`font:400 10.5px ${MONO};color:#787f87;white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>
+                {p.slug} · {p.meta}
+              </span>
+            </div>
+            <div style={css('display:flex;align-items:center;gap:8px')}>
+              <RevLine p={p} />
+              <span style={css('flex:1')} />
+              <span title={stamp(p.built)} style={css(`font:400 11px ${MONO};color:#787f87`)}>{relTime(p.built)}</span>
+            </div>
+            <div style={css('display:flex;align-items:center;gap:8px')}>
+              <span style={css(`font:400 10.5px ${MONO};color:#b0b6bd`)}>first built {monthYear(p.first)}</span>
+            </div>
+          </div>
+        </a>
+      ))}
+    </div>
+  ),
+
+  list: (page, rows) => (
+    <div style={css('display:flex;flex-direction:column;gap:6px')}>
+      {rows.map((p) => (
+        <a
+          key={p.pid}
+          href={projectUrl(p.pid)}
+          {...page.hover(p.pid)}
+          style={css(`${page.cardStyle(p.pid)}display:flex;align-items:center;gap:12px;padding:8px 12px 8px 8px`)}
+        >
+          <div style={css('position:relative;width:96px;height:60px;flex:none;border-radius:6px;overflow:hidden')}>
+            <Preview radius={6} />
+          </div>
+          <div style={css('flex:1;min-width:0;display:flex;flex-direction:column;gap:2px')}>
+            <span style={css(`font:600 13px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>
+            <span style={css(`font:400 10.5px ${MONO};color:#787f87;white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>
+              {p.slug} · {p.meta}
+            </span>
+          </div>
+          <div style={css('width:150px;flex:none;display:flex;align-items:center;gap:8px')}>
+            <RevLine p={p} />
+          </div>
+          <div title={stamp(p.built)} style={css(`width:110px;flex:none;font:400 11px ${MONO};color:#787f87`)}>{relTime(p.built)}</div>
+          <div style={css(`width:150px;flex:none;font:400 10.5px ${MONO};color:#b0b6bd`)}>first built {monthYear(p.first)}</div>
+        </a>
+      ))}
+    </div>
+  ),
+});
+
 export class HammerolaProjects extends React.Component {
   static defaultProps = { projects: [], defaultView: 'grid', defaultSort: 'modified' };
 
-
-  state = { view: null, sort: null, hover: null };
+  // Seeded from what this browser remembered, and `null` when it remembered
+  // nothing legible — which is what the two getters below already read as "use
+  // the default", so the default stays in one place (defaultProps) whether it is
+  // reached on a first visit or after a stored value was thrown away.
+  //
+  // READ IN THE CONSTRUCTOR, not at module scope: this bundle also serves the
+  // build page, and a read up there would touch storage on a page that never
+  // draws this list.
+  constructor(props) {
+    super(props);
+    this.state = { view: readProjectView(), sort: readProjectSort(), hover: null };
+  }
 
   get view() { return this.state.view || this.props.defaultView; }
 
   get sort() { return this.state.sort || this.props.defaultSort; }
 
+  /**
+   * Both halves of a click on a tab: what is drawn now, and what the next visit
+   * opens on.
+   *
+   * The write goes through store.js and nothing here touches `localStorage`
+   * itself — the rule `tests/test_ui_source.py` enforces, so that the one place
+   * an absent storage has to be caught stays one place.
+   *
+   * FILTERED ON THE WAY IN, not only on the way to storage, and the asymmetry
+   * that made that necessary is worth naming: `writeProjectView` already
+   * refuses an id store.js does not know, so an unrecognised choice was NOT
+   * written — and `setState` took it anyway. With no `||` behind the table
+   * lookups any more, `choose({ view: 'kanban' })` drew a blank page off a
+   * value the next visit could not even reproduce. This method is public on an
+   * exported class, so "nothing calls it with that" is not a property of this
+   * file. An unknown id now leaves the arrangement where it was, which is what
+   * `recall()` in store.js does with an unknown cell.
+   */
+  choose(patch) {
+    const next = {};
+    if (PROJECT_VIEWS.includes(patch.view)) next.view = patch.view;
+    if (PROJECT_SORTS.includes(patch.sort)) next.sort = patch.sort;
+    if (next.view) writeProjectView(next.view);
+    if (next.sort) writeProjectSort(next.sort);
+    this.setState(next);
+  }
+
+  // NO FALLBACK, and the one that used to be here is worth naming because it
+  // looked like defence and was not: `SORT_CMP[this.sort] ||
+  // SORT_CMP[this.props.defaultSort]` cannot fire, because the only way
+  // `this.sort` is missing from the table is that it CAME from `defaultSort` —
+  // `state.sort` holds nothing store.js would not hand back. So the second
+  // lookup reads the same key as the first, and the branch was dead code that
+  // read as cover.
+  //
+  // What keeps this total is that every input is pinned: store.js validates
+  // what it hands back, `choose()` refuses a patch these tables cannot answer,
+  // and `ui/tests/vocabulary.test.js` asserts `defaultProps` names arrangements
+  // they have. A prop naming something else is a programming error caught at
+  // build time.
+  //
+  // IT HAS TO BE CAUGHT THERE, because a miss on THIS table would not announce
+  // itself at runtime. `SORT_CMP[unknown]` is `undefined`, and
+  // `Array.prototype.sort(undefined)` is a perfectly legal call: it compares by
+  // the default string conversion, which is `"[object Object]"` for every row,
+  // so the list comes back in arrival order looking sorted and nothing is
+  // thrown. The view half is the loud one — `VIEW_BODIES[unknown]` is
+  // `undefined` and throws where `render()` calls it — and the difference is
+  // the whole reason the three checks above are the guarantee rather than a
+  // formality.
   sorted() {
-    const cmp = {
-      // No locale argument: a title comes out of the model's own project.json
-      // and can be in any language, and the reader's is not knowable here.
-      name: (a, b) => String(a.title).localeCompare(String(b.title)),
-      modified: (a, b) => ts(b.built) - ts(a.built),
-      first: (a, b) => ts(b.first) - ts(a.first),
-    }[this.sort];
-    return this.props.projects.slice().sort(cmp);
+    return this.props.projects.slice().sort(SORT_CMP[this.sort]);
   }
 
   hover = (id) => ({
     onMouseEnter: () => this.setState({ hover: id }),
     onMouseLeave: () => this.setState({ hover: null }),
   });
+
+  /** A card's frame, which is the only thing the two view bodies share. */
+  cardStyle(id) {
+    const lit = this.state.hover === id;
+    return 'background:#fff;border:1px solid ' + (lit ? '#9cc4f0' : '#e3e6ea')
+      + ';border-radius:10px;text-decoration:none;color:inherit;'
+      + (lit ? 'box-shadow:0 3px 14px rgba(20,24,28,.07);' : '');
+  }
 
   tab(active, onClick, content, key) {
     return (
@@ -507,27 +692,27 @@ export class HammerolaProjects extends React.Component {
 
   render() {
     const rows = this.sorted();
-    const grid = this.view === 'grid';
-    const card = (id) => 'background:#fff;border:1px solid '
-      + (this.state.hover === id ? '#9cc4f0' : '#e3e6ea')
-      + ';border-radius:10px;text-decoration:none;color:inherit;'
-      + (this.state.hover === id ? 'box-shadow:0 3px 14px rgba(20,24,28,.07);' : '');
+    // Looked up, not branched on, and with no `||` behind it for the reason
+    // `sorted()` gives: the fallback that used to be here could only ever repeat
+    // the lookup that had just missed.
+    const body = VIEW_BODIES[this.view];
 
     return (
       <div style={{
-        ...css(`min-height:100vh;background:#eceef1;font-family:${SANS};color:#1c1f23;font-size:13px`),
+        ...css(`min-height:100vh;background:${PAGE_BG};font-family:${SANS};color:${PAGE_FG};font-size:13px`),
         ...FONTS,
       }}
       >
         <style>{ENTRY_CSS}</style>
 
         {/* ── header ── */}
-        <div style={css('height:50px;display:flex;align-items:center;gap:12px;padding:0 20px;background:#f7f8fa;border-bottom:1px solid #d8dce1')}>
+        <div style={css('height:50px;display:flex;align-items:center;gap:12px;padding:0 20px;'
+          + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE}`)}>
           <div style={css('display:flex;align-items:center;gap:8px')}>
             <Mark />
             <span style={css(`font:700 14px ${SANS};letter-spacing:-.2px`)}>hammerola</span>
           </div>
-          <div style={css('width:1px;height:22px;background:#d8dce1')} />
+          <div style={css(`width:1px;height:22px;background:${HEADER_LINE}`)} />
           <span style={css(`font:600 13px ${SANS};color:#5b6470`)}>Projects</span>
           <span style={css('flex:1')} />
           <span style={css(`font:400 11px ${MONO};color:#9aa1a9`)}>
@@ -556,80 +741,19 @@ export class HammerolaProjects extends React.Component {
           <div style={css('display:flex;align-items:center;gap:8px;padding:0 2px 16px;flex-wrap:wrap')}>
             <span style={css(`font:500 11px ${SANS};color:#8a9099`)}>Sort by</span>
             <div style={css('display:flex;background:#e0e3e8;border-radius:6px;padding:2px;gap:2px')}>
-              {[['name', 'Name'], ['modified', 'Last built'], ['first', 'First built']].map(([id, label]) =>
-                this.tab(this.sort === id, () => this.setState({ sort: id }), label, id))}
+              {PROJECT_SORTS.map((id) =>
+                this.tab(this.sort === id, () => this.choose({ sort: id }), SORT_LABELS[id], id))}
             </div>
             <span style={css('flex:1')} />
             <div style={css('display:flex;background:#e0e3e8;border-radius:6px;padding:2px;gap:2px')}>
-              {[['grid', 'M1 1h4.5v4.5H1zM7.5 1H12v4.5H7.5zM1 7.5h4.5V12H1zM7.5 7.5H12V12H7.5z'],
-                ['list', 'M1 1.5h11v2H1zM1 5.5h11v2H1zM1 9.5h11v2H1z']].map(([id, d]) =>
-                this.tab(this.view === id, () => this.setState({ view: id }),
-                  <svg width="13" height="13" viewBox="0 0 13 13"><path d={d} fill="currentColor" /></svg>, id))}
+              {PROJECT_VIEWS.map((id) =>
+                this.tab(this.view === id, () => this.choose({ view: id }),
+                  <svg width="13" height="13" viewBox="0 0 13 13"><path d={VIEW_ICONS[id]} fill="currentColor" /></svg>, id))}
             </div>
           </div>
 
-          {/* ── tiles ── */}
-          {grid && (
-            <div style={css('display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px')}>
-              {rows.map((p) => (
-                <a
-                  key={p.pid}
-                  href={projectUrl(p.pid)}
-                  {...this.hover(p.pid)}
-                  style={css(`${card(p.pid)}overflow:hidden;display:flex;flex-direction:column`)}
-                >
-                  <div style={css('position:relative;height:190px;flex:none')}>
-                    <Preview />
-                  </div>
-                  <div style={css('display:flex;flex-direction:column;gap:8px;padding:12px 14px 13px')}>
-                    <div style={css('display:flex;flex-direction:column;gap:2px;min-width:0')}>
-                      <span style={css(`font:600 13.5px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>
-                      <span style={css(`font:400 10.5px ${MONO};color:#787f87;white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>
-                        {p.slug} · {p.meta}
-                      </span>
-                    </div>
-                    <div style={css('display:flex;align-items:center;gap:8px')}>
-                      <RevLine p={p} />
-                      <span style={css('flex:1')} />
-                      <span title={stamp(p.built)} style={css(`font:400 11px ${MONO};color:#787f87`)}>{relTime(p.built)}</span>
-                    </div>
-                    <div style={css('display:flex;align-items:center;gap:8px')}>
-                      <span style={css(`font:400 10.5px ${MONO};color:#b0b6bd`)}>first built {monthYear(p.first)}</span>
-                    </div>
-                  </div>
-                </a>
-              ))}
-            </div>
-          )}
-
-          {/* ── the dense list ── */}
-          {!grid && (
-            <div style={css('display:flex;flex-direction:column;gap:6px')}>
-              {rows.map((p) => (
-                <a
-                  key={p.pid}
-                  href={projectUrl(p.pid)}
-                  {...this.hover(p.pid)}
-                  style={css(`${card(p.pid)}display:flex;align-items:center;gap:12px;padding:8px 12px 8px 8px`)}
-                >
-                  <div style={css('position:relative;width:96px;height:60px;flex:none;border-radius:6px;overflow:hidden')}>
-                    <Preview radius={6} />
-                  </div>
-                  <div style={css('flex:1;min-width:0;display:flex;flex-direction:column;gap:2px')}>
-                    <span style={css(`font:600 13px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>
-                    <span style={css(`font:400 10.5px ${MONO};color:#787f87;white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>
-                      {p.slug} · {p.meta}
-                    </span>
-                  </div>
-                  <div style={css('width:150px;flex:none;display:flex;align-items:center;gap:8px')}>
-                    <RevLine p={p} />
-                  </div>
-                  <div title={stamp(p.built)} style={css(`width:110px;flex:none;font:400 11px ${MONO};color:#787f87`)}>{relTime(p.built)}</div>
-                  <div style={css(`width:150px;flex:none;font:400 10.5px ${MONO};color:#b0b6bd`)}>first built {monthYear(p.first)}</div>
-                </a>
-              ))}
-            </div>
-          )}
+          {/* ── the rows, drawn the way the chosen view draws them ── */}
+          {body(this, rows)}
 
           {!rows.length && (
             <div style={css(`padding:60px 0;text-align:center;font:400 12px ${SANS};color:#8a9099`)}>
