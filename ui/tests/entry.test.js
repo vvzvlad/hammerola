@@ -31,15 +31,26 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
   ...(await importOriginal()),
   loadIndex: vi.fn(),
 }))
-vi.mock('../src/store.js', () => ({
+// The storage functions are stubbed and the VOCABULARY is not: `PROJECT_VIEWS`
+// and `PROJECT_SORTS` are what the component builds its tabs out of, so a copy
+// of them here would let this file agree with itself about which tabs exist.
+vi.mock('../src/store.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   readToken: vi.fn(() => null),
   writeToken: vi.fn(),
   clearToken: vi.fn(),
+  readProjectView: vi.fn(() => null),
+  readProjectSort: vi.fn(() => null),
+  writeProjectView: vi.fn(),
+  writeProjectSort: vi.fn(),
 }))
 
 import HammerolaEntry, { HammerolaProjects, relTime } from '../src/HammerolaEntry.jsx'
 import { loadIndex, projectCard, projectUrl, Unauthorized } from '../src/hub.js'
-import { clearToken, readToken, writeToken } from '../src/store.js'
+import {
+  clearToken, readProjectSort, readProjectView, readToken, writeProjectSort,
+  writeProjectView, writeToken,
+} from '../src/store.js'
 
 /** One card exactly as src/render.py's `index_card` writes it. */
 const CARD = {
@@ -150,6 +161,104 @@ describe('the order of the list', () => {
     c.state = { view: null, sort: 'name', hover: null }
     c.sorted()
     expect(rows.map((p) => p.pid)).toEqual(['b', 'a', 'c'])
+  })
+})
+
+// -- the arrangement, between visits -----------------------------------------
+// Which way the list is drawn and what order it is in used to be state and
+// nothing else, so both were re-chosen on every page load: a reader who works
+// from the dense list by name got tiles by last-built again on the next visit.
+// What is pinned here is the two ends of the memory — that a stored answer is
+// what the page comes up with, and that choosing one records it.
+//
+// THE CASE THE STORAGE MAKES UNAVOIDABLE — a cell holding a value the page
+// cannot use — is NOT here, and could not honestly be: store.js is stubbed in
+// this file, so a bad value planted through the stub would be testing the
+// component against something the real module cannot produce. It lives in
+// `arrangement.test.js`, which drives the real store, in a file of its own
+// because that is the cheap way to get the isolation: vitest resets the module
+// registry between FILES, and undoing a `vi.mock` inside one is a two-part
+// restore where forgetting the second part silently hands the next dynamic
+// import the wrong module.
+
+describe('the arrangement of the list', () => {
+  /** The component as React builds it: defaultProps applied, constructor run. */
+  const built = () => {
+    const c = new HammerolaProjects({ ...HammerolaProjects.defaultProps })
+    c.setState = vi.fn((patch) => { c.state = { ...c.state, ...patch } })
+    return c
+  }
+
+  it('opens on what this browser remembered', () => {
+    readProjectView.mockReturnValueOnce('list')
+    readProjectSort.mockReturnValueOnce('name')
+    const c = built()
+    expect(c.view).toBe('list')
+    expect(c.sort).toBe('name')
+  })
+
+  it('opens on its own default when nothing was remembered', () => {
+    // `null` is what store.js answers both for an empty cell and for a value it
+    // cannot use, so this is also the second half of the bad-value case below.
+    const c = built()
+    expect(c.view).toBe('grid')
+    expect(c.sort).toBe('modified')
+  })
+
+  it('records a choice as it makes it', () => {
+    const c = built()
+    c.choose({ sort: 'name' })
+    c.choose({ view: 'list' })
+    expect(writeProjectSort).toHaveBeenCalledWith('name')
+    expect(writeProjectView).toHaveBeenCalledWith('list')
+    expect(c.sort).toBe('name')
+    expect(c.view).toBe('list')
+  })
+
+  it('records only what was chosen', () => {
+    // Both halves travel through one method, and a click sets one of them. The
+    // other must not be rewritten with the value it already had — a write per
+    // click on an unrelated tab is a cell changing for no reason anybody could
+    // trace.
+    //
+    // BOTH DIRECTIONS, because the sentence above is about the PAIR and only one
+    // of them was asked: a `choose` that wrote the sort on every view click
+    // passed this test unchanged, while the name claimed otherwise.
+    built().choose({ sort: 'first' })
+    expect(writeProjectSort).toHaveBeenCalledWith('first')
+    expect(writeProjectView).not.toHaveBeenCalled()
+
+    vi.clearAllMocks()
+
+    built().choose({ view: 'list' })
+    expect(writeProjectView).toHaveBeenCalledWith('list')
+    expect(writeProjectSort).not.toHaveBeenCalled()
+  })
+
+  it('asks storage once, at construction, rather than on every render', () => {
+    // AND IT RENDERS, which is the half the name promises and the body used to
+    // leave out: with only the constructor run, a getter that read storage on
+    // every access passed this test unchanged. Two renders rather than one,
+    // because "once per render" and "once ever" are the same count at one.
+    const c = built()
+    c.props = { ...c.props, projects: [] }
+    c.render()
+    c.render()
+    expect(readProjectView).toHaveBeenCalledTimes(1)
+    expect(readProjectSort).toHaveBeenCalledTimes(1)
+  })
+
+  it('lights the card the pointer is over, in either view', () => {
+    // `cardStyle` is the one thing the two view bodies share, and it became a
+    // method when they became a table — so what used to be a closure over
+    // `this.state` inside `render()` now has to read the same state from
+    // outside it. Both bodies call it, so a break here is a break in both.
+    const c = built()
+    const resting = c.cardStyle('a')
+    c.state = { ...c.state, hover: 'a' }
+    expect(c.cardStyle('a')).not.toBe(resting)
+    expect(c.cardStyle('a')).toContain('box-shadow')
+    expect(c.cardStyle('b')).toBe(resting)
   })
 })
 

@@ -1,5 +1,6 @@
 // ui/src/store.js — everything these pages remember in the browser: the token,
-// the notes, and which pointer the reader was last on.
+// the notes, which pointer the reader was last on, and how the front page's
+// list of projects is arranged.
 //
 // THE STORAGE IS A DOUBLE, AND THE DOUBLE IS THE WHOLE TEST. There is no
 // `localStorage` in this runner at all: Node's own global of that name is
@@ -37,12 +38,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  clearToken, readNotes, readToken, rememberPointer, writeNotes, writeToken,
+  clearToken, readNotes, readProjectSort, readProjectView, readToken,
+  rememberPointer, writeNotes, writeProjectSort, writeProjectView, writeToken,
 } from '../src/store.js'
 
 const POINTER_KEY = 'hammerola.pointer.proj1'
 const TOKEN_KEY = 'hammerola.token'
 const NOTES_KEY = 'hammerola.notes.proj1'
+const VIEW_KEY = 'hammerola.projects_view'
+const SORT_KEY = 'hammerola.projects_sort'
 
 /** The smallest thing store.js can tell from the real one, plus a way to fail. */
 function fakeStorage({ failing = false } = {}) {
@@ -276,5 +280,96 @@ describe('rememberPointer', () => {
     delete globalThis.localStorage
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(() => rememberPointer('proj1', 'dev')).not.toThrow()
+  })
+})
+
+// -- how the project list is arranged ----------------------------------------
+// Tiles or rows, and in what order. One key each for the whole site, because a
+// hub has one list of projects and the page holding it names no project.
+//
+// EVERY TEST BELOW IS ABOUT THE VALUE COMING BACK, not about the value going in.
+// What is in a cell is a string this browser has been carrying since whichever
+// version of the page wrote it, and the failure being guarded against is not a
+// wrong arrangement — it is a sort id with no comparator behind it (a list in no
+// order at all) or a view id no branch draws (a blank page under a live header),
+// both reached without anybody doing anything wrong.
+
+describe('the arrangement of the project list', () => {
+  it('round-trips both answers, each under its own site-wide key', () => {
+    writeProjectView('list')
+    writeProjectSort('name')
+    expect(storage.getItem(VIEW_KEY)).toBe('list')
+    expect(storage.getItem(SORT_KEY)).toBe('name')
+    expect(readProjectView()).toBe('list')
+    expect(readProjectSort()).toBe('name')
+  })
+
+  it('is keyed by nothing, so it is the same answer on every visit', () => {
+    // The point of the feature: the page at `/` has no project to key by, and
+    // the reader who chose rows meant rows next time too.
+    writeProjectView('list')
+    writeProjectSort('first')
+    expect([...storage.cells.keys()].sort()).toEqual([SORT_KEY, VIEW_KEY])
+  })
+
+  it('reads null where nothing was stored, which is "use the default"', () => {
+    // The default itself is NOT here. It is the page's own statement
+    // (HammerolaProjects.defaultProps), and a copy of it in this module would
+    // make "which default won" a question with two answers.
+    expect(readProjectView()).toBeNull()
+    expect(readProjectSort()).toBeNull()
+  })
+
+  it('reads null for a value it has no way to draw', () => {
+    // Left by an older version of this page, by something else on this origin,
+    // or typed into a storage inspector. `sort` is the one that bites hardest:
+    // an unknown id reaches `sorted()` as a missing comparator.
+    storage.setItem(VIEW_KEY, 'kanban')
+    storage.setItem(SORT_KEY, 'size')
+    expect(readProjectView()).toBeNull()
+    expect(readProjectSort()).toBeNull()
+  })
+
+  it('reads null for the shapes a value is not, rather than throwing', () => {
+    storage.setItem(VIEW_KEY, '')
+    storage.setItem(SORT_KEY, '{"sort":"name"}')
+    expect(readProjectView()).toBeNull()
+    expect(readProjectSort()).toBeNull()
+  })
+
+  it('one unreadable answer does not take the other with it', () => {
+    // The whole reason these are two keys and not one JSON object: a cell that
+    // cannot be read costs only itself.
+    writeProjectSort('name')
+    storage.setItem(VIEW_KEY, 'kanban')
+    expect(readProjectView()).toBeNull()
+    expect(readProjectSort()).toBe('name')
+  })
+
+  it('refuses to store a name it does not know, leaving what stands', () => {
+    // Refused rather than corrected to a default, exactly as `rememberPointer`
+    // treats a commit id: what was remembered is a real answer somebody gave,
+    // and a caller's typo must not be able to lose it.
+    writeProjectView('list')
+    writeProjectView('kanban')
+    writeProjectView(undefined)
+    expect(readProjectView()).toBe('list')
+    writeProjectSort('name')
+    writeProjectSort('size')
+    expect(readProjectSort()).toBe('name')
+  })
+
+  it('survives a browser that refuses storage', () => {
+    install(fakeStorage({ failing: true }))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(() => writeProjectView('list')).not.toThrow()
+    expect(readProjectView()).toBeNull()
+  })
+
+  it('survives a browser with no storage object at all', () => {
+    delete globalThis.localStorage
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(() => writeProjectSort('name')).not.toThrow()
+    expect(readProjectSort()).toBeNull()
   })
 })

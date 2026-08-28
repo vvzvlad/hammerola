@@ -6,32 +6,71 @@
    part of that bundle, taking #grid, .card and #err with it -- every rule that
    served them has been taken out rather than left standing, because a rule that
    matches nothing reads exactly like a rule that matters. What is left is what
-   pointer.html actually carries: the page frame and #bar with its title, meta
-   text, spacer and link.
-   THE PALETTE IS THE OLD DARK ONE, and that is now a statement about one page
-   rather than about the site. Converting it would be a redesign of a page whose
-   whole content is one sentence and one link, and the two pages that matter no
-   longer share a pixel with it. */
+   pointer.html actually carries: the page frame and #bar with its mark, title,
+   meta text, spacer and link.
+
+   THE PALETTE IS THE INTERFACE'S OWN, and this file used to say the opposite:
+   the dark #1e1e1e chrome stayed here on the grounds that it was "a statement
+   about one page" whose whole content is a sentence and a link. That was wrong
+   about WHICH page it is. /project/<pid>/ is not a corner of the site -- it is
+   the URL every card on the front page links to, so opening any project goes
+   through it, and on the remembered-`dev` path it waits for a builds.json round
+   trip before it leaves. What a reader saw was a dark bar from another design
+   flashing up and vanishing: not a page loading, but a different program
+   appearing inside ours. The same argument is already written down two files
+   away -- build.html says it stopped linking this stylesheet because "painting
+   that under a light interface would buy a dark flash before the first render"
+   -- and it applies here harder, because this page cannot be skipped.
+
+   So the rules below reproduce the interface's own header rather than
+   approximating it: same 50px row, same colours, same border, same mark, same
+   two font stacks. The values are copied and not imported, because this page
+   must not load the bundle -- and a copy is only worth having while it is still
+   the same header, so MOST of them are CHECKED rather than trusted:
+   `ui/tests/chrome.test.js` imports what the interface actually uses
+   (`PAGE_BG`, `PAGE_FG`, `HEADER_BG`, `HEADER_LINE`, `FONTS`, `Mark`) and holds
+   this file and pointer.html to it.
+   MOST, NOT ALL, and the exceptions are written here rather than left to be
+   discovered, because a list that says "every one" while covering four of six
+   is worse than no list: it turns silence into a promise. Six colours are shared
+   with the bundle. Four are the constants above. The other two are copied with
+   nothing holding them: `#787f87` on #bar .meta, and `#1f6fd0` on #bar a --
+   the site's accent blue, which has five more copies inside the bundle. See the
+   docstring over those constants in ui/src/style.jsx for what promoting one
+   costs. (#1e1e1e appears above only as history; nothing here paints it.)
+   The mark is the one that matters most, and the reason is not fussiness: a
+   colour that lags looks slightly out of date, while a logo that lags CHANGES
+   WHEN YOU NAVIGATE -- so it is compared path by path, every attribute of each,
+   rather than as text that appears somewhere in the file. */
 /* overflow:hidden stays. The one page here is a single line of chrome and
    nothing inside it scrolls, so a scrollbar on the document could only ever
    appear for a header that ran past the edge -- and the header wraps instead
    (#bar below). */
-html,body{margin:0;height:100%;overflow:hidden;background:#1e1e1e;color:#ddd;
-  font:13px/1.4 -apple-system,"Segoe UI",sans-serif}
+html,body{margin:0;height:100%;overflow:hidden;background:#eceef1;color:#1c1f23;
+  font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,
+  sans-serif}
 body{display:flex;flex-direction:column}
 /* wrap, not nowrap: a header that cannot break its line can only overflow, and
-   with overflow:hidden above that means silently cut off rather than scrolled. */
+   with overflow:hidden above that means silently cut off rather than scrolled.
+   `min-height` rather than `height`, for the same reason: the row is the
+   interface's 50px until it has to wrap, and then it grows instead of clipping. */
 #bar{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;
-  padding:7px 14px;border-bottom:1px solid #333;position:relative;z-index:10}
+  min-height:50px;box-sizing:border-box;padding:0 20px;background:#f7f8fa;
+  border-bottom:1px solid #d8dce1;position:relative;z-index:10}
+/* The mark and the wordmark, as one unit, exactly as the interface sets them. */
+#bar .mark{display:flex;align-items:center;gap:8px;flex:none}
 /* min-width:0 is the half that matters: without it a flex item refuses to go
    below its content width, so the title and the meta text alone hold the line
    wider than the screen and nothing else gets a chance to fit. */
 #bar b,#bar .meta{min-width:0;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap}
-#bar b{font-size:15px}
-#bar .meta{color:#888;font-size:12px;font-family:ui-monospace,Menlo,monospace}
+#bar b{font-size:14px;font-weight:700;letter-spacing:-.2px}
+#bar .meta{color:#787f87;font-size:11px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",
+  monospace}
 /* flex-basis:0 so the spacer claims leftover room without reserving any: at a
    width where the bar wraps there is none to claim, and a spacer with content
    width would push whatever follows it onto a line of its own for nothing. */
 #bar .spacer{flex:1 1 0;min-width:0}
-#bar a{color:#7ab8ff;text-decoration:none;margin-left:10px}
+#bar a{color:#1f6fd0;text-decoration:none;margin-left:10px;font-weight:600;
+  font-size:11.5px}

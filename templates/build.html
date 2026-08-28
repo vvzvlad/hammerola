@@ -22,6 +22,35 @@
      pointer.html is the only page that still links it, and the only one that
      still has that chrome. -->
 <link rel="stylesheet" href="/_v/three-cad-viewer.css">
+<!-- THE PAGE COLOUR, before there is a page. Everything below this line is
+     drawn by the bundle, and until 255 KB of it has been fetched, parsed and
+     rendered the document is whatever the browser makes of a body with no
+     background: white. That is a flash of the wrong colour on the page a reader
+     arrives at from every project card, and the longer of the two loads.
+     Measured, frame by frame: transparent from the first paint until React
+     rendered, and then `rgb(68,68,68)` — white, and then a flash of the
+     library's dark grey.
+
+     THAT SECOND COLOUR IS WHY THIS SITS WHERE IT SITS. three-cad-viewer.css
+     carries `body { background-color: var(--tcv-bg-color) }`, and the custom
+     property is defined under `[data-theme="light"]` / `[data-theme="dark"]` —
+     an attribute the LIBRARY ITSELF puts on `document.body` when it first
+     renders (`Display.setTheme`, reached through our `applyTheme`). So the rule
+     paints nothing before that moment and is live from it on, at the same
+     specificity as the one below. Same specificity means source order decides,
+     and ours has to come SECOND or the library repaints the page out from under
+     the interface once it initialises. `ui/tests/chrome.test.js` checks that
+     order; it is not a formatting preference.
+
+     Inline rather than a file because it is two declarations on the critical
+     path — a `<link>` would be a round trip to say what the markup can say for
+     free — and the CSP allows it (`style-src 'self' 'unsafe-inline'`,
+     src/app.py).
+
+     The values are the interface's own (`PAGE_BG` / `PAGE_FG` in
+     ui/src/style.jsx), and `ui/tests/chrome.test.js` holds this copy,
+     index.html's and the resolver's to them. -->
+<style>html,body{background:#eceef1;color:#1c1f23}</style>
 </head><body>
 <!-- The whole page. The interface draws its own header, its own panels and its
      own error box inside this div, so the template carries no markup of its own:

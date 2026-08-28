@@ -311,19 +311,37 @@ jobs:
         # `docker run --name` fails outright on a name conflict — the re-run would then die
         # before the suite started, with an error about a container instead of about the code.
         docker rm -f -v "$JS_NAME" || true
-        # ONLY ui/ TRAVELS, and that is a positive list where the Python step above carries a
-        # list of exclusions. Everything vitest reads lives under ui/ — the sources, the tests,
-        # the committed fixture, package.json and its lockfile — so naming the one directory is
-        # both smaller (the vendored 3.5 MB viewer in static/_v alone dwarfs the whole of ui/)
-        # and strictly safer than any set of --exclude flags: `.env`, `data/` and `.git/config`
-        # cannot travel here because NOTHING outside ui/ does. That matters for the same reason
-        # it matters up there — this exact command is also what a developer runs BY HAND to
-        # reproduce a CI failure, in a checkout where all three are real.
-        # The day something under ui/tests needs a file from outside it — the vendored library,
-        # say, to check a constant against — add that path to the tar deliberately. Do not
-        # replace this with `.` and a fence of exclusions: the fence has to be complete to be
-        # correct, and this list has to be complete to be USABLE, which is the failure that
-        # announces itself.
+        # A POSITIVE LIST OF PATHS, where the Python step above carries a list of exclusions.
+        # Almost everything vitest reads lives under ui/ — the sources, the tests, the
+        # committed fixture, package.json and its lockfile — and whatever it needs from
+        # outside ui/ is named here, one path at a time. All four of those are for
+        # ui/tests/chrome.test.js: templates/ and static/_v/site.css because they state the
+        # page colour and redraw the header WITHOUT importing any JavaScript — being unable
+        # to import is exactly why that test has to read them as files — and the two
+        # static/_v scripts because the same file searches every hand-written source for a
+        # second copy of the mark, which is a search that passes in silence over a directory
+        # that did not travel. THAT TEST NAMES EVERY PATH ON THIS LINE, one for one, so
+        # dropping one here fails a test that says which file stopped being searched instead
+        # of quietly sweeping less — keep the two lists in step. (It does NOT guard by
+        # refusing an empty directory: a throw while the test module is being evaluated takes
+        # the whole file down and blames this tar for it, and a directory emptying out is
+        # legitimate the day pointer.js moves into the bundle.)
+        # THIS LIST IS NOT EXHAUSTIVE AND IS NOT MEANT TO BE. It gains a path whenever a test
+        # needs one, as a deliberate edit here.
+        # Naming what travels is both smaller (the vendored 3.5 MB viewer in static/_v alone
+        # dwarfs the whole of ui/) and strictly safer than any set of --exclude flags: `.env`,
+        # `data/` and `.git/config` cannot travel because nothing travels that is not named.
+        # That matters for the same reason it matters up there — this exact command is also
+        # what a developer runs BY HAND to reproduce a CI failure, in a checkout where all
+        # three are real.
+        # So add the path deliberately, and do NOT replace this with `.` and a fence of
+        # exclusions: the fence has to be complete to be correct, and this list has to be
+        # complete to be USABLE, which is the failure that announces itself. Be exact about
+        # WHERE it announces itself, though. A test reading a file that did not travel throws
+        # ENOENT while its module is still being evaluated, so vitest collects nothing from it
+        # and exits non-zero — but only here. A workstation runs the same suite against a
+        # whole checkout, where the file is simply present, so a path missing from this line
+        # is green locally and red on the first push, with the image behind `needs: test`.
         # `ui/node_modules` is excluded even so: a dependency tree installed on the HOST,
         # carrying binaries built for the host's architecture, which `npm ci` deletes and
         # reinstalls from the lockfile anyway. It does not exist on the runner; in the by-hand
@@ -347,7 +365,8 @@ jobs:
         # runner, not the container over on the host's daemon. That one goes on running, never
         # exits, so `--rm` never fires — and unnamed it would be unreachable by anything at all,
         # because every cleanup in these workflows removes containers BY NAME.
-        tar -cf - --exclude=./ui/node_modules ./ui \
+        tar -cf - --exclude=./ui/node_modules ./ui ./templates ./static/_v/site.css \
+          ./static/_v/pointer.js ./static/_v/pointer_pref.js \
           | docker run --rm -i --pull always --name "$JS_NAME" \
           -e CI=true \
           -e NPM_CONFIG_UPDATE_NOTIFIER=false \

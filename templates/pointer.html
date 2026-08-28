@@ -13,16 +13,47 @@
      localStorage, which only the browser can read.
 
      This page is deliberately tiny and pulls NONE of the viewer: its whole job
-     is to read one key and leave. Everything it shows lives in the header, so
-     it borrows the chrome every other page on the site already has instead of
-     bringing styling of its own — including the link colour, which is the half
-     of "still works with no script" that is easy to ship broken: a default link
-     on a #1e1e1e background is a link nobody can read once it has been visited.
+     is to read one key and leave. Everything it shows lives in the header —
+     and that header is a COPY, not something borrowed. It reads as borrowed
+     because site.css used to dress all three pages, but build.html and
+     index.html have both dropped it: they are drawn by the React bundle, which
+     carries its own styling inline. This page cannot load that bundle, so
+     site.css now describes exactly one page, this one, and every value in it is
+     a copy of an interface value with nothing but a test holding the two
+     together (ui/tests/chrome.test.js, which imports what the interface
+     actually uses and compares it against this file and that one).
+
+     The link colour is part of the copy too, and it is one of the two values in
+     it that NOTHING CHECKS. #1f6fd0 is the site's accent blue, with five copies
+     inside the bundle (HammerolaEntry.jsx and HammerolaViewer.jsx), and this
+     page takes exactly it -- so moving the accent there leaves the resolver on
+     the old blue silently, which is the class of failure the four imported
+     constants exist to prevent. It is a known gap, not a checked value:
+     ui/src/style.jsx says what promoting it would cost, and site.css lists it
+     beside the other unchecked one. (The interface's header does have a link,
+     `all projects` in HammerolaViewer.jsx -- it just inherits its colour, which
+     is why there is no constant to compare against rather than no link.)
+
+     What the colour has to satisfy regardless is the half of "still works with
+     no script" that is easy to ship broken: a visited link has to stay readable
+     on the background under it, which is now the interface's #eceef1 and was,
+     for as long as this page carried the old dark chrome, #1e1e1e.
 
      The link is not decoration. It is what is left when the script does not
      run, and a reader who lands on a page with no way forward is worse off than
      the redirect ever left them. -->
-<div id="bar"><b>hammerola</b>
+<!-- The header is the INTERFACE'S header, mark and all, and that is the point
+     rather than decoration: this page is on the way to that interface and is
+     visible for as long as the redirect takes, which on the remembered-`dev`
+     path is a builds.json round trip. Drawn as anything else, it reads as a
+     different program appearing for an instant inside this one. The mark is
+     inline SVG copied from ui/src/style.jsx -- a file, or the bundle, would be
+     a second request on the one page whose whole job is to leave quickly. -->
+<div id="bar"><span class="mark">
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <path d="M9 1.5l6.5 3.75v7.5L9 16.5l-6.5-3.75v-7.5z" fill="none" stroke="#1c1f23" stroke-width="1.6"/>
+      <path d="M9 1.5v7.5M9 9l6.5 3.75M9 9L2.5 12.75" fill="none" stroke="#1c1f23" stroke-width="1.2" opacity=".55"/>
+    </svg><b>hammerola</b></span>
   <span class="meta">opening the build you were last on&hellip;</span>
   <span class="spacer"></span>
   <a href="latest/">Open the latest build</a>
