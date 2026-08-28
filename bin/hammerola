@@ -17,6 +17,14 @@ of it now would mean doing it twice.
 nothing outside the standard library, on purpose, so the system interpreter is
 enough — and a shebang naming a virtualenv is a shebang that breaks the moment
 the checkout moves.
+
+THIS FILE IS FOR A MACHINE THAT HAS THE CHECKOUT. One that does not gets the
+same tool from the hub — `curl <hub>/start/hammerola`, a zipapp the hub builds
+out of `src/client/` at request time (`src/onboarding.py`). That is not a second
+implementation and must not become one: it carries these very modules, with a
+generated two-line `__main__.py` in place of this file, because a zip's entry
+point has to sit at the archive's root. What the two share is the rule that
+makes either possible at all — stdlib only, so the tool has nothing to install.
 """
 
 import sys

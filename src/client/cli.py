@@ -1,7 +1,7 @@
 """The `hammerola` command: its verbs, its dispatch, and its exit code.
 
     login                     store the hub's address and the one password
-    create                    start a project: a project.json with a fresh id
+    create                    start a project: a fresh id, and the template
     build                     sources -> the dev slot, and print the build log
     commit -m "..."           sources -> an immutable revision the hub names
     status                    latest, dev, and the revisions that exist
@@ -79,7 +79,8 @@ import sys
 from src.client import (admin, artifacts, config, gitsuggest, project, queue,
                         revdiff, setup, sources, status)
 from src.client.errors import ClientError
-from src.client.hub import JOB_TIMEOUT, UNAUTHORIZED, Hub, HubError
+from src.client.hub import (JOB_TIMEOUT, UNAUTHORIZED, Hub, HubError,
+                            quoted)
 from src.client.limits import DEV_SLOT
 from src.client.pack import PackError, pack
 
@@ -124,10 +125,18 @@ def build_parser() -> argparse.ArgumentParser:
              "machine")
 
     start = commands.add_parser(
-        "create", help="start a project: write a project.json with a fresh id")
+        "create",
+        help="start a project: a project.json with a fresh id, plus the "
+             "starter template")
     start.add_argument(
         "--title", default=None,
         help="the name shown on the site (default: the directory's own name)")
+    start.add_argument(
+        "--no-template", action="store_true",
+        help="write only the project.json. The id is minted locally either "
+             "way; this is what makes `create` need no hub, no address and no "
+             "secret — for a directory that already has a model, or a machine "
+             "with nothing to reach")
 
     dev = commands.add_parser(
         "build", help="publish the working copy into the project's dev slot")
@@ -262,6 +271,17 @@ def _publish(args) -> int:
     # segment is how the hub is asked to name it (`Hub.publish`).
     slot = DEV_SLOT if args.command == "build" else None
 
+    # BUILT HERE AND NOT AT THE PUSH, which is the second half of the paragraph
+    # above. Reading the two settings early only catches the variable being
+    # ABSENT; a typo IN it — a letter in the port, a missing scheme, an
+    # unclosed bracket — is caught by `Hub.__init__` (`hub._origin`), and with
+    # that line below `pack` the whole tree was walked, hashed and compressed
+    # before the tool said the address was unusable. Constructing a Hub opens
+    # nothing and sends nothing, so there is no cost to doing it here. The same
+    # goes for the token: a stored secret with a newline in it is refused here
+    # rather than after the packing.
+    hub = Hub(hub_url, token)
+
     archive = pack(root)
 
     title = project.read_project_title(root)
@@ -275,7 +295,6 @@ def _publish(args) -> int:
     print(f"  {len(archive.names)} files, {archive.size / 1e3:.1f} kB packed")
     sys.stdout.flush()
 
-    hub = Hub(hub_url, token)
     # `code` and not `status`, because `status` is a module of this package.
     code, payload = hub.publish(pid, archive.body, slot=slot)
 
@@ -303,8 +322,12 @@ def _publish(args) -> int:
         return _fail(UNAUTHORIZED)
 
     if code != 202:
+        # QUOTED, like every other place a reply's own words are printed. This
+        # one and the two below are on the ordinary push path — the commonest
+        # route in the tool — and they were writing whatever the far end sent
+        # straight to a terminal, bounded only by the 64 MiB reply ceiling.
         return _fail(f"the hub refused the push with HTTP {code}: "
-                     f"{payload.get('error', payload)}")
+                     f"{quoted(payload.get('error', payload))}")
 
     # THE REVISION FIRST AND THE JOB SECOND, and both labelled with what they
     # address. They arrive in the same reply and they look alike — two opaque
@@ -314,7 +337,8 @@ def _publish(args) -> int:
     _print_revision(payload.get("revision"))
     job_id = payload.get("job")
     if not job_id:
-        raise HubError(f"the hub accepted the push but named no job: {payload}")
+        raise HubError(
+            f"the hub accepted the push but named no job: {quoted(payload)}")
     print(f"queued as job {job_id}: this build's progress and its log")
     sys.stdout.flush()
 
@@ -329,8 +353,9 @@ def _publish(args) -> int:
                           revision=payload.get("revision"),
                           message=getattr(args, "message", None))
 
+    why = record.get("error")
     return _fail(f"the build failed (HTTP {record.get('code')}): "
-                 f"{record.get('error') or 'no reason given'}")
+                 f"{quoted(why) if why else 'no reason given'}")
 
 
 def _print_revision(revision) -> None:

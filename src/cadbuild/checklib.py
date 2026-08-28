@@ -1,8 +1,15 @@
 """Reusable geometry checks for the `checks()` in model.py.
 
-Part of the shared half of the template, like `scripts/` and the `Makefile`:
-the project author calls these, does not edit them. A fix belongs in
-model_template and rolls out from there, not in a fork inside one project.
+NOT PART OF THE TEMPLATE, and this line used to say it was — "the shared half
+of the template, like `scripts/` and the `Makefile`", which described a
+directory in `cad_publish` that a project copied and that no longer exists.
+This module ships INSIDE THE HUB'S IMAGE and is reached by the `checklib.py`
+shim at the repository root; what `hammerola create` unpacks is `model_template/`,
+and there is nothing of this file in it. A fix therefore rolls out with the
+image, to every model at once, rather than being copied into projects — which is
+the same rule read from the other end: the project author calls these and does
+not edit them, and a `checklib.py` of one's own SHADOWS this one (the model's
+directory goes first on `sys.path`) rather than extending it.
 
 Every function measures the solids and returns a **list of problem strings**,
 empty when nothing is wrong. That is the same shape `checks()` may return, so

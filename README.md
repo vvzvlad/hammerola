@@ -28,15 +28,45 @@ make client                          # symlink bin/hammerola into ~/.local/bin
 hammerola login https://hub.example  # once per machine; the password is prompted for
 ```
 
+From a checkout, that is. **A machine that has no checkout gets it from the hub**, which
+serves the three things a first run needs and needs no token for any of them — they are
+the software, identical on every deployment, and the person downloading them does not have
+a token yet by definition:
+
+```bash
+mkdir -p ~/.local/bin ~/.claude/skills/hammerola
+curl -fsSL <hub>/start/hammerola -o ~/.local/bin/hammerola && chmod +x ~/.local/bin/hammerola
+curl -fsSL <hub>/start/skill.md -o ~/.claude/skills/hammerola/SKILL.md   # for an agent
+```
+
+The downloaded client is a zipapp built out of `src/client/` — one file, no
+install, python 3.9 and up (`src/onboarding.MIN_PYTHON`, which is also what the
+skill tells the reader and what a test holds the syntax to: a stock
+`/usr/bin/python3` is 3.9 on macOS and on Debian 11, so "newer than that" is a
+first onboarding step that fails on the ordinary machine).
+
+`GET /start` is the manifest that names both, plus the template below — and one boolean,
+`empty`, which is the only thing on this service that says anything about the deployment
+without the token. It is there so that the front page of a hub nobody has pushed to yet
+will be able to show somebody what to do instead of a login form and nothing else. **That
+page has not been written**: the browser UI is untouched here, and the one reader of the
+manifest today is `hammerola create`, which follows `template` and fetches nothing else.
+`src/onboarding.py` carries the argument for the boolean and for why it is never a count.
+
 Then, in a model's directory:
 
 ```bash
-hammerola create --title "T13 ceiling mount"   # once per project: mints project.json
+hammerola create --title "T13 ceiling mount"   # once per project: project.json + the template
 hammerola build                                # publish the working copy into `dev`
 hammerola commit -m "thicker bracket"          # publish an immutable revision
 hammerola status                               # what the hub has for this project
 hammerola comments                             # notes left on this project's builds
 ```
+
+`create` fetches the starter template from the hub and unpacks it beside the `project.json`
+it mints — a `model.py` that builds as it stands. It never writes over anything that is
+already there, and `--no-template` is the form for a directory that already has a model (or
+a machine with no hub to reach: the id has always been minted locally and still is).
 
 **The revision is named by the hub**, not by the pusher and not by git: it is the digest of
 the sources it received. So `commit` means "publish a version of this" — a directory that
@@ -66,9 +96,11 @@ Python. `make ui` builds the browser bundle and is the only target that needs no
 | Path | Purpose |
 | --- | --- |
 | `Makefile` | Single entry point for repeated actions: `install`, `test`, `run`, `client`, `ui`. Run `make help`. |
-| `src/` | Application code; `settings.py` reads all config from ENV / `.env`. `app.py` is the HTTP surface, `store.py` the on-disk layout and the atomic publish, `jobs.py` the build queue a push hands over to, `buildproc/` the separate process a model actually runs in, and `cadbuild/` the build half moved in from `cad_publish`. |
+| `src/` | Application code; `settings.py` reads all config from ENV / `.env`. `app.py` is the HTTP surface, `store.py` the on-disk layout and the atomic publish, `jobs.py` the build queue a push hands over to, `buildproc/` the separate process a model actually runs in, `cadbuild/` the build half moved in from `cad_publish`, and `onboarding.py` the four things `/start` serves to somebody who has just found the hub. |
 | `src/client/` | The other side of the wire: the `hammerola` command an author runs in a model's directory. Standard library only — it must import under a laptop's bare `python3`, so it takes nothing from `requirements.txt` and talks HTTP with `urllib.request`. `tests/client/` drives it against a real hub over a real socket. |
 | `bin/hammerola` | The command itself, a plain script `make client` symlinks onto PATH. Deliberately not a packaging entry point: this repo's one importable top-level name is `src`, and `pip install`ing that onto a laptop would shadow every other project's. |
+| `model_template/` | The starter project `hammerola create` unpacks: a `model.py` that builds as it stands, and a `.gitignore`. Files rather than a section of documentation, because the suite BUILDS it through the real build path (`tests/test_template.py`) — a template that stopped satisfying the gate would otherwise be handed to somebody with no way of telling whose fault it is. |
+| `skill/SKILL.md` | Instructions for an agent working in a MODEL's repository, served at `/start/skill.md` and installed into `~/.claude/skills/`. It is about the workflow (`build` is a draft, `commit` is what makes a version exist), the model contract, and the four rules whose breach refuses a push. |
 | `checklib.py` | At the repository ROOT on purpose, and not a stray file: `import checklib` is part of the contract with every model.py, like `views()` and `printables()`. It re-exports `src/cadbuild/checklib.py` under that name, and it has to sit at the root because a model is imported with its own directory FIRST on `sys.path` — the name then has to resolve on the path behind it, which in the image is `/app`. |
 | `tests/` | pytest suite (runs in CI before the image is built). |
 | `ci/smoke.py` | The gate between building the image and publishing it, run as a step of its own in both workflows. It answers the seven things a green test suite structurally cannot, because the suite runs against a checkout and never looks at the artefact: the declared ENTRYPOINT/CMD/WORKDIR, that the startup guard still fires *and still names the missing variable*, that privileges are really dropped to `app`, that `.dockerignore` kept `tests/`, `.env` and `.venv` out — and its mirror, that `templates/`, `static/` and `checklib.py` really are in — that the image's own command reaches its startup marker, and that the CAD kernel imports inside the image at the pinned versions. No ports, no secrets, no network, so the identical gate runs on pull requests too. |

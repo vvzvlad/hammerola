@@ -34,6 +34,24 @@ def test_the_reserved_build_names_are_the_hubs():
     assert limits.DEV_SLOT == store.DEV_LINK
 
 
+def test_the_artifact_ceiling_is_what_a_build_may_write_into_one_file():
+    """A build's OUTPUT is not bounded by what a push may be, and this is the
+    number that says so.
+
+    `hammerola artifacts` fetches STL/STEP/3MF, which the hub produced rather
+    than received: a source tree is kilobytes and its meshes are not. Holding the
+    fetch to MAX_BUILD_BYTES refused files the hub was serving perfectly happily
+    — so the client carries the BUILD's per-file ceiling too, and this compares
+    it against the rlimit a build actually runs under.
+    """
+    from src.buildproc.limits import Limits
+
+    assert limits.MAX_ARTIFACT_BYTES == Limits().file_bytes
+    assert limits.MAX_ARTIFACT_BYTES > limits.MAX_BUILD_BYTES, (
+        "the two ceilings have converged, which makes one of them pointless — "
+        "read the comment on MAX_ARTIFACT_BYTES before removing either")
+
+
 def test_the_size_ceiling_matches_the_hubs_default():
     """The DEFAULT, which is all the client can know.
 

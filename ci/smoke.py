@@ -221,6 +221,31 @@ REQUIRED_PATHS = [
     # dynamic import or a stylesheet adds the file it produces here and a COPY line for it, in
     # the same commit.
     "/app/static/_v/hammerola.js",
+    # What the hub hands somebody who has just found it (src/onboarding.py): the
+    # agent instructions, and the starter model directory. Both are copied as
+    # whole trees, so one file of each is named here — the one whose absence the
+    # route cannot survive.
+    #
+    # They are here for the reason every other row is: nothing else can see them
+    # go missing. The image starts, drops privileges, serves every page and
+    # passes checks (a) to (f) with neither of them, and what breaks is a 404 on
+    # `/start/skill.md` for somebody who came to the hub precisely because they
+    # did not know what to do next.
+    #
+    # SKILL.md has a second, sharper way of disappearing, which is why it is not
+    # enough to trust the COPY line: `.dockerignore` carries a `*.md` rule. It is
+    # root-only as docker matches patterns, so this file survives it today —
+    # widen that line to `**/*.md` and the image builds green with the skill
+    # route dead. This row is what fails instead.
+    "/app/skill/SKILL.md",
+    "/app/model_template/model.py",
+    # The ONE file the template rules were relaxed for, and the only reason
+    # `unpack` has an exception at all. It is hidden, so it is exactly the
+    # kind of file a COPY, an ignore rule or an editor drops silently — and
+    # `/start/template.tar.gz` would go on serving a template without it,
+    # leaving every project created from it with no .gitignore and nothing
+    # anywhere saying so.
+    "/app/model_template/.gitignore",
 ]
 
 # --- check (f): the CAD kernel -------------------------------------------------------------

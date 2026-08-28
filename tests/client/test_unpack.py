@@ -19,6 +19,7 @@ the destination as it found it. A partial unpack would be the worst outcome —
 some of a stranger's tree on disk, under a command that reported failure.
 """
 
+import inspect
 import io
 import tarfile
 
@@ -29,6 +30,19 @@ from harness import (chardev_entry, dir_entry, fifo_entry, file_entry,
 from src.client import unpack
 from src.client.errors import ClientError
 from src.client.limits import MAX_MEMBERS, MAX_PATH_DEPTH
+
+
+# EVERY HOSTILE ARCHIVE IS TRIED UNDER BOTH RULE SETS, and that parametrization
+# is not symmetry for its own sake. `TEMPLATE_RULES` is the one the client reads
+# an archive with from an address a PERSON TYPED, on a machine where nothing else
+# has checked it — and it was the untested one: the whole adversarial set below
+# called `extract` without an argument, i.e. exercised the push rules only, and
+# the relaxation written for `.gitignore` turned out to accept `.git/config` as
+# well. That member is executed by the next `git status` anybody runs.
+ALL_RULES = [
+    pytest.param(unpack.PUSH_RULES, id="push"),
+    pytest.param(unpack.TEMPLATE_RULES, id="template"),
+]
 
 
 def good(files=None):
@@ -50,6 +64,7 @@ def test_reading_in_memory_gives_the_same_members(tmp_path):
         "model.py": b"X = 1\n", "ref/part.step": b"ISO;\n"}
 
 
+@pytest.mark.parametrize("rules", ALL_RULES)
 @pytest.mark.parametrize("name", [
     "../escape.py",
     "../../escape.py",
@@ -59,18 +74,71 @@ def test_reading_in_memory_gives_the_same_members(tmp_path):
     ".ssh/authorized_keys",     # a hidden component is not on the alphabet
     "ref//model.py",            # an empty component
     "C:\\model.py",
+    # THE TWO THAT MATTER MOST UNDER THE TEMPLATE RULES, because they are what a
+    # per-component relaxation lets through. `.git/config` is remote code
+    # execution and needs no vulnerability anywhere: `core.fsmonitor` holds a
+    # shell command, `git init` does not overwrite an existing config, and the
+    # skill tells the author to commit project.json — so the next `git status`
+    # runs it. `.ssh/authorized_keys` is above, under both.
+    ".git/config",
+    ".git/hooks/pre-commit",
+    # A directory named for the one file the template rules DO allow: the
+    # exception is a leaf, so this is still refused.
+    ".gitignore/payload.py",
 ])
 def test_a_member_that_navigates_is_refused_and_nothing_is_written(tmp_path,
-                                                                   name):
+                                                                   name, rules):
     dest = tmp_path / "out"
     with pytest.raises(ClientError) as raised:
-        unpack.extract(raw_tar_gz([file_entry(name, b"pwned")]), dest)
+        unpack.extract(raw_tar_gz([file_entry(name, b"pwned")]), dest,
+                       rules=rules)
     assert "match" in str(raised.value) or "deeper" in str(raised.value)
     # Not one byte, and not even the directory: the check runs before the write.
     assert not dest.exists() or list(dest.iterdir()) == []
     assert not (tmp_path / "escape.py").exists()
 
 
+def test_a_hidden_file_is_refused_by_default_and_only_the_template_may_carry_one(
+        tmp_path):
+    """THE RELAXED RULES ARE NOT THE DEFAULT, stated as a test.
+
+    Both functions take `rules` with `PUSH_RULES` in the signature, and the day
+    somebody "tidies" that into the template's set — or passes it to save an
+    argument — `source` and `diff` would start writing hidden files out of an
+    archive from the hub. This fails at that edit.
+    """
+    body = raw_tar_gz([file_entry(".gitignore", b"_out/\n")])
+    with pytest.raises(ClientError):
+        unpack.extract(body, tmp_path / "push")
+    with pytest.raises(ClientError):
+        unpack.read_members(body)
+
+    written = unpack.extract(body, tmp_path / "template",
+                             rules=unpack.TEMPLATE_RULES)
+    assert written == [".gitignore"]
+    assert (tmp_path / "template" / ".gitignore").read_bytes() == b"_out/\n"
+
+    for function in (unpack.extract, unpack.read_members):
+        default = inspect.signature(function).parameters["rules"].default
+        assert default is unpack.PUSH_RULES, (
+            f"{function.__name__} defaults to {default}, so an unpack written "
+            f"without an argument no longer applies the push's alphabet")
+
+
+def test_the_template_exception_is_one_name_in_the_last_position(tmp_path):
+    """The width of the relaxation, pinned where it is easy to widen by accident.
+
+    One entry, and it is checked as a NAME rather than as "starts with a dot".
+    """
+    assert unpack.TEMPLATE_RULES.hidden_leaves == frozenset({".gitignore"})
+    assert unpack.PUSH_RULES.hidden_leaves == frozenset()
+    # A leaf inside a directory is fine; the directory itself never is.
+    assert unpack.extract(
+        raw_tar_gz([file_entry("ref/.gitignore", b"x")]), tmp_path / "out",
+        rules=unpack.TEMPLATE_RULES) == ["ref/.gitignore"]
+
+
+@pytest.mark.parametrize("rules", ALL_RULES)
 @pytest.mark.parametrize("entry", [
     symlink_entry("link.py", "/etc/passwd"),
     symlink_entry("link.py", "../outside.py"),
@@ -78,14 +146,14 @@ def test_a_member_that_navigates_is_refused_and_nothing_is_written(tmp_path,
     fifo_entry("pipe"),
     chardev_entry("null"),
 ])
-def test_only_regular_files_are_unpacked(tmp_path, entry):
+def test_only_regular_files_are_unpacked(tmp_path, entry, rules):
     """A link is the classic way to make a write land somewhere else, and the
     hub refuses every one of them on the way in — so one arriving here means
     the archive did not come from a push this hub accepted."""
     dest = tmp_path / "out"
     with pytest.raises(ClientError) as raised:
         unpack.extract(raw_tar_gz([file_entry("model.py", b"X = 1\n"), entry]),
-                       dest)
+                       dest, rules=rules)
     assert "not a regular file" in str(raised.value)
     assert not dest.exists() or list(dest.iterdir()) == []
 

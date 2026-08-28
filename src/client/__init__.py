@@ -5,7 +5,11 @@ publish; the other four are the ones that need nothing new from the hub.
 
     hammerola login            -> checks the password, then writes HUB_URL and
                                   EDIT_TOKEN into ~/.config/hammerola/env
-    hammerola create           -> a project.json with a fresh id (SPEC §3.1)
+    hammerola create           -> a project.json with a fresh id (SPEC §3.1),
+                                  and the starter template from GET /start —
+                                  the one route this tool asks for with no
+                                  token, because `--no-template` is what makes
+                                  the id offline rather than the whole command
     hammerola build            -> POST /api/v1/publish/<pid>/dev
     hammerola commit -m "..."  -> POST /api/v1/publish/<pid>, and the hub
                                   answers with the revision id it minted
