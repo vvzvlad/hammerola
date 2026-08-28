@@ -356,13 +356,20 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   project directory" either: `build_staging` creates one before the build runs
   and nothing removes it when the build fails the gate, so counting bare
   directories made a hub permanently non-empty the moment its first push failed
-  — landing on exactly the reader the answer is for. ONE OF THE FOUR MANIFEST FIELDS HAS
-  A READER TODAY — `hammerola create` follows `template` — and `empty` has none
-  at all: the browser UI was deliberately left untouched, so the front page of a
-  hub nobody has pushed to still shows a login form and nothing else. The block
-  that renders the three downloads is the work this route was built for and has
-  not been done; until it is, the argument for answering a question about the
-  deployment anonymously is a debt nothing has collected on
+  — landing on exactly the reader the answer is for. ALL FOUR MANIFEST FIELDS
+  HAVE A READER: `hammerola create` follows `template`, and the SIGN-IN PAGE
+  reads `empty` — the gate on everything below — and then follows `skill` and
+  `client` when it says this hub has nothing on it
+  (SPEC §8 entry 48). That block — five lines a person copies and hands to their
+  agent — is what the route was built for and what collects on the argument for
+  answering a question about the deployment anonymously. It is on the DOOR and
+  not on the list, because the list is behind the very token somebody opening an
+  empty hub does not have. Its addresses are BUILT, never written down: the
+  origin off the browser (`hubOrigin` in `ui/src/hub.js`) and the paths out of
+  the manifest. The page asks LAZILY — a
+  reader who already has a token goes to the list and never touches this route —
+  and every failure of that fetch is silence: a hint must not be able to take a
+  sign-in form down (`loadStart` in `ui/src/hub.js`)
 - **The client has two doors and no installed script.** Out of a checkout it is
   `python3 -m src.client`, STARTED IN THE CHECKOUT ROOT because that is where
   `src` is importable — so the model directory is an argument and not the shell's

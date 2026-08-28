@@ -27,9 +27,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // and `Unauthorized` are left real — this file checks the mapping itself and
 // the branch that keys on that class, and a stubbed one would let it agree with
 // itself instead of with the code.
+//
+// `loadStart` is stubbed beside it and answers "no block" by default, which is
+// what a hub with projects on it answers. What the real one does with what a hub
+// actually sends is `start.test.js`, in a file of its own for the reason given
+// there: this one needs the module mocked, that one needs it real.
 vi.mock('../src/hub.js', async (importOriginal) => ({
   ...(await importOriginal()),
   loadIndex: vi.fn(),
+  loadStart: vi.fn(async () => null),
 }))
 // The storage functions are stubbed and the VOCABULARY is not: `PROJECT_VIEWS`
 // and `PROJECT_SORTS` are what the component builds its tabs out of, so a copy
@@ -45,12 +51,15 @@ vi.mock('../src/store.js', async (importOriginal) => ({
   writeProjectSort: vi.fn(),
 }))
 
-import HammerolaEntry, { HammerolaProjects, relTime } from '../src/HammerolaEntry.jsx'
-import { loadIndex, projectCard, projectUrl, Unauthorized } from '../src/hub.js'
+import HammerolaEntry, {
+  agentBrief, HammerolaLogin, HammerolaProjects, relTime,
+} from '../src/HammerolaEntry.jsx'
+import { loadIndex, loadStart, projectCard, projectUrl, Unauthorized } from '../src/hub.js'
 import {
   clearToken, readProjectSort, readProjectView, readToken, writeProjectSort,
   writeProjectView, writeToken,
 } from '../src/store.js'
+import { collect, texts } from './eltree.js'
 
 /** One card exactly as src/render.py's `index_card` writes it. */
 const CARD = {
@@ -68,6 +77,11 @@ const CARD = {
 
 afterEach(() => {
   vi.clearAllMocks()
+  // `clearAllMocks` forgets the CALLS and keeps the implementations, so a test
+  // that made the hub answer with a block would go on answering that way for
+  // every test after it. Put back the default the factory gave it.
+  loadStart.mockImplementation(async () => null)
+  vi.unstubAllGlobals()
 })
 
 // -- the card ----------------------------------------------------------------
@@ -300,9 +314,10 @@ describe('relTime', () => {
 /** The page as `open`, `submit` and `signOut` see it. */
 function page(token = null) {
   const c = Object.create(HammerolaEntry.prototype)
-  c.state = { projects: null, token, busy: false, refused: '' }
+  c.state = { projects: null, token, busy: false, refused: '', start: null }
   c.setState = vi.fn((patch) => { c.state = { ...c.state, ...patch } })
   c.open = HammerolaEntry.prototype.open
+  c.askStart = HammerolaEntry.prototype.askStart
   return c
 }
 
@@ -386,10 +401,15 @@ describe('arriving with a token already stored', () => {
     expect(loadIndex).toHaveBeenCalledWith('remembered')
   })
 
-  it('asks nothing at all when there is no token', () => {
+  it('asks for no list when there is no token, and asks /start instead', () => {
+    // BOTH HALVES ARE ASSERTED, and the second one used to be a sentence. It
+    // does ask the hub ONE thing on this path — whether anything is published
+    // here, which is what the door's block is drawn from. That is the public
+    // route and it carries no token; the guarded one is not touched.
     const c = page(null)
     HammerolaEntry.prototype.componentDidMount.call(c)
     expect(loadIndex).not.toHaveBeenCalled()
+    expect(loadStart).toHaveBeenCalledTimes(1)
   })
 
   it('forgets a stored token the hub no longer accepts', async () => {
@@ -450,5 +470,352 @@ describe('which screen is drawn', () => {
     expect(screenOf({ token: 'sekrit', projects: [] }).name).toBe('HammerolaProjects')
     expect(screenOf({ token: 'sekrit', projects: [projectCard(CARD)] }).name)
       .toBe('HammerolaProjects')
+  })
+})
+
+// -- the block for an agent, on a hub with nothing on it ---------------------
+//
+// Five lines somebody copies and hands to their agent: where the skill is, where
+// the client is, what this hub's address is, install the skill and follow it,
+// ask the owner for the token (SPEC 8, entry 48). What is pinned here is the
+// three properties that are decisions rather than layout — it is on the DOOR and
+// appears at every arrival there, every address in it is BUILT from the browser's
+// origin and the manifest's paths, and it never claims to have copied itself
+// when it has not.
+//
+// WHAT IS NOT HERE is what the manifest has to say for the block to exist at
+// all: that lives in start.test.js, where hub.js is the real module.
+
+const HINT = { skill: '/start/skill.md', client: '/start/hammerola' }
+/** A hub reached at an address nothing in this repository could have written. */
+const AT = { origin: 'https://hub.example', ...HINT }
+
+/** A HammerolaLogin as React builds one: defaultProps applied, state seeded. */
+function login(props) {
+  const c = new HammerolaLogin({ ...HammerolaLogin.defaultProps, ...props })
+  c.setState = vi.fn((patch) => { c.state = { ...c.state, ...patch } })
+  return c
+}
+
+/** The sign-in screen exactly as the page hands it over, as an element tree. */
+function drawnDoor(entryState) {
+  const c = Object.create(HammerolaEntry.prototype)
+  c.state = {
+    projects: null, token: null, busy: false, refused: '', start: null, ...entryState,
+  }
+  const screen = HammerolaEntry.prototype.render.call(c)
+  expect(screen.type).toBe(HammerolaLogin)
+  return HammerolaLogin.prototype.render.call(login(screen.props))
+}
+
+const fields = (tree) => collect(tree, (el) => (el.type === 'input' ? el : undefined))
+
+describe('the block for an agent', () => {
+  it('is on the door, line for line, when the hub says it has nothing', () => {
+    const drawn = texts(drawnDoor({ start: AT }))
+    for (const line of agentBrief(AT)) expect(drawn).toContain(line)
+  })
+
+  it('is not on the door when the hub has something on it', () => {
+    // `start` is null for a hub with projects, for a hub that could not be
+    // asked and for one that answered something unreadable — all three by the
+    // time it gets here (hub.js). The form has to be the form either way.
+    const drawn = texts(drawnDoor({ start: null }))
+    for (const line of agentBrief(AT)) expect(drawn).not.toContain(line)
+    expect(drawn).not.toContain('Nothing published here yet')
+    expect(drawn).toContain('Sign in')
+    expect(fields(drawnDoor({ start: null }))).toHaveLength(1)
+  })
+
+  it('builds every address out of the origin and the manifest paths', () => {
+    // THE POINT OF THE WHOLE FILE-FULL: nothing in the bundle names a host, and
+    // nothing names the paths either — the origin is the browser's and the paths
+    // are the hub's own answer. Fed an address and paths no deployment uses,
+    // the block has to print exactly those.
+    const odd = { origin: 'https://elsewhere.example:8443', skill: '/get/s.md', client: '/get/tool' }
+    const drawn = texts(drawnDoor({ start: odd }))
+    expect(drawn).toContain('Skill: https://elsewhere.example:8443/get/s.md')
+    expect(drawn).toContain('Client: https://elsewhere.example:8443/get/tool')
+    expect(drawn).toContain('Hub: https://elsewhere.example:8443')
+  })
+
+  it('calls the client what the rest of this repository calls it', () => {
+    // `src/client/`, "the client" in AGENTS.md and the SPEC, `hammerola` on a
+    // PATH. A third name for it here — `Helper:`, which is what this said first
+    // — leaves whoever reads the block and then the skill working out that the
+    // two are one file.
+    expect(agentBrief(AT)).toContain(`Client: ${AT.origin}${AT.client}`)
+    expect(agentBrief(AT).join('\n')).not.toMatch(/helper/i)
+  })
+
+  it('joins the browser\'s own origin to what the hub answered', async () => {
+    // The other half of the same rule, at the place the two meet: the origin is
+    // read off the page rather than stored anywhere, so this compares against
+    // what the environment says and not against a string.
+    loadStart.mockImplementation(async () => HINT)
+    const c = page()
+    await c.askStart()
+    expect(c.state.start).toEqual({ origin: window.location.origin, ...HINT })
+  })
+
+  it('carries no token and grows no field for one', () => {
+    // The secret goes from a person to a person; the block only says so. A
+    // field here would be a credential in whatever the reader pasted this into.
+    const copied = agentBrief(AT).join('\n')
+    expect(copied).toMatch(/ask the owner of this instance for the token/i)
+    expect(copied).not.toMatch(/EDIT_TOKEN/)
+    // One field on the whole screen, and it is the sign-in one.
+    expect(fields(drawnDoor({ start: AT }))).toHaveLength(1)
+  })
+
+  it('says nothing this page cannot say', () => {
+    // Five lines, no explanation of what any of it is: the skill is the first
+    // address in it, and everything about hammerola is written there. A block
+    // that grew a second account of it would be a copy going stale on a page
+    // whose reader has not read the first one yet.
+    expect(agentBrief(AT)).toHaveLength(5)
+  })
+})
+
+describe('when the door asks whether the hub is empty', () => {
+  it('asks on a page load with no token, which is the arrival it exists for', async () => {
+    // THE ONE THAT ACTUALLY HAPPENS: somebody deployed this, opened it, and has
+    // no token — the whole reason the block was written. It was also the one
+    // arrival nothing covered: deleting `this.askStart()` out of
+    // `componentDidMount` left every test in this file green, while the two
+    // arrivals below (sign-out, a refused token) both caught it. Asserted end to
+    // end rather than by counting the call, so that a mount which asks and then
+    // drops the answer fails here too.
+    loadStart.mockImplementation(async () => HINT)
+    const c = page(null)
+    await HammerolaEntry.prototype.componentDidMount.call(c)
+    await vi.waitFor(() => expect(c.state.start).not.toBeNull())
+    expect(loadStart).toHaveBeenCalledTimes(1)
+    expect(c.state.start).toEqual({ origin: window.location.origin, ...HINT })
+  })
+
+  it('does not ask at all for a reader who has a token', async () => {
+    // Lazy: somebody with a token is going to the list, where no block is
+    // drawn, and a second request on that path buys the page nothing.
+    loadIndex.mockResolvedValue([CARD])
+    loadStart.mockImplementation(async () => HINT)
+    const c = page('remembered')
+    await HammerolaEntry.prototype.componentDidMount.call(c)
+    await vi.waitFor(() => expect(c.state.projects).not.toBeNull())
+    expect(loadStart).not.toHaveBeenCalled()
+  })
+
+  it('asks once, however often the door is arrived at', async () => {
+    loadStart.mockImplementation(async () => HINT)
+    const c = page()
+    await c.askStart()
+    await c.askStart()
+    expect(loadStart).toHaveBeenCalledTimes(1)
+  })
+
+  it('asks after signing out', async () => {
+    // The arrival that never passes through a page load: the list was on the
+    // screen a moment ago, and this is a hub with nothing on it.
+    loadStart.mockImplementation(async () => HINT)
+    const c = page('sekrit')
+    c.state = { ...c.state, projects: [projectCard(CARD)] }
+    await HammerolaEntry.prototype.signOut.call(c)
+    await vi.waitFor(() => expect(c.state.start).not.toBeNull())
+    expect(c.state.start).toEqual({ origin: window.location.origin, ...HINT })
+  })
+
+  it('asks after the hub refused a token', async () => {
+    // Quite possibly the owner, setting the hub up with the wrong string in the
+    // browser — which is exactly the reader the block is written for.
+    loadIndex.mockRejectedValue(new Unauthorized('401'))
+    loadStart.mockImplementation(async () => HINT)
+    const c = page('stale')
+    await HammerolaEntry.prototype.componentDidMount.call(c)
+    await vi.waitFor(() => expect(c.state.start).not.toBeNull())
+  })
+
+  it('does not ask a hub that just failed to answer anything', async () => {
+    // Distinct from a refusal, and the distinction is deliberate: the hub could
+    // not be reached, so another question is one more request nobody can get an
+    // answer to. The door still works; there is simply no block on it.
+    loadIndex.mockRejectedValue(new Error('offline'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const c = page()
+    await HammerolaEntry.prototype.submit.call(c, 'sekrit')
+    expect(loadStart).not.toHaveBeenCalled()
+    expect(c.state.start).toBeNull()
+  })
+
+  it('draws no block when the hub answered that it has projects', async () => {
+    loadStart.mockImplementation(async () => null)
+    const c = page()
+    await c.askStart()
+    expect(c.state.start).toBeNull()
+  })
+
+  it('asks again after an ask that brought nothing back', async () => {
+    // THE BUG THIS IS FOR, in the order it happens: the door opens, `/start`
+    // does not answer, and the reader then types a token the hub refuses — the
+    // arrival the block is most written for, since somebody typing a token into
+    // an empty hub is usually its owner. With the flag set on the REQUEST that
+    // second arrival found the question already asked and drew nothing until a
+    // reload; set on the ANSWER, it asks again and gets one.
+    loadStart.mockImplementation(async () => null)
+    const c = page()
+    await c.askStart()
+    expect(c.state.start).toBeNull()
+
+    loadStart.mockImplementation(async () => HINT)
+    await c.askStart()
+    expect(loadStart).toHaveBeenCalledTimes(2)
+    expect(c.state.start).toEqual({ origin: window.location.origin, ...HINT })
+  })
+
+  it('asks again after an ask that threw, rather than handing back the wreck', async () => {
+    // UNREACHABLE TODAY AND WRITTEN ANYWAY, because the path is deliberate:
+    // `loadStart` resolves for every failure it can have, and `startHint` was
+    // put OUTSIDE its `try` on purpose so that a defect in this bundle arrives
+    // as a stack trace instead of a hub that silently never has a block
+    // (hub.js). "There is nothing to catch here" is therefore the first
+    // sentence in askStart's docstring that will go stale, and clearing the
+    // flight on the fulfilled branch alone makes that day cost twice: the
+    // rejected promise sits in `this.asking` and every later arrival at the
+    // door gets it back without a request being made, so the block never
+    // appears again for the life of the page.
+    loadStart.mockImplementationOnce(async () => { throw new Error('defect') })
+    const c = page()
+    await expect(c.askStart()).rejects.toThrow('defect')
+    expect(c.state.start).toBeNull()
+
+    loadStart.mockImplementation(async () => HINT)
+    await c.askStart()
+    expect(loadStart).toHaveBeenCalledTimes(2)
+    expect(c.state.start).toEqual({ origin: window.location.origin, ...HINT })
+  })
+
+  it('asks once for two arrivals inside one flight', async () => {
+    // The other direction of the same field. Nothing overlaps them in the
+    // browser today, but "ask once" has to mean once whether or not the first
+    // answer has landed — otherwise moving the flag off the request traded one
+    // wasted ask for two live ones.
+    let answer
+    loadStart.mockImplementation(() => new Promise((resolve) => { answer = resolve }))
+    const c = page()
+    const first = c.askStart()
+    const second = c.askStart()
+    expect(loadStart).toHaveBeenCalledTimes(1)
+    answer(HINT)
+    await Promise.all([first, second])
+    expect(c.state.start).toEqual({ origin: window.location.origin, ...HINT })
+  })
+
+  it('leaves the question about /start unasked and unanswered', async () => {
+    // THE CONSTRUCTOR IS OTHERWISE UNTESTED, and everything the block hangs off
+    // is seeded there: `start`, `answered` and `asking`. Every other test in
+    // this file builds the page with `Object.create` and writes `state` by
+    // hand, so the constructor never runs in them — and all three of
+    // `answered = true`, `asking = <a promise that never settles>` and a
+    // `start` seeded with a block passed the entire suite unchanged. The first
+    // two are the door never asking `/start` at any arrival, on any hub, for
+    // the life of the tab; the third is the block drawn on a hub that never
+    // said it was empty. Asserted through a real ask rather than by reading the
+    // fields, so that seeding them with anything else fails here too.
+    loadStart.mockImplementation(async () => HINT)
+    const c = new HammerolaEntry({})
+    c.setState = vi.fn((patch) => { c.state = { ...c.state, ...patch } })
+    expect(c.state.start).toBeNull()
+
+    const flight = c.askStart()
+    // Synchronously, before the answer: an `asking` seeded with a pending
+    // promise is handed back instead, and no request is made at all.
+    expect(loadStart).toHaveBeenCalledTimes(1)
+    await flight
+    expect(c.state.start).toEqual({ origin: window.location.origin, ...HINT })
+  })
+})
+
+describe('copying the block', () => {
+  const clipboardOf = (writeText) => {
+    vi.stubGlobal('navigator', { clipboard: writeText ? { writeText } : undefined })
+  }
+
+  it('writes every line of it, in one piece', async () => {
+    // One message, not five: the reason the button exists is that a person
+    // selecting three addresses out of a box by hand drops a character off one.
+    const writeText = vi.fn(async () => {})
+    clipboardOf(writeText)
+    const c = login({ start: AT })
+    await c.copy()
+    expect(writeText).toHaveBeenCalledWith(agentBrief(AT).join('\n'))
+    expect(c.state.copied).toBe('done')
+    expect(texts(HammerolaLogin.prototype.render.call(c))).toContain('Copied')
+  })
+
+  it('does not claim to have copied where there is no clipboard', async () => {
+    // `navigator.clipboard` is absent in an insecure context, which a hub on a
+    // plain http address inside a network is. Saying "Copied" there leaves
+    // somebody pasting whatever was in the buffer before.
+    clipboardOf(null)
+    const c = login({ start: AT })
+    await c.copy()
+    expect(c.state.copied).toBe('none')
+    const drawn = texts(HammerolaLogin.prototype.render.call(c))
+    expect(drawn).not.toContain('Copied')
+    expect(drawn).toContain('Copy by hand')
+  })
+
+  it('says so when the clipboard refused', async () => {
+    // Rejected rather than absent: the document was not focused, or the
+    // permission was denied. Same rule, and the failure must not be silent
+    // either — the button is the only report there is.
+    clipboardOf(vi.fn(async () => { throw new DOMException('not focused') }))
+    const c = login({ start: AT })
+    await c.copy()
+    expect(c.state.copied).toBe('failed')
+    expect(texts(HammerolaLogin.prototype.render.call(c))).toContain('Copy failed')
+  })
+
+  it('does nothing at all when there is no block to copy', async () => {
+    const writeText = vi.fn(async () => {})
+    clipboardOf(writeText)
+    const c = login({ start: null })
+    await c.copy()
+    expect(writeText).not.toHaveBeenCalled()
+    expect(c.state.copied).toBe('')
+  })
+
+  it('drops its verdict when the block underneath it changes', () => {
+    // A verdict is about the text that was copied. `Copied` over lines that have
+    // since changed claims a clipboard holding something else, and `Copy failed`
+    // reports a failure that happened to different ones — neither correctable by
+    // the reader, since the button says nothing more until it is pressed again.
+    const c = login({ start: AT })
+    c.state = { ...c.state, copied: 'failed' }
+    c.props = { ...c.props, start: { origin: 'https://moved.example', ...HINT } }
+    HammerolaLogin.prototype.componentDidUpdate.call(c, { start: AT })
+    expect(c.state.copied).toBe('')
+    expect(texts(HammerolaLogin.prototype.render.call(c))).toContain('Copy')
+  })
+
+  it('leaves the verdict alone while the block is the same', () => {
+    // The other half: every keystroke in the token field re-renders this screen,
+    // and a `Copied` that vanished on the next one would be a button that
+    // answered and then took it back.
+    const c = login({ start: AT })
+    c.state = { ...c.state, copied: 'done' }
+    HammerolaLogin.prototype.componentDidUpdate.call(c, { start: AT })
+    expect(c.state.copied).toBe('done')
+  })
+
+  it('clears the last verdict before trying again', async () => {
+    // A retry must not read as its own result for however long the clipboard
+    // takes to answer.
+    const c = login({ start: AT })
+    const seen = []
+    clipboardOf(vi.fn(async () => { seen.push(c.state.copied) }))
+    c.state = { ...c.state, copied: 'failed' }
+    await c.copy()
+    expect(seen).toEqual([''])
+    expect(c.state.copied).toBe('done')
   })
 })

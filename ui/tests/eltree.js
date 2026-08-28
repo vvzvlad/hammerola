@@ -58,3 +58,25 @@ export const links = (node) => collect(node, (el) => (el.type === 'a' ? el : und
 
 /** Every `title` prop — a value the page shows only to somebody who hovers. */
 export const titles = (node) => collect(node, (el) => el.props.title)
+
+/**
+ * Every string the tree puts on the screen, one per string, in draw order.
+ *
+ * ITS OWN WALK, and not a `take` over the one above, for a reason worth stating
+ * so nobody unifies them: `collect` hands `take` an ELEMENT and descends through
+ * `props.children`, so a string is never a node it visits — it is the thing it
+ * stops at. Most of the text on these pages is also not an element's only child
+ * (`{busy && <span/>}{busy ? 'Checking…' : 'Sign in'}` is an array of two), and
+ * a reading that joined an array's strings would answer with text no element
+ * actually holds. Both halves are why this is four lines rather than a filter.
+ */
+export function texts(node, out = []) {
+  if (node === null || node === undefined || typeof node === 'boolean') return out
+  if (typeof node === 'string' || typeof node === 'number') {
+    out.push(String(node))
+    return out
+  }
+  if (Array.isArray(node)) node.forEach((child) => texts(child, out))
+  else if (node.props) texts(node.props.children, out)
+  return out
+}

@@ -35,15 +35,22 @@ count would leak the size of the fleet and its growth rate to anyone who polled;
 a name is the prefix of a permanent URL, which is precisely what `/index.json`
 is guarded to withhold.
 
-NOTHING READS `empty` YET, and it is worth knowing that before reading the
-paragraph above as a description of a working page. Of the four fields, ONE has
-a reader today: `hammerola create` follows `template`. The browser UI was not
-touched on the branch that added this route — deliberately, because the page is
-a separate piece of work — so the front page of a hub nobody has pushed to still
-shows a login form and nothing else. What the boolean is FOR is the block that
-page will grow; until then this module is the whole of the feature, and the
-argument for making a fact about the deployment public is a debt that has not
-yet bought anything. Whoever builds that block is who collects on it.
+WHAT READS `empty` IS THE DOOR — the sign-in screen of a hub nobody has pushed
+to (`ui/src/HammerolaEntry.jsx`, SPEC 8 entry 48). It draws five lines somebody
+copies and hands to their agent: where the skill is, where the client is, what
+this hub's address is, install the skill and follow it, ask the owner for the
+token. The two paths in it come from the manifest and the address from the
+browser, so nothing on that page names a deployment either. That is what the
+argument above buys, and until it was written the argument was a debt: the
+route answered a question about the deployment anonymously and no reader had
+collected on it.
+
+ALL FOUR FIELDS HAVE A READER NOW, `empty` included — it is the one the
+paragraph above is about, and it is the gate on the other three: the door draws
+nothing unless it says `true`. `hammerola create` follows `template`; `skill`
+and `client` are what the door renders. The page asks
+LAZILY, only when it is showing the form, so a hub with projects on it is not
+polled by every reader who already has a token.
 
 WHAT COUNTS AS EMPTY is "no project directory on the volume WITH ANYTHING IN IT"
 (`Store.empty`), which differs from the obvious reading in two places. It is not
@@ -59,9 +66,9 @@ an onboarding block would be telling them what they have already done, and
 called that hub empty.
 
 NO ADDRESS APPEARS HERE. The paths below are relative and that is the whole of
-what this module names: a page rendering them will learn the hub's address from
-the address it was loaded from, and this repository never carries the address of
-a deployment (AGENTS.md).
+what this module names: the door reads the hub's address off the address it was
+loaded from (`hubOrigin` in `ui/src/hub.js`), and this repository never carries
+the address of a deployment (AGENTS.md).
 """
 
 import ast
@@ -77,9 +84,8 @@ ROOT = Path(__file__).resolve().parent.parent
 # --- the routes, named once ------------------------------------------------
 # The manifest carries them so that nothing else has to spell them: `hammerola
 # create` asks the manifest where the template is rather than carrying a second
-# copy of this string, and a front-page block, when there is one, will render
-# its links out of what it fetched rather than out of a third copy. Only the
-# first of those two readers exists today.
+# copy of this string, and the door's block for an agent renders its two
+# addresses out of what it fetched rather than out of a third copy.
 START_SEGMENT = "start"
 SKILL_NAME = "skill.md"
 CLIENT_NAME = "hammerola"
@@ -187,17 +193,20 @@ ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 
 
 def manifest(*, empty: bool) -> dict:
-    """The document a first run is made of, and a front-page block would be.
+    """The document a first run is made of, and the door's block is drawn from.
 
     Four keys and no more, checked by a test: three relative paths that are
     constants of the image, and the ONE boolean about this deployment. Adding a
     field here is adding a statement the hub makes without authentication — read
     the module docstring before doing it.
 
-    ONE OF THE FOUR HAS A READER TODAY. `hammerola create` follows `template`;
-    `skill`, `client` and `empty` are fetched by nobody, because the page that
-    would offer them has not been written (see the module docstring). That is
-    the state of it, not a fact to be inferred from the shape of this function.
+    ALL FOUR HAVE A READER. `hammerola create` follows `template`; the sign-in
+    page reads `empty` — that is the whole of the gate on its block — and
+    follows `skill` and `client` when it says there is nothing here yet.
+    `template` is the one the BROWSER deliberately ignores — a page cannot
+    unpack a starter project into anybody's directory, and the block that would
+    name it says "install the skill and follow it" instead — but it is read all
+    the same, by the client, which is where unpacking belongs.
     """
     return {
         "empty": bool(empty),
