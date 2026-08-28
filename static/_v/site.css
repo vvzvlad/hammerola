@@ -40,8 +40,11 @@
    costs. (#1e1e1e appears above only as history; nothing here paints it.)
    The mark is the one that matters most, and the reason is not fussiness: a
    colour that lags looks slightly out of date, while a logo that lags CHANGES
-   WHEN YOU NAVIGATE -- so it is compared path by path, every attribute of each,
-   rather than as text that appears somewhere in the file. */
+   WHEN YOU NAVIGATE -- so it is compared element by element, every attribute of
+   each, rather than as text that appears somewhere in the file. Since 2026-08-28
+   it is compared against a THIRD document as well, brand/mark-on-light.svg: the
+   drawing the designer sent, which the component and pointer.html are both
+   transcriptions of. */
 /* overflow:hidden stays. The one page here is a single line of chrome and
    nothing inside it scrolls, so a scrollbar on the document could only ever
    appear for a header that ran past the edge -- and the header wraps instead

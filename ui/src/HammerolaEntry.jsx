@@ -350,7 +350,7 @@ export class HammerolaLogin extends React.Component {
           + 'box-shadow:0 14px 44px rgba(20,24,28,.10);padding:40px 36px 32px;'
           + 'display:flex;flex-direction:column;align-items:center')}
         >
-          <Mark size={44} width={1.2} />
+          <Mark size={44} />
           <div style={css(`font:700 22px ${SANS};letter-spacing:-.3px;margin-top:14px`)}>{title}</div>
           <div style={css(`font:400 12.5px/1.55 ${SANS};color:#787f87;text-align:center;margin-top:8px;text-wrap:pretty`)}>
             {description}

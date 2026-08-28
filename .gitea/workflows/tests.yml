@@ -314,19 +314,28 @@ jobs:
         # A POSITIVE LIST OF PATHS, where the Python step above carries a list of exclusions.
         # Almost everything vitest reads lives under ui/ — the sources, the tests, the
         # committed fixture, package.json and its lockfile — and whatever it needs from
-        # outside ui/ is named here, one path at a time. Four of those are for
+        # outside ui/ is named here, one path at a time. Six of those are for
         # ui/tests/chrome.test.js: templates/ and static/_v/site.css because they state the
         # page colour and redraw the header WITHOUT importing any JavaScript — being unable
-        # to import is exactly why that test has to read them as files — and the two
+        # to import is exactly why that test has to read them as files — the two
         # static/_v scripts because the same file searches every hand-written source for a
         # second copy of the mark, which is a search that passes in silence over a directory
-        # that did not travel. THAT TEST NAMES EVERY PATH ON THIS LINE, one for one, so
+        # that did not travel, brand/ because the logo is the DESIGNER'S drawing kept as
+        # a file, which both of the inline copies are transcribed from and compared against,
+        # and static/_v/favicon.svg because the site icon is held to the two checks that ask
+        # whether a document is a VALID drawing rather than the same one — it is the only one
+        # of those four SVGs that ships in the image and is served to browsers.
+        # THAT TEST NAMES EVERY PATH ON THIS LINE, one for one, so
         # dropping one here fails a test that says which file stopped being searched instead
         # of quietly sweeping less — keep the two lists in step. (It does NOT guard by
         # refusing an empty directory: a throw while the test module is being evaluated takes
         # the whole file down and blames this tar for it, and a directory emptying out is
-        # legitimate the day pointer.js moves into the bundle.)
-        # The fifth is the vendored viewer, for ui/tests/hatch.test.js: it checks that the
+        # legitimate the day pointer.js moves into the bundle. The SVGs are covered another
+        # way, because an empty walk of them would not throw: brand/ is reached at module
+        # scope and a tar without it takes the whole file down as templates/ would, while
+        # favicon.svg is reached only by walking static/_v for *.svg — so that test names it,
+        # and a tar without it fails one test saying which drawing stopped being checked.)
+        # The seventh is the vendored viewer, for ui/tests/hatch.test.js: it checks that the
         # three.js shader chunk the section hatch splices at is still in the shader it
         # patches. Nothing under ui/ can answer that, and nothing at runtime can either — a
         # chunk renamed upstream costs the page its hatch and NOTHING else, no error and no
@@ -384,7 +393,8 @@ jobs:
         # runner, not the container over on the host's daemon. That one goes on running, never
         # exits, so `--rm` never fires — and unnamed it would be unreachable by anything at all,
         # because every cleanup in these workflows removes containers BY NAME.
-        tar -cf - --exclude=./ui/node_modules --exclude=./ui/dist ./ui ./templates ./static/_v/site.css \
+        tar -cf - --exclude=./ui/node_modules --exclude=./ui/dist ./ui ./templates ./brand \
+          ./static/_v/site.css ./static/_v/favicon.svg \
           ./static/_v/pointer.js ./static/_v/pointer_pref.js ./static/_v/three-cad-viewer.esm.js \
           | docker run --rm -i --pull always --name "$JS_NAME" \
           -e CI=true \
