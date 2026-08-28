@@ -1,9 +1,27 @@
 """What the browser UI cannot check about itself, checked from Python.
 
-There is no JavaScript test runner in this repository and this file does not
-introduce one. It answers a narrower question instead: WHERE TWO FILES HAVE TO
-AGREE AND NOTHING MAKES THEM. Every check below is a silent-failure class — the
-build is green, the page loads, and one feature is quietly inert:
+BEFORE ADDING ANYTHING HERE, read this paragraph — it is the one that has cost
+the most. There IS a JavaScript test runner in this repository (`ui/tests`,
+vitest, run by both CI workflows), and the sentence that used to stand here said
+there was not. Everything below reads source as TEXT, which is the right tool for
+exactly one kind of question — "does this spelling appear where it must not" —
+and the wrong tool for every question about a VALUE. Twice now a check written
+here has passed on the defect it was written for: one looked for a colour and
+found it in the prose explaining the colour; one collected the keys of an object
+literal by matching braces and commas, and a trailing `//` comment containing a
+comma handed it the next word as a key. `strip_comments()` below removes
+whole-line comments only, deliberately, so neither was a bug in the helper —
+they were the method.
+
+So the division is: if the thing being checked is a value the language can
+compute — a set of keys, a colour, a font stack, the attributes of an SVG path —
+it belongs in `ui/tests/`, where it can be imported and executed
+(`vocabulary.test.js`, `chrome.test.js`). What stays here is what only the text
+can answer.
+
+The question this file is for is still: WHERE TWO FILES HAVE TO AGREE AND
+NOTHING MAKES THEM. Every check below is a silent-failure class — the build is
+green, the page loads, and one feature is quietly inert:
 
   * the interface (`ui/src/`) and the viewport (`ui/src/viewport/`) talk over
     window events, and a name spelled differently at the two ends is not an error
@@ -119,8 +137,18 @@ def interface_events() -> dict:
 
 
 def js_array(source: str, name: str) -> list:
-    """The identifiers in `export const NAME = [ ... ];`."""
-    match = re.search(rf"const\s+{name}\s*=\s*\[(.*?)\]", source, flags=re.S)
+    """The identifiers in `export const NAME = [ ... ];`, frozen or not.
+
+    `Object.freeze(` is optional because two of the arrays read here are frozen
+    and the others are not, and freezing one more must not be a change that
+    breaks a reader of the source. It did break this one once — which is the
+    right failure mode and is why the assertion below names the array rather
+    than returning an empty list: a parser that silently found nothing would
+    have handed every caller an empty set, and a check that sweeps an empty set
+    passes.
+    """
+    match = re.search(rf"const\s+{name}\s*=\s*(?:Object\.freeze\(\s*)?\[(.*?)\]",
+                      source, flags=re.S)
     assert match, f"{name} is not an array literal any more"
     return [item.strip() for item in match.group(1).split(",") if item.strip()]
 
@@ -626,3 +654,103 @@ def test_every_localstorage_access_is_guarded():
             window = lines[max(0, number - 6):number]
             assert any("try {" in earlier for earlier in window), (
                 f"{path.name}:{number + 1} touches localStorage outside a try")
+
+# -- the arrangement of the project list -------------------------------------
+#
+# ONE CHECK, and what is NOT here is the point. The four key sets that have to
+# agree — `PROJECT_SORTS` / `PROJECT_VIEWS` in store.js against `SORT_LABELS`,
+# `SORT_CMP`, `VIEW_ICONS` and `VIEW_BODIES` in HammerolaEntry.jsx — used to be
+# compared here, by matching braces and reading the words after commas. That
+# check passed on the very defect it was written for: `strip_comments()` above
+# removes whole-line comments only (deliberately, and its docstring says so), so
+# a TRAILING `// oldest project, parts come from metrics` put a comma at depth
+# zero and the parser took the next word for a key. It failed the other way too,
+# on a comma inside a perfectly ordinary label string.
+#
+# The tables are exported now and `ui/tests/vocabulary.test.js` compares
+# `Object.keys` against the two lists — the same invariant, at the same moment,
+# with the whole class of parsing mistakes simply absent. A set of keys is
+# something the language computes; guessing at it from the text was never the
+# cheaper answer, only the closer one.
+#
+# What stays here is the property that IS about the text: a set of names must
+# have one spelling, and a branch on a view id is a second spelling that no
+# comparison of exported values can see, because a branch is not a value.
+
+
+def test_the_project_list_chooses_its_body_from_that_table():
+    """No view id is written down in the page except as the default it opens on.
+
+    `{grid && …}` / `{!grid && …}` is how two of the four sets used to be
+    written, and it drew the dense list for every id that was not `grid`, so an
+    unknown view LOOKED like a working answer. The same shape can come back at
+    any time, and nothing that compares exported tables would notice: the tables
+    would still be complete and still agree, while the render ignored them.
+
+    THE RULE IS ABOUT THE LITERAL, NOT ABOUT AN OPERATOR, and that is the third
+    version of it. Forbidding `this.view === 'grid'` meant enumerating ways to
+    write a comparison, and the enumeration was never finished: the first version
+    missed `'grid' === this.view`, and the second still let through both
+
+        switch (this.view) { case 'grid': … }
+        const v = this.view; const body = v === 'grid' ? … : …
+
+    each of which reproduces exactly the property this test is about. A view id
+    is a name the tables are keyed by; the page has no business writing one down
+    at all, except to say which one it opens on. That single rule covers the
+    switch, the alias, the Yoda spelling and every operator nobody has thought
+    of yet.
+
+    COMMENTS ARE NOT STRIPPED, deliberately, and this is where the operator
+    version was actively harmful: it failed on a trailing comment quoting the
+    spelling it forbade, i.e. on somebody documenting it. Under this rule a
+    literal in a comment IS the violation — say `the grid view` and not
+    `'grid'`, the same way the rest of this file's prose does.
+
+    ALL THREE QUOTE CHARACTERS, backtick included. A template literal with no
+    substitution in it is an ordinary string, and `this.view === \\`grid\\`` is the
+    same branch; leaving the backtick out would have repeated one floor down
+    exactly the mistake this rule was written to end — an incomplete enumeration,
+    of quotes instead of operators.
+
+    THE ALLOWED REGION IS THE DECLARATION, NOT THE LINE. Anchoring on "the line
+    also contains defaultProps" meant a purely cosmetic wrap of that declaration
+    — a fourth prop, a formatter — failed this test with a message about
+    branching, which is the same species of harm the operator version did when it
+    failed on a comment. The span of each `static defaultProps = { … };` is
+    computed instead, so the declaration may be written over as many lines as it
+    likes.
+    """
+    page = read(UI / "HammerolaEntry.jsx")
+    views = {item.strip("'\"") for item in js_array(strip_comments(read(UI / "store.js")),
+                                                    "PROJECT_VIEWS")}
+    assert views, "store.js no longer declares PROJECT_VIEWS"
+
+    # Every defaultProps in the file, not only this component's: a view id inside
+    # any of them is a default being declared, which is the one thing allowed.
+    # A nested object would end the span early at its inner `};` — and that fails
+    # loudly here rather than passing something through, which is the right way
+    # round for a bound this rough.
+    allowed = [match.span() for match
+               in re.finditer(r"static\s+defaultProps\s*=\s*\{.*?\}\s*;", page, flags=re.S)]
+    assert allowed, "HammerolaEntry.jsx declares no defaultProps at all"
+
+    seen = 0
+    for view in views:
+        for found in re.finditer(rf"['\"`]{re.escape(view)}['\"`]", page):
+            seen += 1
+            if any(start <= found.start() < end for start, end in allowed):
+                continue
+            number = page.count("\n", 0, found.start()) + 1
+            line = page.splitlines()[number - 1]
+            raise AssertionError(
+                f"HammerolaEntry.jsx:{number} writes the view id '{view}' down: "
+                f"{line.strip()!r}. The views are a set of names keyed into "
+                "VIEW_BODIES / VIEW_ICONS, and the page names one only in its "
+                "defaultProps — anywhere else is a branch, an alias or a switch "
+                "that the tables cannot see, which is how an unknown view came to "
+                "look like a working answer")
+    # Otherwise a file that stopped naming any view would pass by having nothing
+    # to find, which is this file's own oldest failure mode.
+    assert seen, ("HammerolaEntry.jsx names no view at all — defaultProps has to say "
+                  "which one the page opens on")

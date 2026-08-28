@@ -20,7 +20,12 @@
 //     a third mock-up by hand is exactly when somebody would reinstate the
 //     original — tests/test_ui_source.py is what stops that, and this is what
 //     keeps the answer in one place.
-//   * a second mark is a logo that changes when you navigate.
+//   * a second mark is a logo that changes when you navigate. That one had
+//     happened: the build page's header wrote the same SVG out again, byte for
+//     byte, and the two pages holding the two copies link to each other. The
+//     copy is gone and `ui/tests/chrome.test.js` now checks both halves — that
+//     no component draws the paths itself, and that the resolver page's
+//     unavoidable copy still matches this component path by path.
 
 import React from 'react';
 
@@ -51,6 +56,44 @@ export const FONTS = {
 };
 export const SANS = 'var(--hmr-sans)';
 export const MONO = 'var(--hmr-mono)';
+
+/**
+ * FOUR OF THE SIX colours that exist outside this bundle as well as inside it.
+ *
+ * Everything else in the interface is a hex written where it is used, and that
+ * is fine: one file draws it and one file changes it. These four are different
+ * because three documents this bundle does not draw have to state them too —
+ * `templates/build.html` and `templates/index.html` paint the page before there
+ * is a page, and `static/_v/site.css` reproduces this header on the resolver at
+ * /project/<pid>/ so that opening a project does not flash another design.
+ *
+ * Named here so that there is ONE source rather than a component's literal and
+ * a template's copy of it — the shape that lets a colour change in one place and
+ * quietly stop matching in three. `ui/tests/chrome.test.js` reads those three
+ * documents and compares them against these values, which it can only do
+ * because they are values it can import and not text it has to parse.
+ *
+ * THE OTHER TWO ARE NOT HERE AND ARE NOT CHECKED, and naming them is the whole
+ * point of this paragraph: an unmentioned copy reads exactly like an absent one,
+ * and both of these are one `grep` away.
+ *
+ *   * `#787f87` — the mono meta line beside the title. Not a different kind of
+ *     thing from the four above: the same detail of the same header, copied
+ *     into `site.css` the same way;
+ *   * `#1f6fd0` — the site's accent blue, and the resolver's link takes exactly
+ *     it. Five more copies live in `HammerolaEntry.jsx` and
+ *     `HammerolaViewer.jsx`, so moving the accent in the bundle leaves the
+ *     resolver on the old one without a word.
+ *
+ * Both are deliberate copies rather than oversights, and both can drift in
+ * silence. Promoting one is two lines — export it here, add it to the list
+ * chrome.test.js holds `site.css` to — and until somebody does, this is a known
+ * gap and not a covered one.
+ */
+export const PAGE_BG = '#eceef1';
+export const PAGE_FG = '#1c1f23';
+export const HEADER_BG = '#f7f8fa';
+export const HEADER_LINE = '#d8dce1';
 
 /**
  * The mark, at whatever size the page needs it.

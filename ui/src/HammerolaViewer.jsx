@@ -77,12 +77,14 @@ import {
 } from './events.js';
 import {
   PAGE, ASSEMBLED_VIEW_ID, isPointerPage, buildKey, indexTree,
-  loadMeta, loadBuilds, shortId, stamp, day, mb,
+  loadMeta, loadBuilds, shortId, stamp, mb,
 } from './hub.js';
 import {
   readToken, writeToken, clearToken, readNotes, writeNotes, rememberPointer,
 } from './store.js';
-import { css, FONTS, SANS, MONO } from './style.jsx';
+import {
+  css, FONTS, SANS, MONO, Mark, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
+} from './style.jsx';
 // The canvas theme lives with the rest of the viewport's options, and so does the
 // storage for it: `tests/test_ui_source.py` allows this side exactly one module
 // that touches localStorage (store.js), and the viewport keeps its own answers
@@ -230,7 +232,30 @@ export function filesByPart(downloads) {
 }
 
 export default class HammerolaViewer extends React.Component {
-  static defaultProps = { commentsOpen: true };
+  /**
+   * The comment rail starts CLOSED, and the 300 px it used to take is the whole
+   * argument: this page exists to show a model, the rail is a panel about
+   * something else, and a reader who opened a build to look at it was paying for
+   * a queue nobody asked to see. It is one click away in the header, it says how
+   * many open items it holds without being opened, and it opens BY ITSELF for
+   * the one arrival that is about a comment — clicking a pin on the model (the
+   * PIN handler below, and posting a comment) sets `rail: true`.
+   *
+   * NOT REMEMBERED, unlike the list arrangement on the front page (store.js),
+   * and for a reason that survives the obvious objection. "Remembering would
+   * stop it being closed by default" is not the argument — a write from
+   * `railToggle` alone would remember only what a person asked for and would
+   * keep the default for everyone else. The argument is that THIS state is not
+   * that: `s.rail` is one field and three writers set it, and two of them are
+   * not a preference. The PIN handler opens the rail because a pin was clicked
+   * on the model, and posting a comment opens it to show where the comment
+   * went. Remembering the field therefore records "it was open", which mixes "I
+   * asked for this panel" with "it was opened for me" — and one click on one pin
+   * would quietly become "always show me the queue". Making it a preference
+   * means giving it a writer that only a person can reach, which is a decision
+   * to take deliberately rather than a side effect of storing a boolean.
+   */
+  static defaultProps = { commentsOpen: false };
 
   constructor(props) {
     super(props);
@@ -1006,7 +1031,16 @@ export default class HammerolaViewer extends React.Component {
     }
     history.forEach((b, at) => revs.push({
       id: b.commit, head: at === 0 ? 'BUILDS' : '', badge: '',
-      date: day(b.built), pointer: false,
+      // THE TIME BELONGS HERE, and this is the list that changed its mind about
+      // it. `day()` was written for a picker whose rows were CI commits — one or
+      // two a day, so the clock was noise beside the date. Publishing is now
+      // `hammerola build` from a laptop (SPEC §8, entry 26), which an author runs
+      // as often as they save; a column of identical `2026-08-27`s then tells a
+      // reader nothing about the one thing this menu is for, which is choosing
+      // between two of them. So the picker shows the same `stamp` the header
+      // does — and shows it in the same shape, which is the second half of the
+      // fix: the two were formatted differently while naming the same instant.
+      date: stamp(b.built), pointer: false,
     }));
 
     const revRows = revs.map((r) => {
@@ -1166,7 +1200,22 @@ export default class HammerolaViewer extends React.Component {
 
       title: (meta && (meta.title || meta.project)) || '',
       subtitle: meta ? this.subtitle() : '',
-      slot: PAGE.slot,
+      // SHORTENED HERE TOO, and this was the one place it was not. `PAGE.slot`
+      // is a path segment straight out of the URL, so on a pinned revision it is
+      // the full digest of the sources — 64 characters, in a fixed-width header
+      // row, next to a title and a status chip that then have nowhere to go. The
+      // picker below this button has always drawn the same value at seven
+      // (`shortId`), so the header was contradicting the menu it opens. A
+      // pointer name passes through unchanged: `dev` is special-cased and
+      // `latest` is shorter than the cut.
+      slot: shortId(PAGE.slot),
+      // The whole of it, for the reader who needs to copy one. A revision is
+      // addressed by its full digest everywhere off this page — `hammerola
+      // source <rev>`, a permanent URL — and the seven characters above cannot
+      // be pasted anywhere. Empty when nothing was cut: a tooltip that repeats
+      // the word under the cursor is noise, and `dev` and `latest` are shown
+      // whole already.
+      slotTitle: shortId(PAGE.slot) === PAGE.slot ? '' : PAGE.slot,
       slotBadge: PAGE.slot === 'dev' ? 'auto-updates' : PAGE.slot === 'latest' ? 'follows CI' : 'pinned',
       slotDate: meta ? stamp(meta.built) : '',
       revToggle: stop(() => this.setState({ revOpen: !s.revOpen, dlOpen: false, tokenPop: false })),
@@ -1389,7 +1438,7 @@ export default class HammerolaViewer extends React.Component {
   render() {
     if (this.state.error) {
       return (
-        <div style={{ ...css(`position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#eceef1;color:#1c1f23;font:400 13px ${SANS};z-index:5`), ...FONTS }}>
+        <div style={{ ...css(`position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:${PAGE_BG};color:${PAGE_FG};font:400 13px ${SANS};z-index:5`), ...FONTS }}>
           <div style={css('max-width:420px;padding:18px 20px;background:#fff;border:1px solid #d3d8de;border-radius:9px')}>
             <div style={css(`font:600 13px ${SANS};margin-bottom:6px`)}>This build did not load</div>
             <div style={css(`font:400 12px/1.6 ${MONO};color:#5b6470`)}>{this.state.error}</div>
@@ -1405,26 +1454,31 @@ export default class HammerolaViewer extends React.Component {
       // position:fixed, because this interface is the WHOLE page: build.html
       // carries nothing but the div this mounts into, so there is no page
       // layout to fit into and nothing underneath to leave visible.
-      <div onClick={v.rootClick} style={{ ...css(`position:fixed;inset:0;display:flex;flex-direction:column;background:#eceef1;color:#1c1f23;font-family:${SANS};font-size:13px;overflow:hidden;z-index:5`), ...FONTS }}>
+      <div onClick={v.rootClick} style={{ ...css(`position:fixed;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px;overflow:hidden;z-index:5`), ...FONTS }}>
         <style>{PIN_CSS}</style>
 
         {/* ── header: model, revision, status, downloads, access, comments ── */}
-        <div style={css('height:50px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;background:#f7f8fa;border-bottom:1px solid #d8dce1;position:relative;z-index:30')}>
+        <div style={css('height:50px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;'
+          + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE};position:relative;z-index:30`)}
+        >
           <a href="/" title="all projects" style={css('display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit')}>
-            <svg width="18" height="18" viewBox="0 0 18 18">
-              <path d="M9 1.5l6.5 3.75v7.5L9 16.5l-6.5-3.75v-7.5z" fill="none" stroke="#1c1f23" strokeWidth="1.6" />
-              <path d="M9 1.5v7.5M9 9l6.5 3.75M9 9L2.5 12.75" fill="none" stroke="#1c1f23" strokeWidth="1.2" opacity=".55" />
-            </svg>
+            {/* `<Mark />`, not the same SVG written out again. It WAS written out
+                again — byte for byte, defaults and all — which is the third copy
+                of a logo that only style.jsx is supposed to own, and the two
+                pages carrying two of the copies link to each other. A mark that
+                changes when you navigate is one of the three reasons that module
+                exists. */}
+            <Mark />
             <span style={css(`font:700 14px ${SANS};letter-spacing:-.2px`)}>hammerola</span>
           </a>
-          <div style={css('width:1px;height:22px;background:#d8dce1')} />
+          <div style={css(`width:1px;height:22px;background:${HEADER_LINE}`)} />
           <div style={css('display:flex;flex-direction:column;gap:1px;flex:none;min-width:0')}>
             <div style={css(`font:600 13.5px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{v.title}</div>
             <div style={css(`font:400 10.5px ${MONO};color:#787f87;white-space:nowrap`)}>{v.subtitle}</div>
           </div>
 
           <div style={css('position:relative;margin-left:8px;flex:none')}>
-            <div onClick={v.revToggle} style={css(v.revBtnStyle)}>
+            <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>
               <span style={css(v.statusDotStyle)} />
               <span style={css(`font:600 12px ${MONO}`)}>{v.slot}</span>
               <span style={css(`font:500 10.5px ${MONO};color:#fff;background:#5b6470;padding:2px 6px;border-radius:4px`)}>{v.slotBadge}</span>

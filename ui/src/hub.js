@@ -271,7 +271,11 @@ export const stamp = (value) => {
     : text.slice(0, 20);
 };
 
-/** Just the date, for a list where the time is noise. */
-export const day = (value) => String(value || '').slice(0, 10);
+// There used to be a `day()` beside `stamp` — the date alone, "for a list where
+// the time is noise". Its one caller was the revision picker, and the premise
+// stopped holding when publishing moved from CI to `hammerola build`: an author
+// runs that as often as they save, so a build list without a clock is a column
+// of identical dates. It is taken out rather than left unused, because an
+// exported helper reads as one somebody should be reaching for.
 
 export const mb = (bytes) => `${(Number(bytes || 0) / 1e6).toFixed(1)} MB`;

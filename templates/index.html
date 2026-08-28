@@ -14,6 +14,19 @@
 
      The library's own stylesheet is not linked either. That one belongs to the
      3D viewport, which this page does not mount. -->
+<!-- The page colour, before there is a page: everything in this document is
+     drawn by the bundle, and until that has been fetched, parsed and rendered
+     the body has no background and the browser paints it white. Two
+     declarations inline rather than a stylesheet, because a `<link>` on the
+     critical path would be a round trip to say what the markup says for free,
+     and the CSP allows it (`style-src 'self' 'unsafe-inline'`, src/app.py).
+
+     No ordering constraint here, unlike build.html: this page links no
+     stylesheet at all, so there is nothing for this rule to come after. The
+     values are `PAGE_BG` / `PAGE_FG` from ui/src/style.jsx, and
+     `ui/tests/chrome.test.js` holds this copy, build.html's and the resolver's
+     to them. -->
+<style>html,body{background:#eceef1;color:#1c1f23}</style>
 </head><body>
 <!-- The whole page. The bundle looks this id up and does nothing at all when it
      is absent, which is what keeps pointer.html unaffected by it; build.html
