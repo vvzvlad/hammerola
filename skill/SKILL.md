@@ -324,7 +324,7 @@ ways**: that footer, `metrics.json`, and whatever the model prints. The second
 sits in the same build directory, and `.json` IS on the inline whitelist, so
 `curl <hub>/project/<pid>/dev/metrics.json` gives `bbox_mm` for every part
 straight after a `build`, with no commit. The log itself carries no size — per
-part it says `valid, volume … cm3, watertight, one body, N faces`, a volume — so
+part it says `valid, volume … cm3, watertight, one body, N triangles` — so
 a `print()` in `model.py` or `checks()` is the third. Print every printable's
 bounding box from `checks()` all the same, for a different reason: the log is
 what `commit` keeps, while a picture and a `metrics.json` have to be fetched. That
