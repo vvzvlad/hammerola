@@ -25,7 +25,7 @@ import { MIN_SINE, SECTION_BIAS, SECTION_INDEX } from '../src/viewport/options.j
 import {
   applySection, captureSection, dragSection, keepSectionCut, placeSectionPlane,
   restoreSection, sectionAxis, sectionLimit, sectionOffset, sectionRange,
-  slideSectionTo, suspendSectionCut,
+  sectionValueFor, suspendSectionCut,
 } from '../src/viewport/section.js'
 import { fakeViewer, fakeViewport, orthoCamera } from './fakes.js'
 
@@ -80,44 +80,63 @@ describe('sectionLimit and sectionRange', () => {
   })
 })
 
-describe('slideSectionTo', () => {
+describe('sectionValueFor', () => {
   let ctx
   beforeEach(() => { ctx = scene() })
 
-  it('puts the plane THROUGH the point, from wherever the slider happens to be', () => {
-    // The claim in the module: from ANY current value `v`, the value that puts
-    // the plane through P is `v - distanceToPoint(P)`. Checked by asking the
-    // plane afterwards, from three different starting values.
+  it('names the value that stands a plane with that normal through that point', () => {
+    // The claim in the module: `value = -normal . (point - centre)`, and it
+    // needs nothing from the plane that is standing — not its normal, not its
+    // constant, not the slider. Checked by asking the plane afterwards, from
+    // three different starting values and with a normal the plane does not
+    // currently carry.
     const { viewer, g } = ctx
     const point = [7, -3, 2]
+    const normal = [0, 1, 0]
     for (const start of [sectionLimit(viewer), 0, -12.5]) {
       viewer.setClipSlider(SECTION_INDEX, start, true)
-      slideSectionTo(viewer, g, point, 0)
+      const value = sectionValueFor(viewer, g, normal, point)
+      viewer.setClipNormal(SECTION_INDEX, normal, value, true)
       expect(distance(g, point)).toBeCloseTo(0, 9)
     }
   })
 
-  it('holds the plane `back` further along its own normal', () => {
+  it('writes NOTHING, whatever it is asked', () => {
+    // The whole reason it is a function of its own: `applySection` has to know
+    // the answer before it touches the viewer, so nothing here may touch it.
     const { viewer, g } = ctx
-    const point = [0, 0, 5]
-    slideSectionTo(viewer, g, point, 3)
-    // A larger slider value holds the plane further back, so subtracting the
-    // bias sinks the plane INTO the part by exactly that much.
-    expect(distance(g, point)).toBeCloseTo(-3, 9)
+    sectionValueFor(viewer, g, [0, 1, 0], [7, -3, 2])
+    expect(viewer.setClipSlider).not.toHaveBeenCalled()
+    expect(viewer.setClipNormal).not.toHaveBeenCalled()
   })
 
   it('clamps to the travel the grid allows', () => {
     const { viewer, g } = ctx
-    const value = slideSectionTo(viewer, g, [0, 0, 1e6], 0)
-    expect(value).toBe(-sectionLimit(viewer))
-    expect(viewer.getClipSlider(SECTION_INDEX)).toBe(-sectionLimit(viewer))
+    expect(sectionValueFor(viewer, g, [0, 0, 1], [0, 0, 1e6]))
+      .toBe(-sectionLimit(viewer))
   })
 
-  it('writes nothing when the slider is unreadable', () => {
+  it('is null when the centre the slider counts from is not there', () => {
+    // `CenteredPlane.center` is one property deeper than the plane `internals()`
+    // guards, so a library that moved it has to cost the placement and nothing
+    // else — never a wrong answer.
     const { viewer, g } = ctx
-    viewer.getClipSlider = () => NaN
-    expect(slideSectionTo(viewer, g, [0, 0, 0], 0)).toBeNull()
-    expect(viewer.setClipSlider).not.toHaveBeenCalled()
+    g.plane.center = undefined
+    expect(sectionValueFor(viewer, g, [0, 0, 1], [0, 0, 0])).toBeNull()
+  })
+
+  it('is null for a normal or a point that is not a measurement', () => {
+    // The other two of its three predicates, and NEITHER IS REDUNDANT with the
+    // `Number.isFinite` at the end — that is the whole reason this test exists.
+    // An infinite operand makes the dot product infinite, and `sectionValue`
+    // CLAMPS: infinity becomes a tidy `±sectionLimit`, a number that is finite,
+    // plausible and about nothing. The plane would stand at the edge of the grid
+    // as though somebody had asked for it.
+    const { viewer, g } = ctx
+    for (const bad of [[Infinity, 0, 0], [NaN, 0, 0], null, [0, 1]]) {
+      expect(sectionValueFor(viewer, g, bad, [1, 2, 3])).toBeNull()
+      expect(sectionValueFor(viewer, g, [0, 0, 1], bad)).toBeNull()
+    }
   })
 })
 
@@ -176,23 +195,233 @@ describe('applySection', () => {
     expect(distance(g, face)).toBeCloseTo(-(4 + bias(viewer)), 9)
   })
 
-  it('keeps "deeper" meaning deeper after a flip', () => {
-    // The offset walks the plane along the normal it is being flipped WITH, so
-    // the same slider still opens the part up rather than reversing under the
-    // reader. Same distance, opposite normal.
+  it('turns the plane over on a flip and does not move it', () => {
+    // THIS TEST REPLACES ONE CALLED "keeps 'deeper' meaning deeper after a
+    // flip", and the old one is named here so nobody restores it as a
+    // regression. It asserted that a flip left the plane the same DISTANCE from
+    // the seed face with the opposite normal — i.e. that the offset walked along
+    // the flipped normal, so that pushing the slider always went on cutting
+    // deeper. The intent reads well and the geometry does not survive it: the
+    // only way to hold "deeper" fixed while the kept side turns over is to move
+    // the plane, and both changes then point the same way. The plane walks out
+    // through the face it was laid on while the kept half becomes the outside of
+    // the part, so a flip drew an empty canvas at EVERY offset — verified in a
+    // browser, and the whole of the flip button's bug.
+    //
+    // What a flip means instead is Fusion's: the plane stands exactly where it
+    // stood and the other side is kept. The reader's slider then still moves the
+    // plane in one fixed world direction, which is the half of "deeper stays
+    // deeper" that was worth keeping.
     const { viewer, vp, g } = ctx
     const face = [0, 0, 0]
     placeSectionPlane(vp, g, [0, 0, -1], face)
     vp.state.cutOffset = 4
+    applySection(vp, g)
+    // A world point ON the plane before the flip, so "the same plane" can be
+    // asserted without depending on which way the normal points.
+    const on = [0, 0, -(4 + bias(viewer))]
+    expect(distance(g, on)).toBeCloseTo(0, 9)
+
     vp.state.cutFlip = true
     applySection(vp, g)
     expectDirection(g.plane.normal, [0, 0, 1])
-    expect(distance(g, face)).toBeCloseTo(-(4 + bias(viewer)), 9)
+    expect(distance(g, on)).toBeCloseTo(0, 9)
+  })
+
+  it('leaves the plane exactly as it was when the placement cannot be worked out', () => {
+    // A HALF-APPLIED PASS IS THE FAILURE THIS SHAPE EXISTS TO PREVENT. The
+    // normal used to go in first and unconditionally — with a null value, so the
+    // library parked the slider at the far edge — and the correction below it
+    // could return false, leaving the plane turned over AND cutting nothing,
+    // which is a state nobody ever asked for and which erases the model.
+    // Nothing is written now until every number is known.
+    const { viewer, vp, g } = ctx
+    placeSectionPlane(vp, g, [1, 0, 0], [0, 0, 0])
+    const normal = viewer.getClipNormal(SECTION_INDEX)
+    const slider = viewer.getClipSlider(SECTION_INDEX)
+
+    g.plane.center = undefined          // the one reading the value depends on
+    vp.state.cutFlip = true
+    expect(applySection(vp, g)).toBe(false)
+
+    expect(viewer.getClipNormal(SECTION_INDEX)).toEqual(normal)
+    expect(viewer.getClipSlider(SECTION_INDEX)).toBe(slider)
+  })
+
+  it('does not hand the library the one value it silently refuses', () => {
+    // `Viewer.setClipSlider` returns early on exactly -1, so a placement that
+    // works out to that number would set the normal and leave the slider parked
+    // — the same erased model, reached from the other side. The seed is placed
+    // by hand because the number has to be hit exactly.
+    const { viewer, vp, g } = scene({ gridSize: 100, clipCenter: [0, 0, 0] })
+    const at = [1, 0, 0]
+    vp.sectionSeed = { normal: [1, 0, 0], point: [1 - bias(viewer), 0, 0], value: null }
+    expect(applySection(vp, g)).toBe(true)
+    expect(viewer.getClipSlider(SECTION_INDEX)).not.toBe(-1)
+    expect(distance(g, at)).toBeCloseTo(0, 6)
   })
 
   it('does nothing without a seed: an untouched plane cuts nothing', () => {
     const { vp, g } = ctx
     expect(applySection(vp, g)).toBe(false)
+  })
+})
+
+describe('the seed is where the unit normal is guaranteed', () => {
+  // EVERYTHING DOWNSTREAM ASSUMES A UNIT NORMAL — `sectionValueFor` measures a
+  // distance with a dot product, and `applySection` walks the same vector to
+  // build the point it measures to — so a normal of length 2 is wrong twice, in
+  // different proportions, and the plane lands somewhere nobody chose. It is
+  // guaranteed at the two functions that WRITE `vp.sectionSeed`, which is the
+  // only door a normal enters the module by.
+  //
+  // Written as tests rather than as a sentence in a docstring because the
+  // producer on the placing side is `faceNormalAt` in picking.js, and that file
+  // has no tests at all: "it already returns a unit vector" was a fact about
+  // code nothing checks, and the cost of it ceasing to be true is a cut standing
+  // metres from the face with nothing anywhere reporting it.
+
+  it('normalises what `placeSectionPlane` is handed', () => {
+    const { viewer, vp, g } = scene()
+    const face = [0, 0, 20]
+    // The same face and the same direction, at twice the length.
+    expect(placeSectionPlane(vp, g, [0, 0, -2], face)).toBe(true)
+    expect(vp.sectionSeed.normal).toEqual([0, 0, -1])
+    // The plane stands one render sliver into the part and nowhere else. With
+    // the length carried through it stands 4.98 world units off this face —
+    // measured, and a thousand times the tolerance below.
+    expect(distance(g, face)).toBeCloseTo(-bias(viewer), 9)
+    expect(sectionOffset(vp)).toBeCloseTo(0, 9)
+  })
+
+  it('the library leaves a zero normal AT ZERO, which is why the failure is silent', () => {
+    // THE PREMISE THE NEXT TEST REASONS FROM, and the one thing `fakes.js` has
+    // to get right for it to mean anything: three.js's `normalize()` is
+    // `divideScalar( this.length() || 1 )`, so a zero-length normal is LEFT
+    // ALONE rather than turned into NaNs. The difference decides which symptom
+    // the suite is entitled to assert — NaN would be loud, while zero is a plane
+    // that separates nothing and quietly never cuts.
+    //
+    // Held here because nothing else holds it: with `unit3` correct, no zero
+    // normal reaches the library any more, so the fake's fidelity on this point
+    // has no other witness and "simplifying" the `|| 1` away would pass unnoticed
+    // a second time.
+    const { viewer, g } = scene()
+    viewer.setClipNormal(SECTION_INDEX, [0, 0, 0], 0.5, true)
+    expect(viewer.getClipNormal(SECTION_INDEX)).toEqual([0, 0, 0])
+    // ...and a plane with no direction is the same distance from everywhere,
+    // which is the arithmetic behind "nothing is discarded".
+    expect(distance(g, [0, 0, 0])).toBe(0.5)
+    expect(distance(g, [0, 0, 40])).toBe(0.5)
+  })
+
+  it('normalises one too large to square, rather than refusing it', () => {
+    // `len3` squares first, so it overflows at a component around 1.34e154 and
+    // `unit3` used to divide by that Infinity — returning [0,0,0], a FINITE
+    // vector of zero length that `finite3` waves through.
+    //
+    // WHAT THAT DOES IS SILENT, which is what makes it worth a test. The library
+    // does not blow up on a zero normal: `Vector3.normalize` is
+    // `divideScalar( length() || 1 )`, so zero stays zero, and the clip plane
+    // becomes `(0, 0, 0, w)`. Every point is then the SAME distance from it —
+    // the plane separates nothing — and the fragment test `dot(vClipPosition,
+    // plane.xyz) > plane.w` reads `0 > w`, false, so nothing is discarded: the
+    // model stands there whole and the cut just never happens.
+    //
+    // So the assertion below is that the plane SEPARATES the two sides of the
+    // face, which is the property a cut is. Asserting the normal is finite would
+    // not do it — a zero normal is perfectly finite — and asserting it is not
+    // NaN would be asserting something the library cannot produce at all.
+    //
+    // The mirror case underflowed to zero and was refused outright; it is here
+    // for the same reason.
+    for (const huge of [[0, 0, -1e200], [0, 0, -1e-200]]) {
+      const { viewer, vp, g } = scene()
+      const face = [0, 0, 20]
+      expect(placeSectionPlane(vp, g, huge, face)).toBe(true)
+      expect(vp.sectionSeed.normal).toEqual([0, 0, -1])
+      expect(distance(g, face)).toBeCloseTo(-bias(viewer), 9)
+      // In front of the face and behind it, on opposite sides of the plane.
+      expect(distance(g, [0, 0, 0])).toBeGreaterThan(0)
+      expect(distance(g, [0, 0, 40])).toBeLessThan(0)
+    }
+  })
+
+  it('refuses a normal that is no direction at all', () => {
+    // Zero length and non-finite are the same answer as a pick that found no
+    // face: no cut, and NOTHING WRITTEN — the plane stands where it stood.
+    const { viewer, vp, g } = scene()
+    const before = viewer.getClipSlider(SECTION_INDEX)
+    for (const bad of [[0, 0, 0], [NaN, 0, 1], [Infinity, 0, 0]]) {
+      expect(placeSectionPlane(vp, g, bad, [0, 0, 20])).toBe(false)
+      expect(vp.sectionSeed).toBeNull()
+      expect(viewer.getClipSlider(SECTION_INDEX)).toBe(before)
+    }
+  })
+
+  it('refuses a POINT that is no place at all, and writes nothing either', () => {
+    // The other half of a seed, and it used to be unguarded while the normal was
+    // not: `viewDir` normalises the eye-to-point difference, and `unit3` of a
+    // difference carrying an infinity is a vector of NaNs — an array, so it
+    // sailed past `if (!view)`. The seed was then written with an infinite
+    // point, `applySection` refused to place anything and returned false, and
+    // the record stayed behind saying a cut existed.
+    const { viewer, vp, g } = scene()
+    const before = viewer.getClipSlider(SECTION_INDEX)
+    // `null` and the short array are a DIFFERENT failure from the other two and
+    // that is why they are here: an infinity comes back through `viewDir` as a
+    // direction of NaNs, while `vec3(null)` reads `null[0]` and throws — and
+    // `placeSectionPlane` has no `try` to catch it with, so the exception would
+    // leave the tool rather than the plane.
+    for (const bad of [[Infinity, 0, 0], [0, NaN, 0], null, undefined, [1, 2]]) {
+      expect(placeSectionPlane(vp, g, [0, 0, -1], bad)).toBe(false)
+      expect(vp.sectionSeed).toBeNull()
+      expect(viewer.getClipSlider(SECTION_INDEX)).toBe(before)
+    }
+  })
+
+  it('refuses a captured plane that is no plane, and leaves no seed', () => {
+    // The twin of the two above, on the restore side, and it had no test at all
+    // while its `placeSectionPlane` counterpart did. `[Infinity, 0, 0]` is the
+    // case that discriminates: `unit3` returns `[NaN, 0, 0]` for it — truthy —
+    // so a plain `if (!normal)` accepts it and stores exactly the rubbish seed
+    // this module warns about. `captureSection` is the far end of the same
+    // thread and now refuses to mint one; this is the near end.
+    for (const keep of [{ normal: [Infinity, 0, 0], point: [1, 0, 0], placed: true },
+                        { normal: [NaN, 0, 0], point: [1, 0, 0], placed: true },
+                        { normal: [0, 0, 0], point: [1, 0, 0], placed: true },
+                        { normal: [1, 0, 0], point: [Infinity, 0, 0], placed: true }]) {
+      const { viewer, vp } = scene()
+      const before = viewer.getClipSlider(SECTION_INDEX)
+      expect(restoreSection(vp, keep)).toBe(false)
+      expect(vp.sectionSeed).toBeNull()
+      expect(viewer.getClipSlider(SECTION_INDEX)).toBe(before)
+    }
+  })
+
+  it('normalises what `restoreSection` is handed', () => {
+    // A live reload feeds this from `captureSection`, which is unit — but `keep`
+    // is a plain object that has crossed a swap, so the guarantee is made here
+    // rather than assumed of the sender. The offset is what makes the length
+    // bite: the seed is the captured point walked BACK along the normal by it.
+    const before = scene()
+    const face = [4, 0, 0]
+    placeSectionPlane(before.vp, before.g, [1, 0, 0], face)
+    before.vp.state.cutOffset = 5
+    applySection(before.vp, before.g)
+    const keep = captureSection(before.vp)
+
+    const plain = scene()
+    plain.vp.state.cutOffset = 5
+    expect(restoreSection(plain.vp, keep)).toBe(true)
+
+    const doubled = scene()
+    doubled.vp.state.cutOffset = 5
+    expect(restoreSection(doubled.vp, { ...keep, normal: keep.normal.map((c) => c * 2) }))
+      .toBe(true)
+
+    expect(doubled.vp.sectionSeed.normal).toEqual(plain.vp.sectionSeed.normal)
+    expect(distance(doubled.g, face)).toBeCloseTo(distance(plain.g, face), 9)
   })
 })
 
@@ -226,6 +455,26 @@ describe('sectionAxis', () => {
     viewer.setClipNormal(SECTION_INDEX,
                          [Math.sin(open), 0, Math.cos(open)], null, true)
     expect(sectionAxis(viewer, g, [0, 0, 0])).not.toBeNull()
+  })
+
+  it('is null when the camera is nowhere, on any axis', () => {
+    // The edge-on guard is `Math.sqrt(1 - cos*cos) < MIN_SINE`, and with a NaN
+    // cosine that comparison is FALSE — which is the branch that lets the drag
+    // through. So a camera position this cannot subtract has to be refused
+    // earlier, in `viewDir`, and it is. `y` and not `x` on purpose: `viewDir`
+    // checked `eye.x` alone for as long as it checked components at all.
+    const { viewer, g } = ctx
+    viewer.setClipNormal(SECTION_INDEX, [1, 0, 0], null, true)
+    expect(sectionAxis(viewer, g, [0, 0, 0])).not.toBeNull()   // premise
+    // THE SHAPE COMES FROM THE LIBRARY, not from a literal here, and that is
+    // what makes this test about `viewDir` at all. `sectionAxis` later does
+    // `eye.clone().set(...)` and bails on anything without a `clone` — so a bare
+    // `{x, y, z}` would be refused at THAT line instead, and this test would
+    // pass against the old `viewDir` while proving nothing about it.
+    const real = g.camera.getPosition()
+    expect(typeof real.clone).toBe('function')
+    g.camera.getPosition = () => { const v = real.clone(); v.y = Infinity; return v }
+    expect(sectionAxis(viewer, g, [0, 0, 0])).toBeNull()
   })
 })
 
@@ -261,6 +510,40 @@ describe('dragSection', () => {
     const further = dragSection(vp, g, axis, 1e9, 0)
     expect(far).toBe(further)
     expect(Math.abs(far)).toBeLessThan(sectionLimit(ctx.viewer))
+  })
+
+  it('moves nothing when the slider does not read as a number', () => {
+    // A drag is the one placement that starts from the library's OWN number
+    // rather than recomputing one, so an unreadable slider is arithmetic on NaN:
+    // the guard is what keeps a plane from being written to a constant nothing
+    // can measure, which looks on screen like the model disappearing.
+    const { vp, g, viewer } = ctx
+    const before = distance(g, face)
+    viewer.getClipSlider = () => NaN
+    expect(dragSection(vp, g, axis, 40, 0)).toBe(0)
+    expect(distance(g, face)).toBe(before)
+  })
+
+  it('does not stall on the one slider value the library silently refuses', () => {
+    // The other half of the guard `standSection` carries, and a drag reaches
+    // that number more easily than a placement does: `sectionValue` clamps to
+    // +-`sectionLimit`, so on a grid of 2 the lower stop of the travel IS
+    // exactly -1 — which `Viewer.setClipSlider` reads as "no value given" and
+    // ignores. Untreated, the plane stops dead at one end of its range while
+    // this function goes on reporting the distance it covered, and parts 2 mm
+    // across are ordinary here.
+    const { viewer, vp, g } = scene({ gridSize: 2 })
+    viewer.setClipNormal(SECTION_INDEX, [1, 0, 0], null, true)
+    viewer.setClipSlider(SECTION_INDEX, -0.95, true)
+    const stop = sectionAxis(viewer, g, face)
+    const before = distance(g, face)
+    const travelled = dragSection(vp, g, stop, 1e6, 0)
+    expect(viewer.getClipSlider(SECTION_INDEX)).not.toBe(-1)
+    // The distance it REPORTS is the distance it MOVED — the pair is the whole
+    // failure, since either alone still reads as a plane at the end of its
+    // travel.
+    expect(travelled).toBeGreaterThan(0)
+    expect(before - distance(g, face)).toBeCloseTo(travelled, 9)
   })
 })
 
@@ -303,6 +586,29 @@ describe('sectionOffset', () => {
 
     vp.state.cutOffset = sectionOffset(vp)
     applySection(vp, g)
+    expect(distance(g, face)).toBeCloseTo(dragged, 9)
+  })
+
+  it('reads back a re-appliable number on a FLIPPED cut too', () => {
+    // The same round trip with the normal turned over, and the reason it needs
+    // its own test: `state.cutOffset` counts along the SEED normal while
+    // `distanceToPoint` is signed along the normal in force, so on a flipped cut
+    // the two disagree by a sign. Dropping that sign does not read as a small
+    // error — the first reconcile after the drag hands `applySection` the
+    // offset's negative and the plane jumps to the far side of the face.
+    const { viewer, vp, g } = scene()
+    const face = [0, 0, 0]
+    placeSectionPlane(vp, g, [1, 0, 0], face)
+    vp.state.cutFlip = true
+    applySection(vp, g)
+    const axis = sectionAxis(viewer, g, face)
+    dragSection(vp, g, axis, 30, 0)
+    const dragged = distance(g, face)
+
+    vp.state.cutOffset = sectionOffset(vp)
+    applySection(vp, g)
+    expect(distance(g, face)).toBeCloseTo(dragged, 9)
+    applySection(vp, g)                      // ...and every reconcile after it
     expect(distance(g, face)).toBeCloseTo(dragged, 9)
   })
 })
@@ -358,6 +664,34 @@ describe('captureSection', () => {
 
   it('is null when the plane is parked at the far edge and cuts nothing', () => {
     const { vp } = scene()
+    expect(captureSection(vp)).toBeNull()
+  })
+
+  it('refuses to mint a plane out of a normal that is not one', () => {
+    // THE FAR END OF THE THREAD `restoreSection` GUARDS AT THE NEAR END: what
+    // comes out of here is what a live reload hands straight back in, and the
+    // swap in between is where the evidence of where it came from is lost. A
+    // library holding an infinite clip normal gives `unit3` a vector of NaNs —
+    // an array, and truthy — so the bare check this used to make would have
+    // minted exactly the `keep` the restore side has to defend against.
+    const { viewer, vp, g } = scene()
+    placeSectionPlane(vp, g, [1, 0, 0], [2, 0, 0])
+    expect(captureSection(vp)).not.toBeNull()          // premise
+    for (const bad of [[Infinity, 0, 0], [NaN, 0, 0], [0, 0, 0]]) {
+      viewer.getClipNormal = () => [...bad]
+      expect(captureSection(vp)).toBeNull()
+    }
+  })
+
+  it('is null when the slider does not read as a number', () => {
+    // The parked-at-the-far-edge test above cannot cover this one: `NaN >= lim`
+    // is false, so an unreadable slider walks straight past that comparison and
+    // a capture would come back describing a plane, which a live reload would
+    // then faithfully restore.
+    const { viewer, vp, g } = scene()
+    placeSectionPlane(vp, g, [1, 0, 0], [2, 0, 0])
+    expect(captureSection(vp)).not.toBeNull()
+    viewer.getClipSlider = () => NaN
     expect(captureSection(vp)).toBeNull()
   })
 
@@ -441,13 +775,15 @@ describe('captureSection -> restoreSection', () => {
     expect(after.vp.state.cutOffset).toBe(5)
   })
 
-  it('takes the offset back off along the FLIPPED normal, not the recorded one', () => {
-    // The seed is recorded UNFLIPPED (`captureSection`), while the offset was
-    // walked along the normal in force — the flipped one. So the subtraction
-    // that turns the captured plane back into a seed has to use the flipped one
-    // too, and getting the sign wrong is worth exactly twice the offset: the
-    // seed lands that far the wrong side of the face, and `applySection` then
-    // walks the plane the same distance again from there.
+  it('carries a FLIPPED cut across, offset and sliver and all', () => {
+    // The three sign conventions that meet on a flipped cut, and the reason this
+    // test is separate from the one above: the offset is walked along the SEED
+    // normal (`applySection`), `distanceToPoint` is signed along the normal IN
+    // FORCE (`captureSection`, `sectionOffset`), and the seed is recorded
+    // unflipped. Getting the first one wrong is worth exactly twice the offset —
+    // the seed lands that far the wrong side of the face and the plane is walked
+    // the same distance again from there — and getting the sliver's direction
+    // wrong is worth two of them on every live reload.
     //
     // BOTH SCENES ARE THE SAME SIZE, for the reason the test above spells out:
     // equal grids make every placement bias equal, so the tolerance can be a

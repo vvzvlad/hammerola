@@ -8,7 +8,7 @@
 // frame of reference the slider counts in, which is the whole of the note below.
 
 import { internals } from "./internals.js";
-import { clamp, dot3, sub3, unit3, vec3 } from "./math.js";
+import { clamp, dot3, finite3, sub3, unit3, vec3 } from "./math.js";
 import { MIN_SINE, SECTION_BIAS, SECTION_INDEX } from "./options.js";
 
 /** Half the grid: the range the library's own clip sliders span. */
@@ -51,15 +51,38 @@ function sectionBias(viewer) {
  */
 const stepCap = (viewer) => (sectionLimit(viewer) || 1) / 10;
 
-/** Unit direction from the camera towards `point`, or null. */
+/** Unit direction from the camera towards `point`, or null.
+ *
+ * NULL IS THE ONLY WAY THIS DECLINES, and both callers lean on that. `unit3`
+ * answers a vector carrying an infinity with a vector of NaNs — an array, and
+ * therefore truthy — so returning its result unchecked would hand `!view` and
+ * `!n` a value they cannot refuse. What each of them does with NaNs afterwards
+ * is worse than useless: `placeSectionPlane` writes a seed nothing can measure,
+ * and `sectionAxis` computes `Math.sqrt(1 - NaN)` and compares it against
+ * `MIN_SINE`, a comparison that is false, which is the ACCEPTING branch of the
+ * guard against a plane seen edge-on.
+ *
+ * That covers a bad `point` and a bad eye alike — an infinite `eye.y` reached
+ * here for as long as this checked `eye.x` alone.
+ */
 function viewDir(g, point) {
   const eye = g.camera.getPosition();
-  if (!eye || !Number.isFinite(eye.x)) return null;
-  return unit3(sub3(vec3(point), eye));
+  // `point` is checked HERE and not by the callers, because this is the function
+  // that dereferences it: `vec3(null)` reads `null[0]` and THROWS, which is the
+  // one way this could decline that is neither null nor a NaN — and
+  // `placeSectionPlane` runs outside any `try`. Everything else a bad point can
+  // be (an infinity, a NaN, a short array) comes back through `finite3(dir)`
+  // below; this line is only about the ones that would not come back at all.
+  if (!eye || !finite3(point)) return null;
+  const dir = unit3(sub3(vec3(point), eye));
+  return finite3(dir) ? dir : null;
 }
 
 /**
- * Slide the plane along its own normal until it passes through `point`.
+ * The slider value that stands a plane with `normal` through `point`, or null.
+ *
+ * PURE — it writes nothing, and that is the whole reason it is a function of its
+ * own. See `standSection`.
  *
  * The slider's frame of reference, read off the library rather than guessed at:
  *
@@ -73,26 +96,80 @@ function viewDir(g, point) {
  *   That is why `resetClip` parks it at `gridSize / 2`: the far edge of the
  *   grid, where the plane cuts nothing.
  *
- * The consequence this code actually uses: `distanceToPoint` is affine in
- * `value` with slope exactly 1, so from ANY current value `v` the value that
- * puts the plane through P is `v - plane.distanceToPoint(P)`. That needs neither
- * the centre nor the grid size, and it stays right if the library moves its
- * origin again.
+ * Inverting that one line gives `value = -normal . (point - centre)`, which
+ * needs nothing from the plane that is currently standing — in particular it
+ * does not need the plane to already carry `normal`. THAT is what lets the
+ * normal and the slider go into the library together, which is the whole of
+ * `applySection`'s atomicity.
  *
- * ONE FUNCTION, spent by three callers — laying a plane on a face, moving it to
- * an offset, and putting it back after a live reload — so they cannot drift into
- * three subtly different subtractions. `back` pushes the answer further along
- * the normal (the placement bias) and is 0 when the plane has to land exactly on
- * the point. Returns the value it set, or null when the numbers came back
- * unusable, in which case nothing was written.
+ * `centre` is `CenteredPlane.center`, one property deeper than the `plane` that
+ * `internals()` guards, so it is checked here: a library that stopped carrying
+ * it costs the section tool its placement and nothing else.
+ *
+ * `normal` MUST BE A UNIT VECTOR, and that is a real precondition rather than a
+ * style note: the dot product above measures a distance only when it is, and the
+ * same normal is walked by `applySection` to build the point it is asked about,
+ * so a normal of length 2 is wrong TWICE and in different proportions — the
+ * plane lands somewhere nobody chose. Measured on the scene the suite uses: with
+ * a normal of length 2 a cut aimed at the face stands 4.98 world units off it.
+ *
+ * NOTHING HERE NORMALISES, and that is not the invariant going unenforced — it
+ * is enforced one level up, at THE SEED, which is the only door a normal enters
+ * this module by. `placeSectionPlane` and `restoreSection` are the two functions
+ * that write `vp.sectionSeed`, and both run `unit3` before they do; everything
+ * downstream — this, `applySection`'s `at`, `sectionOffset` — then reads one
+ * already-unit normal. Doing it here instead would fix only the value and leave
+ * `at` wrong, which is worse than not doing it: a half-correct placement looks
+ * robust. Any third writer of the seed has to normalise the same way.
  */
-export function slideSectionTo(viewer, g, point, back) {
-  const v0 = viewer.getClipSlider(SECTION_INDEX);
-  if (!Number.isFinite(v0)) return null;
-  const value = sectionValue(viewer, v0 - g.plane.distanceToPoint(vec3(point)) - back);
-  if (!Number.isFinite(value)) return null;
-  viewer.setClipSlider(SECTION_INDEX, value, true);
-  return value;
+export function sectionValueFor(viewer, g, normal, point) {
+  const centre = g.plane && g.plane.center;
+  if (!finite3(centre) || !finite3(normal) || !finite3(point)) return null;
+  const value = sectionValue(viewer, -dot3(normal, [point[0] - centre[0],
+                                                    point[1] - centre[1],
+                                                    point[2] - centre[2]]));
+  return Number.isFinite(value) ? value : null;
+}
+
+/** A slider value the library will actually take.
+ *
+ * `Viewer.setClipSlider` opens with `if (value === -1 || value == null) return`
+ * — -1 is its spelling of "no value given". So a placement that works out to
+ * exactly -1 sets the NORMAL and leaves the slider parked at the far edge of the
+ * grid, which cuts the whole model away: the same half-applied state
+ * `standSection` exists to make impossible, arrived at from the other side. A
+ * billionth off it is the same plane to look at and is a number the library
+ * takes.
+ *
+ * EVERY WRITE OF THE SLIDER GOES THROUGH HERE — `standSection` and
+ * `dragSection`, the two that compute a value — because the failure is the
+ * library's and not the caller's, so a path that skipped it would be silently
+ * stuck at one number. The third writer, `suspendSectionCut`, does not compute
+ * anything: it writes `sectionLimit`, which `sectionLimit` itself returns only
+ * for a positive grid and which therefore cannot be -1.
+ */
+const sliderSafe = (v) => (v === -1 ? -1 + 1e-9 : v);
+
+/**
+ * Stand the plane at `normal` through `point`. Returns the value it set, or
+ * null when the numbers came back unusable — in which case NOTHING was written.
+ *
+ * ONE library call, not two, and that is the point rather than a tidy-up. The
+ * previous arrangement set the normal first and unconditionally (with a null
+ * value, so the library parked the slider at its documented default) and then
+ * corrected the slider "from a KNOWN state". Every failure between those two
+ * writes returned false with the plane left somewhere it was never meant to
+ * stand — turned over AND parked at the far edge, which is the one combination
+ * that cuts the entire model away. `setClipNormal` takes the value itself, so
+ * the pair is one call once the value is known in advance, and the only thing
+ * left in front of it is arithmetic that writes nothing.
+ */
+function standSection(viewer, g, normal, point) {
+  const value = sectionValueFor(viewer, g, normal, point);
+  if (value === null) return null;
+  const safe = sliderSafe(value);
+  viewer.setClipNormal(SECTION_INDEX, normal, safe, true);
+  return safe;
 }
 
 /**
@@ -101,15 +178,44 @@ export function slideSectionTo(viewer, g, point, back) {
  */
 export function placeSectionPlane(vp, g, normal, point) {
   const viewer = vp.viewer;
+  // THE SEED IS CHECKED WHOLE, BEFORE ANYTHING IS WRITTEN — both halves of it,
+  // because a seed is a normal AND a point and the rest of the module reads it
+  // as one thing. `vp.sectionSeed` being non-null is what tells
+  // `keepSectionCut`, `sectionOffset` and `captureSection` that a cut exists, so
+  // a seed written out of numbers nothing can measure is worse than no seed:
+  // `applySection` still refuses to place a plane and returns false, and leaves
+  // that record behind for every one of them to believe. Every exit here is the
+  // one a pick that found no face gets: no cut, and NOTHING WRITTEN.
+  //
+  // THE POINT IS COVERED BY THIS LINE, which is why there is no separate check
+  // for it: `viewDir` measures from the eye TO the point and is total (see
+  // there), so a point that is not a place cannot produce a direction. Said
+  // plainly because the check does not look like it is about the point at all.
   const view = viewDir(g, point);
   if (!view) return false;
+  // NORMALISED HERE, because this is one of the two doors a normal enters the
+  // module by and everything downstream assumes a unit one (`sectionValueFor`
+  // says what breaks otherwise). `faceNormalAt` does hand back a unit vector
+  // today — but picking.js has no tests of its own, so that is a fact about a
+  // file nothing checks, and the cost of it changing is a plane standing metres
+  // from the face with nothing reporting anything.
+  //
+  // `finite3` AND NOT the null `unit3` returns, because null is only one of the
+  // two ways it declines: a component that is already Infinity has no direction
+  // to find and comes back as `[NaN, …]`, an array. `unit3` itself is what makes
+  // this the ONLY remaining case — it scales by the largest component, so a
+  // vector too large or too small to square is answered rather than refused
+  // (math.js says why that used to be a finite vector of length zero, which is
+  // exactly what a check for finiteness cannot see).
+  const unit = unit3(normal);
+  if (!finite3(unit)) return false;
   // three.js keeps the half-space the normal points INTO. A normal pointing away
   // from the camera therefore throws away the near side — everything between the
   // reader and the face — which is the direction a section cut opens. Taken from
   // the camera rather than from the face winding, so a model whose triangles are
   // wound inwards still cuts the way it looks like it should.
-  const n = dot3(normal, view) < 0
-    ? [-normal[0], -normal[1], -normal[2]] : normal;
+  const n = dot3(unit, view) < 0
+    ? [-unit[0], -unit[1], -unit[2]] : unit;
   vp.sectionSeed = { normal: n, point, value: null };
   return applySection(vp, g);
 }
@@ -132,20 +238,35 @@ export function applySection(vp, given) {
   const offset = Number.isFinite(vp.state.cutOffset) ? vp.state.cutOffset : 0;
   const n = flip ? [-seed.normal[0], -seed.normal[1], -seed.normal[2]]
                  : seed.normal;
+  // A FLIP TURNS THE PLANE OVER AND MOVES NOTHING. It changes which half-space
+  // is kept, which is what Fusion's `Flip` does and what the word means.
+  //
+  // This line used to read `seed.point + n * offset` — the offset walked along
+  // the FLIPPED normal — with the reason written beside it: "so 'deeper' stays
+  // deeper after a flip rather than reversing under the reader". The intent was
+  // sound and the implementation is not, because the only way to hold "deeper"
+  // fixed while the kept side turns over is to MOVE THE PLANE, and the two
+  // changes then compound instead of cancelling: the kept side becomes the
+  // outside of the part AND the plane walks that far further outside it. A cut
+  // six millimetres into a plate came back as an empty canvas — measured in a
+  // browser — where turning the plane over should have shown the six
+  // millimetres. The offset therefore counts along the SEED normal, which is
+  // the face's own direction and does not move.
+  //
+  // What that leaves is the offset of ZERO, and it is a different question with
+  // a different answer: there the plane lies exactly on the face that was
+  // clicked, the part is entirely on one side of it, and keeping the other side
+  // honestly leaves nothing to draw. No arithmetic here can help with that.
+  const depth = offset + sectionBias(viewer);
+  // The bias goes on here, along the same seed normal, and is THE ONLY PLACE IT
+  // IS ADDED — see `sectionBias` for why every reader subtracts it again. It
+  // sinks the plane that sliver into the part, which is what keeps the library's
+  // stencil cap quad off the face it would otherwise z-fight with.
+  const at = [seed.point[0] + seed.normal[0] * depth,
+              seed.point[1] + seed.normal[1] * depth,
+              seed.point[2] + seed.normal[2] * depth];
   try {
-    // null, not the current value: `setClipNormal` then puts the slider at its
-    // documented default and the line below corrects it from a KNOWN state.
-    viewer.setClipNormal(SECTION_INDEX, n, null, true);
-    // The offset walks the plane along the normal it is being flipped with, so
-    // "deeper" stays deeper after a flip rather than reversing under the reader.
-    const at = [seed.point[0] + n[0] * offset,
-                seed.point[1] + n[1] * offset,
-                seed.point[2] + n[2] * offset];
-    // The bias: a larger `value` holds the plane further back, so taking it away
-    // slides the plane the sliver INTO the part that keeps the library's stencil
-    // cap quad off the face it would otherwise z-fight with. THE ONLY PLACE IT
-    // IS ADDED — see `sectionBias` for why every reader subtracts it again.
-    const value = slideSectionTo(viewer, g, at, sectionBias(viewer));
+    const value = standSection(viewer, g, n, at);
     if (value === null) return false;
     seed.value = value;
     // A plane placed while some other tab is open would be a cut nobody can see.
@@ -206,6 +327,14 @@ export function sectionAxis(viewer, g, point) {
  * Least-squares projection of the pixel delta onto the screen direction of the
  * normal: only the component along that direction moves the plane, and a drag
  * across it moves nothing.
+ *
+ * THE DISTANCE IS SIGNED ALONG THE NORMAL IN FORCE, which is the frame the
+ * library's own slider counts in — and NOT the frame `sectionOffset` answers in.
+ * A flip turns the normal in force over without moving the plane, so on a
+ * flipped cut the two disagree in sign for the same physical movement. Nothing
+ * reads this today: the one caller (`tools.js`, `onMove`) discards it, and what
+ * the interface is shown after a drag comes from `sectionOffset` at `onUp`. A
+ * second caller has to decide which of the two frames it means.
  */
 export function dragSection(vp, g, axis, dx, dy) {
   const viewer = vp.viewer;
@@ -213,9 +342,20 @@ export function dragSection(vp, g, axis, dx, dy) {
   const step = clamp((dx * axis.sx + dy * axis.sy) / axis.s2, -cap, cap);
   const v = viewer.getClipSlider(SECTION_INDEX);
   if (!Number.isFinite(v)) return 0;
-  // Slope of 1, from the note on `slideSectionTo`: sliding the plane `step`
-  // along its own normal is the slider MINUS `step`.
-  const next = sectionValue(viewer, v - step);
+  // `value = -normal . (point - centre)` (see `sectionValueFor`) is affine in
+  // the point with slope exactly -1 along the normal, so sliding the plane
+  // `step` along its own normal is the slider MINUS `step`. A relative move
+  // needs neither the centre nor the grid size, which is why a drag reads the
+  // slider rather than recomputing a placement.
+  //
+  // Through `sliderSafe` exactly like a placement, and a drag reaches that
+  // number more easily than a placement does rather than less: `sectionValue`
+  // clamps to +-`sectionLimit`, so on a scene whose grid is 2 the LOWER STOP OF
+  // THE TRAVEL IS EXACTLY -1 — the value the library reads as "no value given"
+  // and silently ignores. Without this the plane would stop at one end of its
+  // range while this function went on reporting the distance it had covered,
+  // and a part 2 mm across is an ordinary thing to publish here.
+  const next = sliderSafe(sectionValue(viewer, v - step));
   viewer.setClipSlider(SECTION_INDEX, next, true);
   return v - next;
 }
@@ -330,8 +470,14 @@ export function captureSection(vp) {
     console.warn("section capture", error);
     return null;
   }
+  // `finite3` rather than a truthiness check, and this is the FAR END of the
+  // same thread `restoreSection` guards at the near end: what this returns is
+  // what a live reload hands straight back in. A library holding an infinite
+  // clip normal produces `[NaN, …]` here — an array, and truthy — so a bare
+  // check would mint the very `keep` the other side has to defend against, and
+  // the swap between them is where the evidence of where it came from is lost.
   normal = Array.isArray(normal) ? unit3(normal) : null;
-  if (!normal) return null;
+  if (!finite3(normal)) return null;
   const v = viewer.getClipSlider(SECTION_INDEX);
   if (!Number.isFinite(v)) return null;
   const lim = sectionLimit(viewer);
@@ -340,8 +486,14 @@ export function captureSection(vp) {
   const src = seed ? seed.point : [0, 0, 0];
   const d = g.plane.distanceToPoint(vec3(src));
   if (!Number.isFinite(d)) return null;
-  // `distanceToPoint` is signed along the unit normal, so stepping the point
-  // back by it lands it on the plane, with every drag since the seed folded in.
+  // The captured normal is the one currently in force, flip included, so the
+  // seed it restores into is recorded UNFLIPPED — otherwise a restore would
+  // apply the flip a second time.
+  const flip = !!vp.state.cutFlip;
+  const base = flip ? [-normal[0], -normal[1], -normal[2]] : normal;
+  // `distanceToPoint` is signed along the unit normal IN FORCE, so stepping the
+  // point back by it lands it on the plane, with every drag since the seed
+  // folded in.
   //
   // AND THEN THE RENDER SLIVER COMES BACK OUT, which is the difference between
   // where the plane IS and the plane the reader aimed at. It has to: the restore
@@ -349,23 +501,25 @@ export function captureSection(vp) {
   // across would land the plane two slivers deep — and deeper again on the next
   // reload, since nothing ever takes them off. It is a fraction of the GRID as
   // well, so the one that belongs here is the new scene's, not this scene's.
-  const back = d + sectionBias(viewer);
-  const point = [src[0] - normal[0] * back, src[1] - normal[1] * back,
-                 src[2] - normal[2] * back];
-  // The captured normal is the one currently in force, flip included, so the
-  // seed it restores into is recorded UNFLIPPED — otherwise a restore would
-  // apply the flip a second time.
-  const flip = !!vp.state.cutFlip;
-  const base = flip ? [-normal[0], -normal[1], -normal[2]] : normal;
+  //
+  // Along `base` and not along `normal`, because that is the direction
+  // `applySection` sinks it in — the SEED normal, which a flip leaves alone. The
+  // two agree until the reader flips, and then they are a sliver apart in
+  // opposite directions, i.e. two slivers out on every live reload.
+  const bias = sectionBias(viewer);
+  const point = [src[0] - normal[0] * d - base[0] * bias,
+                 src[1] - normal[1] * d - base[1] * bias,
+                 src[2] - normal[2] * d - base[2] * bias];
   return { normal: base, point, placed: !!seed };
 }
 
 /** Put the captured plane back on the scene that has just been rendered.
  *
- * The normal goes back verbatim — no re-orienting against the camera. The one in
- * `keep` is already the oriented one, and re-deciding which half-space to keep
- * would invert the cut for a reader who had turned the model more than a quarter
- * turn since they made it.
+ * The normal goes back with its DIRECTION verbatim — no re-orienting against the
+ * camera. The one in `keep` is already the oriented one, and re-deciding which
+ * half-space to keep would invert the cut for a reader who had turned the model
+ * more than a quarter turn since they made it. Its LENGTH is not carried: like
+ * `placeSectionPlane`, this normalises before it writes the seed.
  *
  * If the geometry changed enough that the plane now misses the part, it lands
  * outside it and cuts nothing visible. That is the honest answer: the cut is
@@ -394,17 +548,26 @@ export function restoreSection(vp, keep) {
     // view tab, a pin — and the first of those would walk the plane the reader's
     // millimetres a second time, silently, on a scene nobody had touched.
     //
-    // Along the FLIPPED normal, because that is the one the offset was walked
-    // with; `keep.normal` is recorded unflipped (see `captureSection`).
+    // Along the captured normal, which is the seed's own direction and is the
+    // one `applySection` walks the offset with whether the cut is flipped or
+    // not. It used to come off along the FLIPPED normal, to match an
+    // `applySection` that walked it that way; both changed together, because a
+    // flip moves no plane any more.
     const offset = Number.isFinite(vp.state.cutOffset) ? vp.state.cutOffset : 0;
-    const n = vp.state.cutFlip
-      ? [-keep.normal[0], -keep.normal[1], -keep.normal[2]]
-      : keep.normal;
+    // The OTHER door, and the seed is checked whole here too — normal and point
+    // both, before either is stored, for the reason `placeSectionPlane` spells
+    // out. `keep` comes back from `captureSection` on the ordinary live-reload
+    // path and is already finite and unit; it is nonetheless a plain object that
+    // has crossed a swap, and this is the cheapest place in the module to stop
+    // being sure about that.
+    if (!finite3(keep.point)) return false;
+    const normal = unit3(keep.normal);
+    if (!finite3(normal)) return false;   // `unit3` of an infinity is NaNs
     vp.sectionSeed = {
-      normal: keep.normal,
-      point: [keep.point[0] - n[0] * offset,
-              keep.point[1] - n[1] * offset,
-              keep.point[2] - n[2] * offset],
+      normal,
+      point: [keep.point[0] - normal[0] * offset,
+              keep.point[1] - normal[1] * offset,
+              keep.point[2] - normal[2] * offset],
       value: null,
     };
     const ok = applySection(vp, g);
@@ -428,6 +591,13 @@ export function restoreSection(vp, keep) {
  * plane a sliver deeper on the reconcile that follows, and another on the next
  * drag, for as long as the reader keeps dragging. A freshly placed plane also
  * reads 0 here rather than a sliver, which is what the reader asked for.
+ *
+ * ALONG THE SEED NORMAL, which is the frame `state.cutOffset` counts in and the
+ * one `applySection` walks the plane with. `distanceToPoint` is signed along the
+ * normal IN FORCE, and a flip turns that one over without moving the plane, so
+ * the sign has to come back off here — otherwise the first reconcile after a
+ * drag on a flipped cut would hand `applySection` the offset's negative and the
+ * plane would jump to the wrong side of the face.
  */
 export function sectionOffset(vp) {
   const viewer = vp.viewer;
@@ -436,7 +606,8 @@ export function sectionOffset(vp) {
   const g = internals(viewer);
   if (!g) return 0;
   const d = g.plane.distanceToPoint(vec3(seed.point));
-  return Number.isFinite(d) ? -d - sectionBias(viewer) : 0;
+  if (!Number.isFinite(d)) return 0;
+  return (vp.state.cutFlip ? d : -d) - sectionBias(viewer);
 }
 
 /** How far the offset can usefully run, for the interface's slider. */
