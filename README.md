@@ -1,27 +1,63 @@
 # hammerola
 
-Builds CAD models from code and serves them through a browser viewer. The name is from
-"pianola" — a mechanism that plays itself: push a model source, get back a page you can
-open, rotate and download printable files from.
+Builds CAD models from code and serves them in a browser. Push a model's source,
+get back a page: turn the part, hide what is in the way, cut a section through
+it, measure it, download it as STEP/STL/3MF. The name is from "pianola" — a
+mechanism that plays itself.
 
-**Status: the hub is the builder, and the migration is not finished.** What a push
-carries is a model's SOURCE tree; the hub unpacks it, computes the geometry itself — in a
-separate process, with the CadQuery kernel that ships in the image — and publishes the
-result under a revision **it names itself**, from a digest of those sources. The push does
-not wait for that: it answers `202` with a job id, and `GET /api/v1/jobs/<id>` and
-`.../log` are where the outcome and the build's own output come from.
+<!-- Screenshots live in docs/images/ rather than in static/. static/ is the
+     viewer payload that ships INSIDE the image, and its `hammerola*` names are
+     generated and gitignored; README pictures are drawn by the forge straight
+     out of the repository and have no business in a container. -->
+![A published revision, open in the viewer](docs/images/build-page.png)
 
-What is still open is the checklist in `AGENTS.md`, worked out in `docs/SPEC.md` §8A. The
-two that are about the build path: the geometry gate on the receiving side (step 6) and
-the comparison of two revisions (step 8).
+## How it works
+
+A model is a directory with a `model.py` in it. `hammerola commit` packs that
+directory and posts it; the hub unpacks it, **computes the geometry itself** —
+in a process of its own, with the CAD kernel that ships in its image — checks
+the result, exports STEP/STL/3MF and serves the whole thing at a URL. Nothing is
+built on the laptop, and no forge's CI is involved.
+
+Four things follow from that, and between them they are what the tool is for.
+
+**The hub names the revision, not you.** The id is the digest of the sources it
+received, so `commit` means "publish a version of this" and has nothing to do
+with git: a directory that is not a repository publishes exactly like one that
+is, and the same tree pushed twice lands at the same address instead of making a
+second one. git is consulted once, afterwards — `commit` *prints* a `git commit`
+line recording what was published, for a person to run or ignore, and never runs
+it.
+
+**A published revision never changes and never expires.** Its URL is served as
+immutable, and there is no retention anywhere on the hub — nothing ages out and
+no build can be taken back on its own — so a link pasted into a chat shows the
+same geometry a year later. `dev` is the other kind of slot: one per project,
+rewritten by every `hammerola build`, no history, never listed, and it is where
+the working copy goes while a part is still moving.
+
+**Geometry that fails the gate is not published.** Every printable has to be a
+valid solid with positive volume, export a watertight mesh and come out as one
+body; the `print` view has to be a plate rather than a pile of parts modelled
+inside one another; every printable has to appear in a view. A build that fails
+any of it is thrown away whole — `latest` and `dev` do not move — and what comes
+back is a failure code and the build's own log.
+
+**The files are public and the code is not.** A build's page, its geometry and
+its STEP/STL/3MF are anonymous: being given the link is what gets you the part.
+The sources a revision was built from are kept too, but behind the one secret,
+and so is the list of what exists on the hub at all.
+
+![The same revision as it goes on the bed, and what it hands out](docs/images/print-view.png)
 
 ## Publishing a model
 
-The client is `hammerola`, and it lives in this repository on purpose: the client and the
-hub share one contract — the archive shape, the path alphabet, the ceilings, the job
-states — and it used to be split across two repositories where no test could see both
-halves, which is exactly how publication came to be broken without anyone noticing. It
-imports nothing outside the standard library, so whatever `python3` a laptop has is enough.
+The client is `hammerola`, and it lives in this repository on purpose: the
+client and the hub share one contract — the archive shape, the path alphabet,
+the ceilings, the job states — and it used to be split across two repositories
+where no test could see both halves, which is exactly how publication came to be
+broken without anyone noticing. It imports nothing outside the standard library,
+so whatever `python3` a laptop already has is enough.
 
 ```bash
 make client                          # symlink bin/hammerola into ~/.local/bin
@@ -33,21 +69,146 @@ Then, in a model's directory:
 ```bash
 hammerola create --title "T13 ceiling mount"   # once per project: mints project.json
 hammerola build                                # publish the working copy into `dev`
-hammerola commit -m "thicker bracket"          # publish an immutable revision
-hammerola status                               # what the hub has for this project
-hammerola comments                             # notes left on this project's builds
+hammerola commit -m "thicker plate"            # publish an immutable revision
 ```
 
-**The revision is named by the hub**, not by the pusher and not by git: it is the digest of
-the sources it received. So `commit` means "publish a version of this" — a directory that
-is not a git repository publishes exactly like one that is, and the same tree pushed twice
-lands at the same address. git is consulted once, afterwards: `commit` PRINTS a
-`git commit` line recording what was published, for a person to run or ignore. It never
-runs it.
+Both verbs do the same four things: pack the tree, post it, wait on the build
+job the hub answers with, and print what the build printed — plus, for `commit`,
+the name the hub gave the revision. The exit code is the point, because it
+replaces a forge's job status: zero means a build was published, and a refused
+push, a model that raised, a gate that said no and a hub that could not be
+reached are each non-zero with the sentence that says which.
 
-`hammerola --help` lists the rest.
+The rest of the commands answer questions about a project that is already there:
 
-## Running the hub
+```bash
+hammerola status                 # latest, dev, and the revisions that exist
+hammerola log <revision>         # read a build log again
+hammerola source <revision>      # the code a revision was built from
+hammerola artifacts <revision>   # its STEP/STL/3MF
+hammerola diff <rev> <rev>       # what moved, in geometry and in source
+hammerola comments               # notes left on this project's builds
+hammerola rename "New title"     # the title, never the id
+```
+
+`hammerola --help` has the flags, and `hammerola rm` — the one command that
+unmakes anything. It removes a project whole, never a single build, and it asks
+for the id to be typed first.
+
+## What a model.py looks like
+
+<!-- REPLACE THE EXAMPLE BELOW WITH A POINTER TO THE TEMPLATE once
+     model_template/ lands on main (SPEC §8 entry 31, "the template lives on
+     the backend"): the contract has to have ONE source, and a second copy of
+     it sitting here is exactly the silent drift entry 46 warns about. Until
+     then this is the smallest model that publishes, and it is not invented —
+     it was built and published through the real pipeline before it was
+     written down here.
+
+     WHAT HOLDS IT TO THAT is tests/test_readme_example.py: it lifts this
+     block out of README.md and builds it the way a push is built. Delete that
+     file in the same commit that deletes the example — it skips itself once
+     the block is gone, and a skip nobody reads is not a test. -->
+
+Three functions and one import are the whole contract. `printables()` says what
+gets exported and offered for download; `views()` says what the viewer shows,
+one tab per view; `checks()` is optional and holds this part to its own numbers.
+The geometry comes from `cadquery`, and the shared checks from `checklib` — the
+third bullet below says what that one carries.
+
+```python
+"""A flat mounting plate: one printed part, driven by the numbers at the top."""
+
+import cadquery as cq
+
+import checklib
+
+LENGTH = 60.0     # along X
+WIDTH = 40.0      # along Y
+THICKNESS = 4.0   # of the plate
+HOLE = 5.5        # M5 clearance, ISO 273
+HEAD = 8.5        # M5 socket cap head, ISO 4762
+INSET = 8.0       # hole centres in from each edge
+
+
+def hole_centres():
+    x, y = (LENGTH - 2 * INSET) / 2, (WIDTH - 2 * INSET) / 2
+    return [(sx * x, sy * y) for sx in (-1, 1) for sy in (-1, 1)]
+
+
+def plate():
+    return (cq.Workplane("XY").box(LENGTH, WIDTH, THICKNESS)
+            .faces(">Z").workplane()
+            .pushPoints(hole_centres()).hole(HOLE))
+
+
+def printables():
+    """What the download buttons hand out. The key is the filename stem."""
+    return {"plate": plate()}
+
+
+def views():
+    """One tab each. `assembled` is the product, `print` is the bed.
+
+    They hold the same list here only because there is one part: a single part
+    is already its own bed layout. With two, `print` is where you move them
+    apart, and the gate refuses a `print` view whose parts overlap.
+    """
+    part = plate()
+    return [
+        {"id": "assembled", "name": "assembled",
+         "parts": [{"shape": part, "name": "plate"}]},
+        {"id": "print", "name": "as printed",
+         "parts": [{"shape": part, "name": "plate"}]},
+    ]
+
+
+def checks():
+    """Optional. Measure the solid rather than restate the numbers above.
+
+    It may take one argument — the directory the build has already exported
+    into — for a check that reads the files instead of the geometry.
+    """
+    part = plate()
+    holes = part.faces("%CYLINDER").vals()
+    assert len(holes) == 4, f"the plate has {len(holes)} bores, not 4"
+
+    # The shared version of "the screw head has something to bear on". The box
+    # is centred, so the seat is the top face at +THICKNESS/2 and the head has
+    # the whole plate under it. A check may also report by returning strings.
+    problems = []
+    for x, y in hole_centres():
+        problems += checklib.material_under_head(
+            part, (x, y, THICKNESS / 2), HEAD, THICKNESS, name="plate")
+    return problems
+```
+
+Beside `project.json`, which `hammerola create` writes, that file is the whole
+project. Four things about it are worth knowing before writing the second one:
+
+* **A part in a view needs `shape` and `name`; `color` and `alpha` are
+  optional.** The colour is decided by SHAPE and never by the name: an object
+  in a view gets a palette colour when it is one of the solids `printables()`
+  returned — moved and turned as much as you like — and everything else comes
+  out grey. So the picture says by itself what is going on the bed and what is
+  a bought part shown for reference, and a stand-in stays grey however you
+  label it.
+* **`checks()` runs on the hub, and a demonstrably empty one is refused.** The
+  build counts the checks in the function's own source, and refuses a body with
+  no assert, no raise, nothing filling the list it returns and not so much as a
+  call in it — a function that passes for that reason is worse than no
+  function. A body it cannot count is not refused: a comprehension, a table of
+  checks or a helper handed the problem list gets `count unknown` in the log
+  and publishes.
+* **`import checklib` is part of the contract**, next to those three names: it
+  carries the checks that keep coming up — every pair of parts checked for
+  shared volume, a mating face that has to stay flat, material under a screw
+  head — so a fix to one of them reaches every project instead of one.
+* **Dependencies come from the image and nowhere else.** Nothing is installed on
+  a model's say-so, so `model.py` imports what the hub already has: `cadquery`,
+  `checklib`, the standard library, and whatever the project ships beside it.
+
+## Running a hub
 
 Everything routine is wrapped in the `Makefile` (`make help` lists all targets):
 
@@ -58,38 +219,17 @@ make test                   # run tests
 make run                    # run the app
 ```
 
-Python targets create and reuse a local `.venv` automatically — you never need the system
-Python. `make ui` builds the browser bundle and is the only target that needs node.
+Python targets create and reuse a local `.venv` automatically — you never need
+the system Python. node is needed by the frontend targets only: `make ui`,
+which builds the browser bundle, and `make ui-test`, which runs the JS suite.
+Both refuse to run without npm. `make test` does not refuse — it runs the
+Python suite either way and then says out loud that it skipped the browser
+half.
 
-## What's here
+## Where the rest is written down
 
-| Path | Purpose |
+| File | What it holds |
 | --- | --- |
-| `Makefile` | Single entry point for repeated actions: `install`, `test`, `run`, `client`, `ui`. Run `make help`. |
-| `src/` | Application code; `settings.py` reads all config from ENV / `.env`. `app.py` is the HTTP surface, `store.py` the on-disk layout and the atomic publish, `jobs.py` the build queue a push hands over to, `buildproc/` the separate process a model actually runs in, and `cadbuild/` the build half moved in from `cad_publish`. |
-| `src/client/` | The other side of the wire: the `hammerola` command an author runs in a model's directory. Standard library only — it must import under a laptop's bare `python3`, so it takes nothing from `requirements.txt` and talks HTTP with `urllib.request`. `tests/client/` drives it against a real hub over a real socket. |
-| `bin/hammerola` | The command itself, a plain script `make client` symlinks onto PATH. Deliberately not a packaging entry point: this repo's one importable top-level name is `src`, and `pip install`ing that onto a laptop would shadow every other project's. |
-| `checklib.py` | At the repository ROOT on purpose, and not a stray file: `import checklib` is part of the contract with every model.py, like `views()` and `printables()`. It re-exports `src/cadbuild/checklib.py` under that name, and it has to sit at the root because a model is imported with its own directory FIRST on `sys.path` — the name then has to resolve on the path behind it, which in the image is `/app`. |
-| `tests/` | pytest suite (runs in CI before the image is built). |
-| `ci/smoke.py` | The gate between building the image and publishing it, run as a step of its own in both workflows. It answers the seven things a green test suite structurally cannot, because the suite runs against a checkout and never looks at the artefact: the declared ENTRYPOINT/CMD/WORKDIR, that the startup guard still fires *and still names the missing variable*, that privileges are really dropped to `app`, that `.dockerignore` kept `tests/`, `.env` and `.venv` out — and its mirror, that `templates/`, `static/` and `checklib.py` really are in — that the image's own command reaches its startup marker, and that the CAD kernel imports inside the image at the pinned versions. No ports, no secrets, no network, so the identical gate runs on pull requests too. |
-| `data/` | Runtime state as a directory tree with JSON alongside — no database: builds, pointers, comments, build jobs, and the sources and log of every published revision. Gitignored, mounted as a volume. |
-| `templates/` | Page templates baked into the image (`index.html`, `build.html`, `pointer.html`) — one per URL the hub serves. |
-| `static/` | The viewer payload baked into the image (`static/_v/`). **Not everything in it is committed:** the browser bundle (`hammerola*`) is BUILT into that directory, gitignored and excluded from the build context — it arrives in the image from the `ui` stage instead. Do not commit a file matching that prefix, and do not expect one in a fresh checkout until `make ui` has run. |
-| `ui/` | React sources for the browser UI, and the only place node is used. Built by `make ui` on a workstation and by the Dockerfile's `ui` stage for the image; the output is `static/_v/hammerola.js`. Nothing Python imports or executes anything here, so `make run` and `make test` work on a machine without node. `ui/README.md` explains the layout and the pins. |
-| `Dockerfile` | Two stages: a `node:22-bookworm-slim` stage that compiles the browser bundle and is then discarded, and the `python:3.11-slim` runtime that copies out only its output — so no node toolchain ships in the published image. No `EXPOSE`, and no `USER`: privileges are dropped by `entrypoint.sh`. |
-| `entrypoint.sh` | Postgres-style hybrid: starts as root, fixes `/app/data` ownership, drops to non-root `app` (uid 1000) via gosu. |
-| `docker-compose.yml` | Deploy template — image from the Gitea registry, the data volume, Traefik labels, the healthcheck and one auto-update label. The comments in it are the rationale; `AGENTS.md` carries the rules. |
-| `.env.example` | Full list of env vars with placeholders. Copy to `.env`. |
-| `.gitea/workflows/` | `image-check-publish.yml` on push to `main`/`develop`: test → build → smoke gate → `docker login` → push to the Gitea registry. The login sits *after* the gate on purpose — until it is green there is nothing to publish, so the registry PAT never exists on the runner while untrusted build steps run. `tests.yml` is the same suite and the same gate for pull requests, and publishes nothing. |
-| `docs/SPEC.md` | Requirements, the facts that were verified the hard way, and the work plan (§8A). |
-| `AGENTS.md` | Conventions and onboarding for agents — the rules this repository is written by. |
-
-## CI in one breath
-
-Both workflows run the suite inside a `python:3.11-slim` container started by the same
-docker the build uses — no `actions/setup-python`, because a setup action that quietly
-fails on this runner produces a job that passes having checked nothing. The workspace
-reaches that container as a **tar over stdin**, not a bind mount: the job itself runs
-inside a container while `docker` drives the host's daemon, so `-v "$PWD:/src"` would
-resolve on the host and mean something else entirely. The same split is why `ci/smoke.py`
-publishes no ports and reads everything it needs through `docker exec`.
+| `AGENTS.md` | The conventions this repository is written by, and what every directory in it is for. Start here before changing anything. |
+| `docs/SPEC.md` | The requirements, the facts that were verified the hard way, and the work plan. |
+| `ui/README.md` | The browser interface: its layout, its pins, and why it is built twice. |

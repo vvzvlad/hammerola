@@ -15,6 +15,14 @@ data/
 tests/
 .gitea/
 *.md
+# The design documents and the README's screenshots. Nothing under docs/ can
+# reach the image in the first place — every COPY line in the Dockerfile names
+# its source — so this line is about the CONTEXT: without it every image build
+# uploads SPEC.md and the PNGs in docs/images/ to the daemon to be used by
+# nothing. `*.md` above does NOT already cover them: by the Match rules at the
+# top of this file `*` does not cross a `/`, so that pattern reaches the .md
+# files at the context root and no deeper.
+docs/
 **/.DS_Store
 # The designer's drawing of the mark. It is a SOURCE asset: the two renderings
 # that ship — `Mark` compiled into the bundle and the `<svg>` inside
