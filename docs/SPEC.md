@@ -4986,6 +4986,1827 @@ origin, где лежат сборки всех остальных проект�
     Списывать оттуда, а не изобретать, — но списывать замысел, а не строки, и
     помнить, что отказ там уместен, а здесь — нет.
 
+52. **`build --force` / `commit --force` — пуш без собственных проверок модели.**
+    Пожелание владельца, 2026-08-29, дословно: «build/commit --force, пуш без
+    тестов». **Открыто, не начато:** ни флага, ни обхода в коде сегодня нет —
+    `src/client/cli.py` знает двенадцать глаголов и ни одного `--force`, а в
+    `src/cadbuild/` слово `force` встречается ровно один раз и не про это
+    (`trimesh.load(..., force="mesh")`).
+
+    **Что отменяется — только `checks()` самой модели** (`run_checks`,
+    `src/cadbuild/modelchecks.py`): необязательная функция, которую автор пишет
+    сам, сообщает о провале `assert`-ом или списком строк, и отдельно — пустая
+    `checks()` (в теле по AST не нашлось ни одной проверки) валит сборку сама по
+    себе. Это правила ЭТОГО проекта, и право отказаться от собственных
+    требований у автора есть.
+
+    **Гейт хаба работает всегда, и флаг его не касается.** Это общие правила
+    для всякой модели, и невалидная геометрия не публикуется никаким флагом.
+    Порядок — `src/cadbuild/build.py`, сами проверки:
+
+    - имена, до всякой геометрии (`collect_printables`, `download_labels`,
+      `src/cadbuild/printables.py`): `printables()` непустой, имя годится в имя
+      файла, не совпадает с `assembled`, метка кнопки скачивания влезает в 32
+      символа;
+    - вид `print` — стол, а не куча (`check_print_layout`,
+      `src/cadbuild/gate.py`): габаритные коробки двух деталей не перекрываются
+      больше чем на `PRINT_OVERLAP_TOL = 0.05` мм сразу по трём осям; намеренно
+      вложенная пара объявляется через `nested_ok`; `assembled` не проверяется —
+      там детали обязаны соприкасаться;
+    - каждая печатаемая деталь видна хоть в одном виде и все — в `assembled`
+      (`check_printables_shown`, там же): засчитывается солидом (совпали объём,
+      число граней и их площади) или именем в подписи объекта;
+    - трое ворот на каждую деталь (`export_printables`,
+      `src/cadbuild/printables.py`): `shape.isValid()`; объём строго
+      положительный; после экспорта STL сетка водонепроницаема
+      (`trimesh.is_watertight`) и представляет собой ровно один кусок
+      (`mesh.split(only_watertight=False)` даёт 1 — иначе две непересекающиеся
+      оболочки, каждая из которых валидна и замкнута сама по себе, проходят мимо
+      предыдущих ворот).
+
+    **Решения владельца, 2026-08-29 — приняты, не переоткрывать:**
+
+    - флаг действует и на `build`, и на `commit`; разницы между черновым слотом
+      и неизменяемой ревизией нет;
+    - отметок нет никаких — ни в метаданных, ни на странице сборки, ни в
+      карточке проекта, ни в выводе `hammerola status`. Форсированная сборка
+      неотличима от обычной, и это решение, а не недоделка;
+    - `latest` двигается, как при любой другой успешной сборке;
+    - никаких подтверждений, вопросов и дополнительных шагов.
+
+    Одной фразой: **это обычный пуш, просто без собственных проверок модели.**
+
+    **Зачем.** Показать кому-то незаконченное; дать ссылку на сломанную деталь,
+    чтобы обсуждать именно её; искать перебором ревизий момент, когда деталь
+    сломалась, — для чего сломанные ревизии должны существовать; обойти свою
+    проверку, падающую по причине, к геометрии не относящейся.
+
+    Что происходит с провалившей сборкой сегодня — шаг 6 плана 8A.2 «Гейт
+    переезжает и меняет знак»: гейт срабатывает ПОСЛЕ приёма, staging
+    выбрасывается, `latest` и `dev` не двигаются, наружу уходит код ошибки с
+    логом.
+53. **Превью сборки — объявленный артефакт, а не безбилетник.** Пожелание
+    владельца, 2026-08-29. **Открыто, не начато.**
+
+    **Что происходит сегодня — проверено по коду, файл за файлом.**
+
+    - Картинки рисуются. `src/cadbuild/build.py` зовёт
+      `render_previews(out_dir, list(printables) + [ASSEMBLED_STEM],
+      preview_mode, parts={ASSEMBLED_STEM: assembled_parts})` — по PNG на каждую
+      печатаемую деталь плюс общий вид; суффикс `PREVIEW_SUFFIX =
+      "_preview.png"` (`src/cadbuild/artifacts.py`).
+    - В списке опубликованного их нет. Тот же `build.py` возвращает
+      `files = ["meta.json", METRICS_NAME]`, затем `files += [v["file"] for v in
+      views]` и `files += sorted(set(downloads.values()))`. Превью не попадают
+      ни в одну из трёх строк — при том что `render_previews` ВОЗВРАЩАЕТ список
+      реально написанных имён (`written`), и возвращённое молча выбрасывается.
+    - На сайт они всё же доезжают, но побочным эффектом. Публикация — это
+      `os.rename(staging, final)` в `Store.publish_built` (`src/store.py`):
+      переезжает каталог ЦЕЛИКОМ, со всем, что в нём лежит. Список `files` при
+      этом используется для другого: `_hash_output(staging, names)` считает по
+      нему хеш вывода (а ключи этого отображения — то, по чему
+      `render.build_meta` проверяет, что вид или загрузка указывают на реально
+      существующий файл), и `_verified_files` в `src/buildproc/runner.py`
+      проверяет по нему имена, которые заявил дочерний процесс.
+
+    **Отсюда суть.** Превью публикуются, но НЕ ОБЪЯВЛЕНЫ: их нет в `meta.json`
+    (там `project`, `title`, `built`, `views`, `downloads`), нет в `files`, нет
+    в хеше вывода, нет в родительской проверке имён, и ни один тест их не пиннит
+    (`grep -rn preview tests/` не находит ничего). Файл-безбилетник: едет,
+    потому что переезжает весь каталог. Собственный код хаба ровно так их и
+    классифицирует — докстринг `_hash_output` объясняет, почему берёт список, а
+    не обходит дерево: «an output directory holds working files too (the preview
+    renderer writes PNGs nothing in meta.json points at)». Этот комментарий и
+    есть то, что меняет знак.
+
+    **Зачем чинить, а не оставить как есть.** На этот файл уже опираются: скилл
+    учит агента забрать картинку по прямому адресу, чтобы он ПОСМОТРЕЛ НА СВОЮ
+    ДЕТАЛЬ ГЛАЗАМИ — это единственное, чем ловится деталь, лежащая на столе вверх
+    ногами. Гейт такого не видит и видеть не может: он про `isValid()`, объём,
+    водонепроницаемость и непересечение габаритных коробок (перечень — запись 52
+    «`build --force` / `commit --force`»). Инструкция, опирающаяся на
+    необъявленный файл, сломается МОЛЧА: достаточно сменить публикацию с
+    переименования каталога на копирование по списку — и агент получает 404, а
+    скилл продолжает уверенно посылать за картинкой, которой больше нет.
+    Единственное, что сегодня вообще доказывает существование рендерера, — гейт
+    (`ci/smoke.py` импортирует `src.cadbuild.preview_png`), и доказывает он, что
+    модуль ЕСТЬ В ОБРАЗЕ, а не что его вывод опубликован.
+
+    **Требование.** Превью становятся объявленным артефактом: попадают в `files`
+    (а значит в хеш вывода и в родительскую проверку имён), объявляются в
+    `meta.json` так, чтобы их можно было забрать через клиент, а не собирая
+    адрес руками, отдаются с верным типом, и вид `print` наконец получает
+    картинку.
+
+    **Забирать через `hammerola artifacts`, а не отдельным глаголом.**
+    `artifacts` уже проводит ровно нужную границу — она разобрана в докстринге
+    `src/client/artifacts.py`, и довод берётся оттуда: команда тянет то, что
+    объявлено в `downloads`, и намеренно НЕ тянет файлы видов, потому что это
+    тессселяционная нагрузка вьювера, мегабайты, и «nothing outside the browser
+    has a use for them». Превью осмысленно ровно наоборот — оно и нужно тому,
+    кто НЕ в браузере. Тот же докстринг называет и причину, по которой отдельный
+    глагол не нужен: `source` и `artifacts` разделены по ПРАВАМ (код за
+    секретом, артефакты публичны), а не по удобству, — превью публичны, значит
+    это `artifacts`. Даром достаются две вещи: команда уже принимает `dev` и
+    `latest` наравне с ревизией, то есть только что сделавшему `hammerola build`
+    добавлять нечего, и уже кладёт скачанное под `.hammerola/`.
+
+    **Тип содержимого: `.png` добавить, `.svg` — никогда.** Сегодня `.png` в
+    `BUILD_CONTENT_TYPES` (`src/app.py`) нет, поэтому `build_content_type`
+    отдаёт превью как `application/octet-stream` с `Content-Disposition:
+    attachment` — браузер его скачивает, а не показывает. Белый список узок
+    НАМЕРЕННО, и довод обязан быть пересказан здесь, иначе следующий расширит
+    список неправильно: файлы сборки ПРИЕХАЛИ В ПУШЕ (имена членов архива
+    проверяются по алфавиту, а расширения — нет, так что в сборке может лежать
+    `page.html` или `logo.svg`), а URL сборки вечный, неизменяемый и того же
+    происхождения, что весь остальной хаб. Отдать такой файл его «естественным»
+    типом — хранимый XSS, который уже нельзя отозвать, потому что годовые
+    неизменяемые кэши розданы. Поэтому в списке только JSON для вьювера и
+    модельные форматы, на которые указывают кнопки скачивания, а всё остальное
+    становится непрозрачным вложением. `image/png` в эту логику вписывается —
+    PNG не исполняется; `image/svg+xml` не вписывается ровно по той причине, по
+    которой SVG запрещён и во вложениях к комментариям
+    (`ATTACHMENT_CONTENT_TYPES`, там же в `src/app.py`: «SVG is absent from both
+    ends for the same reason it is refused on the way in — it executes»).
+
+    **Вид `print` картинки не имеет вовсе — и это худший из пропусков.**
+    Проверено: `render_previews` получает `list(printables) + [ASSEMBLED_STEM]`,
+    то есть по печатаемой детали и общий вид, а `print` — это id ВИДА
+    (`PRINT_VIEW_ID`, `src/cadbuild/views.py`), а не печатаемая деталь, и
+    `print.stl` не пишет никто. Единственный вид, где виден стол, — единственный
+    без картинки, а деталь вверх ногами видна именно на столе. Стоит это не
+    одной строки: `render_previews` рисует из STL, УЖЕ лежащего рядом
+    (`out_dir / f"{stem}.stl"`), а раскладка на столе существует только как
+    объекты вида. Значит либо экспорт, аналогичный `export_assembled` /
+    `assembled_shape` (последний специально выбирает вид `assembled`; тот же
+    механизм, наведённый на `PRINT_VIEW_ID`), либо рендер по shape без файла на
+    диске. Первый путь тянет за собой отдельное решение — становится ли
+    `print.stl` опубликованным файлом и кнопкой «скачать»; по умолчанию нет:
+    нужна картинка, а не лишняя загрузка.
+
+    **Цена, названная заранее.** `render_previews` деградирует МЯГКО: питон без
+    matplotlib получает предупреждение «no previews» и пустой список, геометрия
+    не затронута. А `_verified_files` требует, чтобы каждое заявленное имя
+    существовало и было обычным файлом, — иначе сборка становится
+    `STATUS_BAD_RESULT`. Значит объявлять надо ровно то, что РЕАЛЬНО НАПИСАНО
+    (тот самый `written`, который сегодня выбрасывается), а не то, что
+    собирались нарисовать; наоборот — и мягкая деградация превращается в отказ
+    публикации. В образе пины есть (`matplotlib`, `numpy`, `Pillow` в
+    `requirements.txt`) и гейт проверяет импорт, так что на хабе это не
+    выстрелит — выстрелит у того, кто запускает сборку у себя.
+
+    **Смежное, но не то же самое:** запись 34 «Превью сборки для карточки
+    проекта» ждёт поле `preview` в карточке и сегодня рисует заглушку, потому
+    что ссылаться не на что. Объявленное превью даёт ей то, на что можно
+    сослаться, но выбор кадра для карточки — решение той записи, не этой.
+
+    **Пересечение с параллельной работой — записано как есть.** На 2026-08-29 в
+    ПАРАЛЛЕЛЬНОЙ СЕССИИ переписывается скилл и составлен перечень работ по сборочной
+    половине, первый пункт которого — ровно это требование: отрендерить
+    недостающий вид `print`, объявить превью, отдавать через `artifacts`,
+    починить тип. Тот перечень на момент этой записи лежит НЕЗАКОММИЧЕННЫМ файлом в
+    чужом ворктри. Запись всё равно заведена, и вот почему: требование, живущее
+    только в незакоммиченном файле одной сессии, исчезает вместе с ней. Раздел 8
+    заведён ровно против этого — запись 48 «Блок для агента на пустом хабе»
+    называет «носить требование в прозе и в брифах» тем самым способом его
+    потерять. Дублирование здесь дешевле потери; доедет он до кода — запись
+    закроется вместе с ним.
+
+    **КАК ПОЛУЧИТЬ КАРТИНКУ ВИДА `print` — вторая половина этой записи,
+    перенесена из того же разбора, 2026-08-29 (проверено по коду).** Выше
+    сказано, что
+    раскладка на столе существует только как объекты вида и что путей два;
+    выбран первый — экспорт по образцу `assembled`.
+
+    - Меш собирается тем же приёмом, что `assembled`: объекты вида склеиваются
+      в `Compound`, выгружаются одним STL под именем `print.stl`, и
+      `print_preview.png` рендерится из него. Компаунд, а не булево
+      объединение, и довод дословно тот же, что уже записан в
+      `assembled_shape` (`src/cadbuild/assembly.py`): компаунд — это один файл,
+      одна загрузка и мгновенно, тогда как булево объединение плиты — минуты и
+      может не сойтись.
+    - Две функции в `src/cadbuild/assembly.py`, рядом с
+      `assembled_shape`/`export_assembled`: `print_plate_shape(prepared)` →
+      `(shape, objects)` либо `None`, и `export_print_plate(prepared, out_dir)`
+      → `(bodies, bbox)` либо `None`. `None`, а не отказ: проект без вида
+      `print` не обязан его заводить.
+    - **Габарит меряется ДО экспорта.** `exportStl` тесселирует форму на месте,
+      и с этого момента OCCT меряет коробку по МЕШУ — на скруглённой детали это
+      десятые доли миллиметра (комментарий «Measured HERE, before the export» в
+      `src/cadbuild/printables.py`, ровно та же ловушка, ради которой
+      существует `drop_mesh`). После экспорта — `drop_mesh`, как в
+      `export_assembled`: тесселяция разделяется через TShape даже
+      перенесёнными копиями, и объекты принадлежат модели.
+    - **Стем — существующая константа `PRINT_VIEW_ID`** из
+      `src/cadbuild/views.py` (она уже лежит там рядом с `ASSEMBLED_VIEW_ID`), а
+      не третья строка `"print"`: `print.json`, `print.stl` и
+      `print_preview.png` — три формы ОДНОГО вида, и имя у них общее не по
+      совпадению. `assembly.py` уже импортирует `ASSEMBLED_VIEW_ID` из `.views`;
+      `printables.py` тоже придётся импортировать `PRINT_VIEW_ID` оттуда, цикла
+      нет — `views.py` не импортирует `printables`.
+    - **Рендерить из `print.json` НЕ надо.** Он в формате `ocp_tessellate`, у
+      него другая геометрия буферов, и это привяжет рендерер превью к формату
+      вьювера — двум вещам, которые сегодня друг о друге не знают. Компаунд плюс
+      `exportStl` — двадцать строк на механике, которая уже работает для
+      `assembled`.
+    - **`parts=` для плиты обязателен.** Подпись картинки говорит, водонепроницаем
+      ли меш; для плиты вопрос бессмыслен, потому что соприкасающиеся детали
+      слипаются в одно тело при загрузке — это и есть причина, по которой
+      `render_previews` вообще принимает `parts`. Плита обязана прийти со своим
+      числом тел.
+
+    **`print.stl` — ДА, публикуемый файл и кнопка. Открытый вопрос выше
+    закрыт.** Выше сказано «по умолчанию нет: нужна картинка, а не лишняя
+    загрузка»; решение обратное, и довод не про удобство. `assembled.stl` и
+    `print.stl` — файлы ровно того же положения, что превью: пишутся и не
+    объявляются, значит попадают под то же требование записи (имя проходит
+    `_verified_files`, файл открывается на публикации `_hash_output`, и только
+    после этого имя становится ГОДНЫМ для `meta.json` — `render.build_meta`
+    пускает в `downloads` только ключи карты хешей). А отдать их через
+    `hammerola artifacts` можно единственным способом — через `downloads`.
+
+    Итого в `downloads` четыре записи: метки `assembled.stl`, `assembled.png`,
+    `print.stl`, `print.png`. **Метки — не имена файлов:** файлы называются
+    `assembled_preview.png` и `print_preview.png` (суффикс `PREVIEW_SUFFIX`).
+    Все четыре метки проходят `LABEL_RE` (1–32 символа из букв, цифр, точки,
+    тире, подчёркивания). Строит их `overview_downloads` — новая функция в
+    `src/cadbuild/printables.py`, рядом с `download_labels` и под тем же
+    `LABEL_RE`; зовётся из `build()` ПОСЛЕ экспорта, потому что наличие вида
+    `print` известно только после `prepare_views`.
+
+    **Цена названа и ограничена: метка в `downloads` — это подпись КНОПКИ на
+    странице сборки.** Две новые кнопки на сборку. Две НА СБОРКУ, а не по одной
+    на деталь, — и это же довод за то, чтобы подетальные `<name>_preview.png` в
+    `downloads` не класть: десять деталей дали бы десять кнопок, а сама деталь в
+    браузере и так видна в 3D. Подетальные остаются объявленными в `files` и
+    доступными по своему URL — имя выводится из имени детали, и оно теперь
+    проверенное и стабильное.
+
+    **Стем `print` придётся зарезервировать, иначе публикуется не то — молча.**
+    `collect_printables` (`src/cadbuild/printables.py`) уже отказывает детали с
+    именем `assembled`, потому что она столкнулась бы с `assembled.stl`. У имени
+    `print` появляется та же коллизия, и она ХУЖЕ: деталь `print` экспортируется
+    в `print.stl` в цикле экспорта, плита переписывает этот файл позже, а
+    хеширует его хаб уже после — то есть опубликованный `print.stl` окажется
+    плитой, а не деталью, и ни одна проверка этого не заметит. Две проверки
+    сводятся в одну — `RESERVED_STEMS = {ASSEMBLED_STEM: "the glued-together
+    assembly", PRINT_VIEW_ID: "the print plate"}` — с одним сообщением,
+    называющим, чем занят стем. Существующее сообщение про `assembled` при этом
+    терять нельзя: одна проверка вместо двух не должна потерять старый текст.
+
+    **Края и отказы.**
+
+    - **Вида `print` нет.** Ни `print.stl`, ни `print_preview.png` не пишутся,
+      двух записей в `downloads` нет, сборка идёт дальше. Печатается одна
+      информационная строка `print view: none, so no print_preview.png` — **БЕЗ
+      префикса `warning:`**. Префикс здесь запрещён: `tests/test_template.py`
+      превращает любое `warning:` в падение теста шаблона, а односоставная
+      модель, которой вид `print` не нужен (единственная деталь и так
+      экспортируется в ориентации печати), выговора получать не должна.
+    - **В виде `print` одна деталь** — рендерится. Это по-прежнему стол, просто
+      с одной деталью на нём.
+    - **В виде `print` мок покупного железа** — рендерится как есть: на столе
+      показывают то, что показывают, и мок в виде `print` — уже сообщение
+      автору, что вид собран неправильно, а не задача этого кода.
+    - **Деталь названа `print` или `assembled`** — `BuildError` на этапе имён,
+      до единого треугольника, там же, где сегодня отказывает `assembled`.
+    - **`preview_png` не импортируется** (нет matplotlib). `render_previews` уже
+      деградирует в предупреждение и возвращает `[]`. Тогда объявлять нечего:
+      карта строится из ФАКТИЧЕСКИ записанных имён (тот самый `written`, который
+      сегодня выбрасывается), а не из ожидаемых. `downloads`, указывающий на
+      несуществующий файл, — это отказ публикации на стороне хаба
+      (`render.build_meta`).
+    - **Плита не водонепроницаема / состоит из кусков** — не проверяется и не
+      должна: гейты «водонепроницаемость» и «одно тело» применяются к ДЕТАЛЯМ, а
+      плита по построению несколько тел.
+    - **`print.stl` большой** — он суммарно не больше суммы деталей плюс моки.
+      `file_bytes` = 256 MiB, `output_bytes` = 512 MiB
+      (`src/buildproc/limits.py`), риска нет. Рендер защищён
+      `MAX_RENDER_FACES = 80_000` (`src/cadbuild/preview_png.py`), то есть плита
+      из миллиона треугольников будет прорежена, а не будет рендериться минуту.
+
+    **Попутно, в том же коммите.** Докстринг `store._hash_output` — тот самый,
+    что процитирован выше («the preview renderer writes PNGs nothing in
+    meta.json points at») — после этой работы становится ЛОЖНЫМ и правится
+    здесь же. Он стоит ровно в том месте, где следующий читатель решает, можно
+    ли доверять списку `files`, и врать там дороже всего.
+
+    **Симлинк: что объявление чинит попутно, и что оно НЕ чинит.** Проверка
+    родителя (`_verified_files`, `src/buildproc/runner.py`) ловит четыре вещи, и
+    для необъявленного файла существенна одна — симлинк. Её докстринг говорит
+    прямо: `resolve()` ловит ссылку, указывающую НАРУЖУ, но ссылка, указывающая
+    обратно ВНУТРЬ тома, «resolves to a path that passes any containment test,
+    while still being a link the hub then copies or serves». Раздача проверяет
+    ровно containment: `_send_file` резолвит путь и требует
+    `relative_to(store.root)`. А на томе лежат `sources/` — код ревизий, закрытый
+    `EDIT_TOKEN`-ом, — и `jobs/`. **Дырой, в которую можно пройти, это не
+    является**, и это оценка, а не тон: цель надо НАЗВАТЬ по имени, а имена там
+    — sha256 архива и id задания, ни то ни другое не публикуется, перечисления
+    каталога на сервисе нет нигде и намеренно, а всё под `project/` и так
+    публично. Но свойство, которое даёт `files` («в опубликованный каталог
+    попадает только то, что родитель проверил»), на превью сегодня не
+    распространяется, и объявление чинит это бесплатно. **Общий случай —
+    необъявленный симлинк от любой модели — эта запись НЕ закрывает и закрывать
+    не должна:** это решение о публикации целиком (вычищать ли staging, чем и с
+    какими последствиями для рабочих файлов), и протаскивать его коммитом про
+    превью нельзя.
+
+    **Второго маршрута и второго канала для картинок не заводить.** Каталог
+    сборки уже раздаётся целиком, `downloads` в `meta.json` уже говорит клиенту
+    имена, `hammerola artifacts` уже ходит по ним. Новый эндпоинт «отдай
+    превью» — это новый маршрут, новый тест на права и новая строка в
+    `ci/smoke.py` ради файла, который и так лежит по своему URL. Единственное,
+    чего в раздаче не хватает, — строчки `.png` в `BUILD_CONTENT_TYPES`, и это
+    правка одной строки, а не канал. (Осторожно: `.png` в
+    `ATTACHMENT_CONTENT_TYPES` — таблица вложений к комментариям, другая
+    таблица; не перепутать и не расширять вторую.)
+
+    **Тесты.**
+
+    - `tests/cadbuild/test_assembly.py` — новый файл, без CAD-ядра, на
+      `tests/cadbuild/fakes.py`: `print_plate_shape` возвращает `None`, когда
+      среди `prepared` нет вида с `id == "print"`; берёт объекты именно вида
+      `print`, а не первого попавшегося; все тела каждого объекта попадают в
+      плиту (объект, собранный `.add()`, — это несколько тел, тот же дефект,
+      который лечили в `as_shapes`); `overview_downloads` не объявляет картинку,
+      которой нет в списке записанных; каждая порождённая метка проходит
+      `LABEL_RE`.
+    - `tests/cadbuild/test_naming.py`: деталь с именем `print` отвергается и
+      сообщение называет плиту; существующий тест про `assembled` продолжает
+      проходить.
+    - `tests/test_template.py`: `EXPECTED_ARTEFACTS` (сегодня — `meta.json`,
+      `metrics.json`, `assembled.json`, `print.json` и по три файла на каждую из
+      двух деталей) дополняется `print.stl`, `print_preview.png`,
+      `assembled_preview.png`, `base_preview.png`, `lid_preview.png`; список
+      именован явно, чтобы «шаблон тихо перестал экспортировать» падало здесь.
+      Лог сборки шаблона по-прежнему без строк `warning:`.
+    - `tests/test_serving.py`, рядом с `test_downloads_are_served_as_bytes`:
+      `.png` из каталога сборки уезжает как `image/png`, с `nosniff` и БЕЗ
+      `Content-Disposition: attachment`. Существующий
+      `test_an_uploaded_html_file_can_never_be_active_content` обязан
+      продолжать проходить как есть — `page.html` и `logo.svg` остаются
+      octet-stream-вложением. Это и есть граница: расширение из белого списка
+      получает свой тип, всё остальное — вложение, и `nosniff` держит обе
+      половины.
+    - `tests/test_publish.py` или `tests/test_serving.py`: превью, объявленное в
+      `files` и не названное ни в `downloads`, ни в `views`, публикуется и
+      раздаётся по своему имени. Тест фиксирует, что объявление в `files` — это
+      про проверку и хеш, а не про видимость.
+
+    **Перечень работ, о котором сказано абзацем выше, перенесён 2026-08-29** — записи
+    54–59 этого раздела. Состояние «требование живёт только в незакоммиченном
+    файле чужой сессии» закончилось; первый его пункт — тот, что про превью,
+    — влит СЮДА, а не заведён второй записью, поэтому дублирования нет.
+54. **Проверки печатаемости: две в гейт, четыре в `checklib`.** Из разбора
+    рабочих сессий, 2026-08-29; перенесено в раздел 8 целиком, потому что
+    требование, живущее в незакоммиченном файле одной сессии, исчезает вместе с
+    ней. **Открыто, не начато.**
+
+    **Сейчас.** `src/cadbuild/checklib.py` содержит ровно три функции:
+    `pairwise_interference`, `mating_face_flat`, `material_under_head`. Про
+    печать нет ничего. И есть прямой запрет, который надо уважать, — комментарий
+    в шапке того же файла: «There is no wall-thickness check here on purpose.
+    Measuring a wall by firing rays along surface normals gave a false red on
+    ordinary spline geometry — lofts, sweeps, imported STEP — and no amount of
+    filtering the artefacts made the number trustworthy.» Это не «ещё не
+    сделали», это результат НЕУДАЧНОЙ ПОПЫТКИ: новая проверка минимального
+    элемента обязана быть устроена принципиально иначе, иначе вернёт ту же ложь.
+
+    **Граница между гейтом и `checklib` проходит по одному вопросу: знает ли
+    ответ сборка, или его знает только автор.**
+
+    **В гейт идёт то, что универсально и не требует ни одного числа от автора.**
+    Обе новые гейтовые проверки живут в `printables.export_printables`, где меш
+    уже загружен и габарит уже измерен, то есть обе бесплатны:
+
+    - **деталь обязана касаться стола.** `first_layer_mm2 == 0` (запись 58
+      «Физические числа в `metrics.json` и в `hammerola diff`») означает, что в
+      экспортированной ориентации деталь не лежит ни на чём: она не печатается
+      вообще, без всяких допусков и без вопроса «а сколько тут терпимо».
+      `BuildError`, называющий деталь и её нижнюю точку;
+    - **деталь не может быть тоньше нитки целиком.** Минимальный габарит детали
+      ниже `minimum_feature()` — это деталь, которая печатается одной линией во
+      всех трёх измерениях. Универсально при любом сопле, считается из уже
+      измеренного `bbox_mm`. `BuildError`.
+
+    Ни у той ни у другой нет параметра, который надо угадывать, — поэтому им
+    место в гейте, и поэтому они срабатывают сами, на каждой сборке, без строчки
+    в `checks()`.
+
+    **В `checklib` идёт то, чей порог — проектное решение.** Четыре функции ниже
+    требуют чисел, которых у сборки нет и не может быть: сколько
+    неподдержанной площади терпит ЭТА деталь, на каких высотах у НЕЁ несущие
+    стенки, каким инструментом её собирают, по какой степени свободы ходит пара.
+    Гейт, подставляющий такое число за автора, подставляет ЧУЖОЕ число — это не
+    осторожность, это ложь в вердикте. Все четыре — в том же контракте, что три
+    существующие: принимают геометрию, возвращают СПИСОК строк-проблем, пустой
+    когда всё хорошо; зовёт их `checks()`.
+
+    **4.1 `unsupported_area` — площадь неподдержанных граней.** По мешу, и по
+    тому мешу, который уже лежит на диске. Доводы: свес — свойство ТРЕУГОЛЬНИКА,
+    а не грани (у цилиндрической грани нормаль меняется по поверхности, и
+    «нормаль грани» для неё не определена — именно на этом и погорела прошлая
+    попытка мерить стенки по нормалям B-rep); `export_printables` уже загружает
+    экспортированный STL через trimesh для гейта водонепроницаемости, файл на
+    диске, разбор дешёвый; `checks(out_dir)` получает каталог сборки и уже умеет
+    в него ходить (`model_template/model.py` открывает там же `<name>.stl`); STL
+    детали лежит в той ориентации, в которой деталь ЭКСПОРТИРУЕТСЯ, а шаблон
+    учит строить деталь в ориентации печати — то есть проверка меряет ровно ту
+    ориентацию, о которой она.
+
+    ```python
+    def unsupported_area(stl_path, max_area_mm2, *, name="part",
+                         max_angle_deg=45.0, bed_tol=0.2, max_rays=512):
+        """Downward-facing surface with nothing under it, in square millimetres.
+
+        Catches the overhang the author would otherwise have to find by eye on a
+        preview. A triangle counts when its normal points below -cos(max_angle_deg)
+        AND a ray dropped from its centroid hits nothing else in the mesh AND it is
+        not sitting on the bed (within `bed_tol` of the mesh's lowest point, which
+        is the first layer and is supported by the plate).
+
+        `max_area_mm2` HAS NO DEFAULT on purpose. Some unsupported area is normal --
+        a chamfer under a rim, a short bridge -- and a number picked here would be a
+        number picked for somebody else's part. Saying how much this design tolerates
+        is the author's decision, and writing it down is the point.
+
+        Cost: the mesh is already on disk (the gate wrote it); loading is
+        milliseconds. Ray casting is trimesh's pure-numpy intersector -- no
+        pyembree in the image -- vectorised over triangles per ray, so it is
+        `rays x triangles`. Only downward triangles are cast from and only the
+        `max_rays` largest of them, so the worst case is bounded: 512 rays against a
+        80k-triangle mesh measured under two seconds. Raise `max_rays` and pay for it.
+        """
+    ```
+
+    Две секунды — ЗАМЕР, не оценка. Ни `pyembree`, ни `rtree` в
+    `requirements.txt` нет, так что «pure-numpy intersector» — факт о сегодняшнем
+    образе, а не пожелание. Сообщение о проблеме обязано называть площадь, долю
+    от бюджета и КООРДИНАТУ худшего места: «есть свесы» без места стоит ровно
+    столько же, сколько «посмотри глазами».
+
+    **4.2 `thin_walls` — минимальный элемент.** По солиду, классификатором
+    точек, вдоль прямых линий на НАЗВАННОЙ плоскости. Доводы: нормали B-rep
+    запрещены прошлым опытом (комментарий в шапке `checklib.py`); `_classifier`
+    уже есть, отвечает за микросекунды на точку и считает ON материалом, на нём
+    же построен `material_under_head`; сечение вместо поверхности убирает
+    проблему сплайнов целиком — сечение лофта это обычный контур, и толщина в
+    нём измеряется без единой нормали; новых зависимостей не нужно — `shapely` в
+    `requirements.txt` отсутствует и пришёл бы транзитивно и «плавающим» (файл
+    прямо перечисляет, что из 60 дистрибутивов пиновано четыре, а 56 плавают),
+    поэтому эрозия полигонов через `Path2D.polygons_full` отпадает.
+
+    Метод: на плоскости `z` бежим сканирующими линиями вдоль осей с шагом
+    `pitch`, пробуем точки вдоль линии с шагом `step`, меряем длину каждого
+    непрерывного «внутри» участка. Участок короче `min_thickness` — тонкая
+    стенка.
+
+    **У метода ОДНОСТОРОННЯЯ ошибка, и это его главное достоинство.** Стенка под
+    45° к оси сканирования измеряется в √2 раз толще, чем она есть, — то есть
+    метод ПРОПУСКАЕТ тонкое, но никогда не обвиняет толстое. Здешняя доктрина
+    (см. ниже, «ложный красный дороже пропуска») требует именно такого знака
+    ошибки. Сканирование по четырём направлениям (X, Y и две диагонали) сжимает
+    худший случай до ~1.08×, и это разумный дефолт.
+
+    ```python
+    NOZZLE_MM = 0.4
+    # Two extrusion widths. A wall thinner than that is printed as a single line,
+    # and a single line comes out at whatever width the slicer felt like: the
+    # nominal thickness stops being a dimension. This is the number a 0.5 mm thread
+    # crest on a 0.4 mm nozzle was under, and the 100 g of scrap that followed.
+    EXTRUSION_LINES = 2
+
+
+    def minimum_feature(nozzle_mm=NOZZLE_MM, lines=EXTRUSION_LINES):
+        """The thinnest wall this machine prints as a dimension rather than a line."""
+
+
+    def thin_walls(part, planes, min_thickness, *, name="part",
+                   pitch=None, step=None, axes=("x", "y", "xy", "yx")):
+        """Walls thinner than `min_thickness`, measured on named sections.
+
+        `planes` are heights in the part's own coordinates -- Z is the section
+        normal, so a part modelled on its side is sectioned on its side. NAMED, not
+        swept: the author says where the load-bearing and mating walls are, which is
+        the difference between a check that can be trusted and the one this file
+        refuses to have (see the note at the top of this module).
+
+        `pitch` defaults to `min_thickness` (a wall cannot hide between two scan
+        lines that close), `step` to `min_thickness / 4`.
+
+        ONE-SIDED ERROR BY CONSTRUCTION: a wall oblique to a scan axis measures
+        thicker than it is, so this misses and never falsely accuses. Four axes cut
+        the worst case to about 1.08x.
+
+        Cost: `(span / pitch) x (span / step)` classifier calls per axis per plane.
+        For a 60 mm part at a 0.8 mm minimum that is ~75 lines x ~300 samples x 4
+        axes = 90k probes, a few hundred milliseconds. It is linear in the number of
+        planes, so a model naming twenty heights pays twenty times -- name the
+        heights that matter.
+        """
+    ```
+
+    **4.3 `tool_access` — доступ инструментом.** По солиду, классификатором, а
+    не булевой операцией. Доводы: булева операция цилиндра против каждой детали
+    сборки — это то, что `pairwise_interference` уже называет недешёвым (ради
+    этого там стоит отбраковка по габаритным коробкам перед пересечением);
+    классификатор строится один раз на деталь и отвечает за микросекунды.
+    Точность у выборки та же, что у `material_under_head`, который здесь уже
+    принят.
+
+    ```python
+    def tool_access(obstacles, names, *, origin, direction, diameter, length,
+                    name="fastener", rings=4, around=16, ignore=()):
+        """A straight cylinder from a fastener head must be empty.
+
+        Catches the screw that is modelled, seated and unreachable: a boss in the
+        way of the driver, a wall 3 mm from the head, a lid that has to be on before
+        the screw can go in. Nothing in the geometry is wrong -- it just cannot be
+        assembled, which is found in your hands.
+
+        `origin` is (x, y, z) of the head's seat, `direction` a vector pointing the
+        way the tool comes from (it is normalised here; it does NOT have to be Z --
+        that is what separates this from material_under_head, which probes along Z
+        and only along Z). `diameter` is what has to be clear -- the driver, the
+        socket, the ratchet head, whichever is fattest -- and `length` how far it
+        has to be clear for.
+
+        Probes a cylinder: `around` points on each of `rings` radii, at
+        `int(length / (diameter / 2)) + 2` levels along the axis, against every
+        obstacle's classifier. `ignore` names parts allowed to be in the path.
+
+        KNOWN GAP: sampling, so a blade thinner than the probe spacing between two
+        levels is not seen. Tighten `rings`/`around` where that matters. The cost is
+        `rings x around x levels` classifier calls per obstacle -- ~1000 probes
+        against a ten-part assembly is single-digit milliseconds.
+        """
+    ```
+
+    **4.4 `swept_clearance` — прогон пары по степени свободы.** Это та функция,
+    которая в разборе была написана руками и оказалась единственной, что дала
+    ответ: ноль пересечений во всех 18 положениях. Одна статическая проверка на
+    собранном положении такого сказать не может в принципе. По солиду, и здесь
+    булевы операции ОПРАВДАНЫ, потому что число положений называет автор и оно
+    мало (десятки, не тысячи). Плюс замер минимального зазора через
+    `BRepExtrema_DistShapeShape` — это единственное, что даёт ЧИСЛО вместо «не
+    пересекается».
+
+    ```python
+    def swept_clearance(moving_positions, fixed, *, names=("moving", "fixed"),
+                        min_gap=None, tol=DEFAULT_VOLUME_TOL, label=None):
+        """One mating pair, run along its degree of freedom, measured at every stop.
+
+        `moving_positions` is the moving part ALREADY PLACED at each position -- a
+        list the model builds, because only the model knows the kinematics. Ten to
+        twenty stops is the useful range: a static check at the assembled position
+        says nothing about the middle of the travel, and the middle of the travel is
+        where a lid catches a rim.
+
+        At every stop: the shared volume (an interference is a hard problem string,
+        the same rule pairwise_interference applies) and the minimum distance
+        between the two solids. `min_gap` is optional -- given, a stop closer than
+        that is a problem; omitted, the gap is only measured and RECORDED.
+
+        Records `{label: {"positions": n, "min_gap_mm": x, "at": i}}` in module
+        state, read back by cadbuild.metrics into metrics.json, exactly as
+        pairwise_interference records volumes. `label` defaults to "a|b" from
+        `names`. That record is what makes a shrinking clearance visible in
+        `hammerola diff` instead of in a printed part.
+
+        Cost: one bounding-box reject, then one boolean and one distance per stop.
+        A boolean on a real part is tens of milliseconds and a distance the same, so
+        18 stops is under a second and 500 stops is not something to do inside a
+        120-second build.
+        """
+
+
+    def recorded_clearance():
+        """`{label: {...}}` for every pair swept_clearance has measured so far."""
+    ```
+
+    **`checklib` обязан остаться ОДНИМ объектом — правило, общее для этой записи
+    и для записи 56 «Провенанс чисел».** Модель импортируется со своим каталогом
+    первым в `sys.path`, поэтому шим лежит в КОРНЕ репозитория и находит
+    реализацию ПО ПУТИ, ни разу не назвав имя `src`. `pairwise_interference`
+    записывает измеренные объёмы в состояние уровня модуля, а
+    `cadbuild.metrics.collect_metrics` читает эту запись через пакетную
+    половину: два объекта модуля — это две записи, модель наполняет одну,
+    `metrics.json` читает другую, и числа пропадают без единого красного.
+    Отсюда:
+
+    - каждое новое публичное имя дописывается в блок ре-экспорта `checklib.py` в
+      корне И в его `__all__`;
+    - новое состояние читается через ФУНКЦИЮ (`recorded_clearance()`), как
+      `recorded_interference()`, а не через ре-экспорт словаря;
+    - `tests/cadbuild/test_checklib.py::test_everything_a_model_calls_is_re_exported`
+      дополняется новыми именами — это единственное, что ловит забытую строку в
+      шиме.
+
+    **«Ложный красный дороже пропуска» — доктрина, на которую ссылаются записи
+    54 и 55.** Она уже записана в коде: `modelchecks.count_checks` отказывается
+    возвращать 0 в любом неоднозначном случае, потому что «this file is shared by
+    every project in the organisation, and a wrong "empty checks()" would go red
+    on somebody's working model, which is far more expensive than failing to
+    print a number». Довод не про то, что кого-то нельзя ломать, — про то, что
+    проверка, не умеющая отличить законную форму от негодной, обязана НАЗЫВАТЬ,
+    а не отказывать: отказ, срабатывающий на правильном коде, автор выключает, и
+    вместе с ним выключается всё, что стояло рядом.
+
+    **Потолки сборки, из которых всё это тратится.** `src/buildproc/limits.py`:
+    `wall_seconds = 120`, `cpu_seconds = 300` (суммируется по потокам),
+    `occt_threads = 2`, `output_bytes = 512 MiB`, `output_files = 4096`,
+    `file_bytes = 256 MiB`. Цена каждой новой функции посчитана в её докстринге
+    выше — это требование к работе, а не украшение.
+
+    **Края и отказы.**
+
+    - **`unsupported_area`, файла нет** — `ValueError` с текстом, называющим,
+      что `checks(out_dir)` получает каталог сборки и что имя STL — это имя
+      детали из `printables()`. Не `BuildError`: `run_checks` уже оборачивает
+      исключения модели.
+    - **`unsupported_area`, меш без единого нисходящего треугольника** — пустой
+      список проблем и записанный ноль. Ноль — это результат, а не отсутствие
+      результата.
+    - **`thin_walls`, плоскость вне детали** — на сечении нет ни одного
+      «внутри»: это не «стенок нет», это «вы указали не туда», и функция обязана
+      сказать именно так, отдельной проблемной строкой. Ровно та же логика, что
+      у `mating_face_flat`, которая жалуется на «nothing lies in the plane
+      z=...».
+    - **`thin_walls`, `min_thickness <= 0`** — `ValueError`. Ноль здесь означает
+      «всё проходит», а проверка, которая проходит всегда, хуже отсутствующей:
+      это буквально предмет записи 55 «Тавтологические проверки».
+    - **`tool_access`, `length` или `diameter` не положительны** — `ValueError`,
+      по тому же доводу, по которому `material_under_head` отказывается от
+      нулевой глубины («With zero depth every probe sits on the seating plane
+      itself, which counts as material, and the check passes for anything»).
+    - **`tool_access`, имя из `ignore` не среди `names`** — `ValueError`. «An
+      exemption for a part that is not there exempts nothing» — дословно тот же
+      довод, что уже стоит в `pairwise_interference` и в `views.nested_pairs`.
+    - **`swept_clearance`, меньше двух положений** — `ValueError`: одно
+      положение это статическая проверка, для неё есть `pairwise_interference`.
+    - **`swept_clearance`, OCCT сдался на вырожденной паре** — как в
+      `pairwise_interference`: проблемная строка «эту пару проверь глазами», а
+      не исключение. Прогон продолжается.
+    - **Все четыре, `part` не CadQuery-объект** — `_shape()` уже даёт
+      `TypeError` с внятным текстом; пользоваться им, не писать свою проверку
+      типа.
+    - **Новое состояние `_CLEARANCE`** обязано попасть в autouse-фикстуру
+      `guard_module_state` (`tests/cadbuild/conftest.py`, где сегодня сторожатся
+      `paths._root` и `checklib._INTERFERENCE`) — обе проверки, ДО и ПОСЛЕ, — в
+      докстринг той фикстуры и в ре-экспорт шима.
+    - **`NOZZLE_MM = 0.4` — публичная константа сопла в общем файле, и это число
+      КОНКРЕТНОЙ машины.** В докстринге написать прямо, что это дефолт, а не
+      факт, и что проект с другим соплом обязан передать своё — и объявить его
+      `measured()` по записи 56. Обе гейтовые проверки, зависящие от неё, берут
+      её как дефолт, а не как истину.
+    - **Деталь не касается стола / тоньше нитки целиком** — `BuildError` из
+      `export_printables`, до записи чего бы то ни было. Обе цифры уже измерены
+      к этому моменту, так что проверка не стоит ничего и не может «не успеть».
+
+    **Тесты.** `tests/cadbuild/test_checklib_printability.py` — новый файл. Часть
+    тестов не требует ядра, часть требует; вторые пропускаются через
+    `pytest.importorskip("cadquery", exc_type=ImportError, ...)` — точный образец
+    в `tests/test_template.py` (аргумент `exc_type` обязателен: без него pytest
+    9.1 перестанет пропускать и CI покраснеет).
+
+    Без ядра: `minimum_feature()` — арифметика, включая явную проверку, что 0.5
+    при сопле 0.4 не проходит (тот самый гребень резьбы из разбора); валидация
+    аргументов всех четырёх функций (нулевые и отрицательные размеры, одно
+    положение, неизвестное имя в `ignore`, не тот тип); `recorded_clearance()` —
+    пустой в начале, отдаёт копию, которую вызывающий не может испортить
+    (зеркало `test_the_record_is_a_copy_callers_cannot_corrupt`); реестр общий
+    между шимом и пакетом (зеркало
+    `test_the_record_is_shared_between_the_two_names`); AST-тест «ни одна из
+    четырёх не зовётся из `src/cadbuild/`» — граница между гейтом и `checklib`
+    проходит по тому, кто знает число, и она должна быть ПРОВЕРЯЕМОЙ, а не
+    подразумеваемой; обе гейтовые проверки (деталь без первого слоя отвергается
+    и сообщение называет её; деталь тоньше `minimum_feature()` по минимальному
+    габариту отвергается; обычная деталь проходит обе).
+
+    С ядром, на минимальной геометрии, которую тест строит сам: плита с полкой
+    на кронштейне даёт неподдержанную площадь, равную площади полки в пределах
+    допуска, а та же деталь, повёрнутая на 180°, даёт ноль (это тест на то, что
+    функция меряет ОРИЕНТАЦИЮ, а не форму); первый слой не считается свесом;
+    стенка 0.5 мм при `min_thickness=0.8` находится и координата названа, стенка
+    1.6 мм — нет; стенка под 45° толщиной 0.5 мм ФИКСИРУЕТ односторонность
+    ошибки (либо находится, либо нет — но никогда не находится там, где стенка
+    толстая); винт у стенки — путь перекрыт и названа мешающая деталь, тот же
+    винт отодвинутый — чисто, деталь в `ignore` не мешает; крышка, садящаяся на
+    борт, не пересекается ни в одном из 18 положений и записывает минимальный
+    зазор, а крышка на 0.3 мм шире пересекается В СЕРЕДИНЕ ХОДА и НЕ
+    пересекается в собранном положении — это ровно тот дефект, ради которого
+    функция существует, и тест обязан его воспроизвести.
+
+    **Чего НЕ делать.**
+
+    - **Не делать общую проверку толщины стенок «по всей детали».** Уже
+      пробовали, уже провалилось, вывод записан в шапке `checklib.py`. Соблазн
+      «а давай просто пройдём по всем граням» вернётся — и тот комментарий
+      удалять нельзя: он единственное, что стоит между следующим агентом и
+      повторением.
+    - **Не добавлять замер расстояния в `pairwise_interference`.** Соблазн
+      понятен — зазоры нужны записи 58, а эту функцию зовут все. Но
+      `BRepExtrema_DistShapeShape` на паре реальных солидов — десятки
+      миллисекунд, а функция проверяет ВСЕ пары: сборка из пятнадцати деталей —
+      это 105 пар, несколько секунд, добавленных к каждой сборке без спроса,
+      ради числа, которое спрашивали не в ней. Зазоры приходят из
+      `swept_clearance`, которую зовёт тот, кому она нужна, и на том числе
+      положений, которое он назвал.
+
+    **Порядок среди записей 54–59 — назван здесь один раз, остальные ссылаются
+    сюда.** Семь коммитов, порядок продиктован зависимостями по данным:
+
+    1. **запись 53 «Превью сборки — объявленный артефакт»** — ни от чего не
+       зависит и даёт самую большую отдачу на единицу работы; она же первой
+       трогает `files`, `downloads` и резервирование стемов, то есть первой
+       проходит через хаб, `render.py` и клиента, и все последующие изменения
+       формата встречают уже поправленный путь;
+    2. **запись 56 «Провенанс чисел»** — РАНЬШЕ этой записи, хотя выглядит
+       наоборот: проверки печатаемости требуют от автора чисел (бюджет
+       неподдержанной площади, минимальная толщина, диаметр инструмента), и эти
+       числа обязаны сразу рождаться с источником, иначе получится `checks()`,
+       полный новых голых констант, которые правило потом отвергнет. Плюс
+       `Number` — подкласс `float`, трогающий `write_metrics`: лучше выяснить
+       это на пустом месте;
+    3. **эта запись** — самый большой кусок. Внутри свой порядок, по возрастанию
+       риска: `swept_clearance` и `tool_access` (обе на уже существующей
+       механике), затем `unsupported_area` (новая работа с trimesh, но на
+       готовом файле), затем `thin_walls` — единственная, у которой есть
+       предшественник, и тот провалился;
+    4. **запись 58 «Физические числа»** — после 56 и этой, потому что читает их
+       данные (`recorded_clearance()` и сводку провенанса), и после 53, потому
+       что габарит плиты существует только там, где есть плита;
+    5. **запись 59 «`report_metrics` не зовётся ниоткуда»** — сразу после 58 и
+       ОТДЕЛЬНЫМ коммитом: она трогает совсем другие файлы (`store.py`,
+       `jobs.py`, `runner.py`, `child.py` — путь пуша, а не геометрию), а
+       коммит, в котором и новые численные поля, и новое звено в цепочке
+       запуска ребёнка, откатывается только целиком;
+    6. **запись 55 «Тавтологические проверки»** — после 58, потому что кладёт
+       `checks_static` в `metrics.json` и в сводку; отдельным коммитом, потому
+       что это единственная работа, которая живёт в AST и ни строчки не делит с
+       геометрией;
+    7. **запись 57 «Шаблон»** — строго последней, и это не «остатки»: шаблон
+       обязан демонстрировать ВСЁ, что появилось, и любая его правка раньше
+       времени будет переписана. Он же служит приёмкой: `tests/test_template.py`
+       прогоняет шаблон через `run_build` — тот самый вход, которым идёт пуш.
+55. **Тавтологические проверки: предупреждение и число, а НЕ отказ.** Из
+    разбора рабочих сессий, 2026-08-29. **Открыто, не начато.** Порядок среди
+    записей 54–59 — в записи 54 «Проверки печатаемости».
+
+    **Сейчас.** `modelchecks.count_checks` читает исходник `checks()` и считает
+    места проверок; `run_checks` отказывает сборке, если счёт ДОКАЗУЕМО равен
+    нулю («checks() is defined but contains no check: no assert, no raise,
+    nothing filling the list it returns, not even a call to anything»). Механизм
+    есть, и он именно тот, о котором спрашивают. Но `assert abs((a - b) - c) <
+    1e-9`, где `a`, `b`, `c` — константы модуля, для него ПРОВЕРКА: это
+    `ast.Assert`, `total += 1`. Она проходит всегда и не проверяет ничего. В
+    разборе такие ассерты стояли в живых проектах (два из пяти в одном
+    `checks()`), проходили ревью и пропустили брак в печать.
+
+    **Поймать их статически можно, и это не гипотеза.** Нужно три вещи:
+
+    1. знать, какие имена в теле `checks()` — ЛОКАЛЬНЫЕ (цели `Assign`/
+       `AugAssign`, переменные `for`, `with ... as`, параметры функции, имена в
+       comprehension, walrus, `except ... as`). Всё остальное разрешается в
+       глобалях модуля;
+    2. иметь сами глобали. У `run_checks` объект модуля на руках
+       (`run_checks(model, out_dir)`), так что `vars(model)` доступен — у
+       `count_checks` этого сегодня нет, значит анализу нужен второй аргумент;
+    3. закрытый мини-вычислитель по AST, признающий выражение СТАТИЧЕСКИМ только
+       если оно собрано из: `Constant`; `Name`, разрешающегося в глобалях в
+       `int`/`float`/`str`/`bool`/`None`/кортеж таких; `UnaryOp` (`+`, `-`,
+       `not`); `BinOp` (арифметика); `Compare`; `BoolOp`; `Tuple`/`List` из
+       статических; вызова `abs`/`min`/`max`/`round` из встроенных с уже
+       статическими аргументами. Всё прочее — не статическое. Вычислять
+       выражение целиком нельзя (`10**10**10` вешает интерпретатор), поэтому у
+       `Pow` нужен потолок на показатель, а у результата — на величину.
+
+    Работы тут на один вечер, и она надёжна: ложное «статическое» невозможно по
+    построению — неизвестный узел выводит анализ в «не знаю».
+
+    **Где проходит граница, и почему это НЕ повод отказывать сборке.** Проблема
+    не в вычислителе, а в том, что «обе стороны — константы» и «тавтология» —
+    РАЗНЫЕ множества, и они пересекаются на совершенно законных проверках:
+
+    ```python
+    assert FIT_MIN < FIT_MAX, "the fit window is inside out"      # обе — константы
+    assert LENGTH <= BED_X, "does not fit the bed"                # обе — константы
+    assert WALL >= 2 * NOZZLE, "the wall prints as a single line" # обе — константы
+    ```
+
+    Все три статически разрешимы, все три полезны, все три срабатывают ровно
+    тогда, когда надо: когда кто-то поправил число наверху файла. Вторая и
+    третья — это буквально то, чего добиваются от авторов записи 54 и 56.
+    Отказывать за них сборке значит наказывать за единственную форму проверки
+    параметров, которая вообще существует.
+
+    Отличить их от `abs((a-b)-c) < 1e-9` статически можно только одним способом:
+    посмотреть, не выведена ли одна константа из других на уровне модуля
+    (`c = a - b`), — тогда ассерт доказуемо повторяет определение. Это ловит
+    ровно ту форму, которая была в разборе, и не ловит соседнюю (`c = 0.25`
+    рядом с `a - b == 0.25`), которая тавтологична ровно так же. То есть даже
+    уточнённое правило половинчато.
+
+    И есть довод сильнее любого технического — он уже записан в том же файле,
+    докстрингом `count_checks`: «this file is shared by every project in the
+    organisation, and a wrong "empty checks()" would go red on somebody's
+    working model, which is far more expensive than failing to print a number.
+    Every rule here is written so that an unreadable body ends at None and never
+    at 0.» (Разбор доктрины — запись 54 «Проверки печатаемости».)
+
+    **Нужно: не отказ, а имя и число.** Стоит ли оно того — **частично да**:
+    AST-анализ написать стоит, вешать на него отказ — нет.
+
+    1. **Предупреждение на каждое место.** Строка `warning:` из `run_checks`,
+       называющая номер строки, сам ассерт и то, чем он является:
+
+       ```
+       warning: checks() line 231: `assert abs((LIP_CLEARANCE - GAP) - 0.0) < 1e-9` is
+       decided by the constants at the top of model.py alone -- it holds no matter what
+       the geometry came out as, and it will go on holding after the model has drifted
+       away from it. A check about the shape has to READ the shape: measure the two
+       faces and compare what came out. (A deliberate guard on the parameter table --
+       `assert FIT_MIN < FIT_MAX` -- is this same shape and is fine; this line is a
+       note, not a refusal.)
+       ```
+
+       Предупреждение, а не отказ, ровно потому, что отличить второй случай от
+       первого нельзя.
+    2. **Не считать их в общем счёте.** `run_checks` печатает `checks: 5 passed
+       (2 of them decided by the constants alone)`. Если статических оказалось
+       ВСЁ — счёт уходит в `None` («count unknown»), а не в 0: ноль означает
+       отказ, а мы только что решили не отказывать. Это тот же приём, которым
+       `_reraises` вычитается из счёта, но не может уронить его в ноль.
+    3. **Положить число в `metrics.json`** (запись 58 «Физические числа»):
+       `checks_static`. Тогда проект, у которого настоящая проверка выродилась в
+       тавтологию, виден в `hammerola diff` как `checks passed: 5 -> 5, checks
+       decided by constants: 1 -> 3`. Это ровно тот вид доказательства, который
+       отказ дать не может: он показывает ТЕНДЕНЦИЮ, а не разовый вердикт, и не
+       рискует ложным красным ни разу.
+
+    **Сигнатура и форма** — в `src/cadbuild/modelchecks.py`:
+
+    ```python
+    # Builtins an assert may call and still be decidable from the source. Pure,
+    # total, and cheap: nothing here can have a side effect or refuse to return.
+    STATIC_BUILTINS = {"abs": abs, "min": min, "max": max, "round": round, "len": len}
+
+    # The biggest exponent a static `**` may carry. `2 ** 10 ** 10` is a legal
+    # expression and evaluating it is how this analysis would hang a build.
+    MAX_STATIC_POW = 64
+
+
+    def local_names(tree):
+        """Every name the function binds itself: parameters, assignment targets,
+        loop variables, `with ... as`, comprehension variables, `except ... as`."""
+
+
+    def static_value(node, constants):
+        """The value of an expression decidable from `constants`, or NOT_STATIC.
+
+        NOT_STATIC is a sentinel object rather than None, because None is a value an
+        expression can honestly have.
+        """
+
+
+    def static_asserts(func, namespace):
+        """`[(lineno, source)]` for the asserts whose truth the constants settle.
+
+        `namespace` is the model module's globals. Returns [] when the source cannot
+        be read -- the same rule the counter follows: unreadable ends at "nothing to
+        say", never at an accusation.
+        """
+    ```
+
+    `count_checks` НЕ меняется — его контракт «сколько мест проверки в исходнике»
+    остаётся верным. Вычитание происходит в `run_checks`, и оттуда же печатаются
+    предупреждения. `run_checks` начинает возвращать пару:
+
+    ```python
+    CheckReport = namedtuple("CheckReport", "passed static")
+    ```
+
+    Место вызова `run_checks` в `src/cadbuild/build.py` и передача
+    `checks_passed` в `collect_metrics` подстраиваются; `collect_metrics`
+    получает обе цифры.
+
+    **Края и отказы.**
+
+    - **Нет исходника** (`checks` — не питоновская функция, exec'нутый модуль):
+      `static_asserts` возвращает `[]`. Ничего не утверждается.
+    - **Имя есть в глобалях, но его значение — CadQuery-объект, функция,
+      модуль:** не константа, ассерт не статический. Правильно: `assert
+      body.val().isValid()` не должно попадать в этот список никогда.
+    - **Имя переопределено внутри `checks()`:** локальное, ассерт не
+      статический. Это главный источник ложных срабатываний, и `local_names`
+      обязан покрывать все формы связывания.
+    - **Ассерт статически ЛОЖЕН:** он и так уронит сборку при исполнении, со
+      своим сообщением. Ничего специального; предупреждение до него всё равно не
+      доживёт.
+    - **`assert True` / `assert 1`:** статический, попадает в список, получает
+      предупреждение. Соблазн отказать именно на этой форме есть — не
+      поддаваться: одно правило, одно поведение, а исключение из него потом
+      никто не вспомнит.
+    - **`checks()` вообще нет:** `run_checks` возвращает `CheckReport(0, 0)`,
+      как сегодня возвращает 0.
+    - **Шаблон не имеет права нести статический ассерт.** `warning:` смертелен
+      ровно в одном месте — в тесте шаблона (`tests/test_template.py` делает
+      любую строку `warning:` падением), — и это правильно: шаблон учит всему,
+      что в нём написано. Сегодня все три его ассерта читают локальные значения
+      (`gap`, `over`, `size`); после записи 57 «Шаблон» перепроверить, что новый
+      пример этого не сломал.
+    - **Формат строки лога меняется:** `checks: N passed` → `checks: N passed
+      (M ...)`. Строку печатает `run_checks` (`src/cadbuild/modelchecks.py`), а
+      `tests/test_template.py` проверяет `line.startswith("checks: ")`,
+      `" passed" in line` и `"unknown" not in line` — новый формат все три
+      условия сохраняет. Ещё одно место читает эту строку —
+      `tests/test_readme_example.py` ждёт дословное `checks: 2 passed`, и его
+      придётся править вместе с форматом. Больше её не парсит ничто; убедиться
+      `grep`-ом, прежде чем менять формат ещё раз.
+
+    **Тесты** — `tests/cadbuild/test_modelchecks.py`, дописать в существующий
+    файл, стиль оттуда же:
+
+    - два константных ассерта распознаются, локальный — нет;
+    - `assert FIT_MIN <= gap <= FIT_MAX` при локальном `gap` НЕ статический —
+      это главный тест на отсутствие ложных срабатываний, и он должен быть
+      первым в файле;
+    - имя, затенённое локальным присваиванием, не статическое: по одному тесту
+      на форму (`=`, `+=`, `for`, `with ... as`, walrus);
+    - имя, разрешающееся в функцию или в объект без `__eq__` со скаляром, не
+      статическое;
+    - `abs`, `min`, `max` со статическими аргументами — статические;
+      `open(...)` — нет;
+    - `2 ** 10 ** 10` не вешает анализ и не считается статическим;
+    - нет исходника — пустой список, не исключение;
+    - `run_checks` печатает предупреждение и число, и `CheckReport.static` равен
+      ожидаемому;
+    - `checks()`, состоящий ТОЛЬКО из статических ассертов, даёт `passed is
+      None` («count unknown») и **не роняет сборку** — это тест на принятое
+      решение, и его докстринг обязан объяснять почему, чтобы следующий читатель
+      не «починил» его в отказ.
+
+    **Чего НЕ делать: не делать отказ сборки на тавтологическом ассерте.**
+    Разобрано выше. «Обе стороны — константы» не равно «тавтология», и
+    множество законных проверок параметров попадает под то же правило. Файл
+    общий для всех проектов; ложный красный на чужой рабочей модели дороже
+    непечатанного числа — это уже записано в `modelchecks.py` и переспоривать
+    это не надо. Предупреждение, вычет из счёта и число в `metrics.json` дают
+    90% пользы при нулевом риске.
+56. **Провенанс чисел: `measured` / `derived` / `estimated`, обязательно с
+    первого дня.** Из разбора рабочих сессий, 2026-08-29. **Открыто, не
+    начато.** Порядок среди записей 54–59 — в записи 54 «Проверки печатаемости»
+    (эта идёт ВТОРОЙ, раньше самих проверок).
+
+    **Сейчас — ничего.** Константа посадки, зазора или натяга — это `float` в
+    шапке модуля с комментарием рядом, а комментарий не читает никто, включая
+    автора шесть недель спустя. В разборе: константа с комментарием `# measured
+    fit on the printer`, которая не измерялась никогда, стоила двух печатей и
+    100 г пластика; в другом проекте стоит `confidence = measured`, а каталога
+    `ref/` в проекте нет вообще.
+
+    Ближайшее, что есть в коде, — `metrics.source_fingerprints`
+    (`src/cadbuild/metrics.py`), который считает два хеша исходника, в том числе
+    «без комментариев», ровно чтобы переписанный комментарий не читался как
+    изменение модели. То есть машинерия уже знает, что комментарий — это не
+    данные.
+
+    **Форма записи — ОБЁРТКА В ТОЧКЕ ОПРЕДЕЛЕНИЯ**, а не комментарий и не
+    отдельная структура. Довод решающий и он один: комментарий надо парсить (и
+    он отвяжется от константы при первом переносе строки), отдельный словарь
+    `PROVENANCE = {...}` — это второй список, который расходится с первым при
+    первом переименовании и молчит об этом. Обёртка ЯВЛЯЕТСЯ константой, поэтому
+    разойтись ей не с чем:
+
+    ```python
+    LIP_CLEARANCE = checklib.measured(0.25, "ref/measurements.md#lid-fit")
+    BOARD_WIDTH   = checklib.measured(24.6, "ref/measurements.md#board", "caliper, 3 samples")
+    LIP_LENGTH    = checklib.derived(LENGTH - 2 * WALL - 2 * LIP_CLEARANCE,
+                                     "cavity less the clearance on both sides")
+    SHRINK_ALLOW  = checklib.estimated(0.15, "PETG shrink, not measured on this printer")
+    ```
+
+    **И это обязательно, без промежуточных режимов.** Правило, которое применяет
+    гейт:
+
+    > Каждое имя уровня модуля в `model.py`, написанное в UPPER_SNAKE и
+    > связанное с `float`, обязано быть `checklib.Number`. Голый `float` — отказ
+    > сборки.
+
+    Граница выбрана так, чтобы быть РАЗРЕШИМОЙ и при этом попадать ровно в те
+    числа, о которых вся запись:
+
+    - **UPPER_SNAKE** — так константы пишет шаблон (в `model_template/model.py`
+      это сплошной блок от `LENGTH` до `MIN_STL_BYTES`), то есть та самая форма,
+      которой учится каждый новый проект; и это отсекает `from math import pi` и
+      прочие импортированные имена, про которые сборка не может знать, что они
+      не свои;
+    - **`float`, а не `int`** — целое в CAD-модели это счётчик, номер или флаг
+      (`ANGLES = 24`, `MIN_STL_BYTES = 1024`); дробное — это миллиметр, допуск
+      или посадка, то есть ровно то, что обязано иметь источник. Число, которое
+      дробное по случайности, честно пишется `derived(0.5, "half, exactly")` — и
+      это одна строчка, а не спор;
+    - **тот же набор, который обходит `collect()`** — глобали плюс один уровень
+      внутрь словаря, списка и кортежа. Определение одно, и обход, и правило
+      читают его из одного места.
+
+    Требование не «измерь всё». `estimated(value, note)` собирается всегда и
+    стоит одной честной фразы; отказ включается только на числе, о котором не
+    сказано НИЧЕГО. Именно такое число стоило двух печатей.
+
+    **Сигнатура и форма.** В `src/cadbuild/checklib.py`, то есть в имени, которое
+    модель уже импортирует:
+
+    ```python
+    class Number(float):
+        """A float that remembers where its value came from.
+
+        A subclass of float, so it goes into cadquery arithmetic, into f-strings and
+        into json exactly like the number it is -- a model that wraps a constant
+        changes nothing about how the geometry is built.
+
+        PROVENANCE DOES NOT PROPAGATE THROUGH ARITHMETIC, on purpose: `a * 2` is a
+        plain float. A number worked out from other numbers has to say so with
+        `derived()`, which is a sentence about WHICH numbers, and a rule that
+        inferred it would be inventing that sentence.
+        """
+        __slots__ = ("kind", "source", "note")
+
+
+    def measured(value, source, note=""):
+        """A number somebody measured. `source` points at where it is written down:
+        "ref/measurements.md#lid-fit" -- a file in the project, and optionally the
+        heading inside it. The build CHECKS that both exist."""
+
+
+    def derived(value, note):
+        """A number worked out from other numbers. `note` says from which."""
+
+
+    def estimated(value, note):
+        """A number nobody measured. It builds, and the build says so out loud, in
+        the log and in metrics.json. `note` says what would settle it."""
+    ```
+
+    Проверяющая половина — НОВЫЙ модуль `src/cadbuild/provenance.py` (сборочная
+    сторона; в `checklib` ей не место: `checklib` не ходит в файловую систему и
+    не знает про `project_root`):
+
+    ```python
+    SOURCE_FILE_MAX_BYTES = 1 << 20   # a measurement journal is text; a megabyte is
+                                      # already a hundred times more than any of them
+
+    def collect(model):
+        """Every `Number` reachable in the model's globals, with the name it is bound to.
+
+        A shallow walk of `vars(model)`, plus one level into dict, list and tuple
+        values -- a table of clearances is an ordinary way to hold them. Deeper than
+        that is not walked and is documented as not walked, because a walk that
+        follows arbitrary objects is a walk into a CAD kernel.
+        """
+
+
+    def unwrapped(model):
+        """Every module-level UPPER_SNAKE name bound to a PLAIN float, with its line.
+
+        The other half of collect(), over exactly the same walk, so the inventory
+        and the rule can never disagree about what they are looking at. `int` is a
+        count or a flag, not a dimension, and is not looked at.
+        """
+
+
+    def check(entries, bare, root):
+        """Resolve every `measured()` source; refuse every undeclared number.
+
+        ONE error listing every failure of both kinds, not one per build: the author
+        fixes a journal once, not four times, and declares five constants in one
+        pass rather than in five red builds.
+        """
+
+
+    def report(entries):
+        """Print the estimates. Returns the summary for metrics.json."""
+    ```
+
+    **Формат `source`: `"<relative path>[#<anchor>]"`.** Правила разрешения:
+
+    - путь относительный, разбирается ПОКОМПОНЕНТНО; любой `..`, абсолютный путь
+      или символ вне `[A-Za-z0-9._-]` — отказ. Тот же алфавит, что у пуша, и по
+      той же причине: это имя, пришедшее из недоверенного дерева. **Имя
+      константы на сборочной стороне — `MEMBER_RE` из
+      `src/cadbuild/hubspec.py`**, зеркала хабовых правил, а не `SAFE_COMPONENT`
+      из `src/store.py`: `src/cadbuild/` не импортирует раздающую половину, и
+      ровно ради этого `hubspec.py` и существует;
+    - файл должен существовать под `project_root()` и читаться как UTF-8, не
+      длиннее `SOURCE_FILE_MAX_BYTES`;
+    - если якорь задан — в файле должен быть markdown-заголовок, слаг которого
+      равен якорю. Слаг: в нижний регистр, всё не-буквенно-цифровое → `-`,
+      схлопнуть повторы, обрезать по краям. `## Lid fit` → `lid-fit`;
+    - якорь не задан — проверяется только существование файла.
+
+    **Края и отказы.**
+
+    - **`measured()`, файла нет / якоря нет** — `BuildError`. Это не суровость,
+      это весь смысл записи: `# measured fit on the printer` без измерения — то,
+      что стоило двух печатей. Текст ошибки обязан предложить ОБА выхода:
+      записать измерение в журнал или понизить число до `estimated()`.
+    - **`estimated()`** — строка в лог с префиксом `estimate:` (НЕ `warning:` —
+      иначе тест шаблона запретит шаблону нести честную оценку, а он должен её
+      нести, см. запись 57 «Шаблон») плюс запись в `metrics.json`. Сборка идёт.
+    - **`derived()`** — ничего не проверяется, `note` попадает в `metrics.json`.
+      Проверить вывод машинно нельзя, а требовать формулу значит требовать
+      второй копии выражения, которое стоит строчкой выше.
+    - **Число не обёрнуто вообще** — `BuildError`, со ВСЕМИ нарушителями в одном
+      сообщении и с их номерами строк: гонять сборку по одному имени за раз —
+      тот же ад, что и падение на первом неразрешённом источнике. Текст ошибки
+      обязан показать все три выхода на конкретном имени из этого же файла,
+      включая `estimated(value, "…")`, который собирается всегда.
+    - **`Number` внутри `metrics.json`** — `write_metrics` приводит `float`
+      через `round(value, 6)`, что возвращает обычный `float`, а `json.dumps`
+      подавится подклассом только при нестандартном `__repr__`, которого здесь
+      нет. Всё же положить тест. **Уточнение по коду:** в `write_metrics.trim`
+      проверка на `bool` стоит РАНЬШЕ проверки на `float` (исходный текст утверждал обратное), и порядок там неслучаен — тест обязан фиксировать, что
+      подкласс `float` доезжает до JSON обычным числом, а `True` не
+      превращается в `1.0`.
+    - **`Number` с `nan`/`inf`** — `ValueError` в конструкторе. Число, которое
+      нельзя сравнить, не измерение.
+    - **Одно и то же имя-источник у пяти констант** — нормально и никак не
+      отмечается: пять измерений в одном журнале под одним заголовком бывают.
+    - **Место вызова** — сразу после `load_model()` в `src/cadbuild/build.py`, до
+      геометрии. Это правило об ИСХОДНИКЕ, и оно попадает в ту же категорию, что
+      имена и виды, — «everything that can be wrong before a single triangle
+      exists, in the order it costs least to find out» (комментарий там же).
+      Отказ за необёрнутое число обязан звучать оттуда же и до первой секунды,
+      потраченной на геометрию.
+
+    **Тесты** — `tests/cadbuild/test_provenance.py`, новый файл, без CAD-ядра
+    целиком:
+
+    - `measured(0.25, ...)` равен `0.25`, `float(x) == 0.25`, арифметика
+      возвращает обычный `float` и провенанс НЕ наследуется (тест фиксирует
+      принятое решение);
+    - `nan`/`inf` отвергаются;
+    - `collect` находит константу в глобалях, в значении словаря и в элементе
+      списка; НЕ ходит внутрь произвольного объекта;
+    - разрешение источника: файл есть/нет, якорь есть/нет, слаг заголовка
+      совпадает, `..` и абсолютный путь отвергнуты, файл больше потолка
+      отвергнут;
+    - `check` собирает ВСЕ неразрешённые источники в одно сообщение, а не падает
+      на первом;
+    - `report` печатает каждую оценку с префиксом `estimate:` и ни одной строки
+      `warning:`;
+    - сводка для `metrics.json` имеет ровно ту форму, которую читает
+      `src/metricsdiff.py` (запись 58 «Физические числа»), — тест на ФОРМУ, а не
+      на содержание;
+    - обязательность: `GAP = 0.2` голым числом даёт `BuildError`; `GAP =
+      estimated(0.2, "...")` собирается; три голых числа перечислены в ОДНОМ
+      сообщении, все три с номерами строк;
+    - границы правила проверены каждая по отдельности: `ANGLES = 24` (int)
+      проходит, `gap = 0.2` (нижний регистр) проходит, `from math import pi`
+      проходит, `SIZES = [10.0, 20.0]` с голыми числами внутри — отказ,
+      `SIZES = [measured(10.0, "..."), ...]` — проходит;
+    - модель без единого дробного UPPER_SNAKE собирается, даёт нулевую сводку и
+      молчание.
+
+    **Чего НЕ делать: не угадывать провенанс по имени константы.** Правило
+    обязательное, но смотрит оно на РЕГИСТР ИМЕНИ и ТИП ЗНАЧЕНИЯ — вещи, которые
+    видно в исходнике буквально. Эвристика «`*_CLEARANCE`, `*_FIT`, `*_GAP` —
+    это зазоры, а остальное можно не объявлять» соблазнительна и неверна в обе
+    стороны: она пропустит `LIP` и `SLOP` и потребует источника у
+    `NOZZLE_CLEARANCE_UNUSED`. Правило, которое нельзя объяснить одной строчкой,
+    автор не выполняет, а обходит.
+57. **Шаблон учит только тому, что в нём собирается: журнал измерений, мок,
+    провенанс и «сколько есть» против «сколько нужно».** Из разбора рабочих
+    сессий, 2026-08-29. **Открыто, не начато.** Порядок среди записей 54–59 —
+    в записи 54 «Проверки печатаемости»; эта идёт СТРОГО ПОСЛЕДНЕЙ и служит
+    приёмкой всех остальных.
+
+    **Сейчас.** `model_template/model.py` — двухдетальная коробка, 275 строк, 12
+    КБ, плюс `.gitignore`, и это ВСЁ, что в каталоге есть. Она собирается как
+    есть; `tests/test_template.py` прогоняет её через `run_build` — тот же вход,
+    что у пуша, — и требует нулевых `warning:` и напечатанного ЧИСЛА проверок.
+
+    Шаблон — единственный канал, которым конвенция доезжает до нового проекта:
+    `hammerola create` распаковывает его, `/start/template.tar.gz` раздаёт
+    байты, а `skill/SKILL.md` для контракта отсылает СЮДА, вместо того чтобы его
+    пересказывать. И он учит только тому, что собирается: абзац текста в нём
+    сгниёт молча, работающий пример — нет.
+
+    Чего в нём нет: каталога `ref/`, мока покупного железа, примера числа с
+    источником и различения «сколько места есть» против «сколько нужно».
+
+    **Четыре добавления, каждое — работающим примером.**
+
+    **1. `model_template/ref/measurements.md`** — журнал сырых измерений. Формат
+    диктуется тем, что его читает проверка провенанса (запись 56 «Провенанс
+    чисел»): заголовок второго уровня, чей слаг и есть якорь; под ним — строки
+    «дата | что мерили | чем | число».
+
+    ```markdown
+    # Measurements
+
+    Raw numbers, as they came off the instrument. One heading per thing measured; the
+    constants in model.py point at these headings by name
+    (`checklib.measured(24.6, "ref/measurements.md#board")`), and the build REFUSES
+    to publish if a heading a constant claims is not here.
+
+    Write the number you read, not the number you wanted. A measurement corrected
+    later gets a new line under the same heading, with its own date -- the old line
+    stays, because "it used to measure 24.4" is the thing you will want to know.
+
+    ## board
+
+    | date       | what                          | instrument      | value   |
+    | ---------- | ----------------------------- | --------------- | ------- |
+    | 2026-08-24 | bought module, width, 3 spots | caliper 0.02 mm | 24.6 mm |
+    | 2026-08-24 | bought module, height         | caliper 0.02 mm | 12.1 mm |
+
+    ## lid-fit
+
+    | date       | what                             | instrument      | value   |
+    | ---------- | -------------------------------- | --------------- | ------- |
+    | 2026-08-24 | printed lid lip, across the flats | caliper 0.02 mm | 34.7 mm |
+    ```
+
+    **2. `model_template/mocks.py`** — заготовка под покупное железо, ОТДЕЛЬНЫМ
+    файлом, потому что `import mocks` — конвенция, которую механика уже
+    поддерживает (`geometry.load_model` объясняет, почему корень проекта идёт
+    первым в `sys.path`: именно чтобы `import mocks` находил `mocks.py`
+    проекта). Мок — коробка с размерами из журнала:
+
+    ```python
+    """Mock-ups of hardware nobody prints: the shapes the design has to make room for.
+
+    A mock is scenery. It is NOT in printables(), it is grey in every picture
+    (the palette colours what is printed and greys everything else), and its
+    dimensions come from `ref/measurements.md` like every other number that came off
+    a real object.
+
+    NAME A MOCK WITHOUT THE WORD OF THE PART IT STANDS BESIDE. The coverage gate
+    matches on whole words, so an object called "lid mock" answers for the printable
+    `lid` and a build can certify a part nobody can see. "bought module" answers for
+    nothing.
+    """
+    ```
+
+    Про «lid mock» — это не выдумка ради красоты: ровно этот пример уже стоит в
+    докстринге `gate.check_printables_shown`, и там же сказано, что ошибкой это
+    НЕ делается намеренно.
+
+    **3. Пример проверки с провенансом.** В `model.py`:
+
+    ```python
+    # What the box has to hold. MEASURED, and the build refuses to publish if the
+    # heading these point at is not in ref/measurements.md -- which is the whole
+    # difference between a measurement and a comment saying "measured".
+    BOARD_WIDTH_NEEDED  = checklib.measured(24.6, "ref/measurements.md#board")
+    BOARD_HEIGHT_NEEDED = checklib.measured(12.1, "ref/measurements.md#board")
+
+    # NOT measured, and the build says so on every run. This is the line to replace
+    # with a measurement before anything is printed twice: a clearance guessed at is
+    # the number that cost two prints and 100 g of filament on the project this
+    # template learned from.
+    BOARD_CLEARANCE = checklib.estimated(
+        0.4, "guessed; measure a printed pocket against the real module and record it")
+    ```
+
+    и в `checks()` — проверка, читающая ГЕОМЕТРИЮ, а не повторяющая арифметику:
+
+    ```python
+        # The cavity that came out has to hold what it is for. Both sides are read
+        # off the finished solid and off the mock -- not off the constants that drove
+        # them, which is the difference between a check and a restatement.
+        cavity = ...            # inner wire of the rim face, as in check 1
+        module = mocks.bought_module().val().BoundingBox()
+        for axis, available, needed in (
+                ("X", cavity.xlen, module.xlen + 2 * BOARD_CLEARANCE),
+                ("Y", cavity.ylen, module.ylen + 2 * BOARD_CLEARANCE)):
+            assert needed <= available, (
+                f"the cavity is {available:.2f} mm along {axis} and the module needs "
+                f"{needed:.2f} mm with its clearance")
+    ```
+
+    **4. Различение «сколько есть» против «сколько нужно» — в ИМЕНАХ.** Суффиксы
+    `_AVAILABLE` и `_NEEDED`, и один рабочий абзац в докстринге секции
+    параметров:
+
+    ```python
+    # TWO KINDS OF NUMBER LIVE HERE AND THEY ARE NOT THE SAME KIND. A `*_AVAILABLE`
+    # is room that exists -- the inside of a cavity, the length of a shelf, the
+    # travel of a hinge. A `*_NEEDED` is what something demands of that room -- a
+    # bought module plus its clearance, a screw plus its driver. Confusing the two
+    # is how a pocket comes out exactly the size of the thing that has to slide into
+    # it. The check is always the same sentence: `assert needed <= available`, with
+    # both sides read off the geometry rather than off these lines.
+    ```
+
+    Плюс: `checks()` шаблона зовёт ОДНУ из новых проверок записи 54 —
+    `unsupported_area` на крышке — с явным бюджетом и комментарием, откуда
+    бюджет взялся. Это единственное место, где новая функция получает работающий
+    пример, а без примера её не позовёт никто.
+
+    **Края и отказы.**
+
+    - **Шаблон обязан собираться и оставаться без `warning:`.** Строка
+      `estimate:` — не предупреждение, и это специально: шаблон должен нести
+      честную оценку и показывать, что сборка её называет.
+    - **Пути.** `ref/measurements.md` — два компонента, оба проходят алфавит
+      (первый символ буквенно-цифровой), глубина 2 при потолке
+      `MAX_PATH_DEPTH = 8`. И для спуска (`TEMPLATE_RULES`,
+      `src/client/unpack.py`), и для подъёма (`src/client/pack.py`). `.md` в
+      пуше — обычный файл, алфавит расширений не ограничивает.
+    - **`mocks.py` в корне** попадает в `source_fingerprints`
+      (`src/cadbuild/metrics.py` глобит `*.py` по корню проекта). Это
+      правильно: мок — часть модели, и его правка обязана двигать хеш кода.
+    - **Мок не должен покрывать печатаемую деталь по имени.** Гейт покрытия
+      (`gate.check_printables_shown`) считает деталь показанной, если её имя
+      упомянуто в подписи объекта, и матч идёт по ЦЕЛЫМ СЛОВАМ. Имя `bought
+      module` не содержит ни `base`, ни `lid`; тест шаблона на нулевые
+      предупреждения это и сторожит.
+    - **Шаблон растёт.** Сегодня 12 КБ, станет ~18 КБ. Потолки
+      (`MAX_MEMBERS = 1024`, `MAX_BUILD_BYTES = 64 MiB`) не рядом. Но растёт и
+      время чтения: держать новую геометрию минимальной — карман под мок
+      делается одним `.rect().cutBlind()`, а не вторым видом и не третьей
+      деталью.
+    - **Согласие со скиллом.** `skill/SKILL.md` отсылает за контрактом сюда, и
+      `tests/test_onboarding.py` держит согласие между списком разрешённых
+      импортов в шаблоне и в скилле. Если шаблон начнёт импортировать что-то
+      новое — а он не начнёт, `mocks` это его собственный файл, — проверить этот
+      тест.
+
+    **Тесты.** `tests/test_template.py`, существующий файл:
+
+    - `test_the_model_defines_the_contract_it_is_the_example_of` дополняется:
+      `mocks` среди импортов, `measured` и `estimated` встречаются в исходнике;
+    - новый тест БЕЗ ядра: `ref/measurements.md` существует, и КАЖДЫЙ якорь, на
+      который ссылается `model.py`, находится в нём как заголовок. Разбирается
+      AST-ом и регулярным выражением по строке-источнику — то есть тот же
+      вопрос, что задаёт сборка, но задан на каждом пуше, а не только там, где
+      есть CAD-ядро (сборочный тест в CI пропускается);
+    - `EXPECTED_ARTEFACTS` — из записи 53 «Превью сборки»;
+    - сборочный тест дополняется проверкой, что в логе есть строка `estimate:` и
+      что она называет `BOARD_CLEARANCE`: шаблон обязан демонстрировать, что
+      оценка СЛЫШНА;
+    - сборочный тест продолжает требовать нулевых `warning:` и напечатанного
+      числа проверок.
+
+    `tests/test_onboarding.py`: архив, который отдаёт хаб, по-прежнему побайтово
+    равен каталогу на диске (существующий тест это уже делает — просто убедиться,
+    что подкаталог `ref/` он переживает; `onboarding.template_members` ходит
+    `rglob`-ом и файлы фильтрует, так что переживёт).
+58. **Физические числа в `metrics.json` и в `hammerola diff`.** Из разбора
+    рабочих сессий, 2026-08-29. **Открыто, не начато.** Порядок среди
+    записей 54–59 — в записи 54 «Проверки печатаемости».
+
+    **Сейчас.** `collect_metrics` (`src/cadbuild/metrics.py`) собирает
+    `version`, `project`, `built`, `source` (два хеша исходника), `parts`,
+    `assembly: {"interference_mm3": recorded_interference()}` и
+    `checks_passed`. Подетальные числа приходят из `printables.export_printables`:
+    `volume_mm3`, `bbox_mm`, `faces`, `edges`, `solids`, `triangles`,
+    `watertight`. Сравнивает их `src/metricsdiff.py`, поле за полем, по кортежу
+    `METRIC_FIELDS`. Этот же модуль читает `hammerola diff`
+    (`src/client/revdiff.py`), и он ЕДИНСТВЕННЫЙ на обе стороны — копии здесь
+    запрещены и это записано в его же докстринге.
+
+    Чего не хватает, чтобы механически ответить «изменил ли этот круг правок
+    хоть одно физическое число»: **габарита сборки, объёма материала, площади
+    прилипания, свесов, габарита плиты и зазоров**. Сегодня можно узнать, что
+    деталь стала на 3.5% меньше по объёму, — и нельзя узнать, что она перестала
+    доставать до стола, что свес вырос вдвое или что зазор в паре сжался до
+    нуля. В разборе три круга правок дали изменение ровно одного параметра, а
+    остальное было полировкой скрипта, — и увидеть это было нечем.
+
+    **Нужно. Подетально** (считается в `export_printables`, из меша, который там
+    уже загружен для гейта водонепроницаемости, — то есть даром):
+
+    - `first_layer_mm2` — площадь прилипания: сумма площадей треугольников, чья
+      нормаль смотрит строго вниз и чья высота лежит в пределах
+      `FIRST_LAYER_TOL` от нижней точки меша;
+    - `overhang_mm2` — сумма площадей треугольников с нормалью ниже `-cos(45°)`,
+      за вычетом тех, что уже засчитаны первым слоем. Это МЕТРИКА, а не
+      проверка: она не спрашивает, есть ли опора, поэтому стоит один проход
+      numpy по массиву нормалей. Проверку со стрельбой лучами делает
+      `checklib.unsupported_area` из записи 54 «Проверки печатаемости» — она
+      отвечает на вопрос «выдержит ли»; метрика отвечает на вопрос «сдвинулось
+      ли», и это разные вопросы с разной ценой.
+
+    **По сборке** (в `assembly.export_assembled` и `export_print_plate` из
+    записи 53 «Превью сборки», ДО экспорта — после экспорта габарит меряется по
+    мешу):
+
+    - `assembly.bbox_mm` — габарит изделия;
+    - `assembly.volume_mm3` — сумма объёмов печатаемых деталей (складывается в
+      `collect_metrics` из уже измеренного, второго измерения не нужно);
+    - `assembly.print_bbox_mm` — габарит плиты: «влезает ли ещё в стол»;
+    - `assembly.clearance` — из `checklib.recorded_clearance()` (запись 54);
+    - `assembly.interference_mm3` — как было.
+
+    **Сверху:** `checks_static` (запись 55 «Тавтологические проверки») и
+    `provenance` (запись 56 «Провенанс чисел»): `{"measured": n, "derived": n,
+    "estimated": [{"name", "value", "note"}]}`.
+
+    **Сигнатура и форма.** `src/metricsdiff.py` — только стандартная библиотека,
+    это правило и его держит `tests/test_metricsdiff.py`:
+
+    ```python
+    METRIC_FIELDS = ("volume_mm3", "bbox_mm", "first_layer_mm2", "overhang_mm2",
+                     "faces", "edges", "solids", "triangles", "watertight")
+
+    # What is compared about the assembly as a whole. A separate tuple from
+    # METRIC_FIELDS because these live under a different key and are not per part.
+    ASSEMBLY_FIELDS = ("bbox_mm", "print_bbox_mm", "volume_mm3")
+
+    # The fields that are about the PHYSICAL OBJECT rather than about the model
+    # source or the mesh it was tessellated into. `hammerola diff --json` answers
+    # "did this round of edits change anything physical" out of exactly these, which
+    # is why they are named once, here, instead of being a judgement each reader
+    # makes.
+    PHYSICAL_FIELDS = ("volume_mm3", "bbox_mm", "first_layer_mm2", "overhang_mm2")
+
+
+    def moved_fields(old, new):
+        """Structured answer: what moved, by part and by field. `metrics_diff` is the
+        same walk formatted for a person; this one is for a machine."""
+    ```
+
+    `_shown` получает ветку для `*_mm2` (`f"{value:.1f} mm2"`) и для
+    `print_bbox_mm` (та же форма, что `bbox_mm`). `_field_moved` — процент для
+    площадей, как для объёма: «прилипание 640 → 210 мм² (−67%)» — это ровно та
+    строка, ради которой всё делается. `metrics_diff` дополняется двумя блоками
+    — по `ASSEMBLY_FIELDS` и по `assembly.clearance` (появился зазор / пропал /
+    сдвинулся), в том же стиле, что уже написан для `interference_mm3`.
+    `metrics_summary` — тем же.
+
+    `hammerola diff` получает флаг `--json`, печатающий `{"moved": [...],
+    "compared": n}` из `moved_fields`, ограниченный `PHYSICAL_FIELDS`. Это и
+    есть механический ответ на вопрос «изменил ли круг правок хоть одно
+    физическое число»: пустой `moved` — не изменил. **Кодов возврата не
+    трогаем:** `hammerola diff` возвращает 0, на это могут быть завязаны чужие
+    скрипты.
+
+    `_print_geometry` (`src/client/revdiff.py`) в ветке «ничего не сдвинулось»
+    начинает называть, СКОЛЬКО чисел сравнено: сегодня там печатается «every
+    measured number is the same.» и всё; должно быть «every measured number is
+    the same (17 compared)». Разница между «ничего не изменилось» и «сравнивать
+    было нечего» — это буквально разница между ответом и его отсутствием.
+
+    **Края и отказы.**
+
+    - **`METRICS_VERSION` НЕ бумпится.** Правило записано у самой константы:
+      версия растёт, когда «a reader of an older file would misread it». Новые
+      поля не меняют смысла старых, а `metrics_diff` сравнивает только те поля,
+      которые есть с ОБЕИХ сторон. Старый `metrics.json` против нового даст diff
+      по общим полям и молчание по новым — что и требуется. Оставить
+      `METRICS_VERSION = 1` и объяснить это комментарием, иначе следующий
+      читатель бумпнет её «на всякий случай» и сломает сравнение со всеми
+      опубликованными ревизиями (сборка «отказывается сравнивать с версией,
+      которую не знает»).
+    - **Старая ревизия без новых полей.** См. выше; явный тест обязателен.
+    - **`first_layer_mm2 == 0`.** Законно и информативно: деталь стоит на
+      подпорках или на одной точке. Ноль пишется, никаких проблем не выдаётся —
+      это метрика. (Гейтом это становится в записи 54, и там это уже отказ.)
+    - **Меш с вырожденными треугольниками.** Тесселятор выдаёт нулевые
+      треугольники на полюсах сферических граней (`preview_png.load_mesh` про
+      это знает). Нормаль там неопределена; отфильтровать по площади > 0 перед
+      суммированием, иначе получится `nan`, который пролезет в JSON как `NaN` и
+      сломает разбор у клиента.
+    - **`assembly.bbox_mm`, когда вида `assembled` нет.** `assembled_shape` уже
+      подставляет печатаемые детали как есть; габарит считается по тому же
+      самому.
+    - **`clearance` пустой** (никто не звал `swept_clearance`) — ключ пишется
+      ПУСТЫМ объектом, как сегодня пишется пустой `interference_mm3`.
+      Отсутствие ключа и пустой ключ — разные вещи, и `interference_mm3` уже
+      установил, какая из них означает «не измеряли».
+    - **`report_metrics` не имеет права уронить сборку** — это обещано в её
+      докстринге и защищено одним общим `except`. Новые блоки идут ВНУТРЬ этой
+      же защиты; ни один из них не смеет ходить в поле без `.get`. (Про то, что
+      сама функция сегодня ниоткуда не зовётся, — запись 59.)
+    - **Цена.** Все новые подетальные числа считаются из меша, который гейт
+      грузит и так: один-два прохода numpy по массиву треугольников, на 200k
+      треугольников — единицы миллисекунд. Габариты — по одному `BoundingBox()`
+      на форму.
+    - **Порядок «измерить, потом экспортировать» обязан остаться.** Экспорт
+      тесселирует форму на месте, и `BoundingBox()` после него меряет уже меш —
+      это уже написано комментарием в `printables.py`. Если поменять местами,
+      числа поедут на десятые доли миллиметра на всём, что со скруглениями, и
+      это будет выглядеть как «геометрия изменилась» на первой же сборке.
+    - **`src/metricsdiff.py` едет в zipapp клиента** — он назван в
+      `onboarding.CLIENT_EXTRA_MODULES` рядом с `src/__init__.py`, — так что
+      «только stdlib» не пожелание, а условие работоспособности `hammerola` на
+      чужом ноутбуке. Никакого numpy в этом файле.
+
+    **Тесты.**
+
+    - `tests/cadbuild/test_metrics.py` (существующий файл, хелперы
+      `build()`/`measured()` уже там): каждое новое подетальное поле
+      сравнивается и печатается в человеческих единицах; площадь прилипания,
+      упавшая вдвое, даёт строку с процентом; блок по сборке (сдвинувшийся
+      `bbox_mm`, сдвинувшийся `print_bbox_mm`, появившийся и исчезнувший зазор);
+      `checks_static` и `provenance` попадают в `metrics.json` и в сводку;
+      **старый `metrics.json` без новых полей против нового** — diff содержит
+      только общие поля и не падает. Последний важнее остальных: он про то, что
+      выкат не сломает сравнение с уже опубликованным.
+    - `tests/test_metricsdiff.py`: `moved_fields` возвращает пустое, когда
+      физического движения нет, и называет поле и деталь, когда есть; обе
+      половины по-прежнему держат ОДНИ И ТЕ ЖЕ объекты (`is`, не `==`) —
+      существующий тест, не сломать его новым импортом; модуль по-прежнему
+      импортирует только стандартную библиотеку.
+    - `tests/client/`: `hammerola diff --json` печатает разбираемый JSON и
+      возвращает 0 и когда что-то сдвинулось, и когда нет.
+
+    **Чего НЕ делать: не менять формат `metrics.json` версией.** Разобрано выше.
+    `METRICS_VERSION` существует для случая, когда читатель старого файла
+    прочтёт его НЕПРАВИЛЬНО; добавление полей — не этот случай, а бумп сломает
+    сравнение с каждой уже опубликованной ревизией.
+59. **ДЕФЕКТ: `report_metrics` не зовётся ниоткуда — сборка не возвращает в лог
+    ни одного размера.** Найдено при разборе рабочих сессий, 2026-08-29;
+    **перепроверено по коду 2026-08-29 и подтверждено полностью.** **Открыто, не
+    начато.** Порядок среди записей 54–59 — в записи 54 «Проверки печатаемости»
+    (эта идёт сразу после записи 58 и ОТДЕЛЬНЫМ коммитом).
+
+    Это не новое поле, а НЕ ПОДКЛЮЧЁННЫЙ ПРОВОД: вся половина «сборка сама
+    говорит, что сдвинулось» уже написана, задокументирована в трёх местах и не
+    вызывается ни разу.
+
+    **Сейчас — что именно мертво.** `src/cadbuild/metrics.py` определяет
+    `report_metrics(out_dir, baseline, why)` — «Print what moved since the `dev`
+    build». **У неё нет ни одного вызова.** `grep -rn 'report_metrics'
+    --include='*.py' .` по всему дереву даёт ровно четыре попадания и ни одного
+    вызова: определение, строка в `__all__` и две ссылки в тексте докстрингов
+    (`src/cadbuild/metrics.py` и `tests/test_metricsdiff.py`). Из
+    `src/cadbuild/build.py` зовётся только `write_metrics`.
+
+    `fetch_baseline`, на которую ссылается сама `report_metrics`, **в коде не
+    существует вообще** — ни в сборочной половине, ни в клиенте. Два упоминания,
+    оба в прозе, оба в `metrics.py`: шапка модуля («`fetch_baseline`, which
+    GET's the previous metrics.json off `{hub}/project/<pid>/dev/`… Inside the
+    hub the first is a file on the volume rather than a request (whatever reads
+    it will pass it to report_metrics below, which already takes the baseline as
+    an argument)» — «whatever reads it» не читает никто) и докстринг самой
+    функции.
+
+    **Ещё три докстринга обещают работающий контур, и все три врут:**
+
+    - `metrics.py`, комментарий у блока метрик: «It rides in the archive, so the
+      NEXT build of the same project can fetch it back from `dev` and say what
+      moved — which is the only form of "did that edit do what I meant" that
+      does not involve opening two viewers side by side»;
+    - `build.py`, комментарий у списка `files`: «it is written for the next
+      build of this project to read back off `dev`»;
+    - `src/client/revdiff.py`, шапка: `metrics_diff` — «the same function the
+      build itself prints after every run». Сборка её не печатает ни разу.
+
+    Плюс `tests/test_metricsdiff.py` в докстринге теста пишет
+    «`src/cadbuild/metrics.report_metrics` calls it to print what moved since
+    `dev`». Сам тест проверяет тождественность объектов и он честный; неверна
+    фраза о вызове.
+
+    **Правка этих пяти мест — часть работы, а не косметика.** Докстринг,
+    описывающий несуществующий контур, ДОРОЖЕ отсутствующего: читатель кода ищет
+    вызов, не находит, решает, что плохо искал, и идёт искать второй раз. Именно
+    так эта дыра и прожила до сих пор — она описана слишком уверенно, чтобы её
+    заподозрить.
+
+    **Цена дыры.** В ЛОГ сборки не возвращается ни одного размера. Картинки
+    лежат по своим URL (запись 53 «Превью сборки»), но их надо знать по имени и
+    за ними надо сходить; лог же приходит сам, и единственная строка про деталь
+    в нём — та, что печатает `export_printables`: `«  {name}: valid, volume
+    {volume/1000:.2f} cm3, watertight, one body, {N} faces»`. Объём и число
+    граней. Ни габарита, ни площади прилипания, ни свесов, ни одного слова о
+    том, что изменилось с прошлого раза.
+
+    **Нужно: сборка на каждом прогоне печатает свои физические числа, а когда
+    есть с чем сравнивать — что сдвинулось.** Три требования, каждое отдельно:
+
+    1. **Сводка печатается ВСЕГДА**, а не только когда сравнивать не с чем
+       (сегодня ветка с `metrics_summary` живёт под `if baseline is None`).
+       Числа лежат и в `metrics.json`, но за ним надо сходить, зная имя; лог
+       приходит сам и приходит тому, кто пушил. Это единственный канал, который
+       не требует второго действия, — и он не должен зависеть от того, была ли
+       предыдущая сборка.
+    2. **Diff печатается, когда baseline есть**, и когда ничего не сдвинулось —
+       печатается ровно это, с числом сравнённых чисел («every measured number
+       is the same (17 compared)»), а не молчание. Сегодня `if lines:` молчит, и
+       молчание неотличимо от «сравнение не состоялось» — та же разница, которую
+       запись 58 чинит в `revdiff._print_geometry`, и чинить её надо одинаково с
+       обеих сторон.
+    3. **Сводка печатает физические поля** — `PHYSICAL_FIELDS` из записи 58,
+       названные там один раз и здесь только используемые. Число граней и
+       треугольников в подетальной строке лога не нужно: это факты о МЕШЕ, они
+       остаются в `metrics.json` и в diff-е, где отвечают на вопрос «почему
+       сдвинулось».
+
+    **Baseline берётся из опубликованного слота `dev` того же проекта** — файл
+    `<projects_dir>/<pid>/dev/metrics.json`, ровно там, откуда `store._dev_meta`
+    читает `meta.json` того же слота. Функцию, которая его достаёт, надо
+    написать: её нет, и `fetch_baseline` из докстринга — не она (это HTTP-имя из
+    предыдущего проекта, а внутри хаба запрос за собственным файлом на
+    собственном томе не нужен).
+
+    **Цепочка от слота до печати — пять звеньев, все существующие**, и каждое
+    надо тронуть ровно один раз:
+
+    1. `Store.dev_metrics_path(pid)` — новый метод, отдаёт путь к `metrics.json`
+       слота или `None`. По образцу `_dev_meta`: терпимый, ничего не бросает;
+    2. `jobs._build_and_publish` спрашивает его у стора и передаёт в
+       `build_arguments`. **Только через `build_arguments`** — это единственное
+       место, где вызов воркера записан, и тест в `tests/test_jobs.py` держит
+       его связанным с сигнатурой `run_build` через
+       `inspect.signature(run_build).bind(...)`; аргумент, добавленный мимо
+       помощника, ломает продакшен на первом пуше при зелёном тестовом наборе
+       (весь довод — в докстринге того теста);
+    3. `run_build(..., baseline=None)` **КОПИРУЕТ** файл в свой scratch и
+       передаёт `--baseline <scratch>/baseline.json`. Копия, а не путь в стор:
+       во-первых, параллельная сборка того же проекта может подменить слот
+       посреди этой (`_swap_dev_slot` — это переименования), и тогда сравнение
+       окажется с чем-то третьим; во-вторых, scratch — это каталог родителя,
+       куда уже кладётся `result.json`, и другого канала «родитель дал ребёнку
+       файл» здесь нет;
+    4. `child.main` разбирает `--baseline` (новая строка в `_OPTIONS`,
+       `src/buildproc/child.py`, где сегодня шесть опций) и передаёт путь в
+       `build()`;
+    5. `build(out_dir, preview_mode="iso", baseline=None)` — **последней строкой
+       перед формированием `files`** зовёт `read_baseline` и `report_metrics`.
+       Вызов сидит в `build()`, а не в `child.py`, по двум причинам: сводка —
+       часть сборки, и её видит любой, кто зовёт `build()`; и вызов из `build()`
+       можно удержать тестом, а вызов из `main()` ребёнка — нет, там тест
+       потребовал бы CAD-ядра.
+
+    **Печать обязана быть невозможной причиной отказа сборки.** Требование
+    дословно по смыслу то же, что уже написано в докстринге `report_metrics`, и
+    переписывать его не надо — надо его СОХРАНИТЬ при правке функции: вся сверка
+    сидит под ОДНИМ guard-ом, а не каждое поле под своим («the failures are not
+    a list to enumerate, they are every way a dict of unknown shape can be
+    walked»); строки собираются ДО печати, чтобы ошибка форматирования случилась
+    до того, как что-то попало в терминал, а не посреди блока; guard покрывает и
+    `unchanged_code_moved_geometry`, которая ходит по тем же двум словарям.
+    Новая сводка добавляется внутрь той же защиты и по тем же правилам: сначала
+    строки сводки, потом строки diff-а, потом одна печать.
+
+    **Сигнатура и форма.** В `src/cadbuild/metrics.py`:
+
+    ```python
+    def read_baseline(path):
+        """The published `dev` metrics.json to compare against, and why not.
+
+        Returns `(baseline, why)`: a dict this build knows how to read, or None
+        with one clause saying what was wrong with it. Never raises -- everything
+        it can be handed is a file somebody else published, and the caller's
+        promise is that a diff cannot fail a build.
+
+        What it settles is deliberately only what CAN be settled cheaply: the file
+        parses, it is an object, and its `version` is one this build knows.
+        Nothing about what is inside it -- `{"version": 1, "parts": {"body": 42}}`
+        passes all three and is a TypeError in the middle of the comparison, which
+        is why report_metrics keeps its guard.
+        """
+    ```
+
+    `why` — законченное придаточное без точки, подставляется в существующую
+    строку `f"metrics: nothing to compare against -- {why}. This build:"`:
+
+    - `"this project has no dev build yet"`;
+    - `"the dev build published no metrics.json"`;
+    - `"the metrics.json published as dev is not readable"` — `OSError`, не
+      UTF-8, не JSON, не объект;
+    - `f"the metrics.json published as dev is version {n}, this build writes
+      version {METRICS_VERSION}"` — то самое поведение, которое обещает
+      комментарий у `METRICS_VERSION`: «A build refuses to compare against a
+      version it does not know and says so».
+
+    В `src/metricsdiff.py` — параметр вместо второго списка полей:
+
+    ```python
+    def _part_summary(part, fields=METRIC_FIELDS): ...
+    def metrics_summary(metrics, fields=METRIC_FIELDS): ...
+    ```
+
+    `report_metrics` зовёт `metrics_summary(current, fields=PHYSICAL_FIELDS)`, и
+    имя аргумента В МЕСТЕ ВЫЗОВА — это и есть объяснение, почему в логе не все
+    поля. Умолчание не меняется, поэтому «new part» и «gone» внутри
+    `metrics_diff` по-прежнему печатают про деталь всё: деталь, которой раньше
+    не было, описывают целиком.
+
+    В `src/store.py`:
+
+    ```python
+    def dev_metrics_path(self, pid: str) -> Path | None:
+        """The local slot's metrics.json, or None when there is nothing there.
+
+        A path rather than the parsed file: the only caller hands it to a build
+        process, and parsing it here would mean two readers of the same file
+        disagreeing about what a broken one is. Tolerant like `_dev_meta` next to
+        it -- an unreadable slot is a missing baseline, never an exception on the
+        publish path.
+        """
+    ```
+
+    **Форма лога** (обе ветки, `N` — число сравнённых чисел):
+
+    ```
+    metrics: nothing to compare against -- this project has no dev build yet. This build:
+      base: volume 33.06 cm3, bbox 120.00x80.00x24.00 mm, first layer 640.2 mm2, overhang 12.0 mm2
+      lid: volume 11.20 cm3, bbox 120.00x80.00x6.00 mm, first layer 960.0 mm2, overhang 0.0 mm2
+      assembly: bbox 120.00x80.00x30.00 mm, plate 220.00x110.00x6.00 mm
+
+    metrics vs dev:
+      base: volume 33.06 -> 31.90 cm3 (-3.5%), first layer 640.2 -> 210.4 mm2 (-67%)
+    ```
+
+    **Края и отказы.**
+
+    - **Слота `dev` нет** (первая сборка проекта), **слот есть, а
+      `metrics.json` в нём нет** (сборка старше этой работы), **файл не читается
+      / не JSON / не объект**, **версия незнакомая**, **объект правильной формы с
+      мусором внутри** — во всех пяти случаях сборка публикуется, а в лог идёт
+      ОДНА строка с причиной. Пятый случай ловит существующий guard и печатает
+      свою готовую строку («…is not shaped like one, so there is nothing to
+      compare against»); остальные четыре разбирает `read_baseline`.
+    - **Копия не сделалась** (`OSError` при `shutil.copyfile` в scratch) —
+      родитель зовёт ребёнка без `--baseline`, и это ветка «сравнивать не с чем»
+      с причиной. Сборку это уронить не может по определению: копия делается до
+      запуска ребёнка, в родителе, где падение уже обработано
+      `_build_and_publish`.
+    - **Коммитная сборка сравнивается с `dev`.** Слот `dev` — единственный
+      baseline, который у хаба вообще есть без выбора ревизии, и он может быть
+      старше или вообще из другой работы. Поэтому строка заголовка обязана
+      называть, С ЧЕМ сравнивали (`metrics vs dev:` — уже так и написано), а не
+      «vs previous».
+    - **Ребёнок может переписать свой baseline.** Модель знает `sys.argv` и
+      живёт в том же процессе — это уже разобрано в шапке `child.py` про
+      `--result`. Из этого не следует ничего для хаба и следует одно для
+      следующего читателя: **напечатанный diff — не доказательство**, публикация
+      по-прежнему идёт по проверенному родителем списку файлов, и завязывать на
+      текст лога решение хаба нельзя. Одна фраза об этом в докстринге — вся
+      необходимая работа.
+    - **Своя же сборка перезапишет слот, из которого читала.** Порядок
+      правильный сам собой: родитель снимает копию перед запуском ребёнка,
+      публикация идёт после (`_build_and_publish`), так что сборка `dev`
+      сравнивается с ПРЕДЫДУЩЕЙ `dev`, а не сама с собой. Это надо записать
+      комментарием там, где делается копия: порядок здесь и есть корректность.
+    - **Лог `dev`-сборки не сохраняется.** `jobs._keep_the_code` для `DEV_LINK`
+      выходит сразу, поэтому лог `dev`-пуша не ложится рядом с исходниками, как
+      ложится лог коммитной сборки. Сводка на `dev` живёт только в выводе
+      задания — том, что пушер читает по опросу job-а. Это нормально и менять не
+      надо, но это причина, по которой сводка обязана быть КОРОТКОЙ: её не
+      перечитают потом.
+    - **Объём лога.** Сводка — строка на деталь плюс строка на сборку; diff —
+      столько строк, сколько полей сдвинулось. На двадцатидетальной модели это
+      два десятка строк при `MAX_LOG_BYTES = 3 * Limits.log_bytes` (3 MiB),
+      рассчитанном на порядки больше. Ограничение по физическим полям держит
+      подетальную строку в одну ширину терминала — это и есть довод за него,
+      помимо того, что в логе нужны миллиметры, а не треугольники.
+
+    **Тесты.**
+
+    - **Вызов `report_metrics` из `build()` держится тестом. Это главный тест
+      записи:** функция уже была написана, задокументирована и осиротела ровно
+      потому, что вызов ничем не держался. Проверять надо ФАКТ ВЫЗОВА из
+      `build()` (подменённая `report_metrics` записала, что её позвали, и
+      получила тот же `out_dir`), а не то, что в логе есть какая-то строка:
+      строку можно случайно напечатать откуда угодно, а сломался именно вызов.
+      Файла `tests/cadbuild/test_build.py` сегодня НЕТ — его придётся завести
+      (или поставить тест туда, где появится фейковый `build()`).
+    - `tests/cadbuild/test_metrics.py`: `read_baseline` на каждом из четырёх
+      отказов возвращает `(None, why)` с непустым `why` и НЕ бросает (файла нет,
+      файл не JSON, файл — список, версия 999); мусор в baseline правильной
+      формы (`{"version": 1, "parts": {"body": 42}}`) не роняет `report_metrics`
+      и печатает строку про «не той формы» — тест на то самое обещание из
+      докстринга; сводка печатается и когда baseline есть, и когда его нет;
+      baseline, совпадающий с текущим, даёт строку «every measured number is the
+      same» С ЧИСЛОМ, а не пустой вывод; сводка содержит габарит и не содержит
+      числа треугольников (то есть `PHYSICAL_FIELDS` реально применён).
+    - `tests/test_jobs.py`: существующий `build_arguments`-тест дополняется
+      новым аргументом — ВКЛЮЧАЯ явную перепроверку в конце, ту, что перечисляет
+      аргументы руками (`build_arguments(args[0], args[1], keywords["pid"]) ==
+      (args, keywords)`); забыть её значит оставить тест зелёным и не
+      проверяющим новое звено. Плюс: `dev_metrics_path` пустого проекта — `None`,
+      и сборка с `None` доезжает до публикации.
+    - `tests/test_dev_builds.py` (файла `test_store.py` в наборе нет; тесты про
+      слот `dev` живут здесь): `dev_metrics_path` отдаёт путь после
+      `publish_dev_built` и `None` для неизвестного `pid`.
+
+    **Чего НЕ делать.**
+
+    - **Не ходить за baseline по HTTP из сборочного процесса.** Докстринг
+      говорит «`fetch_baseline`, which GET's the previous metrics.json off
+      `{hub}/project/<pid>/dev/`», и соблазн реализовать написанное — прямой. Не
+      надо, по трём причинам, каждой из которых хватило бы. Внутри хаба это
+      запрос за собственным файлом на собственном томе. Среда ребёнка собрана по
+      ключу и не несёт ни одного креденшла (`runner.child_environment`), а
+      процесс, в котором работает чужая модель, — последнее место, куда стоит
+      добавлять сеть. И главное: сборка, которой для публикации нужен успешный
+      сетевой запрос, падает от недоступной сети, а весь смысл `report_metrics` в
+      том, что напечатанный diff не может уронить сборку. Baseline — это файл,
+      который родитель кладёт ребёнку в scratch.
+    - **Не делать напечатанный diff основанием для чего-либо в хабе.** Модель
+      живёт в том же процессе, знает `sys.argv` и может переписать и baseline, и
+      вывод. Публикация идёт по списку файлов, проверенному родителем, и по коду
+      возврата — так уже устроено, и сводка ничего в этом не меняет. Соблазн
+      появится в форме «а давай не публиковать, если физика не сдвинулась»: это
+      решение по данным из НЕДОВЕРЕННОГО процесса, и принимает его человек,
+      глядя в лог, а не хаб.
+
 ## 8A. Хаб становится билдером — принятое решение
 
 Решено 2026-08-24. Делает неверными: шапку документа, §1 (сценарий A, шаг 3),
