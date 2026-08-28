@@ -22,6 +22,7 @@
 import {
   EVENT_ERROR, EVENT_MODEL, EVENT_STATE, EVENT_TOOL, emit,
 } from "./events.js";
+import { safeHatch } from "./hatch.js";
 import { installHoldKey } from "./holdkey.js";
 import { installIdleClock, captureLive, restoreLive, cameraState, isBusy, snapshot }
   from "./live.js";
@@ -455,6 +456,19 @@ export class HmrViewport extends HTMLElement {
       refit(this);
       const g = internals(this.viewer);
       if (g) muteStatusLine(this, g.display);
+      // The cut faces are hatched HERE and only here, because this is the one
+      // moment the library's cap meshes exist to be patched: it builds one per
+      // (plane, solid) inside `render()`, and throws them away on `clear()`.
+      // See hatch.js for the second path that would rebuild them.
+      //
+      // `safeHatch` AND NOT `hatchSectionCaps`, which is the guarded entry point
+      // and the only one the viewport should ever call: this method's own catch
+      // draws the error panel INSTEAD OF THE MODEL and sets `loadFailed`, so an
+      // exception from a decoration would cost the reader the viewer and stop
+      // the next `hmr:state` retrying. The guard lives at hatch.js's definition
+      // rather than in a `try` written around this line, because there a test
+      // can make the patching really throw instead of reading this file.
+      safeHatch(g);
       this.view = named;
       this.lastPick = null;
       this.applied = { hidden: null, ghost: null, selected: undefined, camera: null };

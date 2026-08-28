@@ -37,8 +37,24 @@ const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 const mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k]
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+/** `Vector3.normalize`, transcribed rather than remembered.
+ *
+ * three.js: `normalize() { return this.divideScalar( this.length() || 1 ); }`
+ * — and the `|| 1` is the whole of what this function has to get right. Divided
+ * unconditionally, as this once was, a zero-length vector comes back as NaNs and
+ * every plane built from one is NaN; the library instead leaves it AT ZERO.
+ *
+ * The difference is not academic, because a zero clip normal is reachable (see
+ * `unit3` in math.js) and the two behaviours look nothing alike on screen. NaN
+ * would be loud — a plane at NaN clips everything or nothing in a way somebody
+ * notices. Zero is silent: the plane is `(0, 0, 0, w)`, the fragment test
+ * `dot( vClipPosition, plane.xyz ) > plane.w` becomes `0 > w`, and the model is
+ * simply never cut. A fake that produced the loud failure would let the suite
+ * assert a symptom the library cannot produce, which is exactly what the header
+ * above forbids.
+ */
 const norm = (a) => {
-  const l = Math.sqrt(dot(a, a))
+  const l = Math.sqrt(dot(a, a)) || 1
   return [a[0] / l, a[1] / l, a[2] / l]
 }
 
@@ -117,19 +133,34 @@ export function orthoCamera({
   return camera
 }
 
-/** A `THREE.Plane`: `distanceToPoint(p) = normal . p + constant`. */
-function plane(normal, constant) {
+/** A `THREE.Plane`: `distanceToPoint(p) = normal . p + constant`.
+ *
+ * `center` is `CenteredPlane`'s own field, carried here because the placement
+ * arithmetic reads it: the slider's zero is that point, so the value that stands
+ * a plane through a world point cannot be worked out without it.
+ */
+function plane(normal, constant, center) {
   return {
     normal: norm(normal),
     constant,
+    center,
     distanceToPoint(p) {
       return this.normal[0] * p.x + this.normal[1] * p.y
         + this.normal[2] * p.z + this.constant
     },
     // `CenteredPlane.setConstant`, verbatim in its effect: the slider counts
     // from `centre`, not from the origin.
-    setCentered(value, centre) {
-      this.constant = value - dot(this.normal, centre)
+    //
+    // FROM `this.center` AND NOT FROM AN ARGUMENT. The library keeps the centre
+    // in ONE field on the plane, so a fake taking it as a parameter has two —
+    // this one, which `sectionValueFor` reads through `g.plane.center`, and the
+    // viewer's `clipCenter`, which callers were passing in. They are the same
+    // object today and nothing notices; a test that changed either one would put
+    // the fake in a state the library cannot be in, and the suite would then
+    // approve arithmetic done against one centre while the plane stood at the
+    // other.
+    setCentered(value) {
+      this.constant = value - dot(this.normal, this.center)
     },
   }
 }
@@ -151,8 +182,9 @@ export function fakeViewer({
   target = null,
 } = {}) {
   const canvas = { getBoundingClientRect: () => ({ ...rect }) }
-  const planes = [plane([0, 0, 1], gridSize / 2), plane([0, 1, 0], gridSize / 2),
-                  plane([1, 0, 0], gridSize / 2)]
+  const planes = [plane([0, 0, 1], gridSize / 2, clipCenter),
+                  plane([0, 1, 0], gridSize / 2, clipCenter),
+                  plane([1, 0, 0], gridSize / 2, clipCenter)]
   const sliders = [gridSize / 2, gridSize / 2, gridSize / 2]
   // Wherever the camera is pointing, unless a test pins it somewhere else.
   const aim = target || add(camera.eye, mul(camera.forward, 60))
@@ -196,13 +228,19 @@ export function fakeViewer({
     // -- clipping ----------------------------------------------------------
     getClipSlider: (i) => sliders[i],
     setClipSlider: vi.fn((i, value) => {
+      // `Viewer.setClipSlider` opens with `if (value === -1 || value == null)
+      // return` — -1 is its spelling of "no value given", and a placement that
+      // works out to exactly that number is silently not applied. Modelled here
+      // because a fake that took it would let the suite agree that a plane
+      // stands where the library would have left it parked.
+      if (value === -1 || value == null) return
       sliders[i] = value
-      planes[i].setCentered(value, viewer.clipCenter)
+      planes[i].setCentered(value)
     }),
     getClipNormal: (i) => [...planes[i].normal],
     setClipNormal: vi.fn((i, n, value = null, notify = true) => {
       planes[i].normal = norm(n)
-      planes[i].setCentered(viewer.gridSize / 2, viewer.clipCenter)
+      planes[i].setCentered(viewer.gridSize / 2)
       sliders[i] = viewer.gridSize / 2
       viewer.setClipSlider(i, value === null ? viewer.gridSize / 2 : value, notify)
     }),

@@ -72,6 +72,62 @@ describe('unit3', () => {
     // Parallel to the original: the cross product of the two is zero.
     expect(len3(cross3(u, a))).toBeCloseTo(0, 12)
   })
+
+  it('answers for a vector too large or too small for `len3` to square', () => {
+    // WHY THIS DOES NOT GO THROUGH `len3`, and the reason it is a separate
+    // function: `len3` squares first, so it overflows to Infinity around 1.34e154
+    // and underflows to 0 around 1.5e-162. Dividing by either produced an answer
+    // that was WRONG RATHER THAN ABSENT — `[1e200,0,0]` came back as `[0,0,0]`, a
+    // finite vector of zero length that every finiteness check waves through.
+    // What that does downstream is NOT a crash and not a NaN: three.js's own
+    // `normalize` is `divideScalar( length() || 1 )`, so zero stays zero, the
+    // clip plane becomes `(0,0,0,w)` and the fragment test `dot(vClipPosition,
+    // plane.xyz) > plane.w` reads `0 > w` — false, nothing discarded, the model
+    // whole on screen and the cut silently not happening. `Math.hypot` scales by
+    // the largest component instead.
+    expect(unit3([1e200, 0, 0])).toEqual([1, 0, 0])
+    expect(unit3([0, -1e-200, 0])).toEqual([0, -1, 0])
+    // ...and it is the direction that is preserved, not just the length: a
+    // mixed-magnitude vector still comes back parallel to itself and unit.
+    const mixed = unit3([3e200, -4e200, 0])
+    expect(mixed[0]).toBeCloseTo(0.6, 12)
+    expect(mixed[1]).toBeCloseTo(-0.8, 12)
+    expect(len3(mixed)).toBeCloseTo(1, 12)
+  })
+
+  it('is NOT unit on subnormals, which is the one limit of the formula', () => {
+    // PINNED RATHER THAN FIXED, and the distinction is the point. `Math.hypot`
+    // divides by the largest component before squaring, and at the bottom of the
+    // subnormal range there is no precision left to divide with: the answer comes
+    // back finite — so `finite3` accepts it — and is not a unit vector.
+    //
+    // Unreachable from this application's geometry: every component here comes
+    // from a picker, a camera or a bounding box, and none produces a coordinate
+    // below 2.2e-308. So nothing guards it, because a guard against an input
+    // nothing can supply is one nothing can test honestly. What is worth having
+    // is this: the callers' precondition says "unit", and this is the input for
+    // which that word is qualified rather than absolute.
+    //
+    // QUALITATIVE ON PURPOSE. `Math.hypot` is "implementation-approximated" in
+    // the standard, so its digits are the engine's business and not a fact about
+    // this repository. Pinning them would make the suite red when the engine
+    // changed — including when it IMPROVED, since an exact hypot would return
+    // exactly 1 here. The two things asserted are the two the callers care
+    // about: the guards let it through, and it is not the unit vector they
+    // assume. A loose bound rather than a close one, for the same reason.
+    const u = unit3([5e-324, 5e-324, 0])
+    expect(finite3(u)).toBe(true)
+    expect(Math.abs(len3(u) - 1)).toBeGreaterThan(0.01)
+  })
+
+  it('declines a vector that has no direction to find', () => {
+    // The two that remain, and they are different answers on purpose. A caller
+    // that STORES the result has to check `finite3` rather than truthiness,
+    // because the infinite case is an array — section.js does, at both of the
+    // places it writes a seed.
+    expect(unit3([NaN, 0, 0])).toBeNull()
+    expect(unit3([Infinity, 0, 0]).every(Number.isFinite)).toBe(false)
+  })
 })
 
 describe('clamp', () => {

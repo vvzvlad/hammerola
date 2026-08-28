@@ -314,7 +314,7 @@ jobs:
         # A POSITIVE LIST OF PATHS, where the Python step above carries a list of exclusions.
         # Almost everything vitest reads lives under ui/ — the sources, the tests, the
         # committed fixture, package.json and its lockfile — and whatever it needs from
-        # outside ui/ is named here, one path at a time. All four of those are for
+        # outside ui/ is named here, one path at a time. Four of those are for
         # ui/tests/chrome.test.js: templates/ and static/_v/site.css because they state the
         # page colour and redraw the header WITHOUT importing any JavaScript — being unable
         # to import is exactly why that test has to read them as files — and the two
@@ -326,14 +326,27 @@ jobs:
         # refusing an empty directory: a throw while the test module is being evaluated takes
         # the whole file down and blames this tar for it, and a directory emptying out is
         # legitimate the day pointer.js moves into the bundle.)
+        # The fifth is the vendored viewer, for ui/tests/hatch.test.js: it checks that the
+        # three.js shader chunk the section hatch splices at is still in the shader it
+        # patches. Nothing under ui/ can answer that, and nothing at runtime can either — a
+        # chunk renamed upstream costs the page its hatch and NOTHING else, no error and no
+        # warning and a section that is simply a flat fill again — so this is the only place
+        # it can be noticed. It costs 3.4 MB on stdin, next to the base image pulled and the
+        # dependency tree installed on either side of it.
+        # THE ONE FILE AND NOT static/_v: that directory also holds this project's OWN
+        # browser bundle (`hammerola*`), which is an output of the build rather than an input
+        # to the suite. It is gitignored, so the runner's checkout has none — but a
+        # workstation has whatever `make ui` last produced, and this command is written for
+        # both.
         # THIS LIST IS NOT EXHAUSTIVE AND IS NOT MEANT TO BE. It gains a path whenever a test
         # needs one, as a deliberate edit here.
-        # Naming what travels is both smaller (the vendored 3.5 MB viewer in static/_v alone
-        # dwarfs the whole of ui/) and strictly safer than any set of --exclude flags: `.env`,
+        # Naming what travels is strictly safer than any set of --exclude flags: `.env`,
         # `data/` and `.git/config` cannot travel because nothing travels that is not named.
-        # That matters for the same reason it matters up there — this exact command is also
-        # what a developer runs BY HAND to reproduce a CI failure, in a checkout where all
-        # three are real.
+        # It is no longer the SMALLER option — the vendored 3.5 MB viewer that used to be the
+        # reason to name paths rather than exclude them is now itself on the line — so the
+        # argument for this shape is safety alone, and it is enough. That matters for the same
+        # reason it matters up there: this exact command is also what a developer runs BY HAND
+        # to reproduce a CI failure, in a checkout where all three are real.
         # So add the path deliberately, and do NOT replace this with `.` and a fence of
         # exclusions: the fence has to be complete to be correct, and this list has to be
         # complete to be USABLE, which is the failure that announces itself. Be exact about
@@ -346,6 +359,12 @@ jobs:
         # carrying binaries built for the host's architecture, which `npm ci` deletes and
         # reinstalls from the lockfile anyway. It does not exist on the runner; in the by-hand
         # reproduction it is sitting right there, tens of megabytes of it.
+        # `ui/dist` is the SAME CASE as `hammerola*` above, and it carries a flag because the
+        # paragraph above would otherwise be stating a principle this command does not follow:
+        # it is `vite build`'s output directory — gitignored, absent on the runner, and on a
+        # workstation holding whatever `make ui` last produced — and naming `./ui` whole sends
+        # it. An output of the build is not an input to the suite: nothing under ui/tests reads
+        # it, and vitest builds nothing.
         # Streamed as a tar over stdin rather than bind-mounted, exactly as above: this job runs
         # inside act_runner's own job container while `docker` talks to the HOST's daemon, so a
         # `-v "$PWD:/src"` would ask the host to mount a path that means something entirely
@@ -365,8 +384,8 @@ jobs:
         # runner, not the container over on the host's daemon. That one goes on running, never
         # exits, so `--rm` never fires — and unnamed it would be unreachable by anything at all,
         # because every cleanup in these workflows removes containers BY NAME.
-        tar -cf - --exclude=./ui/node_modules ./ui ./templates ./static/_v/site.css \
-          ./static/_v/pointer.js ./static/_v/pointer_pref.js \
+        tar -cf - --exclude=./ui/node_modules --exclude=./ui/dist ./ui ./templates ./static/_v/site.css \
+          ./static/_v/pointer.js ./static/_v/pointer_pref.js ./static/_v/three-cad-viewer.esm.js \
           | docker run --rm -i --pull always --name "$JS_NAME" \
           -e CI=true \
           -e NPM_CONFIG_UPDATE_NOTIFIER=false \

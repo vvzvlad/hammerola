@@ -99,6 +99,22 @@ export const viewerOptions = {
   transparent: false,
   blackEdges: false,
   collapse: 1,
+  // THE CUT FACE IS THE PART'S OWN COLOUR, which is Fusion's `Section Color:
+  // From Component` and its default.
+  //
+  // The library's own default is the other one, and it is not a colour anybody
+  // chose for this model: `PLANE_COLORS[theme][index]` is indexed by WHICH OF
+  // THE THREE CLIP PLANES cut the face, so every cut this tool makes came back
+  // the same red (`light: [0xff0000, ...]`, `dark: [0xff4500, ...]` — this
+  // viewport drives plane 0). One saturated red for a plate, a post and a cap
+  // says the three are the same material, which is the one thing a section
+  // drawing is read for.
+  //
+  // `Clipping.setObjectColorCaps` walks the cap meshes in the order they were
+  // built — plane-major, one per (plane, solid) — against the `objectColors` it
+  // recorded in the same order, so each cap ends up carrying the `color` of the
+  // solid it caps. That colour is what `hatch.js` shades its lines from.
+  clipObjectColors: true,
 };
 
 /** Pointer travel below which a press counts as a click rather than a drag. */
