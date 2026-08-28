@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- THE MARK, INKED FOR A DARK BACKGROUND - the same drawing as
+       brand/mark-on-light.svg, in the other ink. Named after the background it
+       goes on rather than after its ink, for the reason that file gives.
+
+       NOTHING RENDERS IT YET, and that is the deliberate half of keeping it.
+       The interface is light everywhere, including the resolver page; a dark
+       one arrives with SPEC 8, entry 35 ("the theme has to cover the whole
+       interface"), which is a token layer over ~80 hand-written hex values and
+       not a switch anybody flips this week. Wiring an unreachable second ink
+       into the bundle now would be dead code; throwing the file away and asking
+       the designer for it again later is worse.
+
+       So it is kept as an ASSET rather than as code, and it is not dead weight:
+       ui/tests/chrome.test.js compares its geometry against the component's,
+       attribute for attribute, so the day the theme lands this is provably the
+       same logo and not a second one that drifted while nobody looked at it.
+       The same test checks the ink is on the right side of mid-grey for the
+       background this name promises, which is what a swap of the two files
+       fails on. -->
+  <rect x="11" y="5" width="9" height="38" fill="#f2f4f6"/>
+  <path d="M20 23.5h8a8.5 8.5 0 018.5 8.5v11" fill="none" stroke="#f2f4f6" stroke-width="6.5"/>
+  <circle cx="15.5" cy="12" r="1.9" fill="#1c1f23"/>
+  <circle cx="15.5" cy="20" r="1.9" fill="#1c1f23"/>
+  <circle cx="15.5" cy="28" r="1.9" fill="#1c1f23"/>
+  <circle cx="15.5" cy="36" r="1.9" fill="#1c1f23"/>
+</svg>

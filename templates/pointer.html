@@ -48,11 +48,29 @@
      path is a builds.json round trip. Drawn as anything else, it reads as a
      different program appearing for an instant inside this one. The mark is
      inline SVG copied from ui/src/style.jsx -- a file, or the bundle, would be
-     a second request on the one page whose whole job is to leave quickly. -->
+     a second request on the one page whose whole job is to leave quickly.
+
+     BOTH OF THOSE ARE COPIES OF A THIRD THING, brand/mark-on-light.svg, which
+     is the drawing the designer sent; ui/tests/chrome.test.js holds all three
+     to each other, element for element. So this is transcribed from the file
+     and not eyeballed from the component, and the inks are the light-page pair
+     because this page is light like the rest of the interface.
+
+     THE INK IS WRITTEN OUT AND THE THEME IS NOT CONSULTED. There is a second
+     ink for a dark background (brand/mark-on-dark.svg) and this page will need
+     it when SPEC 8 entry 35 lands, but it cannot pick between them today: it
+     reads no localStorage, runs no bundle, and its whole point is to be gone
+     before a script could repaint anything. Whatever answers that for
+     site.css's palette has to answer it here in the same commit -- entry 35
+     names this page for exactly that reason. -->
 <div id="bar"><span class="mark">
-    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-      <path d="M9 1.5l6.5 3.75v7.5L9 16.5l-6.5-3.75v-7.5z" fill="none" stroke="#1c1f23" stroke-width="1.6"/>
-      <path d="M9 1.5v7.5M9 9l6.5 3.75M9 9L2.5 12.75" fill="none" stroke="#1c1f23" stroke-width="1.2" opacity=".55"/>
+    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+      <rect x="11" y="5" width="9" height="38" fill="#1c1f23"/>
+      <path d="M20 23.5h8a8.5 8.5 0 018.5 8.5v11" fill="none" stroke="#1c1f23" stroke-width="6.5"/>
+      <circle cx="15.5" cy="12" r="1.9" fill="#fff"/>
+      <circle cx="15.5" cy="20" r="1.9" fill="#fff"/>
+      <circle cx="15.5" cy="28" r="1.9" fill="#fff"/>
+      <circle cx="15.5" cy="36" r="1.9" fill="#fff"/>
     </svg><b>hammerola</b></span>
   <span class="meta">opening the build you were last on&hellip;</span>
   <span class="spacer"></span>

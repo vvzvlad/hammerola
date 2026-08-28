@@ -1,23 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="hammerola">
-  <!-- Three punched bars on a filled tile: a piano roll, which is what the name
-       is from. The tile is what makes the mark work on a light AND a dark tab
-       strip - it brings its own background, so the bars never have to contrast
-       with the browser's chrome. The media query below only warms the tile for
-       dark chrome; the fill attributes are the fallback, because a renderer that
-       ignores the stylesheet (many icon rasterisers do) must still get a
-       complete icon rather than a black square. -->
-  <style>
-    .tile { fill: #2f6feb; }
-    .bar  { fill: #ffffff; }
-    @media (prefers-color-scheme: dark) {
-      .tile { fill: #4c8dff; }
-      .bar  { fill: #0d1117; }
-    }
-  </style>
-  <rect class="tile" x="1" y="1" width="30" height="30" rx="7" fill="#2f6feb"/>
-  <!-- Widths and gaps are both 4.5+ units so that at 16x16 every bar is a solid
-       2px column with a 2px gap beside it. Anything finer greys out. -->
-  <rect class="bar" x="5.25" y="8"  width="4.5" height="16" rx="2.25" fill="#ffffff"/>
-  <rect class="bar" x="13.75" y="6"  width="4.5" height="20" rx="2.25" fill="#ffffff"/>
-  <rect class="bar" x="22.25" y="11" width="4.5" height="12" rx="2.25" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="hammerola">
+  <!-- The site icon, as the designer drew it, and now the SAME OBJECT as the
+       mark in the header (brand/mark-on-light.svg): a punched ribbon with a
+       take-off past the last hole - a piano roll, which is what the name is
+       from. It used to be three solid bars, drawn by another hand, so the tab
+       and the logo depicted two different things.
+
+       IT IS NOT THE MARK RESIZED, and the differences are the icon's whole job:
+       the tile of its own, the slightly bigger holes and the ribbon shifted to
+       sit centred inside that tile. Do not "unify" it with the brand files by
+       copying one over the other - ui/tests/chrome.test.js deliberately does
+       NOT hold this file to the mark's geometry, only the two inline copies of
+       the mark to the brand file.
+
+       WHAT THE PREVIOUS ICON GOT RIGHT AND THIS ONE KEEPS: it brings its own
+       background, so it never has to contrast with the browser's chrome and
+       reads on a light AND a dark tab strip. Here the tile is the dark ink and
+       the ribbon the light one, so the contrast that carries the icon is
+       entirely INSIDE it.
+
+       That is also why there is no `prefers-color-scheme` block any more,
+       though the file it replaces had one. That block warmed a blue tile for
+       dark chrome, and every colour it set needed a duplicate `fill` attribute
+       beside it as a fallback, because plenty of icon rasterisers ignore a
+       stylesheet and would otherwise have got a black square. With the contrast
+       inside the tile there is nothing left for a media query to fix, and with
+       no stylesheet at all the fallbacks stop being fallbacks: these literal
+       fills are the only thing any renderer has to understand. -->
+  <rect width="48" height="48" rx="10" fill="#1c1f23"/>
+  <rect x="13" y="7" width="9" height="34" fill="#f2f4f6"/>
+  <path d="M22 24h6a8 8 0 018 8v9" fill="none" stroke="#f2f4f6" stroke-width="6.5"/>
+  <circle cx="17.5" cy="13.5" r="2" fill="#1c1f23"/>
+  <circle cx="17.5" cy="21" r="2" fill="#1c1f23"/>
+  <circle cx="17.5" cy="28.5" r="2" fill="#1c1f23"/>
+  <circle cx="17.5" cy="36" r="2" fill="#1c1f23"/>
 </svg>

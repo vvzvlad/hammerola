@@ -16,6 +16,16 @@ tests/
 .gitea/
 *.md
 **/.DS_Store
+# The designer's drawing of the mark. It is a SOURCE asset: the two renderings
+# that ship — `Mark` compiled into the bundle and the `<svg>` inside
+# templates/pointer.html — are transcriptions of it, and nothing at runtime ever
+# opens it. Today no `COPY` names it, so the line changes nothing about the
+# image; what it changes is where "this is not for the image" is WRITTEN, and
+# this file is the only place a machine reads that. The day somebody widens a
+# COPY — `COPY . .`, or a `brand/` added beside `static/` for a page that wants
+# to serve the SVG — the answer is already here instead of being re-decided from
+# scratch, which is the same job the `static/_v/hammerola*` line below does.
+brand/
 # The `ui` stage installs its own with `npm ci`, and this keeps a workstation's
 # copy from landing on top of it. The stage runs `RUN npm ci` and only THEN
 # `COPY ui/ ./`, so without this line that second copy would overlay the
