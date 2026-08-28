@@ -59,22 +59,48 @@ where no test could see both halves, which is exactly how publication came to be
 broken without anyone noticing. It imports nothing outside the standard library,
 so whatever `python3` a laptop already has is enough.
 
-```bash
-make client                          # symlink bin/hammerola into ~/.local/bin
-hammerola login https://hub.example  # once per machine; the password is prompted for
-```
-
-That is the install for whoever has a checkout of this repository. **A machine
-that has none gets the same tool from the hub itself**, which serves the three
-things a first run needs and asks for no token for any of them — they are the
-software, identical on every deployment, and the person downloading them does
-not have a token yet by definition:
+**It is installed from the hub**, which serves the three things a first run
+needs and asks for no token for any of them — they are the software, identical
+on every deployment, and the person downloading them does not have a token yet
+by definition:
 
 ```bash
 mkdir -p ~/.local/bin ~/.claude/skills/hammerola
 curl -fsSL <hub>/start/hammerola -o ~/.local/bin/hammerola && chmod +x ~/.local/bin/hammerola
 curl -fsSL <hub>/start/skill.md -o ~/.claude/skills/hammerola/SKILL.md   # for an agent
+hammerola login <hub>   # once per machine; the password is prompted for
 ```
+
+**That is the only install, checkout or no checkout.** There used to be a second
+one — `make client`, which symlinked a `bin/hammerola` script into
+`~/.local/bin` — and the two collided under the one name they share: `curl -o`
+writes THROUGH a symlink, into its target, so the line above quietly landed the
+downloaded zipapp on top of the repository's own file. The link stayed a link,
+the command went on working, and the only sign was `git status` calling the
+client modified. Both the target and the script are gone. Whoever is *working
+on* the client runs it out of the checkout instead — and the whole trick is that
+`python3` has to be able to import `src`, which is a statement about where the
+command is STARTED, not about where the model is:
+
+```bash
+cd <this checkout>
+python3 -m src.client --help                          # the same tool, off the working copy
+python3 -m src.client -C <model dir> status           # the model directory is an argument
+```
+
+`-C` exists because there is no installed script to run from inside a model
+directory: `python3 -m src.client` started there fails with
+`No module named 'src'`, and so does `python3 -m src.client status` started in
+the checkout — the tool resolves, and then finds no `project.json`. The other
+way round works too, if the shell is already in the model:
+
+```bash
+PYTHONPATH=<this checkout> python3 -m src.client status
+```
+
+No venv and nothing to build either way: the package imports the standard
+library and nothing else, which is the same property that lets the hub ship it
+as one file.
 
 The downloaded client is a zipapp built out of `src/client/` — one file, nothing
 installed, python 3.9 and up (`src/onboarding.MIN_PYTHON`, which is also what
@@ -152,8 +178,9 @@ for the id to be typed first.
      deciding whether to use the tool at all is doing.
 
      So do not delete either, and do not delete tests/test_readme_example.py:
-     it is the only thing holding this block to the contract, it skips itself
-     if the block goes, and a skip nobody reads is not a test. -->
+     it is the only thing holding this block to the contract, and because the
+     block is now meant to stay, that test FAILS rather than skips if the block
+     goes -- a skip nobody reads is not a test. -->
 
 Start a project from the template — `hammerola create` brings it, and it builds
 as it stands. What follows is the same contract at a size that can be read here

@@ -363,11 +363,25 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   that renders the three downloads is the work this route was built for and has
   not been done; until it is, the argument for answering a question about the
   deployment anonymously is a debt nothing has collected on
-- `bin/hammerola` — the console command, a plain script `make client` symlinks
-  into `~/.local/bin`. Deliberately not a packaging entry point yet: this repo's
-  one importable top-level name is `src`, and `pip install`ing that onto a laptop
-  would shadow every other project's `src`. Giving the tool a distribution name
-  belongs with the self-update work
+- **The client has two doors and no installed script.** Out of a checkout it is
+  `python3 -m src.client`, STARTED IN THE CHECKOUT ROOT because that is where
+  `src` is importable — so the model directory is an argument and not the shell's
+  cwd: `python3 -m src.client -C <model dir> status`, or
+  `PYTHONPATH=<checkout> python3 -m src.client status` from inside the model.
+  Plain `python3 -m src.client` run in a model directory fails with
+  `No module named 'src'`, which is the mistake this bullet exists to head off.
+  No venv, nothing to build, because the package
+  imports the standard library and nothing else; everywhere else it is the
+  one-file zipapp the hub serves at `/start/hammerola`. There is no
+  `bin/hammerola` and no `make client` any more, and that is a correction rather
+  than an omission: the target symlinked that file into `~/.local/bin`, which is
+  the very name the hub's bootstrap writes with `curl -o`, and a write through a
+  symlink lands in the link's TARGET — so the download quietly overwrote the
+  repository's own copy while the command went on working, with `git status` as
+  the only symptom. A packaging entry point is not the fix and is deliberately
+  still absent: this repo's one importable top-level name is `src`, and `pip
+  install`ing that onto a laptop would shadow every other project's `src`.
+  Giving the tool a distribution name belongs with the self-update work
 - `checklib.py` — at the ROOT, and not a stray file: `import checklib` is part
   of the contract with every model.py in the fleet, exactly like `views()` and
   `printables()`. It re-exports `src/cadbuild/checklib.py` under that name, and
@@ -481,7 +495,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   `make test` work on a machine with no node at all. The output path is written
   in five files that never import each other, and `tests/test_ui_bundle.py` is
   what keeps them in step; `ui/README.md` has the layout and the pins
-- `ci/smoke.py` — the gate between build and publish: seven checks (a)–(g) the
+- `ci/smoke.py` — the gate between build and publish: eight checks (a)–(h) the
   test suite structurally cannot make, because it runs against a checkout and
   never looks at the artefact. (b) proves the startup guard fires and NAMES the
   missing variable. It used to prove more — that the guard names EVERY missing
@@ -489,7 +503,15 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   credentials; with one (`EDIT_TOKEN`, step 0) that property moved to
   `tests/test_config_errors.py`, which can hand the guard a settings class with
   several required fields. Read `REQUIRED_VARIABLES` there before assuming the
-  gate still covers it
+  gate still covers it.
+  (h) is the only check here that makes a REQUEST — it asks the running
+  container for the three `/start` files, two of which are assembled when the
+  request arrives and so cannot be checked by naming a path at all. It is a
+  witness for the whole client only because the assembly REFUSES when a module
+  reachable from `src/client/cli.py` did not reach the image
+  (`onboarding._refuse_unimportable`); the glob that collects those modules
+  cannot see a file that is not there, so without that refusal a stripped image
+  served a 200 and an archive that died on the laptop that downloaded it
 - `docs/SPEC.md` — requirements, verified facts and the work plan (section 8A)
 - `main.py` — thin entry point over `src/`
 

@@ -64,6 +64,7 @@ the address it was loaded from, and this repository never carries the address of
 a deployment (AGENTS.md).
 """
 
+import ast
 import gzip
 import io
 import tarfile
@@ -123,6 +124,11 @@ TEMPLATE_DIR = ROOT / "model_template"
 # archive that runs on this machine, where the checkout is on `sys.path`, and
 # dies with an ImportError on the laptop this is built for.
 CLIENT_EXTRA_MODULES = ("src/__init__.py", "src/metricsdiff.py")
+
+# The module the generated `__main__.py` imports, and therefore the root of the
+# closure `_refuse_unimportable` walks. Anything the tool needs is reachable from
+# here by imports; anything that is not reachable is not part of the tool.
+CLIENT_ENTRY = "src/client/cli.py"
 
 CLIENT_SHEBANG = b"#!/usr/bin/env python3\n"
 
@@ -214,12 +220,55 @@ def skill_bytes() -> bytes:
 @lru_cache(maxsize=1)
 def client_bytes() -> bytes:
     """`hammerola` as one executable file: shebang, then a zip of the modules."""
+    verdict = _import_verdict()
+    if verdict is not None:
+        raise ValueError(verdict)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         _add_zip_entry(archive, "__main__.py", CLIENT_MAIN.encode("utf-8"))
         for name, path in client_members():
             _add_zip_entry(archive, name, path.read_bytes())
     return CLIENT_SHEBANG + buffer.getvalue()
+
+
+@lru_cache(maxsize=1)
+def _import_verdict() -> str | None:
+    """The refusal `_refuse_unimportable` would raise, or None — REMEMBERED.
+
+    THE POINT IS THAT A REFUSAL IS CACHED AT ALL. `lru_cache` stores a returned
+    value and never a raised exception, so caching `client_bytes` covered the
+    healthy image and nothing else: on a broken one the parse ran again on every
+    request. `/start/hammerola` is public, is dispatched before the token check,
+    is throttled by nothing (`src/app.py`) and is served by a thread per
+    connection, so that was 22 ms of CPU for an 80-byte anonymous GET —
+    measured, twenty requests and twenty parses — and a HEAD bought the same,
+    because the archive is built before `with_body` is looked at. It also made
+    the paragraph in `_refuse_unimportable` about being able to AFFORD a parse
+    false on precisely the image that paragraph exists for.
+
+    MEASURED AFTER, on the same broken image over the same socket: twenty GETs,
+    ONE parse, 4.5 ms per request — which is what a 404 on this hub costs when
+    it computes nothing, since the healthy route with its archive already built
+    answers in 4.7 ms. A broken image is no longer a cheaper request to make
+    than a working one.
+
+    REMEMBERING A REFUSAL IS SAFE HERE because there is nothing to recover
+    from: the modules are inside the image, the image cannot change while the
+    process runs, and the verdict reached on the first request is the verdict
+    for every later one. That is the same property that lets the caches around
+    this one go unguarded by a fixture.
+
+    ONLY ValueError BECOMES A VERDICT. An OSError — one of the modules named in
+    `CLIENT_EXTRA_MODULES` missing from the image outright — is left to
+    propagate as itself: `_serve_start` tells the two apart in its log line, and
+    it costs one failed `open` rather than twenty parses, so there is nothing
+    here for a cache to buy.
+    """
+    try:
+        _refuse_unimportable(client_members())
+    except ValueError as error:
+        return str(error)
+    return None
 
 
 def client_members() -> list:
@@ -230,11 +279,286 @@ def client_members() -> list:
     place to forget. What CANNOT be globbed is the second group — the modules
     outside the package that the client imports — so those are named above and
     checked by a test.
+
+    A GLOB IS ALSO WHY THIS LIST CANNOT BE TRUSTED ON ITS OWN, and the reason
+    `client_bytes` runs `_refuse_unimportable` over what comes back: a file that
+    is not there does not appear in a glob, so a client module `.dockerignore`
+    kept out of the image subtracts itself from this list in complete silence.
+    The two named above are different — they are read by name, so a missing one
+    raises OSError out of `client_bytes` — and that asymmetry is exactly what
+    made the glob the dangerous half.
     """
     members = [(name, ROOT / name) for name in CLIENT_EXTRA_MODULES]
     members += [(f"src/client/{path.name}", path)
                 for path in sorted((ROOT / "src" / "client").glob("*.py"))]
     return sorted(members)
+
+
+def _refuse_unimportable(members) -> None:
+    """Refuse to serve a client that would die on `import` where it is run.
+
+    THE FAILURE THIS EXISTS FOR HAS NO OTHER WITNESS. `src/client/*.py` is
+    globbed, so a module `.dockerignore` (or a mistyped COPY) kept out of the
+    image is not an error here — it is simply not in the glob, and the archive
+    is built, served with a 200 and a plausible size, and dies with an
+    ImportError on the laptop that downloaded it. The suite cannot see it
+    either: `tests/test_onboarding.py` builds this archive out of the CHECKOUT,
+    where every module is present by construction.
+
+    So the archive is held to a property the glob cannot express: everything
+    reachable by imports from `CLIENT_ENTRY` has to be IN it. That is derived
+    from the modules themselves rather than from a list, which keeps the
+    property of the glob that is worth keeping — a module added to the package
+    needs no second edit — while removing the one that is not. A module nothing
+    reaches is not required, and that is honest rather than lax: nothing imports
+    it, so its absence breaks nothing.
+
+    TWO OF THE TWENTY ARE OUTSIDE THE CLOSURE and they are outside it for
+    different reasons — this said "one" until 2026-08-28 and named only the
+    first, which is the kind of miscount a test now makes impossible
+    (`tests/test_onboarding.py`). `src/client/__main__.py` is unreachable ON
+    PURPOSE: the zipapp's entry point is the generated `CLIENT_MAIN` at the
+    archive's root, because a zip's entry point has to sit there. `src/__init__.py`
+    is unreachable by ACCIDENT of how the one import out of the package resolves
+    — `from src.metricsdiff import …` lands on `src/metricsdiff.py` directly, so
+    `src` as a package is never looked up — and unlike `__main__.py` it really
+    is required. What requires it is not this walk but `CLIENT_EXTRA_MODULES`,
+    where it is named and therefore read BY NAME; an image without it raises
+    OSError out of `client_bytes` and reaches the same 404.
+
+    AND IT IS REQUIRED ON THE INTERPRETERS THAT MATTER, WHICH ARE NOT THE ONE
+    THE SUITE RUNS. Measured by building the archive without `src/__init__.py`
+    and running it: `No module named 'src'` under python 3.9 (`MIN_PYTHON`, the
+    floor a laptop's stock python3 sits at) and under 3.11 (the image's own),
+    because zipimport resolves no namespace package there — and a clean `ok`
+    under 3.14, which resolves one happily. So the newest interpreter is
+    precisely the one that cannot witness this, and a test asserting it would
+    say the opposite thing on a new enough venv. Do not turn this paragraph
+    into an assertion without pinning the interpreter it is true of.
+
+    IT RAISES ValueError, LIKE `_refuse_unservable`, and that type is part of
+    the contract with `src/app.py`: `_serve_start` catches it and answers 404
+    with a log line naming the artefact's defect. Anything raised here that it
+    does not catch would reach the socket as a dropped connection instead — so
+    a file that will not even parse is re-raised as ValueError too rather than
+    left as SyntaxError.
+
+    WHAT IT DOES NOT DO is decide whether the tool WORKS: an import that
+    resolves says nothing about what the module does. This is the packaging
+    question — did every module the tool imports reach the image — and it is
+    asked here because the image is the only place it can go wrong.
+
+    WHAT IT COSTS, measured on 20 modules: 16 ms, and once per process WHATEVER
+    THE ANSWER IS. Both halves of that need a cache and they are different ones:
+    `client_bytes` remembers the archive, which covers the healthy image, and
+    `_import_verdict` remembers the refusal, which covers the broken one —
+    `lru_cache` stores no exception, so without the second a broken image paid
+    this on every anonymous request to a public, unthrottled route. That is the
+    whole reason this can afford to parse rather than guess; a per-request cost
+    would have bought a cheaper and weaker check instead.
+    """
+    _, missing = _import_closure(members)
+    if missing:
+        raise ValueError(
+            "the client in this image is incomplete: " + "; ".join(
+                f"{module} is imported by {by} and is not here"
+                for module, by in sorted(set(missing))))
+
+
+# Nodes whose body is a SCOPE OF ITS OWN, and therefore binds nothing in the
+# module that contains them. `_module_scope` stops at each: a name assigned in a
+# function body is bound when the function is CALLED, and the question here is
+# what a package binds when it is imported.
+_OWN_SCOPE = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda,
+              ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _module_scope(tree):
+    """Every node a module's own body owns, at any depth inside a statement.
+
+    NOT `tree.body`, which is what this used to be and what made a legitimate
+    `__init__.py` read as an empty one: a name bound inside `try/except
+    ImportError` — the commonest shape there is — or inside `if/else`, `for` or
+    `with` is bound at import exactly like one at the top level, and a walk of
+    the body alone sees none of them. NOT `ast.walk` either, because that
+    descends into function and class bodies, which bind nothing until they run.
+    """
+    stack = list(tree.body)
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, _OWN_SCOPE):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _import_closure(members):
+    """(reachable modules, missing ones) walking imports from `CLIENT_ENTRY`.
+
+    Split out of `_refuse_unimportable` so the SIZE of the closure can be
+    asserted by a test. Without that, the two edges this walk does not follow —
+    a relative import (refused below) and a name reached through
+    `importlib.import_module` (not refused, see `wanted`) — would each shrink
+    the closure silently, and a suite that only checks "a module removed from
+    the list is refused" stays green while the list of modules it can still
+    speak for gets shorter.
+    """
+    carried = dict(members)
+    trees = {}
+
+    def tree(name):
+        if name not in trees:
+            try:
+                source = carried[name].read_text(encoding="utf-8")
+            except UnicodeDecodeError as error:
+                # A UnicodeDecodeError is already a ValueError, so `_serve_start`
+                # answered 404 either way; what it did not do was name the file,
+                # and the log line on that 404 is the only thing the reader gets.
+                raise ValueError(f"{name} in this image is not utf-8 text: "
+                                 f"{error}") from error
+            try:
+                trees[name] = ast.parse(source)
+            except SyntaxError as error:
+                raise ValueError(f"{name} in this image will not parse: "
+                                 f"{error}") from error
+        return trees[name]
+
+    def resolve(dotted):
+        """(archive name, is it a package) for a dotted module name, or (None, False)."""
+        stem = dotted.replace(".", "/")
+        if stem + ".py" in carried:
+            return stem + ".py", False
+        if stem + "/__init__.py" in carried:
+            return stem + "/__init__.py", True
+        return None, False
+
+    def wanted(name):
+        """(module, imported name or None) for every `src` import in one module.
+
+        `import a.b` and `from a.b import c` are collected the same way, and the
+        second yields the imported names as well, because `from src.client
+        import project` names a MODULE while `from src.client.hub import Hub`
+        names an object in one. Which of the two it is cannot be told from the
+        statement, so the caller asks the package instead.
+
+        `ast.walk` rather than the module's top level: an import inside a
+        function is an import the tool makes, and one that is only reached on
+        some paths is the worst kind to discover on a laptop.
+
+        A RELATIVE IMPORT IS REFUSED RATHER THAN SKIPPED, and that one branch is
+        the difference between a blind spot and an answer. `from . import x`
+        carries no module name to resolve, so following it would mean
+        reimplementing the interpreter's own resolution against the archive's
+        layout; skipping it — which is what `node.level == 0` used to do
+        silently — shrinks the closure without shrinking what the refusal
+        CLAIMS. Measured: rewriting `cli.py`'s imports as relative, a change no
+        runtime behaviour depends on, took the closure from 18 modules to 1 and
+        left a client tree missing `status.py` being served with a 200. The
+        client is written with absolute imports; this says so out loud instead
+        of quietly meaning less.
+
+        TWO EDGES ARE NOT FOLLOWED AND NOT REFUSED EITHER, because neither is a
+        FORM this could recognise and both are absent from the client today.
+        `importlib.import_module("src.client.x")` is a call with a string in it,
+        so a module reached only that way is not required here and would fail on
+        the laptop. And `if TYPE_CHECKING:` runs the other way round — the
+        import is collected and the module required, though at runtime it is
+        never executed — which refuses an image that would have worked.
+        """
+        for node in ast.walk(tree(name)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    yield alias.name, None
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    dots = "." * node.level
+                    raise ValueError(
+                        f"{name} line {node.lineno} imports relatively "
+                        f"(`from {dots}{node.module or ''} import ...`), and "
+                        f"this check does not follow relative imports: the "
+                        f"client is written with absolute ones so the closure "
+                        f"can be computed from the names alone. Write it as "
+                        f"`from src.…`, or teach this to resolve `level` "
+                        f"against the archive layout")
+                if not node.module:
+                    continue
+                yield node.module, None
+                for alias in node.names:
+                    # `from src.client import *` names no submodule: it binds
+                    # whatever `__init__` bound, and the package itself is
+                    # already required by the line above. Treating `*` as a
+                    # name asked for `src.client.*` and reported a module by
+                    # that invented spelling.
+                    if alias.name != "*":
+                        yield node.module, alias.name
+
+    def bound(name):
+        """The names a package's `__init__.py` binds — or None for "unknowable".
+
+        What tells `from src.client import project` (a submodule, which has to
+        be carried) from `from src.client import SOMETHING` (a name defined in
+        the package itself, which does not). Today `src/client/__init__.py` is
+        one docstring and binds nothing at all, so this answers the empty set;
+        it is here so that the day the package DOES bind something, a healthy
+        image is not refused for shipping without a module that no longer has
+        to exist.
+
+        None means the namespace cannot be enumerated at all, and the caller
+        then abstains rather than refusing. Two forms do that, and both would
+        otherwise be a false refusal on a working package: a module-level
+        `__getattr__` (PEP 562) manufactures names on demand, and `from x
+        import *` binds whatever the other module happened to export. Neither
+        can be answered with "that name is not bound", so neither is answered.
+        """
+        names = set()
+        for node in _module_scope(tree(name)):
+            if isinstance(node, ast.alias):
+                if node.name == "*":
+                    return None
+                names.add(node.asname or node.name.split(".")[0])
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                # One branch for every assigning form there is: `x = `, `x: T =`,
+                # `x += `, a `for` target, a `with ... as`, a walrus, and every
+                # shape of unpacking.
+                names.add(node.id)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                   ast.ClassDef)):
+                names.add(node.name)
+        if "__getattr__" in names:
+            return None
+        return names
+
+    if CLIENT_ENTRY not in carried:
+        raise ValueError(
+            f"{CLIENT_ENTRY} is not in this image, so there is no client to "
+            f"serve")
+
+    missing = []
+    seen = set()
+    pending = [CLIENT_ENTRY]
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        for module, imported in wanted(name):
+            if module != "src" and not module.startswith("src."):
+                continue
+            found, package = resolve(module)
+            if found is None:
+                missing.append((module, name))
+                continue
+            pending.append(found)
+            if imported is None or not package:
+                continue
+            child, _ = resolve(f"{module}.{imported}")
+            if child is not None:
+                pending.append(child)
+                continue
+            exported = bound(found)
+            if exported is not None and imported not in exported:
+                missing.append((f"{module}.{imported}", name))
+
+    return seen, missing
 
 
 @lru_cache(maxsize=1)

@@ -17,12 +17,34 @@ WHAT IS BEING PINNED HERE, in the order it would hurt to get wrong:
     could notice, because here the checkout is on `sys.path`. So it is run, in a
     process that cannot see this checkout at all.
 
-NO GUARD FIXTURE FOR THE THREE `lru_cache`s in `src/onboarding.py`, on purpose.
-The project's rule is about module-level MUTABLE state, and these are caches over
-files inside the image: pure functions of bytes that cannot change while the
-process runs, exactly like `render._template`, which is guarded by nothing for
-the same reason. The determinism test below reaches for `__wrapped__` rather than
-`cache_clear()` so that nothing here touches the cache at all.
+THE FOUR `lru_cache`s IN `src/onboarding.py` ARE GUARDED, and the guard is in
+`tests/conftest.py` rather than here — `guard_onboarding_caches`, autouse,
+before and after every test in the suite. It is at the root because that is where
+the VICTIM is: three of those caches are what the module says they are, pure
+functions of files inside the image, but `_import_verdict` caches the REFUSAL, so
+a test that hands the check a doctored member list leaves "this image has no
+client to serve" behind and every later `/start/hammerola` — in files that never
+mention onboarding — answers 404. A guard living in this file would have watched
+the culprit and not the damage.
+
+Nothing here clears them or steps around them: the determinism test below calls
+`template_bytes()` and `client_bytes()` the way any caller does and reads the
+timestamps out of the RESULT, so a cached answer and a freshly built one are the
+same evidence.
+
+ONE TEST PLANTS A VERDICT ON PURPOSE — it is the test that the refusal is
+remembered at all — and it says so by asking for `onboarding_cache_sandbox`,
+which hands it cleared caches and clears them again afterwards. That is the form
+to copy if a second one is ever needed; a `try/finally` inside the test was the
+first shape of it and is gone, because two mechanisms for one job leave the
+question of which is load-bearing to whoever reads it next.
+
+This paragraph used to end by claiming that test reached for `__wrapped__`
+rather than `cache_clear()` "so that nothing here touches the cache at all". It
+never did -- the name appears nowhere in this repository -- and bypassing the
+cache would buy nothing, for exactly the reason two sentences up. It is
+corrected rather than implemented because a self-report describing machinery the
+file does not have is how the paragraphs around it stop being believed.
 """
 
 import ast
@@ -597,6 +619,293 @@ def test_a_template_the_hub_cannot_serve_is_a_404_and_not_a_500(hub,
     assert hub.get("/start/template.tar.gz").status_code == 404
     # The other two are untouched by it.
     assert hub.get("/start/skill.md").status_code == 200
+
+
+def test_a_start_route_that_cannot_import_is_a_404_and_not_a_dropped_socket(
+        hub, monkeypatch):
+    """The THIRD way these routes break, and the one that used to reach nobody.
+
+    `template_bytes` borrows the client's own unpacking rules at call time
+    (`_refuse_unservable` imports `src.client.limits`, `unpack` and `errors`),
+    so a client module `.dockerignore` kept out of the image takes this route
+    down with a ModuleNotFoundError — not the OSError of a missing file and not
+    the ValueError of a template the client would refuse. `_serve_start` caught
+    neither of those two names, and `_handle_get` has no blanket `except`, so
+    the exception went past the handler and the caller got a closed connection
+    instead of an answer. Asserting the STATUS is the point: a test that only
+    asserted "not 200" would pass on the dropped socket this exists to rule out.
+    """
+    def refuse():
+        raise ModuleNotFoundError("No module named 'src.client.limits'")
+
+    monkeypatch.setattr(onboarding, "template_bytes", refuse)
+    assert hub.get("/start/template.tar.gz").status_code == 404
+
+
+# -- the client the hub refuses to assemble ----------------------------------
+# `_refuse_unimportable` is handed a member LIST rather than a stripped
+# directory, and the two are the same experiment: `client_members()` globs
+# `src/client/*.py`, so a module .dockerignore kept out of the image is
+# subtracted from that list and from nothing else. Dropping a row is what the
+# image does.
+@pytest.mark.parametrize("gone", [
+    "src/client/hub.py",       # reached from cli.py through a dotted import
+    "src/client/project.py",   # reached ONLY as `from src.client import project`
+    "src/client/errors.py",
+    "src/metricsdiff.py",      # the one carried module outside the package
+])
+def test_the_hub_refuses_a_client_that_is_missing_a_module_it_imports(gone):
+    """THE FAILURE HAS NO OTHER WITNESS, which is why the refusal exists.
+
+    A list would have caught this and was deliberately not used: a module added
+    to `src/client/` is part of the tool by definition, and a second place to
+    name it is a place to forget. The price of the glob is that absence is
+    invisible — the archive was built, served with a 200 and a plausible size,
+    and died with an ImportError on the laptop that downloaded it. So the
+    closure is computed from the modules themselves instead.
+
+    `project.py` is in this list for a reason of its own: it is imported only as
+    `from src.client import project`, which names the PACKAGE, so a check that
+    looked at dotted module names alone would miss it — and it would miss most
+    of the package, since that is how `cli.py` reaches ten of them.
+    """
+    members = [(name, path) for name, path in onboarding.client_members()
+               if name != gone]
+    assert len(members) == len(onboarding.client_members()) - 1, (
+        f"{gone} is not in client_members(), so this case is testing nothing")
+
+    with pytest.raises(ValueError) as raised:
+        onboarding._refuse_unimportable(members)
+    assert gone.replace("/", ".")[:-3] in str(raised.value), (
+        "the refusal does not name the module that is missing, which is the "
+        "only thing the log line on the 404 can pass on")
+
+
+def test_a_broken_image_parses_the_client_once_and_not_once_per_request(
+        hub, monkeypatch, onboarding_cache_sandbox):
+    """THE HANDLE THIS ROUTE USED TO BE, and it was open to anybody.
+
+    `lru_cache` remembers a returned value and never a raised exception, so
+    caching `client_bytes` covered the healthy image and left the broken one
+    re-parsing twenty modules on EVERY request — a public route dispatched
+    before the token check, throttled by nothing (`src/app.py`), on a server
+    that spends a thread per connection. Measured before the fix: twenty
+    anonymous GETs, twenty parses, 22 ms of CPU each for an 80-byte request.
+    HEAD is here too because it bought the same: the archive is built before
+    `with_body` is looked at.
+
+    It also made `_refuse_unimportable`'s own paragraph false — "once per
+    process, which is why it can afford to parse" — on exactly the image that
+    paragraph exists to talk about.
+
+    `onboarding_cache_sandbox` IS WHAT MAKES THIS TEST LEGAL. Proving the
+    refusal is remembered means remembering one, and a remembered refusal is
+    exactly the poison `guard_onboarding_caches` fails a test for; the fixture
+    hands over cleared caches and clears them again afterwards, which is also
+    what lets the assertions above mean anything (a cache already holding the
+    real archive would answer before the doctored input was reached). Asking for
+    it is the declaration; `monkeypatch` could not do this half, because putting
+    `client_members` back does not unremember what it returned.
+    """
+    calls = []
+    real_refuse = onboarding._refuse_unimportable
+    broken = [(name, path) for name, path in onboarding.client_members()
+              if name != "src/metricsdiff.py"]
+
+    def counting(members):
+        calls.append(1)
+        return real_refuse(members)
+
+    monkeypatch.setattr(onboarding, "_refuse_unimportable", counting)
+    monkeypatch.setattr(onboarding, "client_members", lambda: broken)
+    for _ in range(5):
+        assert hub.get("/start/hammerola").status_code == 404
+    assert hub.request("HEAD", "/start/hammerola").status_code == 404
+    assert len(calls) == 1, (
+        f"six requests to a broken image ran the check {len(calls)} times; "
+        f"the refusal is being recomputed per request")
+
+
+def test_what_the_client_really_carries_is_importable():
+    """...and it says yes to the tree that ships, so it is not a no-op the other
+    way either. Every other test here that fetches `/start/hammerola` depends on
+    this being true; this one is what says so out loud."""
+    onboarding._refuse_unimportable(onboarding.client_members())
+
+
+def test_a_module_no_import_reaches_is_not_required():
+    """The boundary, asserted rather than left to be discovered.
+
+    The closure starts at `CLIENT_ENTRY` and requires what it can reach. A
+    module nothing imports is therefore not required, and that is honest rather
+    than lax — nothing imports it, so its absence breaks nothing. `__main__.py`
+    is unreachable ON PURPOSE: the zipapp's entry point is the generated
+    `CLIENT_MAIN` at the archive's root, because a zip's entry point has to sit
+    there.
+
+    WHAT THIS DOES NOT SAY is that `__main__.py` is the ONLY module outside the
+    closure — the docstring here claimed exactly that, and it was wrong by one
+    (`src/__init__.py`), which is a claim a passing test made look checked. The
+    test below is the one that counts them; this one is about a single module
+    being droppable, and it would go on passing with any number of others out
+    there too.
+    """
+    members = [(name, path) for name, path in onboarding.client_members()
+               if name != "src/client/__main__.py"]
+    onboarding._refuse_unimportable(members)
+
+
+def test_the_closure_reaches_every_module_but_the_two_nothing_imports():
+    """HOW MANY modules the refusal can speak for — the number nothing asserted.
+
+    Every case above removes a module and asserts a refusal, and all of them go
+    on passing while the closure SHRINKS: the walk is what decides which modules
+    it has an opinion about, and an import form it does not follow simply takes
+    modules out of it in silence. Both blind spots found on review moved this
+    number and no test noticed — rewriting one module's imports as relative
+    dropped the closure from 18 to 1 (and a tree missing `status.py` was then
+    served with a 200), and an `__init__.py` that bound a name inside a
+    `try/except ImportError` went the other way and refused a healthy image.
+
+    So the SET is asserted, not the count, because the two names outside it are
+    each outside for a reason that has to keep being true:
+
+      * `src/client/__main__.py` — deliberate, the zipapp's entry point is the
+        generated `CLIENT_MAIN` at the archive's root;
+      * `src/__init__.py` — an accident of resolution rather than a decision:
+        the one import leaving the package is `from src.metricsdiff import …`,
+        which lands on the module file directly, so `src` is never resolved as a
+        package. It is required all the same, and by another road —
+        `CLIENT_EXTRA_MODULES` names it, so it is read by name and a missing one
+        raises OSError out of `client_bytes`. That it is REQUIRED is not
+        asserted anywhere and deliberately so: built without it, the archive
+        dies with `No module named 'src'` under python 3.9 and 3.11 (the floor
+        and the image) and runs perfectly under 3.14, whose zipimport resolves
+        the namespace package — so this suite's own interpreter is the one that
+        cannot witness it.
+
+    A name appearing here means the refusal stopped covering a module. A name
+    disappearing means the walk started following something new, which is fine
+    and wants the list updated deliberately.
+    """
+    members = onboarding.client_members()
+    reached, missing = onboarding._import_closure(members)
+    assert missing == []
+    assert set(dict(members)) - reached == {
+        "src/client/__main__.py",
+        "src/__init__.py",
+    }
+
+
+# -- the import forms the walk has to understand, and the one it refuses ------
+def _client_with(tmp_path, source, dropped="src/client/artifacts.py"):
+    """The member list of an image whose `src/client/__init__.py` is `source`.
+
+    `dropped` is a module `cli.py` reaches ONLY as `from src.client import
+    artifacts`, so an image without it is healthy exactly when the package binds
+    that name itself — which is the question `bound()` answers.
+    """
+    fake = tmp_path / "__init__.py"
+    fake.write_text(source, encoding="utf-8")
+    return sorted((name, fake if name == "src/client/__init__.py" else path)
+                  for name, path in onboarding.client_members()
+                  if name != dropped)
+
+
+@pytest.mark.parametrize("label, source", [
+    # The commonest shape in any __init__.py, and the one that was refused.
+    ("try/except ImportError",
+     "try:\n    from src.client.hub import artifacts\n"
+     "except ImportError:\n    artifacts = None\n"),
+    ("if/else", "import os\nif os.environ.get('X'):\n    artifacts = 1\n"
+                "else:\n    artifacts = 2\n"),
+    ("a for loop", "for artifacts in ('a',):\n    pass\n"),
+    ("a with block", "import contextlib\n"
+                     "with contextlib.suppress(Exception):\n    artifacts = 1\n"),
+    # These two bind no name statically at all, so "not bound" is not an answer
+    # and `bound()` abstains instead of refusing.
+    ("PEP 562 lazy __getattr__", "def __getattr__(name):\n    return None\n"),
+    ("a star import", "from src.client.hub import *\n"),
+    ("the top level (the control)", "artifacts = None\n"),
+])
+def test_a_package_that_binds_a_name_is_not_called_incomplete(tmp_path, label,
+                                                              source):
+    """A FALSE REFUSAL IS A 404 ON A HEALTHY IMAGE, and a red gate (h).
+
+    `bound()` walked `tree.body` and nothing else, so it saw only what was bound
+    at the top level of a statement list — while everything above binds its name
+    at import just as firmly. Every one of these was refused before 2026-08-28;
+    the control is last, and it is what keeps this from passing because the
+    check became a no-op.
+    """
+    onboarding._refuse_unimportable(_client_with(tmp_path, source))
+
+
+def test_a_package_that_binds_nothing_still_refuses_the_missing_module(tmp_path):
+    """...and the other direction, or the test above would pass on a no-op.
+
+    An `__init__.py` that binds nothing — which is what the real one is — cannot
+    excuse a module that is not in the image, whatever else it contains. The
+    compound statements are here so the walk has something to walk.
+    """
+    with pytest.raises(ValueError) as raised:
+        onboarding._refuse_unimportable(_client_with(
+            tmp_path,
+            "try:\n    import os\nexcept ImportError:\n    os = None\n"
+            "for unrelated in ():\n    pass\n"))
+    assert "src.client.artifacts" in str(raised.value)
+
+
+def test_a_relative_import_is_refused_rather_than_ignored(tmp_path):
+    """The blind spot turned into a noise, because it could not be turned into
+    an answer.
+
+    `from . import x` carries no module name, so the walk skipped it — and a
+    skip costs the closure every module that import reached, with nothing
+    failing. Measured before the refusal: rewriting `cli.py`'s imports as
+    relative (a change no runtime behaviour depends on) left a closure of ONE
+    module and a client tree missing `status.py` was served with a 200.
+
+    Staged on a module the entry point reaches rather than on the entry point,
+    so what is being observed is the walk arriving there and refusing — not a
+    special case at the root.
+    """
+    original = dict(onboarding.client_members())["src/client/revdiff.py"]
+    mutated = original.read_text(encoding="utf-8").replace(
+        "from src.metricsdiff import", "from ..metricsdiff import")
+    assert mutated != original.read_text(encoding="utf-8"), (
+        "revdiff.py no longer imports src.metricsdiff, so this stages nothing")
+    fake = tmp_path / "revdiff.py"
+    fake.write_text(mutated, encoding="utf-8")
+    members = [(name, fake if name == "src/client/revdiff.py" else path)
+               for name, path in onboarding.client_members()]
+
+    with pytest.raises(ValueError) as raised:
+        onboarding._refuse_unimportable(members)
+    message = str(raised.value)
+    assert "src/client/revdiff.py" in message, (
+        "the refusal does not name the file to fix")
+    assert "relative" in message
+
+
+def test_a_client_module_that_will_not_parse_is_refused_as_one(tmp_path):
+    """A file that is not python is an artefact defect like any other here.
+
+    It matters only for the TYPE: `ast.parse` raises SyntaxError, which is not
+    a ValueError and not an OSError, so left alone it would leave `_serve_start`
+    the same way an uncaught ImportError did — past the handler, onto the
+    socket. Re-raised as ValueError it becomes the logged 404 the route
+    promises.
+    """
+    broken = tmp_path / "cli.py"
+    broken.write_text("def main(:\n", encoding="utf-8")
+    members = [(name, path) for name, path in onboarding.client_members()
+               if name != onboarding.CLIENT_ENTRY]
+    members.append((onboarding.CLIENT_ENTRY, broken))
+
+    with pytest.raises(ValueError) as raised:
+        onboarding._refuse_unimportable(members)
+    assert onboarding.CLIENT_ENTRY in str(raised.value)
 
 
 # -- the route itself --------------------------------------------------------

@@ -23,15 +23,13 @@ happens would be on somebody's laptop.
 
 import ast
 import sys
-from pathlib import Path
 
-from src import client
-
-CLIENT_DIR = Path(client.__file__).resolve().parent
+from src import onboarding
 
 # First-party names a client module may reach for. `src` is this repository —
-# the package the tool is run out of (`bin/hammerola`) — and what it may take
-# from there is narrowed below rather than left open.
+# the package the tool is run out of (`python3 -m src.client`, or the zipapp
+# built from it) — and what it may take from there is narrowed below rather than
+# left open.
 FIRST_PARTY = {"src"}
 
 # The halves of `src/` a client module may NOT import, and why each would hurt:
@@ -55,19 +53,37 @@ def _modules(tree) -> set:
 
 
 def _client_modules() -> list:
-    return sorted(CLIENT_DIR.glob("*.py"))
+    """(archive name, path) for every module the downloaded tool is made of.
+
+    `onboarding.client_members()` RATHER THAN A GLOB OF `src/client/`, and the
+    difference is the whole reach of this file. The zipapp carries a second
+    group — `CLIENT_EXTRA_MODULES`, the modules OUTSIDE the package that the
+    client is allowed to import — and a glob of the package cannot see any of
+    them. `src/__init__.py` is in that group and is imported before anything
+    else in the archive, so one `import httpx` there fails every verb of the
+    tool on a laptop, and the comment above that constant invites the list to
+    grow. Asking the builder what it puts in the archive is what makes this
+    guard cover whatever the archive actually carries, including a module
+    reached for lazily from inside a function — which is the form this code
+    already uses elsewhere and which no import-time check would ever notice.
+
+    The archive name is what a failure is reported under, because the file NAME
+    is not unique across the two groups: `src/__init__.py` and
+    `src/client/__init__.py` are two different modules called `__init__.py`.
+    """
+    return onboarding.client_members()
 
 
 def test_every_client_module_imports_only_the_standard_library():
     offenders = {}
-    for path in _client_modules():
+    for name, path in _client_modules():
         tree = ast.parse(path.read_text(encoding="utf-8"))
         outside = sorted(
-            name for name in _modules(tree)
-            if name.split(".")[0] not in sys.stdlib_module_names
-            and name.split(".")[0] not in FIRST_PARTY)
+            imported for imported in _modules(tree)
+            if imported.split(".")[0] not in sys.stdlib_module_names
+            and imported.split(".")[0] not in FIRST_PARTY)
         if outside:
-            offenders[path.name] = outside
+            offenders[name] = outside
     assert offenders == {}, (
         f"these client modules import something that is not in the standard "
         f"library: {offenders}. The tool installs nothing and runs under "
@@ -76,15 +92,15 @@ def test_every_client_module_imports_only_the_standard_library():
 
 def test_the_client_never_reaches_into_the_service_or_the_build_half():
     offenders = {}
-    for path in _client_modules():
+    for name, path in _client_modules():
         tree = ast.parse(path.read_text(encoding="utf-8"))
         reached = sorted(
-            name for name in _modules(tree)
-            if name.split(".")[0] == "src"
-            and len(name.split(".")) > 1
-            and name.split(".")[1] in FORBIDDEN_SRC_MODULES)
+            imported for imported in _modules(tree)
+            if imported.split(".")[0] == "src"
+            and len(imported.split(".")) > 1
+            and imported.split(".")[1] in FORBIDDEN_SRC_MODULES)
         if reached:
-            offenders[path.name] = reached
+            offenders[name] = reached
     assert offenders == {}, (
         f"these client modules import the service or the build half: "
         f"{offenders}. Both bring dependencies the client does not have — "
@@ -94,7 +110,14 @@ def test_the_client_never_reaches_into_the_service_or_the_build_half():
 
 
 def test_the_command_itself_is_covered_by_this():
-    """The entry point is a client module like any other, and it is the one an
-    import error would be noticed at."""
-    names = {path.name for path in _client_modules()}
-    assert {"cli.py", "hub.py", "revdiff.py"} <= names
+    """What the two checks above are actually looking at.
+
+    The entry point is a client module like any other, and it is the one an
+    import error would be noticed at. `src/__init__.py` is named beside it for a
+    different reason: it is the sentinel for the SECOND group, the one a glob of
+    `src/client/` used to miss entirely, and it is the module every other one in
+    the archive is imported through.
+    """
+    names = {name for name, _path in _client_modules()}
+    assert {"src/client/cli.py", "src/client/hub.py", "src/client/revdiff.py",
+            "src/__init__.py"} <= names

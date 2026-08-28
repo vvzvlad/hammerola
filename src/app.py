@@ -477,13 +477,25 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             exactly like `site.css` and the bundle in `_serve_asset`, and the
             manifest carries a value that changes with the first push.
 
-            An OSError here means the image is missing a file the smoke gate
-            checks for (`ci/smoke.py`, REQUIRED_PATHS), and a ValueError means
-            the template tree holds a path no client would unpack
-            (`onboarding._refuse_unservable`). Both are defects of the artefact
-            rather than of the request, so both are logged as such — and
-            answered 404 rather than 500, because "this hub does not serve that"
-            is the true and useful answer to whoever asked.
+            THREE KINDS OF BREAKAGE ARE CAUGHT HERE and they are one thing: a
+            defect of the ARTEFACT rather than of the request. An OSError means
+            the image is missing a file the smoke gate checks for
+            (`ci/smoke.py`, REQUIRED_PATHS). A ValueError means an archive
+            cannot honestly be built out of what is here — the template tree
+            holds a path no client would unpack
+            (`onboarding._refuse_unservable`), or a module the client imports
+            did not reach the image (`onboarding._refuse_unimportable`). An
+            ImportError means the same defect arriving by the other road: the
+            template builder borrows the CLIENT's own unpacking rules at call
+            time, so a client module `.dockerignore` kept out takes this route
+            down as well, and it does it with a ModuleNotFoundError rather than
+            with either of the other two. Without that clause it was the one
+            failure here that reached the socket as a dropped connection
+            instead of an answer.
+
+            All three are logged as such and answered 404 rather than 500,
+            because "this hub does not serve that" is the true and useful answer
+            to whoever asked.
             """
             if not rest:
                 return self._json(200,
@@ -507,10 +519,16 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             build, ctype, extra = entry
             try:
                 body = build()
-            except (OSError, ValueError) as error:
+            except (OSError, ValueError, ImportError) as error:
+                # All three causes the docstring names, because the reader of
+                # this line has nothing else: the image is missing a file the
+                # gate checks for, or holds a template path no client would
+                # unpack, or did not carry a module the client imports. The
+                # third was the one missing here.
                 logger.error(f"cannot serve /start/{rest[0]}: {error}. The "
                              f"image is missing a file ci/smoke.py checks for, "
-                             f"or carries one no client would accept.")
+                             f"carries a template path no client would unpack, "
+                             f"or is missing a module the client imports.")
                 return self._error(404, "not found", with_body=with_body)
             return self._send(200, body, ctype, CACHE_NONE, extra, with_body)
 

@@ -145,26 +145,35 @@ run: install ## Run the application (auto-creates .venv if missing)
 	$(PY) main.py
 
 # --- The client --------------------------------------------------------------
-# `hammerola` on PATH, so a model directory can be published without knowing
-# where this checkout is. A SYMLINK and not a copy: the tool then moves with the
-# checkout, which is the whole point until self-update exists (SPEC §8, 26).
+# THERE IS NO `client` TARGET, AND IT IS NOT MISSING — it was removed, and this
+# note is what keeps it from being helpfully added back.
 #
-# NOT a prerequisite of anything, and it does not touch $(VENV): src/client/
-# imports nothing outside the standard library — see bin/hammerola for why the
-# shebang is the system python3 and why there is no pyproject entry point yet.
+# It ran `ln -sf $(CURDIR)/bin/hammerola ~/.local/bin/hammerola`: a symlink INTO
+# the checkout, so the command followed the working copy. The hub's own bootstrap
+# writes the tool to the same name — `curl -fsSL <hub>/start/hammerola -o
+# ~/.local/bin/hammerola` — and `curl -o` writes THROUGH a symlink, into its
+# target. So on a machine that had run this target, the downloaded zipapp landed
+# on top of `bin/hammerola` IN THE REPOSITORY: the link stayed a link, the
+# command went on working, and nothing said a word. It surfaced as "git status
+# says the client is modified" (measured, not supposed). `bin/hammerola` went
+# with the target — it existed only to be linked, and the zipapp is built from
+# `src/client/` and never from it.
 #
-# ~/.local/bin because that is the per-user directory on PATH on both platforms
-# this is used from; the echo says so rather than assuming, since a shell that
-# does not have it on PATH gives "command not found" with nothing pointing at
-# the cause.
-CLIENT_BIN ?= $(HOME)/.local/bin
-
-.PHONY: client
-client: ## Symlink the `hammerola` command into ~/.local/bin
-	mkdir -p $(CLIENT_BIN)
-	ln -sf $(CURDIR)/bin/hammerola $(CLIENT_BIN)/hammerola
-	@echo "hammerola -> $(CURDIR)/bin/hammerola"
-	@echo "Make sure $(CLIENT_BIN) is on your PATH, then: hammerola build --help"
+# One name, one place it is installed from: the hub (README). Whoever is WORKING
+# on the client runs it out of the checkout instead, with no venv and nothing to
+# build, because this package imports the standard library and nothing else:
+#
+#     python3 -m src.client -C <model dir> status
+#
+# STARTED HERE, IN THE CHECKOUT ROOT, which is why the model directory is an
+# argument rather than the shell's cwd: `-m` resolves `src` against the
+# directory the command was started in, so the same line run inside a model
+# fails with `No module named 'src'`. From inside the model it is
+# `PYTHONPATH=$(CURDIR) python3 -m src.client status` instead. There is no target
+# for either — a target would be a fourth place the same two lines are written,
+# and the failure it would head off is one message that says exactly what is
+# wrong. `src/client/__main__.py` has the whole argument, and `make test` is what
+# holds it.
 
 # --- Frontend ----------------------------------------------------------------
 # The browser bundle is BUILT, never committed — see .gitignore for why — so it

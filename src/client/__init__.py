@@ -86,7 +86,22 @@ WHAT IS STILL NOT HERE, and for two different reasons worth telling apart.
     build exists only at the job that produced it. Both are said out loud by the
     code that would otherwise have to guess — see `status.py` and
     `sources._dev_log`.
-  * Self-update waits on the tool having a distribution name (`bin/hammerola`).
+  * Self-update waits on the tool having a distribution name, and THAT waits on
+    this repository not being an application. Its one importable top-level name
+    is `src`, so a `[project.scripts]` entry point would mean `pip install`ing a
+    package called `src` onto a laptop, where it would shadow every other
+    project's. Giving the tool a real distribution name and layout is part of
+    the self-update work (SPEC §8 entry 26), and doing half of it now would mean
+    doing it twice. Until then there are two doors and no installed script:
+    `python3 -m src.client`, STARTED IN THE CHECKOUT ROOT and pointed at the
+    model with `-C` (`__main__.py` has both working forms and why the obvious
+    one is not among them), and the zipapp the hub builds out of these modules
+    and serves at `/start/hammerola` for everybody else — that one carries its
+    own modules, so it runs from anywhere and needs no `-C`. This
+    paragraph used to live in `bin/hammerola`, a third door that existed only to
+    be symlinked onto PATH — and that symlink is exactly what the hub's own
+    `curl -o ~/.local/bin/hammerola` wrote through, silently replacing the
+    repository's copy with the download.
 
 STDLIB ONLY, EVERY MODULE BELOW. This runs on the author's machine, under
 whatever python3 is there, so it takes nothing from `requirements.txt` — not
