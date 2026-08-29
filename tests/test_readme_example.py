@@ -174,7 +174,7 @@ def built(tmp_path_factory):
 
     The number is worth having anyway, for whoever wonders whether the ceiling
     is close. On this workstation, quiet: 5.1 and 5.3 s; the same run with the
-    machine busy: 13.2 s. `wall_seconds` is production's 120 s, taken rather
+    machine busy: 13.2 s. `wall_seconds` is production's 900 s, taken rather
     than widened, so the margin is about 23x on a quiet machine and about 9x on
     a busy one -- comfortable at both ends, but only the first is an order of
     magnitude, and a timeout here would mean something is actually wrong rather

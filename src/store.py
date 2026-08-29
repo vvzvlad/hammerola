@@ -576,8 +576,22 @@ LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, UPLOAD_PREFIX,
 # silently: both now live from the request until the build ENDS, so the longest
 # either can honestly be in use is the queue wait plus one build —
 # jobs.MAX_QUEUED_JOBS times buildproc's `wall_seconds`, divided by the workers.
-# At today's 16, 120 s and 2 that is sixteen minutes.
-LEFTOVER_MAX_AGE_SECONDS = 3600
+#
+# THAT IS THE ARITHMETIC THAT BROKE, and it broke silently exactly as predicted.
+# At 16, 120 s and 2 it was sixteen minutes, comfortably inside the hour. The
+# 2026-08-29 raise of `wall_seconds` to 900 s makes it TWO HOURS — past an hour,
+# so this sweeper would have deleted the unpacked sources of a build still
+# sitting in the queue, and the build would then have failed on a tree that was
+# there when it was accepted. Nothing tests this and nothing would have said so;
+# the only reason it was caught is that the comment above did the multiplication
+# out loud.
+#
+# Four hours: the two-hour worst case with the same kind of room the hour used to
+# give the sixteen minutes. What it costs is the other end — a killed 64 MiB
+# upload now sits on the volume for up to four hours instead of one — and that is
+# the right side to lose on, because a leftover wastes space while a swept-out
+# source loses a build.
+LEFTOVER_MAX_AGE_SECONDS = 4 * 3600
 
 
 class PublishError(Exception):
