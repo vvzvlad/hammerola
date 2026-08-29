@@ -260,7 +260,7 @@ describe('sequentialDownload', () => {
 
 describe('the header\'s downloads menu', () => {
   it('offers each group a link that takes the whole group, in the menu\'s own order', () => {
-    // The point of entry 66 in one assertion: one click, every STL. The
+    // The point of issue #66 in one assertion: one click, every STL. The
     // downloading itself is `sequentialDownload`; what is checked here is that
     // the button hands it exactly the group's own files and nothing else.
     const c = component({ node: '/model/plate' })
@@ -330,7 +330,7 @@ describe('the row menu', () => {
     // its own name, so the union of its leaves' files is a set this menu would
     // be inventing. Bulk along the axis a reader actually asks for — one format,
     // every part — is in the header's menu, which has a "download all" per group
-    // since entry 66.
+    // since issue #66.
     //
     // This comment used to end "a browser would block after the first", which is
     // false: a browser ASKS, once, with a per-site permission it then remembers.

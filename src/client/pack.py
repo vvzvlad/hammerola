@@ -33,7 +33,7 @@ rather than skips for the same reason.
 
 AND THE REFUSAL NAMES EVERY ONE OF THEM, in one message, from one run. The walk
 collects what it cannot send instead of raising at the first thing it finds
-(SPEC §8, entry 42): the tree this was written for is a `ref/` holding nineteen
+(issue #42): the tree this was written for is a `ref/` holding nineteen
 cyrillic file names, and one-at-a-time made that nineteen rounds of "renamed it,
 ran it, learned about the next one". The path alphabet is not what gives here —
 it is deliberate, and it stays (SPEC §7.1) — the QUALITY of the refusal is.
@@ -233,7 +233,7 @@ def collect(root: Path) -> list:
     and a diff of two of them means something.
 
     A tree that cannot be sent is refused with EVERY reason it has, in one
-    message (SPEC §8, entry 42), rather than with whichever one the walk met
+    message (issue #42), rather than with whichever one the walk met
     first.
     """
     root = Path(root)
@@ -269,7 +269,7 @@ def _walk(root: Path, directory: Path, prefix: tuple, found: list,
 
     NOTHING HERE RAISES. Every branch that used to end the walk now records what
     it found and carries on, so one run sees the whole tree — which is the point
-    of the exercise (SPEC §8, entry 42) and the reason the caller, not this, is
+    of the exercise (issue #42) and the reason the caller, not this, is
     where the PackError is built.
     """
     try:

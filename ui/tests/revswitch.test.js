@@ -1,4 +1,4 @@
-// Switching revisions IN PLACE — SPEC §8, entry 62.
+// Switching revisions IN PLACE — issue #62.
 //
 // The gesture used to be `location.href = …`: the browser threw the document
 // away and built it again — template, bundle, viewer, view file — so the camera,

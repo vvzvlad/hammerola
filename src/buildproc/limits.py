@@ -333,10 +333,10 @@ class Limits:
     # pool is what makes the CPU ceiling mean roughly what it says.
     #
     # SO THIS NUMBER IS NOT A THROUGHPUT DECISION, and it costs build time --
-    # measured, 2026-08-29, and written up as SPEC §8 entry 68. On a real model
+    # measured, 2026-08-29, and written up as issue #68. On a real model
     # the pairwise interference check is 325 independent intersects, which is
     # perfectly parallel: 2.7 s on a laptop that spreads it over every core,
-    # over 50 s here. That is x20 on that ONE check. Read the entry before
+    # over 50 s here. That is x20 on that ONE check. Read the issue before
     # reaching for the number, because x20 is also the misleading half: the
     # check is about a tenth of the build, so lifting the cap entirely buys
     # around 8%, not "a few times". The weight is in slower cores and in the

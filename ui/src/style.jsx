@@ -119,7 +119,7 @@ export const HEADER_LINE = '#d8dce1';
  * the ribbon, `hole` is the page showing through it. They move together — an
  * ink change with the old hole colour is an unreadable mark — which is why
  * there is a second file, `brand/mark-on-dark.svg`, holding the other pair
- * ready for the day the theme covers the interface (SPEC 8, entry 35). Nothing
+ * ready for the day the theme covers the interface (issue #35). Nothing
  * passes these props today; they exist so that day is a call site and not a
  * redraw.
  *

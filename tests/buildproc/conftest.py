@@ -99,7 +99,7 @@ def hub_secrets(monkeypatch):
     implementation, including one that inherits `os.environ` whole.
     """
     secrets = {
-        # The one credential src/settings.py declares (SPEC §8 entry 26).
+        # The one credential src/settings.py declares (issue #26).
         "EDIT_TOKEN": "edit-token-must-not-leak-4a1f",
         # Not ours, and that is the point: a filter is a list of names somebody
         # maintains, and this is the variable nobody thought to add to it. It

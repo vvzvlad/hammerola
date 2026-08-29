@@ -34,8 +34,8 @@ repeating something it measured itself.
 A PUBLISHED BUILD ALSO LEAVES ITS CODE BEHIND, and the worker is where that is
 decided because it is the only place that knows whether a revision happened.
 `_keep_the_code` hands the pushed body to the store as the code of the revision
-it just published, with a second copy of this same captured log beside it (SPEC
-8, entry 17); every other ending deletes the body. So the sources of a build that
+it just published, with a second copy of this same captured log beside it (issue
+#17); every other ending deletes the body. So the sources of a build that
 FAILED are not kept — a stored tree belonging to no published revision is one
 nothing can answer for, and the author is looking at that failure with the tree
 still on their own disk.
@@ -400,7 +400,7 @@ class BuildTask:
     `archive` is the request body the tree came out of, owned exactly the same
     way and removed at the same moment — with one exception, which is the point
     of carrying it at all: a build that PUBLISHES gives it to the store instead,
-    and it becomes the code of that revision (SPEC 8, entry 17). Everything else
+    and it becomes the code of that revision (issue #17). Everything else
     deletes it, so the sources of a build that failed are never kept.
     """
 
@@ -1335,7 +1335,7 @@ class BuildQueue:
             # collects is every OTHER ending — a build that failed, one the hub
             # refused to publish, one that threw — and for all of them the answer
             # is the same: the sources of a build that produced no revision are
-            # not kept (SPEC 8, entry 17).
+            # not kept (issue #17).
             _discard(task.archive)
 
         # BELOW the cleanup, and that order is the observable one: a poller that
@@ -1368,7 +1368,7 @@ class BuildQueue:
 
         Called only from the branch that has just published, which is the whole
         of the rule: the hub is a forge now and has to hold the code of what it
-        serves, and it holds the code of NOTHING ELSE (SPEC 8, entry 17). A build
+        serves, and it holds the code of NOTHING ELSE (issue #17). A build
         that failed leaves no archive, no log beside one and no directory — the
         author is looking at that failure the moment their command returns, with
         the tree still on their own disk, and a stored tree belonging to no

@@ -633,7 +633,7 @@ export default class HammerolaViewer extends React.Component {
 
   // -- switching revisions in place -----------------------------------------
   //
-  // SPEC §8, entry 62. Two revisions of one part are looked at from ONE angle:
+  // issue #62. Two revisions of one part are looked at from ONE angle:
   // somebody aims the camera at the corner they are unsure about, hides the
   // shell, lays a section on it, and then wants to see the same thing on the
   // build before this one. A full page load throws away every one of those at
@@ -1552,7 +1552,7 @@ export default class HammerolaViewer extends React.Component {
       // THE TIME BELONGS HERE, and this is the list that changed its mind about
       // it. `day()` was written for a picker whose rows were CI commits — one or
       // two a day, so the clock was noise beside the date. Publishing is now
-      // `hammerola build` from a laptop (SPEC §8, entry 26), which an author runs
+      // `hammerola build` from a laptop (issue #26), which an author runs
       // as often as they save; a column of identical `2026-08-27`s then tells a
       // reader nothing about the one thing this menu is for, which is choosing
       // between two of them. So the picker shows the same `stamp` the header
@@ -1591,7 +1591,7 @@ export default class HammerolaViewer extends React.Component {
         // changes, the link copies and opens exactly as it did, and the page the
         // hub renders at that address on its own is untouched — while the reader
         // keeps the camera, the hidden parts and the section they set up in
-        // order to compare two builds (SPEC §8, entry 62). Which is the whole
+        // order to compare two builds (issue #62). Which is the whole
         // point: those get thrown away at precisely the moment they are worth
         // the most. `switchBuild` is where it happens, and a different PROJECT
         // is still a real navigation, because there everything changes at once.
@@ -2420,7 +2420,7 @@ export default class HammerolaViewer extends React.Component {
             {/* The bottom-left corner is the VIEWPORT'S: it draws the view cube
                 there (ui/src/viewport/viewcube.js). A static axis triad used to
                 be drawn here instead, and it never turned with the camera — see
-                SPEC §8, entries 23 and 24. */}
+                issues #23 and #24. */}
 
             <div style={css(`position:absolute;right:14px;bottom:12px;font:400 10.5px ${MONO};color:#9aa1a9;pointer-events:none`)}>{v.hintText}</div>
 

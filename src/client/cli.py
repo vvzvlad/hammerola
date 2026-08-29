@@ -30,7 +30,7 @@ FOUR OF THE VERBS ABOVE ARE WORTH READING TWICE, because the obvious reading of
 each is the wrong one:
 
   * `source` and `artifacts` are two verbs over one build for one reason: the
-    artefacts are PUBLIC and the code is not (SPEC §8 entry 17). A flag would
+    artefacts are PUBLIC and the code is not (issue #17). A flag would
     put both behind one word.
   * `source` unpacks into a directory of its own. Writing over the working copy
     is a flag, and that flag additionally requires git to call the tree clean.

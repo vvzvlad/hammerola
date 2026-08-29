@@ -47,7 +47,7 @@ function write(key, value) {
 //
 // ONE KEY FOR THE WHOLE SITE, and that is a fact about the hub rather than a
 // preference expressed here. Step 0 collapsed the hub's two secrets into a
-// single `EDIT_TOKEN` (SPEC 8, entry 26), so there is exactly one string a
+// single `EDIT_TOKEN` (issue #26), so there is exactly one string a
 // person can be holding, and the same value is what `hammerola login` stores on
 // a laptop. This file used to key it per project — written while the shape of
 // the human token was still undecided and deferred to step 0 — and that had two

@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     # from the environment, Settings() raises a validation error and the app
     # fails at startup. Credentials never have defaults and are never hardcoded.
     #
-    # ONE SECRET FOR THE WHOLE SYSTEM (decided 2026-08-27, SPEC §8 entry 26,
+    # ONE SECRET FOR THE WHOLE SYSTEM (decided 2026-08-27, issue #26,
     # implemented as step 0 of the plan in AGENTS.md). EDIT_TOKEN is presented as
     # `Authorization: Bearer <token>` and it means "may change things here":
     # publish a build, read a build's sources and log, rename a project, remove
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # compared for equality with `hmac.compare_digest`; it is not per-person, it
     # is not hashed, it is not revocable on its own, and nothing here records
     # WHO presented it. Calling it a password would advertise an authentication
-    # system that does not exist (SPEC §8 entry 26 says so out loud), and
+    # system that does not exist (issue #26 says so out loud), and
     # `hammerola login` means "store the shared secret", nothing more.
     edit_token: str = Field(min_length=1)
 

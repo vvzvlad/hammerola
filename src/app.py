@@ -44,7 +44,7 @@ Routing (SPEC 3, 7.4):
     GET  /api/v1/comments/<id>/shot           its rendered frame       EDIT_TOKEN
     POST /api/v1/comments/<id>/resolve        mark it handled          EDIT_TOKEN
 
-ONE SECRET GUARDS EVERY WRITE AND EVERY PRIVATE READ (SPEC §8 entry 26, step 0
+ONE SECRET GUARDS EVERY WRITE AND EVERY PRIVATE READ (issue #26, step 0
 of the plan), and there is exactly one string on the private side of it. There
 used to be two, PUBLISH_TOKEN and COMMENT_READ_TOKEN, and writing a comment used
 to be on the PUBLIC side; both facts are gone, and `_handle_comment_post` below
@@ -65,7 +65,7 @@ single boolean. It is public because it exists to be read by somebody who has no
 token — the person who has just deployed this and is looking at a login form —
 and it says whether anything has ever been published here, so that the sign-in
 page offers what a first run needs instead of nothing. That page is written
-(`ui/src/HammerolaEntry.jsx`, SPEC 8 entry 48): when the boolean says the hub is
+(`ui/src/HammerolaEntry.jsx`, issue #48): when the boolean says the hub is
 empty, the form carries five lines somebody hands to their agent, built out of
 `skill` and `client` and the browser's own origin. Every one of the manifest's
 four fields is read now, where the route once had no reader at all —
@@ -84,7 +84,7 @@ model.py. Closing the first step is what breaks the chain.
 THE CODE OF A REVISION IS THE ONE THING THE SITE SERVES THAT IS NOT PUBLIC. A
 build directory is world-readable and cached for a year; the sources that
 produced it are behind EDIT_TOKEN and live in a tree the file server cannot
-reach at all (SPEC 8, entry 17). The hub is a forge, so it has to HOLD the code —
+reach at all (issue #17). The hub is a forge, so it has to HOLD the code —
 that is not the same as showing it.
 
 THE TWO PROJECT ROUTES ARE THE ONLY ONES THAT UNMAKE SOMETHING, and what each of
@@ -851,7 +851,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             ONE SECRET, so no parameter. This used to take the expected value
             because two tokens guarded two different things and neither could be
             accepted where the other belonged; since step 0 there is one string
-            for the whole system (SPEC §8 entry 26) and a parameter here would
+            for the whole system (issue #26) and a parameter here would
             only be a place for a second one to reappear.
 
             `hmac.compare_digest` rather than `==` because `==` on bytes short
@@ -1258,7 +1258,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
 
         # -- the code of a revision ------------------------------------
         def _serve_sources(self, rest: list[str], with_body: bool):
-            """GET /api/v1/sources/<revision>[/log] (SPEC 8, entry 17).
+            """GET /api/v1/sources/<revision>[/log] (issue #17).
 
             THE CODE IS NOT PUBLIC, and this is the only way out of the store.
             Behind EDIT_TOKEN — the same secret that publishes, because there
@@ -1428,7 +1428,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             away together with everything it was about — its builds, its
             pointers, its comment queue and the stored code of its revisions —
             which is the honest shape for "I made a test project and I am done
-            with it" (SPEC 8, entry 26).
+            with it" (issue #26).
 
             Behind EDIT_TOKEN and checked first, so nothing about a project is
             read or touched without it, and every miss is the same 404.

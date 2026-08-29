@@ -9,7 +9,7 @@ Two kinds of claim here, and they are answered differently on purpose:
     inside the hub, as a confusing message about an import.
 
 And a refusal names EVERYTHING at once — the second half of this file is about
-nothing else (SPEC §8, entry 42). One run has to be enough to fix the tree,
+nothing else (issue #42). One run has to be enough to fix the tree,
 because the real case is nineteen cyrillic file names in a `ref/` and refusing
 one at a time turned one rename job into nineteen pushes.
 
@@ -348,7 +348,7 @@ def test_an_empty_tree_is_refused(tmp_path):
         collect(root)
 
 
-# -- one message, every path (SPEC §8, entry 42) -----------------------------
+# -- one message, every path (issue #42) -----------------------------
 def test_every_unpublishable_name_arrives_in_one_message(tmp_path):
     """The case this was written for, at its real size: nineteen of them.
 

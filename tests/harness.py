@@ -39,7 +39,7 @@ from src.app import create_server
 from src.buildproc import STATUS_FAILED, STATUS_OK, BuildOutcome
 from src.jobs import STATE_DONE, STATE_FAILED
 
-# The one secret of the whole system (SPEC §8 entry 26). There were two names
+# The one secret of the whole system (issue #26). There were two names
 # here — TOKEN for pushes and READ_TOKEN for the comment queue — until step 0 of
 # the plan collapsed them on the hub; a test that wants "a token the hub does not
 # know" spells one out on the spot rather than reaching for a second constant.

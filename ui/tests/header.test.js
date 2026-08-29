@@ -237,9 +237,9 @@ describe('the build picker', () => {
   it('hands a picked revision to the in-place switch', () => {
     // A build is an ADDRESS, and `history.pushState` says so without throwing
     // the document away — which is what keeps the camera, the hidden parts and
-    // the section across the one gesture they are worth the most in (SPEC §8,
-    // entry 62). The row's whole job is to name the build; what the switch then
-    // does with it is ui/tests/revswitch.test.js.
+    // the section across the one gesture they are worth the most in
+    // (issue #62). The row's whole job is to name the build; what the switch
+    // then does with it is ui/tests/revswitch.test.js.
     //
     // Stubbed on the INSTANCE, because `computed()` builds a fresh closure on
     // every call and the handler reads `this.switchBuild` when it fires.

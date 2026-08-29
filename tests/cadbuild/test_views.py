@@ -211,7 +211,7 @@ def test_nested_ok_naming_a_part_that_is_not_in_the_view_is_refused():
 
 
 # --------------------------------------------------------------------------
-# The author's note (SPEC 8, entry 11)
+# The author's note (issue #11)
 #
 # Not the reader's note (that one lives in a browser's localStorage and never
 # leaves it) and not a comment (written by a viewer, addressed to the agent).

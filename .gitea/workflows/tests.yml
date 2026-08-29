@@ -175,7 +175,7 @@ jobs:
         # tests would run against an unpatched base — the same reason `docker build --pull`
         # carries the flag.
         # EDIT_TOKEN is the ONE variable src/settings.py declares with no default — one secret
-        # for the whole system (SPEC §8 entry 26), covering publishing, a build's sources, the
+        # for the whole system (issue #26), covering publishing, a build's sources, the
         # project routes and the whole comment queue including writing to it:
         # `settings` is built at import time, so without it importing anything under src/
         # raises and the whole suite errors during collection. The value is invented here and
@@ -223,8 +223,7 @@ jobs:
         # node:22-bookworm-slim container (`npm ci` plus vitest), for the `docker build` step
         # in the build job, and for the containers ci/smoke.py starts. None of those has been
         # put through a pass/fail sweep, and a number here comes from a measurement rather
-        # than from a guess, so none of them gets one until it has. That sweep is a backlog
-        # entry of its own in docs/SPEC.md §8.
+        # than from a guess, so none of them gets one until it has. That sweep is issue #28.
         #
         # Measured AFTER 473ca4c, and that matters: before it the process ceilings were
         # applied to the pytest process itself, RLIMIT_CPU killed the run part way through,

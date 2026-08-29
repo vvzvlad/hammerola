@@ -37,7 +37,7 @@ a name is the prefix of a permanent URL, which is precisely what `/index.json`
 is guarded to withhold.
 
 WHAT READS `empty` IS THE DOOR — the sign-in screen of a hub nobody has pushed
-to (`ui/src/HammerolaEntry.jsx`, SPEC 8 entry 48). It draws five lines somebody
+to (`ui/src/HammerolaEntry.jsx`, issue #48). It draws five lines somebody
 copies and hands to their agent: where the skill is, where the client is, what
 this hub's address is, install the skill and follow it, ask the owner for the
 token. The two paths in it come from the manifest and the address from the
@@ -235,7 +235,7 @@ def manifest(*, empty: bool) -> dict:
     follows `skill` and `client` when it says there is nothing here yet;
     `hammerola skill` reads `skill_version` to tell a stale copy of the
     instructions from a current one, which is the one thing in this system that
-    used to go wrong in total silence (SPEC §8 entry 51).
+    used to go wrong in total silence (issue #51).
     `template` is the one the BROWSER deliberately ignores — a page cannot
     unpack a starter project into anybody's directory, and the block that would
     name it says "install the skill and follow it" instead — but it is read all
@@ -277,7 +277,7 @@ def skill_version() -> int:
     renamed, a ceiling that was raised — and the agent following it gets a
     refusal whose cause is a file on its own disk, with nothing anywhere going
     red. So the file states which one it is, the manifest repeats it, and
-    `hammerola skill` compares the two (SPEC §8 entry 51).
+    `hammerola skill` compares the two (issue #51).
 
     IN THE FRONTMATTER and not in a comment in the body, because that is the
     part of the document a Claude Code skill already has a parser for: extra

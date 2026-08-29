@@ -141,7 +141,7 @@ GUARD_FRAGMENT = "Missing required variable(s)"
 # COMMENT_READ_TOKEN, and check (b) casting one verdict PER ENTRY proved something a single
 # name cannot: that the guard names EVERY key an operator dropped, not just the first. A
 # regression to `[0]` or `next(...)` in config_errors.py would have failed the second row.
-# With one credential in the whole system (SPEC §8 entry 26) there is no second row to fail,
+# With one credential in the whole system (issue #26) there is no second row to fail,
 # so that property is no longer covered HERE. It is covered by tests/test_config_errors.py,
 # which can hand the guard a settings class with several missing fields; this gate cannot,
 # because it only ever runs the real image with the real Settings.
@@ -447,7 +447,7 @@ print(json.dumps(verdicts))
 # green on a repository whose image serves nothing.
 #
 # `/start` ITSELF IS DELIBERATELY NOT IN THIS LIST, and the reason had to be rewritten when the
-# manifest grew the skill's version (SPEC §8 entry 51): it is no longer true that it opens no
+# manifest grew the skill's version (issue #51): it is no longer true that it opens no
 # file. What is still true is that the file it opens is `/app/skill/SKILL.md`, which check (g)
 # above already requires BY NAME, and that a COPY cannot alter its contents — so the image's
 # copy is the checkout's, whose frontmatter the suite parses on every run

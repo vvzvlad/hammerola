@@ -13,7 +13,7 @@ PUBLISH token is refused on this route was DELETED with the second variable —
 its premise was that the two tokens rotate separately, and they no longer exist
 to rotate. `test_the_same_secret_opens_both_sides` is what stands in its place,
 and it asserts the opposite property on purpose: the collapse is a decision
-(SPEC §8 entry 26), so it is pinned rather than merely uncontradicted.
+(issue #26), so it is pinned rather than merely uncontradicted.
 """
 
 import json
@@ -44,7 +44,7 @@ def test_every_read_endpoint_refuses_a_missing_token(hub):
 
 
 def test_the_same_secret_opens_both_sides(hub):
-    """ONE secret for the whole system (SPEC §8 entry 26, step 0 of the plan).
+    """ONE secret for the whole system (issue #26, step 0 of the plan).
 
     The value that publishes a build is the value that reads the queue and the
     value that writes to it. This replaces a test asserting the reverse — that

@@ -1,6 +1,6 @@
 """`hammerola` — the tool that puts a model's source on the hub.
 
-The single system-wide client described in SPEC §8, entry 26. Two commands
+The single system-wide client described in issue #26. Two commands
 publish; the other four are the ones that need nothing new from the hub.
 
     hammerola login            -> checks the password, then writes HUB_URL and
@@ -47,12 +47,12 @@ its own half. Here the suite holds both, so `tests/client/` drives the REAL hub
 over a real socket and a contract change that breaks the client fails at the
 commit that makes it.
 
-The second reason is SPEC §8 entry 26's own: the finished tool updates itself
+The second reason is issue #26's own: the finished tool updates itself
 from the hub, over the same authenticated channel it already pushes on. The hub
 can only serve what is inside its image, and `COPY src/ src/` already puts this
 there.
 
-ONE SECRET FOR THE WHOLE SYSTEM (decided 2026-08-27, SPEC §8 entry 26), which
+ONE SECRET FOR THE WHOLE SYSTEM (decided 2026-08-27, issue #26), which
 is what `login` stores and what every command here presents. It is worth saying
 plainly what that is NOT: the hub compares one shared value for equality and has
 no idea who presented it, so `login` means "remember the system's password on
@@ -64,8 +64,8 @@ THREE VERBS ARE SHAPED BY WHAT THEY ARE NOT ALLOWED TO DO, and the shape is the
 decision rather than a limitation of what was written:
 
   * `source` and `artifacts` are two verbs over one build because the RIGHTS
-    differ: the artefacts are public, the code is behind the secret (SPEC §8
-    entry 17). A single verb with a flag would put both behind one word.
+    differ: the artefacts are public, the code is behind the secret (issue
+    #17). A single verb with a flag would put both behind one word.
     `source` also unpacks into a directory of its own — writing over the working
     copy is a flag, and that flag additionally requires git to call the tree
     clean, because a clean tree is the only thing that can undo it.
@@ -91,7 +91,7 @@ WHAT IS STILL NOT HERE, and for two different reasons worth telling apart.
     is `src`, so a `[project.scripts]` entry point would mean `pip install`ing a
     package called `src` onto a laptop, where it would shadow every other
     project's. Giving the tool a real distribution name and layout is part of
-    the self-update work (SPEC §8 entry 26), and doing half of it now would mean
+    the self-update work (issue #26), and doing half of it now would mean
     doing it twice. Until then there are two doors and no installed script:
     `python3 -m src.client`, STARTED IN THE CHECKOUT ROOT and pointed at the
     model with `-C` (`__main__.py` has both working forms and why the obvious
