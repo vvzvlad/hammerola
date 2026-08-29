@@ -194,20 +194,27 @@ describe('groupDownloads', () => {
   })
 })
 
-describe('sequentialDownload', () => {
-  /** A clicker and a clock, so the ORDER and the SPACING can both be read. */
-  function driver() {
-    const clicked = []
-    const timers = []
-    return {
-      clicked,
-      timers,
-      click: (href) => clicked.push(href),
-      schedule: (fn, ms) => timers.push({ fn, ms }),
-      tick: () => timers.shift().fn(),
-    }
+/** A clicker and a clock, so the ORDER and the SPACING can both be read.
+ *
+ * `schedule` hands back NOTHING on purpose. A cancelled chain calls
+ * `clearTimeout` on whatever the scheduler returned — a real id on the real path,
+ * a no-op here — and a fake returning, say, an array length would be handing
+ * `clearTimeout` a small integer, which is exactly what jsdom's own timer ids
+ * are.
+ */
+function driver() {
+  const clicked = []
+  const timers = []
+  return {
+    clicked,
+    timers,
+    click: (href) => clicked.push(href),
+    schedule: (fn, ms) => { timers.push({ fn, ms }) },
+    tick: () => timers.shift().fn(),
   }
+}
 
+describe('sequentialDownload', () => {
   it('fires the first click inside the gesture and the rest on the clock', () => {
     // The first one is synchronous on purpose: a download is allowed because it
     // is inside the gesture that asked for it, and a first click handed to a
@@ -255,6 +262,106 @@ describe('sequentialDownload', () => {
     expect(sequentialDownload(undefined, { click: d.click, schedule: d.schedule })).toBe(0)
     expect(d.clicked).toEqual([])
     expect(d.timers).toEqual([])
+  })
+
+  it('hands over nothing more once its signal is aborted', () => {
+    // The chain outlives the gesture that started it — a fifth of a second per
+    // file, six seconds on a thirty-file build — and every href in it was
+    // captured off `PAGE.base` at the press. Whoever started it has to be able to
+    // stop it, or a reader who moved on goes on receiving a build they left.
+    const d = driver()
+    const chain = new AbortController()
+
+    sequentialDownload(['/a', '/b', '/c'],
+                       { click: d.click, schedule: d.schedule, signal: chain.signal })
+    expect(d.clicked).toEqual(['/a'])
+
+    chain.abort()
+    d.tick()
+
+    expect(d.clicked).toEqual(['/a'])
+    // And nothing is left queued behind it either.
+    expect(d.timers).toEqual([])
+  })
+
+  it('hands over nothing at all under a signal that is already aborted', () => {
+    // Checked at the top of every step, the first one included, so a chain
+    // started after the cancel cannot slip one file through.
+    const d = driver()
+    const chain = new AbortController()
+    chain.abort()
+
+    sequentialDownload(['/a', '/b'],
+                       { click: d.click, schedule: d.schedule, signal: chain.signal })
+
+    expect(d.clicked).toEqual([])
+    expect(d.timers).toEqual([])
+  })
+})
+
+describe('the chain the page keeps a handle on', () => {
+  it('stops where `cancelDownloads` says, wherever the reader went', () => {
+    // `componentWillUnmount` and `switchBuild` are the two callers, and both mean
+    // the same thing: the addresses in this chain have stopped describing what is
+    // on the screen.
+    const c = component({ node: '/model/plate' })
+    const d = driver()
+
+    c.downloadAll(['/a.stl', '/b.stl', '/c.stl'], { click: d.click, schedule: d.schedule })
+    expect(d.clicked).toEqual(['/a.stl'])
+
+    c.cancelDownloads()
+    d.tick()
+
+    expect(d.clicked).toEqual(['/a.stl'])
+  })
+
+  it('goes with the page when the component is unmounted', () => {
+    // The chain touches no state at all, so it survives an unmount perfectly
+    // happily — which is precisely why nothing else here would have stopped it.
+    const c = component({ node: '/model/plate' })
+    const d = driver()
+
+    c.downloadAll(['/a.stl', '/b.stl'], { click: d.click, schedule: d.schedule })
+    c.componentWillUnmount()
+    d.tick()
+
+    expect(d.clicked).toEqual(['/a.stl'])
+  })
+
+  it('cancels every chain still stepping, not only the last one started', () => {
+    // Two group links in a row is an ordinary sequence rather than a race: thirty
+    // files take six seconds to hand over. Both chains are about the build the
+    // reader was on, so both end together — which is what ONE signal for the page
+    // buys, and what a controller per press would need a list to do.
+    const c = component({ node: '/model/plate' })
+    const first = driver()
+    const second = driver()
+
+    c.downloadAll(['/a.stl', '/b.stl'],
+                  { click: first.click, schedule: first.schedule })
+    c.downloadAll(['/a.3mf', '/b.3mf'],
+                  { click: second.click, schedule: second.schedule })
+    c.cancelDownloads()
+    first.tick()
+    second.tick()
+
+    expect(first.clicked).toEqual(['/a.stl'])
+    expect(second.clicked).toEqual(['/a.3mf'])
+  })
+
+  it('starts a fresh signal for the next press after a cancel', () => {
+    // The controller is dropped rather than reused, so cancelling the downloads
+    // of the build being left does not quietly disable the ones asked for on the
+    // build being arrived at.
+    const c = component({ node: '/model/plate' })
+    c.cancelDownloads()
+    const d = driver()
+
+    c.downloadAll(['/a.stl', '/b.stl'], { click: d.click, schedule: d.schedule })
+    d.tick()
+
+    expect(d.clicked).toEqual(['/a.stl', '/b.stl'])
   })
 })
 

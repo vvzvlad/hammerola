@@ -357,6 +357,17 @@ function clickHref(href) {
  * `click` and `schedule` are arguments so this can be driven with fake timers
  * and a fake clicker — the ORDER and the SPACING are the whole of what it
  * promises, and neither can be observed through a real anchor in a test.
+ *
+ * AND IT CAN BE CALLED OFF, through `signal`. A chain outlives the gesture that
+ * started it by `gap` × (N − 1) — two seconds on ten parts, six on thirty — and
+ * every href in it was captured off `PAGE.base` when the button was pressed. A
+ * reader who switches revision or leaves the page in that window would otherwise
+ * go on being handed files of the build they left, one every fifth of a second,
+ * with nothing on the screen saying where they came from. The abort is checked
+ * at the top of every step, so an already-aborted signal hands over nothing at
+ * all, and it also clears the pending timer — which is a real `clearTimeout` on
+ * the default path and a no-op under an injected `schedule`, where the flag is
+ * what does the work.
  */
 export function sequentialDownload(hrefs, options) {
   const o = options || {};
@@ -364,13 +375,16 @@ export function sequentialDownload(hrefs, options) {
   const schedule = o.schedule || ((fn, ms) => setTimeout(fn, ms));
   const gap = Number.isFinite(o.delay) ? o.delay : DOWNLOAD_GAP_MS;
   const list = (Array.isArray(hrefs) ? hrefs : []).filter(Boolean);
+  const signal = o.signal || null;
   let at = 0;
+  let timer = null;
   const step = () => {
-    if (at >= list.length) return;
+    if (at >= list.length || (signal && signal.aborted)) return;
     click(list[at]);
     at += 1;
-    if (at < list.length) schedule(step, gap);
+    if (at < list.length) timer = schedule(step, gap);
   };
+  if (signal) signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
   step();
   return list.length;
 }
@@ -396,6 +410,33 @@ export function menuAt(x, y) {
     x: Math.min(x, Math.max(0, window.innerWidth - 246)),
     y: Math.min(y, Math.max(0, window.innerHeight - 300)),
   };
+}
+
+/**
+ * One entry of a note map — the only way a map keyed by PART NAMES may be read.
+ *
+ * There are two such maps on this page and neither is an object this code built:
+ * the AUTHOR's comes out of a fetched meta.json, the READER's out of `JSON.parse`
+ * on localStorage, and both inherit from `Object.prototype`. A part is allowed to
+ * be called `constructor` or `toString` — the hub's own path alphabet says so —
+ * and a bare `map[name]` on one of those answers with a FUNCTION off the
+ * prototype. React refuses to render a function as a child and takes the page
+ * down over a part name; the row menu's hint gets there sooner, slicing what it
+ * thinks is a string. `hasOwnProperty.call` is what asks about the map itself
+ * rather than about everything it inherits.
+ *
+ * ONE HELPER FOR ALL THREE READS, and that is the point of it being a function at
+ * all. The guard used to be spelled out at the newest read and nowhere else,
+ * which is a rule that holds exactly as long as whoever adds the fourth happens
+ * to have seen the third.
+ *
+ * The type check is the same argument for a value the hub would never write but a
+ * fetched document is free to carry: a note that is not a string is no note.
+ */
+export function noteFor(map, name) {
+  if (!name || !map || typeof map !== 'object') return '';
+  if (!Object.prototype.hasOwnProperty.call(map, name)) return '';
+  return typeof map[name] === 'string' ? map[name] : '';
 }
 
 export default class HammerolaViewer extends React.Component {
@@ -612,6 +653,10 @@ export default class HammerolaViewer extends React.Component {
     // The deferred swap goes with them: it holds `this` and would come back on a
     // component that is gone, to `setState` on it.
     clearTimeout(this._swap);
+    // And so does a download chain still stepping. It touches no state, so it
+    // survives an unmount perfectly happily — and goes on handing the browser
+    // files of a build nobody is looking at any more.
+    this.cancelDownloads();
     this._gone = true;
   }
 
@@ -721,6 +766,10 @@ export default class HammerolaViewer extends React.Component {
     // screen, and rejoined against the new one when it arrives (`rejoin`).
     this.carry = { hidden: this.namesOf(this.state.hidden),
                    ghost: this.namesOf(this.state.ghost) };
+    // The frame Fit goes back to belongs to the build it was measured on, and
+    // this is another build. Spent by the model event that lands the swap; see
+    // `onModel`, which is where the argument for it is written out.
+    this._refit = true;
     // The plane is asked about the view actually landing on screen, not about
     // whether the target HAS the old one: a `popstate` can restore a different
     // view of the same parts, and a depth measured on the other arrangement is
@@ -734,6 +783,21 @@ export default class HammerolaViewer extends React.Component {
     // on its own, which is why a swap that forgot this line would go on fetching
     // the revision that had just left the screen, silently and forever.
     rereadPage(path);
+
+    // AND TWO THINGS ALREADY IN FLIGHT ARE NOW ABOUT A BUILD THIS PAGE HAS LEFT.
+    // Both were started against the `PAGE.base` of the line above, both outlive
+    // the gesture that started them, and neither has any way of noticing that
+    // the page moved underneath it — so the swap has to reach them here, at the
+    // one moment it is certain the move is really happening.
+    //
+    // The POLL is cut off by generation rather than by a timer, because what has
+    // to be dropped is an answer that is already on the wire (`poll`).
+    this._pollGen = (this._pollGen || 0) + 1;
+    // The DOWNLOAD chain is cut off outright: its hrefs were built out of the
+    // previous revision's base, and a reader who switched away should not go on
+    // receiving files of the build they left, one every fifth of a second, with
+    // nothing on the screen saying where they came from.
+    this.cancelDownloads();
 
     this.setState({
       meta,
@@ -752,10 +816,40 @@ export default class HammerolaViewer extends React.Component {
       // has nothing to offer at all, and the banner would sit there for a build
       // that is no longer on this page's road.
       pending: null, bannerGone: false,
-      // The composer is deliberately NOT closed. Half-written text is the most
-      // expensive thing on this page to lose (the same reason Escape spares it),
-      // and the comment lands on the revision now on screen — which is the one
-      // the reader is looking at while they finish the sentence.
+      // THE COMMENTS FILED IN THIS SESSION GO WITH THEM, and the pins are why.
+      // This list only ever holds what the reader posted while this page was
+      // open — each one against the commit it was posted on — and every pin in
+      // it is a POINT IN THE MODEL SPACE of that build, which `sync` reads
+      // straight out of here and hands to the viewport on the next frame. Kept,
+      // they would be drawn on geometry that never carried them, at coordinates
+      // the new build need not contain at all. Nothing is lost: the comments are
+      // on the hub, filed against the revision they were written about.
+      comments: [], activePin: null,
+      // THE TEXT SURVIVES THE SWAP AND NOTHING POSITIONAL DOES, and the line
+      // between them is what the reader WROTE against what this page MEASURED.
+      //
+      // The sentence is the reader's own and half-written text is the most
+      // expensive thing on this page to lose (the same reason Escape spares it);
+      // it is also still true of the revision now on screen often enough to be
+      // worth keeping, and the reader can read it and decide. Everything else in
+      // the draft is a coordinate this page took off geometry that has left:
+      // which solid was picked, where in space, a measurement between two faces,
+      // a part dragged out of the assembly. `sendComment` posts to `meta.commit`,
+      // so a draft carried whole files every one of those as a fact about a
+      // build they were never observed on — and the numbers among them go to an
+      // agent as a task.
+      //
+      // THE PART'S NAME GOES WITH THEM even though a name outlives a rebuild,
+      // and that is the correction on the obvious answer. `composerPart` renders
+      // it, `sendComment` sends `partId`, so a kept name shows the reader an
+      // attachment the posted comment will not have — worse than showing none,
+      // because the mismatch is invisible. Re-attaching it to the same-named
+      // part of the new build was the other way out and is worse still: it aims
+      // "this chamfer is too sharp" at a chamfer nobody looked at. Unattached
+      // and honest, then; one click puts it back where the reader means it.
+      composer: this.state.composer
+        ? { ...this.state.composer, part: '', partId: null, p: null, meas: null, move: null }
+        : null,
       ...(sec || null),
     }, () => {
       this.sync(sec ? { __resetCut: true } : null);
@@ -900,11 +994,29 @@ export default class HammerolaViewer extends React.Component {
       expanded: { ...this.defaultExpanded(tree), ...s.expanded },
       ...(rejoined || null),
     }), () => {
-      // NOT ON A LIVE ONE, which is what keeps the camera across a revision
-      // switch: `home` is the frame the library FITTED, and a swap arrives with
-      // the reader's own frame already restored, so re-reading it here would
-      // record that instead and leave Fit doing nothing.
-      if (!d.live) this.captureHome();
+      // NOT ON A LIVE ONE, which is what keeps the camera across a rebuild
+      // arriving under the pointer: `home` is the frame the library FITTED, and
+      // such a reload comes with the reader's own frame already restored, so
+      // re-reading it here would record that instead and leave Fit doing nothing.
+      //
+      // OPENING ANOTHER BUILD IS THE EXCEPTION, and `_refit` is the two places
+      // that do it saying so: `switchBuild`, where the reader picks a revision,
+      // and `takePending`, where they accept the banner's newer one. Both travel
+      // the same live path — the frame is carried over deliberately — but what
+      // the camera is now pointed at is a DIFFERENT BUILD, and Fit promises
+      // "back to the frame this view opened in" (the button's own tooltip). A
+      // `home` left alone would go on meaning the build this PAGE opened first,
+      // three revisions ago, with nothing about the button saying so.
+      //
+      // Clearing `home` was the alternative and is worse — Fit would then say
+      // there is nothing to fit to, on a page with a model on it.
+      //
+      // SPENT HERE rather than at either setter, exactly like `carry`: one model
+      // event acts on a swap, and the event after a swap whose view never
+      // rendered simply does not arrive — so the next live build takes the flag
+      // instead, which is another build opening and the same operation.
+      if (!d.live || this._refit) this.captureHome();
+      this._refit = false;
       // The rejoined ids have to reach the viewport, and a state event is the
       // only way there. Only when something was rejoined: every other model
       // event would otherwise dispatch one for no change at all.
@@ -1091,10 +1203,26 @@ export default class HammerolaViewer extends React.Component {
 
   async poll() {
     if (this._gone) return;
+    // WHICH POLL THIS IS, and the reason it has to be asked. `loadMeta` builds
+    // its URL out of `PAGE.base` at the moment of the call and this then waits on
+    // the network; a revision switch inside that window moves `PAGE`, the build
+    // on screen and the road this page is on, and the answer that lands is about
+    // none of them. Compared against the NEW build's key it differs, so it is
+    // offered as a newer build — on a pinned revision, which has nothing to offer
+    // at all — and taking that offer puts one build's `views` in state beside
+    // another build's `base`, i.e. the viewport fetching geometry at an address
+    // that belongs to neither. `switchBuild` moves this number; a poll that wakes
+    // up on the wrong side of that is thrown away whole, re-arming included,
+    // because the swap armed the next one for the slot it moved to.
+    const gen = this._pollGen = (this._pollGen || 0) + 1;
     let delay = POLL_MS;
     try {
       if (document.visibilityState !== 'hidden') {
-        const next = await loadMeta(true);
+        // Named rather than left to the default, so the request and the
+        // comparison below are visibly about the same build.
+        const base = PAGE.base;
+        const next = await loadMeta(true, base);
+        if (this._gone || gen !== this._pollGen) return;
         const key = buildKey(next);
         if (key && key !== buildKey(this.state.meta)
             && Array.isArray(next.variants) && next.variants.length) {
@@ -1153,6 +1281,14 @@ export default class HammerolaViewer extends React.Component {
       return;
     }
     const keep = next.variants.some((v) => v.id === this.state.view);
+    // Fit is "back to the frame this view opened in" — the tooltip on the button
+    // says so — and taking this offer IS opening a view: a different build, with
+    // its own box, arriving on this page. So `home` is re-read once the model
+    // lands, exactly as on a revision switch (`onModel` carries the argument).
+    // Set here rather than at the top of the method: the busy branch above
+    // returns without swapping anything, and a flag left standing there would be
+    // spent by the next unrelated rebuild instead.
+    this._refit = true;
     this.setState({
       meta: next, pending: null, bannerGone: true,
       view: keep ? this.state.view : next.variants[0].id,
@@ -1357,10 +1493,31 @@ export default class HammerolaViewer extends React.Component {
    * A method rather than a call written straight into the handler, so a test can
    * take it over and read WHICH hrefs the button would fire, in what order,
    * without a jsdom anchor navigating anywhere. The mechanism itself is
-   * `sequentialDownload`, which is tested on its own with a fake clock.
+   * `sequentialDownload`, which is tested on its own with a fake clock; `options`
+   * is the seam that lets the same fake clock reach it THROUGH this method, which
+   * is what a claim about cancelling a chain the page started has to go through.
+   *
+   * ONE SIGNAL FOR THE WHOLE PAGE, not one per press. Two group links pressed in
+   * a row leave two chains stepping at once — thirty files is six seconds, so
+   * that is an ordinary sequence rather than a race — and both of them are about
+   * the build the reader was on, so both have to end together. A controller per
+   * chain would need a list to hold them and nothing to prune it, since a chain
+   * that finished says nothing; one controller is bounded, and the next press
+   * after a cancel gets a fresh one from `cancelDownloads`.
    */
-  downloadAll(hrefs) {
-    return sequentialDownload(hrefs);
+  downloadAll(hrefs, options) {
+    if (!this._dl) this._dl = new AbortController();
+    return sequentialDownload(hrefs, { ...(options || null), signal: this._dl.signal });
+  }
+
+  /** Stop handing over files: the reader is not on that build any more.
+   *
+   * Called by `switchBuild` and by `componentWillUnmount`, i.e. at both moments
+   * the addresses in a running chain stop describing what is on the screen.
+   */
+  cancelDownloads() {
+    if (this._dl) this._dl.abort();
+    this._dl = null;
   }
 
   subtitle() {
@@ -1404,10 +1561,14 @@ export default class HammerolaViewer extends React.Component {
     return this.state.selName || '';
   }
 
-  /** The READER's note: this browser's, for this project, never sent anywhere. */
+  /** The READER's note: this browser's, for this project, never sent anywhere.
+   *
+   * Through `noteFor` like both other reads of a note map: this one is parsed out
+   * of localStorage, which is no more this code's own object than a fetched
+   * document is.
+   */
   selectedNote() {
-    const name = this.selectedName();
-    return (name && this.state.notes[name]) || '';
+    return noteFor(this.state.notes, this.selectedName());
   }
 
   /**
@@ -1416,21 +1577,14 @@ export default class HammerolaViewer extends React.Component {
    *
    * ABSENT IS NORMAL. A build with nothing to say carries no `notes` key at all,
    * and neither does any build published before the key existed; the two are one
-   * document here, and asking about one of them must not be an error.
+   * document here, and asking about one of them must not be an error — which is
+   * also `noteFor`'s answer to a map that is missing altogether.
    *
-   * READ WITH `hasOwnProperty`, not with a bare lookup: this object is parsed
-   * out of a fetched document, so it inherits from `Object.prototype`, and a
-   * part legitimately called `constructor` or `toString` would otherwise pick up
-   * a FUNCTION off the prototype — which React then refuses to render, taking
-   * the whole page down over a part name. The type guard after it is the same
-   * argument for a value the hub would never write but a document can carry.
+   * Through `noteFor` because a part name is not a safe key: see its own note for
+   * what a part called `constructor` does to a bare lookup.
    */
   authorNote() {
-    const name = this.selectedName();
-    const notes = this.state.meta && this.state.meta.notes;
-    if (!name || !notes || typeof notes !== 'object') return '';
-    if (!Object.prototype.hasOwnProperty.call(notes, name)) return '';
-    return typeof notes[name] === 'string' ? notes[name] : '';
+    return noteFor(this.state.meta && this.state.meta.notes, this.selectedName());
   }
 
   /**
@@ -1650,7 +1804,12 @@ export default class HammerolaViewer extends React.Component {
     // -- context menu on a tree row
     const mNode = this.node(s.menu && s.menu.id);
     const mName = mNode ? mNode.name : '';
-    const note = mNode ? s.notes[mNode.name] : '';
+    // Through `noteFor` like every other read of a note map. This one throws
+    // EARLIEST of the three when it is not: the item below slices the note to 22
+    // characters for its hint, and a part called `constructor` hands a bare
+    // lookup a function, which has no `slice` — so the whole menu, and with it
+    // `computed()` and the page, ends on a right-click.
+    const note = noteFor(s.notes, mName);
     // `href` turns the row into a real `<a download>` — see the files block
     // below — and `tone` is 'top' for a rule above the row, 'said' for a row that
     // states something rather than doing it.
@@ -2429,7 +2588,13 @@ export default class HammerolaViewer extends React.Component {
               <div style={css('display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #e3e6ea')}>
                 <span style={css(`width:20px;height:20px;border-radius:10px 10px 10px 3px;background:#1f7ae0;color:#fff;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO}`)}>{v.nextLabel}</span>
                 <span style={css(`font:600 12px ${SANS}`)}>Task for the agent</span>
-                <span style={css(`font:400 11px ${MONO};color:#8a9099`)}>&middot; {v.composerPart}</span>
+                {/* Only when there IS a part: the separator belongs to the name,
+                    and a draft that lost its attachment to a revision swap would
+                    otherwise keep a lone middle dot standing where it used to
+                    be — a leftover pointing at the build the page has left. */}
+                {v.composerPart
+                  ? <span style={css(`font:400 11px ${MONO};color:#8a9099`)}>&middot; {v.composerPart}</span>
+                  : null}
                 <span style={css('flex:1')} />
                 <span onClick={v.compCancel} style={css('color:#9aa1a9;cursor:pointer')}>&#10005;</span>
               </div>

@@ -43,14 +43,19 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { STATE } from '../src/events.js'
-import { PAGE, indexTree, loadBuilds, loadMeta, rereadPage } from '../src/hub.js'
+import { PAGE, indexTree, loadBuilds, loadMeta } from '../src/hub.js'
+import { guardPage } from './pageguard.js'
 
 const path = (slot) => `/project/proj1/${slot}/`
 
-/** Back on the revision this file starts every test from. */
+// `PAGE` became module-level MUTABLE state the day the swap started writing to
+// it, so it gets the fixture this project's convention asks of one: put back and
+// CHECKED, both before and after every test. Before-only is what sends the
+// debugging into whichever test happened to run next — see pageguard.js.
+guardPage(path(A))
+
+/** The mocks, back to what this file starts every test from. */
 beforeEach(() => {
-  window.history.replaceState(null, '', path(A))
-  rereadPage()
   loadMeta.mockReset()
   // The picker's list is refreshed after every swap. It answers with the same
   // history the fixture starts from, so a test about something else does not
@@ -397,11 +402,11 @@ describe('popstate', () => {
 // -- what survives ------------------------------------------------------------
 
 describe('the camera', () => {
-  it('is not re-homed by a swap, while a first load still homes', () => {
+  it('is not re-homed by a rebuild landing under the pointer', () => {
     // `home` is the frame the LIBRARY fitted, and it is the whole of what Fit
-    // means. A swap arrives with the reader's own frame already restored by the
-    // viewport, so reading the camera back here would record that as "fit" and
-    // leave the button doing nothing at all.
+    // means. A live reload arrives with the reader's own frame already restored
+    // by the viewport, so reading the camera back here would record that as "fit"
+    // and leave the button doing nothing at all.
     const c = component()
     c.captureHome = vi.fn()
 
@@ -410,6 +415,74 @@ describe('the camera', () => {
 
     c.onModel({ tree: TREE, view: 'assembled', live: false })
     expect(c.captureHome).toHaveBeenCalledTimes(1)
+  })
+
+  it('IS re-homed by a revision switch, once, when its model lands', async () => {
+    // The exception to the line above, and the failure it closes has no symptom
+    // of its own. A swap takes the same live path, but the model that arrives is
+    // a DIFFERENT BUILD with a bounding box of its own — so a `home` left alone
+    // stays the frame fitted to the build this page opened FIRST, and Fit then
+    // shows a part that grew three times over cropped, silently, with the button
+    // looking exactly as it always does.
+    const c = component()
+    c.captureHome = vi.fn()
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+    expect(c.captureHome, 'homed before the new geometry had even arrived')
+      .not.toHaveBeenCalled()
+
+    c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+    expect(c.captureHome).toHaveBeenCalledTimes(1)
+
+    // And the flag is SPENT, exactly like `carry`: a live reload after the swap
+    // is a rebuild of the build now on screen, and homing on one of those would
+    // overwrite the fit with wherever the reader happened to be looking.
+    c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+    expect(c.captureHome).toHaveBeenCalledTimes(1)
+  })
+
+  it('IS re-homed by taking the banner\'s build, for the same reason', async () => {
+    // Switch on the "new build" banner opens a build too — a different commit,
+    // built from different sources, with a box of its own — and it reaches the
+    // viewport by the same live path as a revision switch. Fit reads "back to
+    // the frame this view opened in", so leaving `home` alone here would keep it
+    // pointing at the build the page was loaded with, however many builds ago
+    // that was.
+    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    c.captureHome = vi.fn()
+    c.el = () => null
+
+    c.takePending()
+    expect(c.state.meta.commit, 'the offer was not taken at all').toBe('ccc')
+    expect(c.captureHome, 'homed before the new geometry had arrived')
+      .not.toHaveBeenCalled()
+
+    c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+    expect(c.captureHome).toHaveBeenCalledTimes(1)
+
+    // Spent, like the swap's: the next live model is a rebuild of the build now
+    // on screen, and homing on one of those records wherever the reader is
+    // looking as the fit.
+    c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+    expect(c.captureHome).toHaveBeenCalledTimes(1)
+  })
+
+  it('is not re-homed by an offer the viewport was too busy to take', async () => {
+    // The flag is set where the swap COMMITS, not at the top of the method: the
+    // busy branch returns having changed nothing, and a flag left standing there
+    // would be spent by whichever rebuild happened to land next — re-homing the
+    // camera on a build nobody switched to.
+    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    c.captureHome = vi.fn()
+    c.el = () => ({ isBusy: () => true })
+
+    c.takePending()
+    expect(c.state.meta.commit, 'swapped while the reader had hold of it').toBe(A)
+
+    c.onModel({ tree: TREE, view: 'assembled', live: true })
+    expect(c.captureHome).not.toHaveBeenCalled()
+    clearTimeout(c._swap)
   })
 
   it('rides across on the element, which is what `live` buys', async () => {
@@ -580,6 +653,188 @@ describe('what does not survive', () => {
     await c.switchBuild('proj1', B)
 
     expect(c.state.composer.text).toBe('this hole is')
+  })
+
+  it('takes that comment\'s ANCHOR away, the part\'s name included', async () => {
+    // The half the exception above does not cover. `sendComment` posts to
+    // `meta.commit`, so a draft carried across whole files the previous build's
+    // solid path, the previous build's 3D point, a measurement taken on geometry
+    // that is gone and a drag of a part the rebuild has already put back — every
+    // one of them as a fact about the build now on screen, and the two numbers
+    // among them reach an agent as a task.
+    //
+    // THE NAME GOES TOO, though a name is the one thing a rebuild does not
+    // renumber. It is what `composerPart` renders while `sendComment` sends
+    // `partId`, so keeping it shows the reader an attachment the posted comment
+    // will not carry — a mismatch with nothing on screen to reveal it.
+    const c = component({
+      composer: {
+        part: 'plate', partId: '/model/plate', p: [1, 2, 3],
+        text: 'this hole is', photo: null,
+        meas: '3.00 mm', move: 'plate by 2 mm',
+      },
+    })
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+
+    expect(c.state.composer.text).toBe('this hole is')
+    expect(c.state.composer.part).toBe('')
+    expect(c.state.composer.partId).toBeNull()
+    expect(c.state.composer.p).toBeNull()
+    expect(c.state.composer.meas).toBeNull()
+    expect(c.state.composer.move).toBeNull()
+  })
+
+  it('shows no part on the draft afterwards, with the text still in it', async () => {
+    // The state above as the reader meets it: `composerPart` is what the header
+    // of the composer renders, so this is the assertion that the draft on screen
+    // has stopped claiming an attachment while the sentence is still there to
+    // finish.
+    const c = component({
+      composer: {
+        part: 'plate', partId: '/model/plate', p: [1, 2, 3],
+        text: 'this hole is', photo: null, meas: null, move: null,
+      },
+    })
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+
+    const v = c.computed()
+    expect(v.composerPart).toBe('')
+    expect(v.composerText).toBe('this hole is')
+  })
+
+  it('drops the comments filed in this session, and the pin that was open', async () => {
+    // This list only ever holds what the reader posted while the page was open,
+    // each one against the commit it was posted on. Kept, the rail would attribute
+    // them to a revision they say nothing about.
+    const c = component({
+      comments: [{ id: 'c1', label: '1', part: 'plate', pin: [1, 2, 3],
+                   text: 'too thin', resolved: false }],
+      activePin: 'c1',
+    })
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+
+    expect(c.state.comments).toEqual([])
+    expect(c.state.activePin).toBeNull()
+  })
+
+  it('sends the viewport no pin belonging to the build it left', async () => {
+    // THE OBSERVABLE HALF, and the reason that list cannot simply stay: a pin is
+    // a POINT IN THE MODEL SPACE of the build it was placed on, `sync` reads the
+    // pins straight off `comments` on every frame, and the new build need not
+    // contain that point at all — so the old ones would be drawn on geometry that
+    // never carried them. The draft's own pin goes the same way, through the
+    // composer's anchor.
+    const c = component({
+      comments: [{ id: 'c1', label: '1', part: 'plate', pin: [1, 2, 3], resolved: false }],
+      activePin: 'c1',
+      composer: { part: 'plate', partId: '/model/plate', p: [4, 5, 6], text: 'x' },
+    })
+    delete c.sync
+    loadMeta.mockResolvedValue(build())
+    const seen = []
+    const listen = (event) => seen.push(event.detail)
+    window.addEventListener(STATE, listen)
+    onTestFinished(() => window.removeEventListener(STATE, listen))
+
+    await c.switchBuild('proj1', B)
+
+    expect(seen).toHaveLength(1)
+    expect(seen[0].pins).toEqual([])
+  })
+})
+
+// -- what was already in flight when the swap landed --------------------------
+
+describe('a poll waiting on its answer', () => {
+  /**
+   * A poll and a swap, each answered separately.
+   *
+   * They share one `loadMeta`, and telling them apart by the base they ask for is
+   * the point rather than a convenience: the poll builds its URL out of `PAGE`
+   * BEFORE the swap moves it, which is exactly how the two come to disagree.
+   */
+  function inFlight(c) {
+    let answer = null
+    loadMeta.mockImplementation((fresh, base) => (
+      base === path(A)
+        ? new Promise((resolve) => { answer = resolve })
+        : Promise.resolve(build())))
+    const polling = c.poll()
+    return { polling, answer: (meta) => answer(meta) }
+  }
+
+  /** A third build, as `latest` would have picked it up mid-flight. */
+  const C = 'c'.repeat(64)
+
+  it('does not offer what it found once the page has moved on', async () => {
+    // The banner is the visible symptom and a pinned revision is where it is
+    // worst: `switchBuild` clears `pending` precisely because a pinned build has
+    // nothing to offer, and an answer landing a moment later put it straight back
+    // up. (The poll is started by hand because this fixture sits on a revision
+    // and nothing arms one there — which is the sequence itself: armed under
+    // `latest`, answered after the reader pinned a revision.)
+    const c = component()
+    const poll = inFlight(c)
+
+    await c.switchBuild('proj1', B)
+    c.schedulePoll.mockClear()
+    poll.answer({ ...build(), commit: C })
+    await poll.polling
+
+    expect(c.state.pending, 'the answer about the slot we left was offered anyway')
+      .toBeNull()
+    expect(c.state.meta.commit).toBe(B)
+    // Nor does it re-arm: the swap already armed the poll for the slot it moved
+    // to, and a second timer from the poll it superseded is one more fetch than
+    // this page asked for.
+    expect(c.schedulePoll).not.toHaveBeenCalled()
+  })
+
+  it('still offers it when no swap happened while it waited', async () => {
+    // The other side of the same guard: the generation only bites on a swap, so
+    // an ordinary poll goes on doing exactly what it always did.
+    const c = component()
+    const poll = inFlight(c)
+
+    poll.answer({ ...build(), commit: C })
+    await poll.polling
+
+    expect(c.state.pending.commit).toBe(C)
+    expect(c.schedulePoll).toHaveBeenCalled()
+  })
+})
+
+describe('a download chain still handing over files', () => {
+  it('is called off, so the rest of the old build is not downloaded', async () => {
+    // The hrefs were built out of `PAGE.base` when the button was pressed, and
+    // the chain outlives that gesture by a fifth of a second per file — six
+    // seconds on a thirty-file build. Without this, a reader who switched
+    // revision goes on receiving files of the build they left, silently, because
+    // nothing on the screen says which build a download came from.
+    const clicked = []
+    const timers = []
+    const c = component()
+    loadMeta.mockResolvedValue(build())
+
+    // The fake clock hands back NOTHING, deliberately: a handle that happened to
+    // be a small integer would be passed to `clearTimeout` on the cancel below,
+    // and jsdom's own timer ids are small integers too.
+    c.downloadAll([`${path(A)}plate.stl`, `${path(A)}post.stl`],
+                  { click: (href) => clicked.push(href),
+                    schedule: (fn, ms) => { timers.push({ fn, ms }) } })
+    expect(clicked).toHaveLength(1)
+
+    await c.switchBuild('proj1', B)
+    timers.shift().fn()
+
+    expect(clicked, 'the rest of the chain downloaded the build that had left')
+      .toEqual([`${path(A)}plate.stl`])
   })
 })
 

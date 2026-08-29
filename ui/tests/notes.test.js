@@ -29,7 +29,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import HammerolaViewer from '../src/HammerolaViewer.jsx'
+import HammerolaViewer, { noteFor } from '../src/HammerolaViewer.jsx'
 import { indexTree } from '../src/hub.js'
 import { collect, texts } from './eltree.js'
 
@@ -173,6 +173,87 @@ describe('the author\'s note', () => {
     // an object handed to React as a child throws.
     const v = component({ sel: '/model/lid', notes: { lid: { text: 'nope' } } }).computed()
     expect(v.authorNote).toBe('')
+  })
+})
+
+// -- the key is a PART NAME, and a part name is not a safe key ----------------
+//
+// Both maps are keyed by the part's name and neither is an object this code
+// built: the author's is parsed out of a fetched meta.json, the reader's out of
+// `JSON.parse` on localStorage. A part is allowed to be called `constructor` —
+// the hub's path alphabet says so — and a bare lookup then answers with a
+// function off `Object.prototype`.
+//
+// THREE READS, ONE HELPER, which is what these tests are really about. The guard
+// used to be written out at the newest read and nowhere else; the two older ones
+// had it nowhere, and a fourth would have been added the same way.
+
+describe('noteFor', () => {
+  it('answers the entry the map itself owns', () => {
+    expect(noteFor({ lid: 'M3x8 DIN912' }, 'lid')).toBe('M3x8 DIN912')
+  })
+
+  it('answers nothing for a name that only the PROTOTYPE has', () => {
+    for (const name of ['constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
+      expect(noteFor({}, name), `${name} came off the prototype`).toBe('')
+    }
+    // `__proto__` is the other half of the same trap: it is not an own property
+    // of a literal either, and reading it answers with the prototype object.
+    expect(noteFor({}, '__proto__')).toBe('')
+  })
+
+  it('still answers a part that is REALLY called `constructor`', () => {
+    // The guard is about ownership, not about the spelling of the name: a model
+    // may legitimately publish a part under one of these.
+    expect(noteFor({ constructor: 'M3x8' }, 'constructor')).toBe('M3x8')
+  })
+
+  it('treats anything that is not a string as no note', () => {
+    expect(noteFor({ lid: { text: 'nope' } }, 'lid')).toBe('')
+    expect(noteFor({ lid: 12 }, 'lid')).toBe('')
+  })
+
+  it('answers nothing for a missing map or a missing name', () => {
+    // `meta.notes` is absent on most builds and `selectedName()` is '' on a
+    // group; neither may be an error.
+    expect(noteFor(undefined, 'lid')).toBe('')
+    expect(noteFor(null, 'lid')).toBe('')
+    expect(noteFor('not a map', 'lid')).toBe('')
+    expect(noteFor({ lid: 'x' }, '')).toBe('')
+  })
+})
+
+describe('a part called `constructor`', () => {
+  /** That part, selected, with the row menu open on it. */
+  const onIt = (over) => {
+    const c = component({ sel: '/model/lid', ...over })
+    c.state.tree = indexTree({ id: '/model', name: 'model',
+                              children: [{ id: '/model/c', name: 'constructor' }] })
+    c.state.sel = '/model/c'
+    return c
+  }
+
+  it('reads no READER note off the prototype either', () => {
+    // The older of the three reads, and the one nobody looked at when the guard
+    // was written for the author's: same key, same map shape, same failure.
+    expect(onIt({ mine: {} }).computed().noteText).toBe('')
+  })
+
+  it('does not take the row menu down when it is right-clicked', () => {
+    // The read that fails EARLIEST of the three: the `Note` item slices the note
+    // to 22 characters for its hint, and a function has no `slice` — so an
+    // unguarded lookup throws inside `computed()` and the whole page goes with
+    // the menu, on a right-click.
+    const c = onIt({ mine: {} })
+    c.state.menu = { id: '/model/c', x: 0, y: 0 }
+
+    expect(() => c.computed()).not.toThrow()
+    const item = c.computed().menuItems.find((m) => m.label === 'Note')
+    expect(item.hint).toBe('')
+
+    // And the editor it opens starts empty rather than on a function.
+    item.onClick({ stopPropagation() {} })
+    expect(c.state.noteDraft).toBe('')
   })
 })
 
