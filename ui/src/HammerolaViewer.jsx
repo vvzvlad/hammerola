@@ -1159,9 +1159,18 @@ export default class HammerolaViewer extends React.Component {
       // Files hang on a PART, so a group row has none of its own — the same rule
       // and the same reason as the note above it. A group is not a printable and
       // never has files under its own name; offering the union of its leaves'
-      // instead would be one click asking the browser for a dozen downloads,
-      // which browsers block after the first, and the whole build's files are one
-      // menu away in the header already.
+      // instead would be one click asking the browser for a dozen downloads, and
+      // the whole build's files are one menu away in the header already.
+      //
+      // THIS USED TO SAY BROWSERS BLOCK EVERY DOWNLOAD AFTER THE FIRST. They do
+      // not — they ASK, once, with a per-site permission a person grants and the
+      // browser then remembers. Corrected here rather than deleted because the
+      // false version reads like a hard wall and was quoted onward as one: it
+      // makes "hand out N files on one click" look impossible, when for a person
+      // it costs one prompt. What it does still cost is anything driving the
+      // page that cannot answer a prompt — an agent — and a file whose name the
+      // page never chose. Those are the reasons to prefer one archive over N
+      // links; "the browser refuses" is not one, because it does not.
       ...(mNode.isNode ? [] : fileRows(mNode.name)),
       mi('Copy name', '', () => {
         try {

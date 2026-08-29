@@ -165,8 +165,12 @@ describe('the row menu', () => {
   it('offers a group nothing, the same way a note is not offered on one', () => {
     // Files hang on a PART. A group is not a printable, has no files under its
     // own name, and its leaves' files are one menu away in the header — where
-    // they can be taken one at a time instead of as a dozen downloads a browser
-    // would block after the first.
+    // they can be taken one at a time instead of as a dozen downloads at once.
+    //
+    // This comment used to end "a browser would block after the first", which is
+    // false: a browser ASKS, once, with a per-site permission it then remembers.
+    // Corrected rather than dropped because the false version made the choice
+    // look like a constraint.
     const items = menuOn({ node: '/model/inner' })
     expect(labels(items)).toEqual(['Isolate', 'Hide', 'Translucent', 'Copy name'])
   })
