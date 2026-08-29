@@ -633,7 +633,7 @@ export default class HammerolaViewer extends React.Component {
 
   // -- switching revisions in place -----------------------------------------
   //
-  // issue #62. Two revisions of one part are looked at from ONE angle:
+  // Issue #62. Two revisions of one part are looked at from ONE angle:
   // somebody aims the camera at the corner they are unsure about, hides the
   // shell, lays a section on it, and then wants to see the same thing on the
   // build before this one. A full page load throws away every one of those at

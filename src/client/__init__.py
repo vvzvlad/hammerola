@@ -64,8 +64,8 @@ THREE VERBS ARE SHAPED BY WHAT THEY ARE NOT ALLOWED TO DO, and the shape is the
 decision rather than a limitation of what was written:
 
   * `source` and `artifacts` are two verbs over one build because the RIGHTS
-    differ: the artefacts are public, the code is behind the secret (issue
-    #17). A single verb with a flag would put both behind one word.
+    differ: the artefacts are public, the code is behind the secret
+    (issue #17). A single verb with a flag would put both behind one word.
     `source` also unpacks into a directory of its own — writing over the working
     copy is a flag, and that flag additionally requires git to call the tree
     clean, because a clean tree is the only thing that can undo it.

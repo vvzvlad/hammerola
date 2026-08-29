@@ -34,8 +34,8 @@ repeating something it measured itself.
 A PUBLISHED BUILD ALSO LEAVES ITS CODE BEHIND, and the worker is where that is
 decided because it is the only place that knows whether a revision happened.
 `_keep_the_code` hands the pushed body to the store as the code of the revision
-it just published, with a second copy of this same captured log beside it (issue
-#17); every other ending deletes the body. So the sources of a build that
+it just published, with a second copy of this same captured log beside it
+(issue #17); every other ending deletes the body. So the sources of a build that
 FAILED are not kept — a stored tree belonging to no published revision is one
 nothing can answer for, and the author is looking at that failure with the tree
 still on their own disk.
