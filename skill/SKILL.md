@@ -419,12 +419,15 @@ something that was not going anywhere in the first place.)
 
 ## Keeping checks fast enough to run
 
-A build has a hard wall clock and the hub is not your laptop: measured on a real
-model, the same geometry runs **about four times slower there** — its booleans
-are single-threaded, so the machine's other cores do not help. Two minutes of
-checks locally is eight on the hub. A model that outgrows the ceiling is not
-refused politely; it is killed mid-run and you get a timeout instead of an
-answer.
+**A build has fifteen minutes of wall clock, and running past it is not a
+polite refusal** — the build is killed mid-run and what comes back is a timeout
+instead of an answer. Geometry is rarely what gets there; `checks()` is, because
+it is the part that grows every time the part teaches you something.
+
+You will usually have no way to time this before pushing: the CAD kernel lives
+in the hub's image, so a model that imports `cadquery` does not necessarily run
+anywhere else at all. Do not calibrate against whatever machine you are on —
+write the checks so the question of speed does not arise.
 
 None of what follows is a reason to check less. All three are the same check,
 written so it costs what it should.
