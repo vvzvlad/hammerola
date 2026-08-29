@@ -235,6 +235,28 @@ class Limits:
     # RLIMIT_CPU is summed over threads: on a 20-core host that limit would
     # therefore fire twenty times sooner than the number suggests. Capping the
     # pool is what makes the CPU ceiling mean roughly what it says.
+    #
+    # SO THIS NUMBER IS NOT A THROUGHPUT DECISION, and it costs build time --
+    # measured, 2026-08-29, and written up as SPEC §8 entry 68. On a real model
+    # the pairwise interference check is 325 independent intersects, which is
+    # perfectly parallel: 2.7 s on a laptop that spreads it over every core,
+    # over 50 s here. That is x20 on that ONE check. Read the entry before
+    # reaching for the number, because x20 is also the misleading half: the
+    # check is about a tenth of the build, so lifting the cap entirely buys
+    # around 8%, not "a few times". The weight is in slower cores and in the
+    # mass of single-threaded booleans the pool does not touch.
+    #
+    # Raising it is now mechanical rather than delicate: `cpu_seconds` above is
+    # `wall_seconds * occt_threads * 1.25`, so the CPU ceiling follows this
+    # number instead of being re-derived by hand, and test_build_ceilings.py
+    # fails if it does not. What is missing is the one fact this repository does
+    # not contain -- the container's core count. Keep
+    # `MAX_CONCURRENT_BUILDS * occt_threads` inside it, or two builds simply
+    # contend for the cores this cap exists to stop them contending for.
+    #
+    # AND MEASURE WITH A SAMPLING PROFILER. `cProfile` reports almost nothing
+    # here: OCC spends ~89% of its time in that pool, invisible to a profiler
+    # watching the main thread, so the ordinary tool says the build is fast.
     occt_threads: int = 2
     # `faulthandler.dump_traceback_later(N, exit=True)` in the child. MUST stay
     # under `wall_seconds` or it never fires -- the parent's SIGKILL gets there
