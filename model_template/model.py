@@ -31,6 +31,7 @@ publishing at all. Paths may be at most 8 components deep and a push may carry
 at most 1024 files.
 """
 
+from functools import cache
 from pathlib import Path
 
 import cadquery as cq
@@ -82,6 +83,15 @@ MIN_STL_BYTES = 1024
 # orientation that matters is the one on the bed.
 # --------------------------------------------------------------------------
 
+# @cache ON EVERY BUILDER, and it is not a micro-optimisation. `views()`,
+# `printables()` and `checks()` each call these, and `checks()` usually calls
+# them from several places -- without this the whole assembly is rebuilt a dozen
+# times per build, which is about a fifth of the run on a model of any size. It
+# is safe because these are pure functions of the constants above and CadQuery
+# returns new objects rather than mutating in place; the one in-place change
+# that happens (an STL export triangulates the shape) is undone by the hub after
+# each export. Do not cache a builder whose result you then mutate.
+@cache
 def build_base() -> cq.Workplane:
     """The open-topped tray, printed exactly as modelled."""
     return (
@@ -96,6 +106,7 @@ def build_base() -> cq.Workplane:
     )
 
 
+@cache
 def build_lid() -> cq.Workplane:
     """The plate plus the lip that drops into the tray, flat face down.
 
@@ -245,14 +256,32 @@ def checks(out_dir):
     problems += checklib.pairwise_interference(
         [base, lid_as_assembled()], ["base", "lid"])
 
-    # 3. Both sides of the joint have to stay flat all the way to the edge. One
+    # 3. The shell has to have left a floor and a hollow. Asked as two POINTS,
+    #    with checklib.material_at -- never as a boolean against a small cube.
+    #    The point probe costs microseconds where the boolean costs
+    #    milliseconds, and a model that scans a channel or grids a face does
+    #    hundreds of them; on a real model that was the single largest line of
+    #    a 495-second check run.
+    #
+    #    Both points sit half a wall INSIDE what they ask about, never on a
+    #    face. `material_at` answers about the POINT, so a probe sitting on a
+    #    surface answers about the surface -- and a cube, which answers about a
+    #    small NEIGHBOURHOOD, would give a different answer there. Put the point
+    #    where material is required and the two questions become the same one.
+    solid = checklib.material_at(base)
+    assert solid(0.0, 0.0, WALL / 2.0), (
+        "the tray has no floor at its centre: the shell took it away")
+    assert not solid(0.0, 0.0, HEIGHT - WALL / 2.0), (
+        "the tray is solid where the cavity should be")
+
+    # 4. Both sides of the joint have to stay flat all the way to the edge. One
     #    chamfer there and the box stands open by the size of the bevel -- and
     #    it reads as a modelling detail rather than as a fault.
     problems += checklib.mating_face_flat(base, HEIGHT, name="base rim")
     problems += checklib.mating_face_flat(lid, LID_THICKNESS,
                                           name="lid underside")
 
-    # 4. Every part fits a printer that exists, in the orientation it is
+    # 5. Every part fits a printer that exists, in the orientation it is
     #    exported in, and the mesh that came out of it is a real one.
     for name, part in printables().items():
         box = part.val().BoundingBox()

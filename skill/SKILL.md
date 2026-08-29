@@ -417,6 +417,72 @@ only held downwards is held by gravity. (A wheel was retained only downwards
 against an upward axial pull; the bearing cap made the day before was holding
 something that was not going anywhere in the first place.)
 
+## Keeping checks fast enough to run
+
+A build has a hard wall clock and the hub is not your laptop: measured on a real
+model, the same geometry runs **about four times slower there** — its booleans
+are single-threaded, so the machine's other cores do not help. Two minutes of
+checks locally is eight on the hub. A model that outgrows the ceiling is not
+refused politely; it is killed mid-run and you get a timeout instead of an
+answer.
+
+None of what follows is a reason to check less. All three are the same check,
+written so it costs what it should.
+
+**Ask about a point with `checklib.material_at`, never with a boolean.** "Is
+there material here" written as `body.intersect(small_cube)` costs milliseconds
+to tens of milliseconds; the point probe costs microseconds. A scan along a
+channel or a grid over a seat is hundreds of those, and on the model that
+prompted this it was the single largest line of a 495-second check run.
+
+```python
+solid = checklib.material_at(body)          # once, not per point
+for z in range(...):
+    if not solid(x, y, z):
+        problems.append(f"the wall is hollow at z={z}")
+```
+
+**They are not the same question, so move your points when you switch.** A
+0.6 mm cube reaches 0.3 mm in every direction — it answers about a
+*neighbourhood*. `material_at` answers about the *point*. Away from surfaces
+they agree exactly; within that reach they need not, so a probe grid written to
+sit right against a face will flip answers when ported. Put each point where
+material is *required* — half a millimetre inside the wall, not on it — and the
+question becomes the one you meant either way. A probe is bound to the shape you
+took it from: take a fresh one after a transform or a rebuild.
+
+**Build each part once per `checks()`.** Builders are pure functions of the
+constants at the top of the file, and `checks()` typically calls four or five of
+them from a dozen places, rebuilding the whole assembly every time. One
+decorator ends it:
+
+```python
+from functools import cache
+
+@cache
+def build_lid():
+    ...
+```
+
+Worth about a fifth of the run on a model of any size. It is safe because
+CadQuery operations return new objects rather than mutating in place — but if
+you ever mutate a builder's result, do not cache that builder. The one in-place
+change that does happen is not yours: exporting an STL triangulates the shape,
+after which its bounding box is the *mesh's*, out by tenths of a millimetre on
+anything filleted. The hub throws that triangulation away after each export, so
+a cached part handed to both `printables()` and `checks()` still measures as
+itself.
+
+**Do not pre-filter pairs before `checklib.pairwise_interference`.** It already
+rejects pairs whose bounding boxes cannot touch, before doing any boolean.
+Hand-written filtering in front of it buys nothing and can only remove pairs the
+check was meant to see.
+
+**If you profile, use a sampling profiler.** `cProfile` reports almost nothing
+here: the CAD kernel spends ~89% of its time in a thread pool that a profiler
+watching the main thread cannot see, so the ordinary tool will tell you the
+build is fast while it takes ten minutes.
+
 ## Four rules that break a push, in the order they bite
 
 **1. File names.** Every component of every path in the project must match

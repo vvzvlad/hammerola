@@ -33,11 +33,107 @@ the real child, which inherits them. Nothing unsafe happens in the window.
 """
 
 from dataclasses import dataclass, replace
+import os
 import resource
 import sys
 
 
 MiB = 1024 * 1024
+
+# --- how many cores one build may use --------------------------------------
+# How many builds the hub runs at once. It MUST equal `jobs.MAX_CONCURRENT_BUILDS`
+# and cannot import it: jobs imports this package, so the arrow only points one
+# way. `tests/test_build_ceilings.py` compares the two, which is the only reason
+# a second spelling of one number is acceptable here.
+BUILDS_SHARING_THE_HOST = 2
+
+# Ceiling on the pool whatever the machine has. OCCT's parallel sections scale
+# sublinearly, and `cpu_seconds` is a multiple of this number -- on a 64-core
+# host an uncapped share would put the CPU backstop at ten hours, i.e. switch it
+# off. Eight is enough to make the parallel checks parallel and small enough to
+# keep the backstop meaning something.
+MAX_OCCT_THREADS = 8
+
+
+def _cgroup_cpu_quota():
+    """Cores this container may use per the cgroup, or None if unlimited.
+
+    `os.cpu_count()` reports the HOST's cores and knows nothing about a
+    `cpus:` limit in compose -- so on a host with sixteen cores and a two-core
+    quota it answers sixteen, and every derived number is eight times too big.
+    Nothing sets that limit today, and SPEC 8A.2 step 0 says container limits
+    are set at the first deploy, which is exactly when this would start lying.
+    """
+    try:  # cgroup v2
+        with open("/sys/fs/cgroup/cpu.max", encoding="ascii") as handle:
+            quota, period = handle.read().split()[:2]
+        if quota != "max":
+            return max(1, int(int(quota) / int(period)))
+        return None
+    except (OSError, ValueError, IndexError):
+        pass
+    try:  # cgroup v1
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us", encoding="ascii") as handle:
+            quota = int(handle.read().strip())
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us", encoding="ascii") as handle:
+            period = int(handle.read().strip())
+        if quota > 0 and period > 0:
+            return max(1, int(quota / period))
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _usable_cores():
+    """The smallest honest answer to "how many cores can this process use".
+
+    Three sources, because each of them is blind to a different thing: the
+    scheduler's affinity mask (what this process is pinned to), the cgroup
+    quota (what the container is allowed), and `os.cpu_count()` (what the
+    machine has). The minimum of whatever is available is the only one that
+    cannot promise cores that are not there.
+    """
+    answers = [count for count in (
+        len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
+        _cgroup_cpu_quota(),
+        os.cpu_count(),
+    ) if count]
+    return min(answers) if answers else 1
+
+
+def _default_occt_threads():
+    """The OCCT pool one build gets: its share of the cores, floor 2, cap 8.
+
+    A SHARE, because `BUILDS_SHARING_THE_HOST` of these run at once and a pool
+    per build sized to the whole machine is not parallelism, it is contention
+    for the cores the cap exists to protect.
+
+    Floor of two rather than one: this was a hard 2 until 2026-08-30 and a
+    machine that reports fewer cores than it has (a container with a fractional
+    quota, an odd affinity mask) must not make builds slower than they were.
+    """
+    return max(2, min(MAX_OCCT_THREADS, _usable_cores() // BUILDS_SHARING_THE_HOST))
+
+
+DEFAULT_OCCT_THREADS = _default_occt_threads()
+
+# --- the two ceilings that follow from it ----------------------------------
+# Wall clock, and the two numbers DERIVED from it, in one place so the
+# derivations are code rather than a comment somebody has to honour. The
+# reasoning for each value is at the field that uses it, below.
+DEFAULT_WALL_SECONDS = 900.0
+
+# The gap the child's traceback needs to land in before the parent's SIGKILL.
+DEFAULT_HANG_DUMP_GAP_SECONDS = 10.0
+DEFAULT_HANG_DUMP_SECONDS = DEFAULT_WALL_SECONDS - DEFAULT_HANG_DUMP_GAP_SECONDS
+
+# RLIMIT_CPU is summed over threads, so the backstop has to clear what a fully
+# parallel build may legitimately burn -- wall x threads -- with room. Written
+# as a formula because the alternative is a literal that silently stops being a
+# backstop the moment either factor moves.
+CPU_HEADROOM = 1.25
+DEFAULT_CPU_SECONDS = int(
+    DEFAULT_WALL_SECONDS * DEFAULT_OCCT_THREADS * CPU_HEADROOM)
 
 # --- exit codes owned by the WRAPPER ---------------------------------------
 # High and distinctive on purpose: an exit code from this range means the
@@ -154,7 +250,7 @@ class Limits:
     # here, `jobs.py` calls `run_build` without a `limits=` argument, so these
     # class defaults ARE production. Changing them is a code change, an image
     # and a redeploy.
-    wall_seconds: float = 900.0
+    wall_seconds: float = DEFAULT_WALL_SECONDS
     # Bytes of the child's output kept. The rest is drained and discarded --
     # draining matters, a child blocked writing into a full pipe is a hang the
     # parent then has to kill, which would report a runaway `print` as a
@@ -200,7 +296,7 @@ class Limits:
     # needing ~500 CPU-s. 900 would have been under 2 x 900 and would therefore
     # have fired FIRST on a parallel build -- killing the builds the raise was
     # made to allow, and reporting them as something other than a timeout.
-    cpu_seconds: int | None = 2250
+    cpu_seconds: int | None = DEFAULT_CPU_SECONDS
     # Address space, NOT resident memory. OCP and VTK map several gigabytes of
     # shared objects before a model does anything, so this cannot be set near
     # the real working set (measured: ~450 MB resident right after `import
@@ -246,18 +342,17 @@ class Limits:
     # around 8%, not "a few times". The weight is in slower cores and in the
     # mass of single-threaded booleans the pool does not touch.
     #
-    # Raising it is now mechanical rather than delicate: `cpu_seconds` above is
-    # `wall_seconds * occt_threads * 1.25`, so the CPU ceiling follows this
-    # number instead of being re-derived by hand, and test_build_ceilings.py
-    # fails if it does not. What is missing is the one fact this repository does
-    # not contain -- the container's core count. Keep
-    # `MAX_CONCURRENT_BUILDS * occt_threads` inside it, or two builds simply
-    # contend for the cores this cap exists to stop them contending for.
+    # SO IT IS MEASURED NOW rather than fixed at 2 (2026-08-30). The fact that
+    # was missing -- the container's core count -- is not missing at runtime,
+    # only at the time somebody writes a literal, so `_default_occt_threads`
+    # reads it and divides by the builds that share the machine. `cpu_seconds`
+    # above follows this number by formula, so the two cannot drift and
+    # test_build_ceilings.py fails if they do.
     #
     # AND MEASURE WITH A SAMPLING PROFILER. `cProfile` reports almost nothing
     # here: OCC spends ~89% of its time in that pool, invisible to a profiler
     # watching the main thread, so the ordinary tool says the build is fast.
-    occt_threads: int = 2
+    occt_threads: int = DEFAULT_OCCT_THREADS
     # `faulthandler.dump_traceback_later(N, exit=True)` in the child. MUST stay
     # under `wall_seconds` or it never fires -- the parent's SIGKILL gets there
     # first and the stack, which is the entire reason this exists, is lost.
@@ -271,7 +366,7 @@ class Limits:
     # a pusher sees lands at 890 s and not at 900. The first real build was
     # reported as "killed at 0:01:50" for exactly that reason, against a wall
     # clock of 120.
-    hang_dump_seconds: float | None = 890.0
+    hang_dump_seconds: float | None = DEFAULT_HANG_DUMP_SECONDS
 
     def __post_init__(self):
         if self.wall_seconds <= 0:
