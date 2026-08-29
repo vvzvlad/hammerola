@@ -16,6 +16,7 @@ import inspect
 import io
 import json
 import os
+import socket
 import subprocess
 import tarfile
 import textwrap
@@ -23,7 +24,7 @@ import tracemalloc
 import uuid
 
 import pytest
-from harness import (chardev_entry, dir_entry, fifo_entry, file_entry,
+from harness import (TOKEN, chardev_entry, dir_entry, fifo_entry, file_entry,
                      hardlink_entry, meta_bytes, raw_tar_gz, symlink_entry,
                      view_bytes)
 from loguru import logger
@@ -2447,6 +2448,93 @@ def test_a_corrupt_archive_leaves_no_staging_tree(hub):
     whole = raw_tar_gz(_payload() + [file_entry("big.json", b"{}" + b" " * 200_000)])
     hub.publish("proj1", "abc123", whole[: len(whole) // 2])
     assert _leftovers(hub, "proj1") == []
+
+
+def _record_spools_at_reply_time(hub, monkeypatch):
+    """Every reply this hub writes, as (status, spool files present right then).
+
+    THE SNAPSHOT IS TAKEN IN THE SERVER THREAD, one statement before the status
+    line reaches the socket, which is what makes the test below deterministic
+    where `_leftovers` after a request is not. A test that looks at the volume
+    once the client has its answer is racing the handler's own `finally`: on an
+    idle laptop the request thread finishes cleaning up first and the assertion
+    passes for a reason that has nothing to do with the code, and on a loaded CI
+    runner it does not. The ORDER is the property; observe the order.
+
+    Wrapped at `_send` because it is the single funnel every reply goes through
+    (`_json` and `_error` both end here) and because it runs BEFORE
+    `end_headers`, which is where the first byte actually leaves.
+    """
+    handler = hub.server.RequestHandlerClass
+    original = handler._send
+    seen = []
+
+    def recording_send(self, status, body, content_type, *args, **kw):
+        seen.append((status, sorted(
+            p.name for p in hub.data.iterdir()
+            if p.name.startswith(store_module.UPLOAD_PREFIX))))
+        return original(self, status, body, content_type, *args, **kw)
+
+    monkeypatch.setattr(handler, "_send", recording_send)
+    return seen
+
+
+def test_a_refusal_is_answered_only_after_the_spool_is_gone(hub, monkeypatch):
+    """The spooled body is unlinked BEFORE the refusal is written, on every path.
+
+    The successful path has always had this order — `_queue_build` sits below the
+    `finally` — and the refusals did not: they answered from inside the `try`,
+    so a client that had just been told 400, 422 or 500 could look at the data
+    directory and still find the `.upload-<uuid>` its own push was spooled into.
+    That is what `test_a_corrupt_archive_leaves_no_staging_tree` failed on in CI
+    while passing everywhere else.
+
+    All three refusal clauses are driven, because they are three separate exits
+    and the fix is only worth anything if it covers each: the problem
+    `_spool_body` reports, the PublishError the store raises, and the unexpected
+    exception. The BrokenPipeError clause is deliberately not here — it answers
+    nobody at all, which is the one case with no reply to be ordered against.
+    """
+    seen = _record_spools_at_reply_time(hub, monkeypatch)
+
+    # (1) The store's own refusal: a truncated archive, the case CI failed on.
+    whole = raw_tar_gz(_payload() + [file_entry("big.json", b"{}" + b" " * 200_000)])
+    assert hub.publish_async(
+        "proj1", "abc123", whole[: len(whole) // 2]).status_code == 422
+
+    # (2) The body itself ending early, reported by `_spool_body` rather than
+    # raised. Over a raw socket because httpx cannot under-deliver a body it has
+    # already announced, and under-delivering is the whole point.
+    host, port = hub.server.server_address[:2]
+    with socket.create_connection((host, port), timeout=30) as sock:
+        sock.sendall(
+            b"POST /api/v1/publish/proj1/abc123 HTTP/1.1\r\n"
+            b"Host: hub\r\n"
+            b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
+            b"Content-Length: 100000\r\n"
+            b"\r\n" + b"\0" * 4096)
+        sock.shutdown(socket.SHUT_WR)  # EOF long before the declared length
+        reply = sock.recv(4096)
+    assert reply.startswith(b"HTTP/1.1 400"), reply[:200]
+
+    # (3) The hub's own fault, which must not be answered any sloppier. Last,
+    # because the patch stays on for the rest of the test — `monkeypatch.undo()`
+    # would take the recorder off with it.
+    def boom(*args, **kw):
+        raise RuntimeError("the volume went away mid-accept")
+
+    monkeypatch.setattr(hub.store, "accept_sources", boom)
+    assert hub.publish_async(
+        "proj1", "abc123", _payload_build()).status_code == 500
+
+    # The recorder has to have SEEN all three, or the assertion below is an
+    # assertion about an empty list — the failure this suite counts verdicts to
+    # avoid everywhere else.
+    assert {status for status, _ in seen} >= {400, 422, 500}, seen
+    late = [(status, spools) for status, spools in seen if spools]
+    assert late == [], (
+        f"these replies were written while the pushed body was still spooled on "
+        f"the volume: {late}")
 
 
 def test_gzip_bomb_is_refused_without_filling_the_disk(hub_factory):
