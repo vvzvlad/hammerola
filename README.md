@@ -289,6 +289,65 @@ project. Four things about it are worth knowing before writing the second one:
 
 ## Running a hub
 
+**A hub is one Docker image, and everything it needs is inside it.** That is not
+packaging convenience, it is the architecture: the CAD kernel is in the image
+(`cadquery` and the native OpenCASCADE binding, with the seven X/GL/expat system
+libraries it needs), and nothing is ever installed on a model's say-so — a
+`model.py` gets what the image already has and nothing more. The browser bundle
+is compiled in a `node:22` stage that never reaches the runtime image, so a
+service that is Python does not ship a node toolchain. Alongside them travel the
+page templates, the viewer payload, the starter template and the client's own
+sources: the one-file zipapp behind `/start/hammerola` is assembled out of those
+when the request arrives.
+
+CI builds and publishes it — `.gitea/workflows/image-check-publish.yml`, on every
+push, tagged `:<sha>` and `:latest`, in that order, so `:latest` moving is the
+commit of the whole publication. Between the build and the push sits a gate,
+`ci/smoke.py`, which starts the image and asks it what a test suite structurally
+cannot, because the suite runs against a checkout and never looks at the
+artefact: that the entrypoint drops privileges for real, that the
+missing-variable guard fires and names the variable, that `.dockerignore` kept
+the tests and the `.env` out, that the CAD kernel imports, and that `/start`
+really answers. Nothing reaches the registry until it is green, which is also
+why `docker login` runs *after* it and never before.
+
+Locally the same image is a plain build with no arguments — but expect it to be
+big and slow. The CAD kernel brings VTK with it, hard-pinned by `cadquery-ocp`
+itself, and that alone is about 0.6 GB the hub never renders with; it is carried
+anyway, because the only way out is substituting a different distribution behind
+the declared dependency, and that trade was decided against.
+
+```bash
+docker build -t hammerola .
+```
+
+**Deploying is `docker-compose.yml` in this repository** — a template with
+placeholder values that pulls the published image. Do not build on the host that
+serves it. Four things in it are load-bearing rather than decorative, and each
+one is spelled out at length in the file itself:
+
+* **One volume at `/app/data`.** Every build, pointer, source tree, comment and
+  job lives there; nothing ages out, so it grows monotonically and is cleared by
+  hand. The volume's real name is `<stack>_<key>`, composed at deploy time —
+  getting it wrong does not fail, it silently starts the service from a fresh
+  empty one with all the state still sitting in the volume nothing references.
+* **One secret, `EDIT_TOKEN`.** It is what publishing, the sources, the log, the
+  comment queue, renaming and removing all check; everything else has a default
+  in `src/settings.py`. Without it the service refuses to start and says which
+  variable is missing, rather than coming up half-configured.
+* **Non-root, by the entrypoint and not by the Dockerfile.** It starts as root,
+  fixes ownership of the volume and drops to `app` (uid 1000) with gosu. Nothing
+  declares a `USER`, so removing the entrypoint silently gives the service root
+  back — which is exactly why the gate checks it on the built image.
+* **No `EXPOSE`, and compression at the edge.** The port is published by the
+  reverse proxy through compose labels, and so is gzip: a view is JSON in the
+  megabytes that compresses about 6.5×, and the application deliberately does
+  not compress anything itself. The healthcheck's timings are part of the deploy
+  mechanism too — an update that cannot report healthy inside its window is
+  rolled back, and a long `interval` with no `start_period` gets a perfectly
+  good image rolled back for nothing.
+
+**Working on the hub is the other mode**, and it needs no docker at all.
 Everything routine is wrapped in the `Makefile` (`make help` lists all targets):
 
 ```bash
@@ -303,7 +362,9 @@ the system Python. node is needed by the frontend targets only: `make ui`,
 which builds the browser bundle, and `make ui-test`, which runs the JS suite.
 Both refuse to run without npm. `make test` does not refuse — it runs the
 Python suite either way and then says out loud that it skipped the browser
-half.
+half. What `make run` cannot give you is the CAD kernel unless the machine
+happens to have it: a workstation without it serves every page and refuses every
+build, which is the one thing the image is there for.
 
 ## Where the rest is written down
 

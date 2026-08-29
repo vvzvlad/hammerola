@@ -1,9 +1,17 @@
 # Makefile — single entry point for every repeated action in this project.
 # Run `make` (or `make help`) to list the available targets.
 #
-# All routine commands (environment setup, tests, run, docker build/push) live
+# All routine commands (environment setup, tests, run, the browser bundle) live
 # here so they stay documented, consistent and hard to get wrong. Prefer adding
 # a target over writing a one-off command in the shell or in CI.
+#
+# THE IMAGE IS NOT BUILT HERE, and there is no target for it. This line used to
+# claim "docker build/push" among the above; nothing of the sort ever existed,
+# and a wrapper would be worse than its absence: the build is a bare
+# `docker build .` with no arguments, while the tags, the gate and the push are
+# the publishing workflow's (.gitea/workflows/image-check-publish.yml), which is
+# the one place they may be computed. A target that built an image locally would
+# read like the thing CI does and be a different thing.
 
 # --- Configuration -----------------------------------------------------------
 VENV   ?= .venv
