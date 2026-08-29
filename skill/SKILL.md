@@ -391,10 +391,10 @@ digit, no leading underscore, no spaces, no Cyrillic. One bad name refuses the
 deliberate and is not relaxed: it is what makes a path inside the archive
 incapable of naming anything outside it. Hidden entries (`.git`, `.env`,
 `.venv`) are dropped instead of refusing it, so a normal repository publishes
-fine. Paths are at most 8 components deep, files at most 1024, and the tree at
-most 64 MiB unpacked — the client says "67 MB", counting in millions, and that
-ceiling is only its default: a deployment may set its own, and its 413 carries
-the real number.
+fine. A path is at most 8 components deep, a push carries at most 1024 files,
+and the tree is at most 64 MiB unpacked — the client says "67 MB", counting in
+millions, and that ceiling is only its default: a deployment may set its own,
+and its 413 carries the real number.
 
 **2. Never put a `checklib.py` at the root of a model.** A model is imported
 with its own directory first on `sys.path`, so your copy wins over the one in
