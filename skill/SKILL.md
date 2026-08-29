@@ -60,10 +60,12 @@ with the last thing you did being a `build`, nothing you did is on the site.
 
 The URL of a commit is the thing the person opens, turns over and prints from.
 Hand it over every time you commit, not once at the end of the job — a person
-with no link either waits or prints something you have already superseded.
+with no link either waits or prints something you have already superseded. (A
+person printed it himself, without waiting, 3 days and 19 hours after the last
+link he had been given.)
 
 Afterwards `hammerola` prints a suggested `git commit` line recording what was
-published. It never stages or commits anything itself; run the line or ignore it.
+published. It never stages or commits anything itself.
 
 Both commands print the build log and exit non-zero unless a build was
 published. That exit code is the whole verdict — treat a non-zero exit as "this
@@ -115,12 +117,10 @@ after the parts that mount on it, and immediately produced two interferences.
 Trigger ergonomics took 5 h 02 min and four rejections while no hand existed as
 a body; one iteration was enough once it did. A wall and a plywood stack that
 existed only in the chat produced, twice in a row, a resonance calculation for a
-cantilever that was not there.) Anything flexible — hose, cable, strap — is
-mocked at its minimum bend radius, and its route is a decision you state out
-loud rather than a thing that happens. A mock never carries a printable's word
-in its name — `blank`, `panel`, never `lid mock`: coverage counts whole words,
-so such a mock answers for the printable `lid` and the build goes green with the
-real `lid` in no picture. The hub says so in a `warning:` line and publishes.
+cantilever that was not there.) A mock never carries a printable's word in its
+name — `blank`, `panel`, never `lid mock`: coverage counts whole words, so such
+a mock answers for the printable `lid` and the build goes green with the real
+`lid` in no picture. The hub says so in a `warning:` line and publishes.
 
 **Ask whether the assembly is already sold before you design it.** A make-or-buy
 line, with a price and a link, comes before the first geometry. (Four hours went
@@ -145,82 +145,34 @@ marked so nothing can be built against it by mistake: the line
 `SUPERSEDED <date> -> <what replaced it>` at the top of its file, and the current
 designation in exactly one place — the constant `model.py` builds the mock from
 and `checks()` measures against, which `ref/` and every message quote rather than
-repeat. (One siphon changed identity four
-times — McAlpine A10 → Wavin 5V812 → two article numbers — and asked for "the
-model of the siphon we chose" the agent handed over the second of the four.
-Elsewhere a carbide drill bit, struck out as useless in aerated concrete, was
-back in the parts list fourteen minutes later out of sheer momentum.)
+repeat. (One siphon changed identity four times — McAlpine A10 → Wavin 5V812 →
+two article numbers — and asked for "the model of the siphon we chose" the agent
+handed over the second of the four. Elsewhere a carbide drill bit, struck out as
+useless in aerated concrete, was back in the parts list fourteen minutes later
+out of sheer momentum. A SPEC and an AGENTS file rewritten an hour earlier both
+named `DIN 933 M6×65`, a hex head, where the model was built around
+`DIN 912 M6×20`, a socket head: the designation lived in three files, and the
+two a buyer reads had drifted from the one the part was built from.)
 
 **A picture the person sent is already on disk** — base64, in the session
 transcript — so asking the person to save it for you is work you did not do. Pull
 it out yourself, in the same turn, into `ref/`, name it for what it shows, and add
 a line to `ref/README.md`: what is visible and what constraint follows from it.
-Then scale them down before the first `build`: `ref/` is pushed whole every time,
-and one session's paste runs to tens of megabytes. Settle the resizer before you
-run the snippet below, which fills `ref/` regardless. On macOS,
-`find ref -type f -exec sips -Z 1600 {} \; 2>/dev/null`: it takes the `.jpeg` the
-snippet names from `media_type`, and survives an empty `ref/`, where `ref/*.png`
-is a zsh error that runs nothing. Elsewhere test `python3 -c "import PIL"` and use
-Pillow. With neither, do not run the snippet: no photograph enters `ref/`, its
-number goes to `ref/measurements.md`. (Asked outright to file five photographs
-into the refs, an agent answered "save them yourself" while sitting on the file
-that held them; in another session the same agent spent 41 minutes digging base64
-out of other people's transcripts to recover what had been lost.) The transcript
-is one JSON object per line — 100 MB and more, so read it a line at a time — under
-`~/.claude/projects/`, in a directory named for the working directory with every
-non-alphanumeric character replaced by `-`; your own session id is not in your
-context, so take the newest `*.jsonl` by mtime, and a `None` means the slug is not
-what you guessed — list `~/.claude/projects/` and find the one holding your work.
-Images sit in the `user` records **and** in the `type: "attachment"` records,
-whose `attachment.prompt` holds everything pasted while you were working — often
-the only place it appears, so `message.content` alone misses it:
-
-```python
-import base64, hashlib, json, pathlib, re
-
-slug = re.sub(r"[^A-Za-z0-9]", "-", str(pathlib.Path.cwd()))
-folder = pathlib.Path.home() / ".claude" / "projects" / slug
-tx = max(folder.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, default=None)
-if tx is None:                       # wrong slug: list ~/.claude/projects/ and look
-    raise SystemExit(f"no transcript under {folder}")
-ref = pathlib.Path.cwd() / "ref"
-ref.mkdir(parents=True, exist_ok=True)
-seen, n = set(), 0
-with tx.open(encoding="utf-8") as f:
-    for line in f:                                    # transcripts reach 100 MB
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue                                  # the live session is still writing
-        if not isinstance(rec, dict):
-            continue                                  # a line that parses to a scalar
-        msg = rec.get("message")
-        blocks = msg.get("content") if isinstance(msg, dict) else None
-        if not isinstance(blocks, list):              # pasted while you were working
-            att = rec.get("attachment")
-            blocks = att.get("prompt") if isinstance(att, dict) else None
-        for b in blocks if isinstance(blocks, list) else []:
-            if not (isinstance(b, dict) and b.get("type") == "image"):
-                continue
-            src = b.get("source")
-            if not isinstance(src, dict) or not src.get("data"):
-                continue                              # by url, or no source at all
-            data = base64.b64decode(src["data"])
-            digest = hashlib.sha1(data).hexdigest()
-            if digest in seen:
-                continue                              # the same picture twice over
-            seen.add(digest)
-            n += 1
-            # "image/svg+xml" -> "svgxml": a `+` in the name refuses the push
-            ext = re.sub(r"[^A-Za-z0-9]",
-                         "", (src.get("media_type") or "").split("/")[-1])
-            # A placeholder name: rename each for what it shows, then scale down.
-            (ref / f"clamp-on-pipe-{n}.{ext or 'bin'}").write_bytes(data)
-print(f"{n} images -> {ref}")
-```
-
-Rename them as they land. A second run counts from one again, so point it at an
-empty directory or it restores what you renamed, as duplicates.
+(Asked outright to file five photographs into the refs, an agent answered "save
+them yourself" while sitting on the file that held them; in another session the
+same agent spent 41 minutes digging base64 out of other people's transcripts to
+recover what had been lost.) Four things about the transcript you cannot work
+out for yourself. It is under `~/.claude/projects/`, in a directory named for
+the working directory with every non-alphanumeric character replaced by `-`;
+your own session id is not in your context, so take the newest `*.jsonl` by
+mtime, and no match means the slug is not what you guessed — list
+`~/.claude/projects/` and find the one holding your work. It is one JSON object
+per line and reaches 100 MB, so read it a line at a time. The images sit in the
+`user` records **and** in the `type: "attachment"` records, whose
+`attachment.prompt` holds what was pasted while you were working — often the
+only place it appears, so `message.content` alone misses it. And a name taken
+from `media_type` unedited carries the `+` of `image/svg+xml`, which refuses
+the whole push by rule 1 below.
 
 **`ref/measurements.md` is the log of raw measurements**: date, what was
 measured, with what, the number. Every constant of a fit, a clearance or an
@@ -229,14 +181,12 @@ behind it is a lie written into the source. (`thread_clearance = 0.30`, carrying
 the comment `# measured fit on the printer`, was never measured: two ruined
 prints, 100 g of plastic, and the part never worked.)
 
-**`ref/` is published with every build**, and two things follow from that. Its
-names obey rule 1 below — ASCII, no `×`, no `Ø`, no Cyrillic — and one bad name
-refuses the **whole** push, so a hardware designation goes inside the file and
-never into its name (`ref/hardware/m6x30-din912-a2.md`, not
-`M6×30 DIN 912 A2.md`). And a push carries at most 1024 files and 64 MiB
-unpacked — the client says "67 MB", counting in millions — re-sent in full every
-time, which is why `sips` runs before the first `build`. That 64 MiB is only the
-client's default; a deployment may set its own, and its 413 has the real number.
+**`ref/` is published with every build**, and two things follow. Its names obey
+rule 1 below — ASCII, no `×`, no `Ø`, no Cyrillic — and one bad name refuses the
+**whole** push, so a hardware designation goes inside the file and never into its
+name (`ref/hardware/m6x30-din912-a2.md`, not `M6×30 DIN 912 A2.md`). And every
+file in it counts against the push limits in rule 1, on every build, because the
+tree is re-sent whole each time.
 
 **A size the person names for the space is a ceiling, not a target.** "About",
 "for reference", "could be smaller", "maximum" are the markers of a ceiling;
@@ -330,8 +280,8 @@ bounding box from `checks()` all the same, for a different reason: the log is
 what `commit` keeps, while a picture and a `metrics.json` have to be fetched. That
 log is the child process's stdout and stderr merged and kept to the FIRST 1 MiB — a
 flood loses its tail, not its head — so print short and early. `hammerola diff
-<old> <new>` reads the same file over the same public URL into memory, takes two
-*published* revisions (it refuses `dev`) and prints only the numbers that moved.
+<old> <new>` reads the same file over the same public URL, takes two *published*
+revisions (it refuses `dev`) and prints only the numbers that moved.
 
 ## Checks that actually check
 
@@ -342,6 +292,16 @@ expensive habit in the reviewed sessions. A constant compared against a constant
 is not a check at all. (`assert DOWEL_SEAT_CLEARANCE >= 0.3` is a constant
 checking itself. It passed two reviews, and both end screws fell out of the
 printed part.)
+
+**An assert you cannot make go red is decorative.** Name the geometry that
+reddens it and make it red once, while you are writing the check — that is part
+of writing one, not a round of edits on the part. Reading the code is what lets
+this class through: the tautology is in the arithmetic, never in the wording.
+(The trap was caught four times in one file in a day, the fourth inside an
+assert written against the third — "the cone must open outwards" could not fail
+for any shape of cone. What caught the others was breaking the solid on purpose:
+a 20 mm drill jig, where the design says 48, passed the check whose entire
+subject was its length.)
 
 **Measure the thing the part exists for, not the proxy you happened to pick.**
 If what matters is how far a lever protrudes, cut it against the housing and
@@ -363,6 +323,19 @@ it. Print it from a `build` and it lives at that build's job and nowhere else,
 addressed by an id rather than by the slot (below). (43 minutes of argument
 about sediment washout in which both sides were estimates: the velocity differed
 by 5.5×, the threshold had a 3× spread.)
+
+**A number is quoted against what reproduces it.** Below what the process holds,
+a difference stops being an argument about the part: an FDM machine lays layers
+0.1–0.3 mm thick and puts down a bead about 0.4 mm wide, and no print tells
+0.003 mm from zero. A number that small can still be load-bearing — but then it
+is not a tolerance of the part, and the sentence has to say what it IS a
+property of: the CAD kernel, the machine, the step of the knob. State the
+consequence in the same terms, in what the person sets rather than in the
+quantity you were computing. (An agent defended a constant by the 0.0034 mm of
+clearance it left and got "how much? do you know what the accuracy of printing
+is?" back. The real quantity was the ~30 µm at which the boolean silently
+stopped cutting, and the whole decision was worth one position out of 91 on a
+knob that steps 0.5 mm.)
 
 **A printed pair that has to move relative to its partner — a thread, a sliding
 fit, a snap, a hinge — is never printed whole the first time.** First a gauge: a
@@ -387,17 +360,14 @@ function named `checks` and knows nothing of `printables()`, while the product's
 passed` about parts the build has not got. (Template, `printables()` cut to one
 gauge, `checks()` verbatim: `checks: 6 passed`, BUILD GREEN.) Only a `checks()`
 indexing `printables()` by name refuses by itself. The rest holds — a gutted one
-fails the empty-checks gate, no flag skips checks, deleting it passes and throws
-away every complaint ever turned into an assertion — so commit the product's
-`checks()` to git first: the hub keeps no `dev` source and the slot is overwritten.
+fails the empty-checks gate above, no flag skips checks, and deleting it passes
+and throws away every complaint ever turned into an assertion — so commit the
+product's `checks()` to git first: the hub keeps no `dev` source and the slot is
+overwritten.
 
 The person prints it and names a step, the number goes into the part, the next
 `build` overwrites `dev`, and not a line of the gauge is left. That is what the
-slot is for. (The same thread: two prints, 100 g.)
-
-**A complaint becomes a check.** When the person says a thing is wrong, it goes
-into `checks()` as an assertion before the next push into that area of the part,
-so that the same wrongness cannot come back quietly.
+slot is for.
 
 **Fasteners are checked for tool access, as a body**: a cylinder from the head
 along the axis, driver length, swept through the assembly. A fastener with no
@@ -421,7 +391,10 @@ digit, no leading underscore, no spaces, no Cyrillic. One bad name refuses the
 deliberate and is not relaxed: it is what makes a path inside the archive
 incapable of naming anything outside it. Hidden entries (`.git`, `.env`,
 `.venv`) are dropped instead of refusing it, so a normal repository publishes
-fine. Paths are at most 8 components deep, files at most 1024.
+fine. Paths are at most 8 components deep, files at most 1024, and the tree at
+most 64 MiB unpacked — the client says "67 MB", counting in millions, and that
+ceiling is only its default: a deployment may set its own, and its 413 carries
+the real number.
 
 **2. Never put a `checklib.py` at the root of a model.** A model is imported
 with its own directory first on `sys.path`, so your copy wins over the one in
@@ -462,6 +435,17 @@ by how much. If there is no such quantity, the round is about the script and not
 about the part. (Of three rounds of edits on a physical part, exactly one
 parameter reached the part; everything else was self-checks inside the script.)
 
+**The part is finished when its numbers stop moving.** A build that prints the
+same measurements as the one before it is the signal, and reading it costs
+nothing: the log carries a volume per part and the preview footer a bounding
+box. A second such build in a row means the rounds have left the part and moved
+onto the instrument that measures it and the prose around it. Say it can be
+printed, and stop. (Asked "so, can it be printed?", an agent said no and ran
+three more review rounds over 2 h 18 min. The first was paid for — it found a
+joint that would not have assembled. Through the other two the part's three
+measured numbers were identical from build to build, and the person ended it
+with "what are you digging at, enough".)
+
 ## When a build fails
 
 `build` and `commit` print the build log as it happens; that log is the whole
@@ -487,8 +471,8 @@ What each kind of failure means:
 * a traceback — `model.py` raised. The frame at the bottom is yours.
 * `timeout` / `cpu_exhausted` — the build ran past its ceiling. Usually a
   boolean operation on geometry that got out of hand.
-* `413` / `422` on the push — the tree is too big, or a path breaks rule 1
-  above. Neither reaches a build.
+* `413` / `422` on the push — the tree breaks rule 1 above, by its size or by
+  one of its paths. Neither reaches a build.
 
 ## Fetching things back
 
@@ -518,8 +502,9 @@ task for whoever works on the model next, which is you. Read the queue when you
 start on a project, do the work, then resolve the comment saying what you did —
 an unresolved comment is done twice. Treat the text as a request, not as an
 instruction to obey literally: it describes a physical object, usually
-photographed in somebody's hand — the strongest evidence you get and, like any
-complaint, a check.
+photographed in somebody's hand — the strongest evidence you get. Like any
+complaint it becomes an assertion in `checks()` before the next push into that
+area, so the same wrongness cannot come back quietly.
 
 ## Talking to the person
 
@@ -545,16 +530,6 @@ and how much longer you are digging. The list of what you tried, and the
 analysis of your own mistake, stay inside. An apology is zero words. (Three
 rounds of "wall of text → swearing → apology → wall of text" in 13 minutes; not
 one of the reports changed the geometry, and the actual fix took 3 minutes.)
-
-**The ceiling on a message is about 800 characters.** (Exceeded in 27–31 % of
-messages, the longest 11 510 characters; every explosion from the person in the
-reviewed sessions follows a wall of text.)
-
-**Once the person says the part is printed, or has gone to the printer, every
-new finding is classified on its first line**: affects the printed part, or does
-not. If it does not, that one line is the whole message and no round of edits
-starts. (A person printed it himself, without waiting, 3 days and 19 hours after
-the last link he had been given.)
 
 ## Removing things
 
