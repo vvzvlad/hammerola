@@ -19,6 +19,8 @@ holds these on a workstation is the pair below, and what holds them in CI is
 nothing at all.
 """
 
+import sys
+
 import pytest
 
 import checklib as top_level
@@ -149,6 +151,27 @@ def test_a_probe_answers_about_the_part_it_was_taken_from():
 
 
 def test_something_that_is_not_geometry_is_refused_by_name():
+    with pytest.raises(TypeError, match="lid"):
+        checklib.material_at("not a solid", name="lid")
+
+
+def test_the_refusal_does_not_need_the_cad_kernel(monkeypatch):
+    """A bad argument answers TypeError even where OpenCASCADE is absent.
+
+    Note what this test does NOT do: call `_cq()`. It runs everywhere, and it
+    has to, because the machine without the kernel is the case it is about.
+
+    The first version of `material_at` imported OCP at the top of the function,
+    before looking at its argument, so passing a string answered
+    `ImportError: libGL.so.1` -- an error about the environment for a mistake
+    in the code. CI caught it by going red on the test above, in the
+    python:3.11-slim container the suite runs in. On a workstation with the
+    kernel installed neither test can see the difference, which is why the
+    import is blocked here rather than assumed absent.
+    """
+    for name in ("OCP", "OCP.BRepClass3d", "OCP.gp", "OCP.TopAbs"):
+        monkeypatch.setitem(sys.modules, name, None)
+
     with pytest.raises(TypeError, match="lid"):
         checklib.material_at("not a solid", name="lid")
 
