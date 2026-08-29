@@ -9,7 +9,8 @@ said where to get them: the front page asks for a token, and the token is not
 what is missing. So the hub serves the three things a first run needs, and one
 document that names them.
 
-    GET /start                    the manifest: the three paths, and `empty`
+    GET /start                    the manifest: the three paths, the skill's
+                                  version, and `empty`
     GET /start/skill.md           the agent instructions, one Markdown file
     GET /start/hammerola          the client, one executable file
     GET /start/template.tar.gz    a model directory that builds as it stands
@@ -45,12 +46,20 @@ argument above buys, and until it was written the argument was a debt: the
 route answered a question about the deployment anonymously and no reader had
 collected on it.
 
-ALL FOUR FIELDS HAVE A READER NOW, `empty` included — it is the one the
-paragraph above is about, and it is the gate on the other three: the door draws
-nothing unless it says `true`. `hammerola create` follows `template`; `skill`
-and `client` are what the door renders. The page asks
+ALL FIVE FIELDS HAVE A READER NOW, `empty` included — it is the one the
+paragraph above is about, and it is the gate on the two the door draws: the door
+renders nothing unless it says `true`. `hammerola create` follows `template`;
+`skill` and `client` are what the door renders; `skill_version` is what
+`hammerola skill` compares against the copy installed on a laptop. The page asks
 LAZILY, only when it is showing the form, so a hub with projects on it is not
 polled by every reader who already has a token.
+
+`skill_version` IS NOT A SECOND STATEMENT ABOUT THE DEPLOYMENT, and the test
+guarding this route is written to say why: like the three paths it is a constant
+of the IMAGE — two hubs running the same image answer with the same number — so
+it tells a reader what software is running and nothing about what is published
+here. That is the line, and `empty` is still the only thing on the far side of
+it.
 
 WHAT COUNTS AS EMPTY is "no project directory on the volume WITH ANYTHING IN IT"
 (`Store.empty`), which differs from the obvious reading in two places. It is not
@@ -74,6 +83,7 @@ the address of a deployment (AGENTS.md).
 import ast
 import gzip
 import io
+import re
 import tarfile
 import zipfile
 from functools import lru_cache
@@ -100,6 +110,22 @@ TEMPLATE_URL = f"/{START_SEGMENT}/{TEMPLATE_NAME}"
 # rather than a literal at the call site because both sides of that contract are
 # in this repository and a test compares them.
 TEMPLATE_KEY = "template"
+
+# ...and the key carrying the version of the skill THIS image ships, which the
+# client compares against the copy installed on a laptop (`hammerola skill`).
+# Same arrangement, same reason: `src/client/skill.py` names it too and a test
+# holds the two strings together.
+SKILL_VERSION_KEY = "skill_version"
+
+# THE VERSION LIVES IN THE FILE, and this is the whole of what reads it. Two
+# tight patterns rather than a YAML parser: there is no YAML in the standard
+# library, the frontmatter is written in this repository, and the value is one
+# integer. The client carries a second copy of exactly these two patterns
+# (`src/client/skill.py`) because it may import nothing from here — and a test
+# runs both over the shipped file and compares the answers, which is what keeps
+# the copies from drifting into disagreeing about a version number.
+_FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
+_VERSION_LINE = re.compile(r"^version:[ \t]*(\d+)[ \t]*$", re.MULTILINE)
 
 SKILL_FILE = ROOT / "skill" / "SKILL.md"
 # `model_template/` and NOT `template/`, which is what this was called for
@@ -195,24 +221,38 @@ ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 def manifest(*, empty: bool) -> dict:
     """The document a first run is made of, and the door's block is drawn from.
 
-    Four keys and no more, checked by a test: three relative paths that are
-    constants of the image, and the ONE boolean about this deployment. Adding a
-    field here is adding a statement the hub makes without authentication — read
-    the module docstring before doing it.
+    Five keys and no more, checked by a test: three relative paths and a version
+    number, all four constants of the IMAGE, and the ONE boolean about this
+    deployment. Adding a field here is adding a statement the hub makes without
+    authentication — read the module docstring before doing it, and note which
+    side of that line a candidate falls on. `skill_version` is on the safe side
+    for the same reason the paths are: it is byte-identical on every deployment
+    running this image, so it says what the software IS and nothing about what
+    has been published here or who runs it.
 
-    ALL FOUR HAVE A READER. `hammerola create` follows `template`; the sign-in
+    ALL FIVE HAVE A READER. `hammerola create` follows `template`; the sign-in
     page reads `empty` — that is the whole of the gate on its block — and
-    follows `skill` and `client` when it says there is nothing here yet.
+    follows `skill` and `client` when it says there is nothing here yet;
+    `hammerola skill` reads `skill_version` to tell a stale copy of the
+    instructions from a current one, which is the one thing in this system that
+    used to go wrong in total silence (SPEC §8 entry 51).
     `template` is the one the BROWSER deliberately ignores — a page cannot
     unpack a starter project into anybody's directory, and the block that would
     name it says "install the skill and follow it" instead — but it is read all
     the same, by the client, which is where unpacking belongs.
+
+    IT OPENS A FILE NOW, which it did not before: `skill_version` reads the
+    shipped `SKILL.md`. So this can fail the way the three artefact routes can —
+    an image whose skill is missing or whose frontmatter lost its version — and
+    `src/app.py` answers that with the same logged 404 rather than dropping the
+    socket.
     """
     return {
         "empty": bool(empty),
         "skill": SKILL_URL,
         "client": CLIENT_URL,
         TEMPLATE_KEY: TEMPLATE_URL,
+        SKILL_VERSION_KEY: skill_version(),
     }
 
 
@@ -224,6 +264,48 @@ def skill_bytes() -> bytes:
     immutable inside the image, so re-reading it per request would buy nothing.
     """
     return SKILL_FILE.read_bytes()
+
+
+@lru_cache(maxsize=1)
+def skill_version() -> int:
+    """The version of the instructions this image ships. Off the file itself.
+
+    WHY THE SKILL IS VERSIONED AT ALL, when the client, the template and the
+    model contract are not versioned by hand: those three break LOUDLY. A stale
+    contract fails the build, a stale client is refused by the hub and says so.
+    A stale skill keeps confidently teaching yesterday — a command that was
+    renamed, a ceiling that was raised — and the agent following it gets a
+    refusal whose cause is a file on its own disk, with nothing anywhere going
+    red. So the file states which one it is, the manifest repeats it, and
+    `hammerola skill` compares the two (SPEC §8 entry 51).
+
+    IN THE FRONTMATTER and not in a comment in the body, because that is the
+    part of the document a Claude Code skill already has a parser for: extra
+    keys beside `name` and `description` are ordinary there — Anthropic's own
+    plugin skills carry `version`, `license` and `allowed-tools` — so the number
+    travels with the file wherever it is copied, and no reader has to know a
+    convention of ours to find it.
+
+    STRICTLY PARSED, WITH NO DEFAULT. A file with no version is a ValueError and
+    not a 1: defaulting would make a shipped skill that lost its version
+    indistinguishable from a fresh one, which is the exact silence this whole
+    entry exists to end. Cached like `skill_bytes` and for the same reason — the
+    file cannot change while the process runs.
+    """
+    text = skill_bytes().decode("utf-8")
+    block = _FRONTMATTER.match(text)
+    if block is None:
+        raise ValueError(
+            f"{SKILL_FILE} has no frontmatter block, so it names no version — "
+            f"and a Claude Code skill without one does not install either")
+    found = _VERSION_LINE.search(block.group(1))
+    if found is None:
+        raise ValueError(
+            f"{SKILL_FILE} names no `version:` in its frontmatter. It is one "
+            f"integer, raised by hand whenever what the skill TEACHES changes; "
+            f"there is no default, because a missing version would read as the "
+            f"first one")
+    return int(found.group(1))
 
 
 @lru_cache(maxsize=1)

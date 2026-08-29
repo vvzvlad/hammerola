@@ -1,6 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with views() and printables(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part".
+version: 1
 ---
 
 # hammerola
@@ -25,6 +26,13 @@ curl -fsSL <hub>/start/skill.md -o ~/.claude/skills/hammerola/SKILL.md   # this 
 curl -fsSL <hub>/start/hammerola -o ~/.local/bin/hammerola && chmod +x ~/.local/bin/hammerola
 hammerola login <hub>
 ```
+
+That first `curl` is how this file arrives before there is a client to fetch it;
+afterwards the client keeps it current. `hammerola skill` says which version is
+installed here and which the hub serves, and `hammerola skill update` replaces
+the file with the hub's copy. Nothing checks it for you: a stale skill is the
+one thing here that fails silently — it goes on confidently teaching commands
+that no longer exist — so ask when you start on a project.
 
 `login` asks for the hub's password at the terminal and stores it 0600 in
 `~/.config/hammerola/env`. **Ask the owner of the instance for that password.**
@@ -241,12 +249,29 @@ The template `create` unpacks is the live example — read it rather than this
 section: a working model with the rules written next to the geometry. In short:
 
 * **`views()`** — a list of tabs, each `{"id", "name", "parts": [...]}`, each
-  part `{"shape": <CadQuery object>, "name": "<label>"}` with optional `color`
-  and `alpha`. Every printable has to appear in some view. Two ids mean more
-  than that: an `assembled` view, if the project has one, must show every
+  part `{"shape": <CadQuery object>, "name": "<label>"}` with optional `color`,
+  `alpha` and `note`. Every printable has to appear in some view. Two ids mean
+  more than that: an `assembled` view, if the project has one, must show every
   printable, and in `print` no two parts may stand inside one another — that
   view is the bed, unless the pair really is nested and the view says so in its
   `"nested_ok": [("a", "b")]`.
+* **`"note"`, a key on a part in `views()`** — the fifth one, optional, beside
+  `color` and `alpha`: `{"shape": ..., "name": "lid", "note": "M3×8 DIN912"}`.
+  It is the AUTHOR's note — written here, published with the build, shown
+  beside the part to whoever opens the model in the browser. Not the reader's
+  note (that one is theirs, lives in their browser and never comes back here)
+  and not a comment (written by a viewer, queued, addressed to you). Put in it
+  what the geometry cannot say: the catalogue name of the screw, a link to the
+  datasheet, the fit that was taken, why a number is the number it is. One
+  line, not documentation. It is **plain text always** — a link in it is not
+  clickable, nothing in it is parsed, and a `<`, a `>` or a control character
+  REFUSES the push with a 422. At most 200 characters, and at most 200 parts of
+  one build may carry one; both are refused by the build with a message saying
+  so. An empty note is an error rather than "no note" — a part there is nothing
+  to say about leaves the key out. **The note belongs to the PART, not to the
+  view**: the same part in two views may repeat the same text, but two
+  DIFFERENT texts under one name refuse the build and name both views.
+  `model_template/model.py` carries a worked one on the lid.
 * **`printables()`** — `{name: <CadQuery object>}`, one entry per part somebody
   prints, and **each entry is one fused body**. Each becomes `name.stl`,
   `name.step` and `name.3mf`. The gate reads `.val()`, the first body on the

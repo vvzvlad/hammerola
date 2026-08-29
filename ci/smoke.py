@@ -446,9 +446,15 @@ print(json.dumps(verdicts))
 # those archives out of the CHECKOUT, where every file is present by construction, so it goes
 # green on a repository whose image serves nothing.
 #
-# `/start` ITSELF IS DELIBERATELY NOT IN THIS LIST. The manifest is three constants and one
-# boolean, it opens no file, and it cannot fail the way the three below can; adding it would be
-# a check on this gate's own arithmetic rather than on the image.
+# `/start` ITSELF IS DELIBERATELY NOT IN THIS LIST, and the reason had to be rewritten when the
+# manifest grew the skill's version (SPEC §8 entry 51): it is no longer true that it opens no
+# file. What is still true is that the file it opens is `/app/skill/SKILL.md`, which check (g)
+# above already requires BY NAME, and that a COPY cannot alter its contents — so the image's
+# copy is the checkout's, whose frontmatter the suite parses on every run
+# (`tests/test_onboarding.py`). The two together already cover the only way this route can now
+# fail, and a fourth path here would not fit the probe's time budget as it stands: the ceiling
+# is the retry wait spent once plus one read per route, 10 + 3 x 5 = 25 s against an
+# EXEC_TIMEOUT of 30.
 START_ROUTES = ["/start/skill.md", "/start/hammerola", "/start/template.tar.gz"]
 
 # Where the hub listens inside its own container: `src/settings.py` defaults `host` to 0.0.0.0

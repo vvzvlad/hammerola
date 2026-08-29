@@ -120,7 +120,10 @@ what this hub's address is, install the skill and follow it, ask the owner for
 the token. The addresses in it are built from the browser's own origin and the
 manifest's paths, so nothing here names a deployment; the request is made only
 when the form is what is on the screen, and every failure of it is silence.
-`hammerola create` is the other reader, and it follows `template`.
+`hammerola create` is the other reader, and it follows `template`. The manifest
+also states the VERSION of the skill this image ships, which is what
+`hammerola skill` compares a laptop's copy against; like the three paths it is a
+constant of the image and says nothing about the deployment.
 `src/onboarding.py` carries the argument for the boolean and for why it is
 never a count.
 
@@ -155,7 +158,16 @@ hammerola artifacts <revision>   # its STEP/STL/3MF
 hammerola diff <rev> <rev>       # what moved, in geometry and in source
 hammerola comments               # notes left on this project's builds
 hammerola rename "New title"     # the title, never the id
+hammerola skill                  # is the installed agent skill current?
+hammerola skill update           # write the hub's copy over it
 ```
+
+`skill` is the odd one out: it asks about this MACHINE rather than about a
+project, and it exists because the skill is the only versioned thing here that
+goes stale in silence — a client that is behind is refused and says so, while a
+stale skill goes on confidently teaching a command that no longer exists. It
+compares the version in the installed file's frontmatter against the one the hub
+states in `/start`, and only ever writes when `update` was typed.
 
 `hammerola --help` has the flags, and `hammerola rm` — the one command that
 unmakes anything. It removes a project whole, never a single build, and it asks
