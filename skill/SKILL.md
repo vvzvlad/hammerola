@@ -139,6 +139,42 @@ names exactly one product — `M6×30 DIN 912 A2`, `Ø8×60 nylon anchor with a 
 screw`, or a shop's article number where no standard covers it. The mock is
 built from that designation, and `checks()` measures against it.
 
+**Stock that is cut to length is answered with a cut list, never with a
+length.** Threaded rod, tube, extrusion, strip and cable are bought in sticks
+and cut, and two things decide the order, neither of which is the sum. First
+the stick: the requirement is *packed* into the stock length, not added up.
+Four 357.6 mm studs and one 405.7 mm shaft are 1836 mm against two 1000 mm
+sticks, which reads as 164 mm spare — but three studs do not fit one stick, so
+two sticks give either four studs and no shaft, or three studs and the shaft.
+The spare exists only as two offcuts too short to be anything.
+
+Second, and this is the one that bites at assembly rather than at the order:
+**the allowance goes on the member that can absorb the others' error, and the
+cut list must name which member that is.** Find it by asking what each end of
+each cut piece runs into. In a chain closed by adjustable joints — threads,
+clamps, grub screws — one member usually has an end that runs into *air*:
+surplus there costs nothing, because it is taken up by screwing that piece
+further in. That member is the compensator. It is cut long by a stated amount
+and cut **last**, off the assembly rather than off the drawing; everything else
+is cut to nominal. Surplus flows one way only — extra length in the compensator
+absorbs error anywhere in the chain, extra length anywhere else is absorbed by
+nothing. A chain with no compensator at all is a design defect, not a cutting
+problem: it cannot be assembled without filing something.
+
+This also settles how the tolerance is written: **directional per member
+(`+2/−0`, `+0/−0.5`, `+free`), never `±`.** A symmetric tolerance on a member
+whose freedom is one-sided looks right on paper and is discovered at assembly,
+with the stock already cut.
+
+(In the slip pump the column studs run up a socket bore that exits the top of
+the head's cone — open air, so a stud cut 20 mm long simply pokes out and its
+nut still turns. The rotor shaft ends inside the coupling under a `gap < -0.5`
+assert against the motor shaft, where surplus is a collision. The studs are
+therefore the compensator and every millimetre of doubt belonged on them. What
+was handed over instead was two nominal lengths with a tolerance note; the
+shaft came out slightly long and there was no stud length left to trade
+against it.)
+
 **Hardware changes as the design goes, and what it replaced stays visible.**
 A superseded item stays in `ref/hardware/` as the record of what was tried,
 marked so nothing can be built against it by mistake: the line
