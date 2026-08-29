@@ -40,6 +40,25 @@ export const EVENT_STATE = "hmr:state";
 /** Up: a part was clicked (or the background was, with `id: null`). */
 export const EVENT_PICK = "hmr:pick";
 
+/** Up: a part was right-clicked; the interface's part menu belongs at x/y.
+ *
+ * NOT IN THE MOCK-UP either, and it is here for the same kind of reason as the
+ * two further down: the mock's part menu hangs off a tree row, and the tree is
+ * a list of names beside a model somebody is already pointing at. Asking for
+ * the thing under the cursor is the shorter route to it, and the scene is the
+ * only place that can answer which part that is.
+ *
+ * `id` is null when the background was right-clicked — the same convention
+ * `EVENT_PICK` uses, and the interface reads it as "close the menu", there being
+ * no items about the view as a whole.
+ *
+ * IT CARRIES SCREEN COORDINATES, unlike every other event here, and that is
+ * deliberate rather than a leak of presentation into the contract: a context
+ * menu is defined as opening AT THE CURSOR, and by the time the interface hears
+ * about this there is no event left for it to read a cursor off.
+ */
+export const EVENT_MENU = "hmr:menu";
+
 /** Up: a face was clicked with the cut tool armed; the plane now lies on it. */
 export const EVENT_FACE = "hmr:face";
 
@@ -86,7 +105,7 @@ export const EVENT_TOOL = "hmr:tool";
 
 /** Every name this module owns, for the tests and for a quick audit. */
 export const EVENTS_UP = [
-  EVENT_PICK, EVENT_FACE, EVENT_MEASURE, EVENT_MOVED,
+  EVENT_PICK, EVENT_MENU, EVENT_FACE, EVENT_MEASURE, EVENT_MOVED,
   EVENT_PLACE, EVENT_PIN, EVENT_MODEL, EVENT_ERROR, EVENT_TOOL,
 ];
 

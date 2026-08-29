@@ -16,8 +16,18 @@
  *                     (`has_dev`, `latest`) beside the history of commits.
  *   DIFF           -> nothing. The hub has no endpoint that compares two
  *                     builds (plan step 8), so the panel is drawn and says so.
- *   notes          -> localStorage, keyed by part NAME, per project. No
- *                     endpoint exists; the editor says where they live.
+ *   notes          -> TWO different things that share one word, and the box on
+ *                     the canvas labels them rather than stacking them. The
+ *                     READER's is localStorage, keyed by part NAME, per
+ *                     project, and never leaves this browser — there is still
+ *                     no route that writes it anywhere. The AUTHOR's is
+ *                     published content: written in `model.py`, validated at
+ *                     build and again at publish, and carried in the build's
+ *                     own `meta.notes` — a flat map from part NAME to text. It
+ *                     is shown to EVERYONE, exactly like the part's name, and
+ *                     `meta.notes` is absent on a build that carries none (and
+ *                     on every build published before the key existed), which
+ *                     is the ordinary case rather than an error.
  *   comments       -> the write endpoint is real, used, and since step 0 it
  *                     REQUIRES the token. The FEED is still not fetched, but the
  *                     reason has changed and the difference matters to whoever
@@ -34,9 +44,10 @@
  * THE TOKEN (brief, "Что разделяет заказчика и зрителя"). Whoever has it can
  * edit and comment; whoever does not gets the interface to look with. It is
  * typed in by the person, kept in localStorage per project, and removable.
- * Closed without it: the note on a part, moving a part, and comments entirely.
- * Open always: orbiting, the tree, the section, measuring, the downloads and the
- * frame grab.
+ * Closed without it: the reader's OWN note on a part, moving a part, and
+ * comments entirely. Open always: orbiting, the tree, the section, measuring,
+ * the downloads, the frame grab — and the author's note, which is part of what
+ * was published rather than something this browser is allowed to change.
  *
  * CONTRACT WITH THE VIEWPORT — see events.js for the names. Down, one event
  * carrying the whole of what should be on screen; up, nine. `sync()` below is
@@ -72,12 +83,12 @@
 import React from 'react';
 
 import {
-  STATE, PICK, FACE, MEASURE, MOVED, PLACE, PIN, MODEL, ERROR, TOOL,
+  STATE, PICK, MENU, FACE, MEASURE, MOVED, PLACE, PIN, MODEL, ERROR, TOOL,
   VIEWPORT_TAG,
 } from './events.js';
 import {
   PAGE, ASSEMBLED_VIEW_ID, isPointerPage, buildKey, indexTree,
-  loadMeta, loadBuilds, shortId, stamp, mb,
+  loadMeta, loadBuilds, rereadPage, shortId, stamp, mb,
 } from './hub.js';
 import {
   readToken, writeToken, clearToken, readNotes, writeNotes, rememberPointer,
@@ -231,6 +242,162 @@ export function filesByPart(downloads) {
   return out;
 }
 
+/**
+ * The formats that go to a printer, first, in the order a part reaches one.
+ *
+ * STL is what a slicer is opened with, 3MF is the same mesh with the print
+ * settings on it, and STEP is the solid — the thing you take when you are going
+ * to EDIT the part rather than make it. The header's menu is opened far more
+ * often for the first than for the last, and an alphabetical list puts 3MF at
+ * the top and STL at the bottom, which is the exact reverse. Anything the hub
+ * grows later lands after these three, alphabetically, so a new format is
+ * ordered rather than wherever the object happened to be iterated.
+ */
+const PRINT_FIRST = ['STL', '3MF', 'STEP'];
+
+/** The row's own name inside its group: the label with its format taken off.
+ *
+ * The label the hub publishes is `<part>.<ext>` — except with a SINGLE printable,
+ * where it degenerates to a bare `step` / `stl` / `3mf` and the part name is gone
+ * from it (`download_labels` in src/cadbuild/printables.py). Stripping the format
+ * off THAT leaves nothing at all, so the filename's stem answers instead: the
+ * filename never degenerates, which is the same fact `filesByPart` above is built
+ * on.
+ */
+function rowName(label, file, cut) {
+  const ext = file.slice(cut + 1);
+  let name = label;
+  // Case-insensitively, because the strip has to hold for whatever case the
+  // label arrived in while the group is keyed by the uppercased one.
+  if (name.toLowerCase().endsWith(ext.toLowerCase())) {
+    name = name.slice(0, name.length - ext.length);
+  }
+  if (name.endsWith('.')) name = name.slice(0, -1);
+  return name || file.slice(0, cut);
+}
+
+/**
+ * `meta.downloads` as ordered groups of one FORMAT each, rows ordered by part.
+ *
+ * Flat, this menu is one row per file — thirty of them on a ten-part build, in
+ * the order the hub happened to write them, so picking out every STL means
+ * aiming at every third row. Grouped, the same thirty rows are three groups a
+ * reader can take whole.
+ *
+ * THE GROUP KEY IS THE EXTENSION OFF THE FILENAME, never the label, and it is
+ * the same trap `filesByPart` documents at length one screen up: the label is
+ * the thing that degenerates on a one-part build, and the filename is the thing
+ * that does not.
+ *
+ * A Map for the same reason as `filesByPart`: the keys come off model-supplied
+ * filenames, so `__proto__` is reachable and an object literal would silently
+ * store nothing under it.
+ */
+export function groupDownloads(downloads) {
+  const groups = new Map();
+  Object.entries((downloads && typeof downloads === 'object') ? downloads : {})
+    .forEach(([label, value]) => {
+      const file = String(value);
+      const cut = file.lastIndexOf('.');
+      // No extension, or nothing before the dot: the same rule as `filesByPart`,
+      // and the same reason — a row built out of one downloads nothing.
+      if (cut <= 0 || cut === file.length - 1) return;
+      const ext = file.slice(cut + 1).toUpperCase();
+      if (!groups.has(ext)) groups.set(ext, []);
+      groups.get(ext).push({ label: rowName(String(label), file, cut), file });
+    });
+  const text = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  const rank = (ext) => {
+    const at = PRINT_FIRST.indexOf(ext);
+    return at < 0 ? PRINT_FIRST.length : at;
+  };
+  return Array.from(groups.keys())
+    .sort((a, b) => (rank(a) - rank(b)) || text(a, b))
+    .map((ext) => ({
+      ext,
+      files: groups.get(ext).slice().sort((a, b) => text(a.label, b.label)),
+    }));
+}
+
+/**
+ * The gap between two downloads handed to the browser in one gesture.
+ *
+ * Not a workaround for a block — see the note beside the group menu's button for
+ * what a browser actually does — but for the fact that each of these is a
+ * separate navigation the browser has to notice: fired in one synchronous burst,
+ * anchors pointing at different files can be coalesced into one download, and
+ * which ones survive depends on the engine. A fifth of a second is under the
+ * threshold at which a person reads the sequence as slow and well over the
+ * threshold at which the browser reads it as one event.
+ */
+export const DOWNLOAD_GAP_MS = 200;
+
+/** One `<a download>`, clicked and thrown away. The default `click` below. */
+function clickHref(href) {
+  const a = document.createElement('a');
+  a.href = href;
+  // Empty rather than a name: the href is a file under the build's own
+  // directory, so the browser takes the name off the URL — which is the name the
+  // build published, and the page has no better one to offer.
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+/**
+ * Hand the browser every href in turn, spaced by `delay`.
+ *
+ * THE FIRST ONE FIRES SYNCHRONOUSLY, and that is the load-bearing part: a
+ * download is allowed because it is inside the gesture that asked for it, and a
+ * first click deferred to a timer has left that gesture behind. The rest follow
+ * on the clock; a browser that asks about the second file asks once, for the
+ * site, and remembers the answer.
+ *
+ * `click` and `schedule` are arguments so this can be driven with fake timers
+ * and a fake clicker — the ORDER and the SPACING are the whole of what it
+ * promises, and neither can be observed through a real anchor in a test.
+ */
+export function sequentialDownload(hrefs, options) {
+  const o = options || {};
+  const click = o.click || clickHref;
+  const schedule = o.schedule || ((fn, ms) => setTimeout(fn, ms));
+  const gap = Number.isFinite(o.delay) ? o.delay : DOWNLOAD_GAP_MS;
+  const list = (Array.isArray(hrefs) ? hrefs : []).filter(Boolean);
+  let at = 0;
+  const step = () => {
+    if (at >= list.length) return;
+    click(list[at]);
+    at += 1;
+    if (at < list.length) schedule(step, gap);
+  };
+  step();
+  return list.length;
+}
+
+/**
+ * Where the part menu may open so that it stays on the screen.
+ *
+ * ONE HELPER FOR BOTH DOORS INTO THAT MENU — a right-click on a tree row and a
+ * right-click on the part itself in the scene. They are the same menu with the
+ * same items, and two copies of this arithmetic is how they would come to open
+ * in two different places on the same screen for no reason a reader could see.
+ *
+ * BOTH NUMBERS ARE ASSUMPTIONS AND NEITHER IS MEASURED. 246 is the menu's own
+ * 230 px width (`menuStyle`) plus a little slack; 300 is a guess at its height,
+ * which genuinely varies — a part with three files has four rows more than a
+ * group does. Measuring would mean rendering the menu, reading it back and
+ * moving it, i.e. one frame of the menu in the wrong place. The failure these
+ * numbers actually prevent is the menu opening mostly off the right or bottom
+ * edge, and for that a guess is enough.
+ */
+export function menuAt(x, y) {
+  return {
+    x: Math.min(x, Math.max(0, window.innerWidth - 246)),
+    y: Math.min(y, Math.max(0, window.innerHeight - 300)),
+  };
+}
+
 export default class HammerolaViewer extends React.Component {
   /**
    * The comment rail starts CLOSED, and the 300 px it used to take is the whole
@@ -264,6 +431,11 @@ export default class HammerolaViewer extends React.Component {
     // the only definition of "fit" available to a side that does not know the
     // model's bounding box.
     this.home = null;
+    // The hidden and translucent parts a revision switch is carrying across, by
+    // NAME, waiting for the tree of the build it switched to (`rejoin`). Not
+    // state: nothing renders it, it lives for one model event, and a re-render
+    // in the middle of a swap has no business seeing a half-applied one.
+    this.carry = null;
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
@@ -317,6 +489,7 @@ export default class HammerolaViewer extends React.Component {
         const id = (e.detail && e.detail.id) || null;
         this.set({ sel: id, selName: (e.detail && e.detail.name) || '', menu: null });
       },
+      [MENU]: (e) => this.sceneMenu(e.detail),
       // The plane moved: either it was just laid on a face, or a drag of it
       // ended. Both carry the depth measured FROM THAT FACE and the range the
       // slider has to span, so neither number is invented on this side.
@@ -361,23 +534,7 @@ export default class HammerolaViewer extends React.Component {
       [PIN]: (e) => this.set({ activePin: e.detail && e.detail.id, rail: true }),
 
       // A view finished rendering, and brought the tree with it.
-      [MODEL]: (e) => {
-        const d = e.detail || {};
-        const tree = indexTree(d.tree);
-        this.setState((s) => ({
-          tree,
-          view: d.view || s.view,
-          viewError: null,
-          // Both belonged to the scene that has just been torn down: the
-          // viewport clears its own tape and its own offsets on every load, and
-          // a chip left standing here would describe a model that is gone.
-          measure: null,
-          moved: null,
-          // The reader's own collapses survive: part paths are the same across a
-          // rebuild, and this is the tree they were reading a moment ago.
-          expanded: { ...this.defaultExpanded(tree), ...s.expanded },
-        }), () => { if (!d.live) this.captureHome(); });
-      },
+      [MODEL]: (e) => this.onModel(e.detail),
       // Block 11: a page that shows nothing has to say why. A silent viewport
       // leaves this interface drawing a frame around a hole.
       //
@@ -413,6 +570,27 @@ export default class HammerolaViewer extends React.Component {
     };
     window.addEventListener('keydown', this._kd);
 
+    // Back and forward through the revisions this page pushed. A switch is a
+    // `pushState` (see `switchBuild`), so the browser's own history now holds
+    // entries this document has to answer for itself — without this listener
+    // Back changes the address bar and leaves the previous revision on screen,
+    // which is a worse lie than the reload it replaced.
+    //
+    // The SLOT IS READ OFF `location`, never off `event.state`: the entry the
+    // reader lands on may be the one the server rendered, which carries no state
+    // of ours at all, and the URL is the only thing every entry has.
+    this._pop = () => {
+      const slot = String(location.pathname).split('/')[3] || '';
+      // Nothing to do for the entry this page is already showing. No two
+      // CONSECUTIVE entries can name the same slot — `switchBuild` refuses the
+      // build already on screen, so nothing pushes one — which is why this is a
+      // guard rather than a case that has to be answered.
+      if (!slot || slot === PAGE.slot) return;
+      this.switchBuild(PAGE.pid, slot, { push: false })
+        .catch((error) => console.error('switch', error));
+    };
+    window.addEventListener('popstate', this._pop);
+
     // The viewport listens for `hmr:state` from its `connectedCallback`, so a
     // state sent before the element upgrades is simply lost. This is the resend
     // for the case where the adapter's module lands after the first paint — the
@@ -428,6 +606,7 @@ export default class HammerolaViewer extends React.Component {
   componentWillUnmount() {
     Object.keys(this._h || {}).forEach((k) => window.removeEventListener(k, this._h[k]));
     window.removeEventListener('keydown', this._kd);
+    window.removeEventListener('popstate', this._pop);
     clearTimeout(this._tt);
     clearTimeout(this._poll);
     // The deferred swap goes with them: it holds `this` and would come back on a
@@ -450,6 +629,287 @@ export default class HammerolaViewer extends React.Component {
     // sides, so this first sync is also the load.
     this.setState({ meta, builds, view: variant.id },
                   () => { this.sync(); this.schedulePoll(POLL_MS); });
+  }
+
+  // -- switching revisions in place -----------------------------------------
+  //
+  // SPEC §8, entry 62. Two revisions of one part are looked at from ONE angle:
+  // somebody aims the camera at the corner they are unsure about, hides the
+  // shell, lays a section on it, and then wants to see the same thing on the
+  // build before this one. A full page load throws away every one of those at
+  // exactly the moment they are worth the most — and the page it rebuilds is the
+  // same shell, the same bundle and the same viewer, differing only in one
+  // meta.json and one view payload.
+  //
+  // WHAT ACTUALLY MOVES is therefore small: the address, `PAGE`, `meta`, and the
+  // two numbers the viewport reads to know the geometry changed (`base` and
+  // `buildKey`). Everything else on this page is the same KIND of thing rebuilt
+  // from different data.
+
+  /**
+   * Show another build of THIS project without throwing the page away.
+   *
+   * NOTHING IS TOUCHED UNTIL THE TARGET HAS ANSWERED. The meta.json is fetched
+   * against a base of its own (`loadMeta`'s second argument) precisely so that a
+   * revision that 404s leaves the page whole — the URL, `PAGE` and the model on
+   * screen all as they were — instead of half moved with a frame around a hole.
+   *
+   * `push` is false for the one caller that must NOT push: `popstate`, where the
+   * browser has already moved the address and pushing again would bury the entry
+   * the reader just came back to.
+   */
+  async switchBuild(pid, slot, options) {
+    const push = !options || options.push !== false;
+    if (this._gone || !slot) return;
+    // A DIFFERENT PROJECT IS STILL A REAL NAVIGATION, and it should be: the
+    // title, the picker, the notes, the comment queue and every download would
+    // all be replaced at once, which is a new page by any honest reading. This
+    // page's own picker only ever lists one project, so this branch is a guard
+    // on the day something else calls this rather than a path anybody takes.
+    if (pid !== PAGE.pid) { location.href = `/project/${pid}/`; return; }
+    // Already here. Closing the picker is the whole of the answer.
+    if (slot === PAGE.slot) { this.setState({ revOpen: false }); return; }
+
+    // CLOSED BEFORE THE FETCH, not after it. It is the only sign the click
+    // landed on a gesture that now waits on the network, and — because the menu
+    // then stops being on the screen — it is also what keeps a second row from
+    // being picked while the first is still in flight, which would leave two
+    // swaps racing to push two entries and settle two different `PAGE`s.
+    this.setState({ revOpen: false });
+
+    const path = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
+    let meta = null;
+    try {
+      // `fresh`, because a POINTER is exactly the name whose content can have
+      // been rewritten since the browser last saw it.
+      meta = await loadMeta(true, path);
+    } catch (error) {
+      this.swapFailed(slot, error);
+      return;
+    }
+    if (this._gone) return;
+    const variants = Array.isArray(meta && meta.variants) ? meta.variants : [];
+    if (!variants.length) {
+      this.swapFailed(slot, new Error('this build lists no views'));
+      return;
+    }
+
+    // WHICH VIEW IS WANTED DEPENDS ON WHO MOVED. A row click carries the
+    // reader's own tab across; a `popstate` is the browser putting an entry back
+    // on the screen, and that entry's `?v=` IS the state being restored —
+    // reading the current tab there would leave the address bar saying one view
+    // while the page showed another, which is the whole failure this entry is
+    // about, spelled with the Back button.
+    const wanted = push
+      ? this.state.view
+      : (new URLSearchParams(location.search).get('v') || this.state.view);
+    // It survives when the target declares one with the same id, and otherwise
+    // falls back to the first — exactly what a fresh load of that URL does with
+    // a `?v=` naming a view the build does not have.
+    const view = variants.some((v) => v.id === wanted) ? wanted : variants[0].id;
+    // AND THE ADDRESS SAYS SO. `?v=` is what `load()` reads on a fresh open, so
+    // the URL this pushes has to carry it wherever the view on screen is not the
+    // one that URL would open on by itself — otherwise the link in the address
+    // bar, copied and sent, shows a different view than the sender was looking
+    // at. Dropped where the view IS the target's first, since the query would
+    // then repeat what the path already answers.
+    const query = view === variants[0].id ? '' : `?v=${encodeURIComponent(view)}`;
+
+    // Hidden and translucent parts are held as leaf ids, and an id is a solid
+    // path that a rebuild is free to renumber; a NAME is what the person
+    // recognises and what they meant. Read here, off the tree that is still on
+    // screen, and rejoined against the new one when it arrives (`rejoin`).
+    this.carry = { hidden: this.namesOf(this.state.hidden),
+                   ghost: this.namesOf(this.state.ghost) };
+    // The plane is asked about the view actually landing on screen, not about
+    // whether the target HAS the old one: a `popstate` can restore a different
+    // view of the same parts, and a depth measured on the other arrangement is
+    // as much about a model that moved as one measured on another build.
+    const sec = this.sectionAcross(view === this.state.view);
+
+    if (push) history.pushState({ hmr: slot }, '', path + query);
+    // IN PLACE, so every module that imported `PAGE` sees the new revision —
+    // `loadMeta`, `loadBuilds`, `isPointerPage`, `sync`'s `base`, the comment
+    // route, the download hrefs and the header's own slot. Nothing re-derives it
+    // on its own, which is why a swap that forgot this line would go on fetching
+    // the revision that had just left the screen, silently and forever.
+    rereadPage(path);
+
+    this.setState({
+      meta,
+      view,
+      viewError: null,
+      // MOMENTARY THINGS GO. A selection pointing at a part that may not exist
+      // in this build is worse than no selection, and a menu or a popover that
+      // outlived the model it was opened over is a menu about nothing.
+      sel: null, selName: '', menu: null,
+      revOpen: false, dlOpen: false, secPop: false,
+      tokenPop: false, tokenDraft: '', notePop: null, noteDraft: '',
+      // Both describe geometry that has just left the screen; the viewport
+      // clears its own tape and offsets on every load.
+      measure: null, moved: null,
+      // The poll's offer was about the slot we are leaving. A pinned revision
+      // has nothing to offer at all, and the banner would sit there for a build
+      // that is no longer on this page's road.
+      pending: null, bannerGone: false,
+      // The composer is deliberately NOT closed. Half-written text is the most
+      // expensive thing on this page to lose (the same reason Escape spares it),
+      // and the comment lands on the revision now on screen — which is the one
+      // the reader is looking at while they finish the sentence.
+      ...(sec || null),
+    }, () => {
+      this.sync(sec ? { __resetCut: true } : null);
+      // Recorded here for the same reason `componentDidMount` records it: this
+      // is an arrival at a pointer URL, and SPEC 9 is about which of the two
+      // moving names this reader was last on.
+      if (isPointerPage()) rememberPointer(PAGE.pid, PAGE.slot);
+      // Cleared BEFORE the re-arm, because `schedulePoll` returns without
+      // touching the timer when the new slot is a pinned revision — so a poll
+      // armed while the page was on `latest` would otherwise still fire once
+      // against a build that can never change.
+      clearTimeout(this._poll);
+      this.schedulePoll(POLL_MS);
+      // AND THE PICKER'S OWN LIST CATCHES UP, which the reload used to do for
+      // free: builds.json is read once on mount, so a session spent switching
+      // between revisions would go on showing the history as it stood when the
+      // page opened, and a revision published meanwhile could not be reached
+      // from the menu at all.
+      //
+      // AFTER the swap and not before it, deliberately: this is a list on a menu
+      // nobody has open, and making the model wait on it would spend a round
+      // trip of the reader's time on something they are not looking at. Best
+      // effort for the same reason the first load treats it that way — a project
+      // whose builds.json is missing has an empty picker, not a failed page.
+      loadBuilds()
+        .then((builds) => { if (!this._gone) this.setState({ builds }); })
+        .catch((error) => console.warn('builds', error));
+    });
+  }
+
+  /**
+   * The target would not open. Say so where a view that would not render is
+   * said, and change nothing else.
+   *
+   * `viewError` is the panel this page already has for "what you asked to look
+   * at is not what is on screen", and nothing was moved before the fetch
+   * answered, so the previous revision is still standing under the reader's
+   * camera. Its Retry button re-asks the viewport for the view that IS on screen
+   * — a re-render of what is already there, which costs a fetch and nothing
+   * else; the way back to the build that failed is the picker, which never left.
+   */
+  swapFailed(slot, error) {
+    console.warn('switch', error);
+    this.setState({
+      revOpen: false,
+      viewError: `${shortId(slot)} did not load — still showing ${shortId(PAGE.slot)}`,
+    });
+  }
+
+  /**
+   * What the section plane does across a swap: `null` to keep it, or the patch
+   * that puts it away.
+   *
+   * A PLANE IS A NUMBER IN MODEL SPACE and the model may have moved under it. It
+   * survives only where it still means something — the same view id, so the
+   * parts are laid out the same way, and an offset that is still inside the
+   * extent the slider was given. Anywhere else the number is about a build that
+   * is gone, and a cut left standing at it slices through empty air or through
+   * the middle of a part nobody asked to see inside of.
+   *
+   * The range is the one measured on the build being LEFT, because it is the
+   * only one that exists until a face is picked on the new one — the hub
+   * publishes no extent. So this asks the strongest question available on this
+   * side, and errs toward putting the plane away.
+   */
+  sectionAcross(keepView) {
+    const s = this.state;
+    const range = s.secRange;
+    const admits = Array.isArray(range) && range.length === 2
+      && Number.isFinite(range[0]) && Number.isFinite(range[1])
+      && s.secOff >= range[0] && s.secOff <= range[1];
+    if (keepView && admits) return null;
+    return { secOn: false, secOff: 0, secFlip: false, secFace: null, secRange: null };
+  }
+
+  /** The NAMES behind a list of leaf ids, in the tree on screen right now. */
+  namesOf(ids) {
+    const tree = this.state.tree;
+    if (!tree || !Array.isArray(ids)) return [];
+    const names = [];
+    ids.forEach((id) => {
+      const node = tree.nodes.get(id);
+      if (node && !names.includes(node.name)) names.push(node.name);
+    });
+    return names;
+  }
+
+  /**
+   * Those names again, as ids of the tree that has just arrived — or `null`
+   * when no swap is landing.
+   *
+   * A NAME THAT IS NOT IN THE NEW TREE IS SIMPLY DROPPED: a part that is gone
+   * cannot stay hidden, and carrying the name forward would leave the reader a
+   * list of instructions about parts nobody can see or unhide.
+   *
+   * Consumed rather than read, so exactly one model event acts on a switch. The
+   * one that follows a failed switch never arrives, and the carry is then spent
+   * on the next render instead — which is the same operation on the same names
+   * and is right there too.
+   */
+  rejoin(tree) {
+    const carry = this.carry;
+    this.carry = null;
+    if (!carry || !tree) return null;
+    const byName = new Map();
+    tree.leaves.forEach((id) => {
+      const node = tree.nodes.get(id);
+      if (!node) return;
+      if (!byName.has(node.name)) byName.set(node.name, []);
+      byName.get(node.name).push(id);
+    });
+    const resolve = (names) => names.reduce(
+      (out, name) => out.concat(byName.get(name) || []), []);
+    return { hidden: resolve(carry.hidden), ghost: resolve(carry.ghost) };
+  }
+
+  /**
+   * A view finished rendering, and brought the tree with it.
+   *
+   * A method rather than a closure inside the handler map — the same move
+   * `sceneMenu` makes and for the same reason: the map is built in
+   * `componentDidMount`, which loads a build and starts a poll, so a decision
+   * written inside it can only be reached by mounting the whole page.
+   */
+  onModel(detail) {
+    const d = detail || {};
+    const tree = indexTree(d.tree);
+    // Non-null only while a revision switch is landing. Every other model event
+    // — a first load, a live reload, a view tab — leaves the two lists alone.
+    const rejoined = this.rejoin(tree);
+    this.setState((s) => ({
+      tree,
+      view: d.view || s.view,
+      viewError: null,
+      // Both belonged to the scene that has just been torn down: the
+      // viewport clears its own tape and its own offsets on every load, and
+      // a chip left standing here would describe a model that is gone.
+      measure: null,
+      moved: null,
+      // The reader's own collapses survive: part paths are the same across a
+      // rebuild, and this is the tree they were reading a moment ago.
+      expanded: { ...this.defaultExpanded(tree), ...s.expanded },
+      ...(rejoined || null),
+    }), () => {
+      // NOT ON A LIVE ONE, which is what keeps the camera across a revision
+      // switch: `home` is the frame the library FITTED, and a swap arrives with
+      // the reader's own frame already restored, so re-reading it here would
+      // record that instead and leave Fit doing nothing.
+      if (!d.live) this.captureHome();
+      // The rejoined ids have to reach the viewport, and a state event is the
+      // only way there. Only when something was rejoined: every other model
+      // event would otherwise dispatch one for no change at all.
+      if (rejoined) this.sync();
+    });
   }
 
   /**
@@ -892,12 +1352,49 @@ export default class HammerolaViewer extends React.Component {
     this.setState({ notes });
   }
 
+  /** Every file of one format, handed over one at a time.
+   *
+   * A method rather than a call written straight into the handler, so a test can
+   * take it over and read WHICH hrefs the button would fire, in what order,
+   * without a jsdom anchor navigating anywhere. The mechanism itself is
+   * `sequentialDownload`, which is tested on its own with a fake clock.
+   */
+  downloadAll(hrefs) {
+    return sequentialDownload(hrefs);
+  }
+
   subtitle() {
     const meta = this.state.meta;
     const current = meta.variants.find((v) => v.id === this.state.view) || meta.variants[0];
     const total = meta.variants.reduce((sum, v) => sum + Number(v.gzip || 0), 0);
     const views = meta.variants.length === 1 ? '1 view' : `${meta.variants.length} views`;
     return `${current.parts} parts · ${views} · ${mb(total)}`;
+  }
+
+  /**
+   * A right-click in the SCENE, opening the same menu a tree row's does.
+   *
+   * `setState` and not `set`: the menu is a thing on the page, not a thing about
+   * the model, so the viewport is told nothing.
+   *
+   * IT DOES NOT TOUCH `sel` / `selName`, which is the decision worth defending
+   * here: a tree row's menu leaves the selection alone, and a menu that meant
+   * "look at this" from one door and "select this and look at it" from the other
+   * is worse than either. So the part under the cursor gets a menu and the
+   * reader's selection stays where they put it.
+   *
+   * NO ID IS EMPTY SPACE, and it CLOSES the menu rather than opening one about
+   * the view: there are no view-level items to put in it today, and a menu with
+   * one greyed-out sentence in it is not better than no menu.
+   *
+   * A method rather than a closure inside the handler map so it can be called
+   * without mounting the component — the map is built in `componentDidMount`,
+   * which loads a build and starts a poll.
+   */
+  sceneMenu(detail) {
+    const d = detail || {};
+    const id = d.id || null;
+    this.setState({ menu: id ? { id, ...menuAt(d.x, d.y) } : null });
   }
 
   /** A note hangs on a part NAME, so a group row has none of its own. */
@@ -907,9 +1404,33 @@ export default class HammerolaViewer extends React.Component {
     return this.state.selName || '';
   }
 
+  /** The READER's note: this browser's, for this project, never sent anywhere. */
   selectedNote() {
     const name = this.selectedName();
     return (name && this.state.notes[name]) || '';
+  }
+
+  /**
+   * The AUTHOR's note on the selected part — `model.py`, published in this
+   * build's meta.json under the same part NAME the reader's notes use.
+   *
+   * ABSENT IS NORMAL. A build with nothing to say carries no `notes` key at all,
+   * and neither does any build published before the key existed; the two are one
+   * document here, and asking about one of them must not be an error.
+   *
+   * READ WITH `hasOwnProperty`, not with a bare lookup: this object is parsed
+   * out of a fetched document, so it inherits from `Object.prototype`, and a
+   * part legitimately called `constructor` or `toString` would otherwise pick up
+   * a FUNCTION off the prototype — which React then refuses to render, taking
+   * the whole page down over a part name. The type guard after it is the same
+   * argument for a value the hub would never write but a document can carry.
+   */
+  authorNote() {
+    const name = this.selectedName();
+    const notes = this.state.meta && this.state.meta.notes;
+    if (!name || !notes || typeof notes !== 'object') return '';
+    if (!Object.prototype.hasOwnProperty.call(notes, name)) return '';
+    return typeof notes[name] === 'string' ? notes[name] : '';
   }
 
   /**
@@ -997,15 +1518,12 @@ export default class HammerolaViewer extends React.Component {
         onVis: stop(() => this.set({ hidden: this.toggle(s.hidden, node.leaves) })),
         onGhost: stop(() => this.set({ ghost: this.toggle(s.ghost, node.leaves) })),
         onSelect: stop(() => this.set({ sel: node.id, selName: node.name })),
+        // The other door into this menu is a right-click on the part in the
+        // SCENE (`sceneMenu`), and the two share `menuAt` so they cannot open in
+        // different places.
         onMenu: stop((e) => {
           e.preventDefault();
-          this.setState({
-            menu: {
-              id: node.id,
-              x: Math.min(e.clientX, Math.max(0, window.innerWidth - 246)),
-              y: Math.min(e.clientY, Math.max(0, window.innerHeight - 300)),
-            },
-          });
+          this.setState({ menu: { id: node.id, ...menuAt(e.clientX, e.clientY) } });
         }),
       });
       if (node.isNode && expanded) node.children.forEach((id) => emit(tree.nodes.get(id)));
@@ -1066,19 +1584,52 @@ export default class HammerolaViewer extends React.Component {
         // A build is an ADDRESS, so switching to one is a navigation and not a
         // state change: the URL is the thing that has to keep saying which
         // geometry this is, a year from now, to whoever the link was sent to.
-        onPick: stop(() => { location.href = `/project/${PAGE.pid}/${r.id}/`; }),
+        //
+        // THAT IS A SENTENCE ABOUT THE ADDRESS BAR, NOT ABOUT THE DOCUMENT, and
+        // reading it as a refusal is what kept this a full page load. There is
+        // no wall here: `history.pushState` satisfies every word of it — the URL
+        // changes, the link copies and opens exactly as it did, and the page the
+        // hub renders at that address on its own is untouched — while the reader
+        // keeps the camera, the hidden parts and the section they set up in
+        // order to compare two builds (SPEC §8, entry 62). Which is the whole
+        // point: those get thrown away at precisely the moment they are worth
+        // the most. `switchBuild` is where it happens, and a different PROJECT
+        // is still a real navigation, because there everything changes at once.
+        onPick: stop(() => {
+          this.switchBuild(PAGE.pid, r.id)
+            .catch((error) => console.error('switch', error));
+        }),
       };
     });
     const cmpReady = s.cmp.length === 2;
 
     // -- the downloads, from meta.downloads: label -> file name
     const fileHref = (file) => PAGE.base + encodeURIComponent(String(file));
-    const downloads = Object.entries((meta && meta.downloads) || {}).map(([label, file]) => ({
-      key: label,
-      label: String(label).toUpperCase(),
-      file: String(file),
-      href: fileHref(file),
+    const dlRowStyle = `display:flex;align-items:center;gap:10px;padding:6px 14px 6px 22px;text-decoration:none;color:#2a2e33;font:400 12px ${SANS}`;
+    const downloadGroups = groupDownloads(meta && meta.downloads).map((g) => ({
+      key: g.ext,
+      ext: g.ext,
+      files: g.files.map((f) => ({
+        key: f.file, label: f.label, file: f.file, href: fileHref(f.file),
+        style: dlRowStyle,
+      })),
+      headStyle: `display:flex;align-items:center;gap:8px;padding:8px 14px 3px;font:600 10px ${MONO};color:#8a9099;letter-spacing:.08em`,
+      allStyle: `cursor:pointer;font:500 10.5px ${MONO};color:#1f6fd0;text-decoration:underline`,
+      // ONE CLICK, N DOWNLOADS, DONE IN THE BROWSER — the owner's decision, and
+      // the cost is worth stating rather than discovering. A browser does not
+      // block the second file and the ones after it; it ASKS, once, with a
+      // per-site permission it then remembers (the note further down, on the
+      // tree row's group, is where that correction is written out). So for a
+      // PERSON this is one prompt and then nothing. For an agent driving the
+      // page there is nobody to answer that prompt, which is why an agent takes
+      // `hammerola artifacts` instead and why this is not the hub's job: no
+      // route, no archive, no client change.
+      //
+      // No `stop()`: the click bubbles to `rootClick` and closes the menu, which
+      // is exactly what a file row beside it already does by being a plain link.
+      onAll: () => this.downloadAll(g.files.map((f) => fileHref(f.file))),
     }));
+    const anyDownloads = downloadGroups.length > 0;
     // The same files, cut up by part, for the row menu below.
     const partFiles = filesByPart(meta && meta.downloads);
 
@@ -1139,7 +1690,7 @@ export default class HammerolaViewer extends React.Component {
      * and this one must not be worse.
      */
     const fileRows = (name) => {
-      if (!downloads.length) return [mi('No files in this build', '', () => {}, 'said')];
+      if (!anyDownloads) return [mi('No files in this build', '', () => {}, 'said')];
       const files = partFiles.get(name) || [];
       if (!files.length) return [mi('No files for this part', 'not a printable', () => {}, 'said')];
       return files.map((f, at) => mi(f.ext.toUpperCase(), f.file, () => {},
@@ -1158,9 +1709,10 @@ export default class HammerolaViewer extends React.Component {
         () => this.setState({ notePop: mNode.name, noteDraft: note || '' }))]),
       // Files hang on a PART, so a group row has none of its own — the same rule
       // and the same reason as the note above it. A group is not a printable and
-      // never has files under its own name; offering the union of its leaves'
-      // instead would be one click asking the browser for a dozen downloads, and
-      // the whole build's files are one menu away in the header already.
+      // never has files under its own name, so the union of its leaves' files is
+      // a set this menu would be INVENTING; and bulk by the axis a reader
+      // actually asks along — one format, all parts — is in the header's menu,
+      // where each group has a "download all" of its own.
       //
       // THIS USED TO SAY BROWSERS BLOCK EVERY DOWNLOAD AFTER THE FIRST. They do
       // not — they ASK, once, with a per-site permission a person grants and the
@@ -1204,6 +1756,13 @@ export default class HammerolaViewer extends React.Component {
     const railOpen = s.rail === null ? this.props.commentsOpen : s.rail;
     const cutOn = s.secOn || s.held;
 
+    // Both notes on the part in front of the reader, read once: the box below
+    // asks three questions of each of them (is it there, does the box open, does
+    // a rule go between them) and a method call per question would let the two
+    // halves of one box answer from two different reads.
+    const authorNote = this.authorNote();
+    const readerNote = this.selectedNote();
+
     return {
       rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, tokenPop: false }),
 
@@ -1225,7 +1784,15 @@ export default class HammerolaViewer extends React.Component {
       // the word under the cursor is noise, and `dev` and `latest` are shown
       // whole already.
       slotTitle: shortId(PAGE.slot) === PAGE.slot ? '' : PAGE.slot,
-      slotBadge: PAGE.slot === 'dev' ? 'auto-updates' : PAGE.slot === 'latest' ? 'follows CI' : 'pinned',
+      // `latest` FOLLOWS COMMITS, and it used to say it followed CI. That was
+      // true before the migration, when a Gitea workflow built every model; the
+      // hub builds them now and `hammerola commit` is what moves this pointer,
+      // so the old label named a machine that no longer touches this project.
+      // `tests/test_ui_source.py` pins the retired string out of the tree —
+      // it survived a cleanup that swept the page and the docs precisely
+      // because it is computed inside a component, where nothing could point
+      // at it.
+      slotBadge: PAGE.slot === 'dev' ? 'auto-updates' : PAGE.slot === 'latest' ? 'follows commits' : 'pinned',
       slotDate: meta ? stamp(meta.built) : '',
       revToggle: stop(() => this.setState({ revOpen: !s.revOpen, dlOpen: false, tokenPop: false })),
       revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid #d3d8de;background:#fff;border-radius:6px;cursor:pointer',
@@ -1240,7 +1807,7 @@ export default class HammerolaViewer extends React.Component {
       statusText: status.text,
       statusDotStyle: `width:8px;height:8px;border-radius:4px;background:${status.dot};flex:none`,
 
-      downloads,
+      downloadGroups,
       dlToggle: stop(() => this.setState({ dlOpen: !s.dlOpen, revOpen: false, tokenPop: false })),
       dlBtnStyle: btn(s.dlOpen) + ';border:1px solid #d3d8de;background:#fff',
       dlMenuStyle: 'position:absolute;right:0;top:40px;width:250px;background:#fff;border:1px solid #d3d8de;border-radius:9px;box-shadow:0 10px 34px rgba(20,24,28,.16);padding:6px 0;z-index:40;display:' + (s.dlOpen ? 'block' : 'none'),
@@ -1347,9 +1914,42 @@ export default class HammerolaViewer extends React.Component {
       hatchBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;' + (s.hatch ? 'background:#1f7ae0;color:#fff' : 'border:1px solid #c3c8cf;background:#fff;color:transparent'),
       hatchMark: s.hatch ? '✓' : '',
 
-      noteBoxStyle: 'position:absolute;right:14px;top:14px;width:250px;padding:9px 11px;background:#fdf6e3;border:1px solid #eadfc0;border-radius:7px;box-shadow:0 4px 16px rgba(20,24,28,.1);z-index:11;display:' + (!s.compare && !viewer && this.selectedNote() ? 'block' : 'none'),
+      // -- the two notes on the selected part ---------------------------------
+      //
+      // ONE BOX, TWO LABELLED HALVES, and the labelling is the feature rather
+      // than decoration: these are notes from two different places with two
+      // different rights, and a reader who cannot tell them apart will read
+      // their own reminder as the author's specification. The author's comes
+      // FIRST because it is the one that describes the part; the reader's is
+      // what they added on top of it.
+      //
+      // WHO SEES WHICH. The author's note is published content — the same
+      // standing as the part's name and the downloads — so it is drawn with or
+      // without a token. The reader's keeps the gate it has always had: the
+      // whole customer/viewer split is "no token, no edits", and a note that
+      // showed with no way to change it would be a box the reader cannot get
+      // out of. Which is also why the box opens for either one alone: an author
+      // note on a build a viewer is looking at is the ordinary case.
+      noteBoxStyle: 'position:absolute;right:14px;top:14px;width:250px;padding:9px 11px;background:#fdf6e3;border:1px solid #eadfc0;border-radius:7px;box-shadow:0 4px 16px rgba(20,24,28,.1);z-index:11;display:'
+        + (!s.compare && (authorNote || (!viewer && readerNote)) ? 'block' : 'none'),
       noteName: this.selectedName(),
-      noteText: this.selectedNote(),
+      authorNoteStyle: 'display:' + (authorNote ? 'block' : 'none') + ';margin-top:5px',
+      authorNote,
+      // The rule above it only when there IS something above it — otherwise the
+      // one note in the box gets a line separating it from nothing.
+      readerNoteStyle: 'display:' + (!viewer && readerNote ? 'block' : 'none')
+        + (authorNote
+          ? ';margin-top:7px;padding-top:7px;border-top:1px solid #eadfc0'
+          : ';margin-top:5px'),
+      noteText: readerNote,
+      // The link edits the READER's note and nothing else, so it says so and it
+      // goes away entirely without a token. It also says which of "add" and
+      // "edit" it is about to do, because with an author note on screen the box
+      // now stands for parts this browser has written nothing about — and that
+      // is the one place a reader can start one from besides the row menu.
+      editNoteStyle: 'cursor:pointer;color:#8a9099;font-weight:400;text-transform:lowercase'
+        + (viewer ? ';display:none' : ''),
+      editNoteLabel: readerNote ? 'edit yours' : 'add yours',
       editNote: stop(() => this.setState({ notePop: this.selectedName(), noteDraft: this.selectedNote() })),
 
       cmpA: s.cmp[0] || '', cmpB: s.cmp[1] || '',
@@ -1533,15 +2133,25 @@ export default class HammerolaViewer extends React.Component {
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
               Downloads
             </div>
+            {/* One block per FORMAT, each with a link that takes the whole
+                group: on a ten-part build the flat list was thirty rows in no
+                useful order, and "every STL" meant aiming at every third one. */}
             <div style={css(v.dlMenuStyle)}>
-              {v.downloads.map((d) => (
-                <a key={d.key} href={d.href} download
-                   style={css(`display:flex;align-items:center;gap:10px;padding:7px 14px;text-decoration:none;color:#2a2e33;font:400 12px ${SANS}`)}>
-                  <span style={css('flex:1')}>{d.label}</span>
-                  <span style={css(`font:400 10.5px ${MONO};color:#b0b6bd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:130px`)}>{d.file}</span>
-                </a>
+              {v.downloadGroups.map((g) => (
+                <React.Fragment key={g.key}>
+                  <div style={css(g.headStyle)}>
+                    <span style={css('flex:1')}>{g.ext}</span>
+                    <span onClick={g.onAll} style={css(g.allStyle)}>download all</span>
+                  </div>
+                  {g.files.map((f) => (
+                    <a key={f.key} href={f.href} download style={css(f.style)}>
+                      <span style={css('flex:1')}>{f.label}</span>
+                      <span style={css(`font:400 10.5px ${MONO};color:#b0b6bd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
+                    </a>
+                  ))}
+                </React.Fragment>
               ))}
-              {v.downloads.length === 0 && (
+              {v.downloadGroups.length === 0 && (
                 <div style={css(`padding:10px 14px;font:400 11.5px ${SANS};color:#8a9099`)}>
                   This build ships no files to download.
                 </div>
@@ -1767,14 +2377,34 @@ export default class HammerolaViewer extends React.Component {
               </div>
             </div>
 
-            {/* the selected part's note */}
+            {/* The selected part's notes: the model's own first, then this
+                browser's. Two sources, one word, so each half is labelled —
+                without that, a reader's reminder to themselves reads as the
+                author's specification of the part.
+
+                BOTH TEXTS ARE PLAIN CHILDREN, and that is the whole of what
+                keeps a pushed string from becoming markup on a permanent,
+                immutable, shared-origin page: React renders a child as text.
+                Nothing here parses one, linkifies a URL in one or hands one to a
+                renderer. The hub refuses `<`, `>` and control characters on the
+                way in, and this side does not depend on that being the only line
+                — a clickable link is separate work, and it starts with an
+                allow-list of schemes, because `javascript:` in an href is script
+                execution on the origin every project on this hub shares. */}
             <div style={css(v.noteBoxStyle)}>
               <div style={css(`display:flex;align-items:center;gap:6px;font:600 10px ${MONO};color:#8a6a1f;letter-spacing:.06em`)}>
                 NOTE &middot; {v.noteName}
                 <span style={css('flex:1')} />
-                <span onClick={v.editNote} style={css('cursor:pointer;color:#8a9099;font-weight:400;text-transform:lowercase')}>edit</span>
+                <span onClick={v.editNote} style={css(v.editNoteStyle)}>{v.editNoteLabel}</span>
               </div>
-              <div style={css(`font:400 11.5px/1.5 ${SANS};color:#4a4436;margin-top:4px`)}>{v.noteText}</div>
+              <div style={css(v.authorNoteStyle)}>
+                <div style={css(`font:600 9px ${MONO};color:#a2894e;letter-spacing:.07em`)}>FROM THE MODEL</div>
+                <div style={css(`font:400 11.5px/1.5 ${SANS};color:#4a4436;margin-top:3px`)}>{v.authorNote}</div>
+              </div>
+              <div style={css(v.readerNoteStyle)}>
+                <div style={css(`font:600 9px ${MONO};color:#a2894e;letter-spacing:.07em`)}>ONLY IN THIS BROWSER</div>
+                <div style={css(`font:400 11.5px/1.5 ${SANS};color:#4a4436;margin-top:3px`)}>{v.noteText}</div>
+              </div>
             </div>
 
             {/* the viewport could not draw this view — block 11. The button is
@@ -1933,8 +2563,16 @@ export default class HammerolaViewer extends React.Component {
               placeholder="e.g. thin wall here — do not touch"
               style={css(`width:100%;box-sizing:border-box;border:1px solid #d3d8de;border-radius:6px;outline:none;resize:none;padding:8px 10px;font:400 12px/1.5 ${SANS};height:64px;background:#fff`)}
             />
+            {/* Half of this used to be false: it said the hub has no endpoint
+                for notes, and the hub now publishes the AUTHOR's. What is still
+                true is the half about THIS note — it stays here, and no route
+                writes it back — so the sentence says that, and then says where
+                a note that has to travel is written instead. Somebody who wants
+                the next reader to see what they just typed needs that address
+                more than they need to know what this box does not do. */}
             <div style={css(`font:400 10.5px/1.5 ${MONO};color:#9aa1a9;margin-top:6px`)}>
-              kept in this browser &mdash; the hub has no endpoint for notes yet
+              stays in this browser &mdash; nothing sends it to the hub. A note that
+              travels with the build, for everyone who opens it, is written in model.py
             </div>
             <div style={css('display:flex;gap:8px;justify-content:flex-end;margin-top:8px')}>
               <span onClick={v.noteCancel} style={css(`padding:6px 12px;border-radius:6px;font:500 11.5px ${SANS};color:#5b6470;cursor:pointer`)}>Cancel</span>

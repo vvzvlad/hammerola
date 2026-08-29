@@ -407,6 +407,65 @@ def test_the_comment_payload_only_uses_fields_the_hub_keeps():
     assert sent <= kept, f"fields the hub will silently drop: {sorted(sent - kept)}"
 
 
+# -- a spelling the migration retired ----------------------------------------
+
+# What the badge beside the revision used to say about the `latest` pointer.
+# Written here once, as a constant, so the only copy of it left in the
+# repository is the one whose job is to make sure there are no others.
+RETIRED_POINTER_BADGE = "follows CI"
+
+
+def test_nothing_says_the_latest_pointer_still_follows_a_build_machine():
+    """The retired badge, pinned out of the tree because nothing else could see it.
+
+    `latest` was moved by a Gitea workflow once; it is moved by `hammerola
+    commit` now, and the migration that changed that swept the pages, the
+    templates and the documents for every sentence the change made false. It
+    missed this one — and it missed it for a structural reason rather than
+    carelessness. The string was not in a template, not in a document and not in
+    a route: it was a VALUE computed inside a React component, one arm of a
+    ternary in `computed()`, so no grep of the prose and no reading of a page
+    would ever land on it. Nothing could point at it, which is exactly the
+    condition this file exists for.
+
+    THE TEXT IS THE WHOLE QUESTION HERE, which is why it is asked in Python
+    against the source rather than in `ui/tests/`: the JS suite can assert what
+    the badge SAYS TODAY (`header.test.js` does, on all three slots), and that is
+    a different claim. "This spelling is gone from the repository" is not a value
+    any of these files computes; it is a property of the text of all of them.
+
+    COMMENTS ARE NOT EXEMPT, unlike most of this file, and the exception is
+    deliberate — the same reasoning as
+    `test_the_project_list_chooses_its_body_from_that_table`. A sentence
+    explaining a wrong string by quoting it is how the string comes back:
+    somebody greps for it later, finds it, and reads it as the current answer.
+    Prose about this one therefore says what it says WITHOUT spelling it, the way
+    the comment above `slotBadge` does.
+
+    THE SWEEP REACHES THE CLIENT AND THE SERVED ASSETS, not just the bundle
+    sources, because "what moves `latest`" is a sentence any of them could carry
+    — the CLI prints its own explanations of the two pointers, and the committed
+    page scripts are served to a browser exactly as they are. Only the vendored
+    viewer is skipped: it is 3.5 MB of somebody else's build output, and nothing
+    in it has ever heard of this hub.
+    """
+    swept = list(ALL_UI_FILES)
+    swept += sorted((ROOT / "templates").glob("*.html"))
+    swept += sorted(p for p in (ROOT / "static" / "_v").glob("*.js")
+                    if p.name != "three-cad-viewer.esm.js")
+    swept += sorted((ROOT / "src" / "client").rglob("*.py"))
+    # Otherwise a moved directory turns this into a check that sweeps nothing and
+    # passes — this file's own oldest failure mode.
+    assert len(swept) > 20, f"the sweep found almost nothing to read: {swept}"
+
+    strays = [str(path.relative_to(ROOT)) for path in swept
+              if RETIRED_POINTER_BADGE in read(path)]
+    assert not strays, (
+        f"{strays} still say the `latest` pointer {RETIRED_POINTER_BADGE!r}. "
+        "CI does not build models any more — the hub does, and `hammerola "
+        "commit` is what moves that pointer")
+
+
 # -- what the hub actually publishes -----------------------------------------
 
 def test_every_meta_field_the_ui_reads_is_one_render_writes():
@@ -414,9 +473,23 @@ def test_every_meta_field_the_ui_reads_is_one_render_writes():
 
     A field that is not there reads as `undefined`, which renders as an empty
     string and formats as `NaN` — never as an error.
+
+    TWO SPELLINGS COUNT AS WRITING A FIELD, and the second one had to be added
+    the day a field became OPTIONAL. Most of meta.json is one dict literal, so
+    `"field":` finds it; `notes` is emitted only when the build has any — an
+    empty object there would be a build SAYING it has none, and no older build
+    says anything at all — so it is written by subscript afterwards. Read with
+    the literal spelling alone, this check called a field render.py demonstrably
+    writes a field it does not, i.e. it failed on exactly the shape it exists to
+    permit: a document whose keys are not all decided in one place.
+
+    The subscript pattern is deliberately narrow — a string key assigned into a
+    subscript, which in this module only ever happens to a document being
+    assembled — rather than "any name that appears near an `=`".
     """
     render = read(ROOT / "src" / "render.py")
-    written = set(re.findall(r'"(\w+)":', render))
+    written = (set(re.findall(r'"(\w+)":', render))
+               | set(re.findall(r'\[\s*"(\w+)"\s*\]\s*=', render)))
     read_by_ui = set()
     for path in (COMPONENT, UI / "hub.js"):
         # `meta.json` is the FILE the fields come out of, not one of them, and it

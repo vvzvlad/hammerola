@@ -12,9 +12,17 @@
 //
 // `wheel` is deliberately left alone in every mode, so zoom keeps working while
 // a tool is up.
+//
+// THE RIGHT BUTTON IS A SECOND GESTURE ON THE SAME LISTENER, and it is the one
+// exception to the paragraph above: it opens the interface's part menu, and it
+// takes NOTHING from the library, because the library pans on that button
+// (wheel.js). Both readings of the press stay live until the release, where
+// travel decides — under CLICK_PX it was a click and the menu opens, at or over
+// it the reader was panning and this side says nothing.
 
 import {
-  EVENT_FACE, EVENT_MEASURE, EVENT_MOVED, EVENT_PICK, EVENT_PLACE, emit,
+  EVENT_FACE, EVENT_MEASURE, EVENT_MENU, EVENT_MOVED, EVENT_PICK, EVENT_PLACE,
+  emit,
 } from "./events.js";
 import { cameraBasis, canvasXY, ndcAt, ndcOffset } from "./camera.js";
 import { gestureInternals, internals } from "./internals.js";
@@ -54,6 +62,18 @@ export function installTools(vp) {
     removeEventListener("pointermove", onMove, true);
     removeEventListener("pointerup", onUp, true);
     removeEventListener("pointercancel", onCancel, true);
+  };
+
+  /** Follow this press to wherever it is released.
+   *
+   * On the WINDOW and in the capture phase: the trackball captures the pointer,
+   * so a drag that starts on the canvas can perfectly well end outside it, and a
+   * release missed here strands the gesture forever.
+   */
+  const watch = () => {
+    addEventListener("pointermove", onMove, true);
+    addEventListener("pointerup", onUp, true);
+    addEventListener("pointercancel", onCancel, true);
   };
 
   /** Where the section plane ended up, announced once.
@@ -258,6 +278,27 @@ export function installTools(vp) {
     const at = canvasXY(g.canvas, event);
     if (!at) return;
     const [x, y] = at;
+    if (p.menu) {
+      // The same `pickEntity` the plain pick below uses, so the identifier the
+      // menu opens on is the identifier a selection would have produced — the
+      // interface looks both of them up in the same tree.
+      //
+      // AND IT DOES NOT EMIT A PICK. The menu is about the part under the
+      // cursor; the selection is about the part the reader chose. A tree row's
+      // menu leaves the selection where it was, and one menu with two behaviours
+      // is worse than either.
+      const entity = pickEntity(g, x, y);
+      emit(vp, EVENT_MENU, {
+        id: entity ? entity.id : null,
+        name: entity ? entity.name : null,
+        // The CURSOR, which is where a context menu opens. Client coordinates
+        // rather than canvas ones: the menu is `position: fixed` on the page,
+        // not inside the viewport.
+        x: event.clientX,
+        y: event.clientY,
+      });
+      return;
+    }
     if (p.tool === "cut") {
       seedCut(g, x, y);
       return;
@@ -287,11 +328,34 @@ export function installTools(vp) {
 
   const onDown = (event) => {
     finish();
-    if (event.button !== 0) return;
+    // Two buttons mean something here and the rest mean nothing: the left is
+    // every tool and the plain pick, the right is the part menu.
+    if (event.button !== 0 && event.button !== 2) return;
     const viewer = vp.viewer;
     if (!viewer) return;
     const g = internals(viewer);
     if (!g || event.target !== g.canvas) return;
+    if (event.button === 2) {
+      // THE PRESS IS ONLY WATCHED, never taken. The library PANS on the right
+      // button (wheel.js), so this gesture shares it: the press goes on to the
+      // controls exactly as before, and what decides between the two at the END
+      // is travel — under CLICK_PX it was a click and the menu opens, at or over
+      // it the reader was panning and nothing happens. That is the same
+      // threshold, and the same reasoning, `onMove` already applies to the left
+      // button's clicks.
+      //
+      // `tool` is null rather than a name of its own: none of the tool branches
+      // is meant to fire for this press, and a sentinel in that field would be a
+      // second vocabulary in a variable that holds the interface's tools.
+      press = {
+        tool: null, menu: true,
+        x: event.clientX, y: event.clientY,
+        startX: event.clientX, startY: event.clientY,
+        moved: false, axis: undefined, move: null,
+      };
+      watch();
+      return;
+    }
     // `activeTool`, NOT `state.tool`: the hold key puts the cut up without
     // writing to `state` (the interface owns that field), so reading `state`
     // here would light the interface's "cut is on" indicator while a press went
@@ -307,12 +371,7 @@ export function installTools(vp) {
       startX: event.clientX, startY: event.clientY,
       moved: false, axis: undefined, move: null,
     };
-    // On the WINDOW and in the capture phase: the trackball captures the
-    // pointer, so a drag that starts on the canvas can perfectly well end
-    // outside it, and a release missed here strands the gesture forever.
-    addEventListener("pointermove", onMove, true);
-    addEventListener("pointerup", onUp, true);
-    addEventListener("pointercancel", onCancel, true);
+    watch();
     if (!tool) return;
     if (tool === "move") {
       const at = canvasXY(g.canvas, event);
@@ -347,7 +406,18 @@ export function installTools(vp) {
     event.stopPropagation();
   };
 
+  /** The browser's own menu, kept off the canvas.
+   *
+   * The right button is this page's menu gesture now, and the native one would
+   * come up on top of it — on some platforms before the release that opens ours
+   * has even happened, since `contextmenu` fires on the press rather than the
+   * release outside Windows. Preventing it is also what keeps the release
+   * arriving at all where the native menu would otherwise have taken the pointer.
+   */
+  const onContextMenu = (event) => event.preventDefault();
+
   vp.box.addEventListener("pointerdown", onDown, true);
+  vp.box.addEventListener("contextmenu", onContextMenu);
 
   // The teardown, and it has to take the WINDOW listeners with it: a viewport
   // unmounted mid-drag (React re-render, a route change) would otherwise leave
@@ -355,6 +425,7 @@ export function installTools(vp) {
   // that is gone.
   return () => {
     vp.box.removeEventListener("pointerdown", onDown, true);
+    vp.box.removeEventListener("contextmenu", onContextMenu);
     // `finish` and NOT `endGesture`: this is the viewport going away, so there
     // is nobody left to tell where the plane ended up and no scene to read it
     // off. Only the listeners have to go.

@@ -33,6 +33,7 @@
 import {
   EVENT_STATE as STATE,
   EVENT_PICK as PICK,
+  EVENT_MENU as MENU,
   EVENT_FACE as FACE,
   EVENT_MEASURE as MEASURE,
   EVENT_MOVED as MOVED,
@@ -48,6 +49,7 @@ import {
  *
  *   STATE    down: the whole of what this interface asks the viewport to show
  *   PICK     {id, name, point}   -- `id` is null when the background was clicked
+ *   MENU     {id, name, x, y}    -- a part was right-clicked; x/y are the cursor
  *   FACE     {id, name, point, normal, offset, range}  -- the section plane moved
  *   MEASURE  a resolved measurement; see `measureLabel` for the fields that matter
  *   MOVED    {id, name, delta: [x, y, z]}   -- a part was dragged
@@ -71,11 +73,12 @@ import {
  * reader to SEE that a cut is on -- which this side can only do if it is told.
  */
 export {
-  STATE, PICK, FACE, MEASURE, MOVED, PLACE, PIN, MODEL, ERROR, TOOL,
+  STATE, PICK, MENU, FACE, MEASURE, MOVED, PLACE, PIN, MODEL, ERROR, TOOL,
 };
 
 /** Every event the viewport sends us, in one list — see componentDidMount. */
-export const UP_EVENTS = [PICK, FACE, MEASURE, MOVED, PLACE, PIN, MODEL, ERROR, TOOL];
+export const UP_EVENTS = [PICK, MENU, FACE, MEASURE, MOVED, PLACE, PIN, MODEL,
+                          ERROR, TOOL];
 
 /** The custom element the adapter registers, under the adapter's own name for it.
  *

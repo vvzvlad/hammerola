@@ -35,8 +35,9 @@ vi.mock('../src/viewport/picking.js', async (importOriginal) => ({
 }))
 
 import { HmrViewport } from '../src/viewport/element.js'
-import { EVENT_FACE, EVENT_PICK } from '../src/viewport/events.js'
+import { EVENT_FACE, EVENT_MENU, EVENT_PICK } from '../src/viewport/events.js'
 import { internals } from '../src/viewport/internals.js'
+import { CLICK_PX } from '../src/viewport/options.js'
 import { faceNormalAt, pickEntity } from '../src/viewport/picking.js'
 import { placeSectionPlane, sectionOffset } from '../src/viewport/section.js'
 import { installTools } from '../src/viewport/tools.js'
@@ -65,7 +66,14 @@ function toolViewport(state = {}) {
   vp.dispatchEvent = vi.fn()
   vp.box = {
     down: null,
-    addEventListener(type, fn) { if (type === 'pointerdown') this.down = fn },
+    // Every listener by type, not just the press: the right-button menu also
+    // needs the browser's own context menu kept off the canvas, and that is a
+    // second listener on this same element.
+    on: {},
+    addEventListener(type, fn) {
+      this.on[type] = fn
+      if (type === 'pointerdown') this.down = fn
+    },
     removeEventListener() {},
   }
   teardowns.push(installTools(vp))
@@ -73,9 +81,9 @@ function toolViewport(state = {}) {
 }
 
 /** A press on the canvas. The event is returned so a test can ask who got it. */
-function pointerDown(vp, [clientX, clientY] = [100, 100]) {
+function pointerDown(vp, [clientX, clientY] = [100, 100], button = 0) {
   const event = {
-    button: 0,
+    button,
     target: vp.viewer.canvas,
     clientX,
     clientY,
@@ -85,6 +93,9 @@ function pointerDown(vp, [clientX, clientY] = [100, 100]) {
   vp.box.down(event)
   return event
 }
+
+/** The other button: the one the part menu hangs off. */
+const rightDown = (vp, at) => pointerDown(vp, at, 2)
 
 /** The release. It goes to the WINDOW, which is where onDown put the listener. */
 function pointerUp([clientX, clientY] = [100, 100]) {
@@ -98,7 +109,22 @@ function pointerMove([clientX, clientY]) {
 
 const emitted = (vp) => vp.dispatchEvent.mock.calls.map(([event]) => event.type)
 
-beforeEach(() => { vi.clearAllMocks() })
+/** What was carried by every event of one name, in the order they went out. */
+const details = (vp, type) => vp.dispatchEvent.mock.calls
+  .map(([event]) => event)
+  .filter((event) => event.type === type)
+  .map((event) => event.detail)
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  // `clearAllMocks` clears the CALLS and leaves the implementation standing, so
+  // a `mockReturnValue` set by one test goes on answering for every test after
+  // it — in file order, silently, and only for the ones that never set their
+  // own. Both probes go back to MISSING here, which is what the module factory
+  // at the top of this file says they do.
+  faceNormalAt.mockReturnValue(null)
+  pickEntity.mockReturnValue(null)
+})
 
 afterEach(() => {
   // Before the next test dispatches on the window: a teardown left undone would
@@ -170,6 +196,113 @@ describe('who owns the press', () => {
     expect(event.preventDefault).not.toHaveBeenCalled()
     expect(event.stopPropagation).not.toHaveBeenCalled()
     pointerUp()
+  })
+})
+
+describe('the right button: a menu or a pan', () => {
+  const PLATE = { id: '/model/plate', name: 'plate', point: [1, 2, 3] }
+
+  it('asks for the part menu when the press did not travel', () => {
+    const vp = toolViewport({ tool: null })
+    pickEntity.mockReturnValueOnce(PLATE)
+
+    rightDown(vp, [140, 90])
+    pointerUp([140, 90])
+
+    expect(details(vp, EVENT_MENU)).toEqual([
+      // The CURSOR, because that is where a context menu opens, and the
+      // identifier `pickEntity` gives — the same one a selection would carry, so
+      // the interface looks it up in the same tree.
+      { id: '/model/plate', name: 'plate', x: 140, y: 90 },
+    ])
+  })
+
+  it('says nothing when the press travelled — that was a pan', () => {
+    // The library pans on this button (wheel.js), so travel is the only thing
+    // that tells the two apart, and the threshold is the one already used to
+    // decide a left-button press was a click.
+    // Nothing is asked of `pickEntity` here, and that is part of the claim: a
+    // pan must not even resolve what is under the cursor.
+    const vp = toolViewport({ tool: null })
+
+    rightDown(vp, [140, 90])
+    pointerMove([140 + CLICK_PX, 90])
+    pointerUp([140 + CLICK_PX, 90])
+
+    expect(emitted(vp)).not.toContain(EVENT_MENU)
+    expect(pickEntity).not.toHaveBeenCalled()
+  })
+
+  it('still opens one just under the threshold', () => {
+    // The other side of the same line, so a threshold quietly changed to zero
+    // (or to "any movement at all") fails here rather than making the menu
+    // unreachable on a mouse that jitters.
+    const vp = toolViewport({ tool: null })
+    pickEntity.mockReturnValue(PLATE)
+
+    rightDown(vp, [140, 90])
+    pointerMove([140 + CLICK_PX - 1, 90])
+    pointerUp([140 + CLICK_PX - 1, 90])
+
+    expect(details(vp, EVENT_MENU)).toHaveLength(1)
+  })
+
+  it('leaves the press with the library, so panning keeps working', () => {
+    // Nothing is taken here — unlike a tool's press, which is stopped in the
+    // capture phase precisely so the controls never see it. Both readings of a
+    // right press stay live until the release decides between them.
+    const vp = toolViewport({ tool: null })
+    const event = rightDown(vp)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(event.stopPropagation).not.toHaveBeenCalled()
+    pointerUp()
+  })
+
+  it('reports empty space as a menu with no id, which is how the menu closes', () => {
+    // `pickEntity` misses — the state `beforeEach` puts it back into.
+    const vp = toolViewport({ tool: null })
+
+    rightDown(vp, [10, 10])
+    pointerUp([10, 10])
+
+    expect(details(vp, EVENT_MENU)).toEqual([{ id: null, name: null, x: 10, y: 10 }])
+  })
+
+  it('does not move the selection while opening a menu', () => {
+    // A tree row's menu leaves the selection alone, and one menu with two
+    // behaviours is worse than either. A PICK going out beside the menu is
+    // exactly how the second behaviour would arrive.
+    const vp = toolViewport({ tool: null })
+    pickEntity.mockReturnValue(PLATE)
+
+    rightDown(vp, [140, 90])
+    pointerUp([140, 90])
+
+    expect(emitted(vp)).toEqual([EVENT_MENU])
+  })
+
+  it('opens the menu whatever tool the interface armed', () => {
+    // The tools all live on the LEFT button; this gesture is not a tool and does
+    // not consult `activeTool`. A cut armed with the menu unreachable would be a
+    // mode a reader has to leave in order to look at a part.
+    const vp = toolViewport({ tool: 'measure' })
+    pickEntity.mockReturnValue(PLATE)
+
+    rightDown(vp, [140, 90])
+    pointerUp([140, 90])
+
+    expect(details(vp, EVENT_MENU)).toHaveLength(1)
+    expect(faceNormalAt).not.toHaveBeenCalled()
+  })
+
+  it('keeps the browser\'s own menu off the canvas', () => {
+    // Ours would otherwise open under the native one — and on every platform but
+    // Windows the native one comes up on the PRESS, before the release that
+    // opens ours has happened.
+    const vp = toolViewport({ tool: null })
+    const event = { preventDefault: vi.fn() }
+    vp.box.on.contextmenu(event)
+    expect(event.preventDefault).toHaveBeenCalled()
   })
 })
 

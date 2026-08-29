@@ -43,6 +43,21 @@ export const POINTER_NAMES = ['latest', 'dev'];
  */
 export const ASSEMBLED_VIEW_ID = 'assembled';
 
+/** The three fields, read off one pathname. Pure, and the ONLY place that
+ *  arithmetic is written — `PAGE` below and `rereadPage` after it are two
+ *  moments, not two rules, and a second copy of the slicing is how they would
+ *  come to disagree about what `/project/x/dev/` means. */
+function pageFrom(pathname) {
+  const parts = String(pathname).split('/');
+  return {
+    pid: parts[2] || '',
+    // HOW the page was reached, which is not the same question as which build
+    // answered: on `/latest/` the slot is `latest` and meta.commit is a hash.
+    slot: parts[3] || '',
+    base: String(pathname).replace(/[^/]*$/, ''),
+  };
+}
+
 /** Where this page sits, read off its own URL and nothing else.
  *
  * No template variable, no data attribute: the hub renders the same static
@@ -50,16 +65,33 @@ export const ASSEMBLED_VIEW_ID = 'assembled';
  * the only thing that says which one this is. The committed page scripts read
  * theirs the same way.
  */
-export const PAGE = (() => {
-  const parts = String(location.pathname).split('/');
-  return {
-    pid: parts[2] || '',
-    // HOW the page was reached, which is not the same question as which build
-    // answered: on `/latest/` the slot is `latest` and meta.commit is a hash.
-    slot: parts[3] || '',
-    base: String(location.pathname).replace(/[^/]*$/, ''),
-  };
-})();
+export const PAGE = pageFrom(location.pathname);
+
+/**
+ * Read it again, IN PLACE, after the URL moved without the page reloading.
+ *
+ * Switching revisions is a `history.pushState` rather than a navigation (SPEC
+ * §8, entry 62): the address still has to say which geometry is on screen, but
+ * throwing the document away to change it costs the reader the camera, the
+ * hidden parts and the section — everything they set up in order to compare two
+ * builds. What survives that is exactly what this function exists for: nothing
+ * re-derives `PAGE` on its own, so after a push every reader of `PAGE.base`
+ * would go on fetching the revision that was on screen a moment ago.
+ *
+ * `Object.assign` ONTO THE SAME OBJECT and not a reassignment, because every
+ * module here imported the object itself and reads it as data — `PAGE.base` in
+ * a template string, `PAGE.slot` in a comparison. Rebinding the export would
+ * leave each of those pointing at the old record; a function would mean editing
+ * a dozen call sites into `PAGE().base` for no gain.
+ *
+ * The argument is for tests and for a caller that knows the path before the
+ * browser does; with none, the browser's own URL is the answer, which is the
+ * whole definition of this record.
+ */
+export function rereadPage(pathname) {
+  return Object.assign(
+    PAGE, pageFrom(pathname === undefined ? location.pathname : pathname));
+}
 
 /** True on the two URLs whose content can be rewritten under the reader. */
 export const isPointerPage = () => POINTER_NAMES.includes(PAGE.slot);
@@ -70,9 +102,16 @@ async function getJson(url, init) {
   return response.json();
 }
 
-/** This build, as the hub normalised it at publish time (src/render.py). */
-export const loadMeta = (fresh) =>
-  getJson(`${PAGE.base}meta.json`, fresh ? { cache: 'no-store' } : undefined);
+/** This build, as the hub normalised it at publish time (src/render.py).
+ *
+ * `base` names a build OTHER than the one on screen, and it is what lets a
+ * revision switch ask before it commits to anything: the swap has to know the
+ * target's views before it moves the URL, so that a 404 leaves the page exactly
+ * where it was rather than half moved. Left out, it is this page's own build.
+ */
+export const loadMeta = (fresh, base) =>
+  getJson(`${base === undefined ? PAGE.base : base}meta.json`,
+          fresh ? { cache: 'no-store' } : undefined);
 
 /** The build picker: `{pid, project, title, has_dev, latest, builds[]}`. */
 export const loadBuilds = () => getJson(`/project/${PAGE.pid}/builds.json`);
