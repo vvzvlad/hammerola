@@ -13,7 +13,7 @@ from .metrics import METRICS_NAME, collect_metrics, write_metrics
 from .modelchecks import run_checks
 from .printables import collect_printables, export_printables
 from .project import load_project
-from .views import export_views, prepare_views
+from .views import collect_notes, export_views, prepare_views
 
 
 def build(out_dir, preview_mode="iso"):
@@ -76,6 +76,15 @@ def build(out_dir, preview_mode="iso"):
         "views": views,
         "downloads": downloads,
     }
+    # The author's notes, keyed by part NAME rather than by anything the
+    # tessellator produces: the per-part dicts of views() do not survive into
+    # meta.json (`views` is a list of files here) and the tessellated view file
+    # is the tessellator's own document, so this is the only way they travel.
+    # The key is ABSENT when nothing declared one -- a build with no notes and
+    # a build made before notes existed have to reach the hub as one document.
+    notes = collect_notes(prepared)
+    if notes:
+        meta["notes"] = notes
     (out_dir / "meta.json").write_text(
         json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )

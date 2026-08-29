@@ -7,9 +7,12 @@ after the tessellation, which is the slow half of a build.
 
 import pytest
 
+from src import render
 from src.cadbuild.errors import BuildError
 from src.cadbuild.palette import MOCK_COLOR, PART_PALETTE
-from src.cadbuild.views import prepare_views, read_parts, visible_names, names_mention
+from src.cadbuild.views import (MAX_NOTE_CHARS, MAX_NOTES, collect_notes,
+                                prepare_views, read_parts, visible_names,
+                                names_mention)
 
 from fakes import part
 
@@ -159,6 +162,30 @@ def test_a_view_with_nothing_opaque_is_warned_about(capsys):
     assert "no fully opaque part" in capsys.readouterr().out
 
 
+def test_an_unknown_part_key_is_said_out_loud(capsys):
+    """The part-level twin of the view-level warning below it.
+
+    A misspelt `alfa` leaves the part opaque and used to say nothing at all,
+    which is the same failure as a misspelt `nestedok`: the author reads a green
+    build as agreement. It is a warning rather than an error for the reason
+    written where it is printed -- this contract is shared by every project in
+    the organisation, and a key somebody added for their own tooling must not
+    turn into a red build.
+    """
+    body = part()
+    prepare_views([one_view(parts=[{"shape": body, "name": "body",
+                                    "alfa": 0.5, "notes": "typo"}])],
+                  {"body": body})
+    printed = capsys.readouterr().out
+    assert "'alfa'" in printed
+    assert "'notes'" in printed
+    # ...and it lists the known ones, so the misspelling is VISIBLE rather than
+    # merely reported. Written out rather than joined from PART_KEYS, which
+    # would agree with itself: this line is the per-part contract, and a key
+    # added to it is a change to what every model in the fleet may write.
+    assert "Known keys: alpha, color, name, note, shape" in printed
+
+
 def test_an_unknown_view_key_is_said_out_loud(capsys):
     """A misspelt `nestedok` used to be an exemption that was not there."""
     body = part()
@@ -181,6 +208,120 @@ def test_nested_ok_naming_a_part_that_is_not_in_the_view_is_refused():
         prepare_views([one_view(vid="print",
                                 parts=[{"shape": body, "name": "body"}],
                                 nested_ok=[("body", "ghost")])], {"body": body})
+
+
+# --------------------------------------------------------------------------
+# The author's note (SPEC 8, entry 11)
+#
+# Not the reader's note (that one lives in a browser's localStorage and never
+# leaves it) and not a comment (written by a viewer, addressed to the agent).
+# This one is written HERE, in the model, and travels with the build.
+# --------------------------------------------------------------------------
+
+def test_a_note_is_kept_against_the_part_name():
+    body, lid = part(), part()
+    prepared = prepare_views(
+        [one_view(parts=[{"shape": body, "name": "body"},
+                         {"shape": lid, "name": "lid",
+                          "note": "  M3x8 DIN912  "}])],
+        {"body": body})
+    # Stripped, and keyed by NAME -- which is what survives a rebuild, and what
+    # meta.json can carry (the per-part dicts themselves do not).
+    assert prepared[0]["notes"] == {"lid": "M3x8 DIN912"}
+    # A part that said nothing carries no entry at all, rather than an empty one.
+    assert collect_notes(prepared) == {"lid": "M3x8 DIN912"}
+
+
+def test_a_model_with_nothing_to_say_collects_no_notes():
+    body = part()
+    prepared = prepare_views([one_view(parts=[{"shape": body, "name": "body"}])],
+                             {"body": body})
+    assert collect_notes(prepared) == {}
+
+
+def test_a_note_that_is_not_a_string_is_refused():
+    """str() would invent a sentence nobody wrote -- the `name` lesson again."""
+    body = part()
+    for bad in (42, ["M3x8"], {"text": "M3x8"}):
+        with pytest.raises(BuildError) as exc:
+            read_parts({"id": "assembled",
+                        "parts": [{"shape": body, "name": "body", "note": bad}]},
+                       "assembled")
+        assert "not a string" in str(exc.value)
+
+
+def test_an_empty_note_is_refused_rather_than_dropped():
+    """A part with nothing to say leaves the key out; an empty string is a
+    sentence that was started and not finished, and dropping it in silence is
+    how the author never learns which."""
+    body = part()
+    for bad in ("", "   ", "\t"):
+        with pytest.raises(BuildError) as exc:
+            read_parts({"id": "assembled",
+                        "parts": [{"shape": body, "name": "body", "note": bad}]},
+                       "assembled")
+        assert "empty" in str(exc.value)
+
+
+def test_a_note_longer_than_the_hub_accepts_is_refused_here():
+    body = part()
+    with pytest.raises(BuildError) as exc:
+        read_parts({"id": "assembled",
+                    "parts": [{"shape": body, "name": "body",
+                               "note": "x" * (MAX_NOTE_CHARS + 1)}]},
+                   "assembled")
+    message = str(exc.value)
+    assert str(MAX_NOTE_CHARS) in message and str(MAX_NOTE_CHARS + 1) in message
+
+
+def test_the_same_part_may_carry_the_same_note_in_two_views():
+    """A part appears in several views -- that is how one is followed from
+    `assembled` to `print` -- and the note belongs to the part."""
+    body = part()
+    entry = {"shape": body, "name": "body", "note": "PETG, 4 walls"}
+    prepared = prepare_views([one_view(vid="assembled", parts=[dict(entry)]),
+                              one_view(vid="print", parts=[dict(entry)])],
+                             {"body": body})
+    assert collect_notes(prepared) == {"body": "PETG, 4 walls"}
+
+
+def test_two_different_notes_under_one_name_are_refused_naming_both_views():
+    """meta.json has ONE slot per name, so silent last-wins would show one
+    view's sentence next to the part the other one was written about."""
+    body = part()
+    with pytest.raises(BuildError) as exc:
+        prepare_views(
+            [one_view(vid="assembled",
+                      parts=[{"shape": body, "name": "body", "note": "PETG"}]),
+             one_view(vid="print",
+                      parts=[{"shape": body, "name": "body", "note": "PLA"}])],
+            {"body": body})
+    message = str(exc.value)
+    assert "'assembled'" in message and "'print'" in message
+    assert "PETG" in message and "PLA" in message
+
+
+def test_more_notes_than_the_hub_accepts_are_refused():
+    """The count ceiling, checked against `collect_notes` directly: it is a
+    property of the whole model, not of any one view."""
+    prepared = [{"id": "assembled",
+                 "notes": {f"part {i}": "x" for i in range(MAX_NOTES + 1)}}]
+    with pytest.raises(BuildError) as exc:
+        collect_notes(prepared)
+    assert str(MAX_NOTES) in str(exc.value)
+
+
+def test_the_note_ceilings_are_at_or_under_the_hub_s():
+    """A note the build accepts must never be one the hub then refuses.
+
+    The hub checks every note again on the way in, and its answer is a 422 on a
+    push whose build already ran: minutes of geometry spent to be told the text
+    was two characters too long. The two numbers are written in two files that
+    do not import each other -- the build half may not import the serving half
+    -- so this comparison is the only thing holding them together.
+    """
+    assert MAX_NOTE_CHARS <= render.MAX_TEXT
+    assert MAX_NOTES <= render.MAX_NOTES
 
 
 # --------------------------------------------------------------------------

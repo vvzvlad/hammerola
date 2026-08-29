@@ -154,7 +154,7 @@ def rlimit_guard_snapshot():
 
 # --- Module-level state: the caches in src/onboarding.py -----------------------------------
 # The project's rule about module-level mutable state, pointed at the one module in `src/` that
-# holds an answer a TEST can plant. Three of its four `lru_cache`s are what that module's
+# holds an answer a TEST can plant. Four of its five `lru_cache`s are what that module's
 # docstring says they are — pure functions of files inside the image, which cannot change while
 # the process runs. `_import_verdict` is different IN KIND, and it is the reason this guard
 # exists: it caches the REFUSAL, i.e. "this image has no client to serve". Plant that once and

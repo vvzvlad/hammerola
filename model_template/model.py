@@ -165,10 +165,12 @@ def views():
         that really is nested on purpose goes in that view's
         `"nested_ok": [("a", "b")]`.
 
-    A part is `{"shape": ..., "name": ...}`; `color` and `alpha` are optional. A
-    part that names no colour is painted by the palette when the gate can match
-    it to a printable, and grey when it cannot -- which is what makes a mock of
-    bought hardware look like one.
+    A part is `{"shape": ..., "name": ...}`; `color`, `alpha` and `note` are
+    optional. A part that names no colour is painted by the palette when the
+    gate can match it to a printable, and grey when it cannot -- which is what
+    makes a mock of bought hardware look like one. A `note` is text for whoever
+    OPENS the model: what to buy, what a number was chosen for, what to watch
+    out for when assembling it.
     """
     base = build_base()
     return [
@@ -181,7 +183,14 @@ def views():
                 # the lid is what hides the inside. 0.6 rather than 0.9 -- above
                 # 0.85 the viewer already draws a part blended while it still
                 # looks solid, and parts then flicker as the model is turned.
-                {"shape": lid_as_assembled(), "name": "lid", "alpha": 0.6},
+                # The note is addressed to whoever opens this in the browser,
+                # which is why it says what the picture cannot: the lid goes on
+                # this way up, and the gap it needs is a printer setting rather
+                # than a number in the model.
+                {"shape": lid_as_assembled(), "name": "lid", "alpha": 0.6,
+                 "note": "lip down into the tray; if it binds, print it with "
+                         "horizontal expansion -0.05 mm rather than editing "
+                         "LIP_CLEARANCE"},
             ],
         },
         {

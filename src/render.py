@@ -36,6 +36,15 @@ SAFE_LABEL = re.compile(r"\A[A-Za-z0-9._-]{1,32}\Z")
 # title, short enough that one push cannot push every other card off the screen.
 MAX_TEXT = 200
 
+# How many parts of one build may carry an author's note. A per-note length
+# ceiling is not enough on its own, and the count is not a tidiness rule: every
+# note is legal at 200 characters, so 100 000 of them make a 20 MB meta.json
+# that every visitor of that build page downloads — under a year of `immutable`,
+# from a push that can never be taken back. It also bounds the work the
+# validation loop below does per push, which is the other half of accepting a
+# document whose size the sender chooses.
+MAX_NOTES = 200
+
 # `built` is displayed like the rest but it is a TIMESTAMP, so its ceiling is the
 # length of one, with room for a long timezone spelling — not the free-text one.
 # It ends up in three places at once (the index card, the build page header and an
@@ -392,6 +401,45 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
                 f"download {label!r} points at {name!r}, which the hub rewrites "
                 f"after this check; pick another file name")
 
+    # The AUTHOR's note on a part: text written in model.py, keyed by part name,
+    # shown to whoever opens the build. Absent is the ordinary case, and stays
+    # absent below — a build with no notes and a build from before notes existed
+    # have to be one document here.
+    #
+    # NOT `raw.get("notes") or {}` like `downloads` above: that spelling turns a
+    # falsy non-object — `[]`, `""`, `0` — into "no notes at all" and publishes
+    # a push that described something else entirely, in silence.
+    notes = raw.get("notes")
+    if notes is None:
+        notes = {}
+    if not isinstance(notes, dict):
+        raise ValueError("`notes` must be an object mapping part name -> text")
+    # Counted BEFORE the loop: refusing after walking the document is paying for
+    # exactly what the ceiling exists to refuse to pay for.
+    if len(notes) > MAX_NOTES:
+        raise ValueError(
+            f"`notes` carries {len(notes)} entries, more than the {MAX_NOTES} "
+            f"one build may declare")
+    for name, text in notes.items():
+        # The key IS a part name — it is matched against the ones in the view
+        # file — so it is held to the part-name rule and not to the softer
+        # free-text one.
+        _check_part_name(name, "a note's part name")
+        if not isinstance(text, str):
+            raise ValueError(
+                f"the note on part {name!r} is {text!r}, which is not a string")
+        _plain_text(text, f"note on part {name!r}")
+        # Angle brackets are banned here for the BOUNDARY rather than for any
+        # one renderer: this text arrives from a push, i.e. from anybody who can
+        # land a commit in a model repository, and where the browser half ends
+        # up putting it is a decision made later, on a page that is permanent,
+        # immutable and shares an origin with every other project on the host.
+        # Text that cannot open an element cannot become markup whatever renders
+        # it — the same argument that holds for a part name and for `title`.
+        if "<" in text or ">" in text:
+            raise ValueError(
+                f"the note on part {name!r} contains an angle bracket: {text!r}")
+
     # Both are shown verbatim on the index and the build page. The pages render
     # them with textContent, but a push is not allowed to smuggle control
     # characters or a page-wide banner through them either.
@@ -412,7 +460,7 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
     built = (_plain_text(raw_built, "built", MAX_BUILT)
              if isinstance(raw_built, str) and raw_built.strip() else published)
 
-    return {
+    meta = {
         "pid": pid,
         "project": project,
         "title": title,
@@ -430,6 +478,12 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
         "variants": variants,
         "downloads": {str(k): str(v) for k, v in downloads.items()},
     }
+    # Emitted only when there is something to emit: an empty object here would
+    # be a build SAYING it has no notes, and the browser half would then have
+    # two ways of asking the same question — one of which no older build gives.
+    if notes:
+        meta["notes"] = dict(notes)
+    return meta
 
 
 def builds_json(pid: str, metas: list[dict], dev: bool = False,

@@ -61,10 +61,12 @@ And the one route this tool asks for with NO token at all, because it is read by
 somebody who does not have one yet:
 
     GET  /start                           `{"empty", "skill", "client",
-                                          "template"}` — three relative paths,
-                                          and whether this hub has anything on
-                                          it. `create` follows the `template`
-                                          one and fetches nothing else.
+                                          "template", "skill_version"}` — three
+                                          relative paths, the version of the
+                                          skill this hub ships, and whether it
+                                          has anything on it. `create` follows
+                                          the `template` one; `skill` follows
+                                          the other two.
 
 The code of a revision, and the two routes that unmake something:
 
@@ -706,10 +708,12 @@ class Hub:
     def start(self) -> dict:
         """`GET /start` — the manifest of what a first run needs. NO TOKEN.
 
-        Public on the hub, and asked for without a credential here: `create`
-        never reads the secret, so a project can be started against a hub the
-        machine is not logged in to. The reply is `{"empty", "skill", "client",
-        "template"}` — three relative paths and one boolean about the hub
+        Public on the hub, and asked for without a credential here: neither
+        `create` nor `skill` reads the secret, so a project can be started — and
+        the instructions fetched — against a hub the machine is not logged in
+        to. The reply is `{"empty", "skill", "client", "template",
+        "skill_version"}`: three relative paths and a version number, all four
+        constants of the image, plus one boolean about the hub
         (`src/onboarding.py` has the whole argument for why that boolean is
         public and why nothing wider is).
         """

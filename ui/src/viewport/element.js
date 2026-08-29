@@ -279,8 +279,21 @@ export class HmrViewport extends HTMLElement {
     }
 
     const reload = patch.view !== undefined && patch.view !== before.view;
-    const swap = patch.buildKey !== undefined && patch.buildKey !== before.buildKey
-      && before.buildKey !== null;
+    // A SWAP IS EITHER OF TWO CHANGES, and the second one is why a revision
+    // switch works at all. `buildKey` says the geometry was published again;
+    // `base` says the geometry is somewhere else — a different revision of the
+    // same project, chosen in the picker (SPEC §8, entry 62). The same view id
+    // under a new base names a DIFFERENT FILE, so without this line the element
+    // would keep the scene it had and quietly disagree with the address bar.
+    //
+    // Both are guarded on the previous value not being null, which is the FIRST
+    // load in each case: the element starts with `base: null` and `buildKey:
+    // null`, and the first `hmr:state` fills them in beside the first `view`.
+    // That is a load with nothing to keep, and it is caught by the third
+    // disjunction below rather than by being called a swap.
+    const changed = (key) => patch[key] !== undefined && patch[key] !== before[key]
+      && before[key] !== null;
+    const swap = changed("buildKey") || changed("base");
     // A new view or a new build is a new thing to try, so whatever failed last
     // time stops counting. Anything else does not: the third disjunction below
     // is the FIRST load — a view named and no scene yet — and it is NOT

@@ -11,6 +11,8 @@
     log [dev|<revision>]      read a build log again
     comments                  the project's comment queue
     comments resolve <id>     close one, with an optional note
+    skill                     the agent instructions: this machine's, and the hub's
+    skill update              write the hub's copy over the installed one
     rename "New title"        change the project's TITLE — never its id
     rm                        remove the project from the hub, whole
 
@@ -19,9 +21,10 @@ flow (`build` and `commit`, which are one operation with one thing varying);
 every other verb is a module, because none of them shares anything with
 publishing but the configuration: `setup.py` (login, create), `status.py`,
 `queue.py` (the comment queue), `sources.py` (source, log), `artifacts.py`,
-`revdiff.py` (diff), `admin.py` (rename, rm). Every one of them RAISES on
-refusal rather than printing and exiting, so there is exactly one place in the
-tool that decides what a failure looks like — `main` below.
+`revdiff.py` (diff), `admin.py` (rename, rm), `skill.py` (skill, skill update).
+Every one of them RAISES on refusal rather than printing and exiting, so there
+is exactly one place in the tool that decides what a failure looks like — `main`
+below.
 
 FOUR OF THE VERBS ABOVE ARE WORTH READING TWICE, because the obvious reading of
 each is the wrong one:
@@ -77,7 +80,7 @@ import argparse
 import sys
 
 from src.client import (admin, artifacts, config, gitsuggest, project, queue,
-                        revdiff, setup, sources, status)
+                        revdiff, setup, skill, sources, status)
 from src.client.errors import ClientError
 from src.client.hub import (JOB_TIMEOUT, UNAUTHORIZED, Hub, HubError,
                             quoted)
@@ -214,6 +217,35 @@ def build_parser() -> argparse.ArgumentParser:
     close.add_argument(
         "-m", "--note", default=None,
         help="what was done about it; stored with the comment")
+
+    # ASKED FOR BY NAME OR NOT AT ALL. Nothing else in this tool looks at the
+    # agent's skills directory, and nothing else prints a word about the
+    # instructions — see `skill.py` for why an automatic check was refused.
+    instructions = commands.add_parser(
+        "skill",
+        help="the agent instructions: which version is installed here, and "
+             "which the hub serves")
+    instructions.add_argument(
+        "--path", default=None, metavar="FILE",
+        help=f"the installed skill file (default: {skill.DEFAULT_PATH})")
+    # A sub-subcommand and not a `--update` flag, exactly as `comments resolve`
+    # is one: reading and WRITING are two acts, and a flag that turns a question
+    # into a write into somebody's `~/.claude` is the shape of a mistake nobody
+    # catches in review. Optional, so `hammerola skill` on its own still asks.
+    skill_commands = instructions.add_subparsers(dest="skill_command")
+    refresh = skill_commands.add_parser(
+        "update", help="write the hub's copy over the installed skill")
+    # SUPPRESS AND NOT `None`, and this is the one line here that cannot be
+    # simplified. A subparser parses into a namespace of its own and then copies
+    # EVERY key of it onto the parent's, defaults included, so a plain
+    # `default=None` would make `skill --path FILE update` write to the default
+    # location — the flag accepted, silently discarded, and the file landing
+    # somewhere the caller did not name. With SUPPRESS the attribute is only
+    # created when the flag is actually given, so both orders mean the same
+    # thing.
+    refresh.add_argument(
+        "--path", default=argparse.SUPPRESS, metavar="FILE",
+        help=f"the file to write (default: {skill.DEFAULT_PATH})")
 
     # THE TITLE IS THE ONLY THING THIS TAKES, and there is deliberately no
     # `--id` beside it: an id that could be renamed would break every permanent
@@ -449,6 +481,7 @@ HANDLERS = {
     "diff": revdiff.run,
     "log": sources.run_log,
     "comments": queue.run,
+    "skill": skill.run,
     "rename": admin.rename,
     "rm": admin.remove,
 }

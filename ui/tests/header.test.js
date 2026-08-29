@@ -168,6 +168,21 @@ describe('the revision in the header', () => {
     onSlot('latest')
     expect(component().computed().slot).toBe('latest')
   })
+
+  it('says what moves each of the three slots', () => {
+    // The badge beside the revision is the only place on this page that says
+    // WHO writes the name in front of it, and `latest` used to answer "follows
+    // CI" — a machine that stopped building models at the migration. What moves
+    // it now is `hammerola commit`, so the badge names that instead. The other
+    // two are untouched and are asserted here so a later edit to this branch
+    // has to be a deliberate one.
+    onSlot('dev')
+    expect(component().computed().slotBadge).toBe('auto-updates')
+    onSlot('latest')
+    expect(component().computed().slotBadge).toBe('follows commits')
+    onSlot(REV)
+    expect(component().computed().slotBadge).toBe('pinned')
+  })
 })
 
 // -- when it was built -------------------------------------------------------
@@ -203,6 +218,52 @@ describe('the build picker', () => {
 
   it('still shows each revision short', () => {
     expect(rows([{ commit: REV, built: '2026-08-27T18:20:00Z' }])[0].id).toBe('e05f73b')
+  })
+
+  // -- and what happens when one is picked -----------------------------------
+
+  const OTHER = '7b1c0d4a2e6f8901234567890abcdef0123456789abcdef0123456789abcdef0'
+
+  /** The picker with both pointers and two builds in it. */
+  const picker = () => component({
+    builds: {
+      has_dev: true,
+      latest: OTHER,
+      builds: [{ commit: REV, built: '2026-08-27T18:20:00Z' },
+               { commit: OTHER, built: '2026-08-26T10:00:00Z' }],
+    },
+  })
+
+  it('hands a picked revision to the in-place switch', () => {
+    // A build is an ADDRESS, and `history.pushState` says so without throwing
+    // the document away — which is what keeps the camera, the hidden parts and
+    // the section across the one gesture they are worth the most in (SPEC §8,
+    // entry 62). The row's whole job is to name the build; what the switch then
+    // does with it is ui/tests/revswitch.test.js.
+    //
+    // Stubbed on the INSTANCE, because `computed()` builds a fresh closure on
+    // every call and the handler reads `this.switchBuild` when it fires.
+    const c = picker()
+    c.switchBuild = vi.fn(() => Promise.resolve())
+
+    const row = c.computed().revRows.find((r) => r.key === OTHER)
+    row.onPick({ stopPropagation() {} })
+
+    expect(c.switchBuild).toHaveBeenCalledWith('proj1', OTHER)
+  })
+
+  it('takes the two pointer rows through the same door', () => {
+    // `dev` and `latest` are names rather than digests, but they are the same
+    // kind of thing to pick: a slot of this project with a build behind it. A
+    // row that navigated while its neighbour swapped would lose the frame on
+    // exactly the two rows a reader clicks most.
+    const c = picker()
+    c.switchBuild = vi.fn(() => Promise.resolve())
+
+    c.computed().revRows.find((r) => r.key === 'dev').onPick({ stopPropagation() {} })
+    c.computed().revRows.find((r) => r.key === 'latest').onPick({ stopPropagation() {} })
+
+    expect(c.switchBuild.mock.calls.map((call) => call[1])).toEqual(['dev', 'latest'])
   })
 })
 

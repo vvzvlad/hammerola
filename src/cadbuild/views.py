@@ -24,8 +24,24 @@ ASSEMBLED_VIEW_ID = "assembled"
 # exemption is one that is not there.
 VIEW_KEYS = frozenset({"id", "name", "parts", "nested_ok"})
 # ...and every key one entry of `parts` is read for. `shape` and `name` are
-# required; `color` and `alpha` are not.
-PART_KEYS = frozenset({"shape", "name", "color", "alpha"})
+# required; `color`, `alpha` and `note` are not.
+PART_KEYS = frozenset({"shape", "name", "color", "alpha", "note"})
+
+# The AUTHOR's note on a part: free text written here, in the model, that
+# travels with the build and is shown to whoever opens it -- a catalogue name,
+# a datasheet link, the fit that was taken. Not to be confused with the reader's
+# own note (that one lives in their browser and never leaves it) or with a
+# comment (written by a viewer, addressed to the agent, SPEC 7A).
+#
+# THE CEILING IS THE HUB'S, deliberately, and never above it: the hub checks
+# every note again on the way in (`render.MAX_TEXT`), so a note this build
+# accepts and the hub then refuses would be a whole build spent on a 422.
+# tests/cadbuild/test_views.py holds the two numbers against the hub's.
+MAX_NOTE_CHARS = 200
+# ...and the same argument for HOW MANY parts may carry one: the hub caps the
+# count too (`render.MAX_NOTES`), because a per-note ceiling leaves the total
+# unbounded.
+MAX_NOTES = 200
 
 
 def prepare_views(views, printables):
@@ -77,7 +93,7 @@ def prepare_views(views, printables):
             raise BuildError(f"duplicate view id {vid!r}")
         seen.add(vid)
 
-        objects, names, colors, alphas = read_parts(view, vid)
+        objects, names, colors, alphas, part_notes = read_parts(view, vid)
         # Every part with no colour of its own gets one here, from what it is:
         # a printable, or scenery. An explicit "color" always wins.
         painted = auto_colors(objects, printables, cache, alphas)
@@ -174,15 +190,67 @@ def prepare_views(views, printables):
             "alphas": alphas,
             "file": filename,
             "nested_ok": nested_ok,
+            # Only the parts that said something. A note is keyed by the part
+            # NAME from here on, because that is what survives a rebuild and
+            # what the browser has to match a part by.
+            "notes": {name: note for name, note in zip(names, part_notes)
+                      if note is not None},
         })
+
+    # Called for its REFUSAL and the map thrown away: "the same part does not
+    # carry two different notes" is a rule about the set of views, so it cannot
+    # be checked inside the loop above, and this is the last moment before
+    # anything is exported. build() calls the same function again for the map
+    # itself -- one owner of the rule rather than two merges that can disagree.
+    collect_notes(prepared)
     return prepared
 
 
+def collect_notes(prepared):
+    """Every author note in the model, merged into one part name -> text map.
+
+    The same part appears in several views -- that is how one part is followed
+    from `assembled` to `print` -- and the note belongs to the PART, so one name
+    carrying the SAME text twice is one note and not a conflict.
+
+    Two DIFFERENT texts under one name is refused, naming both views. The
+    transport to the browser is keyed by name (meta.json), so there is exactly
+    one slot for them: silent last-wins would put one view's sentence next to
+    the part the other one was written about, and nothing would say so.
+    """
+    notes = {}
+    origin = {}
+    for view in prepared:
+        vid = view["id"]
+        for name, note in view["notes"].items():
+            if name in notes and notes[name] != note:
+                raise BuildError(
+                    f"part {name!r} carries two different notes: view "
+                    f"{origin[name]!r} says {notes[name]!r} and view {vid!r} "
+                    f"says {note!r}. A note belongs to the part rather than to "
+                    "the view, and the build stores one per name -- write the "
+                    "same text in both, or leave the key out of the view it "
+                    "was not meant for."
+                )
+            notes[name] = note
+            origin[name] = vid
+    if len(notes) > MAX_NOTES:
+        raise BuildError(
+            f"{len(notes)} parts carry a note, over the {MAX_NOTES} the hub "
+            "accepts from one build. Notes are for the parts somebody has to "
+            "be told something about, not for every part in the tree."
+        )
+    return notes
+
+
 def read_parts(view, vid):
-    """One view's `parts` as four full-length lists: shapes, names, colours, alphas.
+    """One view's `parts` as five full-length lists: shapes, names, colours,
+    alphas, notes.
 
     Colours come back with None where the part named none -- the palette fills
-    those in afterwards, and it needs to know which ones were left open.
+    those in afterwards, and it needs to know which ones were left open. Notes
+    do the same, for a different reason: most parts have nothing to say, and
+    only the ones that do are written into meta.json.
 
     Names have to be strings, and inside one view they have to be different --
     see the two errors below for why each of those is an error and not a
@@ -195,7 +263,7 @@ def read_parts(view, vid):
             'each: "parts": [{"shape": body, "name": "body"}, ...]'
         )
 
-    objects, names, colors, alphas = [], [], [], []
+    objects, names, colors, alphas, notes = [], [], [], [], []
     seen_names = {}
     for index, part in enumerate(parts):
         where = f"view {vid!r} part #{index}"
@@ -295,6 +363,35 @@ def read_parts(view, vid):
                 "the viewer clamps silently rather than telling you."
             )
 
+        note = part.get("note")
+        if note is not None:
+            if not isinstance(note, str):
+                # Not stringified, for the reason "name" is not: str() would
+                # turn a number or a list into a sentence nobody wrote and then
+                # show it to every reader of the model.
+                raise BuildError(
+                    f'{where}: "note" is {note!r}, which is a '
+                    f"{type(note).__name__} and not a string. A note is the "
+                    "text shown to whoever looks at this part: "
+                    '{"shape": ..., "name": "screw", "note": "M3x8 DIN912"}.'
+                )
+            note = note.strip()
+            if not note:
+                # An empty note is a sentence somebody meant to write, not a
+                # part with nothing to say -- that one leaves the key out.
+                raise BuildError(
+                    f'{where}: "note" is empty. Leave the key out for a part '
+                    "there is nothing to say about; an empty string is a note "
+                    "that was started and not written."
+                )
+            if len(note) > MAX_NOTE_CHARS:
+                raise BuildError(
+                    f'{where}: "note" is {len(note)} characters, over the '
+                    f"{MAX_NOTE_CHARS} the hub accepts. A note is one line "
+                    "about the part -- a catalogue name, a link, the fit that "
+                    "was taken -- and not the documentation of it."
+                )
+
         unknown = sorted(set(part) - PART_KEYS)
         if unknown:
             # A warning for the same reason the view-level one is (below): this
@@ -311,7 +408,8 @@ def read_parts(view, vid):
         names.append(name)
         colors.append(color)
         alphas.append(alpha)
-    return objects, names, colors, alphas
+        notes.append(note)
+    return objects, names, colors, alphas, notes
 
 
 def nested_pairs(declared, labels, vid):

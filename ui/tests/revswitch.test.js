@@ -1,0 +1,687 @@
+// Switching revisions IN PLACE — SPEC §8, entry 62.
+//
+// The gesture used to be `location.href = …`: the browser threw the document
+// away and built it again — template, bundle, viewer, view file — so the camera,
+// the hidden parts, the section and the view tab were all lost at exactly the
+// moment they are worth the most, which is somebody comparing two builds of one
+// part from one angle. Everything that differs between two revisions of a
+// project is one meta.json and one view payload; the rest of the page is the
+// same kind of thing rebuilt from different data.
+//
+// SO THE CLAIMS UNDER TEST ARE TWO. The address still says which geometry this
+// is — pushed, not loaded, so the link copies and opens exactly as before — and
+// what the reader set up survives, except for the things that would be lies if
+// they did.
+//
+// THE URL IS REAL AND SO IS `PAGE`. `vi.hoisted` runs before every import in
+// this file, which is the only place early enough to put jsdom on a build page:
+// `PAGE` is derived at module scope off `location.pathname`, and a stubbed one
+// would let the file agree with itself about the very field the whole entry
+// turns on — nothing re-derives `PAGE`, so a swap that forgot it would go on
+// fetching the revision that had just left the screen. Only the two hub fetches
+// a swap makes are mocked — `loadMeta` and `loadBuilds` — because they are the
+// only things here that talk to a hub; everything else is the real module.
+//
+// NOTHING IS RENDERED, the arrangement every file in this directory uses: the
+// instance is the real prototype with the state spelled out, and the real
+// methods run over it.
+
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+
+const { A, B } = vi.hoisted(() => {
+  const a = 'a'.repeat(64)
+  const b = 'b'.repeat(64)
+  window.history.replaceState(null, '', `/project/proj1/${a}/`)
+  return { A: a, B: b }
+})
+
+vi.mock('../src/hub.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  loadMeta: vi.fn(),
+  loadBuilds: vi.fn(),
+}))
+
+import HammerolaViewer from '../src/HammerolaViewer.jsx'
+import { STATE } from '../src/events.js'
+import { PAGE, indexTree, loadBuilds, loadMeta, rereadPage } from '../src/hub.js'
+
+const path = (slot) => `/project/proj1/${slot}/`
+
+/** Back on the revision this file starts every test from. */
+beforeEach(() => {
+  window.history.replaceState(null, '', path(A))
+  rereadPage()
+  loadMeta.mockReset()
+  // The picker's list is refreshed after every swap. It answers with the same
+  // history the fixture starts from, so a test about something else does not
+  // have to say anything about it.
+  loadBuilds.mockReset()
+  loadBuilds.mockResolvedValue(BUILDS())
+})
+
+// `history.pushState` is spied on in half the tests here and it is the REAL
+// object's method, so a spy left standing counts the calls of every test after
+// it — which is a suite that reports "pushed 14 times" for a test that pushed
+// nothing at all.
+afterEach(() => { vi.restoreAllMocks() })
+
+/** Both views the fixture build declares, in the order meta.json lists them. */
+const VIEWS = [
+  { id: 'assembled', name: 'assembled', file: 'a.json', parts: 2, gzip: 1000 },
+  { id: 'printables', name: 'printables', file: 'p.json', parts: 2, gzip: 900 },
+]
+
+/** A build of the target revision, with whichever views it is given. */
+const build = (variants = VIEWS) => ({
+  project: 'fixture', title: '', commit: B, built: '2026-08-28T09:00:00Z',
+  downloads: {}, variants,
+})
+
+/**
+ * The project's history, as `builds.json` gives it. A FUNCTION rather than a
+ * constant: a swap refreshes this list and the fixture holds it, so two tests
+ * sharing one object would leave one another's swap in their state.
+ */
+const BUILDS = () => ({
+  has_dev: false,
+  latest: null,
+  builds: [{ commit: A, built: '2026-08-27T18:20:00Z' },
+           { commit: B, built: '2026-08-26T10:00:00Z' }],
+})
+
+/** The tree on screen: two parts. */
+const TREE = {
+  id: '/model',
+  name: 'model',
+  children: [{ id: '/model/plate', name: 'plate' }, { id: '/model/post', name: 'post' }],
+}
+
+/** The same model one revision later: `plate` renumbered, `post` gone. */
+const TREE_B = {
+  id: '/model',
+  name: 'model',
+  children: [{ id: '/model/0', name: 'plate' }],
+}
+
+/**
+ * The component as `switchBuild` and `onModel` see it.
+ *
+ * `setState` is the real one's CONTRACT and not React's — merge, then run the
+ * callback — because the callback is where a swap tells the viewport.
+ */
+function component(over = {}) {
+  const c = Object.create(HammerolaViewer.prototype)
+  c.props = { ...HammerolaViewer.defaultProps }
+  c.home = null
+  c.carry = null
+  c.host = { current: null }
+  c.state = {
+    meta: {
+      project: 'fixture', commit: A, built: '2026-08-27T18:20:00Z', downloads: {},
+      variants: VIEWS,
+    },
+    builds: BUILDS(),
+    tree: indexTree(TREE),
+    error: null, viewError: null, pending: null,
+    view: 'assembled', tool: null, held: false,
+    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
+    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
+    secFace: null, secPop: false,
+    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
+    bannerGone: false, rail: false, menu: null,
+    notePop: null, noteDraft: '', notes: {},
+    comments: [], activePin: null, composer: null,
+    measure: null, moved: null, toast: null,
+    token: 'sekrit', tokenPop: false, tokenDraft: '',
+    theme: 'light',
+    ...over,
+  }
+  c.setState = vi.fn((patch, done) => {
+    const next = typeof patch === 'function' ? patch(c.state) : patch
+    c.state = { ...c.state, ...next }
+    if (done) done()
+  })
+  c.sync = vi.fn()
+  c.schedulePoll = vi.fn()
+  c.toast = vi.fn()
+  return c
+}
+
+/**
+ * Record what the page hands to the BROWSER as a navigation, without letting
+ * jsdom try one.
+ *
+ * `window.location` is a getter here, so the whole object can be stood in for —
+ * and it has to be, since a write to `location.href` is the one thing on this
+ * page that cannot be observed any other way: jsdom refuses the navigation, says
+ * so on its own console and leaves every readable field exactly as it was. The
+ * three reads the code makes are delegated to the real one so nothing else
+ * changes meaning.
+ */
+function watchNavigation() {
+  const real = Object.getOwnPropertyDescriptor(window, 'location')
+  const at = () => real.get.call(window)
+  const went = []
+  const view = {
+    get href() { return at().href },
+    set href(value) { went.push(value) },
+    get pathname() { return at().pathname },
+    get search() { return at().search },
+    get origin() { return at().origin },
+  }
+  Object.defineProperty(window, 'location', { configurable: true, get: () => view })
+  onTestFinished(() => Object.defineProperty(window, 'location', real))
+  return went
+}
+
+/** Let a handler that was fired and not awaited finish its fetch. */
+const flush = () => new Promise((resolve) => { setTimeout(resolve, 0) })
+
+/** The URL the last `pushState` wrote, or null. */
+const pushed = (spy) => (spy.mock.calls.length ? spy.mock.calls.at(-1)[2] : null)
+
+// -- the address --------------------------------------------------------------
+
+describe('picking a revision', () => {
+  it('pushes the address rather than loading the page', async () => {
+    // The comment on `onPick` says a build is an ADDRESS, and that is about the
+    // address bar rather than about the document: `pushState` keeps every word
+    // of it — the URL changes, the link copies and opens as before — while the
+    // page, the viewer and everything in front of the reader stay standing.
+    const c = component()
+    const went = watchNavigation()
+    const push = vi.spyOn(history, 'pushState')
+    loadMeta.mockResolvedValue(build())
+
+    // THROUGH THE ROW, because the claim is about the picker and not about a
+    // method: `computed()` builds the handler afresh on every call, so this is
+    // the one the reader's click would reach.
+    const row = c.computed().revRows.find((r) => r.key === B)
+    row.onPick({ stopPropagation() {} })
+    await flush()
+
+    expect(went, 'the picker still navigates — the page is being thrown away')
+      .toEqual([])
+    expect(pushed(push)).toBe(path(B))
+    expect(location.pathname).toBe(path(B))
+  })
+
+  it('re-derives PAGE, which is what everything else fetches through', async () => {
+    // THE BUG THIS EXISTS TO CATCH, and it has no symptom of its own: `PAGE` is
+    // computed once at import and nothing re-derives it, so a swap that moved
+    // the URL and left the record alone would fetch meta.json, the view file,
+    // the downloads and the comment route against the revision that had just
+    // left the screen — silently, for as long as the page stayed open.
+    const c = component()
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+
+    expect(PAGE.pid).toBe('proj1')
+    expect(PAGE.slot).toBe(B)
+    expect(PAGE.base).toBe(path(B))
+  })
+
+  it('sends the viewport the new base and the new build key', async () => {
+    // The other half of the line above: `base` is where the geometry is fetched
+    // from and `buildKey` is what makes the element treat the swap as a live
+    // reload rather than a first load. Both are read off `PAGE` and `meta` at
+    // the moment the event is dispatched, so the real `sync` is what is asked.
+    const c = component()
+    delete c.sync
+    loadMeta.mockResolvedValue(build())
+    const seen = []
+    const listen = (event) => seen.push(event.detail)
+    window.addEventListener(STATE, listen)
+    onTestFinished(() => window.removeEventListener(STATE, listen))
+
+    await c.switchBuild('proj1', B)
+
+    expect(seen).toHaveLength(1)
+    expect(seen[0].base).toBe(path(B))
+    expect(seen[0].buildKey).toBe(B)
+    expect(seen[0].view).toBe('assembled')
+  })
+
+  it('keeps ?v= when the target declares that view', async () => {
+    // `load()` reads `?v=` on a fresh open, so the pushed URL has to carry it —
+    // otherwise the address in the bar, copied and sent, shows a different view
+    // than the person who sent it was looking at.
+    const c = component({ view: 'printables' })
+    const push = vi.spyOn(history, 'pushState')
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+
+    expect(pushed(push)).toBe(`${path(B)}?v=printables`)
+    expect(c.state.view).toBe('printables')
+  })
+
+  it('drops it when the target has no such view, and falls back to the first',
+    async () => {
+      // Exactly what a fresh load of that URL does with a `?v=` naming a view
+      // the build does not have. Carrying the query on would put a name in the
+      // address that the page then ignores.
+      const c = component({ view: 'printables' })
+      const push = vi.spyOn(history, 'pushState')
+      loadMeta.mockResolvedValue(build([VIEWS[0]]))
+
+      await c.switchBuild('proj1', B)
+
+      expect(pushed(push)).toBe(path(B))
+      expect(c.state.view).toBe('assembled')
+    })
+
+  it('closes the picker before the fetch rather than after it', async () => {
+    // The only sign the click landed on a gesture that now waits on the network
+    // — and, since the menu leaves the screen with it, what stops a second row
+    // being picked while the first swap is still in flight, which would leave
+    // two of them racing to push two entries and settle two different `PAGE`s.
+    const c = component({ revOpen: true })
+    let settle = null
+    loadMeta.mockReturnValue(new Promise((resolve) => { settle = resolve }))
+
+    const swapping = c.switchBuild('proj1', B)
+    expect(c.state.revOpen).toBe(false)
+
+    settle(build())
+    await swapping
+  })
+
+  it('closes the picker and fetches nothing for the build already on screen',
+    async () => {
+      const c = component({ revOpen: true })
+      await c.switchBuild('proj1', A)
+      expect(c.state.revOpen).toBe(false)
+      expect(loadMeta).not.toHaveBeenCalled()
+      expect(loadBuilds).not.toHaveBeenCalled()
+    })
+
+  it('re-reads the history the picker itself lists', async () => {
+    // WHAT THE RELOAD USED TO DO FOR FREE. `builds.json` is read once on mount,
+    // so without this a session of switching would go on offering the history as
+    // it stood when the page opened — and a revision published meanwhile could
+    // not be reached from the menu at all, on the one page whose job is to
+    // move between revisions.
+    const c = component()
+    const C = 'c'.repeat(64)
+    loadMeta.mockResolvedValue(build())
+    loadBuilds.mockResolvedValue({
+      has_dev: true, latest: C,
+      builds: [{ commit: C, built: '2026-08-29T12:00:00Z' },
+               ...BUILDS().builds],
+    })
+
+    await c.switchBuild('proj1', B)
+    await flush()
+
+    expect(c.state.builds.builds.map((b) => b.commit)).toEqual([C, A, B])
+    expect(c.computed().revRows.some((r) => r.key === C)).toBe(true)
+  })
+
+  it('swaps anyway when that list will not load', async () => {
+    // A menu is not worth a failed swap: the model is what the reader asked for
+    // and the history is a list behind a button they are not looking at.
+    const c = component()
+    loadMeta.mockResolvedValue(build())
+    loadBuilds.mockRejectedValue(new Error('nope'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await c.switchBuild('proj1', B)
+    await flush()
+
+    expect(c.state.meta.commit).toBe(B)
+    expect(c.state.builds).toEqual(BUILDS())
+    expect(warn).toHaveBeenCalled()
+  })
+})
+
+// -- back and forward ---------------------------------------------------------
+
+describe('popstate', () => {
+  /** The component with its real listeners on the window. */
+  const mounted = () => {
+    // `readNotes` runs on mount and this runner has no `localStorage`; store.js
+    // catches that and says so, which is one line of noise per test here.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const c = component()
+    // The first load is what `componentDidMount` does before the listeners go
+    // up; it is not what this block is about, and it would reach a hub.
+    c.load = vi.fn(async () => {})
+    c.componentDidMount()
+    onTestFinished(() => c.componentWillUnmount())
+    return c
+  }
+
+  it('switches back the same way, and does not push again', async () => {
+    // The entries this page pushed are entries it now has to answer for: Back
+    // that moved the address bar and left the previous revision on screen would
+    // be a worse lie than the reload this replaced.
+    const c = mounted()
+    const push = vi.spyOn(history, 'pushState')
+    loadMeta.mockResolvedValue(build())
+
+    window.history.replaceState(null, '', path(B))
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flush()
+
+    expect(PAGE.slot).toBe(B)
+    expect(c.state.meta.commit).toBe(B)
+    expect(push, 'a popstate that pushes buries the entry the reader came back to')
+      .not.toHaveBeenCalled()
+  })
+
+  it('restores the view the entry names, not the tab that is open', async () => {
+    // A `popstate` is the browser putting an entry BACK on the screen, and the
+    // `?v=` on it is the state being restored. Reading the current tab instead
+    // would leave the address bar saying one view while the page showed another
+    // — the same failure this whole entry is about, spelled with Back.
+    const c = mounted()
+    loadMeta.mockResolvedValue(build())
+
+    window.history.replaceState(null, '', `${path(B)}?v=printables`)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flush()
+
+    expect(c.state.view).toBe('printables')
+  })
+
+  it('ignores an entry that names the build already on screen', async () => {
+    const c = mounted()
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flush()
+    expect(loadMeta).not.toHaveBeenCalled()
+  })
+})
+
+// -- what survives ------------------------------------------------------------
+
+describe('the camera', () => {
+  it('is not re-homed by a swap, while a first load still homes', () => {
+    // `home` is the frame the LIBRARY fitted, and it is the whole of what Fit
+    // means. A swap arrives with the reader's own frame already restored by the
+    // viewport, so reading the camera back here would record that as "fit" and
+    // leave the button doing nothing at all.
+    const c = component()
+    c.captureHome = vi.fn()
+
+    c.onModel({ tree: TREE, view: 'assembled', live: true })
+    expect(c.captureHome).not.toHaveBeenCalled()
+
+    c.onModel({ tree: TREE, view: 'assembled', live: false })
+    expect(c.captureHome).toHaveBeenCalledTimes(1)
+  })
+
+  it('rides across on the element, which is what `live` buys', async () => {
+    // What actually keeps the frame is one flag on the viewport's own load: the
+    // base changed under the same view, so the element captures the camera, the
+    // visibility and the section, renders the new geometry and puts them back.
+    // The element half of that is asserted in element.test.js; this is the
+    // interface asking for it.
+    const c = component()
+    delete c.sync
+    loadMeta.mockResolvedValue(build())
+    const seen = []
+    const listen = (event) => seen.push(event.detail)
+    window.addEventListener(STATE, listen)
+    onTestFinished(() => window.removeEventListener(STATE, listen))
+
+    await c.switchBuild('proj1', B)
+
+    // Same view, different base: the two conditions the element reads as a live
+    // swap rather than as a fresh arrangement to re-fit to.
+    expect(seen[0].view).toBe('assembled')
+    expect(seen[0].base).not.toBe(path(A))
+  })
+})
+
+describe('hidden and translucent parts', () => {
+  it('are re-resolved by NAME, and one that vanished is dropped', async () => {
+    // They are held as leaf ids, and an id is a solid path a rebuild is free to
+    // renumber; a name is what the person recognises and what they meant. A part
+    // that is gone cannot stay hidden, so it is simply dropped — carrying the
+    // name on would leave a list of instructions about parts nobody can see or
+    // unhide.
+    const c = component({ hidden: ['/model/plate'], ghost: ['/model/post'] })
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+    c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+
+    expect(c.state.hidden).toEqual(['/model/0'])
+    expect(c.state.ghost).toEqual([])
+  })
+
+  it('reach the viewport, rather than only this side', async () => {
+    // The re-resolved ids are new strings the element has never seen, and a
+    // state event is the only road there. Without one the tree would draw the
+    // right part greyed out while the scene showed it.
+    const c = component({ hidden: ['/model/plate'] })
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+    c.sync.mockClear()
+    c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+
+    expect(c.sync).toHaveBeenCalledTimes(1)
+  })
+
+  it('are left alone by an ordinary live reload', () => {
+    // Every model event that is not a swap — a first load, a rebuild arriving
+    // under a pointer, a view tab — has nothing carried and must change neither
+    // list, nor dispatch a state event for a change that did not happen.
+    const c = component({ hidden: ['/model/plate'], ghost: ['/model/post'] })
+
+    c.onModel({ tree: TREE, view: 'assembled', live: true })
+
+    expect(c.state.hidden).toEqual(['/model/plate'])
+    expect(c.state.ghost).toEqual(['/model/post'])
+    expect(c.sync).not.toHaveBeenCalled()
+  })
+})
+
+describe('the section plane', () => {
+  const cut = (over) => component({
+    secOn: true, secOff: 5, secRange: [-30, 30], secFace: 'top', secFlip: true,
+    ...over,
+  })
+
+  it('survives where it still means something', async () => {
+    const c = cut()
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+
+    expect(c.state.secOn).toBe(true)
+    expect(c.state.secOff).toBe(5)
+    expect(c.state.secFace).toBe('top')
+    expect(c.sync).toHaveBeenCalledWith(null)
+  })
+
+  it('is put away when the offset is outside the extent it was measured in',
+    async () => {
+      // A plane is a number in model space and the model may have moved under
+      // it. Left standing, a cut at 50 mm on a part that is now 20 mm deep
+      // slices through empty air.
+      const c = cut({ secOff: 50 })
+      loadMeta.mockResolvedValue(build())
+
+      await c.switchBuild('proj1', B)
+
+      expect(c.state.secOn).toBe(false)
+      expect(c.state.secOff).toBe(0)
+      expect(c.state.secFace).toBeNull()
+      expect(c.state.secRange).toBeNull()
+      // And the viewport is told, because the plane is its own state as well.
+      expect(c.sync).toHaveBeenCalledWith({ __resetCut: true })
+    })
+
+  it('is put away when the view falls back to another one', async () => {
+    // A different view is a different arrangement of the same parts, so the
+    // depth was taken from a face that is not where it was.
+    const c = cut({ view: 'printables' })
+    loadMeta.mockResolvedValue(build([VIEWS[0]]))
+
+    await c.switchBuild('proj1', B)
+
+    expect(c.state.secOn).toBe(false)
+    expect(c.sync).toHaveBeenCalledWith({ __resetCut: true })
+  })
+})
+
+describe('what does not survive', () => {
+  it('drops the selection, the menu and every popover', async () => {
+    // Momentary things, and a selection pointing at a part that may not be in
+    // this build at all is worse than none.
+    const c = component({
+      sel: '/model/plate', selName: 'plate',
+      menu: { id: '/model/plate', x: 10, y: 20 },
+      revOpen: true, dlOpen: true, secPop: true, tokenPop: true, tokenDraft: 'x',
+      notePop: 'plate', noteDraft: 'half a note',
+      measure: { text: '3.00 mm', note: '', full: '3.00 mm' },
+      moved: { id: '/model/plate', name: 'plate', mag: 2 },
+    })
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+
+    expect(c.state.sel).toBeNull()
+    expect(c.state.selName).toBe('')
+    expect(c.state.menu).toBeNull()
+    expect(c.state.revOpen).toBe(false)
+    expect(c.state.dlOpen).toBe(false)
+    expect(c.state.secPop).toBe(false)
+    expect(c.state.tokenPop).toBe(false)
+    expect(c.state.notePop).toBeNull()
+    expect(c.state.noteDraft).toBe('')
+    expect(c.state.measure).toBeNull()
+    expect(c.state.moved).toBeNull()
+  })
+
+  it('takes the poll\'s offer down with the slot it belonged to', async () => {
+    // The banner names a build that arrived under the pointer this page is
+    // leaving. On a pinned revision there is nothing for it to offer at all.
+    const c = component({ pending: { commit: 'ccc', variants: VIEWS }, bannerGone: false })
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+
+    expect(c.state.pending).toBeNull()
+  })
+
+  it('leaves a half-written comment alone', async () => {
+    // The one deliberate exception, and the same reason Escape spares it: typed
+    // text is the most expensive thing on this page to lose, and the comment
+    // lands on the revision now on screen — the one the reader is looking at
+    // while they finish the sentence.
+    const c = component({ composer: { part: 'plate', text: 'this hole is', p: null } })
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+
+    expect(c.state.composer.text).toBe('this hole is')
+  })
+})
+
+// -- what the new revision brings with it -------------------------------------
+
+describe('the author\'s note on a part', () => {
+  // It rides in `meta.notes` — written in model.py, published with the build —
+  // so a swap that replaces `meta` replaces the notes with it. THAT IS ASSERTED
+  // RATHER THAN ASSUMED: a stale note is the worst thing this box can show,
+  // because it is a sentence about a part that is no longer the part on screen,
+  // and nothing about it would look wrong. Everything else about the two notes
+  // is in `notes.test.js`; this is the one claim that needs a real swap.
+  //
+  // THE PART IS PICKED AGAIN AFTERWARDS, because a swap drops the selection on
+  // purpose (above) — which is also the reader's own gesture: they click the
+  // part in the model that has just arrived.
+  const on = (id, name) => ({ sel: id, selName: name })
+
+  it('is the new revision\'s once the swap has landed', async () => {
+    const c = component({ ...on('/model/plate', 'plate'),
+                          meta: { project: 'fixture', commit: A, built: '', downloads: {},
+                                  variants: VIEWS, notes: { plate: 'M3x8 DIN912' } } })
+    expect(c.computed().authorNote).toBe('M3x8 DIN912')
+
+    loadMeta.mockResolvedValue({ ...build(), notes: { plate: 'M4x10, was M3' } })
+    await c.switchBuild('proj1', B)
+    c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+    c.setState(on('/model/0', 'plate'))
+
+    expect(c.computed().authorNote).toBe('M4x10, was M3')
+  })
+
+  it('is gone when the revision switched TO carries none', async () => {
+    // The direction that fails silently: `meta.notes` is absent on most builds,
+    // and a note left over from the previous one would be attributed to a model
+    // that never said it.
+    const c = component({ ...on('/model/plate', 'plate'),
+                          meta: { project: 'fixture', commit: A, built: '', downloads: {},
+                                  variants: VIEWS, notes: { plate: 'M3x8 DIN912' } } })
+
+    loadMeta.mockResolvedValue(build())
+    await c.switchBuild('proj1', B)
+    c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+    c.setState(on('/model/0', 'plate'))
+
+    expect(c.state.meta.notes).toBeUndefined()
+    expect(c.computed().authorNote).toBe('')
+  })
+})
+
+// -- when it does not work ----------------------------------------------------
+
+describe('a target that will not load', () => {
+  it('leaves the previous revision on screen and says so', async () => {
+    // NOTHING IS MOVED UNTIL THE TARGET HAS ANSWERED, which is the whole reason
+    // meta.json is fetched against a base of its own: the address, `PAGE` and
+    // the model all stay where they were, and the reader is told in the panel
+    // this page already has for "what you asked for is not what is on screen".
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const c = component()
+    const push = vi.spyOn(history, 'pushState')
+    loadMeta.mockRejectedValue(new Error('meta.json -> HTTP 404'))
+
+    await c.switchBuild('proj1', B)
+
+    expect(push).not.toHaveBeenCalled()
+    expect(PAGE.slot).toBe(A)
+    expect(PAGE.base).toBe(path(A))
+    expect(c.state.meta.commit).toBe(A)
+    expect(c.state.viewError).toContain(B.slice(0, 7))
+    expect(c.state.revOpen).toBe(false)
+  })
+
+  it('refuses a build that lists no views at all', async () => {
+    // A meta.json that parsed and carries nothing to render. Same answer: the
+    // swap would put a frame around a hole.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const c = component()
+    loadMeta.mockResolvedValue(build([]))
+
+    await c.switchBuild('proj1', B)
+
+    expect(PAGE.slot).toBe(A)
+    expect(c.state.viewError).toBeTruthy()
+  })
+})
+
+describe('another project', () => {
+  it('is still a real navigation', async () => {
+    // Everything changes there at once — the title, the picker, the notes, the
+    // queue, every download — which is a new page by any honest reading. This
+    // page's own picker only ever lists one project, so this is a guard for the
+    // day something else calls it rather than a path anybody takes.
+    const c = component()
+    const went = watchNavigation()
+    const push = vi.spyOn(history, 'pushState')
+
+    await c.switchBuild('other', 'latest')
+
+    expect(went).toEqual(['/project/other/'])
+    expect(loadMeta).not.toHaveBeenCalled()
+    expect(push).not.toHaveBeenCalled()
+    expect(PAGE.pid).toBe('proj1')
+  })
+})

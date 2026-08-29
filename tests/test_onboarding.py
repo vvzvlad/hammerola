@@ -17,10 +17,10 @@ WHAT IS BEING PINNED HERE, in the order it would hurt to get wrong:
     could notice, because here the checkout is on `sys.path`. So it is run, in a
     process that cannot see this checkout at all.
 
-THE FOUR `lru_cache`s IN `src/onboarding.py` ARE GUARDED, and the guard is in
+THE FIVE `lru_cache`s IN `src/onboarding.py` ARE GUARDED, and the guard is in
 `tests/conftest.py` rather than here — `guard_onboarding_caches`, autouse,
 before and after every test in the suite. It is at the root because that is where
-the VICTIM is: three of those caches are what the module says they are, pure
+the VICTIM is: four of those caches are what the module says they are, pure
 functions of files inside the image, but `_import_verdict` caches the REFUSAL, so
 a test that hands the check a doctored member list leaves "this image has no
 client to serve" behind and every later `/start/hammerola` — in files that never
@@ -94,15 +94,26 @@ def test_the_manifest_says_nothing_about_this_hub_but_whether_it_is_empty(
     would leak the size of the fleet and its growth rate to whoever polled; a
     project name or an id is the prefix of every permanent URL that project will
     ever have, which is precisely what `/index.json` is behind the token to
-    withhold. So the shape is fixed: three paths that are constants of the
-    image, and one boolean.
+    withhold. So the shape is fixed: four constants of the IMAGE, and one
+    boolean about this deployment.
+
+    `skill_version` WAS ADDED DELIBERATELY AND IS ON THE SAFE SIDE OF THAT LINE,
+    which is why this list moved rather than the rule (SPEC §8 entry 51). It is
+    a constant of the image exactly as the three paths are — two hubs running
+    the same image answer with the same number, and the number changes when the
+    software does, never when somebody pushes. It names what is RUNNING here,
+    which is public anyway, and nothing about what is published here or who runs
+    it. `empty` is still the only field on the other side of the line, and the
+    next candidate has to make that same argument before it is added.
     """
-    assert set(manifest) == {"empty", "skill", "client", "template"}
+    assert set(manifest) == {"empty", "skill", "client", "template",
+                             "skill_version"}
     assert manifest["empty"] is True
     assert isinstance(manifest["empty"], bool)
     assert manifest["skill"] == onboarding.SKILL_URL
     assert manifest["client"] == onboarding.CLIENT_URL
     assert manifest["template"] == onboarding.TEMPLATE_URL
+    assert manifest[onboarding.SKILL_VERSION_KEY] == onboarding.skill_version()
 
 
 def test_the_paths_it_names_are_relative(manifest):
@@ -213,6 +224,70 @@ def test_the_skill_is_served_as_markdown_with_its_frontmatter(hub):
     assert text.startswith("---\n")
     assert "\nname: hammerola\n" in text
     assert "\ndescription: " in text
+
+
+def test_the_manifest_states_the_version_of_the_SKILL_IT_SERVES(hub):
+    """THE SEAM WHERE DRIFT WOULD APPEAR, and nothing else would notice it.
+
+    The manifest's number is what `hammerola skill` compares a laptop's copy
+    against, so a number that stopped matching the file this hub serves would
+    make the tool say "up to date" about instructions that are not, or send
+    somebody to update a file that is already current — either way silently, and
+    silence is the whole failure this entry exists to end.
+
+    Parsed HERE, with a pattern written in this test, rather than by calling
+    either side's parser: this is the one place the two are compared, and using
+    one of them to do it would compare it with itself.
+    """
+    served = hub.get("/start/skill.md").text
+    block = served.split("\n---\n", 1)[0]
+    found = re.search(r"^version:[ \t]*(\d+)[ \t]*$", block, re.MULTILINE)
+    assert found, ("the skill this hub serves names no version in its "
+                   "frontmatter")
+    assert int(found.group(1)) == hub.get("/start").json()["skill_version"]
+
+
+def test_a_skill_with_no_version_is_refused_rather_than_read_as_the_first(
+        tmp_path, monkeypatch, onboarding_cache_sandbox):
+    """NO DEFAULT, and that is the decision this test holds.
+
+    A missing version read as 1 would make a shipped file that LOST its version
+    indistinguishable from a fresh one — the tool would then say "up to date"
+    about a skill nobody can date, which is the exact silence being closed. So
+    it raises, and `src/app.py` turns that into a logged 404 on the route.
+
+    Both shapes, because they fail at different lines: a document with no
+    frontmatter at all, and frontmatter with everything but the version.
+    """
+    for text in ("# no frontmatter here\n",
+                 "---\nname: hammerola\ndescription: x\n---\n\nbody\n"):
+        path = tmp_path / "SKILL.md"
+        path.write_text(text, encoding="utf-8")
+        monkeypatch.setattr(onboarding, "SKILL_FILE", path)
+        onboarding.skill_bytes.cache_clear()
+        onboarding.skill_version.cache_clear()
+        with pytest.raises(ValueError) as raised:
+            onboarding.skill_version()
+        assert "version" in str(raised.value)
+
+
+def test_a_skill_the_hub_cannot_date_is_a_404_and_not_a_dropped_socket(
+        hub, monkeypatch):
+    """The manifest OPENS A FILE now, so it can break the way the others can.
+
+    It could not before — three constants and a boolean — and the route was
+    written on that premise. `_handle_get` has no blanket `except`, so a
+    ValueError out of the version parse would have gone past the handler and
+    reached the caller as a closed connection. Asserting the STATUS is the
+    point: "not 200" would pass on the dropped socket this rules out.
+    """
+    def refuse():
+        raise ValueError("planted: no version in the frontmatter")
+
+    monkeypatch.setattr(onboarding, "skill_version", refuse)
+    assert hub.get("/start").status_code == 404
+    # The file itself is untouched by it: only the manifest reads a version.
+    assert hub.get("/start/skill.md").status_code == 200
 
 
 def test_the_skill_names_no_deployment(hub):
@@ -955,3 +1030,52 @@ def test_the_manifest_key_the_client_follows_is_the_one_the_hub_writes():
 
     assert setup.TEMPLATE_KEY == onboarding.TEMPLATE_KEY
     assert onboarding.TEMPLATE_KEY in onboarding.manifest(empty=True)
+
+
+def test_the_two_keys_the_skill_command_follows_are_the_ones_the_hub_writes():
+    """The same arrangement for the verb added by SPEC §8 entry 51.
+
+    `hammerola skill` reads two fields out of the manifest — where the file is
+    and which version it is — and it spells both itself, because the client
+    imports nothing from the serving half.
+    """
+    from src.client import skill as client_skill
+
+    document = onboarding.manifest(empty=True)
+    assert client_skill.VERSION_KEY == onboarding.SKILL_VERSION_KEY
+    assert client_skill.VERSION_KEY in document
+    assert client_skill.SKILL_KEY in document
+    assert document[client_skill.SKILL_KEY] == onboarding.SKILL_URL
+
+
+def test_the_client_reads_the_SAME_version_out_of_the_skill_as_the_hub():
+    """TWO PARSERS OVER ONE FILE, and this is what keeps them honest.
+
+    The client may import nothing from `src/onboarding.py`, so it carries its
+    own copy of the frontmatter patterns. A copy that drifted would not fail
+    anything by itself — it would make `hammerola skill` compare a number it
+    read differently against the hub's, and print "out of date" about a file
+    that is current, or the reverse. Neither goes red anywhere else.
+
+    Run over the file that actually ships, rather than over an invented one:
+    what has to agree is the reading of THIS document.
+    """
+    from src.client import skill as client_skill
+
+    text = onboarding.SKILL_FILE.read_text(encoding="utf-8")
+    assert client_skill.version_of(text) == onboarding.skill_version()
+
+
+def test_the_skill_tells_the_reader_how_to_update_it(hub):
+    """The file arrives by `curl` once and is refreshed by the client after.
+
+    The raw download stays — it is how the skill gets there before there is a
+    client at all — but a reader who only ever saw that line has no way of
+    knowing the file goes stale, which is the failure this whole entry is
+    about. Both verbs are named, and the check is against the SERVED copy so
+    that a hub is not handing out instructions with a command it does not have.
+    """
+    text = hub.get("/start/skill.md").text
+    assert "hammerola skill update" in text
+    assert re.search(r"`hammerola skill`", text), (
+        "the skill does not tell its reader how to ask whether it is stale")

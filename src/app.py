@@ -10,8 +10,9 @@ Routing (SPEC 3, 7.4):
     GET  /                                    the front page shell, from templates/
     GET  /index.json                          what is on this hub      EDIT_TOKEN
     GET  /_v/<file>                           shared viewer bundle, one per site
-    GET  /start                               how to start: three paths and
-                                              whether this hub is empty
+    GET  /start                               how to start: three paths, the
+                                              skill's version, and whether this
+                                              hub is empty
     GET  /start/skill.md                      the agent instructions
     GET  /start/hammerola                     the client, as one file
     GET  /start/template.tar.gz               a model directory that builds
@@ -498,12 +499,28 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
 
             All three are logged as such and answered 404 rather than 500,
             because "this hub does not serve that" is the true and useful answer
-            to whoever asked.
+            to whoever asked. THE MANIFEST IS HELD TO THE SAME RULE, which it
+            did not need while it opened no file: it now reads the version out
+            of the shipped skill, so the two failures of that read get the same
+            treatment one line further down.
             """
             if not rest:
-                return self._json(200,
-                                  onboarding.manifest(empty=store.empty()),
-                                  CACHE_NONE, with_body=with_body)
+                # THE MANIFEST OPENS A FILE TOO, since it began carrying the
+                # version of the skill this image ships — so it can fail the
+                # one way the three files below can, on an image whose
+                # `SKILL.md` is missing or whose frontmatter lost its
+                # `version:`. Same answer for the same reason: a defect of the
+                # ARTEFACT is a logged 404, never an exception out of a request
+                # handler, which reaches the browser as a dropped connection.
+                try:
+                    document = onboarding.manifest(empty=store.empty())
+                except (OSError, ValueError) as error:
+                    logger.error(f"cannot serve /start: {error}. The image's "
+                                 f"skill file is missing or carries no version "
+                                 f"in its frontmatter.")
+                    return self._error(404, "not found", with_body=with_body)
+                return self._json(200, document, CACHE_NONE,
+                                  with_body=with_body)
             if len(rest) != 1:
                 return self._error(404, "not found", with_body=with_body)
             builders = {

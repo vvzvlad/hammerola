@@ -354,6 +354,43 @@ describe('setState', () => {
       expect(vp.load).not.toHaveBeenCalled()
     })
 
+    it('a new BASE alone is a live swap too', () => {
+      // Choosing another revision in the picker, which no longer reloads the
+      // page (SPEC §8, entry 62). `base` is where the view file is fetched from,
+      // so the same view id under a new base names a DIFFERENT FILE.
+      //
+      // ALONE, because that really happens: `latest` and the revision it points
+      // at carry the SAME commit, so switching between the two moves nothing but
+      // the address. Without the base in this rule the element would keep the
+      // scene it had and quietly disagree with the URL — a page that says one
+      // revision and shows another.
+      const vp = element({ views, view: 'a', base: '/project/p/latest/', buildKey: 'k1' })
+      vp.load = vi.fn()
+      vp.setState({ base: '/project/p/abc/' })
+      expect(vp.load).toHaveBeenCalledWith({ live: true })
+    })
+
+    it('and with the build key beside it, which is how the swap really arrives', () => {
+      // Two revisions of one project differ in both, and the interface sends
+      // them in one patch. Still a live swap and NOT a reload: the reader is
+      // comparing two builds from one angle, which is the whole reason the frame
+      // has to survive.
+      const vp = element({ views, view: 'a', base: '/project/p/one/', buildKey: 'k1' })
+      vp.load = vi.fn()
+      vp.setState({ base: '/project/p/two/', buildKey: 'k2' })
+      expect(vp.load).toHaveBeenCalledWith({ live: true })
+    })
+
+    it('the FIRST base is not a swap either', () => {
+      // The element starts with `base: null` and the interface fills it in
+      // beside the first `view`. That is a load with nothing to keep, and it is
+      // reached as a first load rather than as a swap.
+      const vp = element({ views, view: 'a', base: null, buildKey: null }, null)
+      vp.load = vi.fn()
+      vp.setState({ base: '/project/p/one/', buildKey: 'k1', view: 'a' })
+      expect(vp.load).toHaveBeenCalledWith({ live: false })
+    })
+
     it('loads when a view is named and no scene has been built yet', () => {
       const vp = element({ views, view: 'a' }, null)
       vp.load = vi.fn()
