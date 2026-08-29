@@ -124,11 +124,18 @@ POLL_MAX_SECONDS = 2.0
 POLL_BACKOFF = 1.5
 
 # How long `await_job` waits by default. The worst honest wait is the queue
-# ahead of you: MAX_QUEUED_JOBS (16) builds at buildproc's `wall_seconds` (120)
-# over MAX_CONCURRENT_BUILDS (2) workers is about sixteen minutes, and this is
-# that with a little room. `--timeout` moves it; a person presses Ctrl-C long
-# before either.
-JOB_TIMEOUT = 1200
+# ahead of you: MAX_QUEUED_JOBS (16) builds at buildproc's `wall_seconds` (900,
+# raised from 120 on 2026-08-29) over MAX_CONCURRENT_BUILDS (2) workers is about
+# two hours, and this is that with a little room. `--timeout` moves it; a person
+# presses Ctrl-C long before either.
+#
+# THIS NUMBER IS A COPY AND CANNOT IMPORT ITS SOURCE -- the client is stdlib-only
+# and may not reach into `src.buildproc` -- so it goes stale the moment
+# `wall_seconds` moves and nothing anywhere says so. When it does go stale the
+# symptom is not an error: the client reports a timeout on a build that is still
+# legitimately queued, and the build then publishes with nobody watching. Move
+# `wall_seconds`, come back here.
+JOB_TIMEOUT = 8100
 
 TERMINAL_STATES = ("done", "failed")
 

@@ -165,7 +165,7 @@ def main(argv):
     # `start + hang_dump_seconds` on the parent's clock rather than at
     # `hang_dump_seconds`, so it eats into the gap between the budget and the
     # parent's `wall_seconds` -- 10 s as the two are configured (limits.py:
-    # 110 against 120). A start slower than that gap loses the dump: the
+    # 890 against 900). A start slower than that gap loses the dump: the
     # parent's SIGKILL lands first and the build is reported as a timeout with
     # no stack. Measured starts are 0.8-7.6 s on a workstation, the top of that
     # range at a load average of 300 on ten cores, so the gap covers everything

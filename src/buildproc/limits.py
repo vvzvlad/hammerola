@@ -121,9 +121,40 @@ class Limits:
 
     # --- the parent's ------------------------------------------------------
     # Wall clock. The ONLY ceiling that catches a hang which burns no CPU, and
-    # therefore the one that cannot be dropped. SPEC 8A.2 puts the target at
-    # 60-120 s for a real build.
-    wall_seconds: float = 120.0
+    # therefore the one that cannot be dropped.
+    #
+    # 900 s SINCE 2026-08-29, RAISED FROM 120 BY MEASUREMENT, and the old number
+    # is named because SPEC 8A.2 still carries the estimate it came from --
+    # "60-120 s for a real build" -- which was written before any real build had
+    # been run here. The first one falsified it: seven parts, all exporting
+    # valid solids, killed at 110 s with the geometry finished and the checks
+    # still running. What was measured on that model, on the hub rather than on
+    # a workstation:
+    #
+    #   * the hub is 3.7-4x slower than the author's laptop on the same
+    #     geometry, which is ordinary -- the booleans are single-threaded, so
+    #     none of the container's other cores help;
+    #   * its checks() is 254 checks and wants about 500 s here.
+    #
+    # 900 is that with room, and it is deliberately not the smallest number that
+    # would have passed: the next model is not going to be smaller.
+    #
+    # THE COST, so it is a decision and not a slide: MAX_CONCURRENT_BUILDS is 2,
+    # so two heavy models can now hold the whole pool for a quarter of an hour,
+    # and the worst honest queue wait (MAX_QUEUED_JOBS at this number over those
+    # workers) went from sixteen minutes to two hours. Two numbers elsewhere are
+    # derived from this one and were moved WITH it -- `LEFTOVER_MAX_AGE_SECONDS`
+    # in src/store.py, which would otherwise sweep the sources of a build still
+    # queued, and `JOB_TIMEOUT` in src/client/hub.py, which would otherwise give
+    # up on a build that is still legitimately waiting. Neither is cosmetic and
+    # neither is checked by anything: move this number again and go read both.
+    #
+    # It is NOT settable per deployment, and that is worth knowing before
+    # somebody goes looking for the variable: nothing reads the environment
+    # here, `jobs.py` calls `run_build` without a `limits=` argument, so these
+    # class defaults ARE production. Changing them is a code change, an image
+    # and a redeploy.
+    wall_seconds: float = 900.0
     # Bytes of the child's output kept. The rest is drained and discarded --
     # draining matters, a child blocked writing into a full pipe is a hang the
     # parent then has to kill, which would report a runaway `print` as a
@@ -156,7 +187,20 @@ class Limits:
     # reached first for anything that merely runs long. This ceiling is for the
     # case the wall timer cannot cover -- an orphaned build whose parent is
     # gone, where the kernel is the only thing left holding the leash.
-    cpu_seconds: int | None = 300
+    #
+    # SO IT IS COMPUTED FROM THE OTHER TWO AND NOT PICKED: `wall_seconds` x
+    # `occt_threads` is the most a build can legitimately burn before the wall
+    # timer fires, and this is that with a quarter more. Set it any lower and it
+    # stops being a backstop and becomes the binding ceiling -- a fully parallel
+    # build gets killed by the kernel while still inside its wall clock, which
+    # is the failure this comment exists to prevent.
+    #
+    # That is exactly the trap the 2026-08-29 raise walked up to: the request
+    # that prompted it asked for "wall ~900, CPU ~900", derived from one model
+    # needing ~500 CPU-s. 900 would have been under 2 x 900 and would therefore
+    # have fired FIRST on a parallel build -- killing the builds the raise was
+    # made to allow, and reporting them as something other than a timeout.
+    cpu_seconds: int | None = 2250
     # Address space, NOT resident memory. OCP and VTK map several gigabytes of
     # shared objects before a model does anything, so this cannot be set near
     # the real working set (measured: ~450 MB resident right after `import
@@ -196,7 +240,16 @@ class Limits:
     # under `wall_seconds` or it never fires -- the parent's SIGKILL gets there
     # first and the stack, which is the entire reason this exists, is lost.
     # None disables it.
-    hang_dump_seconds: float | None = 110.0
+    #
+    # The GAP is what matters, not the number: `__post_init__` refuses anything
+    # at or past `wall_seconds`, and the child arms this timer after its own
+    # start, so the gap has to cover the slowest start (measured 0.8-7.6 s) --
+    # 10 s, kept at both 120/110 and 900/890. Note what this number IS to
+    # whoever is watching: a build that runs out of time dies HERE, so the kill
+    # a pusher sees lands at 890 s and not at 900. The first real build was
+    # reported as "killed at 0:01:50" for exactly that reason, against a wall
+    # clock of 120.
+    hang_dump_seconds: float | None = 890.0
 
     def __post_init__(self):
         if self.wall_seconds <= 0:

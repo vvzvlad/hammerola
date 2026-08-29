@@ -21,7 +21,7 @@ import time
 from harness import meta_bytes, tar_gz, view_bytes
 
 from src import store
-from src.store import Store
+from src.store import LEFTOVER_MAX_AGE_SECONDS, Store
 
 
 def _build(marker, built, padding=0):
@@ -463,8 +463,12 @@ def test_stale_leftovers_are_swept_at_startup(tmp_path):
     link = pdir / ".latest-deadbeef"
     os.symlink("nowhere", link)  # deliberately dangling, like a real leftover
 
-    # Age them past the hour: anything younger might belong to a live publish.
-    old = time.time() - 2 * 3600
+    # Age them past the ceiling: anything younger might belong to a live publish.
+    # READ OFF THE CONSTANT rather than written as a number -- this was `2 * 3600`
+    # against an hour, and the 2026-08-29 raise of the ceiling to four hours (it
+    # has to clear the queue wait, which follows `Limits.wall_seconds`) turned the
+    # test red without anything about the sweep having changed.
+    old = time.time() - 2 * LEFTOVER_MAX_AGE_SECONDS
     for path in stale:
         os.utime(path, (old, old))
     os.utime(link, (old, old), follow_symlinks=False)

@@ -129,7 +129,7 @@ from src.buildproc import (
     Limits,
     run_build,
 )
-from src.store import (DEV_LINK, JSON_TMP_PREFIX, LEFTOVER_MAX_AGE_SECONDS,
+from src.store import (DEV_LINK, JSON_TMP_PREFIX,
                        PublishError, atomic_write_bytes, utcnow_iso)
 
 # -- what a job can be -------------------------------------------------------
@@ -257,9 +257,28 @@ SUBMIT_STOPPED = "stopped"
 #
 # Fourteen days rather than at once, because such a directory may be somebody's
 # evidence about a build that misbehaved, and being unreadable is not proof of
-# who put it there. `.wip-` names are the exception and get an hour instead; see
-# `_sweep_strangers`.
+# who put it there. `.wip-` names are the exception and get an hour instead
+# (WIP_MAX_AGE_SECONDS, just below); see `_sweep_strangers`.
 STRANGER_MAX_AGE_SECONDS = 14 * 24 * 3600
+
+# The hour that exception gets, and it is ITS OWN NUMBER since 2026-08-29 rather
+# than `store.LEFTOVER_MAX_AGE_SECONDS`, which is what it used to read.
+#
+# The two were the same hour for the same-sounding reason — "far longer than the
+# thing can honestly be in use" — and that hid the fact that the things are not
+# alike. The store's number covers `.src-`/`.body-`, which live from the request
+# until the build ENDS, so it is a function of the queue wait; raising
+# `Limits.wall_seconds` to 900 s took it to four hours. What is swept HERE is a
+# `.wip-` file: the hub's own half-finished write of a record or a log, abandoned
+# in milliseconds, and belonging to nothing by the time this runs at all
+# (`_sweep_strangers` is called from `JobStore.__init__`, before the pool exists
+# and before the socket is bound).
+#
+# So the shared name would have quadrupled this wait as a side effect of a change
+# about something else — and a `.wip-log.txt-*` is up to MAX_LOG_BYTES apiece,
+# i.e. megabytes sitting there for no reason. Same value as before, different
+# reason, and now it moves only when its own reason moves.
+WIP_MAX_AGE_SECONDS = 3600
 
 # The name every worker thread carries. Tests assert on it — a pool that is not
 # shut down is otherwise invisible until an unrelated test hangs.
@@ -275,7 +294,7 @@ WORKER_THREAD_PREFIX = "hammerola-build"
 # pointing somewhere else.
 #
 # Waiting out a BUILD instead would be waiting for something that is not going to
-# be allowed to finish. A build may run to `wall_seconds` (120 s), and the
+# be allowed to finish. A build may run to `wall_seconds` (900 s), and the
 # compose file declares no `stop_grace_period`, so docker sends SIGKILL 10 s after
 # its SIGTERM whatever this number says. A join longer than that grace period
 # therefore saves no build — it just converts every ordinary stop into a SIGKILL,
@@ -690,10 +709,10 @@ class JobStore:
         now = time.time()
         cutoff = now - self.stranger_max_age_seconds
         # `min`, so a registry configured with a shorter stranger age than the
-        # store's hour does not accidentally grant its own half-written files a
+        # hour below does not accidentally grant its own half-written files a
         # longer life than the strangers around them.
         tmp_cutoff = now - min(self.stranger_max_age_seconds,
-                               LEFTOVER_MAX_AGE_SECONDS)
+                               WIP_MAX_AGE_SECONDS)
         removed = kept = 0
         for name in names:
             entry = self.root / name
@@ -1106,7 +1125,7 @@ class BuildQueue:
         Leaving them to `Store._sweep_leftovers` is what the previous version of
         this said, and it was wrong in a way worth spelling out so it does not
         come back: that sweep runs only from `Store.__init__` and only touches
-        entries older than LEFTOVER_MAX_AGE_SECONDS — an hour — while a
+        entries older than LEFTOVER_MAX_AGE_SECONDS — four hours — while a
         container comes back in seconds. A tree dropped here would therefore
         survive the restart that was supposed to collect it and sit on the
         volume until some later restart happened to find it aged out. Up to
