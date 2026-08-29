@@ -295,14 +295,20 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   (`project.py`, mints the
   twelve hex characters of SPEC §3.1 and refuses to write over an existing id;
   `setup.py` then unpacks the starter template beside it, fetching it from
-  `/start` — the ONE route this tool asks for with no token, because the reader
-  of it may not have one. The id is still minted locally and `--no-template`
-  is what keeps that true offline; the download is fetched and its collisions
-  are checked BEFORE anything is written, so a failure leaves the directory
-  untouched rather than holding a permanent id and no model),
+  `/start` — the one family of routes this tool asks for with NO token, and
+  that is a property of the ROUTE and not of this command: `skill` asks the
+  same way, for the manifest and for the instructions themselves, because the
+  reader of them may not have a token yet. The id is still minted locally and
+  `--no-template` is what keeps that true offline; the download is fetched and
+  its collisions are checked BEFORE anything is written, so a failure leaves
+  the directory untouched rather than holding a permanent id and no model),
   `status` (`status.py`, assembled out of `builds.json` and the dev slot's own
   `meta.json`, i.e. what the project page already fetches), `comments`
-  (`queue.py`, the queue and its `resolve`), and the six added once the hub
+  (`queue.py`, the queue and its `resolve`), `skill` (`skill.py`, the version
+  installed on this machine against the one the hub serves, and `skill update`,
+  which writes the hub's copy over it and refuses a document it cannot read a
+  version out of — what this fetches goes into the agent's skills directory, so
+  it is parsed before it lands there), and the six added once the hub
   began keeping a revision's sources (SPEC §8 entry 17): `source` and `log`
   (`sources.py`), `artifacts` (`artifacts.py`), `diff` (`revdiff.py`), `rename`
   and `rm` (`admin.py`, over the two routes `src/app.py` grew for them). FOUR
@@ -314,9 +320,17 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   URL is built from it; `rm` removes the project whole and never one build, and
   asks for the id to be typed first. What each of those fetches lands under
   `.hammerola/` in the project — hidden, so `pack` drops it and the next push
-  cannot publish a copy of an older push. Self-update waits on the tool having a
-  distribution name. Three gaps are of a different kind and are worth knowing
-  before reaching for them: "the last build
+  cannot publish a copy of an older push. `skill` IS THE ONE VERB HERE THAT ASKS
+  ABOUT THE MACHINE AND NOT ABOUT A PROJECT: every other command addresses a
+  project or a revision, while this one reads a file in the home directory of
+  whoever ran it (`~/.claude/skills/hammerola/SKILL.md` unless `--path` says
+  otherwise), needs no project directory and presents no secret — `/start` is
+  public precisely because the reader of the instructions may not have one yet.
+  Nothing checks that version automatically, and that is a decision rather than
+  an unfinished half: no ordinary command says a word about the skill, because
+  this tool cannot know which copy an agent is actually reading. Self-update
+  waits on the tool having a distribution name. Three gaps are of a different
+  kind and are worth knowing before reaching for them: "the last build
   job" cannot be shown at all, because a job is addressable only by its id and
   job order is stored nowhere (see `src/jobs.py`); `hammerola log dev` cannot be
   answered either, because nothing is stored for the local slot on purpose
@@ -356,9 +370,12 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   project directory" either: `build_staging` creates one before the build runs
   and nothing removes it when the build fails the gate, so counting bare
   directories made a hub permanently non-empty the moment its first push failed
-  — landing on exactly the reader the answer is for. ALL FOUR MANIFEST FIELDS
-  HAVE A READER: `hammerola create` follows `template`, and the SIGN-IN PAGE
-  reads `empty` — the gate on everything below — and then follows `skill` and
+  — landing on exactly the reader the answer is for. ALL FIVE MANIFEST FIELDS
+  HAVE A READER: `hammerola create` follows `template`; `hammerola skill`
+  compares the copy installed on a laptop against `skill_version`, which is a
+  constant of the IMAGE and not a second statement about this deployment —
+  `empty` is still the only one of those; and the SIGN-IN PAGE reads `empty` —
+  the gate on everything below — and then follows `skill` and
   `client` when it says this hub has nothing on it
   (SPEC §8 entry 48). That block — five lines a person copies and hands to their
   agent — is what the route was built for and what collects on the argument for
@@ -487,7 +504,19 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   ignore rule ends up on the wrong one while each still resolves
 - `skill/SKILL.md` — instructions for an agent working in a MODEL's repository,
   not in this one, served at `/start/skill.md` and installed into
-  `~/.claude/skills/hammerola/`. What it exists to say, and what nothing else
+  `~/.claude/skills/hammerola/`. ITS FRONTMATTER IS READ BY THE HUB, AND READ
+  STRICTLY: editing that header is editing what the service serves, not
+  cosmetics in a document written for agents. `onboarding.skill_version` lifts
+  `version:` out of it and raises `ValueError` on a file with no frontmatter
+  block or no such key, and `manifest()` calls it — so a header this cannot be
+  read out of takes the whole `/start` document down to a 404, which is why
+  `ci/smoke.py` deliberately holds `/start` out of `START_ROUTES` and leans on
+  check (g), which already requires `/app/skill/SKILL.md` by name. THE
+  STRICTNESS IS THE DECISION and not an oversight to be softened into a
+  default: a version that cannot be read has to be a REFUSAL rather than
+  "version unknown", because a default would make a shipped skill that lost its
+  version indistinguishable from a fresh one — the exact silence the versioning
+  exists to end. What it exists to say, and what nothing else
   says anywhere: `build` fills the draft slot and leaves the project off the
   front page, `commit` is what makes a version exist, and finished work is
   committed. The rest is the model contract (pointing at `model_template/` as the
