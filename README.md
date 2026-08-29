@@ -301,8 +301,23 @@ sources: the one-file zipapp behind `/start/hammerola` is assembled out of those
 when the request arrives.
 
 CI builds and publishes it — `.gitea/workflows/image-check-publish.yml`, on every
-push, tagged `:<sha>` and `:latest`, in that order, so `:latest` moving is the
-commit of the whole publication. Between the build and the push sits a gate,
+push:
+
+```
+gitea.vvzvlad.xyz/projects/hammerola:latest     # main, what a deploy pulls
+gitea.vvzvlad.xyz/projects/hammerola:<sha>      # main, the rollback point
+gitea.vvzvlad.xyz/projects/hammerola:<branch>   # anything else
+```
+
+`:latest` is pushed LAST of the two, so it moving is the commit of the whole
+publication: if `:<sha>` fails to reach the registry the run stops before
+`:latest` moves, and what is deployed keeps running the previous image. Only
+`main` ever writes `:latest` — a side branch publishes under its own name and
+cannot overwrite what production pulls. Do not count on every commit having a
+`:<sha>`: a run still queued when the next push lands is cancelled, and with a
+build measured in tens of minutes that is ordinary rather than exceptional.
+
+Between the build and the push sits a gate,
 `ci/smoke.py`, which starts the image and asks it what a test suite structurally
 cannot, because the suite runs against a checkout and never looks at the
 artefact: that the entrypoint drops privileges for real, that the
@@ -322,9 +337,9 @@ docker build -t hammerola .
 ```
 
 **Deploying is `docker-compose.yml` in this repository** — a template with
-placeholder values that pulls the published image. Do not build on the host that
-serves it. Four things in it are load-bearing rather than decorative, and each
-one is spelled out at length in the file itself:
+placeholder values that pulls `gitea.vvzvlad.xyz/projects/hammerola:latest`. Do
+not build on the host that serves it. Four things in it are load-bearing rather
+than decorative, and each one is spelled out at length in the file itself:
 
 * **One volume at `/app/data`.** Every build, pointer, source tree, comment and
   job lives there; nothing ages out, so it grows monotonically and is cleared by
