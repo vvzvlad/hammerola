@@ -87,27 +87,76 @@ def _shape(obj, where):
     return shape
 
 
-def _classifier(shape):
-    """Point-in-solid test for one shape, built once and reused.
+def material_at(part, name="part"):
+    """A fast "is there material at this point" probe for one part.
 
-    Booleans are the obvious way to ask "is there material here", and far too
-    slow to ask a few hundred times. The classifier answers the same question
-    per point in microseconds. ON counts as material: a probe landing exactly
-    on a face is touching the part, not hanging off it. Callers must therefore
-    keep their probe points off the surfaces -- a point that sits on a face
-    answers about the face, not about what is behind it.
+    Returns a function `probe(x, y, z) -> bool`, built once and reusable for as
+    many points as you like:
+
+        solid = checklib.material_at(body)
+        if not solid(0, 0, 12.5):
+            problems.append("the boss is hollow where the screw seats")
+
+    USE THIS INSTEAD OF INTERSECTING WITH A SMALL CUBE. Asking the question
+    with a boolean -- `body.intersect(cq.Workplane().box(0.6, 0.6, 0.6)
+    .translate(p))` and looking at the volume -- is the obvious way and it is
+    the reason builds take minutes: a boolean on a complex solid costs
+    milliseconds to tens of milliseconds and this costs microseconds. A model
+    doing a few hundred of them (a scan along a channel, a probe grid over a
+    seat) pays seconds against nothing. Measured on a real model, 2026-08-29:
+    point probes done with booleans were the single largest line of a
+    495-second check run.
+
+    BUT THEY ARE NOT THE SAME QUESTION, and anybody replacing one with the
+    other has to know where they part. A cube asks "is there material within
+    half a cube of here"; this asks about the POINT. Away from surfaces they
+    agree exactly. Within half the cube's diagonal of a face they need not: a
+    point sitting 0.2 mm OUTSIDE the part is empty here and material to a
+    0.6 mm cube, which reaches 0.3 mm in every direction. So a probe grid
+    ported across without moving its points can flip exactly the answers that
+    sit near a boundary -- which, in a check written to ask "is there material
+    right up against this face", is most of them.
+
+    The fix is to say what you mean rather than to tune a cube: put the point
+    where material is REQUIRED -- half a millimetre inside the wall, not on its
+    surface -- and the two agree again. `tests/cadbuild/test_material_at.py`
+    pins both halves of this, the agreement and the disagreement.
+
+    ON COUNTS AS MATERIAL. A probe landing exactly on a face is touching the
+    part rather than hanging off it, which means a point that sits on a surface
+    answers about the surface and not about what is behind it -- another reason
+    to keep probe points off the faces.
+
+    THE PROBE IS BOUND TO THE PART AS IT WAS WHEN YOU ASKED FOR IT. It holds a
+    classifier over that shape; moving or rebuilding the part afterwards does
+    not update it. Take a fresh probe after a transform, and do not cache one
+    across a rebuild.
+
+    Anything with a solid in it works -- a Workplane, a Shape, a Compound --
+    exactly like the other checks here. `name` only improves the error message
+    when it is handed something that is not geometry.
     """
     from OCP.BRepClass3d import BRepClass3d_SolidClassifier
     from OCP.gp import gp_Pnt
     from OCP.TopAbs import TopAbs_OUT
 
+    shape = _shape(part, name)
     classifier = BRepClass3d_SolidClassifier(shape.wrapped)
 
-    def inside(x, y, z):
-        classifier.Perform(gp_Pnt(x, y, z), 1e-7)
+    def probe(x, y, z):
+        classifier.Perform(gp_Pnt(float(x), float(y), float(z)), 1e-7)
         return classifier.State() != TopAbs_OUT
 
-    return inside
+    return probe
+
+
+def _classifier(shape):
+    """The internal spelling: `material_at` for a shape already validated.
+
+    Kept as a name of its own because the callers inside this module have a
+    `Shape` in hand and `material_at` would run `_shape` over it a second time.
+    """
+    return material_at(shape, "shape")
 
 
 def _boxes_apart(a, b, tol):

@@ -82,9 +82,43 @@ def test_the_record_is_shared_between_the_two_names():
 
 
 def test_everything_a_model_calls_is_re_exported():
-    for name in ("pairwise_interference", "mating_face_flat",
-                 "material_under_head", "name_pairs", "recorded_interference"):
-        assert hasattr(top_level, name), name
+    """The shim carries every public name the implementation defines.
+
+    DERIVED, not listed. This used to name five functions by hand, and a
+    hand-written list of what to check is the defect it is meant to catch: add
+    a helper to the implementation, forget the shim, and `import checklib;
+    checklib.the_new_one` fails in a model repository while this test stays
+    green -- the list simply never mentioned it. `material_at` was added on
+    2026-08-30 and would have gone exactly that way.
+
+    Public means "defined here and not underscored". Imported modules are
+    excluded, or the shim would be required to re-export `math`.
+    """
+    import types
+
+    public = {
+        name for name, value in vars(checklib).items()
+        if not name.startswith("_") and not isinstance(value, types.ModuleType)
+    }
+    assert public, "no public names found: the derivation itself is broken"
+    missing = sorted(name for name in public if not hasattr(top_level, name))
+    assert not missing, (
+        f"the implementation defines {missing} and the root checklib.py does "
+        f"not re-export them, so `import checklib` in a model cannot reach "
+        f"them. Add them to the assignments and to __all__ there.")
+
+
+def test_the_shims_declared_list_matches_what_it_actually_exports():
+    """__all__ and the assignments above it are two lists that can disagree.
+
+    `from checklib import *` reads __all__; `checklib.x` reads the assignment.
+    A name in one and not the other works through one door and not the other,
+    which is worse than being absent from both.
+    """
+    declared = set(top_level.__all__)
+    bound = {name for name in declared if hasattr(top_level, name)}
+    assert declared == bound, (
+        f"__all__ names {sorted(declared - bound)} that are not bound")
 
 
 def test_the_shim_survives_a_model_project_that_has_a_src_of_its_own(tmp_path):

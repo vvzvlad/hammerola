@@ -18,9 +18,10 @@ A comment cannot catch either. These are one multiplication each, so they cost
 nothing to run and they fail on the commit that breaks them.
 """
 
-from src.buildproc.limits import DEFAULT_LIMITS
+from src.buildproc.limits import BUILDS_SHARING_THE_HOST, DEFAULT_LIMITS
 from src.client.hub import JOB_TIMEOUT
 from src.jobs import MAX_CONCURRENT_BUILDS, MAX_QUEUED_JOBS
+from src.buildproc.limits import _usable_cores
 from src.store import LEFTOVER_MAX_AGE_SECONDS
 
 
@@ -95,3 +96,34 @@ def test_the_client_waits_at_least_as_long_as_the_hub_may_honestly_take():
         f"JOB_TIMEOUT={JOB_TIMEOUT} is under the hub's own worst honest wait of "
         f"{worst_honest_wait()} s: the client gives up on a build that is still "
         f"waiting its turn.")
+
+
+def test_the_thread_share_knows_how_many_builds_share_the_machine():
+    """`limits` spells MAX_CONCURRENT_BUILDS a second time, and must not drift.
+
+    It cannot import the first spelling -- `jobs` imports `buildproc`, so the
+    arrow points one way -- and the number decides how much of the machine one
+    build's OCCT pool takes. Too small and every build is throttled; too large
+    and the concurrent builds contend for the cores the pool cap exists to stop
+    them contending for. Neither shows up as an error, only as a slower hub.
+    """
+    assert BUILDS_SHARING_THE_HOST == MAX_CONCURRENT_BUILDS, (
+        f"limits.BUILDS_SHARING_THE_HOST={BUILDS_SHARING_THE_HOST} and "
+        f"jobs.MAX_CONCURRENT_BUILDS={MAX_CONCURRENT_BUILDS} are the same fact "
+        f"written twice, and they disagree.")
+
+
+def test_one_build_never_claims_the_whole_machine():
+    """The pool is a SHARE, so all the builds together fit on the cores.
+
+    The floor of two is the exception and is deliberate: on a one- or two-core
+    machine the shares would round to nothing and a build would be slower than
+    it was before this number was derived at all. So the assertion is the real
+    invariant -- either everything fits, or we are on the floor.
+    """
+    limits = DEFAULT_LIMITS
+    total = limits.occt_threads * MAX_CONCURRENT_BUILDS
+    assert total <= _usable_cores() or limits.occt_threads == 2, (
+        f"{MAX_CONCURRENT_BUILDS} builds x {limits.occt_threads} threads = "
+        f"{total} on {_usable_cores()} usable cores, and the floor of 2 does "
+        f"not explain it.")
