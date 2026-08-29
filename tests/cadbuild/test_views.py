@@ -10,9 +10,9 @@ import pytest
 from src import render
 from src.cadbuild.errors import BuildError
 from src.cadbuild.palette import MOCK_COLOR, PART_PALETTE
-from src.cadbuild.views import (MAX_NOTE_CHARS, MAX_NOTES, collect_notes,
-                                prepare_views, read_parts, visible_names,
-                                names_mention)
+from src.cadbuild.views import (MAX_NAME_CHARS, MAX_NOTE_CHARS, MAX_NOTES,
+                                collect_notes, prepare_views, read_parts,
+                                visible_names, names_mention)
 
 from fakes import part
 
@@ -274,6 +274,63 @@ def test_a_note_longer_than_the_hub_accepts_is_refused_here():
     assert str(MAX_NOTE_CHARS) in message and str(MAX_NOTE_CHARS + 1) in message
 
 
+def note_refusal(note):
+    """The message this note is refused with, here on the build side."""
+    body = part()
+    with pytest.raises(BuildError) as exc:
+        read_parts({"id": "assembled",
+                    "parts": [{"shape": body, "name": "body", "note": note}]},
+                   "assembled")
+    return str(exc.value)
+
+
+def name_refusal(name):
+    """The message this part NAME is refused with, here on the build side."""
+    body = part()
+    with pytest.raises(BuildError) as exc:
+        read_parts({"id": "assembled", "parts": [{"shape": body, "name": name}]},
+                   "assembled")
+    return str(exc.value)
+
+
+def test_a_note_carrying_an_angle_bracket_is_refused_here():
+    """`clearance < 0.2 mm` is ordinary CAD prose and the hub refuses it, so a
+    build that accepted it would be minutes of geometry spent on a 422."""
+    assert "angle bracket" in note_refusal("clearance < 0.2 mm")
+    assert "angle bracket" in note_refusal("see <a href=/>the datasheet</a>")
+
+
+def test_a_note_carrying_a_non_printable_character_is_refused_here():
+    # U+202E RIGHT-TO-LEFT OVERRIDE is the one worth naming: it passes a naive
+    # "is this printable" check and reverses the text around it.
+    assert "non-printable" in note_refusal("M3x8‮gnitset")
+    assert "non-printable" in note_refusal("first line\nsecond line")
+    assert "non-printable" in note_refusal("M3x8\x00DIN912")
+
+
+def test_a_part_name_carrying_an_angle_bracket_is_refused_here():
+    """The name is the KEY the note is stored under and the label in the view
+    file, and the hub holds both to the stricter part-name rule."""
+    assert "angle bracket" in name_refusal("<img src=x onerror=alert(1)>")
+
+
+def test_a_part_name_carrying_a_non_printable_character_is_refused_here():
+    assert "non-printable" in name_refusal("body\ttop")
+    assert "non-printable" in name_refusal("lid‮")
+
+
+def test_a_part_name_longer_than_the_hub_accepts_is_refused_here():
+    message = name_refusal("x" * (MAX_NAME_CHARS + 1))
+    assert str(MAX_NAME_CHARS) in message and str(MAX_NAME_CHARS + 1) in message
+    # The last legal length is still a name, so the ceiling is a ceiling rather
+    # than an off-by-one nothing can get through.
+    names = read_parts(
+        {"id": "assembled",
+         "parts": [{"shape": part(), "name": "x" * MAX_NAME_CHARS}]},
+        "assembled")[1]
+    assert names == ["x" * MAX_NAME_CHARS]
+
+
 def test_the_same_part_may_carry_the_same_note_in_two_views():
     """A part appears in several views -- that is how one is followed from
     `assembled` to `print` -- and the note belongs to the part."""
@@ -322,6 +379,10 @@ def test_the_note_ceilings_are_at_or_under_the_hub_s():
     """
     assert MAX_NOTE_CHARS <= render.MAX_TEXT
     assert MAX_NOTES <= render.MAX_NOTES
+    # The part name goes the same way, under the hub's free-text ceiling: it is
+    # the key of a note in meta.json and the label in every view file, and
+    # `render._check_part_name` measures both against MAX_TEXT.
+    assert MAX_NAME_CHARS <= render.MAX_TEXT
 
 
 # --------------------------------------------------------------------------
