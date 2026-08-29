@@ -966,6 +966,19 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     {"Connection": "close", "Retry-After": "30"})
             try:
                 spool = store.upload_path()
+                # WHAT TO ANSWER IS DECIDED HERE AND SENT BELOW THE CLEANUP, the
+                # order `_queue_build` already keeps for the same reason: a
+                # client that has been answered is entitled to assume the hub is
+                # done with its push. `_error` writes to the socket where it is
+                # called, so answering inside the `try` left every REFUSAL
+                # racing its own `finally` — the pusher had its 408, 422 or 500
+                # and the spool file was still on the volume. The successful
+                # path never had that window (`_queue_build` is below the
+                # `finally`), which is what made this look like a flaky test
+                # rather than an ordering bug: it takes a loaded machine for the
+                # request thread to lose the race, and CI is one.
+                refusal = None          # (status, message, extra headers)
+                accepted = None
                 try:
                     problem = self._spool_body(length, spool)
                     if problem is not None:
@@ -975,32 +988,50 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                         # Closed, like every other refusal that leaves bytes
                         # unread: on a keep-alive connection the remains of the
                         # body would be parsed as the next request.
-                        return self._error(
-                            status, message, {"Connection": "close"})
-                    # `<pid>/dev` is the laptop's route (SPEC 7.6): the work has
-                    # no commit to be addressed by, so it goes into the project's
-                    # one local slot, overwriting whatever was there — the same
-                    # name, the same meaning as in the URL people read. It is a
-                    # reserved build name, so this can never shadow a commit that
-                    # could otherwise have been published. Both routes are
-                    # accepted identically; only the last step differs, and that
-                    # step happens in the worker.
-                    accepted = store.accept_sources(pid, commit, spool, length)
+                        refusal = (status, message, {"Connection": "close"})
+                    else:
+                        # `<pid>/dev` is the laptop's route (SPEC 7.6): the work
+                        # has no commit to be addressed by, so it goes into the
+                        # project's one local slot, overwriting whatever was
+                        # there — the same name, the same meaning as in the URL
+                        # people read. It is a reserved build name, so this can
+                        # never shadow a commit that could otherwise have been
+                        # published. Both routes are accepted identically; only
+                        # the last step differs, and that step happens in the
+                        # worker.
+                        accepted = store.accept_sources(
+                            pid, commit, spool, length)
                 except PublishError as error:
                     logger.warning(
                         f"publish {target} refused: {error.message}")
-                    return self._error(error.status, error.message)
+                    refusal = (error.status, error.message, None)
                 except (BrokenPipeError, ConnectionResetError):
                     # Handed to do_POST above rather than to `except Exception`
                     # below: these are subclasses of OSError, so without this
                     # clause a disconnect became `logger.exception` plus a second
-                    # traceback from trying to answer on the closed socket.
+                    # traceback from trying to answer on the closed socket. It
+                    # still leaves through the `finally`, so the spool goes
+                    # either way — there is simply nobody left to answer.
                     raise
                 except Exception:
                     logger.exception(f"publish {target} failed")
-                    return self._error(500, "internal error")
+                    refusal = (500, "internal error", None)
                 finally:
-                    spool.unlink(missing_ok=True)
+                    try:
+                        spool.unlink(missing_ok=True)
+                    except OSError:
+                        # Swallowed for the reason the same `finally` in
+                        # `_queue_build` gives: this now runs BEFORE the reply is
+                        # written, so a volume that will not take the unlink
+                        # would turn an ordinary refusal into a dropped
+                        # connection. The leftover is dot-prefixed and swept by
+                        # `Store._sweep_leftovers`.
+                        logger.exception(
+                            f"publish {target}: the spooled body could not be "
+                            f"removed")
+                if refusal is not None:
+                    status, message, extra = refusal
+                    return self._error(status, message, extra)
                 return self._queue_build(pid, accepted, minted=commit is None)
             finally:
                 publish_slots.release()
