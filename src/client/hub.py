@@ -123,6 +123,58 @@ POLL_FIRST_SECONDS = 0.25
 POLL_MAX_SECONDS = 2.0
 POLL_BACKOFF = 1.5
 
+# HOW LONG A STREAK OF UNANSWERED POLLS IS TOLERATED BEFORE GIVING UP, and the
+# number is sized on the one outage that actually happens here rather than on a
+# guess. The hub's container is recreated whenever `:latest` moves (Portainer's
+# ContainerAutomation), and while it is down Traefik's docker provider has no
+# router for the host and answers its OWN 404 — Go's `http.NotFound`, `404 page
+# not found`. That whole window is SECONDS: stop, start, `JobStore._load`
+# scanning the volume, and an edge that has not re-read the container list yet.
+# The image PULL is not inside it — docker pulls before it replaces the
+# container, so the download has already happened by the time anything stops
+# answering.
+#
+# WHAT A MINUTE DELIBERATELY DOES NOT BUY IS WAITING OUT A HUB THAT IS DOWN FOR
+# GOOD. That is not the trade: a wait is only worth continuing while there is a
+# build at the other end of it, and past a minute of silence the honest thing to
+# say is that the hub stopped answering — while somebody is still watching the
+# terminal.
+#
+# IT IS A CONSECUTIVE STREAK AND NOT A TOTAL BUDGET. One answered poll resets
+# it, so a slower sequence of gaps — an update and the rollback that follows it
+# — is still survivable however long the build runs. That is the shape of the
+# incident this exists for: main is merged several times an evening, so a long
+# build can easily straddle two recreations.
+POLL_GRACE_SECONDS = 60
+
+# The cadence WHILE a streak is open, and it is sized to fit inside that window.
+# The SLEEPS are 1.0, 1.5, 2.25, 3.38, 5.06, 7.59, 10, 10, 10, 10 —
+# `POLL_BACKOFF` applied to the one before, capped — eleven attempts in a
+# minute.
+# (Written as sleep lengths on purpose: the first draft of this line listed
+# cumulative times and read as a 2.5x backoff, which is not the factor in the
+# code.) The normal cadence above (0.25 s → 2 s) is for a hub that is answering,
+# where a fast first poll is what makes an already published push return at
+# once; a hub that is NOT answering is down for seconds, and asking it four
+# times a second buys nothing and lands as a burst of connections at the exact
+# moment the far end is coming back up.
+POLL_ERROR_FIRST_SECONDS = 1.0
+POLL_ERROR_MAX_SECONDS = 10.0
+
+# THE FLOOR UNDER THE INTERVAL BETWEEN TWO NOTICES, and it is what keeps a
+# flapping endpoint from writing the terminal full. A notice exists so that a
+# silence does not read as a hang; a line every half-second is the same silence
+# in a different font, and it buries the states the command is actually
+# reporting. "Once per streak" is not a ceiling on its own — an endpoint that
+# alternates failure and success opens and closes a streak forever, which was
+# measured at 1.7 lines a second.
+#
+# THE FIRST NOTICE OF A WAIT IS ALWAYS EMITTED, because that one is the whole
+# point: it is what turns an unexplained pause into a sentence. What the floor
+# drops afterwards is repetition and reassurance, never an outcome — the
+# command's own result still says what happened to the build.
+POLL_NOTICE_MIN_SECONDS = 30
+
 # How long `await_job` waits by default. The worst honest wait is the queue
 # ahead of you: MAX_QUEUED_JOBS (16) builds at buildproc's `wall_seconds` (900,
 # raised from 120 on 2026-08-29) over MAX_CONCURRENT_BUILDS (2) workers is about
@@ -215,6 +267,14 @@ class HubError(Exception):
     """The hub could not be reached, or answered something unusable."""
 
 
+# "NO POLL HAS EVER SUCCEEDED", which is not the same fact as "the hub answered
+# without a `state`" — and `record.get("state")` gives None for both.
+# `_timed_out` says "was never seen in any state — no poll of it ever succeeded"
+# about the first, and saying that about the second is a false sentence in the
+# one message a reader is using to work out what happened.
+_NEVER = object()
+
+
 class Hub:
     """One hub, one token. Nothing here logs or prints the token."""
 
@@ -236,12 +296,20 @@ class Hub:
 
     # -- transport ---------------------------------------------------------
     def _call(self, path: str, *, method: str = "GET", body=None,
-              content_type=None, max_bytes=None):
+              content_type=None, max_bytes=None, timeout=None):
         """(status, bytes). Raises HubError only when there was no answer.
 
         `max_bytes` is how much of the answer this call will hold; it defaults to
         `MAX_REPLY_BYTES`, and the ONE caller that raises it is the one fetching
         a build's artefacts (see the constants above).
+
+        `timeout` overrides the Hub's for ONE request, and it exists for the
+        poll in `await_job`: the Hub's own is sized for the push (300 s, an
+        archive up a domestic uplink), and a poll inheriting that turns a
+        promised minute of tolerance into ten the moment a socket is accepted
+        and then goes silent — a dropped VPN, a wifi handover, a black hole on
+        the path. The streak is only measured when a poll RETURNS, so the
+        per-request budget is what makes the window wall-clock.
 
         THE HEADER IS OMITTED WHEN THERE IS NO TOKEN, rather than sent empty.
         `create` reaches the hub for the starter template and deliberately never
@@ -269,7 +337,7 @@ class Hub:
             # as a traceback. Putting the body ceiling on error replies made
             # that path more reachable, not less. One statement in the try, and
             # both reads are behind the same diagnosis.
-            return self._exchange(request, self.url + path, cap)
+            return self._exchange(request, self.url + path, cap, timeout)
         except ValueError as error:
             # THE LAST RESORT, AND DELIBERATELY NEUTRAL. It used to say "the
             # token contains a character that cannot be sent in an HTTP header"
@@ -402,7 +470,7 @@ class Hub:
                 f"  like this, and so does a captive portal or a proxy "
                 f"answering in its place.") from error
 
-    def _exchange(self, request, where: str, cap: int):
+    def _exchange(self, request, where: str, cap: int, timeout=None):
         """Send it, and read the body — of a 2xx and of an error alike.
 
         ONE PLACE, so that both reads sit inside `_call`'s single `try` and get
@@ -419,8 +487,9 @@ class Hub:
         is a body, and a hub answering 500 with a gigabyte fills the same
         memory.
         """
+        budget = self.timeout if timeout is None else timeout
         try:
-            with self._opener.open(request, timeout=self.timeout) as response:
+            with self._opener.open(request, timeout=budget) as response:
                 return response.status, _read_capped(response, where, cap)
         except urllib.error.HTTPError as error:
             try:
@@ -430,9 +499,18 @@ class Hub:
 
     @staticmethod
     def _payload(status: int, raw: bytes) -> dict:
+        """The reply as a dict, or a sentence about what it was instead.
+
+        `RecursionError` IS CAUGHT BESIDE THE VALUE ERRORS AND IT IS NOT
+        TIDINESS. `json.loads` recurses per nesting level, so a body of
+        `[[[[...]]]]` raises it rather than `ValueError` — and 400 kB of
+        brackets is nothing against a 64 MiB reply ceiling. Uncaught it left
+        this path as a traceback out of `cli.main`, which catches five exception
+        classes and not that one. The far end chooses this body.
+        """
         try:
             payload = json.loads(raw.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             payload = None
         if not isinstance(payload, dict):
             raise HubError(
@@ -472,35 +550,313 @@ class Hub:
                            f"job {job_id}")
         return raw.decode("utf-8", "replace")
 
+    def _poll_job(self, job_id: str):
+        """One poll, for `await_job` only. -> (record, trouble).
+
+        THE ONE-SHOT `job()` ABOVE IS UNCHANGED AND STAYS THE HONEST ONE: it
+        raises on anything that is not a usable 200, which is right for a caller
+        asking once. This is the other reading of the same request — "is there
+        an answer yet" — where an unusable reply may simply mean the far end is
+        not there this second, and the caller decides whether that has gone on
+        long enough to matter. Be exact about what `job()` is kept FOR, because
+        the first version of this comment was not: nothing in `src/` calls it
+        any more (`check_token` uses this same ROUTE, but goes to `_call`
+        directly), so its only callers today are tests. It is kept because it is
+        the honest reading of one request and because the tolerance below is a
+        property of waiting rather than of asking — not because some caller
+        needs it.
+
+        AN ANSWER IS READ AS THE HUB'S ONLY WHEN THE HUB'S OWN CONTRACT IS
+        VISIBLE IN IT. On 2026-08-30 a `hammerola build` died mid-wait on `404
+        page not found` — text/plain, Go's `http.NotFound`. That was TRAEFIK,
+        not the hub: the docker provider drops the router while the container is
+        not running, and the container is recreated every time `:latest` moves.
+        The hub's own 404 is its documented error shape, `{"error": "not
+        found"}` (`_error` in `src/app.py`), and that shape is what
+        `_carries_the_hubs_error_shape` looks for.
+
+        SO THE TWO FINAL ANSWERS ARE BOTH GUARDED BY IT:
+
+          * a 404 in the hub's own words — the record is gone, which is
+            permanent, so waiting a minute for it to change its mind spends a
+            person's time on a fact already known;
+          * a 401 in the hub's own words — the token is refused, which cannot
+            heal itself.
+
+        AND A 401 THAT IS NOT IDENTIFIABLY THE HUB'S IS TRANSIENT, which is the
+        half that looks surprising and is the same rule. `UNAUTHORIZED` tells
+        the reader to replace the one secret of the system; `Hub.__init__` names
+        that exact harm ("telling somebody to replace the one secret of the
+        system over a typo in an address is the specific harm this arrangement
+        exists to prevent"), and an auth gateway blinking during its own
+        redeploy is not evidence about the token. It is SAFE here specifically:
+        the push was accepted with this very token seconds earlier, so a genuine
+        credential failure arriving mid-wait is very nearly impossible. If the
+        401 persists it still ends the wait — with the give-up message, which
+        quotes it.
+
+        WHAT MUST NOT BE USED IS `Server:` OR THE CONTENT TYPE. Anything on the
+        path can strip a header or add one, so a header is not evidence about
+        who wrote the body; the body shape is what this tool parses everywhere
+        else, and it is what identifies the answer here.
+
+        `HubError` is the ONLY exception turned into trouble — `_call` raises it
+        when there was no answer at all — because everything else on this path
+        is a bug in this tool and must not be swallowed by a retry loop.
+        """
+        # `QUERY_TIMEOUT` AND NOT THE HUB'S OWN: see `_call`. A poll that
+        # inherited the push's 300 s would make the grace window a fiction,
+        # since the streak is measured only when a poll returns.
+        try:
+            status, raw = self._call(
+                f"/api/v1/jobs/{urllib.parse.quote(job_id)}",
+                timeout=QUERY_TIMEOUT)
+        except HubError as error:
+            # `str` AND NOT `quoted`, for the same reason as the `_payload`
+            # branch at the bottom of this method: every `HubError` `_call`
+            # raises has ALREADY put whatever came off the wire through
+            # `quoted`. Escaping it again turns a byte into `\\x15` and cuts
+            # the sentence at 200 characters — which threw away the half that
+            # matters ("Check HUB_URL: an `http://` address where the hub speaks
+            # `https://`..."), leaving a mangled quotation and no advice.
+            return None, f"the hub could not be reached ({error})"
+        # ASKED ONLY OF THE TWO STATUSES THAT CAN BE A VERDICT. It parses a body
+        # the far end chose, up to the reply ceiling, so running it on every 200
+        # as well would be work — and exposure — for an answer nothing reads.
+        mine = status in (401, 404) and _carries_the_hubs_error_shape(raw)
+        if status == 401 and mine:
+            raise HubError(UNAUTHORIZED)
+        if status == 404 and mine:
+            raise HubError(
+                f"the hub itself denies job {job_id} (HTTP 404, in its own "
+                f"words), so nothing is polling any more.\n"
+                f"  THE RECORD IS GONE, WHICH IS NOT THE BUILD FAILING: a push "
+                f"that was accepted may\n"
+                f"  still have published. Look at {self.url} for the project, "
+                f"and at `hammerola status`\n"
+                f"  for what it has.")
+        if status != 200:
+            return None, (f"the hub answered HTTP {status} for job {job_id}: "
+                          f"{quoted(raw)}")
+        try:
+            return self._payload(status, raw), None
+        except HubError as error:
+            # `str` AND NOT `quoted`: that message already quotes the far end's
+            # body inside itself, and quoting it again puts a repr in a repr —
+            # the reader gets `"the hub answered HTTP 200 with something..."`
+            # complete with backslashes, instead of a sentence reading like the
+            # branches above.
+            return None, str(error)
+
     def await_job(self, job_id: str, timeout: float = JOB_TIMEOUT,
-                  on_state=None) -> dict:
+                  on_state=None, on_notice=None, grace=None) -> dict:
         """Poll until the job is `done` or `failed`. Raises HubError on timeout.
 
         `on_state` is called once per NEW state, so a run prints "building" when
         the build starts and not once a second for as long as it lasts.
+
+        `on_notice` is called for what happens to the CONNECTION rather than to
+        the build: when a streak of unanswered polls opens, and when the hub
+        starts answering again. A notice exists because a silent pause reads as
+        a hang, which is half of what made the incident behind this confusing —
+        and it is held to `POLL_NOTICE_MIN_SECONDS` between lines, because an
+        endpoint that flaps opens and closes streaks indefinitely and a line
+        every half-second is the same silence in a different font.
+
+        `grace` is how long a CONSECUTIVE streak of unanswered polls is
+        tolerated; a good poll resets it, so two separate outages are both
+        survivable. `grace=0` is no tolerance at all, i.e. what this did before,
+        and None asks for `POLL_GRACE_SECONDS` — RESOLVED IN THE BODY, because a
+        default binds at `def` and a test lowering the constant would otherwise
+        be lowering something nothing reads.
+
+        IT IS OF THAT ORDER RATHER THAN EXACTLY THAT LONG, and the difference is
+        worth stating because it is what a black hole on the path costs. The
+        streak clock starts when the first failed poll RETURNS, so a request
+        that is accepted and then answered by nobody spends `QUERY_TIMEOUT`
+        before the window even opens, and the last one may spend another before
+        it is declared over: the worst case is about `grace + 2 x
+        QUERY_TIMEOUT`. A refusal or a reset returns at once and costs neither.
+
+        THE TWO BUDGETS ARE KEPT APART AND SO ARE THEIR MESSAGES. `timeout` is
+        the budget for the BUILD and `grace` is the tolerance for the HUB being
+        unreachable; one message denies `--timeout` as the knob, which is true
+        of the streak and false of the deadline, so they may never be raised
+        from one condition. The streak is checked first: it is the specific
+        diagnosis, and the deadline is the one that is always true eventually.
+
+        WHAT IS DELIBERATELY NOT RETRIED IS THE PUSH ITSELF. The POST is one
+        request whose answer may be lost after the hub has already accepted it,
+        and a blind repeat of it is a second build of the same sources —
+        possibly a second published revision. Only the READ is retried here,
+        which is safe precisely because it changes nothing.
         """
+        if grace is None:
+            grace = POLL_GRACE_SECONDS
         deadline = time.monotonic() + timeout
+        # TWO CADENCES, TWO VARIABLES, and which one grows is decided by
+        # `_next_sleep` rather than here — see its docstring for why that is
+        # lifted out. The short of it: healing must NOT drop `wait` back to
+        # `POLL_FIRST_SECONDS`, because 0.25 s polling is for the first seconds
+        # of a wait, when a push may already be published, and not for every
+        # blink an hour in.
         wait = POLL_FIRST_SECONDS
-        seen = None
-        record = None
+        error_wait = POLL_ERROR_FIRST_SECONDS
+        seen = _NEVER
+        # When the current streak of unanswered polls began. None means the hub
+        # is answering.
+        streak_began = None
+        last_notice = None
+        # The transition not yet told to the reader. ONE SLOT, OVERWRITTEN
+        # rather than queued: what a reader needs is the state of the
+        # connection NOW, and a backlog of superseded lines is the flood the
+        # floor exists to prevent.
+        pending = None
+
+        def notice(text) -> bool:
+            """Emit one line if the floor has passed. -> whether it went out.
+
+            THE RETURN VALUE IS WHAT MAKES THE FLOOR A RATE LIMIT INSTEAD OF A
+            DROP, and the difference was a real defect: a suppressed line used
+            to be gone for good, and an OPENING happens once and never repeats.
+            A hub that went away at 0 s, came back at 30 s and died for good at
+            45 s therefore announced the outage that did not kill the command
+            and stayed silent about the one that did — the last thing the
+            terminal said about the connection was that the hub is answering,
+            which was the opposite of the truth by the time it gave up.
+
+            The caller keeps the undelivered line in `pending` and offers it
+            again on every later iteration, so a state that stops changing is
+            always eventually announced, while a flapping one still costs at
+            most a line per `POLL_NOTICE_MIN_SECONDS`.
+
+            The first line of a wait always goes out (`last_notice` is None
+            until then): that one is the whole point of having notices at all.
+            """
+            nonlocal last_notice
+            if on_notice is None:
+                return True
+            now = time.monotonic()
+            if (last_notice is not None
+                    and now - last_notice < POLL_NOTICE_MIN_SECONDS):
+                return False
+            last_notice = now
+            on_notice(text)
+            return True
+
         while True:
-            record = self.job(job_id)
-            state = record.get("state")
-            if state != seen:
-                seen = state
-                if on_state is not None:
-                    on_state(state)
-            if state in TERMINAL_STATES:
-                return record
-            if time.monotonic() >= deadline:
-                raise HubError(
-                    f"job {job_id} was still {state!r} after {timeout:.0f}s.\n"
-                    f"  The build is not cancelled by giving up here — the hub "
-                    f"kills it on its own ceiling. Check "
-                    f"{self.url}/api/v1/jobs/{job_id} later, or pass a longer "
-                    f"--timeout.")
-            time.sleep(min(wait, max(0.0, deadline - time.monotonic())))
-            wait = min(wait * POLL_BACKOFF, POLL_MAX_SECONDS)
+            new_streak = False
+            finished = None
+            record, trouble = self._poll_job(job_id)
+            if record is not None:
+                if streak_began is not None:
+                    streak_began = None
+                    pending = "the hub is answering again; still waiting"
+                state = record.get("state")
+                if state != seen:
+                    seen = state
+                    if on_state is not None:
+                        on_state(state)
+                if state in TERMINAL_STATES:
+                    finished = record
+                elif time.monotonic() >= deadline:
+                    raise self._timed_out(job_id, state, timeout)
+            else:
+                now = time.monotonic()
+                new_streak = streak_began is None
+                if new_streak:
+                    streak_began = now
+                # THE STREAK FIRST, and only then the deadline. An opening
+                # failure has `now - streak_began == 0`, so a single condition
+                # gave every failed poll past the deadline the streak's message
+                # — including its "a longer --timeout does not help", at the one
+                # moment a longer --timeout is exactly what would have helped.
+                # When both are out at once this order is the answer: the streak
+                # is the specific diagnosis and the deadline is the one that
+                # comes true eventually anyway.
+                if now - streak_began >= grace:
+                    raise HubError(
+                        f"the hub stopped answering while job {job_id} was "
+                        f"being waited for.\n"
+                        f"  Last reply: {trouble}.\n"
+                        f"  THE BUILD DID NOT FAIL — the push was accepted "
+                        f"before this, and the build may\n"
+                        f"  still be running on the hub. Check "
+                        f"{self.url}/api/v1/jobs/{job_id} when it is back. "
+                        f"A longer\n"
+                        f"  --timeout does not help with this one: that is the "
+                        f"budget for the BUILD, and\n"
+                        f"  what ran out is the tolerance for the hub being "
+                        f"unreachable.")
+                if now >= deadline:
+                    raise self._timed_out(job_id, seen, timeout, trouble)
+                # AFTER the two give-up checks, so `grace=0` says one thing
+                # rather than announcing that it is still waiting and then
+                # refusing to.
+                if new_streak:
+                    pending = (f"{trouble}; still waiting, the build may be "
+                               f"running")
+            # THE DEFERRED LINE, OFFERED AGAIN ON EVERY ITERATION — and ABOVE
+            # the terminal return, which is why the return became a variable.
+            # A recovery whose very next poll is `done` is the commonest good
+            # ending there is, and returning before this point dropped the one
+            # line saying the hub came back.
+            #
+            # The two give-up branches DO skip it, deliberately: each carries
+            # what it needs in its own message, and `grace=0` must not announce
+            # that it is still waiting and then refuse to.
+            if pending is not None and notice(pending):
+                pending = None
+            if finished is not None:
+                return finished
+            # CLAMPED AGAINST BOTH EDGES, not just the deadline. A 10 s sleep
+            # inside a 60 s window can only end after it, and the attempt that
+            # would have landed at 59 s then never happens — so the window a
+            # reader was promised is short by up to one backoff step, at the
+            # moment it matters most.
+            left = deadline - time.monotonic()
+            if streak_began is not None:
+                left = min(left, streak_began + grace - time.monotonic())
+            sleep_for, wait, error_wait = _next_sleep(
+                wait, error_wait, streak_began is not None, new_streak)
+            time.sleep(min(sleep_for, max(0.0, left)))
+
+    def _timed_out(self, job_id: str, state, timeout: float,
+                   trouble=None) -> HubError:
+        """The BUILD's budget ran out — the ordinary deadline, either branch.
+
+        Raised from two places and worded once: a job still `queued`/`building`
+        when the clock runs out, and a failed poll at the deadline whose streak
+        has NOT expired. The second is why `state` may be `_NEVER` and why
+        `trouble` exists — reporting a state without saying that the last look
+        at it failed hands the reader a fact that may be minutes old as if it
+        were current.
+
+        `_NEVER` AND NOT None, because None is a state the hub can hand back:
+        a 200 whose JSON has no `state` field gives `record.get("state") is
+        None` after every poll SUCCEEDED, and "no poll of it ever succeeded"
+        would then be a false sentence in a diagnostic message.
+
+        It names `--timeout` as the knob because here that is true. The streak
+        message says the opposite about itself, and the two must not be merged.
+        """
+        if state is _NEVER:
+            was = ("was never seen in any state — no poll of it ever "
+                   "succeeded")
+        else:
+            was = f"was still {state!r}"
+        extra = ""
+        if trouble is not None:
+            extra = f"\n  The last poll failed as well: {trouble}."
+            if state is not _NEVER:
+                extra += (" The state above is from an earlier one\n"
+                          "  and may be out of date.")
+        return HubError(
+            f"job {job_id} {was} after {timeout:.0f}s.{extra}\n"
+            f"  The build is not cancelled by giving up here — the hub kills "
+            f"it on its own ceiling.\n"
+            f"  Check {self.url}/api/v1/jobs/{job_id} later, or pass a longer "
+            f"--timeout.")
 
     # -- what the hub already knows about a project ------------------------
     def builds(self, pid: str):
@@ -861,6 +1217,70 @@ def quoted(text, limit: int = QUOTE_LIMIT) -> str:
     if total <= limit and len(quoted) <= limit:
         return quoted
     return f"{quoted[:limit]}... ({total} {unit}, truncated)"
+
+
+def _next_sleep(wait: float, error_wait: float, streaking: bool,
+                new_streak: bool):
+    """How long to sleep before the next poll. -> (sleep, wait, error_wait).
+
+    PURE, AND LIFTED OUT OF `await_job` BECAUSE ITS TWO PROPERTIES ARE ABOUT
+    WHAT SURVIVES ACROSS ITERATIONS, which is exactly what a test driving the
+    loop with a stopwatch witnesses badly and a table witnesses exactly:
+
+      * the NORMAL cadence is never restarted by a recovery. It is the cadence
+        of a hub that is answering, and it belongs to the WAIT rather than to
+        the current stretch of it — restarting it meant an endpoint that flaps
+        polled four times a second forever, an hour into a build, which is the
+        load the backoff exists to avoid;
+      * the ERROR cadence IS restarted, on each new streak. It belongs to the
+        outage rather than to the wait: a fresh outage deserves a fast first
+        retry, because most of them are over in seconds.
+
+    Both were claimed in a comment and checked by nothing — putting
+    `wait = POLL_FIRST_SECONDS` back into the recovery branch passed every test
+    in the suite, which is the same hole this file's own history is about.
+    """
+    if new_streak:
+        error_wait = POLL_ERROR_FIRST_SECONDS
+    if streaking:
+        return (error_wait, wait,
+                min(error_wait * POLL_BACKOFF, POLL_ERROR_MAX_SECONDS))
+    return (wait, min(wait * POLL_BACKOFF, POLL_MAX_SECONDS), error_wait)
+
+
+def _carries_the_hubs_error_shape(raw: bytes) -> bool:
+    """Did the HUB write this error, or did something in front of it?
+
+    POSITIVE EVIDENCE ONLY, and the width of it is the whole care here: a dict
+    with an `error` key is what `_error` in `src/app.py` emits for every refusal
+    this service makes, so a body producing it is the hub speaking. Anything
+    that does not — Traefik's `404 page not found`, a proxy's HTML, an empty
+    body — is not identified as the hub's, and the caller treats it as the
+    outage it usually is.
+
+    NOTHING IS READ OUT OF A HEADER. `Server:` and the content type can both be
+    set, stripped or rewritten by anything on the path, so neither is evidence
+    about who wrote the body. The body is what this tool parses everywhere else.
+
+    False for anything unparseable rather than raising: this is a question, and
+    "cannot tell" and "no" mean the same thing to the one caller.
+    `RecursionError` is in the tuple for that promise to be true —
+    `json.loads` recurses per nesting level, so `[[[[...]]]]` raises it rather
+    than a `ValueError`, and 400 kB of brackets is nothing against a 64 MiB
+    reply ceiling. Uncaught, a body the far end chose became a traceback out of
+    `cli.main`.
+
+    AND THE `error` KEY IS PART OF THE TEST, not decoration on an isinstance.
+    `{"detail": "Not Found"}` is what Starlette and FastAPI answer by default,
+    i.e. what a large share of the API gateways in the world put in front of a
+    service — accepting any dict would read that as the hub's own verdict and
+    kill a live build on it.
+    """
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return False
+    return isinstance(payload, dict) and "error" in payload
 
 
 def _bytes_text(count: int) -> str:

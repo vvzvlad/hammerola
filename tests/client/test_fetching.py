@@ -468,3 +468,24 @@ def test_a_view_file_is_not_confused_for_an_artefact(hub, tmp_path, capsys):
     assert run(model, "artifacts", revision) == 0
     fetched = model / sources.SCRATCH_DIR / f"artifacts-{revision[:12]}"
     assert sorted(p.name for p in fetched.iterdir()) == ["body.step", "body.stl"]
+
+
+def test_a_metrics_body_that_blows_the_JSON_parser_is_not_a_traceback():
+    """The third copy of one hole, and the reason it is worth naming: `_metrics`
+    reads a body off the wire exactly like `hub._payload` and
+    `hub._carries_the_hubs_error_shape`, and all three caught
+    `(ValueError, UnicodeDecodeError)`.
+
+    `json.loads` recurses per nesting level, so `[[[[...]]]]` raises
+    `RecursionError` instead — 400 kB of brackets, against a reply ceiling
+    measured in megabytes — and it escaped `cli.main`, which catches five
+    exception classes and not that one. Fixing two of three would have left the
+    rule reading as local to one file.
+    """
+    from src.client import revdiff
+
+    class Stub:
+        def build_file(self, pid, revision, name):
+            return b"[" * 200000 + b"]" * 200000
+
+    assert revdiff._metrics(Stub(), "demo0001", "abcdef123456") is None

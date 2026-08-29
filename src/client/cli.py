@@ -342,8 +342,15 @@ def _publish(args) -> int:
     print(f"queued as job {job_id}: this build's progress and its log")
     sys.stdout.flush()
 
+    # STATE GOES TO STDOUT AND TROUBLE GOES TO STDERR, like the log's own
+    # failure line below: the states are the progress of the build, which is
+    # what this command is reporting, while a notice is about the CONNECTION to
+    # the hub and belongs with the other things that went wrong on the way.
     record = hub.await_job(job_id, timeout=args.timeout,
                            on_state=lambda state: print(f"  {state}",
+                                                        flush=True),
+                           on_notice=lambda note: print(f"  {note}",
+                                                        file=sys.stderr,
                                                         flush=True))
 
     _print_log(hub, job_id, record)
