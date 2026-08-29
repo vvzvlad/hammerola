@@ -136,11 +136,21 @@ def material_at(part, name="part"):
     exactly like the other checks here. `name` only improves the error message
     when it is handed something that is not geometry.
     """
+    # THE TYPE CHECK COMES FIRST, BEFORE THE KERNEL IS IMPORTED, and the order
+    # is the whole point rather than style. `_shape` is plain Python; the OCP
+    # import below needs the native OpenCASCADE libraries, which exist in the
+    # hub's image and in very few other places. With the import first, handing
+    # this a string answered `ImportError: libGL.so.1` on any machine without
+    # them -- an error about the environment, for a mistake in the argument,
+    # and one that made a test of the refusal impossible to run anywhere the
+    # kernel is absent. That is exactly how it was caught: CI went red on the
+    # test that asserts the refusal, in a container that has no OpenCASCADE.
+    shape = _shape(part, name)
+
     from OCP.BRepClass3d import BRepClass3d_SolidClassifier
     from OCP.gp import gp_Pnt
     from OCP.TopAbs import TopAbs_OUT
 
-    shape = _shape(part, name)
     classifier = BRepClass3d_SolidClassifier(shape.wrapped)
 
     def probe(x, y, z):
