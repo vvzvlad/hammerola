@@ -287,6 +287,80 @@ def test_a_hub_that_never_comes_back_gives_up_and_says_which_budget_ran_out(
     assert len(seen) > 1, "it did not retry at all"
 
 
+def test_the_give_up_message_quotes_the_far_end_ONCE_and_keeps_its_advice(
+        quick):
+    """The unreachable branch interpolates the error with `str` and not
+    `quoted`, and that is the correct call at exactly this one site.
+
+    Every `HubError` `_call` raises has ALREADY put whatever came off the wire
+    through `quoted` — the far end's bytes are escaped and trimmed there, once.
+    Escaping the whole sentence a second time doubles every `\\x15` into
+    `\\\\x15` and then trims THAT at `QUOTE_LIMIT`, and what the cut throws away
+    is the only advice in it: "Check HUB_URL: an `http://` address where the hub
+    speaks `https://` looks exactly like this". The reader is left with a
+    doubly-mangled quotation of a TLS record and nothing to do about it, on the
+    commonest typo there is.
+
+    Both halves are asserted, because either one alone licenses the wrong fix:
+    the advice has to survive, AND the far end's bytes have to still be escaped
+    rather than written to a terminal raw.
+
+    Staged with a socket that answers something that is not HTTP, the same shape
+    as `test_transport.py`'s. IT IS A RECORD AND NOT SEVEN BYTES, deliberately:
+    a server speaking TLS answers a plaintext request with an alert or a
+    handshake flight, i.e. a few hundred bytes of binary before anything that
+    looks like a line ending, and `http.client` hands the whole line to
+    `BadStatusLine`. Seven bytes escape to little enough that the doubled copy
+    still fits under the ceiling — the defect is real either way and only this
+    length makes it visible.
+    """
+    # An alert record's first bytes, then binary. Every byte of the tail is a
+    # control character, which is what makes the escaped form four times its
+    # own length — and none of them is CR or LF, so it is all one "status line".
+    garbage = (b"\x15\x03\x01\x00\x02\x02\x46"
+               + bytes((index % 8) + 1 for index in range(240)) + b"\r\n")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def handle_one_request(self):
+            # Not a status line: what a TLS server answers a plaintext request
+            # with. Written straight to the socket, because every helper above
+            # this level insists on producing valid HTTP.
+            self.rfile.readline()
+            self.wfile.write(garbage)
+            self.close_connection = True
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever,
+                     kwargs={"poll_interval": 0.01}, daemon=True).start()
+    try:
+        hub = Hub(f"http://127.0.0.1:{server.server_address[1]}", "token",
+                  timeout=10)
+        with pytest.raises(HubError) as raised:
+            hub.await_job("job-1", timeout=30, grace=0.3)
+        message = str(raised.value)
+        assert "stopped answering" in message, message
+        assert "Check HUB_URL" in message, (
+            f"the only advice in the quoted reply was cut off: {message!r}")
+        assert "\x15" not in message, (
+            "a control byte from the far end reached the terminal raw")
+        assert "\\x15" in message, (
+            "the far end's bytes were stripped rather than escaped")
+        # ONCE, and asserted directly rather than through the trim: escaping
+        # twice is what this test is named after, and the trim only reveals it
+        # while `QUOTE_LIMIT` stays small enough for the doubled copy to
+        # overflow it. Raising that constant would otherwise retire this test
+        # in silence.
+        assert "\\\\x15" not in message, (
+            "the far end's bytes were escaped twice — the message quotes a "
+            "repr of a repr, and the trim then eats whichever half comes last")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_the_hubs_OWN_404_is_final_and_costs_exactly_one_request(
         quick, scripted):
     """The other side of the same status, and the reason the body is read.
@@ -608,6 +682,44 @@ def test_a_throttled_notice_is_DEFERRED_and_not_lost(monkeypatch, scripted):
         f"then the command gave up — the fatal outage was never announced")
 
 
+def test_a_deferred_line_is_the_LATEST_transition_and_not_a_healed_outage(
+        monkeypatch, scripted):
+    """`pending` IS ONE SLOT, OVERWRITTEN — the mirror of the defect above.
+
+    Two docstrings say so ("ONE SLOT, OVERWRITTEN rather than queued", "is
+    overwritten when a newer transition supersedes it") and nothing checked it:
+    writing the recovery line only `if pending is None` kept the whole suite
+    green. What that mutant produces is the test above run backwards — an
+    outage's line waits in the slot, the hub comes back, the recovery cannot
+    displace it, and the line that finally goes out says "the hub is not
+    answering" while the hub is answering and the build is running to
+    completion. A backlog of superseded lines is the same fault in the other
+    direction: what a reader needs is the state of the connection NOW.
+
+    Staged as outage, recovery, outage, and then a long healthy stretch, all
+    inside one floor: only the LAST of those transitions may reach the reader.
+    """
+    for name in ("POLL_FIRST_SECONDS", "POLL_MAX_SECONDS",
+                 "POLL_ERROR_FIRST_SECONDS", "POLL_ERROR_MAX_SECONDS"):
+        monkeypatch.setattr(hub_module, name, 0.01)
+    # Long enough that every transition below happens inside it, short enough
+    # that the healthy stretch afterwards still outlives it and flushes.
+    monkeypatch.setattr(hub_module, "POLL_NOTICE_MIN_SECONDS", 0.4)
+
+    hub, _seen = scripted([EDGE_404, _record("building"), EDGE_404]
+                          + [_record("building")] * 60 + [_record("done")])
+    notices = []
+
+    record = hub.await_job("job-1", timeout=30, grace=5,
+                           on_notice=notices.append)
+
+    assert record["state"] == "done"
+    assert "answering again" in notices[-1], (
+        f"the last thing said about the connection was {notices[-1]!r}, while "
+        f"the hub was answering and the build finished — a superseded line was "
+        f"kept instead of being overwritten")
+
+
 class _Reply:
     """The least a response has to be for `_read_capped` to accept it."""
 
@@ -793,27 +905,94 @@ def test_the_LOOP_carries_the_normal_cadence_across_a_recovery(
 
 
 # -- the two budgets, in the same instant ------------------------------------
+class _Clock:
+    """The clock `hub` reads, moved by this test instead of by the machine.
+
+    `monotonic()` reads it and `sleep(n)` advances it by `n`, so every reading
+    `await_job` sees is one chosen here. On top of that it charges what a ROUND
+    TRIP appears to cost, which is the only other thing that moves a real clock
+    inside that loop: `first` once, and `later` on every sleep — which in this
+    loop is always followed immediately by another poll.
+
+    The one-shot is placed where it is because of WHERE the loop reads the
+    clock. Its first read is `deadline = monotonic() + timeout`, the last thing
+    that happens before the first request goes out, so the cost of that request
+    is charged just after it and is visible to every read from the failed
+    poll's onwards.
+
+    Substituted for the module's `time` and for nothing else: the socket, the
+    server and the suite keep the real one.
+    """
+
+    def __init__(self, start, first, later):
+        self.now = start
+        self._first = first
+        self._later = later
+
+    def monotonic(self):
+        reading = self.now
+        if self._first is not None:
+            self.now += self._first
+            self._first = None
+        return reading
+
+    def sleep(self, seconds):
+        self.now += seconds + self._later
+
+
+# (the first round trip, every later one) — what a poll APPEARS to cost. The
+# first row is the cold-start shape that broke the wall-clock version of this
+# test; the other two are the shapes it happened to survive. The verdict below
+# is the same in all three, which is the whole point of driving the clock.
+ROUND_TRIPS = [
+    (5.0, 0.25, "a slow first poll and fast ones after"),
+    (0.25, 0.25, "polls that all cost the same"),
+    (0.05, 0.5, "a fast first poll and slow ones after"),
+]
+
+
+@pytest.mark.parametrize("first, later, shape", ROUND_TRIPS,
+                         ids=[row[2] for row in ROUND_TRIPS])
 def test_when_BOTH_budgets_expire_at_once_the_streak_is_what_is_reported(
-        quick, scripted):
+        quick, scripted, monkeypatch, first, later, shape):
     """The order of the two checks is declared load-bearing and nothing tested
     it — swapping the blocks passed everything, because no test had both expire
-    together.
+    together. The streak is the specific diagnosis and must win; the deadline is
+    the one that comes true eventually anyway.
 
-    `timeout == grace` against a server that never answers puts them out in the
-    same iteration: the sleep is clamped to the streak's edge, so the poll after
-    it is past both. The streak is the specific diagnosis and must win; the
-    deadline is the one that comes true eventually anyway.
+    HOW THE INSTANT IS CONSTRUCTED. The deadline lands `timeout` after the read
+    that opens the wait; the streak opens when the FIRST poll fails, which is
+    one round trip after that same read. So `timeout = first + grace` puts the
+    two edges on the same number exactly — for any round trip, at any scale —
+    and `_Clock` is what makes `first` a number this test chose rather than one
+    the machine happened to produce.
+
+    WHY A REAL CLOCK CANNOT CONSTRUCT IT, and why the fake is not decoration to
+    be simplified away. The old version wrote the instant as `timeout == grace`,
+    which is a knife edge and not an equality: it puts the deadline at `timeout`
+    and the streak's edge at `t1 + grace`, one whole round trip later, so the
+    sleep is clamped to the deadline and the deciding poll lands at
+    `timeout + rt2`. The streak is therefore reported only when `rt2 >= t1` —
+    true merely because the first request of a run is usually the slow one
+    (imports, the first socket), and false on a cold run, where the deadline
+    branch legitimately wins and the assertion fails. Bigger numbers do not
+    remove it: the margin stays `rt2 - rt1` whatever the scale.
+
+    Everything else is real — `await_job`, the socket, the scripted 404 — so
+    what is under test is still the decision inside the loop.
     """
+    grace = 0.5
+    monkeypatch.setattr(hub_module, "time", _Clock(1000.0, first, later))
     hub, _seen = scripted([EDGE_404])
 
     with pytest.raises(HubError) as raised:
-        hub.await_job("job-1", timeout=0.3, grace=0.3)
+        hub.await_job("job-1", timeout=first + grace, grace=grace)
 
     message = str(raised.value)
-    assert "stopped answering" in message, message
+    assert "stopped answering" in message, f"{shape}: {message}"
     assert "pass a longer --timeout" not in message, (
-        "the deadline's message won, so a reader with an unreachable hub is "
-        "sent to raise a budget that is not the one that ran out")
+        f"{shape}: the deadline's message won, so a reader with an unreachable "
+        f"hub is sent to raise a budget that is not the one that ran out")
 
 
 def test_a_200_WITHOUT_a_state_is_not_reported_as_never_having_answered(
@@ -825,15 +1004,26 @@ def test_a_200_WITHOUT_a_state_is_not_reported_as_never_having_answered(
     never seen in any state — no poll of it ever succeeded" about a wait whose
     every poll succeeded — a false sentence in the one message the reader is
     using to work out what happened.
+
+    AND THE STATE CALLBACK STAYS SILENT, which is the other half of the same
+    reply and a decision rather than a side effect. `seen` starts at `_NEVER`,
+    so `state != seen` is true for a 200 that names nothing, and `on_state(None)`
+    fired: the push transcript grew a line reading `  None` as though the hub
+    had reported a build state called None. The value is still RECORDED — the
+    message above is the reason — and only the callback is skipped.
     """
     hub, _seen = scripted([(200, "application/json", b'{"job": "job-1"}')])
+    states = []
 
     with pytest.raises(HubError) as raised:
-        hub.await_job("job-1", timeout=0.4, grace=30)
+        hub.await_job("job-1", timeout=0.4, grace=30, on_state=states.append)
 
     message = str(raised.value)
     assert "no poll of it ever succeeded" not in message, message
     assert "was still None" in message, message
+    assert states == [], (
+        f"the transcript got {states} as build states — a 200 with no `state` "
+        f"field printed itself as one")
 
 
 def test_the_one_shot_read_is_left_alone_and_still_raises(scripted):

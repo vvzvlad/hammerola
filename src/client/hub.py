@@ -755,7 +755,12 @@ class Hub:
                 state = record.get("state")
                 if state != seen:
                     seen = state
-                    if on_state is not None:
+                    # A 200 that names no state is not progress: `None` printed
+                    # as a build state is noise in the one transcript a person
+                    # reads. It is still RECORDED above, because `_timed_out`
+                    # tells "the hub answered and named no state" apart from
+                    # "no poll of it ever succeeded".
+                    if on_state is not None and state is not None:
                         on_state(state)
                 if state in TERMINAL_STATES:
                     finished = record
