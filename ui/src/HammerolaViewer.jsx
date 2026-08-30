@@ -772,30 +772,65 @@ export default class HammerolaViewer extends React.Component {
     // page's own picker only ever lists one project, so this branch is a guard
     // on the day something else calls this rather than a path anybody takes.
     if (pid !== PAGE.pid) { location.href = `/project/${pid}/`; return; }
-    // ALREADY HERE — AND "HERE" IS A DIFFERENT QUESTION FOR EACH CALLER.
+    // ALREADY GOING THERE, which is not the same question as "already here" and
+    // is the one BOTH DOORS ask. `PAGE` is where the page HAS GOT TO, and a swap
+    // moves it only once its fetch answers, so during one `PAGE.slot` still
+    // names the build being left. `_want` is the destination: the slot of the
+    // last gesture this method accepted, and `PAGE.slot` whenever nothing is in
+    // flight.
     //
-    // For the PICKER it is `PAGE.slot`: a click on the highlighted row asks for
-    // the build on screen, and closing the menu is the whole of the answer. It
-    // must not cancel a swap in flight either, which is why the generation
-    // below is taken after this line and not above it.
+    // ASKING `PAGE.slot` FROM THE PICKER BURIED A HISTORY ENTRY. Forward onto B
+    // starts a swap; the reader, seeing nothing yet, opens the picker and clicks
+    // row B — `PAGE.slot` was still A, so the click passed for a real gesture
+    // and `pushState` laid a second entry for B on top of the one they were
+    // standing on. Back then looks like nothing happened, and the forward
+    // history is gone.
     //
-    // For `popstate` that reading is wrong, and wrong in the direction that
-    // ends with the address bar naming a build the page is not showing. `PAGE`
-    // is where the page HAS GOT TO, and a swap moves it only after its fetch
-    // answers — so during one, `PAGE.slot` is the build being left. History
-    // entries are compared against where the page is GOING. Reader on B with
-    // `[A, B]` behind them: Back starts a slow swap to A, Forward comes back to
-    // B, `PAGE.slot` is still B, and the entry that would have cancelled the
-    // swap is thrown away as a no-op instead. A lands, the address says B.
-    // `pageguard` in the suite calls that state invalid in so many words.
-    //
-    // `_want` is that destination: the slot of the last gesture this method
-    // accepted, and `PAGE.slot` whenever nothing is in flight. Comparing
-    // against it makes Forward-onto-the-current-`PAGE` a real gesture — it
-    // bumps the generation, cancels the swap and re-fetches the build the
-    // address now names, which is also what restores that entry's own `?v=`.
-    const here = push ? PAGE.slot : (this._want || PAGE.slot);
+    // The generation below is taken AFTER this line, and this is the case that
+    // needs it there: the gesture asks for what is already on its way, so a bump
+    // here would kill the swap fetching it and leave nothing to land.
+    const here = this._want || PAGE.slot;
     if (slot === here) { this.setState({ revOpen: false }); return; }
+
+    // ON SCREEN, BUT BEING LEFT — so this gesture asks to STAY, and staying is
+    // not a trip. Reader on B, Back starts a slow swap to A, Forward comes back
+    // to B: the page is showing B and the address says B. There is nothing to
+    // fetch, nothing to push and nothing to leave behind; all that is asked is
+    // that the swap be called off.
+    //
+    // RUNNING THE WHOLE SWAP INSTEAD IS WHAT THIS REPLACES, and it cost more
+    // than the doing-nothing it looked like. `leaveBuild` ran over a build
+    // nobody was leaving, so the selection went, the session's pins went, the
+    // composer lost its part and the measurement went — a reader who pressed
+    // Forward to get back where they already were lost their own work. Then the
+    // viewport was handed a payload IDENTICAL to the one it had: same `base`,
+    // same `buildKey`, same `view`, which `element.js` reads as neither a
+    // reload, a swap nor a retry, so it never called `load()`. No `hmr:model`
+    // came back, `onModel` never ran, and the two things it spends were left
+    // armed — `_refit`, which then made an ordinary live reload re-capture the
+    // frame Fit promises to keep, and `carry`, which rejoined hidden parts BY
+    // NAME onto a tree nobody had switched to and hid a part the reader never
+    // touched. Both fired later, on an unrelated event, which is where the
+    // debugging would have started.
+    if (slot === PAGE.slot) {
+      this._swapGen = (this._swapGen || 0) + 1;
+      this._want = slot;
+      // The swap that just died raised `swapping` on its way out and is not
+      // coming back to put it down; nobody else would, and the banner's Switch
+      // would sit spent for the rest of the page's life.
+      this.setState({ revOpen: false, swapping: false });
+      // THE ONE THING THAT CAN STILL BE OUT OF STEP IS THE VIEW: an entry
+      // carries its own `?v=`, and Back onto a different tab of the build on
+      // screen is a real change. It goes through `showView` — the view tab's own
+      // path, the one the reader's own click takes — because a view is not a
+      // build and this method has nothing to add to it.
+      if (!push) {
+        const wanted = this.entryView();
+        const variants = (this.state.meta && this.state.meta.variants) || [];
+        if (variants.some((v) => v.id === wanted)) this.showView(wanted);
+      }
+      return;
+    }
 
     // CLOSED BEFORE THE FETCH, not after it: it is the only sign the click
     // landed on a gesture that now waits on the network, and a menu left open
@@ -917,9 +952,7 @@ export default class HammerolaViewer extends React.Component {
     // reading the current tab there would leave the address bar saying one view
     // while the page showed another, which is the whole failure this entry is
     // about, spelled with the Back button.
-    const wanted = push
-      ? this.state.view
-      : (new URLSearchParams(location.search).get('v') || this.state.view);
+    const wanted = push ? this.state.view : this.entryView();
     // It survives when the target declares one with the same id, and otherwise
     // falls back to the first — exactly what a fresh load of that URL does with
     // a `?v=` naming a view the build does not have.
@@ -2063,6 +2096,19 @@ export default class HammerolaViewer extends React.Component {
   showView(id) {
     if (id === this.state.view) return;
     this.set({ view: id });
+  }
+
+  /**
+   * The view a history entry is asking for: its own `?v=`, or the one showing.
+   *
+   * ONE READING FOR THE TWO PLACES THAT NEED IT — `switchBuild`, both where it
+   * opens another build and where it only calls a swap off. The fallback is the
+   * current view because `?v=` is DROPPED where the view is the build's first
+   * (see the push in `switchBuild`), so an entry without one carries no opinion
+   * that could be read off it.
+   */
+  entryView() {
+    return new URLSearchParams(location.search).get('v') || this.state.view;
   }
 
   /**

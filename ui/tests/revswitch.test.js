@@ -265,6 +265,25 @@ describe('picking a revision', () => {
     expect(c.state.view).toBe('printables')
   })
 
+  it('carries the reader\'s own tab across, not the one the address still names',
+    async () => {
+      // A `?v=` in the bar is the view the ENTRY was pushed with, and the reader
+      // has moved on from it: a view tab writes state and not the address, so a
+      // row click that read the query would quietly put the page back on a tab
+      // they had left. `popstate` is the one caller that wants the entry's view,
+      // and it says so by not pushing.
+      const c = component({ view: 'printables' })
+      const push = vi.spyOn(history, 'pushState')
+      loadMeta.mockResolvedValue(build())
+      window.history.replaceState(null, '', `${path(A)}?v=assembled`)
+
+      await c.switchBuild('proj1', B)
+
+      expect(c.state.view, 'the swap took the address bar\'s view over the reader\'s')
+        .toBe('printables')
+      expect(pushed(push)).toBe(`${path(B)}?v=printables`)
+    })
+
   it('drops it when the target has no such view, and falls back to the first',
     async () => {
       // Exactly what a fresh load of that URL does with a `?v=` naming a view
@@ -401,41 +420,112 @@ describe('popstate', () => {
     expect(loadMeta).not.toHaveBeenCalled()
   })
 
-  it('cancels a swap when the reader comes back to the build being left',
+  it('calls a swap off without taking another', async () => {
+    // COMING BACK TO THE BUILD ON SCREEN IS NOT A TRIP. The entry used to be
+    // thrown away as a no-op — "already here" was asked against `PAGE.slot`,
+    // which during a swap still names the build being LEFT — so the swap landed
+    // under an address bar saying otherwise. The answer to that is to cancel,
+    // and cancelling is where the second version went wrong: it ran the whole
+    // of `switchBuild` against the build that had never left the screen.
+    //
+    // What that cost is asserted here rather than described, because none of it
+    // looks like a failure at the time. `leaveBuild` throws away the reader's
+    // own work over a gesture that asked for nothing; and the viewport is then
+    // handed a payload identical to the one it holds, which it reads as nothing
+    // to load — so no `hmr:model` comes back, `onModel` never runs, and the two
+    // things it spends stay armed for an unrelated event to trip over later.
+    const c = mounted()
+    const push = vi.spyOn(history, 'pushState')
+    const answers = {}
+    loadMeta.mockImplementation((fresh, base) => new Promise((resolve) => {
+      answers[base] = resolve
+    }))
+    // The reader's own state, none of which this gesture is about.
+    c.setState({ sel: '/model/plate', selName: 'plate' })
+    c.carry = null
+
+    // Onto B: a swap starts and stays on the network.
+    window.history.replaceState(null, '', path(B))
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flush()
+    expect(PAGE.slot, 'the swap landed early, so the window is gone').toBe(A)
+
+    // And straight back onto A — the entry that names the build on screen.
+    window.history.replaceState(null, '', path(A))
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flush()
+    // The cancelled swap answers anyway; nothing may come of it.
+    answers[path(B)](build())
+    await flush()
+
+    expect(c.state.meta.commit, 'the cancelled swap landed').toBe(A)
+    expect(PAGE.slot).toBe(A)
+    expect(loadMeta.mock.calls.map((call) => call[1]),
+           'the build already on screen was fetched again').toEqual([path(B)])
+    expect(push, 'staying put pushed an entry').not.toHaveBeenCalled()
+
+    // Nothing of the reader's was thrown away…
+    expect(c.state.sel, 'the selection went over a gesture that asked to stay')
+      .toBe('/model/plate')
+    // …and nothing was left armed for a later event to spend.
+    expect(c._refit, 'a refit is waiting for a model event that will never come')
+      .toBeFalsy()
+    expect(c.carry, 'a carry is waiting for a model event that will never come')
+      .toBeNull()
+    // The banner's Switch is a live button again: the swap that raised the flag
+    // is not coming back to lower it.
+    expect(c.state.swapping).toBe(false)
+  })
+
+  it('restores the view the entry names while calling the swap off', async () => {
+    // The one thing that CAN still be out of step when the build does not move.
+    // It goes through `showView`, the view tab's own path, rather than through a
+    // swap of its own.
+    const c = mounted()
+    loadMeta.mockImplementation(() => new Promise(() => {}))
+
+    window.history.replaceState(null, '', path(B))
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flush()
+
+    window.history.replaceState(null, '', `${path(A)}?v=printables`)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flush()
+
+    expect(c.state.view).toBe('printables')
+  })
+
+  it('leaves the destination where the page really is, so that build is reachable',
     async () => {
-      // THE ENTRY THAT USED TO BE THROWN AWAY AS A NO-OP. "Already here" was
-      // asked against `PAGE.slot`, and `PAGE` is where the page HAS GOT TO — a
-      // swap moves it only once its fetch answers. So while one is in flight,
-      // the build being left still counts as "here", and an entry naming it was
-      // dropped: no generation bump, nothing cancelled. The swap then landed
-      // under an address bar that said otherwise — a state `pageguard` calls
-      // invalid in so many words.
+      // `_want` is where the page is GOING, and the swap that was going there is
+      // dead. Left standing on the build the reader turned back from, it makes
+      // every later gesture asking for that build — from either door — look like
+      // a request for what is already on its way, and be swallowed. The row goes
+      // on eating clicks for the rest of the page's life.
       const c = mounted()
       const answers = {}
       loadMeta.mockImplementation((fresh, base) => new Promise((resolve) => {
         answers[base] = resolve
       }))
 
-      // Onto B: a swap starts and stays on the network.
       window.history.replaceState(null, '', path(B))
       window.dispatchEvent(new PopStateEvent('popstate'))
       await flush()
-      expect(PAGE.slot, 'the swap landed early, so the window is gone').toBe(A)
-
-      // And straight back onto A — the entry that names the build on screen.
       window.history.replaceState(null, '', path(A))
       window.dispatchEvent(new PopStateEvent('popstate'))
       await flush()
 
-      // Both answer. Which one the reader ends up looking at must be decided by
-      // the gesture, not by the network.
-      answers[path(B)](build())
-      answers[path(A)]({ ...build(), commit: A })
+      // And now the reader asks for that revision again, deliberately.
+      loadMeta.mockClear()
+      const live = c.switchBuild('proj1', B)
       await flush()
+      expect(loadMeta, 'the gesture was swallowed as one already on its way')
+        .toHaveBeenCalled()
+      answers[path(B)](build())
+      await live
 
-      expect(c.state.meta.commit, 'the address bar said A over a page showing B')
-        .toBe(A)
-      expect(PAGE.slot).toBe(A)
+      expect(c.state.meta.commit).toBe(B)
+      expect(PAGE.slot).toBe(B)
     })
 
   it('goes back to being a no-op once a swap has failed', async () => {
@@ -576,23 +666,98 @@ describe('a second revision picked while the first is fetching', () => {
     expect(c.state.swapping).toBe(false)
   })
 
-  it('is not cancelled by a click on the row already open', async () => {
+  it('is not cancelled by a click on the row it is already going to', async () => {
     // WHERE THE NUMBER IS TAKEN, which is the other half of the decision: after
-    // the two guards, not at the top of the method. Both of those return having
-    // touched nothing — a click on the current row closes the picker and stops —
-    // so a bump above them would cancel a swap genuinely on the wire on behalf
-    // of a gesture that did not ask for anything.
+    // the "already going there" guard rather than above it. A click on the row
+    // the swap is fetching asks for exactly what is on its way, so a bump here
+    // would kill the fetch and leave nothing at all to land — the page frozen on
+    // the old build with the picker closed and no error anywhere.
     const c = component()
     const answers = held()
 
     const live = c.switchBuild('proj1', B)
-    await c.switchBuild('proj1', A)
+    // The reader reopens the picker and clicks the row they already picked.
+    c.setState({ revOpen: true })
+    await c.switchBuild('proj1', B)
     answers[path(B)].resolve(build())
     await live
 
-    expect(c.state.meta.commit, 'a no-op click cancelled the swap under it').toBe(B)
+    expect(c.state.meta.commit, 'the swap the click asked for was cancelled').toBe(B)
     expect(PAGE.slot).toBe(B)
+    expect(c.state.revOpen, 'the picker stayed open over a row that was clicked')
+      .toBe(false)
   })
+
+  it('is called off by a click on the row still on screen', async () => {
+    // THE SAME GESTURE AS FORWARD-ONTO-THE-CURRENT-BUILD, through the other
+    // door, and it has to mean the same thing: the picker highlights the build
+    // on SCREEN, so clicking it while a swap is carrying the page elsewhere is
+    // the reader saying they want to stay. Cancel the trip, take no other, and
+    // leave the reader's own work alone — this used to leave the swap running
+    // and hand them a revision they had just declined.
+    const c = component({ sel: '/model/plate' })
+    const answers = held()
+
+    const live = c.switchBuild('proj1', B)
+    c.setState({ revOpen: true })
+    await c.switchBuild('proj1', A)
+    // The cancelled fetch answers anyway; nothing may come of it.
+    answers[path(B)].resolve(build())
+    await live
+
+    expect(c.state.meta.commit, 'the declined build arrived anyway').toBe(A)
+    expect(PAGE.slot).toBe(A)
+    expect(c.state.sel, 'the selection went with a build that never left').toBe('/model/plate')
+    expect(c.state.swapping, 'the banner was left holding a swap nobody is waiting for')
+      .toBe(false)
+  })
+
+  it('leaves the view tab alone, because a row click says nothing about views',
+    async () => {
+      // The other half of the restore above: calling a swap off puts the ENTRY's
+      // `?v=` back only when an entry is what asked. Here the reader picked the
+      // tab after that entry was pushed, so the view the address still names is
+      // out of date rather than wanted — and a click on a build row would be a
+      // strange thing to lose a view tab to.
+      const c = component({ view: 'printables' })
+      const answers = held()
+      window.history.replaceState(null, '', `${path(A)}?v=assembled`)
+
+      const live = c.switchBuild('proj1', B)
+      c.setState({ revOpen: true })
+      await c.switchBuild('proj1', A)
+      answers[path(B)].resolve(build())
+      await live
+
+      expect(c.state.view, 'a build row put the address bar\'s view back')
+        .toBe('printables')
+    })
+
+  it('does not lay a second entry over the one the reader is standing on',
+    async () => {
+      // THE PICKER USED TO ASK `PAGE.slot`, and `PAGE` lags a swap by a fetch.
+      // Forward onto B starts one; the reader, seeing nothing happen yet, opens
+      // the picker and clicks row B. The click read as a real gesture, and
+      // `pushState` laid a SECOND entry for B on top of the one they were
+      // standing on: one Back afterwards looks like nothing happened, and the
+      // forward history is cut off.
+      const c = component()
+      const push = vi.spyOn(history, 'pushState')
+      const answers = held()
+
+      // What `popstate` does: the browser has already moved the address, and
+      // the swap that follows must not push it again.
+      window.history.replaceState(null, '', path(B))
+      const live = c.switchBuild('proj1', B, { push: false })
+      c.setState({ revOpen: true })
+      await c.switchBuild('proj1', B)
+      answers[path(B)].resolve(build())
+      await live
+
+      expect(PAGE.slot).toBe(B)
+      expect(push, 'the click duplicated the history entry it was standing on')
+        .not.toHaveBeenCalled()
+    })
 
   it('still reports the failure of the swap nobody replaced', async () => {
     // The control on the line above: silence belongs to the OVERTAKEN swap
@@ -1997,33 +2162,41 @@ function balanced(code, open) {
 }
 
 /**
- * The keys written at the TOP LEVEL of one `setState` argument list.
+ * The state fields one call to `set` / `setState` WRITES, out of its arguments.
  *
- * Top level, so that a `hidden` deep inside some other object is not mistaken
- * for a state field — `sync` builds an event whose detail carries one, and a
- * guard that flagged it would be a red suite over correct code.
+ * THREE POSITIONS AND NO OTHERS, because a patch can only reach `setState` in
+ * three ways: it stands at the top of the argument list (`{ … }`, and either
+ * arm of a `cond ? { … } : { … }` stands there too), it is what a functional
+ * updater RETURNS (`return { … }`, at whatever block depth inside the body —
+ * which covers a `function` updater as well, since nothing here reads how the
+ * function was spelled), or it is a concise body's value (`=> ({ … })`). Every
+ * other `{` in the arguments is somebody else's object and is skipped whole.
+ * The one at the top that is NOT a patch is a body opening there — the
+ * completion callback's `() => {` — and it is excluded by what precedes it.
  *
- * A `{` straight after `=>` opens a BODY, not an object, so it does not count
- * as a level: that is what puts `(s) => ({ … })` and `(s) => { return { … } }`
- * at the same depth as a plain literal. The functional updater is not exotic —
- * `onModel` is written that way — and the shape-of-the-line regex this replaces
- * missed it completely, along with a key after a nested literal, a space after
- * the paren, and a quoted key.
+ * COUNTING NESTING DEPTH INSTEAD IS WHAT THIS REPLACES, and it was wrong in
+ * both directions at once. A `{` was an object unless it followed `=>`, so
+ * `if (…) {` inside a callback counted as a level and pushed a real
+ * `return { hidden: [] }` below the one depth being read — the write went
+ * unseen. Widening the block rule to fix that then broke the other way, on this
+ * file's own code: `setVisibility` rebuilds the carry as `… ? { hidden, ghost }
+ * : null` inside an `if` inside a callback, and every wider rule reads that as
+ * a write and goes red on correct code. Naming the three positions has no such
+ * knob: the ternary is in none of them, the return is in one.
  *
- * `=>` AND NOTHING ELSE, deliberately, though `if (…) {` and `else {` open
- * bodies too. The two mistakes are not symmetrical: a block counted as an
- * object pushes a real literal one level DOWN, which can only hide a write —
- * and a hidden one is usually recovered anyway, since every nested `this.set`
- * is scanned as a call of its own — while an object counted as a block lifts a
- * nested literal UP and invents a write that is not there. The narrow rule errs
- * the safe way, and `setVisibility`'s own body is what it is measured on: the
- * carry it rebuilds is a `{ hidden, ghost }` inside an `if` inside a callback,
- * and a wider rule flags it.
+ * THE KEY IS READ TO ITS TERMINATOR — `:` for a plain key, `,` or `}` for the
+ * shorthand `{ hidden }`, which the colon-only regex before this let through
+ * even though it is the idiomatic spelling the moment a local of that name
+ * exists.
+ *
+ * It errs toward complaining in exactly one place: a `return { hidden }` inside
+ * some nested closure of the arguments is not a patch, and is flagged anyway.
+ * Nothing in this file is written that way, and a complaint about an unreadable
+ * form is the failure this guard is allowed to have.
  */
-function topLevelKeys(args) {
+function patchKeys(args) {
   const found = []
   const stack = []
-  const depth = () => stack.filter((k) => k === 'obj').length
   let quote = null
   let expectKey = false
   for (let i = 0; i < args.length; i += 1) {
@@ -2034,20 +2207,23 @@ function topLevelKeys(args) {
       continue
     }
     if (expectKey && !/\s/.test(c)) {
-      const key = /^['"]?([A-Za-z_$][\w$]*)['"]?\s*:/.exec(args.slice(i))
+      const key = /^['"]?([A-Za-z_$][\w$]*)['"]?\s*[:,}]/.exec(args.slice(i))
       if (key) found.push(key[1])
       expectKey = false
     }
     if (c === '"' || c === "'" || c === '`') { quote = c; continue }
     if (c === '{') {
-      const block = /=>\s*$/.test(args.slice(0, i))
-      stack.push(block ? 'body' : 'obj')
-      if (!block && depth() === 1) expectKey = true
+      const before = args.slice(0, i)
+      const patch = (!stack.length && !/(?:=>|\))\s*$/.test(before))
+        || /\breturn\s*$/.test(before)
+        || /=>\s*\(\s*$/.test(before)
+      stack.push(patch ? 'patch' : 'other')
+      expectKey = patch
       continue
     }
     if (c === '(' || c === '[') { stack.push('other'); continue }
-    if (c === '}' || c === ')' || c === ']') { stack.pop(); continue }
-    if (c === ',' && depth() === 1 && stack[stack.length - 1] === 'obj') expectKey = true
+    if (c === '}' || c === ')' || c === ']') { stack.pop(); expectKey = false; continue }
+    if (c === ',' && stack[stack.length - 1] === 'patch') expectKey = true
   }
   return found
 }
@@ -2078,14 +2254,24 @@ function auditVisibility(source) {
   // green, here exactly as above.
   if (writers.length < 2) bad.push('nothing calls setVisibility any more')
 
+  // THE WINDOW IS A HOLE, so it is bounded by the same reading the doors above
+  // use rather than by "to the end of the file if I cannot find the end". That
+  // fallback is what makes this the worst check in the file to get wrong:
+  // `onModel` sits ABOVE all six writers, so a window that ran on would exempt
+  // every one of them at once and the guard would go green while checking
+  // nothing at all. `methodFrom` refuses both ways it can lose its bearings — no
+  // closing line, or one belonging to a later method — and a refusal here is a
+  // complaint, exactly like the exemption not resolving.
   const exempt = MAY_WRITE_VISIBILITY.map((name) => {
     const at = new RegExp(`^  ${name}\\s*\\(`, 'm').exec(code)
     if (!at) return null
-    const end = code.indexOf('\n  }\n', at.index)
-    return [at.index, end === -1 ? code.length : end]
+    const from = at.index + at[0].length
+    const body = methodFrom(code, from)
+    return body === null ? null : [at.index, from + body.length]
   }).filter(Boolean)
   if (exempt.length !== MAY_WRITE_VISIBILITY.length) {
-    bad.push(`a method allowed to write these was not found: ${MAY_WRITE_VISIBILITY}`)
+    bad.push(`a method allowed to write these was not found, or does not end `
+             + `where this file's indentation says it should: ${MAY_WRITE_VISIBILITY}`)
   }
 
   const call = /this\.set(?:State)?\s*\(/g
@@ -2095,7 +2281,7 @@ function auditVisibility(source) {
     const close = balanced(code, open)
     if (close === -1) { bad.push(`unbalanced call at ${m.index}`); continue }
     const args = code.slice(open + 1, close)
-    topLevelKeys(args).filter((k) => VISIBILITY_KEYS.includes(k)).forEach((k) => {
+    patchKeys(args).filter((k) => VISIBILITY_KEYS.includes(k)).forEach((k) => {
       bad.push(`${k} is written past setVisibility: ${args.replace(/\s+/g, ' ').slice(0, 70)}`)
     })
   }
@@ -2155,10 +2341,47 @@ describe('the reader changing what they can see', () => {
       'this.set( { hidden: [] } );',
       "this.set({ 'hidden': [] });",
       'this.set({\n      ghost: [],\n    });',
+      // A patch returned from INSIDE a block of the updater, which is what an
+      // updater that has a condition in it looks like. The depth-counting rule
+      // this replaces read the `if` as a level and never saw the write.
+      'this.setState((s2) => { if (s2.tree) { return { hidden: [] }; } return null; });',
+      // The same updater spelled `function`, since nothing here may depend on
+      // how it was written.
+      'this.setState(function (s2) { return { ghost: [] }; });',
+      // And the shorthand, which is what this is written as the moment a local
+      // of that name exists. A key regex wanting a colon walks straight past it.
+      'this.set({ hidden });',
+      'this.set({ tool: null, ghost });',
+      // Either arm of a conditional patch is still a patch: both stand where
+      // the argument stands.
+      'this.set(s.tree ? { hidden: [] } : null);',
     ]
 
     forms.forEach((line) => {
       expect(auditVisibility(klass([line])), line).toHaveLength(1)
+    })
+  })
+
+  it('reads none of the objects a call merely carries', () => {
+    // The control on the list above, and the reason the three positions are
+    // named rather than a nesting depth counted: every one of these is a `{`
+    // inside the arguments of a real `setState` in this file's own style, and
+    // none of them is a patch. The last is `setVisibility`'s own body — the
+    // carry rebuilt as a ternary inside an `if` inside the completion callback
+    // — and it is what every wider rule tried here went red on.
+    const carried = [
+      'this.setState({ detail: { hidden: s.hidden } });',
+      'this.set({ menu: null }, () => this.sync({ ghost: s.ghost }));',
+      'this.setState(patch, () => { this.emit({ hidden: [] }); });',
+      'this.setState(patch, () => {\n'
+      + '      if (this.carry) {\n'
+      + '        this.carry = this.state.tree ? { hidden: [], ghost: [] } : null;\n'
+      + '      }\n'
+      + '    });',
+    ]
+
+    carried.forEach((line) => {
+      expect(auditVisibility(klass([line])), line).toEqual([])
     })
   })
 
@@ -2190,5 +2413,38 @@ describe('the reader changing what they can see', () => {
     // longer recognises. So the lookup failing is itself a complaint.
     expect(auditVisibility(klass([], []))[0])
       .toMatch(/allowed to write these was not found/)
+  })
+
+  it('does not let the exemption run past the method it belongs to', () => {
+    // THE WORST WAY THIS GUARD CAN FAIL, and the only one that is silent. The
+    // window used to end at the end of the FILE when the method's closing line
+    // was not found where this file's indentation says — and `onModel` is above
+    // every writer, so one method that did not close took the exemption over
+    // all of them and the guard passed while checking nothing. Here the close
+    // it finds belongs to the method BELOW, which is the shape that swallows a
+    // real write: the complaint has to be about the window, and the write below
+    // it has to be caught as well.
+    const swallowed = [
+      'class F {',
+      '  a() {',
+      '    this.setVisibility({ hidden: [] });',
+      '    this.setVisibility({ ghost: [] });',
+      '  }',
+      '',
+      '  onModel(detail) {',
+      '      this.setState({ tree: detail.tree });',
+      '    }',
+      '',
+      '  onVis(detail) {',
+      '    this.setState({ hidden: [] });',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+    const bad = auditVisibility(swallowed)
+
+    expect(bad[0]).toMatch(/does not end where/)
+    expect(bad.some((b) => /hidden is written past setVisibility/.test(b)),
+           'the widened window swallowed a real write').toBe(true)
   })
 })
