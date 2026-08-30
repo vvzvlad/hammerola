@@ -772,6 +772,13 @@ export default class HammerolaViewer extends React.Component {
     // page's own picker only ever lists one project, so this branch is a guard
     // on the day something else calls this rather than a path anybody takes.
     if (pid !== PAGE.pid) { location.href = `/project/${pid}/`; return; }
+    // THE ADDRESS THIS BUILD HAS, computed once and read by both writers below —
+    // the push that lands a swap, and the replace that calls one off. It sits
+    // above the guards rather than beside the push because the cancelling branch
+    // needs it to ANSWER a guard: whether the bar still names the build on
+    // screen. One expression, so the two can never disagree about what the
+    // address of a slot is.
+    const path = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
     // ALREADY GOING THERE, which is not the same question as "already here" and
     // is the one BOTH DOORS ask. `PAGE` is where the page HAS GOT TO, and a swap
     // moves it only once its fetch answers, so during one `PAGE.slot` still
@@ -819,14 +826,43 @@ export default class HammerolaViewer extends React.Component {
       // coming back to put it down; nobody else would, and the banner's Switch
       // would sit spent for the rest of the page's life.
       this.setState({ revOpen: false, swapping: false });
-      // THE ONE THING THAT CAN STILL BE OUT OF STEP IS THE VIEW: an entry
-      // carries its own `?v=`, and Back onto a different tab of the build on
-      // screen is a real change. It goes through `showView` — the view tab's own
-      // path, the one the reader's own click takes — because a view is not a
-      // build and this method has nothing to add to it.
-      if (!push) {
+      const variants = (this.state.meta && this.state.meta.variants) || [];
+      // WHAT IS LEFT OUT OF STEP DEPENDS ON WHICH GESTURE CANCELLED, and the two
+      // are exclusive: a `popstate` arrives with the address already correct and
+      // possibly the wrong VIEW on screen, a picker click arrives with the view
+      // untouched and possibly the wrong ADDRESS in the bar.
+      if (push) {
+        // THE SWAP BEING CANCELLED MAY HAVE MOVED THE ADDRESS ALREADY. A picked
+        // swap pushes nothing until its fetch answers, but a `popstate` swap
+        // exists BECAUSE the browser moved first — so Forward onto B, then a
+        // click on the row for A still on screen, leaves the bar saying B with
+        // nothing else on the page to bring the two back together. F5 opens a
+        // build the reader declined, the copied link points at it, and the next
+        // Back reads as "nothing happened". `pageguard` calls that state invalid
+        // in exactly those words.
+        //
+        // REPLACE, NEVER PUSH. The reader did not navigate, they CANCELLED a
+        // navigation, so the entry the browser has already moved to is the one
+        // that has to be corrected. A push would lay a third entry whose Back
+        // goes straight back to the build just declined — the cancelled gesture
+        // returning through the history.
+        //
+        // AND IT IS MEASURED, not inferred from who called. A flag saying "this
+        // swap came from popstate" would be a second copy of a fact the address
+        // already carries, kept in step by hand, in the one method whose last
+        // rounds were all about state falling out of step. The divergence itself
+        // is what has to be repaired, and it is right there to be read.
+        if (location.pathname !== path) {
+          history.replaceState({ hmr: slot }, '',
+                               path + this.viewQuery(this.state.view, variants));
+        }
+      } else {
+        // THE ONE THING THAT CAN STILL BE OUT OF STEP IS THE VIEW: an entry
+        // carries its own `?v=`, and Back onto a different tab of the build on
+        // screen is a real change. It goes through `showView` — the view tab's
+        // own path, the one the reader's own click takes — because a view is not
+        // a build and this method has nothing to add to it.
         const wanted = this.entryView();
-        const variants = (this.state.meta && this.state.meta.variants) || [];
         if (variants.some((v) => v.id === wanted)) this.showView(wanted);
       }
       return;
@@ -920,7 +956,6 @@ export default class HammerolaViewer extends React.Component {
     // "nothing was lost" without this sentence.
     clearTimeout(this._swap);
 
-    const path = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
     let meta = null;
     try {
       // `fresh`, because a POINTER is exactly the name whose content can have
@@ -957,13 +992,9 @@ export default class HammerolaViewer extends React.Component {
     // falls back to the first — exactly what a fresh load of that URL does with
     // a `?v=` naming a view the build does not have.
     const view = variants.some((v) => v.id === wanted) ? wanted : variants[0].id;
-    // AND THE ADDRESS SAYS SO. `?v=` is what `load()` reads on a fresh open, so
-    // the URL this pushes has to carry it wherever the view on screen is not the
-    // one that URL would open on by itself — otherwise the link in the address
-    // bar, copied and sent, shows a different view than the sender was looking
-    // at. Dropped where the view IS the target's first, since the query would
-    // then repeat what the path already answers.
-    const query = view === variants[0].id ? '' : `?v=${encodeURIComponent(view)}`;
+    // AND THE ADDRESS SAYS SO, by the same reading the cancelling branch above
+    // writes its address with.
+    const query = this.viewQuery(view, variants);
 
     // EVERYTHING THAT DESCRIBED THE BUILD BEING LEFT GOES HERE, and this is the
     // one list of it — `takePending` opens a build too and calls the same
@@ -2109,6 +2140,26 @@ export default class HammerolaViewer extends React.Component {
    */
   entryView() {
     return new URLSearchParams(location.search).get('v') || this.state.view;
+  }
+
+  /**
+   * The query an address needs so that opening it lands on `view`.
+   *
+   * `?v=` is what `load()` reads on a fresh open, so an address written by this
+   * page has to carry it wherever the view showing is not the one that address
+   * would open on by itself — otherwise the link in the bar, copied and sent,
+   * shows a different view than the sender was looking at. Dropped where the
+   * view IS the build's first, since the query would then repeat what the path
+   * already answers.
+   *
+   * ONE READING FOR THE TWO PLACES THAT WRITE AN ADDRESS — the push that lands a
+   * swap and the replace that calls one off. It was written out at the first and
+   * missing from the second, which is how the fix for a divergence over the
+   * BUILD arrived carrying a divergence over the VIEW.
+   */
+  viewQuery(view, variants) {
+    const first = variants[0] && variants[0].id;
+    return view === first ? '' : `?v=${encodeURIComponent(view)}`;
   }
 
   /**

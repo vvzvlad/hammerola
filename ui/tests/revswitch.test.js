@@ -712,6 +712,67 @@ describe('a second revision picked while the first is fetching', () => {
       .toBe(false)
   })
 
+  it('puts the address back when it was a popstate that started the swap',
+    async () => {
+      // THE COMBINATION NEITHER DOOR COVERED ON ITS OWN. A picked swap moves
+      // nothing until its fetch answers, so calling one off leaves the bar where
+      // it was — which is what the test above measures, and why it cannot see
+      // this. A `popstate` swap is the other way round: it exists BECAUSE the
+      // browser moved first. Forward onto B, then a click on the row for A still
+      // on screen, and the page stays on A under an address saying B — F5 opens
+      // the build the reader just declined, the copied link points at it, and
+      // the next Back reads as "nothing happened". Nothing else on the page
+      // brings the two back together.
+      const c = component({ sel: '/model/plate' })
+      const answers = held()
+
+      // Forward: the browser has moved the address, and the swap is what
+      // `popstate` starts behind it.
+      window.history.replaceState(null, '', path(B))
+      const live = c.switchBuild('proj1', B, { push: false })
+
+      // Seeing nothing happen yet, the reader opens the picker and clicks the
+      // row that is still on screen — "no, I am staying here".
+      const push = vi.spyOn(history, 'pushState')
+      c.setState({ revOpen: true })
+      await c.switchBuild('proj1', A)
+      answers[path(B)].resolve(build())
+      await live
+
+      expect(PAGE.slot).toBe(A)
+      // The whole address, query included: the view showing IS this build's
+      // first, so the address that opens on it carries no `?v=` at all.
+      expect(`${location.pathname}${location.search}`,
+             'the bar was left naming the build the reader declined').toBe(path(A))
+      // A cancelled navigation is not a navigation: a third entry here would
+      // send the next Back straight back to the build just declined.
+      expect(push, 'calling a swap off pushed a history entry').not.toHaveBeenCalled()
+    })
+
+  it('takes the view showing into the address it puts right', async () => {
+    // The address is assembled the way a landing swap assembles it, `?v=` and
+    // all. Writing the bare path instead would repair the divergence over the
+    // BUILD and open one over the VIEW: F5 would then land on the build's first
+    // view rather than the tab the reader is looking at.
+    //
+    // AND THE VIEW IS THE ONE ON SCREEN, not the one the abandoned entry names.
+    // The entry being cancelled here says `assembled`; the page never got there,
+    // so the tab in front of the reader is still `printables` and that is what
+    // the address has to describe.
+    const c = component({ view: 'printables' })
+    const answers = held()
+
+    window.history.replaceState(null, '', `${path(B)}?v=assembled`)
+    const live = c.switchBuild('proj1', B, { push: false })
+    c.setState({ revOpen: true })
+    await c.switchBuild('proj1', A)
+    answers[path(B)].resolve(build())
+    await live
+
+    expect(`${location.pathname}${location.search}`)
+      .toBe(`${path(A)}?v=printables`)
+  })
+
   it('leaves the view tab alone, because a row click says nothing about views',
     async () => {
       // The other half of the restore above: calling a swap off puts the ENTRY's
@@ -731,6 +792,13 @@ describe('a second revision picked while the first is fetching', () => {
 
       expect(c.state.view, 'a build row put the address bar\'s view back')
         .toBe('printables')
+      // NOR THE OTHER WAY ROUND. Nothing diverged here — a picked swap moves no
+      // address — so the branch has nothing to repair and writes nothing. An
+      // unconditional replace would carry the reader's tab into an entry they
+      // did not touch, which is the same sentence read backwards.
+      expect(`${location.pathname}${location.search}`,
+             'a row click rewrote the entry the reader was standing on')
+        .toBe(`${path(A)}?v=assembled`)
     })
 
   it('does not lay a second entry over the one the reader is standing on',
@@ -2169,8 +2237,10 @@ function balanced(code, open) {
  * arm of a `cond ? { … } : { … }` stands there too), it is what a functional
  * updater RETURNS (`return { … }`, at whatever block depth inside the body —
  * which covers a `function` updater as well, since nothing here reads how the
- * function was spelled), or it is a concise body's value (`=> ({ … })`). Every
- * other `{` in the arguments is somebody else's object and is skipped whole.
+ * function was spelled), or it is what a concise body evaluates to (`=> ({ … })`
+ * and equally `=> (cond ? { … } : null)`, since the frame is what is labelled
+ * and not the two characters before the brace). Every other `{` in the
+ * arguments is somebody else's object and is skipped whole.
  * The one at the top that is NOT a patch is a body opening there — the
  * completion callback's `() => {` — and it is excluded by what precedes it.
  *
@@ -2216,12 +2286,17 @@ function patchKeys(args) {
       const before = args.slice(0, i)
       const patch = (!stack.length && !/(?:=>|\))\s*$/.test(before))
         || /\breturn\s*$/.test(before)
-        || /=>\s*\(\s*$/.test(before)
+        || stack[stack.length - 1] === 'concise'
       stack.push(patch ? 'patch' : 'other')
       expectKey = patch
       continue
     }
-    if (c === '(' || c === '[') { stack.push('other'); continue }
+    // A `(` straight after `=>` wraps a concise body, and what that body
+    // evaluates to is the patch — however it gets there. Labelling the frame
+    // rather than matching `=> ({` covers the arm of a ternary inside it, which
+    // the literal reading walked past.
+    if (c === '(') { stack.push(/=>\s*$/.test(args.slice(0, i)) ? 'concise' : 'other'); continue }
+    if (c === '[') { stack.push('other'); continue }
     if (c === '}' || c === ')' || c === ']') { stack.pop(); expectKey = false; continue }
     if (c === ',' && stack[stack.length - 1] === 'patch') expectKey = true
   }
@@ -2237,11 +2312,17 @@ function patchKeys(args) {
  * rather than by how the call is written, because the way it is written is
  * exactly what this guard must not depend on.
  *
- * WHAT IT STILL CANNOT SEE, said out loud rather than implied: a patch built
- * into a variable first (`const patch = { hidden: [] }; this.set(patch)`). The
+ * WHAT IT STILL CANNOT SEE, said out loud rather than implied. A patch built
+ * into a variable first (`const patch = { hidden: [] }; this.set(patch)`): the
  * argument is an identifier by then and no reading of the call site can follow
- * it. Every writer here is written inline today, and the six that matter are
- * one-liners inside `computed`.
+ * it. And a patch ASSEMBLED BY A CALL (`this.set(Object.assign({ hidden: [] },
+ * …))`), which is left open deliberately rather than missed — closing it means
+ * reading a `{` at the top of a call inside the arguments as a patch, and that
+ * is the exact shape of `this.set({ menu: null }, () => this.sync({ hidden }))`,
+ * a correct line this file's own style produces. A guard that goes red on that
+ * is the guard that gets deleted, which is worse than one hole nothing in this
+ * file stands in. Every writer here is written inline today, and the six that
+ * matter are one-liners inside `computed`.
  */
 const VISIBILITY_KEYS = ['hidden', 'ghost']
 const MAY_WRITE_VISIBILITY = ['onModel']
@@ -2353,8 +2434,10 @@ describe('the reader changing what they can see', () => {
       'this.set({ hidden });',
       'this.set({ tool: null, ghost });',
       // Either arm of a conditional patch is still a patch: both stand where
-      // the argument stands.
+      // the argument stands — and so does an arm of one inside a concise body,
+      // which is the same sentence one frame in.
       'this.set(s.tree ? { hidden: [] } : null);',
+      'this.setState((s2) => (s2.tree ? { hidden: [] } : null));',
     ]
 
     forms.forEach((line) => {
