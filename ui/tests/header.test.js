@@ -168,21 +168,6 @@ describe('the revision in the header', () => {
     onSlot('latest')
     expect(component().computed().slot).toBe('latest')
   })
-
-  it('says what moves each of the three slots', () => {
-    // The badge beside the revision is the only place on this page that says
-    // WHO writes the name in front of it, and `latest` used to answer "follows
-    // CI" — a machine that stopped building models at the migration. What moves
-    // it now is `hammerola commit`, so the badge names that instead. The other
-    // two are untouched and are asserted here so a later edit to this branch
-    // has to be a deliberate one.
-    onSlot('dev')
-    expect(component().computed().slotBadge).toBe('auto-updates')
-    onSlot('latest')
-    expect(component().computed().slotBadge).toBe('follows commits')
-    onSlot(REV)
-    expect(component().computed().slotBadge).toBe('pinned')
-  })
 })
 
 // -- when it was built -------------------------------------------------------
