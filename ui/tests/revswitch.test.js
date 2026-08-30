@@ -401,6 +401,66 @@ describe('popstate', () => {
     expect(loadMeta).not.toHaveBeenCalled()
   })
 
+  it('cancels a swap when the reader comes back to the build being left',
+    async () => {
+      // THE ENTRY THAT USED TO BE THROWN AWAY AS A NO-OP. "Already here" was
+      // asked against `PAGE.slot`, and `PAGE` is where the page HAS GOT TO — a
+      // swap moves it only once its fetch answers. So while one is in flight,
+      // the build being left still counts as "here", and an entry naming it was
+      // dropped: no generation bump, nothing cancelled. The swap then landed
+      // under an address bar that said otherwise — a state `pageguard` calls
+      // invalid in so many words.
+      const c = mounted()
+      const answers = {}
+      loadMeta.mockImplementation((fresh, base) => new Promise((resolve) => {
+        answers[base] = resolve
+      }))
+
+      // Onto B: a swap starts and stays on the network.
+      window.history.replaceState(null, '', path(B))
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await flush()
+      expect(PAGE.slot, 'the swap landed early, so the window is gone').toBe(A)
+
+      // And straight back onto A — the entry that names the build on screen.
+      window.history.replaceState(null, '', path(A))
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await flush()
+
+      // Both answer. Which one the reader ends up looking at must be decided by
+      // the gesture, not by the network.
+      answers[path(B)](build())
+      answers[path(A)]({ ...build(), commit: A })
+      await flush()
+
+      expect(c.state.meta.commit, 'the address bar said A over a page showing B')
+        .toBe(A)
+      expect(PAGE.slot).toBe(A)
+    })
+
+  it('goes back to being a no-op once a swap has failed', async () => {
+    // The destination is only a destination while the page is still going
+    // there. A target that 404'd is not, and left standing in `_want` it would
+    // make the entry naming the build ON SCREEN look like a real move — one
+    // fetch of a revision that never left it.
+    const c = mounted()
+    loadMeta.mockRejectedValue(new Error('meta.json -> HTTP 404'))
+
+    window.history.replaceState(null, '', path(B))
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flush()
+    expect(c.state.viewError, 'the swap did not fail, so nothing is under test')
+      .toContain('did not load')
+
+    loadMeta.mockClear()
+    window.history.replaceState(null, '', path(A))
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flush()
+
+    expect(loadMeta, 'the build already on screen was fetched again')
+      .not.toHaveBeenCalled()
+  })
+
   it('overrules a pick still on the wire rather than doubling it', async () => {
     // BACK IS A GESTURE LIKE ANY OTHER and is supposed to win, which is the
     // second way two swaps used to end up in flight together. This one never
@@ -747,6 +807,63 @@ describe('hidden and translucent parts', () => {
       expect(c.state.hidden, 'the part came back hidden, two gestures later')
         .toEqual([])
     })
+
+  it('follow a part hidden while the new build was still on the wire',
+    async () => {
+      // THE WINDOW THIS ALL TURNS ON, and the one no test used to enter. It is
+      // not the meta fetch — `leaveBuild` runs after that answers — it is the
+      // geometry download and the render, the long part, and it is spent with
+      // the LEAVING build's tree on screen and its rows live. A click there
+      // writes an id of the old tree, and only the snapshot, taken in names,
+      // can carry it across.
+      //
+      // Dropping the snapshot instead left the id an id. On this tree — the two
+      // parts rebuilt onto each other's paths, which is what a renumber looks
+      // like — `/model/plate` is `post` afterwards, so the reader hid one part
+      // and a DIFFERENT one disappeared. Losing the gesture would have been the
+      // better failure of the two.
+      const SWAPPED = {
+        id: '/model',
+        name: 'model',
+        children: [{ id: '/model/post', name: 'plate' },
+                   { id: '/model/plate', name: 'post' }],
+      }
+      // Expanded, because the panel emits a row for a part only under an open
+      // group — an unexpanded tree has one row and it is the whole model.
+      const c = component({ expanded: { '/model': true } })
+      c.captureHome = vi.fn()
+      loadMeta.mockResolvedValue(build())
+
+      await c.switchBuild('proj1', B)
+      expect(c.state.tree, 'the leaving tree was cleared, so the window is gone')
+        .toBeTruthy()
+      expect(c.carry, 'no snapshot was taken, so nothing here is under test')
+        .toEqual({ hidden: [], ghost: [] })
+
+      // Through the row the panel renders, not through `setVisibility` — a test
+      // that called the fix directly would assert only that it exists.
+      const row = c.computed().rows.find((r) => r.key === '/model/plate')
+      row.onVis({ stopPropagation() {} })
+      expect(c.state.hidden, 'the eye did not hide anything').toEqual(['/model/plate'])
+
+      c.onModel({ tree: SWAPPED, view: 'assembled', live: true })
+
+      expect(c.state.hidden, 'the old id was applied to the new tree, where it '
+        + 'belongs to another part').toEqual(['/model/post'])
+    })
+
+  it('do not start a carry on a page where no build is opening', () => {
+    // The other half of the recompute, and why it is `if (this.carry)`. Writing
+    // a snapshot on every visibility gesture would leave one standing on an
+    // ordinary page, and `rejoin` spends whatever it finds on the NEXT model
+    // event of any kind — a live reload, a view tab — re-seating ids by name
+    // across a build nobody switched away from.
+    const c = component({ hidden: ['/model/plate'] })
+
+    c.computed().showAll()
+
+    expect(c.carry, 'a gesture with no swap behind it left a carry').toBeNull()
+  })
 
   it('carry nothing at all when no tree has ever landed', () => {
     // The other end of the same rule, and the reason it is `if (tree)` rather
@@ -1850,12 +1967,109 @@ describe('every door into another build', () => {
 
 // -- and every writer of `hidden` / `ghost` ----------------------------------
 //
-// The same genre for the same reason: `setVisibility` exists to cancel a swap's
-// pending carry, six controls call it, and nothing about `this.set` stops a
-// seventh from writing those two lists directly. The behaviour test above pins
-// "show all parts"; this pins the other five and the one nobody has added yet.
+// The same genre for the same reason: `setVisibility` is what keeps a swap's
+// snapshot in step with the reader, six controls call it, and nothing about
+// `this.set` stops a seventh from writing those two lists directly. Only ONE of
+// the six is reachable by a behaviour test in this file, so for the other five
+// this guard is the whole of the coverage — which is why it reads the call
+// rather than a shape of the line the call happens to be written on.
 
-/** Complaints about who writes `hidden` and `ghost` in `source`. */
+/** How far a bracket at `open` in `code` reaches, string-aware. */
+function balanced(code, open) {
+  const pairs = { '(': ')', '[': ']', '{': '}' }
+  const want = []
+  let quote = null
+  for (let i = open; i < code.length; i += 1) {
+    const c = code[i]
+    if (quote) {
+      if (c === '\\') i += 1
+      else if (c === quote) quote = null
+      continue
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; continue }
+    if (pairs[c]) { want.push(pairs[c]); continue }
+    if (c === want[want.length - 1]) {
+      want.pop()
+      if (!want.length) return i
+    }
+  }
+  return -1
+}
+
+/**
+ * The keys written at the TOP LEVEL of one `setState` argument list.
+ *
+ * Top level, so that a `hidden` deep inside some other object is not mistaken
+ * for a state field — `sync` builds an event whose detail carries one, and a
+ * guard that flagged it would be a red suite over correct code.
+ *
+ * A `{` straight after `=>` opens a BODY, not an object, so it does not count
+ * as a level: that is what puts `(s) => ({ … })` and `(s) => { return { … } }`
+ * at the same depth as a plain literal. The functional updater is not exotic —
+ * `onModel` is written that way — and the shape-of-the-line regex this replaces
+ * missed it completely, along with a key after a nested literal, a space after
+ * the paren, and a quoted key.
+ *
+ * `=>` AND NOTHING ELSE, deliberately, though `if (…) {` and `else {` open
+ * bodies too. The two mistakes are not symmetrical: a block counted as an
+ * object pushes a real literal one level DOWN, which can only hide a write —
+ * and a hidden one is usually recovered anyway, since every nested `this.set`
+ * is scanned as a call of its own — while an object counted as a block lifts a
+ * nested literal UP and invents a write that is not there. The narrow rule errs
+ * the safe way, and `setVisibility`'s own body is what it is measured on: the
+ * carry it rebuilds is a `{ hidden, ghost }` inside an `if` inside a callback,
+ * and a wider rule flags it.
+ */
+function topLevelKeys(args) {
+  const found = []
+  const stack = []
+  const depth = () => stack.filter((k) => k === 'obj').length
+  let quote = null
+  let expectKey = false
+  for (let i = 0; i < args.length; i += 1) {
+    const c = args[i]
+    if (quote) {
+      if (c === '\\') i += 1
+      else if (c === quote) quote = null
+      continue
+    }
+    if (expectKey && !/\s/.test(c)) {
+      const key = /^['"]?([A-Za-z_$][\w$]*)['"]?\s*:/.exec(args.slice(i))
+      if (key) found.push(key[1])
+      expectKey = false
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; continue }
+    if (c === '{') {
+      const block = /=>\s*$/.test(args.slice(0, i))
+      stack.push(block ? 'body' : 'obj')
+      if (!block && depth() === 1) expectKey = true
+      continue
+    }
+    if (c === '(' || c === '[') { stack.push('other'); continue }
+    if (c === '}' || c === ')' || c === ']') { stack.pop(); continue }
+    if (c === ',' && depth() === 1 && stack[stack.length - 1] === 'obj') expectKey = true
+  }
+  return found
+}
+
+/**
+ * Complaints about who writes `hidden` and `ghost` in `source`.
+ *
+ * ONE WRITER IS ALLOWED AND IT IS NAMED BY METHOD: `onModel` is the build
+ * ARRIVING, which is the other end of the same mechanism — it is where `rejoin`
+ * spends the snapshot, so it has nothing to keep in step. Excluded by name
+ * rather than by how the call is written, because the way it is written is
+ * exactly what this guard must not depend on.
+ *
+ * WHAT IT STILL CANNOT SEE, said out loud rather than implied: a patch built
+ * into a variable first (`const patch = { hidden: [] }; this.set(patch)`). The
+ * argument is an identifier by then and no reading of the call site can follow
+ * it. Every writer here is written inline today, and the six that matter are
+ * one-liners inside `computed`.
+ */
+const VISIBILITY_KEYS = ['hidden', 'ghost']
+const MAY_WRITE_VISIBILITY = ['onModel']
+
 function auditVisibility(source) {
   const code = stripComments(source)
   const bad = []
@@ -1863,12 +2077,51 @@ function auditVisibility(source) {
   // A regex that stopped matching is a check that vanished with the suite still
   // green, here exactly as above.
   if (writers.length < 2) bad.push('nothing calls setVisibility any more')
-  // `[^}]*` is what makes this the ARGUMENT rather than the neighbourhood: the
-  // object literal a `set` is handed, up to its first closing brace.
-  const direct = /this\.set(?:State)?\(\{[^}]*\b(?:hidden|ghost)\s*:/.exec(code)
-  if (direct) bad.push(`written without cancelling the carry: ${direct[0]}`)
+
+  const exempt = MAY_WRITE_VISIBILITY.map((name) => {
+    const at = new RegExp(`^  ${name}\\s*\\(`, 'm').exec(code)
+    if (!at) return null
+    const end = code.indexOf('\n  }\n', at.index)
+    return [at.index, end === -1 ? code.length : end]
+  }).filter(Boolean)
+  if (exempt.length !== MAY_WRITE_VISIBILITY.length) {
+    bad.push(`a method allowed to write these was not found: ${MAY_WRITE_VISIBILITY}`)
+  }
+
+  const call = /this\.set(?:State)?\s*\(/g
+  for (let m = call.exec(code); m; m = call.exec(code)) {
+    if (exempt.some(([from, to]) => m.index >= from && m.index < to)) continue
+    const open = m.index + m[0].length - 1
+    const close = balanced(code, open)
+    if (close === -1) { bad.push(`unbalanced call at ${m.index}`); continue }
+    const args = code.slice(open + 1, close)
+    topLevelKeys(args).filter((k) => VISIBILITY_KEYS.includes(k)).forEach((k) => {
+      bad.push(`${k} is written past setVisibility: ${args.replace(/\s+/g, ' ').slice(0, 70)}`)
+    })
+  }
   return bad
 }
+
+/** A method of two spaces' indentation, as this file writes them. */
+const method = (name, ...body) => [`  ${name}(detail) {`, ...body.map((l) => `    ${l}`), '  }']
+
+/** The exempt writer, doing nothing this guard is about. */
+const ONMODEL = method('onModel', 'this.setState({ tree: detail.tree });')
+
+/**
+ * A class the guard can read: the two live calls it counts, then `extra`.
+ *
+ * `onModel` is in every one of these because the guard checks that its own
+ * exemption still resolves — a fixture without it is testing that, and one
+ * test below does exactly that on purpose.
+ */
+const klass = (lines, extra = ONMODEL) => [
+  'class F {', '  a() {',
+  '    this.setVisibility({ hidden: [] });',
+  '    this.setVisibility({ ghost: [] });',
+  ...lines.map((l) => `    ${l}`),
+  '  }', '', ...extra, '}', '',
+].join('\n')
 
 describe('the reader changing what they can see', () => {
   it('never writes hidden or ghost through plain set()', () => {
@@ -1879,22 +2132,63 @@ describe('the reader changing what they can see', () => {
     // Same guard-against-itself as the doors above: a rule about `this.set` is
     // easy to write in a way that trips over a comment SAYING `this.set`, and a
     // check nobody has watched go red is a regex, not a check.
-    const talking = [
-      'class F {',
-      '  a() {',
-      '    // never this.set({ hidden: [] }) — it would keep the carry',
-      '    this.setVisibility({ hidden: [] });',
-      '    this.setVisibility({ ghost: [] });',
-      '    this.setVisibility({ hidden: this.toggle(s.hidden, n.leaves) });',
-      '  }',
-      '}',
-      '',
-    ].join('\n')
-    const doing = talking.replace('this.setVisibility({ ghost: [] })',
-                                  'this.set({ ghost: [] })')
+    const talking = klass(['// never this.set({ hidden: [] }) — it would strand the snapshot',
+                           'this.setVisibility({ hidden: this.toggle(s.hidden, n.leaves) });'])
+    const doing = talking.replace('this.setVisibility({ hidden: this.toggle',
+                                  'this.set({ hidden: this.toggle')
 
     expect(auditVisibility(talking)).toEqual([])
     expect(auditVisibility(doing)).toHaveLength(1)
-    expect(auditVisibility(doing)[0]).toMatch(/cancelling the carry/)
+    expect(auditVisibility(doing)[0]).toMatch(/hidden is written past setVisibility/)
+  })
+
+  it('catches every shape one of these is written in', () => {
+    // THE FORMS THE OLD RULE LET THROUGH, and it let them through because it
+    // wanted `({` and stopped at the first `}`: it was a rule about how the line
+    // reads, so a writer only had to be idiomatic to slip past it. The first is
+    // the one that was measured going green with the whole suite — and it is the
+    // form this file already uses in `onModel`.
+    const forms = [
+      'this.setState((s2) => ({ hidden: this.toggle(s2.hidden, n.leaves) }));',
+      'this.setState((s2) => { return { hidden: [] }; });',
+      'this.set({ composer: { part: null }, hidden: [] });',
+      'this.set( { hidden: [] } );',
+      "this.set({ 'hidden': [] });",
+      'this.set({\n      ghost: [],\n    });',
+    ]
+
+    forms.forEach((line) => {
+      expect(auditVisibility(klass([line])), line).toHaveLength(1)
+    })
+  })
+
+  it('leaves alone a key of that name that is not a state field', () => {
+    // The cost of over-reaching, and why this counts levels rather than scanning
+    // for the word: `sync` hands the viewport a detail object with a `hidden` in
+    // it, and a guard that flagged nested keys would go red on code that is
+    // right. That is the guard that gets deleted.
+    const nested = klass(['this.setState({ detail: { hidden: s.hidden, ghost: s.ghost } });'])
+
+    expect(auditVisibility(nested)).toEqual([])
+  })
+
+  it('exempts the build ARRIVING, and does it by method name', () => {
+    // `onModel` is where the snapshot is SPENT rather than kept in step, so it
+    // is allowed to write these two — and it is named, not pattern-matched,
+    // because the shape of the call is the thing this guard must not lean on.
+    // The same body under any other name is the defect itself.
+    const writes = 'this.setState((s) => ({ tree: detail.tree, hidden: [], ghost: [] }));'
+
+    expect(auditVisibility(klass([], method('onModel', writes)))).toEqual([])
+    expect(auditVisibility(klass([], [...method('onVis', writes), '', ...ONMODEL])))
+      .toHaveLength(2)
+  })
+
+  it('says so when the method it exempts is gone', () => {
+    // An exemption is a hole, and a hole that stops matching its method widens
+    // silently — the guard would go on passing while checking a class it no
+    // longer recognises. So the lookup failing is itself a complaint.
+    expect(auditVisibility(klass([], []))[0])
+      .toMatch(/allowed to write these was not found/)
   })
 })

@@ -534,6 +534,10 @@ export default class HammerolaViewer extends React.Component {
     // renders it, it lives for one model event, and a re-render in the middle of
     // a swap has no business seeing a half-applied one.
     this.carry = null;
+    // Where the last accepted gesture is taking this page, which is NOT where
+    // the page has got to (`PAGE.slot`) while a swap is on the wire. `popstate`
+    // is compared against this one; see `switchBuild`.
+    this._want = null;
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
@@ -675,11 +679,14 @@ export default class HammerolaViewer extends React.Component {
     // of ours at all, and the URL is the only thing every entry has.
     this._pop = () => {
       const slot = String(location.pathname).split('/')[3] || '';
-      // Nothing to do for the entry this page is already showing. No two
-      // CONSECUTIVE entries can name the same slot — `switchBuild` refuses the
-      // build already on screen, so nothing pushes one — which is why this is a
-      // guard rather than a case that has to be answered.
-      if (!slot || slot === PAGE.slot) return;
+      // "IS THIS THE BUILD WE ARE ALREADY ON" IS NOT ASKED HERE, and it used to
+      // be — against `PAGE.slot`, which during a swap still names the build
+      // being left. Forward onto an entry naming it was thrown away as a no-op
+      // while a swap to somewhere else was in flight, and the swap then landed
+      // under an address bar saying otherwise. `switchBuild` answers it now,
+      // because the thing it has to be asked against — where the page is going
+      // — lives there.
+      if (!slot) return;
       this.switchBuild(PAGE.pid, slot, { push: false })
         .catch((error) => console.error('switch', error));
     };
@@ -765,8 +772,30 @@ export default class HammerolaViewer extends React.Component {
     // page's own picker only ever lists one project, so this branch is a guard
     // on the day something else calls this rather than a path anybody takes.
     if (pid !== PAGE.pid) { location.href = `/project/${pid}/`; return; }
-    // Already here. Closing the picker is the whole of the answer.
-    if (slot === PAGE.slot) { this.setState({ revOpen: false }); return; }
+    // ALREADY HERE — AND "HERE" IS A DIFFERENT QUESTION FOR EACH CALLER.
+    //
+    // For the PICKER it is `PAGE.slot`: a click on the highlighted row asks for
+    // the build on screen, and closing the menu is the whole of the answer. It
+    // must not cancel a swap in flight either, which is why the generation
+    // below is taken after this line and not above it.
+    //
+    // For `popstate` that reading is wrong, and wrong in the direction that
+    // ends with the address bar naming a build the page is not showing. `PAGE`
+    // is where the page HAS GOT TO, and a swap moves it only after its fetch
+    // answers — so during one, `PAGE.slot` is the build being left. History
+    // entries are compared against where the page is GOING. Reader on B with
+    // `[A, B]` behind them: Back starts a slow swap to A, Forward comes back to
+    // B, `PAGE.slot` is still B, and the entry that would have cancelled the
+    // swap is thrown away as a no-op instead. A lands, the address says B.
+    // `pageguard` in the suite calls that state invalid in so many words.
+    //
+    // `_want` is that destination: the slot of the last gesture this method
+    // accepted, and `PAGE.slot` whenever nothing is in flight. Comparing
+    // against it makes Forward-onto-the-current-`PAGE` a real gesture — it
+    // bumps the generation, cancels the swap and re-fetches the build the
+    // address now names, which is also what restores that entry's own `?v=`.
+    const here = push ? PAGE.slot : (this._want || PAGE.slot);
+    if (slot === here) { this.setState({ revOpen: false }); return; }
 
     // CLOSED BEFORE THE FETCH, not after it: it is the only sign the click
     // landed on a gesture that now waits on the network, and a menu left open
@@ -776,12 +805,12 @@ export default class HammerolaViewer extends React.Component {
     // picker "keeps a second row from being picked while the first is still in
     // flight". False in two directions. `revToggle` puts the menu back with one
     // click and `onPick` asks nothing before calling this again; and `popstate`
-    // never goes through the picker at all — its "already here" guard reads
-    // `PAGE.slot`, which this method moves only AFTER the await, so Back during
-    // a slow fetch sails through it and starts a second swap. Two in flight then
-    // settled in whatever order the NETWORK answered: pick B, reopen, pick C,
-    // and a reader whose last word was C ends on B, with `push B, push C, push
-    // B` in the history behind them.
+    // never goes through the picker at all — it is a gesture on the browser's
+    // own chrome, and Back during a slow fetch simply starts a second swap.
+    // Two in flight then settled in whatever order the NETWORK answered: pick
+    // B, reopen, pick C, and a reader whose last word was C ends on B — with
+    // `push C, push B` behind them, an address bar walked BACKWARDS through two
+    // entries neither of which the reader asked for last.
     //
     // SO THE NEWEST GESTURE WINS, BY NUMBER RATHER THAN BY REFUSAL. Turning a
     // row click away while a fetch is out would be a new rule of this interface
@@ -807,6 +836,10 @@ export default class HammerolaViewer extends React.Component {
     // precisely the window the flag exists to close, reopened by the one thing
     // that was supposed to be an error path.
     const gen = (this._swapGen = (this._swapGen || 0) + 1);
+    // AND WHERE THIS PAGE IS NOW HEADED, for the guard above. Written together
+    // with the generation because they answer the same question from two sides:
+    // the number says which swap is current, this says which BUILD it is for.
+    this._want = slot;
 
     // AND THE BANNER'S SWITCH GOES OUT OF SERVICE FOR THIS WINDOW, which the
     // picker's own closing was never going to do for it: the banner is not in
@@ -915,8 +948,13 @@ export default class HammerolaViewer extends React.Component {
     // AN EARLIER VERSION OF THIS PARAGRAPH SAID IT HAD TO PRECEDE `rereadPage`
     // AND THE NEW `meta`, "because the carry is read off the tree that is still
     // on screen". That is false and is named here so it is not written back:
-    // `rereadPage` writes `PAGE` and nothing else, `setState({ meta })` does not
-    // touch `tree`, and the tree has exactly one writer — `onModel`.
+    // `rereadPage` writes `PAGE` and nothing else, and `setState({ meta })` does
+    // not touch `tree`. Neither of the two lines below can move a tree — which
+    // is a smaller claim than "the tree has one writer", the version this
+    // paragraph carried for a round. It has three: `onModel` replaces it,
+    // `onViewError` clears it, and the constructor starts it null. The middle
+    // one matters here more than anywhere, because it is the tree going away
+    // WITHOUT a model event — the very case the carry exists for.
     const gone = this.leaveBuild(view === this.state.view);
 
     if (push) history.pushState({ hmr: slot }, '', path + query);
@@ -1013,6 +1051,13 @@ export default class HammerolaViewer extends React.Component {
    */
   swapFailed(slot, error) {
     console.warn('switch', error);
+    // THE PAGE IS NOT GOING THERE ANY MORE. `_want` is what the "already here"
+    // guard reads for `popstate`, so a failed target left standing in it would
+    // make Back onto the build actually on screen look like a real move — one
+    // pointless fetch of the revision already there. Only the current swap
+    // reaches this method (the generation is checked before the call), so this
+    // cannot put back a destination a newer gesture has since chosen.
+    this._want = PAGE.slot;
     this.setState({
       revOpen: false, swapping: false,
       viewError: `${shortId(slot)} did not load — still showing ${shortId(PAGE.slot)}`,
@@ -1405,27 +1450,38 @@ export default class HammerolaViewer extends React.Component {
    * The READER changing which parts they can see — the one door for it, and the
    * only thing that writes `hidden` or `ghost` outside a build arriving.
    *
-   * IT EXISTS TO CANCEL THE CARRY, and a plain `set` is exactly what it replaces
-   * at six call sites: the eye, the ghost square, Isolate, Hide, Translucent and
-   * "show all parts". `this.carry` is a SNAPSHOT of those two lists, taken when
-   * another build opens (`leaveBuild`) and spent by the model event that lands
-   * it (`rejoin`) — and between those two moments the reader can still change
-   * them. Every edit made in that window is an edit the snapshot does not know
-   * about, so the snapshot has to go.
+   * IT EXISTS TO KEEP THE CARRY HONEST, and a plain `set` is exactly what it
+   * replaces at six call sites: the eye, the ghost square, Isolate, Hide,
+   * Translucent and "show all parts". `this.carry` is a SNAPSHOT of those two
+   * lists as NAMES, taken when another build opens (`leaveBuild`) and spent by
+   * the model event that lands it (`rejoin`). Between those two moments the
+   * reader can still change them, and a snapshot that does not know about the
+   * change is about to be applied to the build that arrives.
    *
-   * THE WINDOW IS NOT THEORETICAL AND IT IS WHERE THE SNAPSHOT IS ALL THERE IS.
-   * `leaveBuild` keeps the carry rather than recomputing it when there is no
-   * tree, which is what makes a swap whose view never rendered survivable — and
-   * the three buttons above the tree, "show all parts" among them, are rendered
-   * OUTSIDE the `hasTree` branch, so they are live in exactly that state. Hide a
-   * part, swap, watch the view fail, press "show all parts", open another build:
-   * without this the part came back HIDDEN, resurrected by a snapshot taken
-   * before the reader unhid it — the mirror of the defect the keeping was added
-   * to fix, and just as invisible.
+   * THE WINDOW IS LONG AND THE TREE IN IT IS THE OLD ONE. `leaveBuild` runs
+   * AFTER meta.json has answered, so the window is not the fetch — it is the
+   * geometry download and the render, the slowest part of a swap. All of it is
+   * spent with the LEAVING build's tree still on screen (deliberately: clearing
+   * it would blink the panel empty), and its rows are live. So a click in that
+   * window writes an id of the OLD tree into `hidden`, and it is the snapshot,
+   * taken in names, that is the only thing able to carry it across.
    *
-   * `null` RATHER THAN A RECOMPUTE, because there may be no tree to recompute
-   * from; and it costs nothing where there is one, since the next `leaveBuild`
-   * writes a fresh snapshot on its way out.
+   * WHICH IS WHY THE SNAPSHOT IS RECOMPUTED AND NOT DROPPED. Dropping it —
+   * which this method did for one round — leaves `rejoin` with nothing, so the
+   * old id survives as an id and lands on the NEW tree, where the same path can
+   * belong to a different part: measured on a build where `/model/plate` came
+   * back as `post`, the reader hid one part and a different one disappeared.
+   * That is strictly worse than the defect it was meant to fix, and it is the
+   * one this file's own note about `takePending` calls unacceptable.
+   *
+   * AND IT IS RECOMPUTED ONLY IF ONE WAS STANDING. A snapshot written here on
+   * an ordinary page would be a carry with no swap behind it, and the next
+   * model event of any kind — a live reload, a view tab — would spend it,
+   * re-seating names nobody asked to have moved.
+   *
+   * `null` where there is NO TREE, because there is then nothing to read the
+   * names off: that is the `onViewError` state, where the reader's gesture is
+   * all there is and the stale snapshot must not outlive it.
    *
    * Hiding those buttons when the tree is gone would be reasonable on its own
    * and is not a substitute: a button nobody can press does not make a stale
@@ -1433,8 +1489,19 @@ export default class HammerolaViewer extends React.Component {
    * snapshot still standing.
    */
   setVisibility(patch, extra) {
-    this.carry = null;
-    this.set(patch, extra);
+    this.setState(patch, () => {
+      // AFTER the patch, so the names are the ones the reader has just chosen.
+      // Read off `this.carry` a second time rather than off a flag taken before
+      // the write: a model event landing in between spends the snapshot, and
+      // recomputing from a flag would put a spent one back.
+      if (this.carry) {
+        this.carry = this.state.tree
+          ? { hidden: this.namesOf(this.state.hidden),
+              ghost: this.namesOf(this.state.ghost) }
+          : null;
+      }
+      this.sync(extra);
+    });
   }
 
   toast(msg) {
@@ -2069,8 +2136,9 @@ export default class HammerolaViewer extends React.Component {
         // nothing visible means show it all. Expressed in LEAF ids — see
         // hub.indexTree for why.
         // `setVisibility` and not `set`, here and at every other writer of these
-        // two lists: it is what tells a swap's pending carry that the reader has
-        // moved on. See the method.
+        // two lists: a swap in flight is carrying them across BY NAME, and a row
+        // clicked in that window is a row of the leaving build's tree — the only
+        // moment those ids can still be read. See the method.
         onVis: stop(() => this.setVisibility({ hidden: this.toggle(s.hidden, node.leaves) })),
         onGhost: stop(() => this.setVisibility({ ghost: this.toggle(s.ghost, node.leaves) })),
         onSelect: stop(() => this.set({ sel: node.id, selName: node.name })),
