@@ -400,6 +400,154 @@ describe('popstate', () => {
     await flush()
     expect(loadMeta).not.toHaveBeenCalled()
   })
+
+  it('overrules a pick still on the wire rather than doubling it', async () => {
+    // BACK IS A GESTURE LIKE ANY OTHER and is supposed to win, which is the
+    // second way two swaps used to end up in flight together. This one never
+    // went through the picker at all, so closing the menu was never going to
+    // reach it — and its own "already here" guard reads `PAGE.slot`, which a
+    // swap moves only after its fetch answers. So Back during a slow pick sails
+    // straight through and starts a second swap; whichever answered last then
+    // decided what the reader was looking at.
+    const C = 'c'.repeat(64)
+    const c = mounted()
+    const push = vi.spyOn(history, 'pushState')
+    const answers = {}
+    loadMeta.mockImplementation((fresh, base) => new Promise((resolve) => {
+      answers[base] = resolve
+    }))
+
+    // A revision picked from the menu, gone to the network and staying there.
+    const picked = c.switchBuild('proj1', C)
+    // Back, onto the entry before it, while that fetch is still out.
+    window.history.replaceState(null, '', path(B))
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flush()
+
+    // The pick answers LAST, so nothing here is decided by the network.
+    answers[path(B)](build())
+    await flush()
+    answers[path(C)]({ ...build(), commit: C })
+    await picked
+    await flush()
+
+    expect(PAGE.slot, 'the overtaken pick landed on top of Back').toBe(B)
+    expect(c.state.meta.commit).toBe(B)
+    expect(push, 'the superseded pick pushed an entry on its way out')
+      .not.toHaveBeenCalled()
+  })
+})
+
+// -- two of them in flight at once --------------------------------------------
+//
+// The picker closes before the fetch, and this file used to read that as a lock
+// on picking a second row. It is not one: `revToggle` reopens the menu with one
+// click and `onPick` asks nothing before calling `switchBuild` again. So the
+// ordering has to be in the method — by number, not by refusing the gesture.
+
+describe('a second revision picked while the first is fetching', () => {
+  /** Two swaps held at the network, answered by base, one at a time. */
+  function held() {
+    const answers = {}
+    loadMeta.mockImplementation((fresh, base) => new Promise((resolve, reject) => {
+      answers[base] = { resolve, reject }
+    }))
+    return answers
+  }
+
+  it('lands the build asked for LAST, whichever answers first', async () => {
+    // The reader picks B, reopens the menu, picks C. Both fetches are out, and
+    // without a generation the page settles in the order the NETWORK answered:
+    // C arrives, then B arrives on top of it, and a reader whose last word was C
+    // is looking at B. The history behind them reads `push B, push C, push B`,
+    // which no sequence of gestures could have produced.
+    const C = 'c'.repeat(64)
+    const c = component()
+    const push = vi.spyOn(history, 'pushState')
+    const answers = held()
+
+    const first = c.switchBuild('proj1', B)
+    // What `revToggle` does, which is all it takes to get here.
+    c.setState({ revOpen: true })
+    const second = c.switchBuild('proj1', C)
+
+    answers[path(C)].resolve({ ...build(), commit: C })
+    await second
+    answers[path(B)].resolve(build())
+    await first
+
+    expect(c.state.meta.commit, 'the older swap landed on top of the newer').toBe(C)
+    expect(PAGE.slot).toBe(C)
+    expect(push.mock.calls.map((call) => call[2]),
+           'the overtaken swap left an entry in the history').toEqual([path(C)])
+  })
+
+  it('does not let the older one\'s failure hand the banner back', async () => {
+    // THE PROPERTY THIS ROUND ADDED, cancelled by its own error path: `swapping`
+    // is what takes the banner's Switch out of service while a revision is
+    // fetching, and `swapFailed` lowers it. A stale swap answering 404 therefore
+    // lowered it under a swap that was still on the wire — reopening exactly the
+    // window the flag exists to close, from the one place nobody looks.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const C = 'c'.repeat(64)
+    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    c.el = () => null
+    const answers = held()
+
+    const first = c.switchBuild('proj1', B)
+    const second = c.switchBuild('proj1', C)
+
+    answers[path(B)].reject(new Error('meta.json -> HTTP 404'))
+    await first
+
+    expect(c.state.swapping, 'the stale 404 put the banner back in service')
+      .toBe(true)
+    expect(c.computed().bannerSwitchStyle).not.toContain('cursor:pointer')
+    // And it says nothing on screen about a build nobody is waiting for.
+    expect(c.state.viewError,
+           'a swap the reader had already replaced reported its failure').toBeNull()
+    c.computed().bannerSwitch()
+    expect(c.state.meta.commit, 'the banner ran in the middle of a live swap')
+      .toBe(A)
+
+    // The live one still owns the flag and still puts it down.
+    answers[path(C)].resolve({ ...build(), commit: C })
+    await second
+    expect(c.state.swapping).toBe(false)
+  })
+
+  it('is not cancelled by a click on the row already open', async () => {
+    // WHERE THE NUMBER IS TAKEN, which is the other half of the decision: after
+    // the two guards, not at the top of the method. Both of those return having
+    // touched nothing — a click on the current row closes the picker and stops —
+    // so a bump above them would cancel a swap genuinely on the wire on behalf
+    // of a gesture that did not ask for anything.
+    const c = component()
+    const answers = held()
+
+    const live = c.switchBuild('proj1', B)
+    await c.switchBuild('proj1', A)
+    answers[path(B)].resolve(build())
+    await live
+
+    expect(c.state.meta.commit, 'a no-op click cancelled the swap under it').toBe(B)
+    expect(PAGE.slot).toBe(B)
+  })
+
+  it('still reports the failure of the swap nobody replaced', async () => {
+    // The control on the line above: silence belongs to the OVERTAKEN swap
+    // alone. A 404 on the swap the reader is actually waiting for is the one
+    // thing `viewError` is for, and a generation check written a line too wide
+    // would take it away.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const c = component()
+    loadMeta.mockRejectedValue(new Error('meta.json -> HTTP 404'))
+
+    await c.switchBuild('proj1', B)
+
+    expect(c.state.viewError).toContain('did not load')
+    expect(c.state.swapping).toBe(false)
+  })
 })
 
 // -- what survives ------------------------------------------------------------
@@ -567,6 +715,37 @@ describe('hidden and translucent parts', () => {
 
       expect(c.state.hidden, 'the part came back because its name was forgotten')
         .toEqual(['/model/0'])
+    })
+
+  it('are not resurrected by a carry the reader has already overruled',
+    async () => {
+      // THE MIRROR OF THE TEST ABOVE, and it is what keeping the carry cost
+      // until `setVisibility` was added. The carry is a SNAPSHOT, taken when a
+      // build opens and spent when its model lands, and between those two the
+      // reader can still work the tree — which is exactly the state a failed
+      // view leaves them in. The three buttons over the panel are rendered
+      // outside the `hasTree` branch, so "show all parts" is live with no tree
+      // at all: press it, open another build, and a part the reader had just
+      // unhidden came back HIDDEN, resurrected by a list taken before they
+      // touched it.
+      const C = 'c'.repeat(64)
+      const c = component({ hidden: ['/model/plate'] })
+      c.captureHome = vi.fn()
+      loadMeta.mockResolvedValue(build())
+
+      await c.switchBuild('proj1', B)
+      c.onViewError({ message: 'a.json -> HTTP 503' })
+      // Through the handler the page renders, on the button that is reachable
+      // in this state — not through `setVisibility`, which would be the test
+      // asserting its own fix.
+      c.computed().showAll()
+      expect(c.state.hidden, 'show all parts did not unhide anything').toEqual([])
+
+      await c.switchBuild('proj1', C)
+      c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+
+      expect(c.state.hidden, 'the part came back hidden, two gestures later')
+        .toEqual([])
     })
 
   it('carry nothing at all when no tree has ever landed', () => {
@@ -1450,42 +1629,272 @@ describe('another project', () => {
 const SOURCE = readFileSync(resolve(process.cwd(), 'src/HammerolaViewer.jsx'), 'utf8')
 
 /**
- * The source of one method, from `at` to the line that closes it.
+ * The same source with its comments taken out, and nothing else moved.
+ *
+ * THE GUARD BELOW CANNOT READ RAW TEXT, because this file's prose quotes the
+ * very code it is about: `leaveBuild`'s own docstring spells out `...gone.state`
+ * and `sync(gone.extra)` as the two halves a caller must keep. A `toContain`
+ * over raw text therefore passed for a door that only TALKED about keeping them
+ * — as long as the talking sat after the call, inside the slice — and went red
+ * for a door that did everything right but explained itself above the call
+ * instead. Both answers were about where the prose was.
+ *
+ * The three quote characters are tracked, so a `//` inside a string is not a
+ * comment. Regex literals are NOT, and do not have to be: a `/` is read as a
+ * comment only when the next character is `/` or `*`, and this file has no
+ * regex containing either (no escaped slash anywhere in it). Newlines survive,
+ * so offsets still land on the line they came from.
+ */
+function stripComments(js) {
+  let out = ''
+  let quote = null
+  for (let i = 0; i < js.length; i += 1) {
+    const c = js[i]
+    if (quote) {
+      out += c
+      if (c === '\\') { out += js[i + 1] || ''; i += 1 } else if (c === quote) quote = null
+      continue
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; out += c; continue }
+    if (c === '/' && js[i + 1] === '/') {
+      while (i < js.length && js[i] !== '\n') i += 1
+      out += '\n'
+      continue
+    }
+    if (c === '/' && js[i + 1] === '*') {
+      const end = js.indexOf('*/', i + 2)
+      const block = js.slice(i, end === -1 ? js.length : end + 2)
+      out += block.replace(/[^\n]/g, '')
+      i += block.length - 1
+      continue
+    }
+    out += c
+  }
+  return out
+}
+
+/**
+ * The source of one method, from `at` to the line that closes it, or null.
  *
  * Methods of this class close on a `}` indented by two spaces, and nothing
  * inside one is indented that shallowly — the nested blocks close at four and
- * six — so this is the method body and not the rest of the file.
+ * six. That is a CONVENTION of this file rather than a fact about JavaScript,
+ * so both ways it can be wrong answer for themselves instead of being assumed:
+ * a closing line that is not found comes back null rather than quietly handing
+ * back the whole rest of the file, and a slice that ran PAST the method is
+ * caught by the thing it would then have to contain — the signature of the next
+ * one, which is the only other place this file indents a name by two spaces.
  */
-function methodFrom(at) {
-  const end = SOURCE.indexOf('\n  }\n', at)
-  return SOURCE.slice(at, end === -1 ? SOURCE.length : end)
+function methodFrom(code, at) {
+  const end = code.indexOf('\n  }\n', at)
+  if (end === -1) return null
+  const body = code.slice(at, end)
+  return /^ {2}[A-Za-z_$][\w$]*\s*\(/m.test(body) ? null : body
+}
+
+/**
+ * Every door in `source`, and one complaint per thing wrong with one.
+ *
+ * A FUNCTION OVER A STRING, not a check written against this one file, so that
+ * the guard can be handed a door built to fail. A test that reads source is
+ * worth what it can be shown to reject; until then it is a regex nobody has
+ * seen go red.
+ *
+ * IT STRIPS ITS OWN INPUT rather than being handed stripped text: reading the
+ * prose is the mistake this whole arrangement is here to make impossible, and a
+ * call site free to pass the raw file is that mistake still available.
+ */
+function auditDoors(source) {
+  const code = stripComments(source)
+  const doors = []
+  const bad = []
+  const call = /this\.leaveBuild\(/g
+  for (let m = call.exec(code); m; m = call.exec(code)) {
+    // BACK OVER THE NEWLINE, not along the line only: `const gone =` breaks
+    // onto its own line the moment the call is long enough, and a guard reading
+    // one line called that door an answer thrown away — a red test for code
+    // that was right, which is the kind that gets the check deleted.
+    const before = code.slice(Math.max(0, m.index - 200), m.index)
+    const named = /(?:const|let|var)\s+(\w+)\s*=\s*$/.exec(before)
+    const where = `${before.slice(-60).replace(/\s+/g, ' ').trim()} this.leaveBuild(…)`
+    doors.push({ at: m.index, held: named ? named[1] : null, where })
+  }
+
+  doors.forEach((door) => {
+    // BOTH READINGS ARE NAMED, because the guard cannot tell them apart: the
+    // answer really is dropped, or it is taken in a shape this regex does not
+    // know (destructured, assigned to a field, passed straight on).
+    if (!door.held) {
+      bad.push(`leaveBuild's answer is not held in a plain variable — either it `
+               + `is thrown away, or it is taken in a form this guard cannot `
+               + `read: ${door.where}`)
+      return
+    }
+    const body = methodFrom(code, door.at)
+    if (body === null) {
+      bad.push(`the method around ${door.where} does not end where this file's `
+               + `indentation says it should, so nothing was checked`)
+      return
+    }
+    if (!body.includes(`...${door.held}.state`)) {
+      bad.push(`${door.held}.state never reaches setState: ${door.where}`)
+    }
+    // THE HALF THE DOCSTRING WARNS ABOUT. Without it the plane stays in the
+    // scene while every control on this side says there is no cut.
+    if (!body.includes(`sync(${door.held}.extra)`)) {
+      bad.push(`${door.held}.extra never reaches the viewport: ${door.where}`)
+    }
+  })
+
+  return { doors, bad }
 }
 
 describe('every door into another build', () => {
   it('is a call that keeps both halves of the answer', () => {
-    const doors = []
-    const call = /this\.leaveBuild\(/g
-    for (let m = call.exec(SOURCE); m; m = call.exec(SOURCE)) {
-      const line = SOURCE.slice(SOURCE.lastIndexOf('\n', m.index) + 1, m.index)
-      const named = /(?:const|let|var)\s+(\w+)\s*=\s*$/.exec(line)
-      doors.push({ at: m.index, held: named ? named[1] : null, line: line.trim() })
-    }
+    const audit = auditDoors(SOURCE)
 
     // A regex that stopped matching is a check that vanished with the suite
     // still green — the failure `ci/smoke.py` counts its verdicts to avoid.
-    expect(doors.length, 'no call to leaveBuild was found at all').toBeGreaterThan(1)
+    expect(audit.doors.length, 'no call to leaveBuild was found at all')
+      .toBeGreaterThan(1)
+    expect(audit.bad).toEqual([])
+  })
 
-    doors.forEach((door) => {
-      // Held in a variable, because an answer nobody holds is an answer both
-      // halves of which were dropped.
-      expect(door.held, `leaveBuild's answer is thrown away: ${door.line}`).not.toBeNull()
-      const body = methodFrom(door.at)
-      expect(body, `${door.held}.state never reaches setState`)
-        .toContain(`...${door.held}.state`)
-      // THE HALF THE DOCSTRING WARNS ABOUT. Without it the plane stays in the
-      // scene while every control on this side says there is no cut.
-      expect(body, `${door.held}.extra never reaches the viewport`)
-        .toContain(`sync(${door.held}.extra)`)
-    })
+  // -- and the guard against itself -------------------------------------------
+
+  it('is read out of the code and not out of the prose around it', () => {
+    // The door this guard used to pass: it says every word the check looks for
+    // and does none of it. The second method is the control — the same words,
+    // actually executed — so a guard that simply always complained would fail
+    // here too.
+    const fake = [
+      'class Fake {',
+      '  onPick(slot) {',
+      '    // Takes the answer whole: `const gone = this.leaveBuild(keep)`, then',
+      '    // `...gone.state` into the setState below and `sync(gone.extra)` for',
+      '    /* the viewport, exactly like the door underneath this one. */',
+      '    this.leaveBuild(this.state.keep);',
+      '    this.setState({ slot });',
+      '  }',
+      '',
+      '  onPop(slot) {',
+      '    const gone = this.leaveBuild(this.state.keep);',
+      '    this.setState({ ...gone.state, slot }, () => this.sync(gone.extra));',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+    const audit = auditDoors(fake)
+
+    expect(audit.doors.length, 'a door quoted in a comment was counted as one').toBe(2)
+    expect(audit.bad).toHaveLength(1)
+    expect(audit.bad[0]).toMatch(/not held in a plain variable/)
+  })
+
+  it('reads an answer taken on the line above the call', () => {
+    // The other way the old guard was wrong, and the more expensive one: it
+    // looked left along ONE line, so a call long enough to wrap read as a door
+    // throwing its answer away. A guard that goes red on correct code is worth
+    // less than no guard, because it is the guard that gets deleted.
+    const wrapped = [
+      'class Fake {',
+      '  onPick(slot) {',
+      '    const gone =',
+      '      this.leaveBuild(this.state.keepEverythingTheViewportIsHoldingNow);',
+      '    this.setState({ ...gone.state, slot }, () => this.sync(gone.extra));',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+
+    expect(auditDoors(wrapped).bad).toEqual([])
+  })
+
+  it('says so instead of checking nothing when a method does not end', () => {
+    // `methodFrom` finds the end of a method by this file's indentation, which
+    // is a convention and not a rule. When it does not hold, the answer has to
+    // be a complaint: the old version sliced to the end of the file instead,
+    // where every string it was looking for could be found in some other
+    // method — a check that passes precisely because it lost its bearings.
+    // No line closes at two spaces at all, so the end is not found.
+    const runOn = [
+      'class Fake {',
+      '    onPick(slot) {',
+      '        const gone = this.leaveBuild(1);',
+      '    }',
+      '}',
+      '',
+    ].join('\n')
+    // And the worse one: an end IS found, but it belongs to a later method, so
+    // the slice carries somebody else's body — where both strings the guard is
+    // looking for happen to be. This is the shape that passes while checking
+    // the wrong door, and the only sign of it is the signature it swallowed.
+    const overshoot = [
+      'class Fake {',
+      '    onPick(slot) {',
+      '        const gone = this.leaveBuild(1);',
+      '    }',
+      '',
+      '  onPop(slot) {',
+      '    const left = this.leaveBuild(1);',
+      '    this.setState({ ...gone.state }, () => this.sync(gone.extra));',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+
+    expect(auditDoors(runOn).bad[0]).toMatch(/does not end where/)
+    expect(auditDoors(overshoot).bad[0]).toMatch(/does not end where/)
+  })
+})
+
+// -- and every writer of `hidden` / `ghost` ----------------------------------
+//
+// The same genre for the same reason: `setVisibility` exists to cancel a swap's
+// pending carry, six controls call it, and nothing about `this.set` stops a
+// seventh from writing those two lists directly. The behaviour test above pins
+// "show all parts"; this pins the other five and the one nobody has added yet.
+
+/** Complaints about who writes `hidden` and `ghost` in `source`. */
+function auditVisibility(source) {
+  const code = stripComments(source)
+  const bad = []
+  const writers = code.match(/this\.setVisibility\(/g) || []
+  // A regex that stopped matching is a check that vanished with the suite still
+  // green, here exactly as above.
+  if (writers.length < 2) bad.push('nothing calls setVisibility any more')
+  // `[^}]*` is what makes this the ARGUMENT rather than the neighbourhood: the
+  // object literal a `set` is handed, up to its first closing brace.
+  const direct = /this\.set(?:State)?\(\{[^}]*\b(?:hidden|ghost)\s*:/.exec(code)
+  if (direct) bad.push(`written without cancelling the carry: ${direct[0]}`)
+  return bad
+}
+
+describe('the reader changing what they can see', () => {
+  it('never writes hidden or ghost through plain set()', () => {
+    expect(auditVisibility(SOURCE)).toEqual([])
+  })
+
+  it('is read out of the code here too', () => {
+    // Same guard-against-itself as the doors above: a rule about `this.set` is
+    // easy to write in a way that trips over a comment SAYING `this.set`, and a
+    // check nobody has watched go red is a regex, not a check.
+    const talking = [
+      'class F {',
+      '  a() {',
+      '    // never this.set({ hidden: [] }) — it would keep the carry',
+      '    this.setVisibility({ hidden: [] });',
+      '    this.setVisibility({ ghost: [] });',
+      '    this.setVisibility({ hidden: this.toggle(s.hidden, n.leaves) });',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+    const doing = talking.replace('this.setVisibility({ ghost: [] })',
+                                  'this.set({ ghost: [] })')
+
+    expect(auditVisibility(talking)).toEqual([])
+    expect(auditVisibility(doing)).toHaveLength(1)
+    expect(auditVisibility(doing)[0]).toMatch(/cancelling the carry/)
   })
 })
