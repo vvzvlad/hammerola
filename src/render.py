@@ -435,7 +435,10 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
         # up putting it is a decision made later, on a page that is permanent,
         # immutable and shares an origin with every other project on the host.
         # Text that cannot open an element cannot become markup whatever renders
-        # it — the same argument that holds for a part name and for `title`.
+        # it — the same argument that holds for a part name. NOT for `title` and
+        # `project`, and that is the code rather than an omission here: those two
+        # go through `_plain_text` alone, so a bracket in a title is published.
+        # Read this sentence before "fixing" either side into agreement.
         if "<" in text or ">" in text:
             raise ValueError(
                 f"the note on part {name!r} contains an angle bracket: {text!r}")

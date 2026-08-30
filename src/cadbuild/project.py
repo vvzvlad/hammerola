@@ -9,6 +9,15 @@ from . import project_title
 from .errors import BuildError
 from .paths import PROJECT_FILE, project_root
 from .hubspec import MEMBER_RE, TEST_ID
+from .views import hub_text_problem
+
+
+# The ceiling on both names this file produces, and it is the HUB's: `title`
+# and `project` travel in meta.json and are measured there against
+# `render.MAX_TEXT` (`_plain_text`), so a longer one is a 422 answering a build
+# that already ran. tests/cadbuild/test_views.py holds this number against the
+# hub's along with the other three.
+MAX_TITLE_CHARS = 200
 
 
 # --------------------------------------------------------------------------
@@ -46,11 +55,23 @@ def load_project():
     project = (str(data.get("project") or "").strip()
                or project_title.slug_from_title(title)
                or root.name)
+    # Both go through the hub's own text rule, transcribed once in views.py.
+    # This used to be a check of its own -- a ceiling plus `ord(ch) < 32 or
+    # ord(ch) == 127` -- and that spelling covered Unicode category Cc and
+    # nothing else, so U+202E RIGHT-TO-LEFT OVERRIDE (Cf) went through here and
+    # was refused by the hub after the geometry had been computed. Not a
+    # cosmetic difference either: that character reverses the text AROUND the
+    # field it sits in, i.e. the rest of the card. Angle brackets are allowed
+    # through, exactly as the hub allows them here -- see hub_text_problem.
     for field, value in (("title", title), ("project", project)):
-        if len(value) > 200:
-            raise BuildError(f"{field} is longer than 200 characters")
-        if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
-            raise BuildError(f"{field} contains non-printable characters")
+        problem = hub_text_problem(value, MAX_TITLE_CHARS,
+                                   angle_brackets_ok=True)
+        if problem:
+            raise BuildError(
+                f"{field} {problem}: {value!r}. It is shown on the index card "
+                "and in the build page header, and the hub checks it again on "
+                f"the way in -- edit \"{field}\" in {PROJECT_FILE} to plain, "
+                "printable text.")
     return pid, project, title
 
 

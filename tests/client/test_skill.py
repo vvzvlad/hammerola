@@ -12,16 +12,21 @@ WHAT IS WORTH PINNING HERE, in the order it would hurt to get wrong:
     sits on two parsers and argparse quietly prefers the inner one's default,
     which would put somebody's file in a place they did not name.
 
-NOTHING HERE TOUCHES `~/.claude`. Every test passes `--path` into `tmp_path`, and
-that is not tidiness: the default is a real file on the machine running the
-suite, and a test that wrote it would replace the developer's own instructions
-with whatever this hub happened to serve.
+NOTHING HERE TOUCHES THE DEVELOPER'S `~/.claude`, and it is held that way twice
+over. Nearly every test passes `--path` into `tmp_path`, because the default is
+a real file on the machine running the suite and a test that wrote it would
+replace the author's own instructions with whatever this hub happened to serve.
+But a flag is discipline, so this directory's conftest also substitutes HOME —
+and the one test below that runs the default path on purpose is what proves the
+substitution is doing its job.
 
 The hub is the REAL one over a real socket, like the rest of this directory —
 the two halves of this contract are a route and a client, and the whole reason
 the client lives in this repository is that no test could see both while they
 lived in two.
 """
+
+from pathlib import Path
 
 import pytest
 from harness import TOKEN
@@ -209,6 +214,34 @@ def test_update_over_a_current_copy_says_it_was_unchanged(configured,
 
     assert installed.read_text(encoding="utf-8") == shipped()
     assert "unchanged" in capsys.readouterr().out
+
+
+def test_update_with_no_path_writes_where_the_default_points(configured,
+                                                             tmp_path, capsys):
+    """THE ONE TEST THAT LETS THE DEFAULT RUN, and it is two things at once.
+
+    It covers the branch every other test here steps around: `_path` falls back
+    to `DEFAULT_PATH` and expands the `~`, and with a flag always present that
+    line was never executed by anything.
+
+    And it is the standing proof that the home substitution in this directory's
+    conftest works. Without it this call would write over the instructions of
+    whoever is running the suite — quietly, with a green run — which is exactly
+    the accident a forgotten `--path` in some future test would cause.
+    """
+    home = Path.home()
+    assert home.is_relative_to(tmp_path), (
+        "HOME is not the one this directory's conftest substitutes, so "
+        "`skill update` is about to write over a real ~/.claude")
+
+    assert main(["skill", "update"]) == 0
+
+    written = Path(skill.DEFAULT_PATH).expanduser()
+    assert written.read_bytes() == configured.get("/start/skill.md").content
+    # Spelled out as well as expanded, so a DEFAULT_PATH that moved somewhere
+    # else under the same home would still be caught here.
+    assert written == home / ".claude" / "skills" / "hammerola" / "SKILL.md"
+    assert config.display_path(written) in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("argv", [
