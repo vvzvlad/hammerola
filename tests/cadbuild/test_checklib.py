@@ -23,9 +23,12 @@ IMPLEMENTATION = Path(checklib.__file__).resolve()
 
 @pytest.fixture(autouse=True)
 def clean_record():
+    """Both accumulators, both ends -- the conftest guard checks the same two."""
     checklib._INTERFERENCE.clear()
+    checklib._SECTIONS.clear()
     yield
     checklib._INTERFERENCE.clear()
+    checklib._SECTIONS.clear()
 
 
 def _ours(name):
@@ -225,3 +228,82 @@ def test_the_record_is_a_copy_callers_cannot_corrupt():
     taken = checklib.recorded_interference()
     taken["a|b"] = 99.0
     assert checklib.recorded_interference() == {"a|b": 1.0}
+
+
+# --------------------------------------------------------------------------
+# section() -- what a stretch of checks() cost
+# --------------------------------------------------------------------------
+#
+# Wall time, so nothing here asserts a DURATION: a test that pins "this took
+# more than 10 ms" fails on a fast machine or a slow one sooner or later, and
+# would be pinning the clock rather than the bookkeeping. What is asserted is
+# which labels exist, that a repeat adds up, and that a failure still leaves the
+# cost behind.
+
+def test_a_section_records_its_label():
+    with checklib.section("the joint"):
+        pass
+    assert list(checklib.recorded_sections()) == ["the joint"]
+
+
+def test_the_record_starts_with_no_sections():
+    assert checklib.recorded_sections() == {}
+
+
+def test_a_label_used_twice_is_one_line_and_the_seconds_add_up():
+    """A section inside a loop is the case this exists for."""
+    for _ in range(3):
+        with checklib.section("probe grid"):
+            pass
+    assert list(checklib.recorded_sections()) == ["probe grid"]
+    assert checklib._SECTIONS["probe grid"] == pytest.approx(
+        sum(checklib._SECTIONS.values()))
+
+
+def test_a_section_whose_body_raises_still_records_what_it_cost():
+    """The failed build is the one whose timings get read."""
+    with pytest.raises(ValueError):
+        with checklib.section("interference"):
+            raise ValueError("the check blew up")
+    assert "interference" in checklib.recorded_sections()
+
+
+def test_nested_sections_are_both_recorded():
+    """Each measures its own wall time; the inner one is inside the outer one's
+    total, which is documented rather than corrected."""
+    with checklib.section("outer"):
+        with checklib.section("inner"):
+            pass
+    assert set(checklib.recorded_sections()) == {"outer", "inner"}
+
+
+def test_a_label_that_is_not_a_string_is_refused():
+    """It is a table heading. A Path or a tuple would be printed as one."""
+    with pytest.raises(TypeError, match="label"):
+        with checklib.section(("the", "joint")):
+            pass
+
+
+def test_the_sections_record_is_a_copy_callers_cannot_corrupt():
+    with checklib.section("a"):
+        pass
+    taken = checklib.recorded_sections()
+    taken["a"] = 99.0
+    assert checklib.recorded_sections()["a"] != 99.0
+
+
+# --------------------------------------------------------------------------
+# volume() / is_empty() -- the refusal that needs no kernel
+# --------------------------------------------------------------------------
+#
+# What they answer about real geometry is in test_material_at.py, where the CAD
+# kernel is. This is the half that has to work in the CI container.
+
+def test_volume_refuses_something_that_is_not_geometry():
+    with pytest.raises(TypeError, match="volume"):
+        checklib.volume("not a solid")
+
+
+def test_is_empty_refuses_something_that_is_not_geometry():
+    with pytest.raises(TypeError):
+        checklib.is_empty(42)
