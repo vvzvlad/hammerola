@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with views() and printables(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part".
-version: 1
+version: 3
 ---
 
 # hammerola
@@ -225,6 +225,19 @@ behind it is a lie written into the source. (`thread_clearance = 0.30`, carrying
 the comment `# measured fit on the printer`, was never measured: two ruined
 prints, 100 g of plastic, and the part never worked.)
 
+**That is the special case of a general rule: a justification is an assertion,
+and it is checked like one.** "Measured", "in practice", "standard", "in the
+usual case" each claim something the reader cannot see, and a claim with no
+number, no line and no source behind it is worth less than no comment at all —
+it is what stops the next reader from going to look. The failure is not
+carelessness and does not yield to care: through a review, the most expensive
+defect of each round sits not in the original work but in the edit written FOR
+the previous round, and the commonest shape it takes is a smoother-sounding
+general phrase written where the real measurement was lying right there in the
+file. A figure taken off one build is a property of that run, not of the kernel
+or of the process, and the sentence has to say which — write the number and
+where it came from, or write that you do not know.
+
 **`ref/` is published with every build**, and two things follow. Its names obey
 rule 1 below — ASCII, no `×`, no `Ø`, no Cyrillic — and one bad name refuses the
 **whole** push, so a hardware designation goes inside the file and never into its
@@ -301,10 +314,17 @@ section: a working model with the rules written next to the geometry. In short:
   check fails the build, because a log saying "checks passed" for a function
   that looks at nothing is worse than no function at all.
 * **`import checklib`** — reusable geometry checks (`pairwise_interference`,
-  `mating_face_flat`, `material_under_head`). The module lives inside the hub's
-  image; there is nothing to install and nothing to vendor.
+  `mating_face_flat`, `material_under_head`), the fast "is there material at
+  this point" probe (`material_at`), the two that say whether a boolean left
+  anything at all (`volume`, `is_empty` — `assert wp.vals()` cannot answer that,
+  it is true of an emptied body), and `section`, which marks a stretch of
+  `checks()` so the build log prints what it cost. Every one of them reads
+  EVERY body of the part it is handed — including a part assembled with
+  `.add()`, whose bodies may touch or sit inside one another — rather than
+  whichever body happens to be first. The module lives inside the hub's image;
+  there is nothing to install and nothing to vendor.
 
-Those three functions are all that `checklib` checks, and the gate is all of
+Those are all that `checklib` checks, and the gate is all of
 the hub. Nothing anywhere checks an overhang, a minimum wall, whether a tool
 reaches a screw, or where a number came from. Every rule in the next section is
 a check you write yourself or something you go and look at. Of the bed the gate
@@ -363,6 +383,39 @@ assert written against the third — "the cone must open outwards" could not fai
 for any shape of cone. What caught the others was breaking the solid on purpose:
 a 20 mm drill jig, where the design says 48, passed the check whose entire
 subject was its length.)
+
+**Four traps in the CadQuery API itself, and every one of them makes a check
+silently GREEN rather than red.** None raises, so the price is never a failed
+build — it is a check believed to work for years. Measured on cadquery 2.8.0:
+
+* **`.vals()` is true whether or not anything survived a boolean.** A Workplane
+  after `intersect` holds a list of one `Compound`, empty or not, so
+  `assert wp.vals()` cannot go red — `bool(vals)` was `True` at a total volume
+  of `0.0`. Ask for the volume. (In one model that assert counted as a live
+  check for months, and the line under it read the bounding box of an empty
+  compound.)
+* **`BoundingBox()` on an empty solid raises** `Standard_Failure: Bnd_Box is
+  void` — the only loud member of the family, and only if you get that far.
+* **A body a boolean emptied answers as its previous self.**
+  `Workplane.intersect` calls `findSolid(searchParents=True)` and fetches a
+  solid out of the parent chain, so the emptying is invisible one line later: a
+  body of volume 8000 emptied to 0.00 answered the next `intersect` with a
+  4×4×4 probe with **64.00 mm³** — the probe's whole volume, exactly as if the
+  body were intact. The same question put to a bare `Shape`, which has no
+  parent chain behind it, raises `ValueError: Null TopoDS_Shape object`.
+* **A point classifier on a body with no solids in it answers IN everywhere.**
+  probe(0,0,0), probe(1000,1000,1000) and probe(−50000,30000,7000) all came
+  back IN, so a part that quietly came back empty greens every
+  `assert solid(...)` in the file. Here the kernel now covers you:
+  `checklib.material_at` — the point probe below — refuses loudly on a body
+  with no solids in it. That guard is new: it was not there while the traps
+  above were being found, so a check written before it may have been passing on
+  nothing.
+
+All four are found by one question, and it is the cheapest one to put to a
+check, to a review round and to your own last edit: what does this do on the
+input that should FAIL, rather than on the one that passes? Every trap above is
+an answer to it.
 
 **Measure the thing the part exists for, not the proxy you happened to pick.**
 If what matters is how far a lever protrudes, cut it against the housing and
@@ -454,6 +507,25 @@ in the hub's image, so a model that imports `cadquery` does not necessarily run
 anywhere else at all. Do not calibrate against whatever machine you are on —
 write the checks so the question of speed does not arise.
 
+**When it does arise anyway, mark `checks()` up with `checklib.section("...")`
+and let the hub say where the time went.** It is a context manager around a
+piece of the function; the hub prints the table itself, on a FAILED build as
+well as on a green one, so the marks are the whole of what the model owes.
+Measure before you cut anything: in the model that prompted this the checks
+phase ran 495 seconds and 52% of IT sat in ONE loop inside one section — no
+split by build phase would have shown that — while the check named beforehand
+as the main suspect measured 8.9 s against the ~150 s it had been predicted at.
+
+**The shape of a boolean is measured and not read about, because the sign of
+the effect changes with the geometry.** On one model a single `Common` against
+a compound of 13 bodies came out five times dearer than cutting the 13 bodies
+one at a time — and the geometry it was measured on was never written down,
+which is half the lesson by itself. The same experiment on 13 plain boxes
+against a long bar came out the other way round: 0.020 s as the compound
+against 0.062 s one at a time, three times CHEAPER. There is no rule in that
+pair, and none worth taking from anybody else either: put both forms of your
+question behind a section mark on your own geometry and read the table.
+
 None of what follows is a reason to check less. All three are the same check,
 written so it costs what it should.
 
@@ -494,22 +566,52 @@ def build_lid():
 
 Worth about a fifth of the run on a model of any size. It is safe because
 CadQuery operations return new objects rather than mutating in place — but if
-you ever mutate a builder's result, do not cache that builder. The one in-place
-change that does happen is not yours: exporting an STL triangulates the shape,
-after which its bounding box is the *mesh's*, out by tenths of a millimetre on
-anything filleted. The hub throws that triangulation away after each export, so
-a cached part handed to both `printables()` and `checks()` still measures as
-itself.
+you ever mutate a builder's result, do not cache that builder.
+
+**The one in-place change that does happen is not yours: triangulating a shape
+leaves the mesh on it, and `BoundingBox()` then measures the mesh.** A cylinder
+r=5 h=10 read `zlen` 10.000000, and 10.003108 after `mesh(0.1)` — which is also
+what the tolerances the hub meshes with give it. The FLAT Z axis grew, so this
+is not the chord of an arc; the box simply reads bigger.
+
+Past that direction, carry no number away from here and take none off a mesh of
+your own. The angular tolerance moves the figure strongly. The axes do not move
+together either: at that same setting the Y axis did not shift AT ALL while X
+and Z both went to 10.003108, because what grows, and by how much, is settled
+by where the triangulation's vertices happened to land. That one figure is
+quoted because two independent runs agreed on it — the rest of the sweep it
+came from did not, a second person on the same version of the kernel getting a
+different number at one of its settings, with neither side finding out why. So
+a bounding box read off a meshed shape says something only with the shape, BOTH
+tolerances and the AXIS named beside it, and even then it is a fact about one
+machine. The direction is what survives all of that, and it tells in
+both signs of the answer: "does it fit the printer" can go falsely red, while a
+clearance reads tighter than it is and an inequality whose grown side is the
+weak one buys itself slack and passes without a word.
+
+The hub drops the triangulation after each export it performs, which is what
+keeps `printables()` and `checks()` measuring the same part. Two things it does
+not cover, both of them yours. A `@cache`d builder hands the SAME object to
+every caller, so a mesh or an export of your own moves what the next reader
+measures — in the run above, the first reader of the cached cylinder got
+10.000000 and the one after that mesh got 10.003108, off a line somewhere else
+in the file. And copies do not share alike: `translate()` builds a fresh TShape
+and stays clean (10.000000 beside a meshed original, and clean too when the
+copy is taken after the `mesh()`), while `.moved()` and `.located()` share the
+original's TShape and read 10.003108 with it. So cache the builders — and do
+not mesh or export inside `checks()`.
 
 **Do not pre-filter pairs before `checklib.pairwise_interference`.** It already
 rejects pairs whose bounding boxes cannot touch, before doing any boolean.
 Hand-written filtering in front of it buys nothing and can only remove pairs the
 check was meant to see.
 
-**If you profile, use a sampling profiler.** `cProfile` reports almost nothing
-here: the CAD kernel spends ~89% of its time in a thread pool that a profiler
-watching the main thread cannot see, so the ordinary tool will tell you the
-build is fast while it takes ten minutes.
+**If you profile, use a sampling profiler — or the section marks above.**
+`cProfile` reports almost nothing here: the CAD kernel spends ~89% of its time
+in a thread pool that a profiler watching the main thread cannot see, so the
+ordinary tool will tell you the build is fast while it takes ten minutes. A
+wall clock around a labelled block cannot be fooled that way, which is the
+second reason to mark the sections up.
 
 ## Four rules that break a push, in the order they bite
 
