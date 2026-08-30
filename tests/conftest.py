@@ -21,7 +21,7 @@ import threading
 # workflow `env:` block: those carry the container names, RUNTIME_IMAGE and the smoke gate's
 # SMOKE_* variables, none of which the suite reads.
 #
-# ONE line, because there is one secret for the whole system (SPEC §8 entry 26). There were two
+# ONE line, because there is one secret for the whole system (issue #26). There were two
 # here — the comment queue used to have a credential of its own for reading, while writing to
 # it took none at all.
 os.environ.setdefault("EDIT_TOKEN", "test-token")

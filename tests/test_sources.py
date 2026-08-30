@@ -1,4 +1,4 @@
-"""The hub keeps the CODE of every revision it publishes (SPEC 8, entry 17).
+"""The hub keeps the CODE of every revision it publishes (issue #17).
 
 Three claims, and each of them fails in a different direction:
 

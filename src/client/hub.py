@@ -2,7 +2,7 @@
 
 WHY `urllib.request` AND NOT httpx. The client is installed on the author's
 machine, so every dependency it declares is one more thing that has to be
-present there and one more thing the self-update of SPEC §8 entry 26 has to
+present there and one more thing the self-update of issue #26 has to
 carry — and what is needed here is a POST of a byte string with two headers and
 two GETs. `urllib` does that, and the client stays importable under any
 python3.
@@ -78,12 +78,12 @@ The code of a revision, and the two routes that unmake something:
 
 WHICH SIDE OF THE TOKEN A THING IS ON IS THE WHOLE REASON `source` AND
 `artifacts` ARE TWO VERBS. The build a revision produced is public — it is what
-the site is for — and the code that produced it is not (SPEC 8, entry 17). One
+the site is for — and the code that produced it is not (issue #17). One
 verb with a flag would put the two behind one word and make the difference a
 matter of remembering.
 
 EVERY ROUTE HERE CHECKS THE SAME SECRET, `EDIT_TOKEN` — one for the whole
-system (SPEC §8 entry 26), on both sides since step 0 of the plan. There used to
+system (issue #26), on both sides since step 0 of the plan. There used to
 be a second sentence in this file, `UNAUTHORIZED_QUEUE`, for the one 401 that
 did NOT mean "wrong token": the hub checked `COMMENT_READ_TOKEN` on the queue
 and `PUBLISH_TOKEN` on a push, so a deployment that set them differently gave a
@@ -547,7 +547,7 @@ class Hub:
         PUBLIC, and no token is presented for it — this is the same URL the
         viewer fetches. That asymmetry is the point of `artifacts` being a verb
         of its own next to `source`: a build's STL is served to the world, while
-        the code that produced it is not (SPEC 8, entry 26).
+        the code that produced it is not (issue #26).
 
         None for a 404 rather than an exception, because "this revision ships no
         such file" is an answer several callers act on: a build published before

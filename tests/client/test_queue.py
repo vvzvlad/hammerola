@@ -7,7 +7,7 @@ fixture. That matters more here than anywhere else in this suite: the text comes
 from a stranger's keyboard (SPEC 7A.4), and the reason it is safe to print is
 that the hub already refused everything that would not be.
 
-ONE SECRET, ON BOTH SIDES. The client always kept one (SPEC §8 entry 26,
+ONE SECRET, ON BOTH SIDES. The client always kept one (issue #26,
 decided 2026-08-27); the hub caught up in step 0 of the plan, so the queue and
 the push now check the same `EDIT_TOKEN`. Two things went away with the second
 variable and are named here so they are not restored: `hub_factory` no longer
@@ -28,7 +28,7 @@ from src.client.cli import main
 
 @pytest.fixture
 def hub(hub_factory, monkeypatch):
-    """A hub running the way SPEC §8 entry 26 says a deployment runs: one
+    """A hub running the way issue #26 says a deployment runs: one
     secret, and one variable to put it in."""
     instance = hub_factory()
     monkeypatch.setenv("HUB_URL", instance.url)

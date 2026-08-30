@@ -47,8 +47,8 @@ loguru==0.7.2
 # The four move together, and they are pinned for a reason the pins above do not have: a range
 # here would let an upstream release change a fillet or a tessellation between two builds of an
 # unchanged model, and nothing downstream would report it — the STL simply comes out different,
-# and the per-part buffer hash that the revision comparison is built on (SPEC §8, «Сравнение двух
-# ревизий») stops matching for reasons that have nothing to do with the model.
+# and the per-part buffer hash that the revision comparison is built on (issue #10 «Сравнение
+# двух ревизий») stops matching for reasons that have nothing to do with the model.
 #
 # BE PRECISE ABOUT WHAT THESE FOUR LINES BUY, because the obvious sentence — "a model rebuilt
 # from the same source a year from now produces the same geometry" — is NOT what is written here
@@ -98,7 +98,7 @@ cadquery-ocp==7.9.3.1.1
 # exactly why it is not done here. 3.4.1 is the version the vendored viewer was released
 # alongside (`ocp_vscode` 4.0.1 ships the renderer for the JSON this produces), and 3.5.0 fixes a
 # bug confirmed on our own data: `face_types` and `edge_types` fall out of step with
-# `triangles_per_face` when degenerate geometry is skipped (SPEC §8, «Сравнение двух ревизий»).
+# `triangles_per_face` when degenerate geometry is skipped (issue #10 «Сравнение двух ревизий»).
 # Both halves of the payload contract therefore move on that bump — the producer and the
 # vendored renderer — so it is a change of its own, carrying a test that reproduces the
 # desynchronisation, rather than a version quietly raised alongside something unrelated.

@@ -174,7 +174,7 @@ describe('the mark', () => {
   //
   // AND THE SECOND INK IS HELD TO THE SAME DRAWING. `brand/mark-on-dark.svg` is
   // the pair's other half, for a dark background; nothing renders it until the
-  // theme covers the interface (SPEC 8, entry 35). An unrendered file is
+  // theme covers the interface (issue #35). An unrendered file is
   // exactly the thing that drifts in silence, so its GEOMETRY is compared here
   // too — the day it is wired in it is provably the same logo, and not a second
   // one that quietly became different while nobody was looking at it.
@@ -853,7 +853,7 @@ describe('the mark', () => {
   // at the end of pointer.html, and a second component in style.jsx drawing the
   // same knob with different numbers.
   //
-  // The second is not an invented story. SPEC §8 entry 35 puts a second INK of
+  // The second is not an invented story. Issue #35 puts a second INK of
   // this mark on the roadmap, and the obvious wrong turn is a second component
   // beside `Mark` rather than the two props it already takes — a change that
   // would meet no red test at all.
@@ -869,7 +869,7 @@ describe('the mark', () => {
   //
   //   export const MarkDark = ({ size = 18 }) => <svg …>…</svg>; // dark variant
   //
-  // is exactly what somebody writes for entry 35's second ink. Two tags in the
+  // is exactly what somebody writes for issue #35's second ink. Two tags in the
   // file, one counted, 439 green. Erasing text can only ever hide evidence,
   // never add it; both files hold exactly one `<svg` in their raw bytes today,
   // so the stripping bought nothing at all. If prose here ever wants to write

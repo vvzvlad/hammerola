@@ -5,7 +5,7 @@
 
        NOTHING RENDERS IT YET, and that is the deliberate half of keeping it.
        The interface is light everywhere, including the resolver page; a dark
-       one arrives with SPEC 8, entry 35 ("the theme has to cover the whole
+       one arrives with issue #35 ("the theme has to cover the whole
        interface"), which is a token layer over ~80 hand-written hex values and
        not a switch anybody flips this week. Wiring an unreachable second ink
        into the bundle now would be dead code; throwing the file away and asking

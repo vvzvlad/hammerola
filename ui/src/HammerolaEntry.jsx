@@ -319,13 +319,13 @@ const DESCRIPTION = '3D models built from code. Every link is pinned to a revisi
  *
  * IT IS ADDRESSED TO AN AGENT, not to the person copying it — imperative, no
  * greeting, no explanation of what this service is. That is the shape of the
- * requirement (SPEC 8, entry 48) and it is also what makes it short: everything
+ * requirement (issue #48) and it is also what makes it short: everything
  * about hammerola is already written in the skill, which is the first address
  * here, so a second account of it on this page would be a copy that goes stale
  * and a wall of text an agent has to read before it can get the real one.
  *
  * FIVE LINES, AND THE THIRD IS THE ONE THAT COULD ONLY BE WRITTEN HERE. The
- * skill carries no deployment's address on purpose (entry 47, and
+ * skill carries no deployment's address on purpose (issue #47, and
  * `test_the_skill_names_no_deployment` holds it to that) — it says the hub is
  * whichever one you were given. This is where it is given, and it is a line of
  * its own rather than something to be cut out of the two above it because that

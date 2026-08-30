@@ -6,7 +6,7 @@ local slot's `meta.json` is the file the viewer fetches to caption it. So this
 command cannot come to disagree with the pages — there is one answer and both
 read it — and the hub gained no endpoint that exists only for a CLI.
 
-WHAT IT DELIBERATELY DOES NOT SHOW IS THE LAST BUILD JOB, which SPEC §8 entry 26
+WHAT IT DELIBERATELY DOES NOT SHOW IS THE LAST BUILD JOB, which issue #26
 lists beside the rest. It is not an omission and it is not waiting on anybody's
 next commit — the hub cannot be asked the question at all. A job is
 addressable by its id and by nothing else (`GET /api/v1/jobs/<id>`), and the

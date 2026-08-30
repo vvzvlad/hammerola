@@ -6,8 +6,8 @@ LOUDLY — a stale contract fails the build, a stale client is refused and told
 why. The skill is the one that fails in silence: it goes on confidently teaching
 a command that was renamed, a flag that went away, a ceiling that was raised,
 and the agent reading it then gets a refusal whose cause is a file on its own
-disk. Nothing goes red. That cost has already been paid in real prints (SPEC §8
-entry 51), which is what bought this verb.
+disk. Nothing goes red. That cost has already been paid in real prints
+(issue #51), which is what bought this verb.
 
 WHAT IT DELIBERATELY DOES NOT DO IS CHECK BY ITSELF. No look at the version
 inside `build`, `commit` or `status`, no line printed on every run, and nothing
@@ -16,7 +16,7 @@ in this tool touches the agent's skills directory unless somebody typed the word
 run is a line every reader learns to skip, and THIS TOOL CANNOT KNOW WHICH SKILL
 AN AGENT IS READING — the path below is a default, an agent may be running from
 a plugin, a project-scoped copy, or a file it was handed. So the command answers
-when it is asked instead of pretending to know. It is also not entry 31's
+when it is asked instead of pretending to know. It is also not issue #31's
 "refuse to work when stale": nothing here blocks a push, because a skill one
 version behind is usually still right about most of what it says.
 

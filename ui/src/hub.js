@@ -70,8 +70,8 @@ export const PAGE = pageFrom(location.pathname);
 /**
  * Read it again, IN PLACE, after the URL moved without the page reloading.
  *
- * Switching revisions is a `history.pushState` rather than a navigation (SPEC
- * §8, entry 62): the address still has to say which geometry is on screen, but
+ * Switching revisions is a `history.pushState` rather than a navigation
+ * (issue #62): the address still has to say which geometry is on screen, but
  * throwing the document away to change it costs the reader the camera, the
  * hidden parts and the section — everything they set up in order to compare two
  * builds. What survives that is exactly what this function exists for: nothing

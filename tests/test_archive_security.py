@@ -171,7 +171,7 @@ def test_a_non_ascii_member_name_is_refused(hub):
 
 
 # -- one 422 for EVERY unusable name, and what it may repeat back ------------
-# SPEC §8, entry 42. The names in these messages are the SENDER'S text, so the
+# Issue #42. The names in these messages are the SENDER'S text, so the
 # tests come in pairs: one that the refusal says enough, one that it cannot be
 # made to say too much. Both matter — a refusal that names one file at a time is
 # the defect being fixed, and a refusal that echoes whatever it is handed is a

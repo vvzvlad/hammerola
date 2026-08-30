@@ -43,7 +43,7 @@ def run(model, *args):
 
 
 def metrics_bytes(volume=1000.0, faces=6, code="cc", parts=("body",)):
-    """A metrics.json in the shape `cadbuild.metrics` writes (SPEC §8, entry 26).
+    """A metrics.json in the shape `cadbuild.metrics` writes (issue #26).
 
     Written into the model directory because the suite's stand-in builder
     publishes the pushed tree unchanged — so this is what a real build's
