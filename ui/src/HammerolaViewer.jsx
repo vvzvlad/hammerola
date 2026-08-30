@@ -527,15 +527,22 @@ export default class HammerolaViewer extends React.Component {
     // the only definition of "fit" available to a side that does not know the
     // model's bounding box.
     this.home = null;
-    // The hidden and translucent parts a revision switch is carrying across, by
-    // NAME, waiting for the tree of the build it switched to (`rejoin`). Not
-    // state: nothing renders it, it lives for one model event, and a re-render
-    // in the middle of a swap has no business seeing a half-applied one.
+    // The hidden and translucent parts another build opening is carrying across,
+    // by NAME, waiting for the tree of the build it opened (`rejoin`). Written
+    // by `leaveBuild` — which is to say by BOTH doors, the picker and the
+    // banner's Switch — and read by exactly one model event. Not state: nothing
+    // renders it, it lives for one model event, and a re-render in the middle of
+    // a swap has no business seeing a half-applied one.
     this.carry = null;
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
       pending: null,          // a newer build, seen by the poll, not applied
+      // A revision picked from the picker is on the wire. It exists to take the
+      // banner's Switch out of service for exactly that window — see
+      // `takePending`, which refuses on it, and `bannerSwitchStyle`, which is
+      // what stops the button looking like it still works.
+      swapping: false,
       // -- what the reader is doing
       view: null, tool: null, held: false, sel: null, selName: '',
       hidden: [], ghost: [], expanded: {},
@@ -766,7 +773,19 @@ export default class HammerolaViewer extends React.Component {
     // then stops being on the screen — it is also what keeps a second row from
     // being picked while the first is still in flight, which would leave two
     // swaps racing to push two entries and settle two different `PAGE`s.
-    this.setState({ revOpen: false });
+    //
+    // AND THE BANNER'S SWITCH GOES OUT OF SERVICE FOR THE SAME WINDOW, which
+    // closing the picker cannot do for it: the banner is not in the picker. A
+    // click on it during this await used to run `takePending` all the way
+    // through — `meta` replaced by the banner's build, its geometry fetched,
+    // "Now viewing …" toasted — and then this method landed the revision that
+    // was actually asked for on top of it. That is exactly the symptom the
+    // paragraph below calls unacceptable, reached by the shorter road: the
+    // DEFERRED take needs a busy viewport to exist at all, while a direct click
+    // needs nothing. `swapping` is refused by `takePending` and drawn by
+    // `bannerSwitchStyle`, because a button that ignores clicks while still
+    // looking like a button is a worse answer than one that looks spent.
+    this.setState({ revOpen: false, swapping: true });
 
     // AND A DEFERRED TAKE OF THE BANNER'S BUILD GOES, BEFORE THE FETCH FOR THE
     // SAME REASON. Switch on the banner waits while the reader's hand is on the
@@ -783,7 +802,14 @@ export default class HammerolaViewer extends React.Component {
     // known and the older one has not yet had a chance to run.
     //
     // The OFFER itself is untouched: `pending` still holds it and the banner is
-    // still up, so a swap that then 404s leaves Switch exactly where it was.
+    // still up, so a swap that then 404s leaves the BUTTON exactly where it was
+    // — `swapFailed` puts `swapping` down and Switch is live again. What is lost
+    // is the PRESS, not the button: the `clearTimeout` on the line below throws
+    // away a Switch that was waiting on a busy viewport, and nothing re-arms it
+    // when the swap fails, so the reader has to press it again. That is the
+    // intended trade — a newer gesture overrules an older one — but it is a
+    // gesture that goes, and "leaves Switch exactly where it was" would read as
+    // "nothing was lost" without this sentence.
     clearTimeout(this._swap);
 
     const path = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
@@ -824,12 +850,6 @@ export default class HammerolaViewer extends React.Component {
     // then repeat what the path already answers.
     const query = view === variants[0].id ? '' : `?v=${encodeURIComponent(view)}`;
 
-    // Hidden and translucent parts are held as leaf ids, and an id is a solid
-    // path that a rebuild is free to renumber; a NAME is what the person
-    // recognises and what they meant. Read here, off the tree that is still on
-    // screen, and rejoined against the new one when it arrives (`rejoin`).
-    this.carry = { hidden: this.namesOf(this.state.hidden),
-                   ghost: this.namesOf(this.state.ghost) };
     // EVERYTHING THAT DESCRIBED THE BUILD BEING LEFT GOES HERE, and this is the
     // one list of it — `takePending` opens a build too and calls the same
     // method. The plane inside it is asked about the view actually landing on
@@ -837,6 +857,11 @@ export default class HammerolaViewer extends React.Component {
     // restore a different view of the same parts, and a depth measured on the
     // other arrangement is as much about a model that moved as one measured on
     // another build.
+    //
+    // BEFORE `rereadPage` AND BEFORE THE NEW `meta`, which is not merely tidy:
+    // it reads the hidden and translucent parts off the tree that is still on
+    // screen (`carry`), so a call moved below either of those lines would be
+    // reading the build it is supposed to be leaving behind.
     const gone = this.leaveBuild(view === this.state.view);
 
     if (push) history.pushState({ hmr: slot }, '', path + query);
@@ -847,15 +872,24 @@ export default class HammerolaViewer extends React.Component {
     // the revision that had just left the screen, silently and forever.
     rereadPage(path);
 
-    // AND A POLL ALREADY ON THE WIRE IS NOW ABOUT A BUILD THIS PAGE HAS LEFT.
-    // It was started against the `PAGE.base` of the line above, it outlives the
-    // gesture that started it, and it has no way of noticing that the page moved
-    // underneath it — so the swap has to reach it here, at the one moment it is
-    // certain the move is really happening. By GENERATION rather than by a
-    // timer, because what has to be dropped is an answer already in flight
-    // (`poll`). The download chain is in the same position and is cut off in
-    // `leaveBuild` above, with everything else about the build being left.
+    // AND TWO THINGS ALREADY IN FLIGHT ARE NOW ABOUT A BUILD THIS PAGE HAS LEFT.
+    // Both were started against the `PAGE.base` of the line above, both outlive
+    // the gesture that started them, and neither has any way of noticing that
+    // the page moved underneath it — so the swap has to reach them here, at the
+    // one moment it is certain the move is really happening.
+    //
+    // The POLL is cut off by generation rather than by a timer, because what has
+    // to be dropped is an answer that is already on the wire (`poll`).
     this._pollGen = (this._pollGen || 0) + 1;
+    // The DOWNLOAD chain is cut off outright, and THIS IS THE ONE THING A SWAP
+    // DOES THAT `leaveBuild` DELIBERATELY DOES NOT — see its own note. The list
+    // there is what goes with the BUILD; a download chain goes with the ADDRESS,
+    // and the line above is where this page's address moves. The hrefs were
+    // built out of the previous revision's base (`fileHref` reads `PAGE.base`),
+    // so every file still to come is one the reader has walked away from —
+    // handed over one every fifth of a second, with nothing on the screen saying
+    // which build it came from.
+    this.cancelDownloads();
 
     this.setState({
       meta,
@@ -867,6 +901,9 @@ export default class HammerolaViewer extends React.Component {
       // than set, unlike in `takePending`: nothing has been offered on the new
       // road yet, so the next build to arrive there gets its banner.
       bannerGone: false,
+      // The fetch is answered and landed, so the banner's Switch is a live
+      // button again — for whatever the poll offers on THIS road next.
+      swapping: false,
     }, () => {
       this.sync(gone.extra);
       // Recorded here for the same reason `componentDidMount` records it: this
@@ -906,11 +943,17 @@ export default class HammerolaViewer extends React.Component {
    * camera. Its Retry button re-asks the viewport for the view that IS on screen
    * — a re-render of what is already there, which costs a fetch and nothing
    * else; the way back to the build that failed is the picker, which never left.
+   *
+   * AND THE BANNER GOES BACK INTO SERVICE. `swapping` was raised for the length
+   * of the fetch; a fetch that answered with a 404 is a fetch that is over, and
+   * the offer standing on `pending` is untouched — so the one thing that must
+   * not happen here is the reader being left looking at a spent Switch over a
+   * build that is still perfectly takeable.
    */
   swapFailed(slot, error) {
     console.warn('switch', error);
     this.setState({
-      revOpen: false,
+      revOpen: false, swapping: false,
       viewError: `${shortId(slot)} did not load — still showing ${shortId(PAGE.slot)}`,
     });
   }
@@ -942,6 +985,15 @@ export default class HammerolaViewer extends React.Component {
    *
    * THE SIDE EFFECTS BELONG HERE TOO, and they are the same argument: each one
    * is about the build being left rather than about how the reader left it.
+   *
+   * WHICH IS ALSO WHY CANCELLING THE DOWNLOAD CHAIN IS NOT ONE OF THEM, and the
+   * boundary is worth naming so it is not "fixed" back: this list is what goes
+   * with the BUILD, and a download chain goes with the ADDRESS. `switchBuild`
+   * moves the address, so it cancels there; `takePending` does not move it, and
+   * a chain running across the banner is handing over files that resolve
+   * against the pointer exactly as the reader asked. Cutting it there would
+   * truncate a group download — three STLs of ten, silently — on the strength of
+   * a gesture that changed no href.
    */
   leaveBuild(keepView) {
     const sec = this.sectionAcross(keepView);
@@ -953,17 +1005,44 @@ export default class HammerolaViewer extends React.Component {
     // build that has left, so it would otherwise stand over the new one saying
     // something that has stopped being true.
     clearTimeout(this._tt);
-    // The DOWNLOAD chain is cut off outright. On a revision switch its hrefs
-    // were built out of the previous revision's base, so it would go on handing
-    // over that build's files, one every fifth of a second, with nothing on the
-    // screen saying where they came from. Taking the banner's build is the
-    // subtler half of the same thing: `PAGE.base` does not move there, so the
-    // remaining hrefs resolve — against the POINTER, which now serves the new
-    // build. The reader would be handed one folder holding the first files of
-    // one build and the rest of another, under identical names, and these are
-    // the files that leave the browser for a printer. A short set is visible;
-    // a mixed one is not.
-    this.cancelDownloads();
+    // Hidden and translucent parts are held as leaf ids, and an id is a solid
+    // path that a rebuild is free to renumber; a NAME is what the person
+    // recognises and what they meant. Read HERE — where the tree on screen is
+    // still the one those ids belong to — and rejoined against the new tree when
+    // it arrives (`rejoin`).
+    //
+    // IT IS ON THIS LIST AND NOT IN `switchBuild` BECAUSE IT WAS MISSED ON THE
+    // OTHER DOOR: `takePending` set no carry, so `rejoin` answered null and the
+    // ids of the build that left were sent straight on to the build that
+    // replaced it. A reader who hid a part and pressed Switch watched it come
+    // back — or worse, watched a DIFFERENT part disappear, because the path it
+    // had been renumbered onto belongs to somebody else now — while the toast
+    // said "your frame and tree are kept".
+    //
+    // AND IT IS WRITTEN ONLY WHERE THERE IS A TREE TO READ IT OFF, which is not
+    // a null check but the whole meaning of the field: `carry` describes the
+    // build being LEFT, not what is on the screen now. No tree means the names
+    // cannot be looked up here — it does not mean nothing was hidden — so
+    // writing the empty answer would be recording a fact nobody established.
+    //
+    // The sequence that costs is `onViewError`: a swap whose view never rendered
+    // clears the tree and leaves an UNSPENT carry standing, because `rejoin` is
+    // consumed by a model event that never arrived. A reader who then opens
+    // another build instead of pressing Retry comes through here with
+    // `state.tree` null, and the overwrite threw away names that were still
+    // exactly right — every hidden part back on screen, over a failure two
+    // gestures ago. Kept, they are spent by the next model event to land, which
+    // is what the carry is for.
+    //
+    // A BUILD WITH NO SOLIDS IS THE OTHER CASE AND IS NOT THIS ONE. `indexTree`
+    // always answers with an object, so `state.tree` is falsy only where no
+    // model event ever landed (the initial state, and `onViewError`); a real
+    // build with an empty tree is truthy and clears the carry here, correctly —
+    // nothing in it can be hidden.
+    if (this.state.tree) {
+      this.carry = { hidden: this.namesOf(this.state.hidden),
+                     ghost: this.namesOf(this.state.ghost) };
+    }
     return {
       state: {
         // Cleared so the panel does not describe the build that has left. The
@@ -1431,10 +1510,28 @@ export default class HammerolaViewer extends React.Component {
    * being rebuilt under the pointer. The wait is bounded (BUSY_WAIT_MS above);
    * `since` is how a retry tells this call when the reader pressed the button,
    * and nothing else passes it.
+   *
+   * AND NOT WHILE A REVISION PICKED FROM THE PICKER IS ON THE WIRE. `swapping`
+   * is that window, and the refusal is HERE rather than in the click handler
+   * because more than one thing reaches this method: the banner's click, the
+   * deferred retry it arms itself, and whatever is added next. `switchBuild`
+   * disarms the deferred one by hand and used to stop there — but a direct press
+   * needs no busy viewport and no timer at all, so it lands in the middle of the
+   * await and runs the whole swap: `meta` replaced, geometry fetched, "Now
+   * viewing …" toasted, and then the revision that was actually asked for
+   * arriving on top of it. Guarding the one handler would leave the method as
+   * the thing anybody can still call wrongly.
+   *
+   * NOTHING IS PUT AWAY BY THE REFUSAL — not `pending`, not `bannerGone` —
+   * because the offer has not been answered, only postponed by a few hundred
+   * milliseconds of network. A swap that then 404s leaves the banner exactly as
+   * it stands and `swapFailed` lowers the flag; the reader presses Switch again
+   * and it works.
    */
   takePending(since) {
     const next = this.state.pending;
-    if (this._gone || !next || !Array.isArray(next.variants) || !next.variants.length) return;
+    if (this._gone || this.state.swapping) return;
+    if (!next || !Array.isArray(next.variants) || !next.variants.length) return;
     // At most one wait at a time: a second press must not leave two timers
     // racing to swap the same build.
     clearTimeout(this._swap);
@@ -1463,15 +1560,18 @@ export default class HammerolaViewer extends React.Component {
     // THE SAME LIST AS A REVISION SWITCH, through the same method, because this
     // IS a revision switch: another commit, built from other sources, with a
     // bounding box of its own. `leaveBuild` carries the whole of it — the pins
-    // and the draft's anchor, the selection, the section plane, and the re-fit
-    // Fit needs because the frame it goes back to was measured on the build that
-    // just left.
+    // and the draft's anchor, the selection, the section plane, the names behind
+    // the hidden parts, and the re-fit Fit needs because the frame it goes back
+    // to was measured on the build that just left.
     //
     // CALLED HERE rather than at the top of the method, for the reason `_refit`
     // used to be set here on its own: the busy branch above returns having
     // swapped nothing, and everything `leaveBuild` does would then be spent on a
-    // build nobody opened — the reader's draft emptied and their downloads cut
-    // off over a swap that did not happen.
+    // build nobody opened — the reader's draft emptied and their section put
+    // away over a swap that did not happen.
+    //
+    // AND BEFORE `meta` MOVES, like the other door: the carry inside it is read
+    // off the tree of the build being left.
     const gone = this.leaveBuild(keep);
     this.setState({
       meta: next,
@@ -1699,10 +1799,21 @@ export default class HammerolaViewer extends React.Component {
     return sequentialDownload(hrefs, { ...(options || null), signal: this._dl.signal });
   }
 
-  /** Stop handing over files: the reader is not on that build any more.
+  /** Stop handing over files: the addresses in the chain stopped describing
+   * what is on the screen.
    *
-   * Called by `switchBuild` and by `componentWillUnmount`, i.e. at both moments
-   * the addresses in a running chain stop describing what is on the screen.
+   * Called by `switchBuild` and by `componentWillUnmount`, which are the two
+   * moments this page's ADDRESS goes away — the hrefs are `PAGE.base` plus a
+   * file name (`fileHref`), so those are the two moments they stop resolving to
+   * what the reader asked for.
+   *
+   * `takePending` IS NOT ONE OF THEM, deliberately, and it once was: the banner
+   * moves `meta` and leaves `PAGE.base` where it is, so a chain running across
+   * it goes on fetching from the pointer — which is the same address the reader
+   * pressed the button on. Cutting it there truncated group downloads (three
+   * STLs of ten, no message) over a gesture that changed no href, and left the
+   * asymmetry that gives the game away: Later does not cancel anything, and it
+   * is the same page, the same chain and the same pointer.
    */
   cancelDownloads() {
     if (this._dl) this._dl.abort();
@@ -2312,6 +2423,18 @@ export default class HammerolaViewer extends React.Component {
       bannerStyle: chip(!!s.pending && !s.bannerGone, '#fff', '#d3d8de', '#1c1f23') + ';padding:8px 8px 8px 14px',
       bannerId: s.pending ? shortId(s.pending.commit) : '',
       bannerSwitch: () => this.takePending(),
+      // A REVISION PICKED FROM THE PICKER TAKES THIS BUTTON OUT OF SERVICE, and
+      // it has to SHOW that, which is the whole reason this style is computed
+      // rather than written into the element. `takePending` refuses on
+      // `swapping` either way, so without the washed-out blue and the plain
+      // cursor the reader would be pressing a button that looks exactly as
+      // clickable as it did a second ago and does nothing at all — which is the
+      // failure the refusal was added to prevent, wearing the refusal's clothes.
+      // It lasts one fetch: `swapFailed` and the swap's own landing both lower
+      // the flag.
+      bannerSwitchStyle: `padding:5px 12px;background:${s.swapping ? '#9cbde3' : '#1f7ae0'};`
+        + `color:#fff;border-radius:5px;font:600 12px ${SANS};`
+        + `cursor:${s.swapping ? 'default' : 'pointer'}`,
       bannerLater: () => this.dismissPending(),
 
       movedChipStyle: chip(!!s.moved, '#fdf0d8', '#f0dcae', '#6b5210'),
@@ -2702,7 +2825,7 @@ export default class HammerolaViewer extends React.Component {
                 <span style={css(`font:500 12.5px ${SANS}`)}>
                   Build <b style={{ fontFamily: MONO }}>{v.bannerId}</b> is ready &mdash; you are viewing {v.slot}
                 </span>
-                <span onClick={v.bannerSwitch} style={css(`padding:5px 12px;background:#1f7ae0;color:#fff;border-radius:5px;font:600 12px ${SANS};cursor:pointer`)}>Switch</span>
+                <span onClick={v.bannerSwitch} style={css(v.bannerSwitchStyle)}>Switch</span>
                 <span onClick={v.bannerLater} style={css(`padding:5px 10px;color:#5b6470;border-radius:5px;font:500 12px ${SANS};cursor:pointer`)}>Later</span>
               </div>
             </div>

@@ -26,6 +26,9 @@
 // instance is the real prototype with the state spelled out, and the real
 // methods run over it.
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 const { A, B } = vi.hoisted(() => {
@@ -133,7 +136,7 @@ function component(over = {}) {
     secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
     secFace: null, secPop: false,
     revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
-    bannerGone: false, rail: false, menu: null,
+    bannerGone: false, rail: false, menu: null, swapping: false,
     notePop: null, noteDraft: '', notes: {},
     comments: [], activePin: null, composer: null,
     measure: null, moved: null, toast: null,
@@ -539,6 +542,60 @@ describe('hidden and translucent parts', () => {
     expect(c.sync).toHaveBeenCalledTimes(1)
   })
 
+  it('survive a swap whose view never rendered, into the build opened instead',
+    async () => {
+      // THE THIRD PATH, and the one where the carry is worth the most: the swap
+      // that failed left an UNSPENT carry standing — `rejoin` is consumed by a
+      // model event, and the model event of a view that would not render never
+      // arrives — while `onViewError` cleared the tree those names were read
+      // off. A reader who answers that failure by opening ANOTHER build rather
+      // than pressing Retry then arrives at `leaveBuild` with no tree, and
+      // recomputing the carry there answered "nothing was hidden" and threw away
+      // names that were still exactly right. Every hidden part back on screen,
+      // over a failure two gestures ago, with nothing saying why.
+      const C = 'c'.repeat(64)
+      const c = component({ hidden: ['/model/plate'] })
+      c.captureHome = vi.fn()
+      loadMeta.mockResolvedValue(build())
+
+      await c.switchBuild('proj1', B)
+      c.onViewError({ message: 'a.json -> HTTP 503' })
+      expect(c.state.tree, 'the tree stood, so nothing here is under test').toBeNull()
+
+      await c.switchBuild('proj1', C)
+      c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+
+      expect(c.state.hidden, 'the part came back because its name was forgotten')
+        .toEqual(['/model/0'])
+    })
+
+  it('carry nothing at all when no tree has ever landed', () => {
+    // The other end of the same rule, and the reason it is `if (tree)` rather
+    // than `carry || …`: a first load that failed has no names to keep and none
+    // to read, so `rejoin` must go on answering "there is nothing to rejoin".
+    // An empty carry is a different answer — it is an instruction to unhide
+    // everything.
+    const c = component({ tree: null, hidden: ['/model/plate'] })
+
+    c.leaveBuild(true)
+
+    expect(c.carry).toBeNull()
+  })
+
+  it('ARE cleared by a build that genuinely has no parts', () => {
+    // "No tree" and "a tree with nothing in it" are not the same fact and the
+    // code can tell them apart: `indexTree` always answers with an object, so a
+    // build with no solids is truthy here and its empty answer is one somebody
+    // established. Nothing in it can be hidden, so the carry goes.
+    const c = component({ tree: indexTree({ id: '/model', name: 'model', children: [] }),
+                          hidden: ['/model/plate'] })
+    c.carry = { hidden: ['plate'], ghost: [] }
+
+    c.leaveBuild(true)
+
+    expect(c.carry).toEqual({ hidden: [], ghost: [] })
+  })
+
   it('are left alone by an ordinary live reload', () => {
     // Every model event that is not a swap — a first load, a rebuild arriving
     // under a pointer, a view tab — has nothing carried and must change neither
@@ -888,13 +945,21 @@ describe('taking the banner\'s build', () => {
     expect(c.sync).toHaveBeenCalledWith(null)
   })
 
-  it('calls off a download chain still handing over the old build\'s files', () => {
-    // SUBTLER THAN THE SWAP'S, because `PAGE.base` does not move here: the
-    // remaining hrefs resolve perfectly well — against the POINTER, which now
-    // serves the build that just arrived. So the reader would be handed one
-    // folder holding the first files of one build and the rest of another, under
-    // identical names, with nothing anywhere saying so. These are the files that
-    // leave the browser for a printer; a short set is visible, a mixed one is not.
+  it('leaves a download chain running, because no href moved', () => {
+    // THE ONE THING THE SWAP DOES THAT THIS DOES NOT, and the boundary is the
+    // claim: `leaveBuild` carries what goes with the BUILD, while a download
+    // chain goes with the ADDRESS — `fileHref` is `PAGE.base` plus a name, and
+    // `PAGE.base` does not move here. So every href still to come resolves to
+    // the pointer the reader pressed the button on, which is what they asked
+    // for.
+    //
+    // Cutting it here was tried and is the worse failure: "Download all" on ten
+    // STLs takes two seconds, so a Switch pressed a moment later left the reader
+    // three files of ten with nothing on the screen saying so — off to print an
+    // incomplete set. The mixing this was meant to prevent does not need Switch
+    // at all: the pointer starts serving the new build WHEN THE HUB PUBLISHES
+    // IT, which is before the poll notices and before the banner is even up.
+    // Later, on the same banner, cancels nothing and never did.
     const clicked = []
     const timers = []
     const c = offered()
@@ -907,9 +972,33 @@ describe('taking the banner\'s build', () => {
     c.takePending()
     timers.shift().fn()
 
-    expect(clicked, 'the rest of the chain came from the build that had left')
-      .toEqual([`${path(A)}plate.stl`])
+    expect(clicked, 'the chain was cut off by a gesture that changed no href')
+      .toEqual([`${path(A)}plate.stl`, `${path(A)}post.stl`])
   })
+
+  it('re-resolves the hidden and translucent parts by NAME, as the picker does',
+    () => {
+      // THE TWIN of the swap's own claim, and it was missing for exactly as long
+      // as the list was written out in `switchBuild` alone: this door set no
+      // carry, `rejoin` answered null, and the ids of the build that left were
+      // handed straight to the build that replaced it. Ids are solid paths and a
+      // rebuild renumbers them freely — `plate` is `/model/plate` here and
+      // `/model/0` in the next build — so the part the reader hid came back on
+      // screen, or, where the old path had been renumbered onto somebody else,
+      // a part they never touched vanished instead. The toast over all of that
+      // read "your frame and tree are kept".
+      const c = offered({ hidden: ['/model/plate'], ghost: ['/model/post'] })
+      c.captureHome = vi.fn()
+
+      c.takePending()
+      c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+
+      expect(c.state.hidden, 'the hidden part was named by an id of the build that left')
+        .toEqual(['/model/0'])
+      // `post` is not in the new build at all, and a part that is gone cannot
+      // stay hidden.
+      expect(c.state.ghost).toEqual([])
+    })
 })
 
 // -- the banner's own Switch, still waiting, when a revision is picked --------
@@ -989,6 +1078,89 @@ describe('a deferred take of the banner\'s build', () => {
 
     expect(c.state.toast).toBeNull()
     expect(vi.getTimerCount(), 'the toast\'s own timer outlived the build').toBe(0)
+  })
+})
+
+// -- and the banner's Switch pressed OUTRIGHT while that revision is fetching --
+//
+// The deferred take above needs a busy viewport to exist at all. A direct press
+// needs nothing, lands in the same window, and used to run the whole of
+// `takePending` — which is why closing the picker was never enough: the banner
+// is not in the picker.
+
+describe('the banner\'s Switch while a picked revision is on the wire', () => {
+  /** A swap held at the fetch, and the resolver that lets it finish. */
+  function inFlight(c) {
+    let answer = null
+    loadMeta.mockImplementation(() => new Promise((resolve) => { answer = resolve }))
+    return { swapping: c.switchBuild('proj1', B), answer }
+  }
+
+  it('does not run, however directly it is pressed', async () => {
+    // THROUGH THE HANDLER THE PAGE ACTUALLY RENDERS, not through `takePending`:
+    // what is under test is that the button on the screen is inert, and a test
+    // that called the method would pass on a page whose Switch still worked.
+    //
+    // Without the refusal this press swaps `meta` to the banner's build, tells
+    // the viewport to fetch its geometry and toasts "Now viewing ccc" — and then
+    // the revision the reader picked lands on top of it. One wasted load of a
+    // model nobody chose, and a toast naming a build that is not there.
+    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    // Not busy, so nothing defers: a press either runs now or is refused.
+    c.el = () => null
+    const swap = inFlight(c)
+
+    c.computed().bannerSwitch()
+
+    expect(c.state.meta.commit, 'the banner\'s build landed in the middle of the swap')
+      .toBe(A)
+    expect(c.toast).not.toHaveBeenCalled()
+
+    swap.answer(build())
+    await swap.swapping
+    expect(c.state.meta.commit).toBe(B)
+  })
+
+  it('says so, instead of looking exactly as clickable as it did', () => {
+    // A button that ignores the click while still looking like a button is the
+    // failure the refusal was added to prevent, wearing the refusal's clothes:
+    // the reader presses it, nothing happens, and there is nothing on the screen
+    // to read that off.
+    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    const live = c.computed().bannerSwitchStyle
+
+    c.setState({ swapping: true })
+    const spent = c.computed().bannerSwitchStyle
+
+    expect(live).toContain('cursor:pointer')
+    expect(spent, 'the cursor still promises a click').not.toContain('cursor:pointer')
+    expect(spent, 'and it is still painted the colour of a live button')
+      .not.toContain('background:#1f7ae0')
+  })
+
+  it('is a live button again once that swap has failed', async () => {
+    // THE HALF THAT MUST NOT BE PAID FOR BY THE OTHER. Nothing about the offer
+    // was answered — it was postponed by a few hundred milliseconds of network —
+    // so a revision that 404s must leave the reader able to take it after all.
+    // Emptying `pending` would have been the cheap way to make the button inert
+    // and would have thrown the offer away with it.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const offer = { commit: 'ccc', built: '2026-08-29T10:00:00Z', downloads: {},
+                    variants: VIEWS }
+    const c = component({ pending: offer })
+    c.el = () => null
+    loadMeta.mockRejectedValue(new Error('meta.json -> HTTP 404'))
+
+    await c.switchBuild('proj1', B)
+
+    expect(c.state.pending, 'the offer went down with the swap that failed').toBe(offer)
+    expect(c.state.swapping, 'Switch is still out of service after the fetch ended')
+      .toBe(false)
+    expect(c.computed().bannerSwitchStyle).toContain('cursor:pointer')
+
+    c.computed().bannerSwitch()
+
+    expect(c.state.meta.commit, 'the second press was refused too').toBe('ccc')
   })
 })
 
@@ -1246,5 +1418,74 @@ describe('another project', () => {
     expect(loadMeta).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalled()
     expect(PAGE.pid).toBe('proj1')
+  })
+})
+
+// -- the shape of `leaveBuild`'s answer, held against its callers -------------
+//
+// `leaveBuild` returns TWO halves — `state` for this side, `extra` for the
+// viewport, which holds a section plane of its own — and its own docstring names
+// what a caller that spread the first and dropped the second would leave behind:
+// the plane standing in the scene with the slider back at zero. Both callers do
+// it right today and both are tested doing it. THE THIRD ONE IS THE PROBLEM.
+// Nothing about the method makes half of the answer hard to drop, and the only
+// thing standing between that and production is a paragraph, which the next
+// person writing a third door is not obliged to read.
+//
+// SO THE CALLERS ARE READ OUT OF THE SOURCE rather than listed here — a list
+// would go stale the same way, silently, and the check would pass by knowing
+// about fewer doors than exist. The genre is not new in this repository:
+// tests/test_workflow_steps.py hashes the bodies of workflow steps that must
+// stay identical, for the same reason.
+//
+// THE OTHER WAY OUT WAS TO CHANGE THE SHAPE — have `leaveBuild` call `sync`
+// itself, or return one object the caller cannot half-spread — and it is
+// deliberately not taken. The two-half return has been through review twice, the
+// callers need the state merged with fields of their own BEFORE it reaches
+// `setState`, and moving code that works is a worse trade than checking it.
+
+// From `process.cwd()` and not from `import.meta.url`: this file runs under
+// jsdom, where the module URL is an http one and `fileURLToPath` refuses it —
+// the same note hatch.test.js carries. Vitest's cwd is its config root, `ui/`.
+const SOURCE = readFileSync(resolve(process.cwd(), 'src/HammerolaViewer.jsx'), 'utf8')
+
+/**
+ * The source of one method, from `at` to the line that closes it.
+ *
+ * Methods of this class close on a `}` indented by two spaces, and nothing
+ * inside one is indented that shallowly — the nested blocks close at four and
+ * six — so this is the method body and not the rest of the file.
+ */
+function methodFrom(at) {
+  const end = SOURCE.indexOf('\n  }\n', at)
+  return SOURCE.slice(at, end === -1 ? SOURCE.length : end)
+}
+
+describe('every door into another build', () => {
+  it('is a call that keeps both halves of the answer', () => {
+    const doors = []
+    const call = /this\.leaveBuild\(/g
+    for (let m = call.exec(SOURCE); m; m = call.exec(SOURCE)) {
+      const line = SOURCE.slice(SOURCE.lastIndexOf('\n', m.index) + 1, m.index)
+      const named = /(?:const|let|var)\s+(\w+)\s*=\s*$/.exec(line)
+      doors.push({ at: m.index, held: named ? named[1] : null, line: line.trim() })
+    }
+
+    // A regex that stopped matching is a check that vanished with the suite
+    // still green — the failure `ci/smoke.py` counts its verdicts to avoid.
+    expect(doors.length, 'no call to leaveBuild was found at all').toBeGreaterThan(1)
+
+    doors.forEach((door) => {
+      // Held in a variable, because an answer nobody holds is an answer both
+      // halves of which were dropped.
+      expect(door.held, `leaveBuild's answer is thrown away: ${door.line}`).not.toBeNull()
+      const body = methodFrom(door.at)
+      expect(body, `${door.held}.state never reaches setState`)
+        .toContain(`...${door.held}.state`)
+      // THE HALF THE DOCSTRING WARNS ABOUT. Without it the plane stays in the
+      // scene while every control on this side says there is no cut.
+      expect(body, `${door.held}.extra never reaches the viewport`)
+        .toContain(`sync(${door.held}.extra)`)
+    })
   })
 })
