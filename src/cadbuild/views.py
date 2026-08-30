@@ -51,8 +51,14 @@ MAX_NOTES = 200
 # rules below.
 MAX_NAME_CHARS = 200
 
+# ...and for the VIEW's own name -- the caption in the picker, written into
+# meta.json by export_views and checked there again by the hub
+# (`render._plain_text(..., "view name")`). Same ceiling, same argument: a
+# caption the build accepts and the hub refuses is a 422 on a build that ran.
+MAX_VIEW_NAME_CHARS = 200
 
-def hub_text_problem(value, limit):
+
+def hub_text_problem(value, limit, *, angle_brackets_ok=False):
     """Why the hub would refuse this text on the way in, or None if it would not.
 
     A TRANSCRIPTION of `render._plain_text` and of the angle-bracket rule
@@ -76,15 +82,36 @@ def hub_text_problem(value, limit):
         text that cannot open an element cannot become markup whatever ends
         up rendering it.
 
+    THE THIRD RULE IS NOT ON EVERY FIELD THE HUB CHECKS, which is why it is a
+    flag and not simply part of the transcription. The hub bans brackets in a
+    note and in a part name (`render._check_part_name`) and does NOT ban them
+    in a title, in a project name or in a view name -- those go through
+    `_plain_text` alone. The asymmetry is the hub's and is argued there: our
+    own pages write those three with `textContent`, where `<b>` is three
+    characters on screen, while the vendored viewer assigns a part name to
+    `innerHTML`, where the same three are a tag. Copying it faithfully is what
+    keeps the two verdicts EQUAL; banning brackets on everything here would
+    refuse a title the hub accepts, which is safe and still wrong -- a model
+    turned away for a rule that does not exist. `False` is the default so that
+    a caller which says nothing gets the rule rather than loses it.
+
     A reason string rather than an exception: the caller knows the view and the
     part, and every message in this file names both.
     """
+    if not isinstance(value, str):
+        # The hub's `_check_part_name` opens with this same isinstance, and
+        # here it is what keeps the gate from CRASHING instead of answering:
+        # `len()` happens to work on a list, and `unicodedata.category` of its
+        # first element then raises a bare TypeError out of a build. Every
+        # caller today checks the type before it gets here; this is the line
+        # that keeps that true for the next one.
+        return f"is {type(value).__name__}, not a string"
     if len(value) > limit:
         return f"is {len(value)} characters, over the {limit} the hub accepts"
     for char in value:
         if unicodedata.category(char).startswith("C"):
             return f"carries a non-printable character {char!r}"
-    if "<" in value or ">" in value:
+    if not angle_brackets_ok and ("<" in value or ">" in value):
         return "carries an angle bracket"
     return None
 
@@ -137,6 +164,22 @@ def prepare_views(views, printables):
         if vid in seen:
             raise BuildError(f"duplicate view id {vid!r}")
         seen.add(vid)
+
+        # The view's own caption, checked here for the reason a part name is:
+        # export_views writes it into meta.json and the hub reads it back with
+        # `_plain_text(..., "view name")`, so an unchecked one is a 422 handed
+        # to a build that has already been computed. `str()` and the fallback
+        # to the id are transcribed too -- the hub does exactly both.
+        label = str(view.get("name") or vid)
+        problem = hub_text_problem(label, MAX_VIEW_NAME_CHARS,
+                                   angle_brackets_ok=True)
+        if problem:
+            raise BuildError(
+                f'view {vid!r}: "name" {problem}: {label!r}. It is the caption '
+                "in the view picker, it travels in meta.json, and the hub "
+                "checks it again on the way in -- answering 422 on a build "
+                "that already ran. Keep it to plain, printable text, or leave "
+                f'the key out and the view is captioned {vid!r}.')
 
         objects, names, colors, alphas, part_notes = read_parts(view, vid)
         # Every part with no colour of its own gets one here, from what it is:
@@ -228,7 +271,7 @@ def prepare_views(views, printables):
 
         prepared.append({
             "id": vid,
-            "label": str(view.get("name") or vid),
+            "label": label,
             "objects": objects,
             "names": names,
             "colors": colors,

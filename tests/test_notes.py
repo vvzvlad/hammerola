@@ -17,19 +17,26 @@ comes from a push, i.e. from anybody who can land a commit in a model
 repository, so it is held to the rules `title` and a part name are held to,
 whatever the browser half later decides to do with it.
 
-THE LAST SECTION IMPORTS THE BUILD HALF, which nothing else on this side does,
-and that is the point of putting it here: `src/cadbuild/views.py` checks the
-same text before the geometry is computed and may not import this module, so
-the two rules are written twice and this file is the only place allowed to see
-both at once.
+THE LAST TWO SECTIONS IMPORT THE BUILD HALF, which nothing else on this side
+does, and that is the point of putting them here: `src/cadbuild/views.py` and
+`src/cadbuild/project.py` check the same text before the geometry is computed
+and may not import this module, so the rules are written twice and this file is
+the only place allowed to see both copies at once. FOUR texts cross that
+boundary and all four are paired here -- a note, a part name, a view's caption,
+and the project's own title and slug. The file is named after the first pair
+rather than after the boundary, which is the only reason the other three are
+not in a file of their own.
 """
 
 import json
 
 from harness import good_build, meta_bytes, tar_gz, view_bytes
 
+from src.cadbuild import paths
 from src.cadbuild.errors import BuildError
-from src.cadbuild.views import MAX_NAME_CHARS, MAX_NOTE_CHARS, read_parts
+from src.cadbuild.project import MAX_TITLE_CHARS, load_project
+from src.cadbuild.views import (MAX_NAME_CHARS, MAX_NOTE_CHARS,
+                                MAX_VIEW_NAME_CHARS, prepare_views, read_parts)
 from src.render import MAX_NOTES, MAX_TEXT
 
 
@@ -178,8 +185,16 @@ def text_cases(limit):
     """One set of inputs for both sides, plus the two lengths around a ceiling.
 
     Nothing here carries leading or trailing whitespace, on purpose: the build
-    half strips a note and a name before anything else, so the hub never sees
-    the outside of one and a padded input would compare two different strings.
+    half strips a note, a name and a title before anything else, so the hub
+    never sees the outside of one and a padded input would compare two
+    different strings. (A view's caption is stripped by neither side, which is
+    the same answer arrived at from the other direction.)
+
+    NOTHING HERE IS EMPTY EITHER, and that exclusion is the one deliberate
+    disagreement between the two halves rather than a gap in the set: the gate
+    refuses an empty note and an empty name, the hub takes both. It is argued
+    and pinned in test_the_gate_refuses_an_empty_note_the_hub_would_take, so an
+    exception to the equality contract is a test rather than a silence.
     """
     return [
         ("ordinary text", "M3x8 DIN912"),
@@ -239,3 +254,118 @@ def test_the_two_halves_agree_about_a_part_name(hub):
             what=f"as the part name {what}", value=name,
             here="refuses" if here else "accepts",
             there="refuses" if there else "accepts")
+
+
+def test_the_gate_refuses_an_empty_note_the_hub_would_take(hub):
+    """The one place the two sides deliberately disagree, written down here.
+
+    `text_cases` carries nothing empty and nothing whitespace-only, and that
+    exclusion is a DECISION rather than a hole in the set. The build half
+    strips a note and a name and then refuses what is left of an empty one; the
+    hub takes `""` as a note and even as a note's KEY, because there is no
+    character in it to be too long, to file under category C or to be an angle
+    bracket.
+
+    Refusing here is right and is kept. An empty note is a sentence somebody
+    started and did not write, and an empty part name is a label the viewer's
+    tree cannot show and a nested_ok pair cannot point at -- both are visible
+    in model.py, which is where they can still be fixed. The hub cannot make
+    that judgement: by the time a push arrives the model is gone and all it has
+    is a string. And the direction is the safe one -- the gate refuses what the
+    hub would take, so nothing is ever computed for minutes and then answered
+    with a 422.
+
+    This test is what makes it a decision rather than an untested gap: teach
+    the gate to accept an empty note and this goes red, which is the moment to
+    look at the hub's half of the pair in the same change.
+    """
+    assert build_refuses(name="lid", note="")
+    assert build_refuses(name="")
+    assert not hub_refuses(hub, {"lid": ""}, commit="empty01")
+    assert not hub_refuses(hub, {"": "harmless text"}, commit="empty02")
+
+
+# --------------------------------------------------------------------------
+# The same pairing for the other two texts that cross the boundary
+#
+# A note and a part name were the first pair to be held together this way. They
+# are not the only text a build hands the hub: the caption of a view and the
+# project's own title and slug travel in the same meta.json and are checked
+# there by the same `_plain_text`. Each got its own homemade check on the build
+# side and each was WEAKER than the hub's -- a 201-character view name and a
+# title carrying U+202E both passed the gate and were refused on arrival.
+#
+# Angle brackets are the one rule that is NOT shared here, and that is the
+# hub's asymmetry rather than a gap: our own pages write a title, a project
+# name and a view name with `textContent`, while the vendored viewer assigns a
+# PART name to `innerHTML`. Transcribing that faithfully is what keeps these
+# loops green; see `cadbuild.views.hub_text_problem`.
+# --------------------------------------------------------------------------
+
+def hub_refuses_meta(hub, commit, **fields):
+    """Does a real push whose meta.json carries these fields get turned away?"""
+    body = tar_gz({"meta.json": meta_bytes(**fields),
+                   "assembled.json": view_bytes()})
+    reply = hub.publish("proj1", commit, body)
+    assert reply.status_code in (201, 422), reply.text
+    return reply.status_code == 422
+
+
+def build_refuses_view_name(name):
+    """Does the gate turn away a view captioned this way, before any geometry?"""
+    try:
+        prepare_views([{"id": "assembled", "name": name,
+                        "parts": [{"shape": Shape(), "name": "lid"}]}], {})
+    except BuildError:
+        return True
+    return False
+
+
+def build_refuses_project_field(tmp_path, where, **fields):
+    """Does the gate turn away a project.json carrying this title or slug?"""
+    root = tmp_path / where
+    root.mkdir()
+    (root / "project.json").write_text(
+        json.dumps({"id": "abc123def456", **fields}), encoding="utf-8")
+    paths.set_project_root(root)
+    try:
+        load_project()
+    except BuildError:
+        return True
+    finally:
+        # Module-level state that everything path-shaped in the build half
+        # reads. Left behind, it fails the guard fixture that opens every test
+        # in tests/cadbuild/ -- in another file, under one collection order.
+        paths.set_project_root(None)
+    return False
+
+
+def test_the_two_halves_agree_about_a_view_s_name(hub):
+    """The caption in the view picker, written into meta.json by export_views
+    and read back by the hub as `view name`."""
+    for index, (what, name) in enumerate(text_cases(MAX_VIEW_NAME_CHARS)):
+        here = build_refuses_view_name(name)
+        there = hub_refuses_meta(
+            hub, f"viewname{index:02d}",
+            views=[{"id": "assembled", "name": name,
+                    "file": "assembled.json", "parts": 2}])
+        assert here == there, DISAGREEMENT.format(
+            what=f"as the view name {what}", value=name,
+            here="refuses" if here else "accepts",
+            there="refuses" if there else "accepts")
+
+
+def test_the_two_halves_agree_about_a_project_s_title_and_slug(hub, tmp_path):
+    """`title` and `project`: the two captions on the index card and in the
+    build page header. The gate reads them out of project.json and the hub
+    reads them back out of the meta.json the build wrote."""
+    for field in ("title", "project"):
+        for index, (what, text) in enumerate(text_cases(MAX_TITLE_CHARS)):
+            here = build_refuses_project_field(
+                tmp_path, f"{field}{index:02d}", **{field: text})
+            there = hub_refuses_meta(hub, f"{field}{index:02d}",
+                                     **{field: text})
+            assert here == there, DISAGREEMENT.format(
+                what=f"as the {field} {what}", value=text,
+                here="refuses" if here else "accepts",
+                there="refuses" if there else "accepts")

@@ -10,8 +10,10 @@ import pytest
 from src import render
 from src.cadbuild.errors import BuildError
 from src.cadbuild.palette import MOCK_COLOR, PART_PALETTE
+from src.cadbuild.project import MAX_TITLE_CHARS
 from src.cadbuild.views import (MAX_NAME_CHARS, MAX_NOTE_CHARS, MAX_NOTES,
-                                collect_notes, prepare_views, read_parts,
+                                MAX_VIEW_NAME_CHARS, collect_notes,
+                                hub_text_problem, prepare_views, read_parts,
                                 visible_names, names_mention)
 
 from fakes import part
@@ -319,6 +321,58 @@ def test_a_part_name_carrying_a_non_printable_character_is_refused_here():
     assert "non-printable" in name_refusal("lid‮")
 
 
+def test_a_view_name_the_hub_would_refuse_is_refused_here():
+    """The caption of the view itself, which went unchecked until it was the
+    third text found crossing this boundary under a weaker rule than the hub's.
+
+    export_views writes it into meta.json and the hub reads it back with
+    `_plain_text(..., "view name")`, so a 201-character caption or a newline in
+    one is a 422 answering a build that has already been computed. An angle
+    bracket is NOT refused here, because the hub does not refuse it either --
+    that rule is the part name's, and tests/test_notes.py holds the pair.
+    """
+    body = part()
+
+    def refusal(name):
+        with pytest.raises(BuildError) as exc:
+            prepare_views([one_view(parts=[{"shape": body, "name": "body"}],
+                                    name=name)], {"body": body})
+        return str(exc.value)
+
+    assert "non-printable" in refusal("assembled\nview")
+    assert "non-printable" in refusal("assembled‮")
+    assert str(MAX_VIEW_NAME_CHARS) in refusal("x" * (MAX_VIEW_NAME_CHARS + 1))
+    # The last legal caption still prepares, and an angle bracket still does.
+    prepared = prepare_views(
+        [one_view(parts=[{"shape": body, "name": "body"}],
+                  name="x" * MAX_VIEW_NAME_CHARS)], {"body": body})
+    assert prepared[0]["label"] == "x" * MAX_VIEW_NAME_CHARS
+    assert prepare_views([one_view(parts=[{"shape": body, "name": "body"}],
+                                   name="lid <> body")],
+                         {"body": body})[0]["label"] == "lid <> body"
+
+
+def test_hub_text_problem_answers_a_non_string_rather_than_crashing():
+    """The first line of the transcription, and the one with no caller today.
+
+    Every call site checks the type before it gets here, and the disagreement
+    message in tests/test_notes.py invites the next agent to call this from
+    somewhere new -- which is exactly what closing the view name and the title
+    just did. `len()` is perfectly happy with a list, so without that line the
+    walk reaches `unicodedata.category(<element of it>)` and raises a bare
+    TypeError out of a build: the gate crashes where it was supposed to tell
+    the author which field is wrong. The hub's own `_check_part_name` opens
+    with the same isinstance.
+    """
+    assert "not a string" in hub_text_problem(["body"], MAX_NAME_CHARS)
+    assert "not a string" in hub_text_problem(42, MAX_NAME_CHARS)
+    assert "not a string" in hub_text_problem(None, MAX_NAME_CHARS)
+    # ...and it is answered the same way whichever rule set the caller asked
+    # for: a non-string has no characters to hold to either of them.
+    assert "not a string" in hub_text_problem(42, MAX_NAME_CHARS,
+                                              angle_brackets_ok=True)
+
+
 def test_a_part_name_longer_than_the_hub_accepts_is_refused_here():
     message = name_refusal("x" * (MAX_NAME_CHARS + 1))
     assert str(MAX_NAME_CHARS) in message and str(MAX_NAME_CHARS + 1) in message
@@ -368,21 +422,42 @@ def test_more_notes_than_the_hub_accepts_are_refused():
     assert str(MAX_NOTES) in str(exc.value)
 
 
-def test_the_note_ceilings_are_at_or_under_the_hub_s():
-    """A note the build accepts must never be one the hub then refuses.
+def test_every_text_ceiling_here_equals_the_hub_s():
+    """The five numbers this half copies from the hub, held to EQUALITY.
 
-    The hub checks every note again on the way in, and its answer is a 422 on a
-    push whose build already ran: minutes of geometry spent to be told the text
-    was two characters too long. The two numbers are written in two files that
-    do not import each other -- the build half may not import the serving half
-    -- so this comparison is the only thing holding them together.
+    A build ceiling ABOVE the hub's is the bug the pair exists to prevent: the
+    hub checks the same text again on the way in and answers 422 on a push
+    whose build already ran, so minutes of geometry are spent to be told the
+    text was two characters too long. That is why this test was written.
+
+    It asserted `<=` until the equality tests in tests/test_notes.py arrived,
+    and the two then encoded contradicting contracts: those run one set of
+    inputs -- a string exactly one character over the ceiling among them --
+    through BOTH real validators and demand the same verdict, so lowering
+    MAX_NOTE_CHARS to 150 would pass here and fail there, with a message
+    calling a deliberate decision "drift".
+
+    Equality is the contract. One-sided strictness is not forbidden, but it has
+    to be a NAMED exception written where it is made, rather than a silent
+    freedom only one of the two tests knows about -- tests/test_notes.py
+    carries exactly one such exception today (the empty string, which the gate
+    refuses and the hub accepts) and it has a test of its own saying so.
+
+    The numbers are written in files that do not import each other -- the build
+    half may not import the serving half -- so this is the only thing holding
+    them together.
     """
-    assert MAX_NOTE_CHARS <= render.MAX_TEXT
-    assert MAX_NOTES <= render.MAX_NOTES
-    # The part name goes the same way, under the hub's free-text ceiling: it is
-    # the key of a note in meta.json and the label in every view file, and
-    # `render._check_part_name` measures both against MAX_TEXT.
-    assert MAX_NAME_CHARS <= render.MAX_TEXT
+    assert MAX_NOTE_CHARS == render.MAX_TEXT
+    assert MAX_NOTES == render.MAX_NOTES
+    # The part name goes to the same ceiling: it is the key of a note in
+    # meta.json and the label in every view file, and `render._check_part_name`
+    # measures both against MAX_TEXT.
+    assert MAX_NAME_CHARS == render.MAX_TEXT
+    # ...and so do the two captions, which reach the hub the same way: the view
+    # name through meta.json's `views`, the project's title and slug through
+    # its `title` and `project`. Both are `_plain_text` on the far side.
+    assert MAX_VIEW_NAME_CHARS == render.MAX_TEXT
+    assert MAX_TITLE_CHARS == render.MAX_TEXT
 
 
 # --------------------------------------------------------------------------
