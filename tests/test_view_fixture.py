@@ -225,7 +225,7 @@ def test_the_exporter_still_produces_the_committed_structure(committed, tmp_path
     passing against a document no build produces any more. Closing the hole means
     putting libgl1 into the test container, which switches this test and that
     single cadbuild one on — a step of its own, with its own cost to measure; it
-    is written up in docs/SPEC.md §8.
+    is written up in issue #27.
 
     Guarding on `cadquery` alone covers `ocp_tessellate` too, which the export
     also needs: both are pinned in requirements.txt and both fail on the same

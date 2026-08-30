@@ -7,7 +7,7 @@ BOTH STAND ON ONE ROUTE PAIR the hub already serves (SPEC 7.8):
 
 Behind the publishing secret, because the code is the one thing on this service
 that is held and not shown: a build directory is public and cached for a year,
-and the sources that produced it are not (SPEC 8, entry 17). That is the whole
+and the sources that produced it are not (issue #17). That is the whole
 reason `artifacts` is a separate verb rather than a flag on this one.
 
 `source` NEVER WRITES OVER THE WORKING COPY BY DEFAULT, and that default is the
@@ -18,7 +18,7 @@ the directory is in. So the ordinary form unpacks into a directory of its own an
 the destructive form is a flag that additionally requires git to say the tree is
 clean; then every file it replaces is one `git checkout` away.
 
-`log` IS ADDRESSED THREE WAYS (SPEC 8, entry 26) because a build in the `dev`
+`log` IS ADDRESSED THREE WAYS (issue #26) because a build in the `dev`
 slot has no revision at all:
 
     hammerola log              the newest revision this project has published

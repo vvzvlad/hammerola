@@ -1,4 +1,4 @@
-"""The author's note on a part, on the receiving side (SPEC 8, entry 11).
+"""The author's note on a part, on the receiving side (issue #11).
 
 A note is written by the AUTHOR in model.py, travels with the build in
 meta.json and is addressed to whoever opens the model. That makes it the third

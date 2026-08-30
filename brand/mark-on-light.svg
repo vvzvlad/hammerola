@@ -6,7 +6,7 @@
        "on-light" cannot be read backwards: you put it ON a light page.
 
        This one is what the interface uses today - the interface is light
-       (SPEC 8, entry 21) - and `Mark` in ui/src/style.jsx is its inline copy,
+       (issue #21) - and `Mark` in ui/src/style.jsx is its inline copy,
        as is the <svg> in templates/pointer.html. Neither can import a file: the
        first would make the bundle emit a second output, the second is on the
        one page whose whole job is to leave quickly. So there are three copies of

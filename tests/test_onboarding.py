@@ -98,7 +98,7 @@ def test_the_manifest_says_nothing_about_this_hub_but_whether_it_is_empty(
     boolean about this deployment.
 
     `skill_version` WAS ADDED DELIBERATELY AND IS ON THE SAFE SIDE OF THAT LINE,
-    which is why this list moved rather than the rule (SPEC §8 entry 51). It is
+    which is why this list moved rather than the rule (issue #51). It is
     a constant of the image exactly as the three paths are — two hubs running
     the same image answer with the same number, and the number changes when the
     software does, never when somebody pushes. It names what is RUNNING here,
@@ -1033,7 +1033,7 @@ def test_the_manifest_key_the_client_follows_is_the_one_the_hub_writes():
 
 
 def test_the_two_keys_the_skill_command_follows_are_the_ones_the_hub_writes():
-    """The same arrangement for the verb added by SPEC §8 entry 51.
+    """The same arrangement for the verb added by issue #51.
 
     `hammerola skill` reads two fields out of the manifest — where the file is
     and which version it is — and it spells both itself, because the client

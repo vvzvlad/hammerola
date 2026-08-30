@@ -22,7 +22,7 @@ class _TwoRequired(BaseSettings):
     """Two credentials, so the guard can be asked to name BOTH of them.
 
     src/settings.py declares exactly one no-default field since step 0 of the
-    plan (EDIT_TOKEN — one secret for the whole system, SPEC §8 entry 26), and
+    plan (EDIT_TOKEN — one secret for the whole system, issue #26), and
     that is what makes this throwaway class load-bearing rather than decorative.
     The CI smoke gate used to prove the many-names property against the real
     image, because the real image had two credentials to drop; with one, check

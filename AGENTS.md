@@ -32,7 +32,9 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
 1. **Прочитай `docs/SPEC.md`, начиная с раздела 8A** — это план работ проекта.
    Врезка в начале файла объясняет, что в документе актуально, а что описывает
    состояние ДО переезда. Разделы 1–7 — проверенные эмпирически факты и подводные
-   камни; перепроверять их не надо, это уже стоило времени. Раздел 8 — беклог.
+   камни; перепроверять их не надо, это уже стоило времени. Беклога в документе
+   больше нет: он переехал в задачи `projects/hammerola` на `gitea.vvzvlad.xyz`
+   2026-08-30, а §8 остался таблицей «запись → issue».
 2. Прочитай соглашения:
    - скилл `new-project` — процедура создания проекта;
    - гайд **«Как создавать проект»**, вики `gitmost-vvzvlad`, пространство Netmap
@@ -45,7 +47,8 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
 3. Закрой чеклист ниже — это ровно девять шагов из SPEC 8A.2.
 
 **Чеклист незакрытого (шаги плана 8A.2):** здесь только шаги плана — всё
-остальное, что переезд не закрывает, живёт в беклоге, `docs/SPEC.md` §8.
+остальное, что переезд не закрывает, живёт задачами в `projects/hammerola` на
+`gitea.vvzvlad.xyz`.
 
 - [x] **Шаг 0. Комментарии под токен.** **Сделано.** Публичная запись комментариев
       переведена под токен — это то, что закрывает дорожку от анонимного ввода до
@@ -57,7 +60,7 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       по-прежнему заставляет хаб принять и разобрать multipart с вложением.
 
       **Вместе с этим два секрета схлопнулись в один: `EDIT_TOKEN`** (решение
-      2026-08-27, SPEC §8 запись 26). `PUBLISH_TOKEN` и `COMMENT_READ_TOKEN`
+      2026-08-27, issue #26). `PUBLISH_TOKEN` и `COMMENT_READ_TOKEN`
       исчезли. Имя новое, а не старое, и это отдельное решение: `PUBLISH_TOKEN`
       врал задолго до того, как лишился пары — им уже открывались исходники
       ЛЮБОГО проекта (§7.8) и маршрут, УДАЛЯЮЩИЙ проект, — а читался как
@@ -198,8 +201,8 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       он упирался, шаг 7 снял: код ревизии теперь лежит на томе и отдаётся по её
       имени (§7.8), так что «деталь изменилась, потому что изменилась вот эта
       строка модели» стало вопросом, на который есть чем ответить. Осталось само
-      сравнение геометрии по буферам — детали в записи беклога «Сравнение двух
-      ревизий» (SPEC §8).
+      сравнение геометрии по буферам — детали в issue #10 «Сравнение двух
+      ревизий».
 - [x] ~~Завести репозиторий в Gitea и спушить~~ — сделано 2026-08-24:
       `projects/hammerola`, ветка по умолчанию `main`, `origin` настроен.
       `REGISTRY_TOKEN` отдельно не заводился: он есть на уровне организации
@@ -220,7 +223,7 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
   не требующая ни одной уязвимости.
 - **`keep_instances` не берём.** Он меняет формат экспорта целиком — буферы едут
   base64, лист несёт `{"ref": n}`, — из-за чего ломается пофайловое сравнение по
-  байтам буфера. Разобрано не в 8A, а в SPEC 8, запись «Сравнение двух ревизий».
+  байтам буфера. Разобрано не в 8A, а в issue #10 «Сравнение двух ревизий».
 - **VTK принимаем как есть.** Его жёстко требует сам `cadquery-ocp` (`vtk==9.6.2`);
   единственный способ избавиться — подменить дистрибутив на `cadquery-ocp-novtk` в
   обход объявленной зависимости. Экономия ~0.6 ГБ не стоит постоянной хрупкости.
@@ -268,7 +271,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   stored that way; it is now stored nowhere at all, because retention was its
   only reader
 - `src/client/` — the OTHER side of the wire: the `hammerola` command an author
-  runs in a model's directory (SPEC §8, entry 26). `build` publishes the `dev`
+  runs in a model's directory (issue #26). `build` publishes the `dev`
   slot, `commit` publishes an immutable revision; both pack the
   source tree, POST it, poll the job from step 5 and print the build log. THE
   REVISION IS NAMED BY THE HUB, not by the client and not by git (SPEC §7.7):
@@ -309,7 +312,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   which writes the hub's copy over it and refuses a document it cannot read a
   version out of — what this fetches goes into the agent's skills directory, so
   it is parsed before it lands there), and the six added once the hub
-  began keeping a revision's sources (SPEC §8 entry 17): `source` and `log`
+  began keeping a revision's sources (issue #17): `source` and `log`
   (`sources.py`), `artifacts` (`artifacts.py`), `diff` (`revdiff.py`), `rename`
   and `rm` (`admin.py`, over the two routes `src/app.py` grew for them). FOUR
   OF THOSE ARE SHAPED BY WHAT THEY MAY NOT DO, and the shape is the decision:
@@ -377,7 +380,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   `empty` is still the only one of those; and the SIGN-IN PAGE reads `empty` —
   the gate on everything below — and then follows `skill` and
   `client` when it says this hub has nothing on it
-  (SPEC §8 entry 48). That block — five lines a person copies and hands to their
+  (issue #48). That block — five lines a person copies and hands to their
   agent — is what the route was built for and what collects on the argument for
   answering a question about the deployment anonymously. It is on the DOOR and
   not on the list, because the list is behind the very token somebody opening an
@@ -483,7 +486,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   side is an invisible logo, so the test asserts the naming: each file's ribbon
   has to be on the opposite side of mid-grey from the background its name
   promises. Only `mark-on-light.svg` is rendered today, because the interface is
-  light everywhere; `mark-on-dark.svg` is wired in by SPEC §8 entry 35, and is
+  light everywhere; `mark-on-dark.svg` is wired in by issue #35, and is
   kept — rather than dropped as dead weight — because its geometry is held to
   the same check meanwhile
 - `model_template/` — the starter project `hammerola create` unpacks, served at

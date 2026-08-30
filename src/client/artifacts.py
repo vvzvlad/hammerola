@@ -1,7 +1,7 @@
 """`hammerola artifacts` — the STL, STEP and 3MF a build produced.
 
 A SEPARATE VERB FROM `source`, AND THE REASON IS RIGHTS, NOT CONVENIENCE
-(SPEC 8, entry 26). A build directory is public: the viewer fetches it, the
+(issue #26). A build directory is public: the viewer fetches it, the
 download buttons link into it, and every file in it is served to anybody with
 the URL, cached for a year. The CODE that produced it is behind the publishing
 secret and lives in a tree the file server cannot reach at all. One verb with a

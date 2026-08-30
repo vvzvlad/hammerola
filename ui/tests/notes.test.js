@@ -1,4 +1,4 @@
-// The two notes on a part, and telling them apart — SPEC §8, entry 11.
+// The two notes on a part, and telling them apart — issue #11.
 //
 // There are now two things called a note in this interface, they land in the
 // same box, and confusing them is the whole risk this file exists for:

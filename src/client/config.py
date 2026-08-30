@@ -29,7 +29,7 @@ the archive, why `login` reads it with `getpass` instead of taking it as an
 argument (a command line is in the shell's history and in every `ps` on the
 machine), and why the file it lands in is created 0600.
 
-ONE SECRET FOR THE WHOLE SYSTEM, decided 2026-08-27 (SPEC §8 entry 26) and true
+ONE SECRET FOR THE WHOLE SYSTEM, decided 2026-08-27 (issue #26) and true
 on BOTH SIDES since step 0 of the plan: `EDIT_TOKEN` is the only credential this
 tool knows and the only one the hub declares. There is no second key for the
 comment queue, and there was one — the hub used to check `PUBLISH_TOKEN` on a

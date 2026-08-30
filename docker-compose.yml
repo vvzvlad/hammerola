@@ -94,7 +94,7 @@ services:
     # into the Portainer server's own volume.
     environment:
       # THE secret, and the only one this service declares — one for the whole
-      # system (SPEC §8 entry 26). Replace XXX before deploying. It is what
+      # system (issue #26). Replace XXX before deploying. It is what
       # `Authorization: Bearer` carries on every route that changes something or
       # reads something private: publishing, a build's sources and log, renaming
       # a project, removing one, and the whole comment queue including writing to

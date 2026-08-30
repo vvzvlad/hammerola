@@ -28,7 +28,7 @@ promise into a 404 while the project goes on standing. Removing the project take
 the promise away with everything it was about. There is no retention anywhere on
 this service (SPEC 5.3), so this is the ONLY thing that ever takes bytes off the
 volume — which is the argument for it being big, rare and loud rather than a
-tidying tool (SPEC 8, entry 26).
+tidying tool (issue #26).
 
 IT ASKS BEFORE IT DOES IT. Not a y/n — the id has to be typed, because a y/n is
 answered by reflex and this cannot be undone: the hub keeps no copy, and the

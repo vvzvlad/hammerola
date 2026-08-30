@@ -29,7 +29,7 @@ because the volume would shadow them.
     <data>/sources/<digest>/log.txt        what the build of that revision printed
 
 `sources/` IS THE CODE OF EVERY PUBLISHED REVISION, and three things about it are
-decisions rather than arrangement (SPEC 8, entry 17).
+decisions rather than arrangement (issue #17).
 
 It is OUTSIDE the build directory. A build directory is served publicly and with
 a year of `immutable`, so a mistake there cannot be taken back — the copies are
@@ -175,7 +175,7 @@ MAX_MEMBERS = 1024
 # How many refused member names one 422 carries, and how much of each of them.
 #
 # A refusal names EVERY member whose path this hub cannot take, not just the
-# first (SPEC §8, entry 42) — a source tree whose `ref/` holds nineteen cyrillic
+# first (issue #42) — a source tree whose `ref/` holds nineteen cyrillic
 # file names is one rename job, and answering with one name at a time made it
 # nineteen pushes. But THE NAMES ARE THE SENDER'S OWN TEXT, and the sender is
 # not trusted: listing them is this hub repeating attacker-chosen bytes into a
@@ -509,7 +509,7 @@ SOURCES_DIR_NAME = "sources"
 # request body of the push, unmodified, which is what makes it possible to say
 # the code of a revision is the code that built it rather than a repacking of it.
 SOURCE_ARCHIVE_NAME = "source.tar.gz"
-# The build log, beside the code rather than only at the job (SPEC 8, entry 17).
+# The build log, beside the code rather than only at the job (issue #17).
 # The job's copy is not going anywhere — no job is ever deleted — but it is
 # addressed by a JOB id, which is per attempt and recorded against nothing, so a
 # month later the log of a revision is unreachable from the revision. This copy is
@@ -694,7 +694,7 @@ def _member_parts(name: str) -> tuple[list[str], str]:
     `name` is what the archive said with a leading `./` removed, which is what
     actually gets checked. RETURNS the fault instead of raising it, so the walk
     can collect every unusable name in the archive and answer with all of them
-    at once (SPEC §8, entry 42); `parts` is meaningful only when the fault is
+    at once (issue #42); `parts` is meaningful only when the fault is
     empty.
 
     Everything a traversal needs is refused by the component rule alone, and it
@@ -1852,8 +1852,8 @@ class Store:
         seen_names: dict[str, str] = {}
         # Member names this archive cannot have, as (name ALREADY cut and
         # escaped, why not) — and separately how many there were. Collected
-        # instead of raised, so one 422 names every one of them (SPEC §8, entry
-        # 42). The first one also turns the rest of this walk into a SURVEY: the
+        # instead of raised, so one 422 names every one of them (issue #42).
+        # The first one also turns the rest of this walk into a SURVEY: the
         # push is refused whatever else is in the archive, nothing more is
         # extracted, and the only thing left worth learning is which OTHER names
         # have to change. That is why no check below this one runs once the
@@ -2205,7 +2205,7 @@ class Store:
 
         WHAT CONSUMES THE ANSWER is the sign-in page: `/start` serves this
         boolean and the door draws its block for an agent when it is true
-        (`ui/src/HammerolaEntry.jsx`, SPEC 8 entry 48; `src/onboarding.py` has
+        (`ui/src/HammerolaEntry.jsx`, issue #48; `src/onboarding.py` has
         the accounting). The fail-closed rule was pinned before that page
         existed, and it held: it is a property of the answer, so the page
         inherited it rather than having to reinvent it.
@@ -2469,7 +2469,7 @@ class Store:
         permanent URL, which is the one thing the service promises; removing the
         project takes the promise away with the thing it was about. This is for
         "I made a test project and I am done with it", and it is meant to be the
-        big rare hammer rather than a tidying tool (SPEC 8, entry 26).
+        big rare hammer rather than a tidying tool (issue #26).
 
         THE CODE OF THE REMOVED REVISIONS GOES TOO, AND ONLY IF NOTHING ELSE
         POINTS AT IT. `sources/` is addressed by the digest of a source tree and

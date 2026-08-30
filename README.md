@@ -177,7 +177,7 @@ for the id to be typed first.
 
 <!-- THE EXAMPLE BELOW STAYS, AND SO DOES model_template/. An earlier note here
      asked for this block to be replaced by a pointer to the template the day
-     the template landed (SPEC §8 entry 31), on the argument that a contract
+     the template landed (issue #31), on the argument that a contract
      must have ONE source or the second copy drifts in silence. The template
      has landed, and the argument does not apply: NEITHER COPY CAN DRIFT,
      because both are executed. This block is lifted out of README.md and

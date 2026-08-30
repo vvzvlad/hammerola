@@ -10,8 +10,8 @@
 // widget reads the camera and writes the camera, and the interface never hears
 // about either.
 //
-// IT REPLACES THE STATIC AXIS TRIAD that used to sit in this corner (SPEC §8,
-// entries 23 and 24). That triad was three fixed SVG lines: right by accident
+// IT REPLACES THE STATIC AXIS TRIAD that used to sit in this corner
+// (issues #23 and #24). That triad was three fixed SVG lines: right by accident
 // while the model was still in its opening pose, and confidently wrong about
 // where X, Y and Z had gone the moment anybody rotated the scene. A marker that
 // lies about which way is up is worse than no marker, so it is gone rather than

@@ -5,7 +5,7 @@ WHAT IS WORTH PINNING HERE, in the order it would hurt to get wrong:
   * the COMPARISON, because a wrong answer to it is silent in both directions —
     "up to date" about a stale file teaches yesterday for another month, and
     "out of date" about a current one sends somebody to overwrite what they
-    have. Neither fails anything anywhere else (SPEC §8 entry 51);
+    have. Neither fails anything anywhere else (issue #51);
   * that a MISSING file is not an error. It is the first state every machine is
     in, and a non-zero exit for it would make the ordinary case look broken;
   * that `update` writes where it was told, in BOTH argument orders. The flag

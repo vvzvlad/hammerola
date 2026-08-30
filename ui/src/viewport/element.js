@@ -282,7 +282,7 @@ export class HmrViewport extends HTMLElement {
     // A SWAP IS EITHER OF TWO CHANGES, and the second one is why a revision
     // switch works at all. `buildKey` says the geometry was published again;
     // `base` says the geometry is somewhere else — a different revision of the
-    // same project, chosen in the picker (SPEC §8, entry 62). The same view id
+    // same project, chosen in the picker (issue #62). The same view id
     // under a new base names a DIFFERENT FILE, so without this line the element
     // would keep the scene it had and quietly disagree with the address bar.
     //

@@ -477,7 +477,7 @@ describe('which screen is drawn', () => {
 //
 // Five lines somebody copies and hands to their agent: where the skill is, where
 // the client is, what this hub's address is, install the skill and follow it,
-// ask the owner for the token (SPEC 8, entry 48). What is pinned here is the
+// ask the owner for the token (issue #48). What is pinned here is the
 // three properties that are decisions rather than layout — it is on the DOOR and
 // appears at every arrival there, every address in it is BUILT from the browser's
 // origin and the manifest's paths, and it never claims to have copied itself

@@ -3,13 +3,13 @@
 THIS FILE EXISTS BECAUSE THE README CARRIES A SECOND COPY OF THE CONTRACT.
 `printables()`, `views()`, `checks()` and `import checklib` are one agreement
 between a model and the hub, and it is written down in two places on purpose:
-`model_template/`, which SPEC §8 entry 31 put on the hub and which
+`model_template/`, which issue #31 put on the hub and which
 `hammerola create` unpacks, and the block in README.md, which is the one a
 person deciding whether to use the tool at all can read without downloading
 anything. The comment above that block says why both are kept. WHAT MAKES TWO
 COPIES SAFE IS THAT BOTH ARE EXECUTED -- this file builds one and
 tests/test_template.py builds the other -- because a code block nobody executes
-is exactly the silent drift entry 46 warns about: the example goes on looking
+is exactly the silent drift issue #46 warns about: the example goes on looking
 correct for as long as nobody tries it, and the first person to try it is an
 author copying it.
 

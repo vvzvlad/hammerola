@@ -356,7 +356,7 @@ describe('setState', () => {
 
     it('a new BASE alone is a live swap too', () => {
       // Choosing another revision in the picker, which no longer reloads the
-      // page (SPEC §8, entry 62). `base` is where the view file is fetched from,
+      // page (issue #62). `base` is where the view file is fetched from,
       // so the same view id under a new base names a DIFFERENT FILE.
       //
       // ALONE, because that really happens: `latest` and the revision it points
