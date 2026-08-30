@@ -196,6 +196,54 @@ def count_checks(func):
     return 0
 
 
+# Seconds. A section shorter than this gets one shared line at the bottom
+# instead of a line of its own. THE NUMBER IS THE PRECISION OF THE COLUMN BESIDE
+# IT: the rows print as `%.1f`s, like every other timing this build prints
+# (assembly.render_previews, views.export_views), so anything under 0.1 s comes
+# out as `0.0s` and says only that it existed. A model marking a section inside
+# a loop can produce dozens of those, and dozens of `0.0s` rows would bury the
+# one row the table is read for.
+SECTION_FLOOR = 0.1
+
+
+def print_check_sections():
+    """Print what each `checklib.section(...)` block of checks() cost.
+
+    THE CORE PRINTS THIS, NOT THE MODEL, and that placement is the feature: the
+    call site is wrapped in try/finally, so the table comes out of a build that
+    FAILED its checks as well -- which is the log anybody reads. A model that
+    printed its own timings would print them only on the runs that got that far.
+
+    Longest first, because the question is always which one to look at. Sections
+    below SECTION_FLOOR collapse into one line: their count is what matters
+    (twelve tiny sections is a shape worth seeing), not twelve labels.
+
+    checklib is imported HERE rather than at module level so this reaches the
+    module the MODEL filled. The model's own `import checklib` may be what loads
+    it, through the shim at the repository root, and there must be exactly one
+    module: two would mean the model records into one and this reads the other,
+    printing an empty table for a run that measured itself (the same trap
+    `geometry._warn_if_checklib_shadowed` exists for).
+    """
+    from . import checklib
+
+    recorded = checklib.recorded_sections()
+    if not recorded:
+        return
+    ranked = sorted(recorded.items(), key=lambda item: item[1], reverse=True)
+    # Sorted descending, so everything at or above the floor comes first and the
+    # rest is the tail -- no second pass, and the two halves cannot disagree.
+    named = [row for row in ranked if row[1] >= SECTION_FLOOR]
+    rest = ranked[len(named):]
+
+    print("check sections:")
+    for label, seconds in named:
+        print(f"  {label}: {seconds:.1f}s")
+    if rest:
+        print(f"  other {len(rest)} sections: "
+              f"{sum(seconds for _, seconds in rest):.1f}s")
+
+
 def checks_call_args(checks, out_dir):
     """Nothing, or the build directory -- whichever the signature asks for.
 
@@ -305,6 +353,38 @@ def run_checks(model, out_dir):
     except Exception as exc:
         raise BuildError(f"checks() raised {type(exc).__name__}{fail_site(exc)}: "
                          f"{exc}") from exc
+    finally:
+        # AFTER the failure paths above, not instead of them: the timings are
+        # most wanted on the build that went red, and a `finally` is the only
+        # place that covers the raise as well as the return.
+        #
+        # NOTHING IN HERE MAY RAISE. An exception leaving a `finally` REPLACES
+        # the exception on its way out, so a printing bug would swallow the
+        # BuildError naming the check that failed and report itself instead --
+        # the build would go red for the wrong reason and the real one would be
+        # gone. Hence the blanket catch, which is otherwise not this file's
+        # style.
+        #
+        # AND THE RESCUE PRINT IS WRAPPED TOO, which is the half that was
+        # missing: the one realistic way a function whose whole job is printing
+        # fails is that WRITING fails -- a closed or broken stdout -- and in
+        # exactly that case the `print` in the handler raises the same error
+        # again, out of the `finally`, doing the substitution this block exists
+        # to prevent. It was reproduced: the build reported `ValueError: I/O
+        # operation on closed file` instead of the assert that failed, and a
+        # build whose checks all passed went red with nothing wrong in it. The
+        # inner handler is deliberately empty -- there is nowhere left to
+        # report to, and the timing table is worth nothing against the verdict.
+        try:
+            print_check_sections()
+        except Exception as printing_error:  # never mask the verdict above
+            try:
+                print(f"warning: the check section timings could not be printed "
+                      f"({type(printing_error).__name__}: {printing_error}). The "
+                      "checks themselves are unaffected -- this is the timing "
+                      "table only.")
+            except Exception:
+                pass
 
     if result is None:
         problems = []

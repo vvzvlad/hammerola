@@ -33,9 +33,29 @@ A part modelled lying on its side has to be rotated before these two mean
 anything.
 """
 
+import contextlib
 import math
+import time
+# `import types`, not `from types import SimpleNamespace`: a bare name
+# imported here becomes a public name of this module, and the root shim then
+# owes it a re-export (test_everything_a_model_calls_is_re_exported).
+import types
 
-# Millimetres. Volumes below this are boolean noise, not overlap.
+# CUBIC millimetres -- it is compared against volumes, and this line said
+# "Millimetres" while `is_empty` said "cubic millimetres" a screenful below.
+# Volumes below this are boolean noise, not overlap.
+#
+# IT WAS CALIBRATED FOR ONE QUESTION AND IS NOW USED FOR TWO. The question it
+# was chosen for is "did this boolean BETWEEN TWO PARTS return real overlap or
+# arithmetic dust"; `is_empty` asks it of a WHOLE PART, which is a different
+# question with the same units and no measurement behind this value. It is
+# reused rather than given a second constant because on this scale the two
+# cannot disagree in practice: the smallest thing a printer can put down is a
+# 0.4 mm extrusion at a 0.2 mm layer over 0.4 mm, i.e. 0.032 mm3, more than
+# four orders of magnitude above this. A body that is real but under this
+# threshold would have to be a sliver no process could make. Give `is_empty` a threshold
+# of its own the day a caller has a reason to want a different one -- the
+# parameter is already there.
 DEFAULT_VOLUME_TOL = 1e-6
 # A face normal is "in the plane" when its Z component is under this. Pure
 # geometry, not a fudge: a wall meeting the joint at a right angle gives 0.0,
@@ -75,16 +95,130 @@ def recorded_interference():
     return dict(_INTERFERENCE)
 
 
+# What each `with section(...)` block of checks() cost, in seconds, summed by
+# label. Written by `section` below; PRINTED BY THE CORE and not by the model
+# (cadbuild.modelchecks.run_checks), so the table comes out on a failed build
+# too -- which is the log somebody actually opens.
+#
+# The same shape as _INTERFERENCE above and for the same reason: a record of
+# work already done, taken as the work goes, so reading it costs nothing and
+# accumulates over the whole run. A label reused -- inside a loop, or in two
+# places -- is ONE line whose seconds are the sum, which is the point: what a
+# repeated stretch costs altogether is the number that decides anything.
+#
+# NESTED SECTIONS EACH MEASURE THEIR OWN WALL TIME, so an inner one is also
+# inside its outer one's total and the column does not add up to the run.
+# Left that way deliberately: subtracting inner time would make a label's number
+# depend on where else it was used.
+_SECTIONS = {}
+
+
+@contextlib.contextmanager
+def section(label):
+    """Mark a stretch of checks() so the build log can say what it cost.
+
+        def checks(out_dir):
+            problems = []
+            with checklib.section("interference"):
+                problems += checklib.pairwise_interference(parts, names)
+            with checklib.section("probe grid"):
+                for x, y in grid:
+                    assert solid(x, y, 2.0), f"no material at {x},{y}"
+            return problems
+
+    Seconds per label, longest first, printed by the build after checks() ends
+    -- including when it ends by failing.
+
+    WHY THIS AND NOT A DECORATOR ON A HELPER. The hub counts the checks in a
+    model by reading the SOURCE of `checks()` (modelchecks.count_checks), and a
+    `checks()` with no check in its own body fails the build outright -- "an
+    empty checks() is worse than none". Splitting the body into decorated
+    helpers would leave exactly that: a `checks()` that only calls things. A
+    `with` block leaves every assert where the counter can see it, which is
+    measured rather than assumed -- `tests/cadbuild/test_modelchecks.py` counts
+    asserts and `problems +=` lines sitting inside one.
+
+    WHY IT IS WORTH MARKING ANYTHING AT ALL. Phases of a build are timed by
+    build.py, and on a real model measured 2026-08-29 that was not enough: the
+    checks phase was 495 seconds and 52% of it sat in a single loop inside it,
+    which no per-phase number can point at.
+
+    The label is a string and is refused if it is not one -- it is a table
+    heading, and a stray tuple or Path would come out as one.
+    """
+    if not isinstance(label, str):
+        raise TypeError(
+            f"section() takes a label to print, got {type(label).__name__}. "
+            "Write it as `with checklib.section('the joint'):`.")
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        # In `finally`, so a check that fails inside a section still leaves its
+        # cost behind: the failed build is the one whose timing is read.
+        _SECTIONS[label] = _SECTIONS.get(label, 0.0) + (time.monotonic() - started)
+
+
+def recorded_sections():
+    """`{label: seconds}` for every section() block that has finished so far."""
+    return dict(_SECTIONS)
+
+
 # --------------------------------------------------------------------------
 # Shared helpers
 # --------------------------------------------------------------------------
 
-def _shape(obj, where):
-    """Accept a Workplane or a bare Shape, hand back a Shape."""
-    shape = obj.val() if hasattr(obj, "val") else obj
-    if not hasattr(shape, "BoundingBox"):
-        raise TypeError(f"{where}: expected a CadQuery object, got {type(obj).__name__}")
-    return shape
+# There is no `_shape` helper here any more, and its absence is deliberate.
+# It returned `Workplane.val()` -- the FIRST body -- under the justification
+# "fine where one body is all there can be (a printable is one part)". Both of
+# its callers took arbitrary assembly objects rather than printables, so the
+# sentence excused nothing while reading like it had been checked: measured on
+# cadquery 2.8.0, `pairwise_interference` missed 800.00 mm3 of interference
+# because the overlap was with the SECOND body of a part, and
+# `mating_face_flat` reported "there is no flat mating face there at all" for a
+# joint that lay on the second body. Everything here goes through `_shapes`.
+# Bring a first-body helper back only for a caller that can say why one body is
+# all there can be -- and none of the callers here can.
+def _shapes(obj, where):
+    """Every body a Workplane holds, not just the first. A bare Shape is one.
+
+    `val()` is the first object on the stack, so a Workplane put together with
+    `.add()` gets judged on its first body alone. Measured on cadquery 2.8.0:
+    two 10 mm boxes 50 mm apart, added into one Workplane, give `vals()` of
+    length 2 -- and a classifier built on `val()` answers OUT at the centre of
+    the second box.
+
+    A LOCAL ANALOGUE OF `geometry.as_shapes` RATHER THAN AN IMPORT OF IT, and
+    the reason is the same one that made `checklib.py` at the repository root
+    resolve this file by PATH. That shim loads this module with
+    `spec_from_file_location` under the name `src.cadbuild.checklib` without
+    importing `src.cadbuild` at all, precisely because a model project owns the
+    name `src` (its root goes on sys.path first, see geometry.load_model). A
+    `from .geometry import as_shapes` here would ask for that parent package
+    anyway and put the whole shim back behind the name it was taken out from
+    behind. That is not a prediction: the import was tried, and it turns
+    `test_the_shim_survives_a_model_project_that_has_a_src_of_its_own` red --
+    the test asserts the name `src` is never touched at all -- along with
+    `test_everything_a_model_calls_is_re_exported`, since an imported function
+    is a public name of this module and the root shim would then owe it a
+    re-export.
+
+    The error discipline differs too, and it is not cosmetic: as_shapes raises
+    BuildError, which belongs to the hub, while everything in this file raises
+    what a model author's own code raises -- run_checks turns a ValueError or a
+    TypeError out of checks() into a failed build with the message and the line,
+    which is the same treatment an assert gets.
+
+    An empty stack comes back as an empty list rather than as a refusal here:
+    the caller that cares (material_at) has one message for "no geometry" and
+    "geometry with no solid in it", because they are the same mistake.
+    """
+    shapes = list(obj.vals()) if hasattr(obj, "vals") else [obj]
+    for shape in shapes:
+        if not hasattr(shape, "BoundingBox"):
+            raise TypeError(
+                f"{where}: expected CadQuery geometry, got {type(shape).__name__}")
+    return shapes
 
 
 def material_at(part, name="part"):
@@ -132,12 +266,31 @@ def material_at(part, name="part"):
     not update it. Take a fresh probe after a transform, and do not cache one
     across a rebuild.
 
+    EVERY BODY IS PROBED, not the first one. A Workplane put together with
+    `.add()` holds several, and the probe covers all of them: it holds ONE
+    CLASSIFIER PER SOLID and answers yes as soon as one of them says yes.
+    Measured on cadquery 2.8.0 -- on two 10 mm boxes 50 mm apart added into one
+    Workplane, a classifier built the old way (on `val()`) answered OUT at the
+    centre of the second box.
+
+    Per solid, and not over a compound of them, because a classifier built over
+    a compound answers WRONGLY on bodies that touch or nest -- it is documented
+    for a solid, and over a compound the nearest face wins whichever solid it
+    belongs to. On two touching 10 mm boxes it read "no material" inside the
+    second one; on a 20 mm box holding a 2 mm cube it read "no material" over
+    most of the box. The comment at the code has the points and the cost.
+
+    A PART WITH NO SOLID IN IT IS REFUSED rather than probed. That is what a
+    boolean which removed everything leaves behind, and the reason for the
+    refusal is that the alternatives lie -- see the message itself.
+
     Anything with a solid in it works -- a Workplane, a Shape, a Compound --
     exactly like the other checks here. `name` only improves the error message
-    when it is handed something that is not geometry.
+    when it is handed something that is not geometry, or geometry with nothing
+    in it.
     """
     # THE TYPE CHECK COMES FIRST, BEFORE THE KERNEL IS IMPORTED, and the order
-    # is the whole point rather than style. `_shape` is plain Python; the OCP
+    # is the whole point rather than style. `_shapes` is plain Python; the OCP
     # import below needs the native OpenCASCADE libraries, which exist in the
     # hub's image and in very few other places. With the import first, handing
     # this a string answered `ImportError: libGL.so.1` on any machine without
@@ -145,28 +298,131 @@ def material_at(part, name="part"):
     # and one that made a test of the refusal impossible to run anywhere the
     # kernel is absent. That is exactly how it was caught: CI went red on the
     # test that asserts the refusal, in a container that has no OpenCASCADE.
-    shape = _shape(part, name)
+    shapes = _shapes(part, name)
 
     from OCP.BRepClass3d import BRepClass3d_SolidClassifier
     from OCP.gp import gp_Pnt
     from OCP.TopAbs import TopAbs_OUT
 
-    classifier = BRepClass3d_SolidClassifier(shape.wrapped)
+    solids = [solid for shape in shapes for solid in shape.Solids()]
+    if not solids:
+        # TWO DIFFERENT EMPTIES, and one message describing both would be false
+        # about one of them: a Workplane with an empty stack has no body at all,
+        # while a boolean that removed everything leaves a body that still looks
+        # like geometry. The second is the one worth explaining at length --
+        # nothing about it says "empty" until the volume is asked for.
+        if not shapes:
+            what = (
+                "there is nothing here at all -- `.vals()` is empty, so not "
+                "even a body came through. An empty Workplane, or a stack that "
+                "every operation dropped.")
+        else:
+            what = (
+                f"{len(shapes)} object(s) came through, not one of them with a "
+                "solid in it. A boolean that removed everything leaves exactly "
+                "this, and it does not look empty: `.vals()` is still a list "
+                "holding one Compound, so it is still truthy, and only the "
+                "VOLUME says the material is gone (checklib.is_empty is how to "
+                "ask). It is refused instead of probed because both ways of "
+                "asking about such a body lie, measured on cadquery 2.8.0. "
+                "Probed: BRepClass3d_SolidClassifier built on it answers IN at "
+                "EVERY point -- (0, 0, 0), (1000, 1000, 1000) and "
+                "(-50000, 30000, 7000) all read as material -- so every `assert "
+                "solid(...)` written against it passes and the part is "
+                "certified solid everywhere in the universe. Intersected: it "
+                "answers as its PREVIOUS version, because Workplane.intersect "
+                "resolves its operand with findSolid(searchParents=True), which "
+                "walks back up the chain to the solid that was there before the "
+                "boolean emptied it -- a 4 mm probe cube against an emptied "
+                "10 mm box measured 64.00 mm3, the whole cube.")
+        raise ValueError(
+            f"material_at({name}): there is no solid here to probe -- {what} "
+            "Find the operation that came back empty; the geometry is what is "
+            "wrong, not the check.")
+
+    # ONE CLASSIFIER PER SOLID, and the answers OR'd together. The obvious
+    # alternative -- `Compound.makeCompound(solids)` and one classifier over it
+    # -- is WRONG, and wrong quietly: BRepClass3d_SolidClassifier is documented
+    # for a SOLID, and over a compound it resolves a point against the nearest
+    # face among all of them, so a face belonging to a different solid decides
+    # the verdict. Measured on cadquery 2.8.0, against per-solid classifiers and
+    # against an independent check (a 0.2 mm cube intersected solid by solid),
+    # which agreed with each other everywhere:
+    #
+    #   two 10 mm boxes 50 mm apart   compound right   val() wrong
+    #   the same two boxes TOUCHING   compound WRONG   val() wrong
+    #   20 mm box, 2 mm cube INSIDE   compound WRONG   val() right
+    #
+    # On the touching pair the compound answered "no material" at (7, 0, 0),
+    # (10, 0, 0) and (12, 0, 0), all of which are inside the second box; on the
+    # nested pair it answered "no material" at (4, 0, 0) and (8, 0, 0), which
+    # are inside the 20 mm box -- so a model that added an insert with `.add()`
+    # would have read as hollow over most of its own body. Note the third row:
+    # there the compound is worse than the single-body classifier this replaced.
+    #
+    # THE COST IS O(number of solids) PER POINT rather than O(1), and the short
+    # circuit only helps when the answer is yes. Measured on this machine,
+    # 20000 probes: ~11 us per classifier consulted, so a miss over 3 solids is
+    # 33 us against 11 us for one, while a hit on the first solid stays at ~11 us
+    # whatever the count. An ordinary part is 1-3 solids. There is deliberately
+    # no bounding-box prefilter in front of this: it has not been measured to be
+    # needed, and it would be a second, subtler thing to get wrong.
+    classifiers = [BRepClass3d_SolidClassifier(solid.wrapped) for solid in solids]
 
     def probe(x, y, z):
-        classifier.Perform(gp_Pnt(float(x), float(y), float(z)), 1e-7)
-        return classifier.State() != TopAbs_OUT
+        # The point is built once and handed to each classifier in turn.
+        point = gp_Pnt(float(x), float(y), float(z))
+        for classifier in classifiers:
+            classifier.Perform(point, 1e-7)
+            if classifier.State() != TopAbs_OUT:
+                return True
+        return False
 
     return probe
 
 
-def _classifier(shape):
-    """The internal spelling: `material_at` for a shape already validated.
+def volume(obj):
+    """Cubic millimetres of material, over every body and every solid in it.
 
-    Kept as a name of its own because the callers inside this module have a
-    `Shape` in hand and `material_at` would run `_shape` over it a second time.
+    The one honest answer to "did anything survive that boolean". `assert
+    wp.vals()` is the answer people write instead, and IT CANNOT FAIL: measured
+    on cadquery 2.8.0, a 10 mm box intersected with a 1 mm box 100 mm away
+    hands back a Workplane whose `.vals()` is a list of ONE Compound -- truthy,
+    length 1, no solids inside it, total volume 0.0. In the model that produced
+    this function an `assert wp.vals()` had stood for months over the line
+    beneath it, which read a bounding box off exactly that empty compound.
+
+    THE BOUNDING BOX IS NOT AN ALTERNATIVE either: `BoundingBox()` on that body
+    raises `Standard_Failure: Bnd_Box is void`, so a check reaching for extents
+    to see whether anything is left dies with a message about a box.
+
+    Solids only, like everywhere else here -- a sketch, a wire or a loose face
+    is not material and contributes nothing. A Workplane, a Shape and a Compound
+    are all accepted, and every body of a Workplane is counted (`.add()` puts
+    several on the stack).
     """
-    return material_at(shape, "shape")
+    shapes = _shapes(obj, "volume")
+    # The 0.0 start is not decoration: `sum([])` is the int 0, and this function
+    # promises cubic millimetres for every input including the empty one.
+    return sum((solid.Volume() for shape in shapes for solid in shape.Solids()),
+               0.0)
+
+
+def is_empty(obj, tol=DEFAULT_VOLUME_TOL):
+    """True when nothing of substance is left -- the predicate over volume().
+
+        assert not checklib.is_empty(body), "the pocket cut the whole part away"
+
+    Write this where `assert body.vals()` suggests itself: that one is true for
+    an emptied body (see volume), so it is an assert that cannot fail.
+
+    `tol` is in cubic millimetres. Its default is DEFAULT_VOLUME_TOL, which was
+    chosen for a different question -- boolean noise between two parts, not
+    emptiness of one -- and is reused because nothing printable comes anywhere
+    near it; the reasoning is written out at the constant. Pass your own where
+    that matters.
+    """
+    return volume(obj) <= tol
 
 
 def _boxes_apart(a, b, tol):
@@ -174,6 +430,23 @@ def _boxes_apart(a, b, tol):
     return (a.xmin > b.xmax + tol or b.xmin > a.xmax + tol
             or a.ymin > b.ymax + tol or b.ymin > a.ymax + tol
             or a.zmin > b.zmax + tol or b.zmin > a.zmax + tol)
+
+
+def _hull(boxes):
+    """One box enclosing them all -- for rejecting a PART against a part.
+
+    A multi-body part has no single bounding box of its own, and the one thing
+    a prefilter may never do is reject a pair that does overlap. Measured on
+    cadquery 2.8.0: a part whose bodies sit at X -5..5 and X 25..35 has a
+    `val().BoundingBox()` of -5..5, so a neighbour at X 27..37 was rejected as
+    "nowhere near" while sharing 800.00 mm3 with the second body. The hull is
+    a superset of every body, so it can only ever be too generous -- and the
+    per-body pair below is what makes it tight again.
+    """
+    return types.SimpleNamespace(
+        xmin=min(b.xmin for b in boxes), xmax=max(b.xmax for b in boxes),
+        ymin=min(b.ymin for b in boxes), ymax=max(b.ymax for b in boxes),
+        zmin=min(b.zmin for b in boxes), zmax=max(b.zmax for b in boxes))
 
 
 def name_pairs(pairs, argument, where=""):
@@ -253,13 +526,26 @@ def pairwise_interference(objects, names, allowed_touching=(), tol=DEFAULT_VOLUM
     parts pass without being listed. `tol` is in cubic millimetres and exists
     to swallow boolean noise, nothing more.
 
+    A PART MAY BE SEVERAL BODIES and all of them are checked, against all of
+    the other part's. What is reported is one line per PART pair: the volumes
+    of every overlapping body pair added up, and the region enclosing them.
+    That is the pair a person can act on -- "which two parts collide" -- and it
+    keeps `allowed_touching`, which names parts, meaning what it says. When the
+    kernel refuses one body pair the whole part pair is reported as untestable
+    rather than answered from the rest: a partial sum understates the overlap
+    while reading exactly like a verdict.
+
     Returns a list of problem strings.
     """
-    shapes = [_shape(obj, f"object #{i}") for i, obj in enumerate(objects)]
+    # EVERY BODY OF EVERY OBJECT. An object here is a part as assembled, which
+    # is routinely several bodies -- `.add()`, a helper returning a lid and its
+    # lip -- and judging one of them was not a simplification but a hole: see
+    # the note where `_shape` used to be for the 800.00 mm3 it measured through.
+    bodies = [_shapes(obj, f"object #{i}") for i, obj in enumerate(objects)]
     names = list(names)
-    if len(names) != len(shapes):
+    if len(names) != len(bodies):
         raise ValueError(
-            f"pairwise_interference got {len(shapes)} objects but {len(names)} names"
+            f"pairwise_interference got {len(bodies)} objects but {len(names)} names"
         )
 
     skip = name_pairs(allowed_touching, "allowed_touching")
@@ -274,31 +560,60 @@ def pairwise_interference(objects, names, allowed_touching=(), tol=DEFAULT_VOLUM
                 "An exemption for a part that is not there exempts nothing."
             )
 
-    boxes = [s.BoundingBox() for s in shapes]
+    # Two levels of box, and they do different jobs. `hulls` rejects a PART
+    # against a part in one comparison; `boxes` is per body, and rejects the
+    # body pairs inside a part pair that survived. Neither may reject a pair
+    # that overlaps, which is why the outer one is a hull rather than the first
+    # body's box (see _hull).
+    boxes = [[body.BoundingBox() for body in group] for group in bodies]
+    hulls = [_hull(group) if group else None for group in boxes]
     problems = []
 
-    for i in range(len(shapes)):
-        for j in range(i + 1, len(shapes)):
+    for i in range(len(bodies)):
+        for j in range(i + 1, len(bodies)):
             if frozenset((names[i], names[j])) in skip:
                 continue
             # Cheap reject first: most pairs in an assembly are nowhere near
             # each other, and a boolean on a complex solid is not free.
-            if _boxes_apart(boxes[i], boxes[j], 0.0):
+            if hulls[i] is None or hulls[j] is None:
+                continue  # an object with no bodies cannot overlap anything
+            if _boxes_apart(hulls[i], hulls[j], 0.0):
                 continue
-            try:
-                common = shapes[i].intersect(shapes[j])
-            except Exception as exc:  # OCCT gives up on some degenerate pairs
+
+            volume = 0.0
+            region = []
+            failure = None
+            for bi, left in enumerate(bodies[i]):
+                for bj, right in enumerate(bodies[j]):
+                    if _boxes_apart(boxes[i][bi], boxes[j][bj], 0.0):
+                        continue
+                    try:
+                        common = left.intersect(right)
+                    except Exception as exc:  # OCCT gives up on some pairs
+                        failure = exc
+                        break
+                    shared = sum(solid.Volume() for solid in common.Solids())
+                    if shared > 0.0:
+                        volume += shared
+                        region.append(common.BoundingBox())
+                if failure is not None:
+                    break
+
+            if failure is not None:
+                # One body pair the kernel could not do makes the whole part
+                # pair unanswerable: a partial sum would understate the overlap
+                # and read like a verdict.
                 problems.append(
                     f"cannot test {names[i]!r} against {names[j]!r}: the "
-                    f"intersection failed ({type(exc).__name__}: {exc}). "
+                    f"intersection failed ({type(failure).__name__}: {failure}). "
                     "Check that pair by eye."
                 )
                 continue
-            volume = sum(solid.Volume() for solid in common.Solids())
+
             # Recorded whether it is a problem or not -- see _INTERFERENCE.
             _INTERFERENCE["|".join(sorted((names[i], names[j])))] = volume
             if volume > tol:
-                box = common.BoundingBox()
+                box = _hull(region)
                 problems.append(
                     f"{names[i]!r} and {names[j]!r} share {volume:.2f} mm3 of "
                     f"space, in the region "
@@ -360,14 +675,22 @@ def mating_face_flat(part, plane_z, tol=PLANE_TOL, name="part",
     Where that matters, split the part at the joint so the plane becomes a real
     edge, or check the section by eye.
 
+    A part may be several bodies; the faces of all of them are examined
+    together, so a joint carried by the second body counts exactly like one on
+    the first.
+
     Returns a list of problem strings.
     """
-    shape = _shape(part, name)
+    # EVERY BODY, and the faces of all of them pooled: a part is often several
+    # bodies and the joint does not have to be on the first. Judging one body
+    # gave a false RED, which is the worse direction -- measured on cadquery
+    # 2.8.0, a two-body part whose second body carries the face at z=2 was told
+    # "there is no flat mating face there at all".
     problems = []
     flat_area = 0.0
     seen_faces = 0
 
-    for face in shape.Faces():
+    for face in [f for shape in _shapes(part, name) for f in shape.Faces()]:
         box = face.BoundingBox()
         if box.zmin > plane_z + tol or box.zmax < plane_z - tol:
             continue  # nowhere near the joint
@@ -457,9 +780,19 @@ def material_under_head(part, centre, head_diameter, depth, name="part", angles=
     plane itself, where the classifier counts ON as material and the check
     passes for every part ever handed to it, hole or no hole.
 
+    The probe comes from `material_at`, so this inherits both of its rules:
+    every body of a Workplane is probed rather than the first, and a part with
+    no solid left in it is refused instead of answering "material" everywhere.
+
     Returns a list of problem strings.
     """
-    shape = _shape(part, name)
+    # Validated here as well as inside material_at below, and the point is the
+    # ORDER: this is plain Python, the classifier needs the native kernel, and a
+    # bad argument has to answer about the argument on a machine that has no
+    # OpenCASCADE (the same reason material_at checks its type before importing
+    # OCP). Nothing is kept -- the probe is built from `part` itself further
+    # down, because collapsing it to one body here is the defect this call fixed.
+    _shapes(part, name)
 
     try:
         cx, cy, cz = centre
@@ -478,7 +811,7 @@ def material_under_head(part, centre, head_diameter, depth, name="part", angles=
             "boss height -- or negative for a head seating from below."
         )
 
-    inside = _classifier(shape)
+    inside = material_at(part, name)
     radius = head_diameter / 2.0
     levels = max(3, int(abs(depth) / 0.5) + 1)
     misses = []

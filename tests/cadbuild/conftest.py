@@ -42,8 +42,8 @@ from src.cadbuild import checklib, paths
 def guard_module_state():
     """Fail the test that dirties shared state, not the one that trips over it.
 
-    Two pieces of module-level mutable state came across with this package, and
-    both are read by something far away from where they are written:
+    Three pieces of module-level mutable state live in this package, and every
+    one of them is read by something far away from where it is written:
 
       * `paths._root` -- the project this run is about. Set by the fixture
         below and by any test that pins a root of its own; left behind, it
@@ -54,6 +54,12 @@ def guard_module_state():
         per subassembly), and `collect_metrics` copies whatever is in it into
         metrics.json. A test that measures an overlap and does not clear it
         therefore turns up inside an unrelated test's metrics.
+      * `checklib._SECTIONS` -- what each `with checklib.section(...)` block of
+        checks() cost. Accumulates for the same reason and is read by the same
+        kind of distant reader: `modelchecks.run_checks` prints it in a
+        `finally`, so a section left behind by one test comes out in the log of
+        every later test that runs checks, attached to a run that never
+        measured it.
 
     `isolated_project` REQUESTS this fixture by name rather than merely being
     declared after it, and that is the only thing that gets the ordering right:
@@ -69,16 +75,18 @@ def guard_module_state():
     some unrelated test that assumed a clean start, usually in another file and
     reliably never when that test is run on its own.
     """
-    assert paths._root is None and checklib._INTERFERENCE == {}, (
+    assert (paths._root is None and checklib._INTERFERENCE == {}
+            and checklib._SECTIONS == {}), (
         "src.cadbuild module state was already dirty when this test started, so "
         "an EARLIER test left it behind; this test is where it surfaced, not "
         "where it was caused")
     yield
-    assert paths._root is None and checklib._INTERFERENCE == {}, (
-        "this test left src.cadbuild module state behind (paths._root or "
-        "checklib._INTERFERENCE). Without this assertion the failure would have "
-        "landed on some unrelated test later, under one particular collection "
-        "order")
+    assert (paths._root is None and checklib._INTERFERENCE == {}
+            and checklib._SECTIONS == {}), (
+        "this test left src.cadbuild module state behind (paths._root, "
+        "checklib._INTERFERENCE or checklib._SECTIONS). Without this assertion "
+        "the failure would have landed on some unrelated test later, under one "
+        "particular collection order")
 
 
 @pytest.fixture(autouse=True)
