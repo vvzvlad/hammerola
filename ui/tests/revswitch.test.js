@@ -749,6 +749,314 @@ describe('what does not survive', () => {
   })
 })
 
+// -- the OTHER door into another build ----------------------------------------
+//
+// Switch on the "new build" banner. It is a revision switch by every fact that
+// matters — another commit, built from other sources, with a bounding box of its
+// own and parts the previous build need not have had — and the list above used
+// to be written out in `switchBuild` and nowhere else, so none of it happened
+// here. `leaveBuild` is now the one list and both doors call it; these are the
+// same claims asked of the second door, and each one was a live defect until the
+// method existed.
+//
+// The offer is a build with the SAME views the fixture is on, so the view id
+// survives and the section is asked the question it is meant to be asked. The
+// viewport is absent (`host.current` is null), which `takePending` reads as "not
+// busy" — the deferring is interface.test.js's subject, not this one's.
+
+describe('taking the banner\'s build', () => {
+  /** The page with an offer standing, on a build with a section laid on it. */
+  const offered = (over) => component({
+    pending: { commit: 'ccc', built: '2026-08-29T10:00:00Z', downloads: {}, variants: VIEWS },
+    ...over,
+  })
+
+  it('sends the viewport no pin belonging to the build the banner replaced', () => {
+    // THE TWIN of the swap's own claim above, and the reason it had to be
+    // written twice: a pin is a POINT IN THE MODEL SPACE of the build it was
+    // placed on, `sync` reads the pins straight off `comments` on every frame,
+    // and the build the banner is offering need not contain that point at all.
+    // Without it the old pins were drawn on geometry that never carried them —
+    // invisible as a defect, because a pin looks like a pin wherever it lands.
+    const c = offered({
+      comments: [{ id: 'c1', label: '1', part: 'plate', pin: [1, 2, 3], resolved: false }],
+      activePin: 'c1',
+      composer: { part: 'plate', partId: '/model/plate', p: [4, 5, 6], text: 'x' },
+    })
+    delete c.sync
+    const seen = []
+    const listen = (event) => seen.push(event.detail)
+    window.addEventListener(STATE, listen)
+    onTestFinished(() => window.removeEventListener(STATE, listen))
+
+    c.takePending()
+
+    expect(c.state.meta.commit, 'the offer was not taken at all').toBe('ccc')
+    expect(seen).toHaveLength(1)
+    expect(seen[0].pins).toEqual([])
+    expect(c.state.comments).toEqual([])
+    expect(c.state.activePin).toBeNull()
+  })
+
+  it('takes the draft\'s anchor away and leaves the sentence', () => {
+    // The half that leaves the browser. `sendComment` posts to `meta.commit`,
+    // which is the BANNER's the moment this lands, carrying `part`, `partId`,
+    // the 3D point and the measurement — every one of them observed on the
+    // build that has just gone, every one of them filed as a fact about the one
+    // that replaced it, and the numbers among them reaching an agent as a task.
+    const c = offered({
+      composer: {
+        part: 'plate', partId: '/model/plate', p: [1, 2, 3],
+        text: 'this hole is', photo: null, meas: '3.00 mm', move: 'plate by 2 mm',
+      },
+    })
+
+    c.takePending()
+
+    expect(c.state.composer.text).toBe('this hole is')
+    expect(c.state.composer.part).toBe('')
+    expect(c.state.composer.partId).toBeNull()
+    expect(c.state.composer.p).toBeNull()
+    expect(c.state.composer.meas).toBeNull()
+    expect(c.state.composer.move).toBeNull()
+  })
+
+  it('drops the selection, the menu and every popover', () => {
+    // `sel` is a solid path of the build that left and goes to the viewport as
+    // `selected` on the next frame; the rest are menus about a model that is no
+    // longer under them.
+    const c = offered({
+      sel: '/model/plate', selName: 'plate',
+      menu: { id: '/model/plate', x: 10, y: 20 },
+      revOpen: true, dlOpen: true, secPop: true, tokenPop: true, tokenDraft: 'x',
+      notePop: 'plate', noteDraft: 'half a note',
+      measure: { text: '3.00 mm', note: '', full: '3.00 mm' },
+      moved: { id: '/model/plate', name: 'plate', mag: 2 },
+    })
+    delete c.sync
+    const seen = []
+    const listen = (event) => seen.push(event.detail)
+    window.addEventListener(STATE, listen)
+    onTestFinished(() => window.removeEventListener(STATE, listen))
+
+    c.takePending()
+
+    expect(c.state.sel).toBeNull()
+    expect(c.state.selName).toBe('')
+    expect(c.state.menu).toBeNull()
+    expect(c.state.revOpen).toBe(false)
+    expect(c.state.dlOpen).toBe(false)
+    expect(c.state.secPop).toBe(false)
+    expect(c.state.tokenPop).toBe(false)
+    expect(c.state.notePop).toBeNull()
+    expect(c.state.noteDraft).toBe('')
+    expect(c.state.measure).toBeNull()
+    expect(c.state.moved).toBeNull()
+    // And the viewport is told, since a selection is its state too.
+    expect(seen[0].selected).toBeNull()
+  })
+
+  it('puts the section plane away when the model may have moved under it', () => {
+    // `sectionAcross` was never asked on this path, and its own argument — "the
+    // model could have moved under it" — is about a rebuild, which is exactly
+    // what the banner is offering. A cut at 50 mm on a part that is now 20 mm
+    // deep slices through empty air.
+    const c = offered({ secOn: true, secOff: 50, secRange: [-30, 30],
+                        secFace: 'top', secFlip: true })
+
+    c.takePending()
+
+    expect(c.state.secOn).toBe(false)
+    expect(c.state.secOff).toBe(0)
+    expect(c.state.secFace).toBeNull()
+    expect(c.state.secRange).toBeNull()
+    // The viewport holds a cut of its own, so the patch alone would leave the
+    // plane standing in the scene with the slider back at zero.
+    expect(c.sync).toHaveBeenCalledWith({ __resetCut: true })
+  })
+
+  it('leaves it standing where it still means something', () => {
+    // The control on the line above: the same view id and an offset still inside
+    // the extent the slider was given is the strongest question that can be
+    // asked from this side, and it answers "keep".
+    const c = offered({ secOn: true, secOff: 5, secRange: [-30, 30], secFace: 'top' })
+
+    c.takePending()
+
+    expect(c.state.secOn).toBe(true)
+    expect(c.state.secOff).toBe(5)
+    expect(c.sync).toHaveBeenCalledWith(null)
+  })
+
+  it('calls off a download chain still handing over the old build\'s files', () => {
+    // SUBTLER THAN THE SWAP'S, because `PAGE.base` does not move here: the
+    // remaining hrefs resolve perfectly well — against the POINTER, which now
+    // serves the build that just arrived. So the reader would be handed one
+    // folder holding the first files of one build and the rest of another, under
+    // identical names, with nothing anywhere saying so. These are the files that
+    // leave the browser for a printer; a short set is visible, a mixed one is not.
+    const clicked = []
+    const timers = []
+    const c = offered()
+
+    c.downloadAll([`${path(A)}plate.stl`, `${path(A)}post.stl`],
+                  { click: (href) => clicked.push(href),
+                    schedule: (fn, ms) => { timers.push({ fn, ms }) } })
+    expect(clicked).toHaveLength(1)
+
+    c.takePending()
+    timers.shift().fn()
+
+    expect(clicked, 'the rest of the chain came from the build that had left')
+      .toEqual([`${path(A)}plate.stl`])
+  })
+})
+
+// -- the banner's own Switch, still waiting, when a revision is picked --------
+
+describe('a deferred take of the banner\'s build', () => {
+  it('is cancelled by picking a revision, before it can land inside the swap', async () => {
+    // THE SEQUENCE, and the reason the cancel is before the fetch rather than
+    // after it: Switch on the banner defers while the reader's hand is on the
+    // model and retries every 250 ms for five seconds, which is shorter than a
+    // network round trip. A reader who pressed Switch, saw nothing happen and
+    // picked a revision instead used to get the deferred take landing INSIDE
+    // this await — `meta` replaced by the banner's build, its geometry fetched,
+    // "Now viewing ccc" toasted — and then the revision they actually asked for
+    // arriving on top of it. One wasted load, and a toast naming a build that is
+    // not on the screen.
+    vi.useFakeTimers()
+    onTestFinished(() => vi.useRealTimers())
+    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    c.el = () => ({ isBusy: () => true })
+
+    c.takePending()
+    expect(vi.getTimerCount(), 'nothing was deferred, so nothing is under test').toBe(1)
+
+    // The swap goes to the network and stays there.
+    let answer = null
+    loadMeta.mockImplementation(() => new Promise((resolve) => { answer = resolve }))
+    const swapping = c.switchBuild('proj1', B)
+
+    // The hand comes off the model, so a timer still armed would fire and take
+    // the offer.
+    c.el = () => null
+    vi.advanceTimersByTime(60000)
+    expect(c.state.meta.commit, 'the deferred take landed in the middle of the swap')
+      .toBe(A)
+
+    answer(build())
+    await swapping
+    expect(c.state.meta.commit).toBe(B)
+  })
+
+  it('leaves the offer itself standing, so a swap that fails loses nothing', async () => {
+    // Only the WAIT is cancelled. The banner and its Switch are still there, and
+    // a revision that 404s puts nothing away — the reader's second thought about
+    // the offer is still available to them.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.useFakeTimers()
+    onTestFinished(() => vi.useRealTimers())
+    const offer = { commit: 'ccc', variants: VIEWS }
+    const c = component({ pending: offer })
+    c.el = () => ({ isBusy: () => true })
+    c.takePending()
+    loadMeta.mockRejectedValue(new Error('meta.json -> HTTP 404'))
+
+    await c.switchBuild('proj1', B)
+
+    expect(vi.getTimerCount(), 'the wait outlived the gesture that replaced it').toBe(0)
+    expect(c.state.pending).toBe(offer)
+  })
+
+  it('takes a toast about the build that left down with it', async () => {
+    // A toast stands for 2.6 s and says what the page was doing for the build it
+    // was raised on. Left alone it sits over the build that replaced it saying
+    // something that has stopped being true — and its timer, which nothing else
+    // would ever clear, fires into the new page to take it away.
+    vi.useFakeTimers()
+    onTestFinished(() => vi.useRealTimers())
+    const c = component()
+    // The real one, because what is under test is the timer it arms.
+    delete c.toast
+    loadMeta.mockResolvedValue(build())
+
+    c.toast('copied: plate')
+    expect(c.state.toast).toBe('copied: plate')
+    expect(vi.getTimerCount()).toBe(1)
+
+    await c.switchBuild('proj1', B)
+
+    expect(c.state.toast).toBeNull()
+    expect(vi.getTimerCount(), 'the toast\'s own timer outlived the build').toBe(0)
+  })
+})
+
+// -- a swap whose view never renders ------------------------------------------
+
+describe('a swap the viewport would not render', () => {
+  it('clears the tree, which is still the build that left', async () => {
+    // The page is half moved and nothing about it looks wrong: `meta`, the
+    // title, the picker and `PAGE.base` are the new build's, while the panel on
+    // the left lists the parts of the old one under real part names. What is
+    // actually broken is invisible — `authorNote` looks those names up in the
+    // NEW build's `meta.notes`, and every row's menu builds its download links
+    // on the NEW base.
+    const c = component()
+    loadMeta.mockResolvedValue(build())
+    expect(c.state.tree).not.toBeNull()
+
+    await c.switchBuild('proj1', B)
+    c.onViewError({ message: 'a.json -> HTTP 503' })
+
+    expect(c.state.viewError).toContain('503')
+    expect(c.state.tree).toBeNull()
+  })
+
+  it('leaves the tree alone when no swap was landing', async () => {
+    // The ordinary failure: a view that would not render on the build already on
+    // screen. The tree describes THAT build, so emptying the panel would be
+    // throwing away something true.
+    const c = component()
+
+    c.onViewError({ message: 'p.json -> HTTP 503' })
+
+    expect(c.state.viewError).toContain('503')
+    expect(c.state.tree).not.toBeNull()
+  })
+
+  it('does not empty the panel on a swap that works', async () => {
+    // The price of clearing the tree at the swap instead, which is why it is
+    // done here: the panel would blink empty on every switch that lands, for the
+    // sake of the rare one that does not.
+    const c = component()
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+
+    expect(c.state.tree, 'the panel went empty on a swap that worked').not.toBeNull()
+  })
+
+  it('still re-homes Fit on a Retry that works', async () => {
+    // `_refit` is what says "a swap is landing and its model has not arrived",
+    // and it is read here rather than spent: the model event a successful Retry
+    // produces is still the first of that swap, so the frame Fit goes back to
+    // still has to be re-read on it.
+    const c = component()
+    c.captureHome = vi.fn()
+    loadMeta.mockResolvedValue(build())
+
+    await c.switchBuild('proj1', B)
+    c.onViewError({ message: 'a.json -> HTTP 503' })
+    c.retryView()
+    c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+
+    expect(c.captureHome).toHaveBeenCalledTimes(1)
+    expect(c.state.tree).not.toBeNull()
+    expect(c.state.viewError).toBeNull()
+  })
+})
+
 // -- what was already in flight when the swap landed --------------------------
 
 describe('a poll waiting on its answer', () => {

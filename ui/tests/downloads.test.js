@@ -297,6 +297,76 @@ describe('sequentialDownload', () => {
     expect(d.clicked).toEqual([])
     expect(d.timers).toEqual([])
   })
+
+  // -- and it lets go of the signal when it is done ---------------------------
+  //
+  // THE SIGNAL OUTLIVES THE CHAIN, which is the whole of why this needs saying:
+  // one controller serves the entire page (`downloadAll`), and it is replaced
+  // only by a cancel. A listener left behind by a chain that FINISHED therefore
+  // sits on that controller holding the chain's `list` and `timer` until the
+  // next `switchBuild` or unmount — one more for every press of a group link, on
+  // a page a reader can leave open all day. `{once: true}` covers only the other
+  // end, an abort that actually fires.
+  //
+  // A hand-made signal rather than an `AbortController`, because a real one
+  // reports nothing about how many listeners are on it — which is the whole
+  // claim.
+
+  /** A signal that says who is listening to it. */
+  function watchedSignal() {
+    const on = []
+    return {
+      aborted: false,
+      on,
+      addEventListener: (type, fn) => { on.push(fn) },
+      removeEventListener: (type, fn) => {
+        const at = on.indexOf(fn)
+        if (at >= 0) on.splice(at, 1)
+      },
+    }
+  }
+
+  it('takes its listener off the signal when the chain runs out', () => {
+    const d = driver()
+    const signal = watchedSignal()
+
+    sequentialDownload(['/a', '/b', '/c'], { click: d.click, schedule: d.schedule, signal })
+    expect(signal.on, 'nothing was listening, so nothing is under test').toHaveLength(1)
+
+    d.tick()
+    expect(signal.on, 'let go before the last file').toHaveLength(1)
+    d.tick()
+
+    expect(signal.on, 'the finished chain is still holding the signal').toEqual([])
+  })
+
+  it('leaves nothing on the signal for a lone file or an empty list', () => {
+    // Both leave `step` by its first line, which is the way out a listener is
+    // easiest to forget on.
+    const d = driver()
+    const one = watchedSignal()
+    const none = watchedSignal()
+
+    sequentialDownload(['/only.stl'], { click: d.click, schedule: d.schedule, signal: one })
+    sequentialDownload([], { click: d.click, schedule: d.schedule, signal: none })
+
+    expect(one.on).toEqual([])
+    expect(none.on).toEqual([])
+  })
+
+  it('does not pile them up over a session of pressing the button', () => {
+    // The shape of the leak as a reader would produce it: one controller, one
+    // group link, pressed again and again with every chain allowed to finish.
+    const signal = watchedSignal()
+
+    for (let n = 0; n < 5; n += 1) {
+      const d = driver()
+      sequentialDownload(['/a', '/b'], { click: d.click, schedule: d.schedule, signal })
+      d.tick()
+    }
+
+    expect(signal.on).toEqual([])
+  })
 })
 
 describe('the chain the page keeps a handle on', () => {
