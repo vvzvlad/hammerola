@@ -2510,15 +2510,6 @@ export default class HammerolaViewer extends React.Component {
       // the word under the cursor is noise, and `dev` and `latest` are shown
       // whole already.
       slotTitle: shortId(PAGE.slot) === PAGE.slot ? '' : PAGE.slot,
-      // `latest` FOLLOWS COMMITS, and it used to say it followed CI. That was
-      // true before the migration, when a Gitea workflow built every model; the
-      // hub builds them now and `hammerola commit` is what moves this pointer,
-      // so the old label named a machine that no longer touches this project.
-      // `tests/test_ui_source.py` pins the retired string out of the tree —
-      // it survived a cleanup that swept the page and the docs precisely
-      // because it is computed inside a component, where nothing could point
-      // at it.
-      slotBadge: PAGE.slot === 'dev' ? 'auto-updates' : PAGE.slot === 'latest' ? 'follows commits' : 'pinned',
       slotDate: meta ? stamp(meta.built) : '',
       revToggle: stop(() => this.setState({ revOpen: !s.revOpen, dlOpen: false, tokenPop: false })),
       revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid #d3d8de;background:#fff;border-radius:6px;cursor:pointer',
@@ -2832,7 +2823,6 @@ export default class HammerolaViewer extends React.Component {
             <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>
               <span style={css(v.statusDotStyle)} />
               <span style={css(`font:600 12px ${MONO}`)}>{v.slot}</span>
-              <span style={css(`font:500 10.5px ${MONO};color:#fff;background:#5b6470;padding:2px 6px;border-radius:4px`)}>{v.slotBadge}</span>
               <span style={css(`font:400 11px ${MONO};color:#787f87`)}>{v.slotDate}</span>
               <span style={css('font-size:9px;color:#9aa1a9')}>&#9662;</span>
             </div>
