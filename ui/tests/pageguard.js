@@ -14,9 +14,20 @@
 // is the point of this paragraph, because the obvious reading of "clean" says it
 // is. The file this guards is the file about SWITCHING REVISIONS: most of its
 // tests end with `PAGE` on another build, deliberately, because moving it is the
-// thing under test. A hook demanding it be back would fail twenty-eight honest
-// tests, and the only way to satisfy it would be for each of them to put the
-// record back by hand — which is the fixture asking the tests to do its job.
+// thing under test. A hook demanding it be back would fail every one of those —
+// which is most of the file, comfortably more than half — and the only way to
+// satisfy it would be for each of them to put the record back by hand, which is
+// the fixture asking the tests to do its job.
+//
+// THAT USED TO BE A COUNT AND IS NOW A PROPORTION, deliberately. The count went
+// stale inside the very commit that wrote it (the same commit added a dozen
+// tests to revswitch.test.js, five of which end on another build) and was stale
+// again one round later. Nothing recomputes it, nothing fails when it drifts,
+// and a number in a comment that nobody checks is the shape this project keeps
+// removing — see AGENTS.md on the word "six" and the count in
+// tests/test_workflow_steps.py, which are held in step BY A TEST. There is no
+// test to hold this one, so it says the thing that stays true instead: whoever
+// wants the figure can restore the strict assertion for one run and read it off.
 //
 // What is asserted instead is the INVARIANT that holds however far the page has
 // moved: `PAGE` describes the address the browser is on. That is the production
@@ -42,12 +53,40 @@ import { afterEach, beforeEach, expect } from 'vitest'
 import { PAGE, rereadPage } from '../src/hub.js'
 
 /**
+ * The browser's own `location`, captured before any test can stand something in
+ * for it.
+ *
+ * THE CHECK READS AN ADDRESS, and reading it off `window.location` would read it
+ * out of whatever the test under judgement had put there. That is not a
+ * hypothetical: `watchNavigation` in revswitch.test.js replaces the whole object
+ * to catch a write to `href`, which jsdom refuses to perform and refuses to
+ * report. It happens to be safe, because that stand-in delegates `pathname` to
+ * the real one — but the safety is the stand-in's courtesy rather than this
+ * fixture's, and the next one written to catch something else need not extend
+ * it. A stub with no `pathname` getter would make this hook read `undefined`,
+ * fail every test in the file behind the one that installed it, and say `PAGE
+ * stopped describing the address the browser is on` — pointing at the wrong
+ * thing, which is the cascade this file exists to stop.
+ *
+ * So the descriptor is taken at import, which is module scope of a module every
+ * such file imports at the top, and read through for the rest of the run. The
+ * fallback covers a DOM where `location` is not an own accessor at all; there
+ * the promise is only as good as it was.
+ */
+const BROWSER = Object.getOwnPropertyDescriptor(window, 'location');
+const browserPath = () => (BROWSER && BROWSER.get
+  ? BROWSER.get.call(window).pathname
+  : window.location.pathname)
+
+/**
  * Pin `PAGE` to `pathname` around every test in the calling file.
  *
  * Call it at module scope, after the imports and before the tests. The reset
  * happens before AND after each test and is judged both times; the argument is
  * passed to `rereadPage` explicitly rather than left to `location`, so the RESET
- * still lands in a test that stood `window.location` in for something else.
+ * still lands in a test that stood `window.location` in for something else. The
+ * READ is held to the same standard by `browserPath` above, which is the other
+ * half of that promise and used to be missing from it.
  */
 export function guardPage(pathname) {
   window.history.replaceState(null, '', pathname)
@@ -78,8 +117,9 @@ export function guardPage(pathname) {
 export function pageCheck(pathname, clean, when) {
   return () => {
     // Read BEFORE anything is put back: the address the browser is on, and the
-    // record the page believes describes it.
-    const address = location.pathname
+    // record the page believes describes it. Through the real accessor rather
+    // than through `location`, which the test being judged may have replaced.
+    const address = browserPath()
     const found = { ...PAGE }
     // What that address MEANS, computed by the page's own arithmetic rather than
     // by a second copy of it here — `pageFrom` is deliberately the only place

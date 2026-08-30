@@ -58,7 +58,8 @@ describe('the PAGE guard', () => {
     // demand the record be back where it started: the file it protects is the
     // file about switching revisions in place, and most of its tests end on
     // another build on purpose. A hook that called that dirty would be the
-    // fixture asking twenty-eight honest tests to put the record back for it.
+    // fixture asking the majority of an honest file to put the record back for
+    // it.
     const { check } = guard()
 
     window.history.replaceState(null, '', AWAY)
@@ -110,6 +111,39 @@ describe('the PAGE guard', () => {
 
     expect(() => check()).toThrow(/not part of PAGE/)
     expect('cachedTitle' in PAGE, 'the stray key survived the guard').toBe(false)
+  })
+
+  it('reads the address past a stand-in for `window.location`', () => {
+    // THE READ IS HELD TO THE STANDARD THE RESET ALREADY WAS. The reset takes
+    // its path as an argument precisely so it survives a test that stood
+    // `window.location` in for something else — and the read used to go
+    // straight through `location.pathname`, i.e. through the stand-in.
+    //
+    // It is not hypothetical: `watchNavigation` in revswitch.test.js replaces
+    // the whole object, because a write to `location.href` is the one gesture
+    // jsdom refuses to perform AND refuses to report. That one delegates
+    // `pathname` to the real object and so was harmless, but the delegation is
+    // the stand-in's courtesy rather than this fixture's guarantee — the next
+    // one, written to catch something else, need not extend it. Reading
+    // `undefined` here would fail every test behind the one that installed it,
+    // with a message about `PAGE` and the address bar that points nowhere near
+    // the cause.
+    //
+    // So: a stand-in with NO `pathname` at all, and the check still says
+    // nothing, because it reads through the accessor captured at import.
+    const { check } = guard()
+    const real = Object.getOwnPropertyDescriptor(window, 'location')
+    Object.defineProperty(window, 'location', {
+      configurable: true, get: () => ({ href: 'about:blank' }),
+    })
+
+    try {
+      expect(() => check()).not.toThrow()
+    } finally {
+      // By hand rather than through `onTestFinished`, so the stand-in is gone
+      // before anything else in this file runs — including its own `afterEach`.
+      Object.defineProperty(window, 'location', real)
+    }
   })
 
   it('reports the stray key BEFORE the address, so the cause is named first', () => {
