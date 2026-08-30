@@ -137,12 +137,16 @@ _impl = _implementation()
 DEFAULT_VOLUME_TOL = _impl.DEFAULT_VOLUME_TOL
 NORMAL_TOL = _impl.NORMAL_TOL
 PLANE_TOL = _impl.PLANE_TOL
+is_empty = _impl.is_empty
 material_at = _impl.material_at
 mating_face_flat = _impl.mating_face_flat
 material_under_head = _impl.material_under_head
 name_pairs = _impl.name_pairs
 pairwise_interference = _impl.pairwise_interference
 recorded_interference = _impl.recorded_interference
+recorded_sections = _impl.recorded_sections
+section = _impl.section
+volume = _impl.volume
 
 # One import form to avoid elsewhere in this repository. When this shim has run
 # first, `sys.modules` carries "src.cadbuild.checklib" without its parents, so the
@@ -156,10 +160,14 @@ __all__ = [
     "DEFAULT_VOLUME_TOL",
     "NORMAL_TOL",
     "PLANE_TOL",
+    "is_empty",
     "material_at",
     "mating_face_flat",
     "material_under_head",
     "name_pairs",
     "pairwise_interference",
     "recorded_interference",
+    "recorded_sections",
+    "section",
+    "volume",
 ]
