@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with views() and printables(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part".
-version: 1
+version: 2
 ---
 
 # hammerola
@@ -50,21 +50,48 @@ this, `~/.local/bin` is not on it: run the file by its path, or add it.
 ## The working cycle, and why a commit is not optional
 
 ```sh
-hammerola build            # -> the dev slot. Draft. Overwritten by the next build.
+hammerola build            # -> the dev slot. YOUR OWN eyes. Overwritten by the next build.
 hammerola commit -m "..."  # -> an immutable revision, and `latest` moves to it
 ```
+
+**The two verbs are split by AUDIENCE, not by how finished the part is:
+`build` is what YOU look at, `commit` is what the PERSON looks at.** Everything
+shown to a person goes through `commit`. A `dev` URL is never handed over — not
+as a link, not as "have a look meanwhile", not under a picture.
 
 **`build` publishes into `dev`, and a project with only a `dev` build does not
 appear on the hub's front page.** That is not a defect to work around: `dev` is
 one directory that every push overwrites, it has no history, its URL is served
 with no caching, and the hub stores neither source nor log under that slot. It
-is the draft you refresh while you are shaping the part.
+is what you push in order to look at the thing yourself — fetch a picture, read
+`metrics.json` (both below), see whether a number landed where you meant it to.
+A link into it names something the next push destroys, so a person who opens it
+tomorrow is shown a different part and is not told.
+
+**Nothing here rations `build`, and the slot exists so that nothing has to.**
+It is the only pair of eyes you have: there is no CAD kernel on your machine —
+that is the point of the hub — so a model you have not pushed is one nobody has
+looked at, you included. What is left in its place is re-deriving the arithmetic
+by hand, in scripts that restate the constants the part was built from, which is
+the tautology of "Checks that actually check" with the geometry unseen as well.
+Push after every change that moves a number. (51 minutes, eight edits, four of
+them redoing the other four — the console under the barb, the tail, the skirt,
+the centre of mass — and not one build in the whole of it: each was re-derived
+on paper because nothing had been looked at.) A brief that forbids pushing is a
+brief that blinds; `dev` is overwritten by design, so there is nothing to spend.
 
 `commit` is what makes a version exist. The hub names the revision itself, from
 the digest of the sources it received — git is not involved and the client never
 invents an id — stores the code and the log under that name, moves `latest`, and
 the project gets its card. Finished work is committed. If you leave a session
 with the last thing you did being a `build`, nothing you did is on the site.
+
+**The first thing a person is shown is already a commit.** The block layout of
+the next section — the whole part in boxes, before one real solid exists — is
+committed, not built: it is shown, so it is a revision, and being crude does not
+make it a draft in the sense `dev` means. Every later "done, here it is" is a
+commit as well, quoted to the person by its revision. A round of edits that ends
+in a `build` is a round the person has no way to see.
 
 The URL of a commit is the thing the person opens, turns over and prints from.
 Hand it over every time you commit, not once at the end of the job — a person
@@ -108,8 +135,9 @@ minutes before the first solid existed. A short phase, and not a skippable one.
 name five different objects, and the one in the person's head is not the one in
 yours. Say back what the object is as a shape, what it touches and what holds
 it, then put up a block preview — the whole layout in boxes and cylinders, in
-`views()`, pushed with `build` so the person can turn it round. That preview
-closes this phase and is not optional. A build needs a non-empty `printables()`,
+`views()`, published with `commit` so the person can turn it round. That preview
+closes this phase and is not optional; it is shown, so it is a commit, and it is
+the project's first revision. A build needs a non-empty `printables()`,
 so the part goes in there as a box of its overall size and the things around it
 stay mocks in the views. And `checks()` is still the template's, measuring its own
 box and lid: it reddens on the first body of yours (`bracket.stl is 684 bytes,
@@ -404,11 +432,16 @@ stub of the pair as a ladder over the clearance, each step with its number
 embossed on it, then the full part once a human has printed it and said which
 step works.
 
-**The gauge is a build of its own, into `dev`, and never a part of the
-product.** It comes before the product does — the clearance is not chosen yet,
-so neither is the part that uses it — so `printables()` returns the one gauge,
-`assembled` shows that same gauge, `print` stands it on the bed. That passes the
-view gates whole; no view is deleted or bent around a part that is not the product.
+**The gauge is a commit of its own, and never a part of the product.** A person
+prints it, so it is committed like anything else a person prints: the link they
+work from has to outlive the next push. It comes before the product does — the
+clearance is not chosen yet, so neither is the part that uses it — so
+`printables()` returns the one gauge, `assembled` shows that same gauge, `print`
+stands it on the bed. That passes the view gates whole; no view is deleted or
+bent around a part that is not the product. `latest` sits on the gauge until the
+part that uses its number is committed, and the project's card shows a ladder of
+steps meanwhile: that is the price, and it is smaller than handing over a link
+that dies under the person holding it.
 
 The ladder is one fused body — the steps on a common base, the embossed digits
 unioned to it — for the reason under `printables()`; fetch `<gauge>_preview.png`
@@ -423,12 +456,13 @@ gauge, `checks()` verbatim: `checks: 6 passed`, BUILD GREEN.) Only a `checks()`
 indexing `printables()` by name refuses by itself. The rest holds — a gutted one
 fails the empty-checks gate above, no flag skips checks, and deleting it passes
 and throws away every complaint ever turned into an assertion — so commit the
-product's `checks()` to git first: the hub keeps no `dev` source and the slot is
-overwritten.
+product's `checks()` to git first: the revision the hub keeps is the GAUGE's
+file, with the product's `checks()` already swapped out of it, so
+`hammerola source <gauge>` brings back the gauge's checks and not the product's.
 
-The person prints it and names a step, the number goes into the part, the next
-`build` overwrites `dev`, and not a line of the gauge is left. That is what the
-slot is for.
+The person prints it and names a step, the number goes into the part, and the
+next commit is the product. The gauge's revision stays where it is — the record
+of what was printed and which step won — and nothing overwrites it.
 
 **Fasteners are checked for tool access, as a body**: a cylinder from the head
 along the axis, driver length, swept through the assembly. A fastener with no
