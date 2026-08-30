@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
 """The two gates that read a whole view: the print plate, and coverage.
 
-Both run before anything is exported. They read bounding boxes and names only,
-and an export meshes the shape in place -- from then on OCCT measures bounding
-boxes off the mesh (see geometry.drop_mesh).
+Both run before anything is exported, and that ORDER is the point: what these
+gates judge is extents, and an export meshes the shape in place -- from then on
+the box OCCT hands back is the mesh's box rather than the shape's, reading
+BIGGER and never smaller (geometry.drop_mesh has the measurements and the
+caveats). A gate about extents therefore has to measure before anything has
+been exported, whatever the size of the difference.
+
+The size is worth stating honestly rather than dramatising: the inflation
+measured so far sits BELOW `PRINT_OVERLAP_TOL` -- more than an order of
+magnitude below it -- so on today's numbers this gate would not go red on a
+correct plate. That is a coincidence of two independently chosen quantities,
+not a design: the tolerance was picked against the accuracy of the boxes and
+the physics of a first layer, and nothing about it was ever sized against a
+triangulation. An inflation that grew past `PRINT_OVERLAP_TOL` would fail a
+plate that is laid out correctly, and nobody promised it cannot.
 """
 
 from .errors import BuildError
