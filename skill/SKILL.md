@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with views() and printables(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part".
-version: 3
+version: 4
 ---
 
 # hammerola
@@ -157,6 +157,20 @@ cantilever that was not there.) A mock never carries a printable's word in its
 name — `blank`, `panel`, never `lid mock`: coverage counts whole words, so such
 a mock answers for the printable `lid` and the build goes green with the real
 `lid` in no picture. The hub says so in a `warning:` line and publishes.
+
+**An operation nobody named does not exist either.** The part is what comes off
+the printer. Tapping a hole, reaming it, drilling it out, gluing, pressing in a
+heat-set insert, bending, sanding to fit — every one of those is a step somebody
+has to own, with a tool, and it exists only once a person has named it and
+agreed to it. A model that works only after an unnamed operation does not work:
+what will be printed is the thing in `printables()`, and the operation lives
+nowhere but in your head. Where a step IS agreed, it is written down the way
+hardware is — named, with the tool's designation, in `ref/` — and the geometry
+stays the state that comes off the bed. (A socket was drawn as a smooth Ø8.43
+hole "under a tap", so that the nozzle's Ø9.35 thread would have something to
+cut into. Nobody had said a word about tapping, there was no tap, and the
+assembly worked only in a description of it. Threads that are printed are
+printed.)
 
 **Ask whether the assembly is already sold before you design it.** A make-or-buy
 line, with a price and a link, comes before the first geometry. (Four hours went
@@ -411,6 +425,22 @@ assert written against the third — "the cone must open outwards" could not fai
 for any shape of cone. What caught the others was breaking the solid on purpose:
 a 20 mm drill jig, where the design says 48, passed the check whose entire
 subject was its length.)
+
+**When a check goes red, either the part is wrong or the check is — and which
+one is a decision made out loud, never by reflex.** The cheapest move is always
+to nudge the model until the complaint stops, and it is the one that destroys
+the instrument: the log goes green, the part stays wrong, and that check is
+decorative from then on. The tell is mechanical, and it is the same question as
+"a round of edits that moves no physical number is not started" further down —
+name the physical quantity your edit moved. If the answer is "none, but it
+passes now", you edited the instrument and not the part. (A nozzle's Ø9.35
+thread interfered with its Ø8.43 seat, correctly. Rather than fix the fit, the
+nozzle in the assembly was swapped for a stand-in turned down to the thread's
+root diameter, which slid through — the check went green, and the model of
+record stopped being the thing that gets printed. `assembled.stl` is glued from
+the assembly view, so the downloadable assembly was made of the stand-in too;
+the hub said as much in a `warning:` line about a part matched by name only, and
+the line was read and argued past.)
 
 **Four traps in the CadQuery API itself, and every one of them makes a check
 silently GREEN rather than red.** None raises, so the price is never a failed
