@@ -327,9 +327,10 @@ def test_the_client_archive_carries_every_module_it_imports(hub):
     """The failure this catches happens on somebody ELSE's machine.
 
     `src/client/*.py` is globbed into the archive, so a new client module is
-    carried automatically. A module OUTSIDE that package — `src/metricsdiff.py`
-    is the one today — is named by hand in `CLIENT_EXTRA_MODULES`, and a second
-    one added without that line produces an archive that works perfectly here,
+    carried automatically. A module OUTSIDE that package — `src/buildnames.py`
+    and `src/metricsdiff.py` today — is named by hand in `CLIENT_EXTRA_MODULES`,
+    and a further one added without that line produces an archive that works
+    perfectly here,
     where the whole checkout is on `sys.path`, and dies with an ImportError the
     first time somebody runs the downloaded file.
     """
@@ -727,7 +728,12 @@ def test_a_start_route_that_cannot_import_is_a_404_and_not_a_dropped_socket(
     "src/client/hub.py",       # reached from cli.py through a dotted import
     "src/client/project.py",   # reached ONLY as `from src.client import project`
     "src/client/errors.py",
-    "src/metricsdiff.py",      # the one carried module outside the package
+    # Both carried modules from outside the package, and both rows are the
+    # point: they arrive by a different road from the glob (`CLIENT_EXTRA_MODULES`
+    # names them), so a second one added there without a row here would be a
+    # module the refusal is never asked about.
+    "src/metricsdiff.py",
+    "src/buildnames.py",
 ])
 def test_the_hub_refuses_a_client_that_is_missing_a_module_it_imports(gone):
     """THE FAILURE HAS NO OTHER WITNESS, which is why the refusal exists.
@@ -848,8 +854,9 @@ def test_the_closure_reaches_every_module_but_the_two_nothing_imports():
       * `src/client/__main__.py` — deliberate, the zipapp's entry point is the
         generated `CLIENT_MAIN` at the archive's root;
       * `src/__init__.py` — an accident of resolution rather than a decision:
-        the one import leaving the package is `from src.metricsdiff import …`,
-        which lands on the module file directly, so `src` is never resolved as a
+        the imports leaving the package are `from src.buildnames import …` and
+        `from src.metricsdiff import …`, and each lands on the module file
+        directly, so `src` is never resolved as a
         package. It is required all the same, and by another road —
         `CLIENT_EXTRA_MODULES` names it, so it is read by name and a missing one
         raises OSError out of `client_bytes`. That it is REQUIRED is not

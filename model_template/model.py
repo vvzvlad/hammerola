@@ -212,8 +212,16 @@ def printables():
     """What is exported and downloaded. The key is the file name stem.
 
     `base` becomes base.stl, base.step and base.3mf. Letters, digits, dot, dash
-    and underscore only, and `assembled` is taken -- the build writes an
-    assembled.stl of its own next to these.
+    and underscore only.
+
+    TWO STEMS ARE TAKEN: `assembled` and `print`. The build writes an
+    assembled.stl (everything where the product stands) and a print.stl (the
+    bed as your `print` view lays it out) of its own next to these, so a part
+    called either would be exported and then overwritten. The build refuses the
+    name rather than letting that happen -- `print` in particular is an
+    ordinary name for a single printed part, which is why it is spelled out
+    here. They are `RESERVED_STEMS` in the hub's `cadbuild.printables`, and the
+    hub's own suite checks that this paragraph still names every one of them.
     """
     return {
         "base": build_base(),

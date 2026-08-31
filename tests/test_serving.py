@@ -9,8 +9,10 @@ permanent in production.
 """
 
 import json
+import os
 import re
 
+import pytest
 from harness import good_build, meta_bytes, tar_gz, view_bytes
 
 from src.app import STATIC_DIR
@@ -263,6 +265,54 @@ def test_downloads_are_served_as_bytes(hub):
     assert r.headers["X-Content-Type-Options"] == "nosniff"
 
 
+def test_a_preview_is_served_as_a_picture_and_not_as_a_download(hub):
+    """The build's PNGs are shown, not downloaded (issue #53).
+
+    Off the whitelist a preview came back as `application/octet-stream` with
+    `Content-Disposition: attachment`, so the one instruction that catches a
+    part lying on the bed upside down — open the picture and look at it — saved
+    a file instead of showing one. PNG is on the list because a browser handed
+    one cannot be made to execute anything with it, which is exactly what the
+    test below asserts about everything that is NOT on it.
+    """
+    png = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+    hub.publish("proj1", "abc123", good_build(
+        previews={"assembled": "assembled_preview.png"},
+        extra_files={"assembled_preview.png": png}))
+    r = hub.get("/project/proj1/abc123/assembled_preview.png")
+    assert r.status_code == 200
+    assert r.content == png
+    assert r.headers["Content-Type"] == "image/png"
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    # Shown in the tab it is opened in, not saved to disk.
+    assert "Content-Disposition" not in r.headers
+
+
+def test_a_declared_preview_survives_publication_without_becoming_a_button(hub):
+    """`previews` reaches the reader intact and `downloads` stays untouched.
+
+    That is exactly what a per-part picture is: it is DECLARED, so a client can
+    be told it exists without assembling its URL out of a part name and a
+    suffix, and it carries no button, because ten parts would be ten buttons and
+    the part is already on the page in 3D. The hub is what could conflate the
+    two — it rewrites this document — so the split is asserted on the far side
+    of a real publication rather than on what the build handed over.
+    """
+    png = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+    hub.publish("proj1", "abc123", good_build(
+        previews={"base": "base_preview.png"},
+        extra_files={"base_preview.png": png}))
+    meta = hub.get("/project/proj1/abc123/meta.json").json()
+    assert meta["previews"] == {"base": "base_preview.png"}
+    assert "base_preview.png" not in meta.get("downloads", {}).values()
+    assert "base_preview.png" not in [v["file"] for v in meta["variants"]]
+
+    r = hub.get("/project/proj1/abc123/base_preview.png")
+    assert r.status_code == 200
+    assert r.content == png
+    assert r.headers["Content-Type"] == "image/png"
+
+
 def test_an_uploaded_html_file_can_never_be_active_content(hub):
     # The member-name whitelist says nothing about extensions, so a push CAN
     # contain page.html. A build URL is permanent, same-origin and immutable, so
@@ -386,6 +436,72 @@ def test_the_payload_digest_file_is_not_served(hub):
     hub.publish("proj1", "abc123", good_build())
     assert (hub.project_dir("proj1") / "abc123" / ".payload.sha256").is_file()
     assert hub.get("/project/proj1/abc123/.payload.sha256").status_code == 404
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"),
+                    reason="this platform has no os.mkfifo, so no fifo can "
+                           "reach a build directory in the first place")
+def test_a_fifo_in_a_build_is_refused_rather_than_waited_on(hub):
+    """A file the name rule and the type whitelist both let through.
+
+    Model code writes its own output directory and nothing on the build path
+    stops it from calling mkfifo there. The name need not be DECLARED — nothing
+    prunes an undeclared file and publication moves the directory whole — so it
+    lands at a public URL, and a plain `open()` on it blocks until a writer
+    appears: a serving thread gone for good, from one GET, with no vulnerability
+    involved. `_send_file` refuses it on `S_ISREG`, and it can only get there
+    because the open is `O_NONBLOCK`.
+
+    The timeout is spelled out here rather than inherited from `Hub.get`, and
+    it is as much of the assertion as the status code is: without one a
+    regression would hang this test instead of failing it, and a test that
+    hangs is not a test.
+    """
+    hub.publish("proj1", "abc123", good_build())
+    os.mkfifo(hub.project_dir("proj1") / "abc123" / "pipe.json")
+    assert hub.get("/project/proj1/abc123/pipe.json",
+                   timeout=5).status_code == 404
+
+
+def test_a_directory_in_a_build_is_refused_without_leaking_a_descriptor(hub):
+    """The refusal was never wrong; only the descriptor count could show this.
+
+    A directory under a build answers 404 both before and after the fix, so
+    nothing about a response can tell the two apart. What the old shape did was
+    `os.fdopen(os.open(...))`: `os.open` SUCCEEDS on a directory, `os.fdopen`
+    then raises `IsADirectoryError` and does NOT close the descriptor it was
+    handed, and the `except OSError` around it turned that into the same correct
+    404 — one descriptor lost per request, forever, on a public unauthenticated
+    route, until `accept()` in socketserver quietly stopped taking connections
+    with the hub still looking alive.
+
+    It is reachable because a model writes its own output directory: `os.makedirs`
+    in `model.py`, publication moves the directory whole, and nothing prunes what
+    was never declared (see `store._hash_output`), so the directory lands at a
+    permanent public URL that anyone can GET in a loop.
+
+    The hub runs in this process, so its descriptors are this process's; the
+    delta is measured rather than compared to zero because httpx opens and
+    closes sockets of its own while the loop runs.
+
+    `/dev/fd` IS TAKEN DELIBERATELY and carries no `skipif`: it is not a POSIX
+    guarantee, but it is present everywhere this suite runs — on macOS, and in
+    the `python:3.11-slim` container CI runs pytest in, where it is a symlink to
+    `/proc/self/fd`. A platform without it should fail loudly here rather than
+    skip, because a skip is how a leak check stops checking.
+    """
+    hub.publish("proj1", "abc123", good_build())
+    os.mkdir(hub.project_dir("proj1") / "abc123" / "subdir.json")
+    requests = 50
+    before = len(os.listdir("/dev/fd"))
+    for _ in range(requests):
+        assert hub.get("/project/proj1/abc123/subdir.json").status_code == 404
+    grew = len(os.listdir("/dev/fd")) - before
+    # A leak is exactly one per request; connection churn is a handful either
+    # way. Anything at or above a fifth of the run is the defect back.
+    assert grew < requests // 5, (
+        f"{grew} descriptors left open across {requests} requests for a "
+        f"directory — the open is leaking one per refusal")
 
 
 def test_encoded_traversal_in_the_url_is_refused(hub):

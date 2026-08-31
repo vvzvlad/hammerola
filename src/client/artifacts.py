@@ -18,12 +18,29 @@ accident while meaning the other.
 
 WHAT IT FETCHES IS WHAT `meta.json` DECLARES, and there is no directory listing
 anywhere on the service to fetch instead — deliberately: the hub serves files by
-name and never enumerates a build. `downloads` is the model's own list of what it
-ships (`{label: filename}`, validated at publish time and pointed at real
-members), so it is both the complete answer and the curated one. The view files
-under `variants` are NOT artefacts and are not fetched: they are the viewer's
-tessellation payload, megabytes of it, and nothing outside the browser has a use
-for them.
+name and never enumerates a build. THREE MAPS DECLARE, and this takes all three:
+
+  * `downloads` — `{label: filename}`, one entry per file of one PART, exactly
+    the three the model's `printables()` produced for each;
+  * `overview` — `{stem: filename}`, the two meshes that are about the whole
+    build rather than about a part: `assembled.stl`, and `print.stl` where the
+    project has a `print` view;
+  * `previews` — `{stem: filename}`, every picture the build rendered: one per
+    part, one of the assembly, one of the plate.
+
+THIS COMMAND IS THE ONLY READER OF THE LAST TWO. Only `downloads` is drawn as
+buttons on the build page — a picture is looked at rather than downloaded, and
+a `print.stl` button on a public page would offer a plate that may legitimately
+carry a mock of a purchased part — so `overview` and `previews` exist to be
+FETCHED and for nothing else. That is exactly why they exist at all: while
+`downloads` was the one declaration channel, "a client may fetch this" and "the
+page draws a button for this" were the same sentence, so a per-part picture
+could not be declared without ten buttons appearing under it, and an agent was
+left assembling its URL by hand.
+
+The view files under `variants` are NOT artefacts and are not fetched: they are
+the viewer's tessellation payload, megabytes of it, and nothing outside the
+browser has a use for them.
 
 `dev` AND `latest` ARE ACCEPTED HERE, unlike in `source`. This asks a BUILD for
 its files and the hub serves those two names like any other build directory —
@@ -32,6 +49,7 @@ which is exactly what somebody who just ran `hammerola build` wants.
 
 from pathlib import Path
 
+from src.buildnames import unservable_reason
 from src.client import project
 from src.client.errors import ClientError
 from src.client.hub import Hub
@@ -43,6 +61,17 @@ from src.client.sources import LATEST, SHORT_ID_CHARS, hub_for, scratch_dir
 # first — the file it serves under that name IS the newest revision's, and one
 # fetch is better than two.
 POINTER_NAMES = (LATEST, DEV_SLOT)
+
+# The three maps of `meta.json` that name a file this command fetches, in the
+# order their entries are printed. See the module docstring for what each is;
+# what matters here is that the list is closed — `variants` is deliberately not
+# on it. A fourth map on the hub side is a change to TWO places, not to this
+# line alone: the message in `run` below names all three by hand, and
+# `test_a_build_declaring_nothing_at_all_says_so_and_still_succeeds` pins that
+# sentence as a substring — so a map added here and nowhere else would be
+# fetched correctly while the one message about them stayed wrong, with the
+# suite green.
+DECLARING_FIELDS = ("downloads", "overview", "previews")
 
 
 def run(args) -> int:
@@ -58,14 +87,20 @@ def run(args) -> int:
             f"the hub has no build {name} for project {pid}.\n"
             f"  `hammerola status` lists what it does have.")
 
-    downloads = meta.get("downloads")
-    if not isinstance(downloads, dict) or not downloads:
-        # A build with no downloads is a model that exported none — the list is
-        # the model's own (`printables()` -> `downloads`), so this is a fact
-        # about the model rather than about the hub.
+    declared = _declared(meta)
+    if not declared:
+        # ALL THREE MAPS EMPTY, which no build the hub published can be:
+        # `printables()` has to return at least one part, so `downloads` alone
+        # is never empty — and `overview` carries `assembled.stl` on top of
+        # that. So this is the same kind of answer as the malformed name below:
+        # not from where it should have come. It stays a message and a zero all
+        # the same, because the answer is well formed and merely empty — there
+        # is nothing here to download and nothing that could be downloaded
+        # WRONGLY, which is what the refusal below is for.
         print(f"{name} declares no downloadable artefacts.")
-        print("  `downloads` in its meta.json is empty: the model exported no "
-              "STL, STEP or 3MF.")
+        print("  `downloads`, `overview` and `previews` in its meta.json are "
+              "all empty, and a build the hub published exports at least one "
+              "part, so this answer did not come from one.")
         return 0
 
     dest = _destination(args, name)
@@ -73,17 +108,26 @@ def run(args) -> int:
 
     print(f"{pid}/{name} -> {dest}")
     total = 0
-    for label in sorted(downloads):
-        filename = downloads[label]
-        if not isinstance(filename, str) or "/" in filename or \
-                filename.startswith("."):
-            # The hub validated this map at publish time, so this cannot happen
-            # from a build it published — which is why it is a refusal rather
-            # than a skip: a name of this shape means the answer did not come
-            # from where it should have.
+    for field, label, filename in declared:
+        # THE HUB'S OWN RULE, IMPORTED RATHER THAN RESTATED (`src/buildnames.py`).
+        # The hub validated these maps at publish time, so this cannot happen
+        # from a build it published — which is why it is a refusal rather than a
+        # skip: a name of this shape means the answer did not come from where it
+        # should have. That is also why the rule has to be the hub's whole one
+        # and not an approximation of it: the case this defends against is a
+        # dishonest or corrupted answer, and against that case the two
+        # conditions that used to stand here — `/` and a leading dot — caught
+        # nothing of what the check is FOR. The non-printable clause names this
+        # very command as its beneficiary: the name is printed on the line below
+        # and then written to the author's disk, so a U+202E in it reverses the
+        # report of what was just saved.
+        reason = unservable_reason(filename)
+        if reason is not None:
             raise ClientError(
-                f"{name} declares a download {label!r} pointing at "
-                f"{filename!r}, which is not a file name a build can serve.")
+                f"{name} declares a {field} entry {label!r} pointing at "
+                f"{filename!r}, which {reason}.\n"
+                f"  That is not a name a build can serve, so this answer did "
+                f"not come from a build the hub published.")
         body = hub.build_file(pid, name, filename)
         if body is None:
             raise ClientError(
@@ -99,8 +143,39 @@ def run(args) -> int:
         total += len(body)
         print(f"  {label:<12} {filename}  {len(body) / 1e3:.1f} kB")
 
-    print(f"  {len(downloads)} files, {total / 1e6:.2f} MB")
+    print(f"  {len(declared)} files, {total / 1e6:.2f} MB")
     return 0
+
+
+def _declared(meta: dict) -> list:
+    """Every file the build declares, as `(field, key, filename)`, once each.
+
+    ONE PASS OVER THE THREE MAPS rather than a merge of them: their keys are
+    minted independently, so two of them can carry the same key for different
+    files — `previews` is keyed by a part's stem, and a single-printable build's
+    `downloads` key is the bare `stl` — and a merged dict would silently drop
+    one. The field travels with the entry so a refusal can say which map the
+    unusable name was in.
+
+    Deduplicated BY FILENAME, because nothing stops two maps naming one file and
+    the cost of not noticing is fetching the same bytes twice and reporting a
+    count nobody can reconcile with the directory. A filename that is not a
+    string skips the dedup and is refused by the caller on sight.
+    """
+    found = []
+    seen = set()
+    for field in DECLARING_FIELDS:
+        entries = meta.get(field)
+        if not isinstance(entries, dict):
+            continue
+        for key in sorted(entries, key=str):
+            filename = entries[key]
+            if isinstance(filename, str):
+                if filename in seen:
+                    continue
+                seen.add(filename)
+            found.append((field, str(key), filename))
+    return found
 
 
 def _build_name(given: str) -> str:

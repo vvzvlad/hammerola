@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with views() and printables(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part".
-version: 4
+version: 5
 ---
 
 # hammerola
@@ -329,7 +329,9 @@ section: a working model with the rules written next to the geometry. In short:
   `model_template/model.py` carries a worked one on the lid.
 * **`printables()`** — `{name: <CadQuery object>}`, one entry per part somebody
   prints, and **each entry is one fused body**. Each becomes `name.stl`,
-  `name.step` and `name.3mf`. The gate reads `.val()`, the first body on the
+  `name.step` and `name.3mf`. **`assembled` and `print` are refused as
+  printable names**: the build writes an `assembled.stl` and a `print.stl` of
+  its own beside the parts. The gate reads `.val()`, the first body on the
   stack and only that one: it alone is validated, measured, written to the STL
   and rendered, and the log's `valid, volume … cm3, watertight, one body` is
   about it. So a Workplane holding several unfused bodies — `plate.add(bosses)` —
@@ -373,28 +375,35 @@ a check you write yourself or something you go and look at. Of the bed the gate
 reads one thing: `check_print_layout` compares bounding boxes in `print`, and
 parts standing inside one another — by more than 0.05 mm on all three axes —
 refuse the build. Orientation, the air between parts, how much of each sticks
-to the plate, whether any of it fits the machine: none of that is read. And no
-command of the client brings back a picture: `artifacts` downloads only what
-`meta.json` declares, and that list is built from `printables()`.
+to the plate, whether any of it fits the machine: none of that is read by
+anything. A picture is what answers it, and there is one of the bed.
 
-**The pictures exist all the same, and fetching one is the cheapest check there
-is.** A build renders one isometric PNG per printable and one of the stem
-`assembled`, and nothing else: `print` has no picture, nor has any tab you add,
-so the bed layout is what no picture answers. Each comes off that stem's STL, so
-a part's preview shows exactly what will print, while `assembled.stl` is glued
-from the `assembled` view — or from the printables themselves, where the project
-has no such view. Under each is a footer: `Bounding box: 60.0 x 20.0 x 6.0 mm`,
-the triangle count, and `watertight` — which on the assembly reads `N parts`. The
-build directory is published whole, so they are served — undeclared, public, no
-secret — at `<hub>/project/<pid>/<build>/<part>_preview.png`, with
-`assembled_preview.png` beside them: `<build>` is `dev`, `latest` or a revision,
-`<pid>` the id in `project.json`. A `.png` is off the whitelist of types a build
-directory serves inline, so it arrives as an attachment: `curl -o` it and read
-the file. You can read a picture and the gate cannot.
+**The `print` picture is the cheapest check there is, and the only thing that
+shows the BED.** A build renders one isometric PNG per printable, one of the
+stem `assembled` and one of `print`, and nothing else — no tab you add gets a
+picture. `print_preview.png` is what a part lying face down, standing on edge or
+hanging off the plate looks like, and no gate reads any of that: look at it
+after every build that moved a part or a view. (A project with no `print` view
+has no plate, so no `print.stl` and no picture of one; the build says so in a
+line of its own.) Each picture comes off that stem's own STL, so a part's
+preview shows exactly what will print, `assembled.stl` is glued from the
+`assembled` view — or from the printables themselves, where the project has no
+such view — and `print.stl` is the bed as it is laid out. Under each picture is
+a footer: `Bounding box: 60.0 x 20.0 x 6.0 mm`, the triangle count, and
+`watertight` — which on a plate or an assembly reads `N parts`.
+
+**One way to a picture.** `hammerola artifacts <build>` brings every picture the
+build rendered into `.hammerola/`, the per-part `<part>_preview.png` ones
+included, along with the parts' STL/STEP/3MF and the two whole-build meshes
+(`assembled.stl` and, where the project has a `print` view, `print.stl`). It
+takes `dev` and `latest` as well as a revision, so it works straight after a
+`build`. Do not assemble a picture's URL by hand: the command asks the build
+what it published and fetches that, so a file that is renamed goes on arriving
+while a hand-written path stops. You can read a picture and the gate cannot.
 
 Shape is otherwise judged in the browser viewer, and **a size comes back three
 ways**: that footer, `metrics.json`, and whatever the model prints. The second
-sits in the same build directory, and `.json` IS on the inline whitelist, so
+sits in the same build directory and is served as plain JSON, so
 `curl <hub>/project/<pid>/dev/metrics.json` gives `bbox_mm` for every part
 straight after a `build`, with no commit. The log itself carries no size — per
 part it says `valid, volume … cm3, watertight, one body, N triangles` — so
@@ -774,7 +783,7 @@ What each kind of failure means:
 
 ```sh
 hammerola source <revision>     # the code that produced it, into .hammerola/
-hammerola artifacts <revision>  # its STL/STEP/3MF, into .hammerola/
+hammerola artifacts <revision>  # its STL/STEP/3MF and pictures, into .hammerola/
 hammerola diff <old> <new>      # what moved: geometry numbers, and the source
 ```
 

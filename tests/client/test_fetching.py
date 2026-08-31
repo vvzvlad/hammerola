@@ -62,12 +62,23 @@ def metrics_bytes(volume=1000.0, faces=6, code="cc", parts=("body",)):
 
 
 def with_downloads(root, **kw):
-    """A model directory whose meta.json declares printable artefacts."""
+    """A model directory whose meta.json declares artefacts in all three maps.
+
+    ALL THREE deliberately. `downloads` is the per-part files and is the only
+    one the build page draws; `overview` carries the whole-build meshes and
+    `previews` the pictures, and THIS COMMAND IS THEIR ONLY READER — so a fetch
+    that quietly stopped walking either would be invisible to every other test
+    in the repository.
+    """
     model = make_model(root, **kw)
     (model / "body.stl").write_bytes(b"solid body\nendsolid body\n")
     (model / "body.step").write_bytes(b"ISO-10303-21;\n")
+    (model / "assembled.stl").write_bytes(b"solid all\nendsolid all\n")
+    (model / "body_preview.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 32)
     (model / "meta.json").write_bytes(meta_bytes(
-        downloads={"stl": "body.stl", "step": "body.step"}))
+        downloads={"stl": "body.stl", "step": "body.step"},
+        overview={"assembled": "assembled.stl"},
+        previews={"body": "body_preview.png"}))
     return model
 
 
@@ -255,6 +266,30 @@ def test_artifacts_brings_back_what_the_build_declared(hub, tmp_path, capsys):
     assert not (fetched / "assembled.json").exists()
 
 
+def test_artifacts_brings_back_the_pictures_and_the_whole_build_meshes(
+        hub, tmp_path, capsys):
+    """The two maps that draw nothing, and the reason this command exists.
+
+    A part's picture is the cheapest check there is on a part that came out
+    lying face down, and until it was declared there was no way to ask for one:
+    `downloads` was the only channel, so declaring ten pictures meant ten
+    buttons under a menu whose other rows are things you print, and the
+    instruction that survived instead told an agent to assemble the URL by hand
+    out of the part name and a suffix.
+    """
+    model = with_downloads(tmp_path / "demo")
+    revision = publish(model, capsys)
+
+    assert run(model, "artifacts", revision) == 0
+    out = capsys.readouterr().out
+
+    fetched = model / sources.SCRATCH_DIR / f"artifacts-{revision[:12]}"
+    assert (fetched / "body_preview.png").read_bytes().startswith(b"\x89PNG")
+    assert (fetched / "assembled.stl").is_file()
+    # Four files from three maps, counted once each and reported as such.
+    assert "4 files" in out
+
+
 def test_artifacts_reads_the_public_route_and_source_does_not(hub, tmp_path,
                                                               capsys):
     """The two verbs exist because the rights differ. The build's files are
@@ -277,12 +312,64 @@ def test_artifacts_can_fetch_the_dev_slot(hub, tmp_path, capsys):
     assert (fetched / "body.stl").is_file()
 
 
-def test_a_build_that_exported_nothing_says_so_and_succeeds(hub, model, capsys):
-    """An empty `downloads` is a fact about the model, not a failure of the
-    command."""
+def test_a_build_declaring_nothing_at_all_says_so_and_still_succeeds(
+        hub, model, capsys):
+    """A shape no real build produces — every one of them exports at least one
+    part into `downloads` and one mesh into `overview`, and it is the stand-in
+    builder here that can leave all three maps out at all. So the message names
+    the hub rather than the model, and the command still succeeds: the answer is
+    well formed and simply has nothing in it to fetch."""
     revision = publish(model, capsys)
     assert run(model, "artifacts", revision) == 0
-    assert "no downloadable artefacts" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "no downloadable artefacts" in out
+    # It names all three maps, because "empty" is now a statement about three
+    # fields and a reader told about one would go looking in the wrong place.
+    assert "`downloads`, `overview` and `previews`" in out
+
+
+# A file name no build the hub published can carry: U+202E RIGHT-TO-LEFT
+# OVERRIDE, written as an escape rather than pasted, because a literal one
+# reverses this very source line in every editor that reads it.
+BAD_NAME = "body\u202elts.stl"
+
+
+@pytest.mark.parametrize("field", ("downloads", "overview", "previews"))
+def test_a_declared_name_the_hub_could_never_serve_is_refused(
+        hub, tmp_path, capsys, field):
+    """THE CASE THE CLIENT'S RE-CHECK EXISTS FOR, and the one it used to miss.
+
+    The hub validates these three maps at publish time, so a name of this shape
+    cannot come from a build it published — which is exactly why the client
+    refuses instead of skipping: the answer did not come from where it should
+    have. That makes a DISHONEST OR CORRUPTED ANSWER the only case the check is
+    ever exercised by, and it is staged here by rewriting the published
+    meta.json on the volume, because no push can carry such a name through the
+    archive alphabet in the first place.
+
+    U+202E RIGHT-TO-LEFT OVERRIDE, and not a leading dot, because the dot is
+    what the hand-rolled version of this check already caught. This one is the
+    clause the shared rule has and the copy did not — and it names this very
+    command as its reason: the filename is printed on the line reporting the
+    save and then written to the author's disk, so an override in it reverses
+    the report of what just landed.
+    """
+    model = with_downloads(tmp_path / "demo")
+    revision = publish(model, capsys)
+
+    build = hub.project_dir("demo0001") / revision
+    meta = json.loads((build / "meta.json").read_text(encoding="utf-8"))
+    meta[field] = {"body": BAD_NAME}
+    (build / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    assert run(model, "artifacts", revision) == 1
+    err = capsys.readouterr().err
+    assert BAD_NAME not in err, (
+        "the refusal printed the name raw; an override in it reverses the very "
+        "line reporting it, which is what the check is about")
+    assert repr(BAD_NAME) in err
+    assert "non-printable" in err
+    assert field in err
 
 
 def test_artifacts_of_a_build_that_is_not_there(hub, model, capsys):
@@ -459,15 +546,22 @@ def test_diff_needs_a_project_because_metrics_live_in_a_build_directory(
 
 
 def test_a_view_file_is_not_confused_for_an_artefact(hub, tmp_path, capsys):
-    """`variants` and `downloads` are different lists with different jobs, and
-    only one of them is what a person wants on their disk."""
+    """`variants` is a fourth list on this document and the one map NOT walked.
+
+    The other three are, so this cannot be asserted by "the command fetches what
+    is declared" — the directory below is compared WHOLE, and the tessellation
+    is the name that has to be missing from it while the picture and the
+    whole-build mesh are present. It is megabytes nothing outside the browser
+    can use, and `DECLARING_FIELDS` is where the line is drawn.
+    """
     model = with_downloads(tmp_path / "demo")
     (model / "assembled.json").write_bytes(view_bytes("big"))
     revision = publish(model, capsys)
 
     assert run(model, "artifacts", revision) == 0
     fetched = model / sources.SCRATCH_DIR / f"artifacts-{revision[:12]}"
-    assert sorted(p.name for p in fetched.iterdir()) == ["body.step", "body.stl"]
+    assert sorted(p.name for p in fetched.iterdir()) == [
+        "assembled.stl", "body.step", "body.stl", "body_preview.png"]
 
 
 def test_a_metrics_body_that_blows_the_JSON_parser_is_not_a_traceback():

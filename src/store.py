@@ -2091,6 +2091,16 @@ class Store:
                         # succeeded; if it raises, nothing owns `fd` any more and
                         # nothing will ever close it — one leaked descriptor per
                         # member, on a process that also serves every read.
+                        #
+                        # `app._nonblocking` argues against this exact shape and
+                        # both are correct: an opener is owned by `FileIO` on
+                        # every failure path of its own, while this is owned only
+                        # because the guard here exists. What keeps this one off
+                        # the opener is `dir_fd=parent_fd` in
+                        # `_create_member_file` — `open()`'s opener is called
+                        # with `(path, flags)` and nothing else, so the directory
+                        # descriptor would have to ride in on a closure. It
+                        # could; this is a choice rather than an impossibility.
                         os.close(fd)
                         raise
                     with out:
@@ -2609,18 +2619,68 @@ def _payload_digest(files: dict) -> str:
 def _hash_output(directory: Path, names) -> dict:
     """`{relative path: sha256}` for the files a build declared it ships.
 
-    The same shape `_unpack` produces, because it feeds the same consumer:
-    `render.build_meta` decides whether a view or a download names a file that
-    is really there by asking whether it is a KEY of this mapping.
+    The same shape `_unpack` produces — `{path: sha256}` — but not the same
+    journey, and this said "because it feeds the same consumer" until
+    2026-08-31, which is no longer so: `_unpack`'s mapping is of an upload's
+    members and goes to `_payload_digest` alone. THIS one is what
+    `render.build_meta` reads, and it is the only mapping that reaches it:
+    build_meta decides whether a view or a download names a file that is really
+    there by asking whether it is a KEY of this mapping.
 
     The names come from `BuildOutcome.files`, which the build process claimed and
     the PARENT then checked one by one — inside `directory`, in normal form, no
     symlink in any component, a regular file that exists (`runner._verified_files`).
     That check is why this can open them directly. Taking the list rather than
     walking the tree is also what keeps the mapping to what the build SHIPS: an
-    output directory holds working files too (the preview renderer writes PNGs
-    nothing in meta.json points at), and a view file that was never declared has
-    no business validating.
+    output directory may hold files a build wrote and never declared, and a view
+    file that was never declared has no business validating.
+
+    WHAT THIS DOES NOT DO IS PRUNE, and issue #53 did not change it: publication
+    is a whole-directory move — `os.rename(staging, final)` on the commit route,
+    the two renames of `_swap_dev_slot` on the `dev` one — and nothing anywhere
+    deletes a file that is not a key of this mapping. So a model can write an
+    arbitrary file into its output, never declare it, and have it land at a
+    permanent public URL without `render._check_declared_file` ever seeing the
+    name. #53 closed the other half — the maps are all declared now, and a
+    declared name has to be one the file server will answer — so read that as
+    "nothing DECLARED can be unservable", never as "nothing undeclared can be
+    served".
+
+    WHAT HOLDS THE UNDECLARED HALF IS THE FILE SERVER, and it answers in more
+    than one place. Read the list below as what is really there rather than as
+    a claim of completeness: an undeclared file it lets through is served, and
+    that is the accepted position rather than an oversight.
+
+      * the NAME. `app._safe_name` asks `buildnames.unservable_reason` of every
+        name requested under `/project/<pid>/<commit>/`, so a name that starts
+        with a dot or carries a character of the C category is not served at
+        all. That, and not the content type, is what covers a
+        `.payload.sha256`-shaped name;
+      * WHERE IT LANDS. `app._send_file` resolves the path and refuses anything
+        outside `store.root` — on the RESOLVED path, because `latest` is a
+        symlink and following it is the point;
+      * WHAT IT IS, in TWO places rather than one, and reading them as one is
+        what hid a descriptor leak for a round. A DIRECTORY is refused by the
+        `open()` in `app._send_file` itself — `FileIO` fstats what it was handed
+        and raises `IsADirectoryError` — so it never reaches the check below. A
+        FIFO or a device passes the open and is refused by `stat.S_ISREG` on the
+        handle. A model writes its own output directory and nothing on the build
+        path stops it calling `makedirs` or `mkfifo` there, so both are
+        reachable in practice — and the fifo is REACHED only because the open is
+        `O_RDONLY | O_NONBLOCK`: a plain `open()` on a fifo blocks until a writer
+        appears, which is the serving thread gone for good before anything gets
+        to refuse it. THE PERIMETER OF THIS WHOLE LIST IS
+        `/project/<pid>/<commit>/`, and outside it the hazard is open as a
+        CLASS rather than at a countable set of places: anything that reads the
+        volume with a plain `open`/`read_text` and no `S_ISREG` wedges its
+        handler for good — the comment queue's listing, a rename, a delete, the
+        two log routes, and that enumeration went stale once already, which is
+        why it is not the point. `EDIT_TOKEN` in front of a route limits who
+        pulls the trigger, never who lays the trap: it is laid by the BUILD.
+        Issue #74 carries the inventory; when it closes, this comes out;
+      * the TYPE. `app.build_content_type` serves the whitelist
+        (`BUILD_CONTENT_TYPES`) as itself and hands back everything else as
+        `application/octet-stream` with `Content-Disposition: attachment`.
     """
     files: dict[str, str] = {}
     for name in names:

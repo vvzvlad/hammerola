@@ -342,6 +342,46 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   same `EDIT_TOKEN` as everything else — the hub's second variable went away in
   step 0, along with the client's sentence explaining a 401 that meant "this
   deployment set its other variable differently"
+- `src/buildnames.py` — what a build file may be CALLED, and the one place that
+  decides it. Three sides ask the question and they live in three different
+  worlds: the file server, of every request for
+  `/project/<pid>/<commit>/<name>` (`app._safe_name`); the declaration, of every
+  name a push names in `meta.json` (`render._check_declared_file`, on all four
+  maps — `views` included, which is the one that had kept a check of its own);
+  and the client, of every name the hub hands back before it writes that name to
+  the author's disk (`src/client/artifacts.py`). Before this module the rule was
+  written out inline in all three, and no two copies agreed: the server refused a
+  leading dot, the declaration accepted one, the client had a third and weaker
+  approximation. That is the failure it exists to end, and it is silent — a name
+  the declaration takes and the server refuses publishes with a 201 into an
+  IMMUTABLE directory under a year of cache and then 404s on every GET, so the
+  build is accepted and impossible to open, from a push that can never be taken
+  back (issue #53). IT IS A MODULE OF ITS OWN because none of the three could
+  host it: the import edge runs `app → store → render`, so `render` may import
+  neither `app` nor `store` — which also closes `store.py`, the obvious address
+  next door to `SAFE_COMPONENT` — and the client is stdlib-only and may not
+  import the service at all. STDLIB ONLY for that last reason, and it travels in
+  `onboarding.CLIENT_EXTRA_MODULES` beside `src/metricsdiff.py`. WHAT ENFORCES
+  the stdlib rule is TWO tests, and they are not the same rule:
+  `tests/test_buildnames.py::test_the_shared_module_imports_nothing_but_the_standard_library`
+  names this file and allows the standard library and nothing else, while
+  `tests/client/test_stdlib_only.py::test_every_client_module_imports_only_the_standard_library`
+  reaches it by walking `onboarding.client_members()` — which is where
+  `CLIENT_EXTRA_MODULES` puts it — and allows `src` on top of the standard
+  library, since the modules it sweeps are the ones that import each other; what
+  they may take from `src` is then narrowed by
+  `test_the_client_never_reaches_into_the_service_or_the_build_half` beside it.
+  Both read the syntax tree rather than importing, so an import buried inside a
+  function is caught too. THE ZIPAPP DOES NOT CATCH IT:
+  `onboarding._refuse_unimportable` refuses on what
+  `_import_closure` reports MISSING, and that walk skips every import whose
+  module is not `src` or `src.*` outright. A `numpy` added here therefore enters
+  no closure, refuses nothing and is served with a 200 — and the laptop that
+  downloaded it is exactly what breaks. `store.SAFE_COMPONENT` deliberately did
+  NOT move in beside it: that is a different rule about a different door — the
+  alphabet each COMPONENT of an archive member's path is held to on the way IN,
+  capped at 128 characters — where this one is about the name of a file a build
+  already wrote, on the way out
 - `src/metricsdiff.py` — reading `metrics.json`: what a build measured, and what
   moved between two of them. It is NOT a copy of anything and that is the point:
   the document has one writer (the build) and two readers — `cadbuild.metrics`,

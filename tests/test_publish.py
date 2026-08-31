@@ -5,9 +5,12 @@ import os
 import socket
 import time
 
+import pytest
+
 from harness import TOKEN, good_build, meta_bytes, tar_gz, view_bytes
 
-from src import app
+from src import app, render
+from src.store import PublishError, Store
 
 
 def test_publish_creates_the_build_and_points_latest_at_it(hub):
@@ -494,6 +497,356 @@ def test_a_download_pointing_at_a_generated_file_is_refused(hub):
     body = tar_gz({"meta.json": meta_bytes(downloads={"meta": "meta.json"}),
                    "assembled.json": view_bytes()})
     assert hub.publish("proj1", "abc123", body).status_code == 422
+
+
+@pytest.mark.parametrize("field", ("overview", "previews"))
+def test_a_whole_build_map_pointing_at_a_missing_file_is_422(hub, field):
+    """The same question `downloads` is asked, on the two maps that grew later.
+
+    These carry no button, so nothing on either page would go visibly wrong —
+    which is exactly why the check has to be here rather than left to the
+    browser: the client fetches every name in them, and a name the archive never
+    carried turns `hammerola artifacts` into a refusal against a build the hub
+    accepted.
+    """
+    body = tar_gz({
+        "meta.json": meta_bytes(**{field: {"assembled": "absent.stl"}}),
+        "assembled.json": view_bytes(),
+    })
+    r = hub.publish("proj1", "abc123", body)
+    assert r.status_code == 422
+    assert "absent.stl" in r.json()["error"]
+    assert not (hub.project_dir("proj1") / "abc123").exists()
+
+
+@pytest.mark.parametrize("field", ("overview", "previews"))
+def test_markup_in_a_whole_build_stem_is_refused(hub, field):
+    """The key is a part name, and a part name reaches the viewer's innerHTML.
+
+    Nothing renders these two maps TODAY, and that is the argument for checking
+    them rather than against it: the reader they exist for is the one that has
+    not been written (a project card, a picture on a tree row), and it will look
+    the stem up against the part names it already draws.
+    """
+    body = tar_gz({
+        "meta.json": meta_bytes(
+            **{field: {"<script>alert(1)</script>": "model.stl"}}),
+        "assembled.json": view_bytes(),
+        "model.stl": b"solid demo",
+    })
+    assert hub.publish("proj1", "abc123", body).status_code == 422
+    assert not (hub.project_dir("proj1") / "abc123").exists()
+
+
+@pytest.mark.parametrize("field", ("downloads", "overview", "previews"))
+@pytest.mark.parametrize("value", (0, [], ""))
+def test_a_whole_build_map_that_is_not_an_object_is_refused(hub, field, value):
+    """`0` is not "no pictures", and reading it as one would publish in silence.
+
+    Every one of these fields is read with an explicit `is None` for this:
+    `raw.get(field) or {}` swallows every falsy non-object, so a push that
+    described something entirely different would be accepted and the difference
+    would show up nowhere.
+
+    `downloads` IS ON THIS LIST NOW, and it is the reason the parametrization
+    grew: it was the map read with `or {}` — the spelling the docstring beside
+    it called a defect — so `downloads: 0` published a build whose download
+    buttons had silently vanished, which is the most visible of the three maps
+    disappearing and the one nobody was told about.
+    """
+    body = tar_gz({"meta.json": meta_bytes(**{field: value}),
+                   "assembled.json": view_bytes()})
+    assert hub.publish("proj1", "abc123", body).status_code == 422
+    assert not (hub.project_dir("proj1") / "abc123").exists()
+
+
+@pytest.mark.parametrize("field", ("overview", "previews"))
+def test_a_stem_longer_than_a_button_caption_still_publishes(hub, field):
+    """The regression that decided the rule these keys are held to.
+
+    A part name has a ceiling of its own and it is four times a caption's — 128
+    characters on the build side (MEMBER_RE), MAX_TEXT here — which is what
+    makes the difference reachable at all: the stem below is legal under both
+    and refused by SAFE_LABEL. It is also a name that publishes TODAY, because
+    on a single-printable build the download labels degenerate to bare
+    `stl`/`step`/`3mf` with the name gone from them, so nothing about such a
+    project ever met the caption rule. Holding the stem to SAFE_LABEL — the
+    32-character rule for a button caption — would start refusing that project,
+    with the picture of its own part as the reason, and no map on this document
+    is a caption.
+    """
+    stem = "bracket_" + "x" * 40
+    body = tar_gz({
+        "meta.json": meta_bytes(**{field: {stem: "model.stl"}}),
+        "assembled.json": view_bytes(),
+        "model.stl": b"solid demo",
+    })
+    assert hub.publish("proj1", "abc123", body).status_code == 201
+    meta = hub.get("/project/proj1/abc123/meta.json").json()
+    assert meta[field] == {stem: "model.stl"}
+
+
+# -- what a build file may be called ----------------------------------------
+# One row per name, and the answer both sides have to give: does the hub serve
+# `/project/<pid>/<commit>/<name>`? The file server asks it of every request
+# (`app._safe_name`) and the declaration asks it of every name a push offers
+# (`render._check_declared_file`), and for as long as those were two rules they
+# disagreed. Nothing here is a name the hub GENERATES: those are served happily
+# and may not be declared, which is the one question only one side asks.
+SERVABLE_NAMES = (
+    ("lid_preview.png", True),
+    # 124 characters: over a caption's 32, under MEMBER_RE's 128, so a real
+    # build can produce it and neither side may refuse it.
+    ("a" * 120 + ".stl", True),
+    (".lid_preview.png", False),
+    # The hub's own bookkeeping beside a build, and the reason the dot rule is
+    # not cosmetic: it is what tells a retry from a collision.
+    (".payload.sha256", False),
+    ("..", False),
+    (".", False),
+    ("", False),
+    ("sub/lid_preview.png", False),
+    # U+202E RIGHT-TO-LEFT OVERRIDE. `hammerola artifacts` prints this name and
+    # then writes it to the author's disk.
+    ("lid\u202egnp.png", False),
+    ("lid\npreview.png", False),
+)
+
+
+def _view_declarable(name, files: dict, staging) -> bool:
+    """Would `build_meta` accept a `views` entry pointing at `name`?
+
+    THROUGH `build_meta` AND NOT THROUGH THE HELPER, which is the whole reason
+    this walk is a third one rather than a second call to the same function.
+    The `views` loop had a check inlined in it for as long as the shared rule
+    existed beside it, and a test that asked `_check_declared_file` directly
+    would have been perfectly green the entire time.
+
+    AN OSError MEANS THE NAME WAS ACCEPTED, and saying so is what keeps a
+    reverted rule visible here. `build_meta` opens exactly one file — the view
+    the entry points at — and it opens it only AFTER `_check_declared_file`, which
+    is pure. So a name this walk wrongly accepts runs on into `check_view_file`
+    and dies on a file the table never wrote (`FileNotFoundError` for a name that
+    could be one, `IsADirectoryError` for `.`, `..` and `""`), and that exception
+    is evidence the name got past the rule rather than evidence it was refused.
+    Reporting it as "refused" would agree with the table for the wrong reason and
+    go green on precisely the regression this exists for; letting it escape would
+    make the same case an ERROR rather than an assertion. It is neither: the
+    answer is True, and the assertion below is what fails.
+    """
+    raw = json.loads(meta_bytes(
+        views=[{"id": "assembled", "file": name, "parts": 1}]))
+    try:
+        render.build_meta("proj1", "abc123", raw, staging, files,
+                          "2026-08-30T00:00:00Z")
+    except ValueError:
+        return False
+    except OSError:
+        pass
+    return True
+
+
+def test_the_file_server_and_a_push_agree_on_what_a_build_file_may_be_called(
+        tmp_path):
+    """Three doors onto one rule, over a table of names, with the answers pinned.
+
+    THE DEFECT THIS EXISTS FOR IS SILENT (issue #53): the declaration took a
+    leading dot and the file server refuses one, so a build declaring
+    `.lid_preview.png` published with a 201 into an immutable directory under a
+    year of cache and answered 404 for every GET of a file it had named — a
+    build accepted and impossible to open, from a push that can never be taken
+    back. Neither side was wrong on its own; they were two copies of one rule.
+
+    So the rule moved into `buildnames.unservable_reason` and this compares its
+    CALLERS rather than the function — a re-inlined copy goes red here — and it
+    compares each of them against the expected answer as well, so weakening the
+    shared rule cannot leave the callers agreeing about the wrong thing. There
+    are THREE of them now: the file server, the declaration helper the three
+    file-declaring maps go through, and `views`, which kept a check of its own
+    until the review of #53 and so had neither the dot clause nor the
+    non-printable one — on the one map without which a build page draws nothing.
+    """
+    # Every row is in `files`, so the membership question — the one thing
+    # `_check_declared_file` asks that the server does not — never fires and
+    # what is left is exactly the shared rule.
+    files = {name: "digest" for name, _ in SERVABLE_NAMES}
+    # `build_meta` measures the view file it accepts, so the servable rows have
+    # to be real files. The refused ones are refused before anything is opened.
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    for name, servable in SERVABLE_NAMES:
+        if servable:
+            (staging / name).write_bytes(view_bytes())
+    for name, servable in SERVABLE_NAMES:
+        assert app._safe_name(name) is servable, f"the file server on {name!r}"
+        try:
+            render._check_declared_file(name, files, "`previews` entry 'lid'")
+            declarable = True
+        except ValueError:
+            declarable = False
+        assert declarable is servable, f"the declaration on {name!r}"
+        assert _view_declarable(name, files, staging) is servable, (
+            f"the `views` declaration on {name!r}")
+
+
+def _built(store, pid, commit, meta_json, extra=(),
+           extra_bytes=b"\x89PNG\r\n\x1a\n"):
+    """A finished build's output in staging, as the build process leaves it.
+
+    THE BUILD PATH AND NOT THE ARCHIVE PATH, which is the whole reason the two
+    tests below are written this way rather than as a push. An archive member
+    has to match SAFE_COMPONENT, so an upload cannot carry a name with a leading
+    dot at all and a declaration of one would be refused for not being in the
+    archive — the right answer for the wrong reason, and a test that stays green
+    with the rule deleted. A BUILD writes its own output directory and nothing
+    applies an alphabet to a name in it: `runner._verify_output_file` checks the
+    path shape, the symlinks and that the file exists, and the names themselves
+    are chosen by model code (src/buildproc/child.py). This is the door those
+    names come through, so this is the door they are refused at.
+
+    `extra_bytes` IS THERE SO THE FAILURE STAYS ON THE NAME. The default is PNG
+    magic, which is what a `previews` entry really points at; a `views` entry
+    points at a view file, and PNG bytes there are refused for being undecodable
+    JSON — by `check_view_file`, which runs AFTER the name rule. So the test
+    below passed while asking nothing about the name, and would have gone red on
+    a reverted rule with `'utf-8' codec can't decode byte 0x89` as its whole
+    explanation. Handing that caller real view JSON is what makes the name the
+    only thing left for the push to be refused over.
+    """
+    staging = store.build_staging(pid, commit)
+    staging.mkdir()
+    (staging / "meta.json").write_bytes(meta_json)
+    (staging / "assembled.json").write_bytes(view_bytes())
+    names = ["meta.json", "assembled.json"]
+    for name in extra:
+        (staging / name).write_bytes(extra_bytes)
+        names.append(name)
+    return staging, tuple(names)
+
+
+@pytest.mark.parametrize("name", (".lid_preview.png", "lid\u202egnp.png"))
+def test_a_build_declaring_a_file_the_hub_cannot_serve_is_refused(tmp_path, name):
+    """The file is really there, really hashed — and would 404 or lie in a report.
+
+    Both names below are files this build genuinely wrote and genuinely
+    declared, so every check up to here passes: they are inside the output
+    directory, in normal form, no symlink, regular files, and keys of the output
+    hash. What they are not is names this service can hand back. The dotted one
+    404s on every GET under a permanent URL; the other one carries U+202E, so
+    the line `hammerola artifacts` prints while writing it to the author's disk
+    reads backwards from the point the override lands.
+    """
+    store = Store(data_dir=tmp_path / "data", max_build_bytes=8 * 1024 * 1024)
+    staging, names = _built(store, "proj1", "abc123",
+                            meta_bytes(previews={"lid": name}), extra=(name,))
+
+    with pytest.raises(PublishError) as refused:
+        store.publish_built("proj1", "abc123", staging, names, "digest-a")
+
+    assert refused.value.status == 422
+    # NAMED, and named through `!r`: this message is what the pusher reads, so
+    # an unprintable in it has to arrive escaped rather than reversing the line
+    # that reports it.
+    assert repr(name) in str(refused.value)
+    # Refused BEFORE the rename, so there is no build at the permanent URL —
+    # which is the whole point: a 201 here could never be taken back.
+    assert not (store.projects_dir / "proj1" / "abc123").exists()
+
+
+@pytest.mark.parametrize("name", (".assembled.json", "assembled\u202enosj.json"))
+def test_a_build_declaring_a_view_the_hub_cannot_serve_is_refused(tmp_path, name):
+    """The same two names, on the map whose loss empties the page.
+
+    `views` is the map the viewer reads: a build whose only view 404s shows
+    nothing at all, so this is the most expensive place for the declaration and
+    the file server to disagree — and it is exactly where they still did after
+    the rule was shared, because this loop kept an inline check that asked
+    membership, `/` and the generated names and neither of the other two
+    clauses.
+
+    Through the BUILD path for the reason `_built` gives: an archive member
+    cannot carry either of these names, so a push-based test would go green on
+    the membership question and stay green with the rule deleted.
+
+    AND THE FILE IS A REAL VIEW, for the reason `_built`'s `extra_bytes`
+    explains: this member is the one `check_view_file` opens, so anything that
+    is not view JSON refuses the push one step past the name rule and answers
+    this test's question by accident.
+    """
+    store = Store(data_dir=tmp_path / "data", max_build_bytes=8 * 1024 * 1024)
+    meta = meta_bytes(views=[{"id": "assembled", "file": name, "parts": 1}])
+    staging, names = _built(store, "proj1", "abc123", meta, extra=(name,),
+                            extra_bytes=view_bytes())
+
+    with pytest.raises(PublishError) as refused:
+        store.publish_built("proj1", "abc123", staging, names, "digest-a")
+
+    assert refused.value.status == 422
+    assert repr(name) in str(refused.value)
+    assert not (store.projects_dir / "proj1" / "abc123").exists()
+
+
+def test_more_views_than_the_build_has_files_is_refused(hub):
+    """The ceiling the three maps had and the list did not — the expensive one.
+
+    An entry here is not a dict lookup: it is a full parse of the view file
+    (`check_view_file`) and a full gzip of it (`measure_view`), and nothing says
+    N entries may not point at ONE file — `seen` forbids a repeated view id, not
+    a repeated file name. Measured on a 0.9 MB view: ~18 ms per entry, so a
+    hundred thousand of them is hours of CPU inside `_finish_staging`, in one of
+    the two build worker threads this process has, with the queue behind it
+    stopped for as long as it runs.
+
+    Bracketed on both sides, like the map ceiling above: a list that names every
+    file the build published sits AT the bound and has to publish, so a `>=`
+    written where `>` belongs fails here.
+    """
+    def archive(count):
+        return tar_gz({
+            "meta.json": meta_bytes(views=[
+                {"id": f"v{i}", "file": "assembled.json", "parts": 1}
+                for i in range(count)]),
+            "assembled.json": view_bytes(),
+            "model.stl": b"solid demo",
+        })
+
+    # Three members in the archive, so three views is the ceiling itself.
+    assert hub.publish("proj1", "abc123", archive(3)).status_code == 201
+    r = hub.publish("proj1", "def456", archive(4))
+    assert r.status_code == 422
+    assert "entries" in r.json()["error"], r.text
+    assert not (hub.project_dir("proj1") / "def456").exists()
+
+
+@pytest.mark.parametrize("field", ("downloads", "overview", "previews"))
+def test_a_map_carrying_more_entries_than_the_build_has_files_is_refused(
+        hub, field):
+    """Every entry legal, in numbers no build produces: the `notes` failure again.
+
+    A hundred thousand entries each pointing at one real file pass every
+    per-entry check there is and make a `meta.json` that every visitor of that
+    build downloads, under a year of `immutable`, from a push that cannot be
+    taken back — the scenario `MAX_NOTES` is written against, on the three maps
+    beside it. The bound is the build's OWN file count, so the first half here
+    matters as much as the second: a map that names every file the build
+    published sits AT the ceiling and has to publish.
+    """
+    prefix = "stl" if field == "downloads" else "part"
+
+    def archive(count):
+        return tar_gz({
+            "meta.json": meta_bytes(
+                **{field: {f"{prefix}{i}": "model.stl" for i in range(count)}}),
+            "assembled.json": view_bytes(),
+            "model.stl": b"solid demo",
+        })
+
+    # Three members in the archive, so three entries is the ceiling itself.
+    assert hub.publish("proj1", "abc123", archive(3)).status_code == 201
+    r = hub.publish("proj1", "def456", archive(4))
+    assert r.status_code == 422
+    assert "entries" in r.json()["error"], r.text
+    assert not (hub.project_dir("proj1") / "def456").exists()
 
 
 def test_traversal_in_the_url_never_reaches_the_store(hub):

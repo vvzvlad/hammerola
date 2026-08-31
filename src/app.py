@@ -124,7 +124,7 @@ from urllib.parse import parse_qs, unquote
 
 from loguru import logger
 
-from src import onboarding, render
+from src import buildnames, onboarding, render
 from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
                           normalize_since, validate_payload)
 from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
@@ -259,12 +259,27 @@ CONTENT_TYPES = {
 # because the year-long immutable caches are already handed out. So: JSON for the
 # viewer, the model formats the download buttons point at, and everything else
 # becomes an opaque attachment.
+#
+# WHAT LETS A TYPE ONTO THIS LIST is that a browser handed it cannot be made to
+# EXECUTE anything with it — not that the type is common or that some file here
+# happens to be one. `.png` qualifies: a decoder renders it and there is no
+# script in it, so the build's previews (`assembled_preview.png` and the rest)
+# are shown rather than downloaded. `image/svg+xml` does NOT and must never be
+# added, however image-shaped it looks in a list of extensions: an SVG is a
+# document that runs script in this origin. That is the same reason an SVG is
+# refused on the way IN as a comment attachment — by `comments.sniff_image`,
+# which decides an upload's type from its leading BYTES and names SVG explicitly
+# to refuse it. `ATTACHMENT_CONTENT_TYPES` below is the other end of that one
+# decision rather than the decision itself: a different table, for a different
+# source of files, closed on three extensions because those three are all
+# `sniff_image` ever stores.
 BUILD_CONTENT_TYPES = {
     ".json": "application/json",
     ".stl": "model/stl",
     ".step": "model/step",
     ".stp": "model/step",
     ".3mf": "model/3mf",
+    ".png": "image/png",
 }
 
 
@@ -296,6 +311,82 @@ def build_content_type(name: str) -> tuple[str, dict]:
     if ctype is not None:
         return ctype, {}
     return OCTET_TYPE, {"Content-Disposition": "attachment"}
+
+
+def _nonblocking(path, flags):
+    """`open()`'s opener, adding O_NONBLOCK — see `_send_file` for why.
+
+    An opener rather than `os.fdopen(os.open(...))`, and the difference is a
+    descriptor leak rather than style: `os.open` SUCCEEDS on a directory, and
+    the `os.fdopen` that follows then raises `IsADirectoryError` without closing
+    what it was handed. Through an opener the descriptor belongs to CPython's
+    `FileIO` the moment this returns, and `FileIO` closes it on every failure
+    path of its own.
+
+    NOT a rule for the whole repository, and the counter-example is deliberate:
+    `Store._extract_members` keeps the `os.fdopen` shape with a hand-rolled
+    `os.close` in its error branch, correctly, because its `os.open` carries
+    `dir_fd=parent_fd`, which an opener's `(path, flags)` signature cannot pass.
+    """
+    return os.open(path, flags | os.O_NONBLOCK)
+
+
+def _safe_name(name: str) -> bool:
+    """One ordinary filename, and nothing that navigates.
+
+    THE RULE IS NOT WRITTEN HERE, and that is the point of the indirection. It
+    lives in `buildnames.unservable_reason`, because the other halves of it are
+    the check every name a push DECLARES goes through
+    (`render._check_declared_file`, on all four of its maps) and the client's
+    own re-check of every name it is about to write to a disk
+    (`src/client/artifacts.py`) — and two copies of one rule is how a build came
+    to publish with a 201 into an immutable directory and then answer 404 for a
+    file it had named: the declaration took a leading dot and this did not
+    (issue #53). Keeping the rule in one module is what stops that recurring,
+    and `tests/test_publish.py` compares the answers over a table of names.
+
+    Rejecting every name that starts with a dot does two jobs at once: it kills
+    `.` and `..` outright, and it hides the bookkeeping files the store writes
+    beside a build — `.payload.sha256` above all, which is what tells a retry
+    from a collision and is nobody's business to read.
+
+    SERVING GOT STRICTER WHEN THE RULE MOVED, and that was inherited rather than
+    chosen: this used to be `bool(name) and not name.startswith(".") and "/" not
+    in name`, and the shared rule adds the non-printable category to it. Through
+    a URL that newly refuses `Cc` and `Cf` — a `%01`, a U+202E — and NOT a lone
+    surrogate: the segment arrives via `unquote` (`_split` below), whose default
+    is `errors='replace'`, so an undecodable byte is already a U+FFFD, category
+    `So`. Lone surrogates are a DECLARATION-side matter, and only in ONE range:
+    `\\udc80`-`\\udcff` is what `surrogateescape` turns back into a byte at the
+    `os` layer, so a name carrying one can exist on disk (`os.stat('/tmp/x')`
+    with `x = '\\udcff'` raises `FileNotFoundError` — the encode succeeded),
+    while any other lone surrogate never reaches the filesystem at all
+    (`'\\ud800'` raises `UnicodeEncodeError: surrogates not allowed`). Even in
+    that range the `Cs` clause is the SECOND thing such a name meets:
+    `render._check_declared_file` asks `name not in files` first, so a name out
+    of a build's JSON reads as "did not declare" unless the build really wrote
+    it AND declared it. Builds already on disk sit in immutable directories and
+    cannot be re-pushed, so a name that got in before could now stop being
+    served. Two things are why that is acceptable, and NEITHER of them is
+    `store.SAFE_COMPONENT` — that alphabet holds the members of the uploaded
+    ARCHIVE, which since the move is the model's SOURCE tree, while what gets
+    served is what the BUILD wrote, and no alphabet is applied to an output name
+    anywhere: `runner._verify_output_file` checks the path's shape, its symlinks
+    and that the file exists, and stops there. What is true is that this service
+    has never been deployed (AGENTS.md, step 0), so no build exists anywhere
+    holding an old name to lose; and that an honest `cadbuild` writes only
+    `<stem>.stl|.step|.3mf`, `<vid>.json`, `<stem>_preview.png`, `meta.json` and
+    `metrics.json`. A DISHONEST model could have written such a name — it names
+    its own output — which is exactly why the tightening is recorded here rather
+    than passed over: "the file server started refusing a name it used to serve"
+    is invisible until somebody opens a two-year-old build.
+
+    It sits at MODULE level rather than on the handler — where it used to be —
+    so a test can ask it directly: the handler class is minted per server inside
+    the closure below, and a rule that is pinned against another module's copy
+    has to be reachable without standing a server up.
+    """
+    return buildnames.unservable_reason(name) is None
 
 
 def make_handler(store: Store, comment_store: CommentStore, settings,
@@ -553,17 +644,6 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             return self._send(200, body, ctype, CACHE_NONE, extra, with_body)
 
         # -- static files ----------------------------------------------
-        @staticmethod
-        def _safe_name(name: str) -> bool:
-            """One ordinary filename, and nothing that navigates.
-
-            Rejecting every name that starts with a dot does two jobs at once: it
-            kills `.` and `..` outright, and it hides the bookkeeping files the
-            store writes beside a build — `.payload.sha256` above all, which is
-            what tells a retry from a collision and is nobody's business to read.
-            """
-            return bool(name) and not name.startswith(".") and "/" not in name
-
         def _send_file(self, path: Path, cache: str, with_body: bool,
                        uploaded: bool = False, content: tuple | None = None):
             """Stream a file, refusing anything that resolves outside the store.
@@ -592,8 +672,31 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             # slot being swapped, or somebody clearing space by hand — and the
             # client then gets a Content-Length with nothing behind it while the
             # log gets a traceback for a situation that is entirely normal.
+            #
+            # O_NONBLOCK IS WHAT MAKES THAT ORDER SAFE, and it is not an
+            # optimisation: a plain `open()` on a FIFO blocks until a writer
+            # appears, so the S_ISREG refusal just below is never reached and
+            # the handler thread is gone for good. Model code writes its own
+            # output directory and nothing on the build path stops it from
+            # calling mkfifo there — an UNDECLARED one at that, which no
+            # declaration check ever sees — and publication moves that directory
+            # whole, so the fifo lands at a public URL. `runner._verified_files`
+            # names the same hazard ("a fifo is a read that never returns") for
+            # DECLARED names; this is the other half. On a regular file the flag
+            # changes nothing about the read below.
+            #
+            # A DIRECTORY AND A FIFO ARE REFUSED IN TWO DIFFERENT PLACES, and
+            # they are not one check: the directory never reaches `S_ISREG` at
+            # all, because `open()` fstats what the opener handed it and raises
+            # `IsADirectoryError` — caught here as the 404; the fifo passes the
+            # open and is refused by `S_ISREG` below. Both land on the same
+            # answer, which is why the leak this shape closed was invisible:
+            # every response was already correct while `os.fdopen(os.open(...))`
+            # lost one descriptor per request on a directory (see
+            # `_nonblocking`), on a public unauthenticated route, until
+            # `accept()` had none left.
             try:
-                handle = open(resolved, "rb")
+                handle = open(resolved, "rb", opener=_nonblocking)
             except OSError:
                 return self._error(404, "not found", with_body=with_body)
             with handle:
@@ -628,7 +731,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             every commit (SPEC 2.3), which is why this path does not go anywhere
             near the store.
             """
-            if len(rest) != 1 or not self._safe_name(rest[0]):
+            if len(rest) != 1 or not _safe_name(rest[0]):
                 return self._error(404, "not found", with_body=with_body)
             path = (STATIC_DIR / "_v" / rest[0]).resolve()
             assets_root = (STATIC_DIR / "_v").resolve()
@@ -761,7 +864,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     return self._redirect(f"/project/{pid}/{second}/", with_body)
                 return self._serve_build_page(build_dir, with_body)
 
-            if len(rest) != 3 or not self._safe_name(rest[2]):
+            if len(rest) != 3 or not _safe_name(rest[2]):
                 return self._error(404, "not found", with_body=with_body)
             # Same page, spelled out. It is generated, so it never comes off the
             # build directory even if a push put a file of that name there.

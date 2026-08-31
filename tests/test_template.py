@@ -27,6 +27,7 @@ import pytest
 
 from src import onboarding
 from src.buildproc import run_build
+from src.cadbuild.printables import RESERVED_STEMS
 from src.buildproc.limits import DEFAULT_LIMITS, memory_limit_supported
 from src.buildproc.runner import STATUS_OK
 from src.client import pack
@@ -51,7 +52,23 @@ BUILD_LIMITS = (DEFAULT_LIMITS if memory_limit_supported()
 EXPECTED_ARTEFACTS = (
     "meta.json", "metrics.json", "assembled.json", "print.json",
     "base.stl", "base.step", "base.3mf", "lid.stl", "lid.step", "lid.3mf",
+    # The whole-build artefacts and the pictures (issue #53). They used to reach
+    # the site as stowaways — written into the output directory, declared by
+    # nothing, and carried along only because publication happens to be a
+    # directory rename. Named here for the reason everything above is: the day
+    # one of them stops being written, or stops being DECLARED, this is what
+    # says so instead of the build agreeing with itself.
+    "assembled.stl", "print.stl",
+    "assembled_preview.png", "print_preview.png",
+    "base_preview.png", "lid_preview.png",
 )
+# THIS LIST DID NOT MOVE WHEN THE ONE MAP BECAME THREE, and that is a fact about
+# `files` rather than an omission. `outcome.files` is the VERIFICATION list — the
+# names the parent checks and the hub hashes — and `build` assembles it from the
+# same evidence the maps are assembled from (`plate`, `written`) rather than from
+# the maps themselves. So which of `downloads`, `overview` and `previews` a name
+# is offered through is invisible here, by design: a narrowing of what is offered
+# must not be able to stop a file that is on disk from being verified.
 
 
 def template_files() -> list:
@@ -138,6 +155,28 @@ def test_the_model_defines_the_contract_it_is_the_example_of():
     assert "cadquery" in imported
 
 
+def test_the_template_warns_about_every_stem_the_build_takes_for_itself():
+    """`printables()` must name all of RESERVED_STEMS, not just `assembled`.
+
+    The template is the one worked example every author copies, and a stem it
+    fails to mention is a `BuildError` on somebody else's first build with no
+    warning anywhere ahead of it — `print` above all, which is a completely
+    ordinary name for a single printed part. The names cannot be derived there:
+    model.py is a MODEL, it may import nothing from `src`, and a docstring is a
+    literal besides. So the copy is checked instead of avoided.
+    """
+    tree = ast.parse((TEMPLATE_DIR / "model.py").read_text(encoding="utf-8"))
+    doc = next(ast.get_docstring(node) for node in tree.body
+               if isinstance(node, ast.FunctionDef) and node.name == "printables")
+    for stem in RESERVED_STEMS:
+        # The FILE, not the bare stem: `print` on its own also appears in this
+        # docstring as the name of a view, so a docstring that had dropped the
+        # warning would still contain the word.
+        assert f"{stem}.stl" in doc, (
+            f"the build refuses a printable called {stem!r} (RESERVED_STEMS in "
+            "cadbuild.printables) and the template never says so")
+
+
 def test_the_archive_the_hub_serves_is_this_directory():
     """The bytes a `create` receives, compared against the files on disk.
 
@@ -176,6 +215,21 @@ def test_the_template_builds_the_way_the_hub_builds_it(tmp_path):
         reason="the CAD kernel does not import in this interpreter, so the "
                "template cannot be built here — see the module docstring for "
                "what skipping it costs")
+    # AND THE RENDERING STACK, because this test asks for four PNGs. Without it
+    # `render_previews` returns `[]` BY DESIGN — a python that cannot draw must
+    # still be able to publish geometry — and says so with a `warning:` line, so
+    # an interpreter carrying the kernel and not the renderer fails this test
+    # twice over (on the missing artefacts and on the warnings assertion) for a
+    # degradation the build supports on purpose. The MODULE is what is asked for
+    # rather than matplotlib by name: that is the import `render_previews`
+    # itself tries, so it covers numpy, trimesh and Pillow with it. `run_build`
+    # spawns the same interpreter this runs in, so the answer here is the
+    # child's answer.
+    pytest.importorskip(
+        "src.cadbuild.preview_png", exc_type=ImportError,
+        reason="the preview renderer does not import in this interpreter, so "
+               "the pictures this test expects are not produced — a supported "
+               "degradation, not a broken template")
 
     project = tmp_path / "project"
     project.mkdir()

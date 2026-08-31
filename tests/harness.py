@@ -105,8 +105,13 @@ class Hub:
     TRUST_ENV = False
 
     def get(self, path, **kw):
+        # `timeout` is a default rather than fixed, so a test whose SUBJECT is
+        # the request coming back at all can name its own deadline instead of
+        # inheriting one it cannot see — see the fifo test in test_serving.py,
+        # where a hung handler thread has to fail rather than wedge the suite.
         kw.setdefault("trust_env", self.TRUST_ENV)
-        return httpx.get(self.url + path, follow_redirects=False, timeout=10, **kw)
+        kw.setdefault("timeout", 10)
+        return httpx.get(self.url + path, follow_redirects=False, **kw)
 
     def index(self, token=TOKEN):
         """GET /index.json, which takes the token (SPEC 3, and src/app.py).
@@ -122,7 +127,11 @@ class Hub:
     def request(self, method, path, **kw):
         """For the verbs the two helpers above do not cover (HEAD, mostly)."""
         kw.setdefault("trust_env", self.TRUST_ENV)
-        return httpx.request(method, self.url + path, timeout=10, **kw)
+        # A default, for the reason spelled out on `get` above: passed as a
+        # keyword it collides with a caller's own `timeout=` and raises
+        # TypeError instead of honouring it.
+        kw.setdefault("timeout", 10)
+        return httpx.request(method, self.url + path, **kw)
 
     def publish(self, pid, commit, body, token=TOKEN):
         """Push, wait for the build, and answer as the synchronous endpoint did.
@@ -223,9 +232,13 @@ class Hub:
         headers = kw.pop("headers", {}) or {}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
+        # Both defaults through `setdefault`, so this reads like `get` and
+        # `request` above and a caller's own `timeout=` is honoured rather than
+        # colliding into a TypeError.
+        kw.setdefault("trust_env", self.TRUST_ENV)
+        kw.setdefault("timeout", 10)
         return httpx.request(method, f"{self.url}/api/v1/comments{path}",
-                             headers=headers, timeout=10,
-                             trust_env=self.TRUST_ENV, **kw)
+                             headers=headers, **kw)
 
     def comment_dir(self, pid):
         return self.data / "comments" / pid
@@ -406,9 +419,16 @@ def tar_gz(files: dict) -> bytes:
     return buffer.getvalue()
 
 
-def good_build(marker="a", downloads=None, extra_files=None) -> bytes:
+def good_build(marker="a", downloads=None, extra_files=None, **extra) -> bytes:
+    """A publishable archive. `**extra` goes straight into meta.json.
+
+    Forwarded rather than enumerated, because `downloads` is no longer the only
+    map a build declares files in: `overview` and `previews` are read by the
+    client and drawn by nothing, so a test about them has to be able to put one
+    in the document without this signature growing a parameter per field.
+    """
     files = {
-        "meta.json": meta_bytes(downloads=downloads),
+        "meta.json": meta_bytes(downloads=downloads, **extra),
         "assembled.json": view_bytes(marker),
     }
     files.update(extra_files or {})

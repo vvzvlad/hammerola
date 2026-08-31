@@ -21,9 +21,23 @@ avoids an import cycle with the thing that calls it.
 import gzip
 import json
 import re
-import unicodedata
 from functools import lru_cache
 from pathlib import Path
+
+# THE RULE ABOUT FILE NAMES IS IMPORTED, NOT WRITTEN HERE, and that import is
+# the subject of issue #53. This module used to ask the question with checks
+# inlined in `build_meta` — membership in what the build wrote, `/`,
+# `GENERATED_FILES` — while `app._safe_name` asked it with a rule of its own
+# that ALSO refused a leading dot, and `src/client/artifacts.py` approximated it
+# a third time. Three copies, no two alike, and the disagreement published a
+# build that could never be opened. `src/buildnames.py` is the single place that
+# answers it now, and `tests/test_buildnames.py` asserts the three sides hold
+# the same OBJECT rather than a copy of it — which is what fails on the day
+# somebody inlines one again.
+# `_first_nonprintable` travels with it because `_plain_text` below asks the same
+# question of every displayed field, and the two must not drift apart on what
+# "printable" means.
+from src.buildnames import _first_nonprintable, unservable_reason
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
@@ -95,11 +109,10 @@ def _plain_text(value: str, field: str, limit: int = MAX_TEXT) -> str:
     """
     if len(value) > limit:
         raise ValueError(f"`{field}` is longer than {limit} characters")
-    for char in value:
-        # Cc control, Cf format, Cs surrogate, Co private use, Cn unassigned.
-        if unicodedata.category(char).startswith("C"):
-            raise ValueError(
-                f"`{field}` contains a non-printable character {char!r}")
+    bad = _first_nonprintable(value)
+    if bad is not None:
+        raise ValueError(
+            f"`{field}` contains a non-printable character {bad!r}")
     return value
 
 
@@ -181,6 +194,186 @@ def _check_part_name(value, where: str) -> None:
     _plain_text(value, where)
     if "<" in value or ">" in value:
         raise ValueError(f"{where} contains an angle bracket: {value!r}")
+
+
+def _check_declared_file(name, files: dict, where: str) -> None:
+    """The file one entry of a build's four file-declaring maps points at.
+
+    FOUR CALLERS: `views[].file`, and one entry each of `downloads`, `overview`
+    and `previews`. One helper for all four because they make the same claim
+    about a name — "this build wrote a file called that, and the hub will hand
+    it back" — and differ only in what the KEY beside it means: a view id, a
+    button caption, a part's stem. Each of the questions below is a way the push
+    is accepted and then serves something other than what was measured here, so
+    they move together or not at all. `views` was the last to arrive and it
+    arrived through a bug: it kept an inline check of its own that asked
+    membership, `/` and `GENERATED_FILES` and neither of the two clauses the
+    shared rule had grown, so the exact defect issue #53 exists to kill was
+    still live on the one map without which a build page is empty.
+    """
+    # `files` is what the build DECLARED it wrote, hashed by `_hash_output`. It
+    # is a real file under this build — `runner._verify_output_file` checked
+    # that, along with the path shape and every symlink on the way down — and
+    # that is all it is: no alphabet is applied to an output name anywhere on
+    # that path, and the names are chosen by model code (see the threat model in
+    # src/buildproc/child.py). So membership answers "is it there", and the rule
+    # the file server goes by has to be asked separately, below.
+    if not isinstance(name, str) or name not in files:
+        # "declare", not "write": `files` is `BuildOutcome.files`, curated as
+        # `shipped` in cadbuild/build.py, and never a walk of the directory — a
+        # build may write a file and leave it undeclared (`store._hash_output`),
+        # and telling that author it "did not write" the file sends them looking
+        # at the wrong half.
+        raise ValueError(
+            f"{where} points at {name!r}, which this build did not declare "
+            "(the list is what the build shipped, not what its directory holds)")
+    # The name the file server will and will not answer for, asked in the one
+    # place that decides it. An entry the server refuses would publish with a
+    # 201 and 404 in the browser — a build that is accepted and cannot be opened.
+    reason = unservable_reason(name)
+    if reason is not None:
+        raise ValueError(f"{where} points at {name!r}, which {reason}")
+    # A name the hub writes itself would be measured here and then answered by
+    # the hub's own file — the rewritten meta.json, or the generated page at
+    # index.html — so what is served is not what these checks looked at. NOT part
+    # of the shared rule above: the server answers these three names perfectly
+    # well, and it is this side that must not point at one.
+    if name in GENERATED_FILES:
+        raise ValueError(
+            f"{where} points at {name!r}, which the hub rewrites after this "
+            f"check; pick another file name")
+
+
+def _check_map_size(value, field: str, files: dict) -> None:
+    """How many entries one file-declaring map may carry, counted before the loop.
+
+    FOUR CALLERS, AND ONE OF THEM IS A LIST: `downloads`, `overview` and
+    `previews` are objects, `views` is an array of objects. The argument is
+    therefore any sized collection rather than a dict — nothing here looks
+    inside it, and "entries" is the right word for a row of either. `views` is
+    the most expensive of the four by orders of magnitude, which is why it may
+    least of all go uncounted: every entry costs a full parse of its view file
+    (`check_view_file`) and a full gzip of it (`measure_view`), measured at
+    ~18 ms on a 0.9 MB view, and N entries may point at ONE file — `seen`
+    forbids a duplicate view id, not a duplicate file name. A hundred thousand
+    of them is hours of CPU inside `_finish_staging`, in a build worker thread,
+    with two of those in the whole process.
+
+    Counted FIRST, before the loop, exactly as `notes` is counted below — the
+    ORDER is what the two share and it is the whole of what they share: refusing
+    after walking the document is paying for precisely what the ceiling exists
+    to refuse to pay for. What it stops is the shape a per-entry rule cannot
+    see: every entry legal, in enormous numbers.
+
+    IT IS NOT PARITY WITH `MAX_NOTES` AND MUST NOT BE READ AS ONE. That number
+    is 200; this ceiling is `len(files)`, and on the build path `files` is
+    bounded by `limits.output_files` — 4096. So a model that writes 4096 tiny
+    files may legally declare on the order of four thousand entries in EACH of
+    `downloads`, `overview` and `previews`, with the `overview`/`previews` keys
+    running to MAX_TEXT and the file names to no length ceiling at all
+    (`buildnames.unservable_reason` has none, deliberately). That is a
+    `meta.json` of a few megabytes, served under a year of `immutable` to every
+    visitor of that build — where the notes ceiling permits tens of kilobytes.
+    Different orders of magnitude, so "for the same reason" is exactly what must
+    not be said about the pair: what they share is the ORDER of the count, and
+    nothing else.
+
+    STILL WORTH HAVING, AND ACCEPTED RATHER THAN TIGHTENED. What it buys is the
+    shape check it was added for: "unbounded" becomes "bounded by what the build
+    actually wrote", so no map can be enormous without the FILES being enormous
+    too, and the millions-pointing-at-one-file shape is gone. What is left is a
+    ceiling that is loose rather than absent, and three things are why no number
+    is put in front of it. Reaching it takes a model that really writes
+    thousands of files — nothing stops one, since a build names and counts its
+    own output, but it is a deliberate act by whoever holds the secret rather
+    than something an honest project drifts into. The cost falls on the visitors
+    of that ONE build page, not on the shared `/index.json` every visitor of `/`
+    downloads with `no-cache` — which is the asymmetry MAX_BUILT above exists
+    for and the reason its ceiling is a number. And the build is not beyond
+    reach afterwards: the project can be removed whole with the same secret that
+    published it (`DELETE /api/v1/projects/<pid>`), so "can never be taken back"
+    is true of the URL and not of the deployment.
+
+    WHAT IT DOES NOT BOUND AT ALL is the document on the way IN.
+    `Store._read_meta` reads `meta.json` with a single `read_text()` and no size
+    cap of its own, and the build that wrote that file was held only by
+    `limits.file_bytes` — 256 MiB. So the INPUT side is still unbounded in the
+    sense that matters for memory; this ceiling is about what gets PUBLISHED,
+    and nothing here should be read as covering the parse.
+
+    THE BOUND IS THE BUILD'S OWN FILE COUNT, and it is derived rather than
+    chosen: every entry here has to name a member of `files`, so a build that
+    really produced what it describes cannot declare more entries than it
+    published files — `downloads` names three per part, `previews` one per part
+    plus one of each whole-build mesh, `overview` at most two, `views` one file
+    per view (`export_views` writes `<vid>.json`), and every one of those names
+    is on that list. Beyond it, entries are repeats of a name already declared,
+    which is the millions-pointing-at-one-file shape and nothing an honest build
+    does.
+
+    A constant would be worse here, not tidier. MAX_NOTES is a count of PARTS,
+    so `downloads` would need three times it and the four callers would stop
+    sharing a rule. `files` is already capped — by `limits.output_files`, on the
+    build path — so this inherits a ceiling instead of inventing a second one
+    that can drift from it. ONE SOURCE, NOT TWO, and MAX_MEMBERS is not the
+    second: there is no archive path here at all.
+    `build_meta` is called from `Store._finish_staging` alone, and the `files`
+    it is handed is always `_hash_output(staging, names)` — what the BUILD
+    declared it wrote. The mapping `_unpack` builds out of an archive's members
+    goes to `_payload_digest` and nowhere else, so MAX_MEMBERS never bounds
+    anything this reads.
+    """
+    if len(value) > len(files):
+        raise ValueError(
+            f"`{field}` carries {len(value)} entries, more than the "
+            f"{len(files)} files this build published; every entry has to name "
+            f"one of them")
+
+
+def _stem_map(raw: dict, field: str, files: dict) -> dict:
+    """One of the two maps a build declares keyed by a STEM: `overview`,
+    `previews`.
+
+    `overview` is the whole build's own meshes (`assembled.stl`, and the print
+    plate where the project has a `print` view); `previews` is every picture it
+    rendered, one per part plus one of each of those two. They are two maps and
+    not one for exactly one reason: keyed by the stem, `assembled` names
+    `assembled.stl` in the first and `assembled_preview.png` in the second, so
+    one map loses one of them.
+
+    Neither is `downloads`, and that is the other half of the same decision:
+    that map is read as PER PART — cut up by splitting `<part>.<ext>` off each
+    file name — so a whole-build file left in it is attributed to a part called
+    `assembled`, a name a view part may legally carry.
+
+    READ WITH AN EXPLICIT `is None`, never `raw.get(field) or {}`: that spelling
+    turns a falsy non-object — `[]`, `""`, `0` — into "nothing here" and
+    publishes a push that described something else, in silence. It is the rule
+    for every optional object on this document, and `downloads` was the last
+    place it was not followed: it read `or {}` until the review of issue #53, so
+    `downloads: 0` published a build with no download buttons and told nobody.
+    """
+    value = raw.get(field)
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ValueError(f"`{field}` must be an object mapping stem -> filename")
+    _check_map_size(value, field, files)
+    for stem, name in value.items():
+        # The key is a part NAME — it is what a reader matches against the parts
+        # in the view file to find the picture of one — so it is held to a part
+        # name's rule, exactly as a note's key is. SAFE_LABEL would be the wrong
+        # rule in the direction that refuses honest pushes: it caps at 32
+        # characters, and the ceilings a part name really has are far above that
+        # — 128 on the build side (MEMBER_RE) and MAX_TEXT here — so a name of,
+        # say, 48 characters publishes today. It publishes on a single-printable
+        # build in particular, where the download labels degenerate to
+        # `stl`/`step`/`3mf` with the name gone from them, so nothing about that
+        # project ever met the caption rule. The key has a ceiling; what it does
+        # not have is a CAPTION's ceiling.
+        _check_part_name(stem, f"a stem in `{field}`")
+        _check_declared_file(name, files, f"`{field}` entry {stem!r}")
+    return value
 
 
 def _check_color(value, where: str) -> None:
@@ -313,6 +506,12 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
     views = raw.get("views")
     if not isinstance(views, list) or not views:
         raise ValueError("meta.json must list at least one view in `views`")
+    # COUNTED BEFORE THE WALK, like the three maps below and more urgently than
+    # any of them: an entry here costs a parse and a gzip of a whole view file
+    # rather than a dict lookup. Same bound and same derivation — every entry
+    # has to name a file this build published, and an honest build writes one
+    # view file per view.
+    _check_map_size(views, "views", files)
 
     variants = []
     seen: set[str] = set()
@@ -327,32 +526,14 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
             raise ValueError(f"view id {view_id!r} appears twice")
         seen.add(view_id)
 
+        # THE SAME QUESTION THE OTHER THREE MAPS ARE ASKED, through the same
+        # helper. This loop used to ask a version of it inline — membership, `/`
+        # and `GENERATED_FILES` — and that version never grew the leading-dot
+        # and non-printable clauses the shared rule has, so a view file called
+        # `.assembled.json` published with a 201 and 404'd on every GET, on the
+        # one map without which the build page has nothing to draw at all.
         name = view.get("file")
-        # Member names were whitelisted during extraction, so membership in
-        # `files` is most of the check: a view can only ever point at a file that
-        # was actually unpacked into this build.
-        if not isinstance(name, str) or name not in files:
-            raise ValueError(
-                f"view {view_id!r} points at {name!r}, which is not in the archive")
-        # The rest of the check is that it sits at the TOP LEVEL. The archive may
-        # carry a tree now (SPEC 7.1), but serving answers
-        # `/project/<pid>/<commit>/<name>` and nothing deeper, so a view pointing
-        # into a subdirectory would validate here, publish with a 201 and then
-        # 404 in the browser — a build that is accepted and cannot be opened.
-        # Refusing it names the problem to whoever pushed, at push time.
-        if "/" in name:
-            raise ValueError(
-                f"view {view_id!r} points at {name!r}, which is inside a "
-                f"subdirectory; a view file has to sit at the top level of the "
-                f"archive, because that is the only place the hub serves from")
-        # A view pointing at one of those names would be measured here and then
-        # answered by the hub's own file — the rewritten meta.json, or the
-        # generated page at index.html — so the viewer would fetch something
-        # other than what these numbers describe.
-        if name in GENERATED_FILES:
-            raise ValueError(
-                f"view {view_id!r} points at {name!r}, which the hub rewrites "
-                f"after this check; pick another file name")
+        _check_declared_file(name, files, f"view {view_id!r}")
 
         # The bytes of this file are handed to `viewer.render()` verbatim, so the
         # push does not stop being untrusted input at the archive boundary: what
@@ -376,39 +557,47 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
             "gzip": compressed,
         })
 
-    downloads = raw.get("downloads") or {}
+    # READ WITH AN EXPLICIT `is None`, for the reason `_stem_map` gives at
+    # length: `raw.get("downloads") or {}` — which is what stood here — turns
+    # every falsy non-object into "no downloads at all", so `downloads: 0`
+    # published a build whose buttons had silently vanished, with nothing
+    # anywhere saying the push had described something else.
+    downloads = raw.get("downloads")
+    if downloads is None:
+        downloads = {}
     if not isinstance(downloads, dict):
         raise ValueError("`downloads` must be an object mapping label -> filename")
+    # THE SAME CEILING AS THE TWO MAPS BELOW, from the same helper: this map had
+    # the gap first and for longer — a label is capped at 32 characters and a
+    # count of them was capped at nothing, so a hundred thousand legal labels
+    # made the same enormous, permanent, `immutable` meta.json.
+    _check_map_size(downloads, "downloads", files)
     for label, name in downloads.items():
         # The label becomes a button caption, so it is whitelisted rather than
         # escaped: nothing that matches this can be markup in any context.
         if not isinstance(label, str) or not SAFE_LABEL.match(label):
             raise ValueError(
                 f"download label {label!r} must match {SAFE_LABEL.pattern}")
-        if not isinstance(name, str) or name not in files:
-            raise ValueError(
-                f"download {label!r} points at {name!r}, which is not in the archive")
-        # Same reason as for a view file: what the button links to has to be a
-        # top-level name, because that is the shape of the only URL that serves
-        # a build's files.
-        if "/" in name:
-            raise ValueError(
-                f"download {label!r} points at {name!r}, which is inside a "
-                f"subdirectory; a download has to sit at the top level of the "
-                f"archive, because that is the only place the hub serves from")
-        if name in GENERATED_FILES:
-            raise ValueError(
-                f"download {label!r} points at {name!r}, which the hub rewrites "
-                f"after this check; pick another file name")
+        _check_declared_file(name, files, f"download {label!r}")
+
+    # What the build published about the WHOLE of itself, and about each part in
+    # a picture. Neither map draws anything on either page — they are how a
+    # CLIENT is told a file exists, since the hub enumerates no directory — and
+    # both are validated all the same, because a name in either is a name this
+    # service will be asked for.
+    overview = _stem_map(raw, "overview", files)
+    previews = _stem_map(raw, "previews", files)
 
     # The AUTHOR's note on a part: text written in model.py, keyed by part name,
     # shown to whoever opens the build. Absent is the ordinary case, and stays
     # absent below — a build with no notes and a build from before notes existed
     # have to be one document here.
     #
-    # NOT `raw.get("notes") or {}` like `downloads` above: that spelling turns a
-    # falsy non-object — `[]`, `""`, `0` — into "no notes at all" and publishes
-    # a push that described something else entirely, in silence.
+    # NOT `raw.get("notes") or {}`: that spelling turns a falsy non-object —
+    # `[]`, `""`, `0` — into "no notes at all" and publishes a push that
+    # described something else entirely, in silence. Every optional object on
+    # this document is read this way now; `downloads` above was the last one
+    # that was not, and it stood here as the counter-example until issue #53.
     notes = raw.get("notes")
     if notes is None:
         notes = {}
@@ -484,6 +673,13 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
     # Emitted only when there is something to emit: an empty object here would
     # be a build SAYING it has no notes, and the browser half would then have
     # two ways of asking the same question — one of which no older build gives.
+    # The same rule, and the same reason, for the two maps beside it: a build
+    # that rendered no pictures and a build made before `previews` existed have
+    # to reach a reader as one document.
+    if overview:
+        meta["overview"] = dict(overview)
+    if previews:
+        meta["previews"] = dict(previews)
     if notes:
         meta["notes"] = dict(notes)
     return meta
