@@ -8,8 +8,7 @@ import subprocess
 from . import project_title
 from .errors import BuildError
 from .paths import PROJECT_FILE, project_root
-from .hubspec import MEMBER_RE, TEST_ID
-from .views import hub_text_problem
+from .hubspec import MEMBER_RE, TEST_ID, hub_text_problem
 
 
 # The ceiling on both names this file produces, and it is the HUB's: `title`

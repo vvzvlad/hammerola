@@ -13,7 +13,13 @@ from .paths import project_root
 # --------------------------------------------------------------------------
 
 def load_model():
-    """Import the project's model.py. The contract is views() and printables().
+    """Import the project's model.py. The contract is parts() and views().
+
+    parts() is the catalogue -- every piece of geometry the model has, each
+    under the key that IS its identity -- and views() selects from it. There is
+    no printables() any more: a second dict of geometry beside the catalogue is
+    what forced everything downstream to guess which entry of one was which
+    entry of the other.
 
     The project root goes on sys.path here rather than at import time, and it
     goes on FIRST. First, because `import mocks` in a model.py has to find the
@@ -35,7 +41,7 @@ def load_model():
         raise BuildError(
             f"importing model.py failed: {exc}"
             f"{_shadowed_src_hint(root_path, exc)}") from exc
-    for name in ("views", "printables"):
+    for name in ("parts", "views"):
         if not callable(getattr(model, name, None)):
             raise BuildError(f"model.py does not define {name}()")
     _warn_if_checklib_shadowed()

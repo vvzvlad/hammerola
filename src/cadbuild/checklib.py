@@ -479,6 +479,17 @@ def name_pairs(pairs, argument, where=""):
             f"{where}{argument} must be a list of name PAIRS, got the string "
             f"{pairs!r}. Write it as [('a', 'b')]."
         )
+    if not hasattr(pairs, "__iter__"):
+        # The string above is the mistake somebody actually makes; this is
+        # every OTHER thing that cannot be walked. Without it a number or a
+        # None comes out of `for ... in pairs` as a bare TypeError from inside
+        # a library, with nothing naming the option it came from -- and every
+        # other refusal in this file names one.
+        raise ValueError(
+            f"{where}{argument} must be a list of name pairs, got "
+            f"{pairs!r}, which cannot be iterated at all. Write it as "
+            "[('a', 'b')]."
+        )
     out = set()
     for index, pair in enumerate(pairs):
         if isinstance(pair, str) or not hasattr(pair, "__iter__"):

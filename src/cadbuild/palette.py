@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 """Colours parts are drawn in, and the rule that keeps them still.
 
-Which entry a printable gets is decided by its KEY, not by its position in
-`printables()` and never by its position in a view. So the same part is the
+Which entry a printable gets is decided by its KEY in the catalogue, not by its
+position in it and never by its position in a view. So the same part is the
 same colour in every view, and it stays that colour across builds while the
-dict around it is edited.
+catalogue around it is edited.
 """
 
 import hashlib
 
 
 # Colours for parts that do not name one, and the rule is not decoration. A
-# part the gate can match to `printables()` gets one of these; everything else
-# in the view -- a mock of a bought motor, the wall the bracket bolts to, a
-# barrel the frame stands in -- is drawn in MOCK_COLOR. So a glance at the
-# picture says what is going on the bed and what is only there for context, and
-# a part somebody believed was printable but never put in `printables()` gives
-# itself away by coming out grey.
+# catalogue entry of kind `printable` gets one of these; a `mock` -- of a
+# bought motor, of the wall the bracket bolts to, of a barrel the frame stands
+# in -- is drawn in MOCK_COLOR, and a `hardware` entry in HARDWARE_COLOR. So a
+# glance at the picture says what is going on the bed, what is bought and what
+# is only there for context.
 #
 # Which entry a printable gets is decided by its KEY, not by its position in
-# `printables()` and never by its position in a view -- see palette_colors. So
+# the catalogue and never by its position in a view -- see palette_colors. So
 # the same part is the same colour in `assembled` and in `print`, and it stays
-# that colour across builds while the dict around it is edited.
+# that colour across builds while the catalogue around it is edited.
 PART_PALETTE = (
     "#4682b4",  # steel blue
     "#c85a3c",  # terracotta
@@ -32,9 +31,22 @@ PART_PALETTE = (
     "#b0567c",  # plum
     "#7f8c4a",  # olive
 )
-# Not printed, so not coloured: light, grey and unsaturated enough that no
+# Not printed and not bought: light, grey and unsaturated enough that no
 # palette entry reads as "the same sort of thing".
 MOCK_COLOR = "#8a8d91"
+# Bought, and going into the product rather than standing beside it for scale:
+# a screw, a bearing, a heat-set insert. A DARK metallic grey, and the distance
+# from MOCK_COLOR is the whole point of the value -- two greys a reader cannot
+# tell apart would say "context" about a part that is in the bill of materials.
+#
+# The number is checkable rather than a matter of taste, and
+# tests/cadbuild/test_palette.py is where it is checked: this colour has to sit
+# at least as far (in plain RGB distance) from every colour above as the two
+# CLOSEST of those sit from each other. That floor is 36.6 today and this value
+# clears it at 78.7 -- more than twice over -- so the check has room to catch a
+# future edit that reaches for another grey without being so tight that any
+# repaint of the palette trips it.
+HARDWARE_COLOR = "#3f444b"
 
 # Opaque unless the part says otherwise. The default is 1.0 and not something
 # slightly under it for the reason NEARLY_OPAQUE_MIN exists.
@@ -62,7 +74,7 @@ INVISIBLE_ALPHA = 0.0
 
 
 def _palette_slot(key):
-    """The palette entry a printable key asks for, before any collision."""
+    """The palette entry a catalogue key asks for, before any collision."""
     # md5 and not hash(): str hashing is salted per process by PYTHONHASHSEED,
     # so hash() would repaint the whole model between two runs on the same
     # machine -- the very thing this is here to stop.
@@ -73,16 +85,15 @@ def _palette_slot(key):
 def palette_colors(keys):
     """A palette entry per printable key, chosen by the key and not by its place.
 
-    The old rule was the position in `printables()`, and a position is not a
+    The old rule was the position in the catalogue, and a position is not a
     property of the part. Inserting one part at the top of that dict renumbered
     everything below it, so the next publish came back with every part in a
     different colour in every view -- for an edit that changed none of them.
     The value of an automatic colour is that it is the same one as last week;
     a colour that moves is worth less than no colour at all.
 
-    So the slot comes from the key's own name (_palette_slot). Reordering
-    `printables()`, or renaming anything else in it, cannot move a part's
-    colour.
+    So the slot comes from the key's own name (_palette_slot). Reordering the
+    catalogue, or renaming anything else in it, cannot move a part's colour.
 
     Two keys can hash to one slot, and two parts drawn in the same colour is
     the defect this palette exists to avoid, so collisions are resolved -- in

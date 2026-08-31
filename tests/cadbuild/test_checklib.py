@@ -204,6 +204,22 @@ def test_a_bare_string_is_refused_with_the_right_message():
     assert "list of name PAIRS" in str(exc.value)
 
 
+def test_something_that_cannot_be_iterated_at_all_is_named_not_crashed():
+    """A ValueError naming the option, not a bare TypeError from the loop.
+
+    The string above is the mistake somebody actually makes; a number or a None
+    is every other way of getting it wrong, and it used to come out of the walk
+    as `'int' object is not iterable` -- from a library, with nothing saying
+    which option it was about. `cadbuild.views.interference_pairs` answers the
+    same way about its own list, so the two halves of the contract read alike.
+    """
+    for bad in (5, None, object()):
+        with pytest.raises(ValueError) as exc:
+            checklib.name_pairs(bad, "allowed_touching")
+        assert "cannot be iterated" in str(exc.value)
+        assert "allowed_touching" in str(exc.value)
+
+
 def test_a_pair_given_as_a_generator_is_consumed_exactly_once():
     """Iterating a pair twice is once too many: the second pass sees nothing,
     `all()` over nothing is True, and non-strings walk through."""

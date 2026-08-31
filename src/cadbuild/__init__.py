@@ -11,12 +11,20 @@ more: with the hub building, there is no build node left for it to drive, and
 step 7 removes it outright. Nothing here talks to a network or reads a
 credential.
 
-What a model.py must define is unchanged and will stay unchanged: nine projects
-are written against it.
+What a model.py must define:
 
-    views()       -> [{"id", "name", "parts": [{"shape", "name", ...}], ...}]
-    printables()  -> {name: Workplane}
+    parts()       -> {key: {"shape": Workplane, "kind": "printable"|"hardware"
+                            |"mock", "color"?, "note"?}}
+    views()       -> [{"id", "name"?, "parts": [<references into parts()>], ...}]
     checks()      optional, and run after the geometry gate
+
+THE CATALOGUE IS THE ONE PLACE GEOMETRY LIVES, and a view references it: the key
+of an entry is the part's identity everywhere -- the file stem, the label in the
+tree, the key in meta.json. It replaced a contract where views() carried shapes
+of its own beside a separate printables() dict, and everything downstream had to
+work out which shape in one was which entry in the other. Two ways of getting
+that wrong were visible in published builds: a part renamed in a view lost its
+own downloads, and a decoy solid answered for a real part in the coverage gate.
 
 `import checklib` is the fourth part of that contract, and it is a top-level
 name rather than something under this package for exactly that reason -- see

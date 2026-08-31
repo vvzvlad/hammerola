@@ -35,9 +35,21 @@ from harness import good_build, meta_bytes, tar_gz, view_bytes
 from src.cadbuild import paths
 from src.cadbuild.errors import BuildError
 from src.cadbuild.project import MAX_TITLE_CHARS, load_project
-from src.cadbuild.views import (MAX_NAME_CHARS, MAX_NOTE_CHARS,
-                                MAX_VIEW_NAME_CHARS, prepare_views, read_parts)
+from src.cadbuild.hubspec import MAX_NOTE_CHARS, MAX_VIEW_NAME_CHARS
+from src.cadbuild.views import prepare_views, read_parts
 from src.render import MAX_NOTES, MAX_TEXT
+
+# NOTE ON THE PART-NAME CEILING BELOW, because it stopped being symmetrical.
+# The build half no longer has one of its own: a part's name in a view file is a
+# catalogue key now, held to `hubspec.MEMBER_RE` (128 characters, an alphabet
+# rather than a length for text). What is left to compare against is the hub's,
+# and the hub has no constant for it either -- `render._check_part_name` defers
+# to `_plain_text`, whose ceiling is `MAX_TEXT`. So the cases below are
+# generated from `MAX_TEXT` DIRECTLY, and deliberately not from a local alias of
+# it: a second name for one number, sitting one line under the import of the
+# number, is the shape this whole change is removing. Whether the two sides
+# still agree at that ceiling is the receiving side's question and belongs to
+# the step that reworks src/render.py.
 
 
 def publish_notes(hub, notes, commit="abc123"):
@@ -246,7 +258,7 @@ def test_the_two_halves_agree_about_a_part_name(hub):
     """The name is the KEY the note is stored under, so it is the same
     question asked about the other half of the entry -- and the hub holds it to
     the stricter part-name rule, which is the one the gate has to match."""
-    for index, (what, name) in enumerate(text_cases(MAX_NAME_CHARS)):
+    for index, (what, name) in enumerate(text_cases(MAX_TEXT)):
         here = build_refuses(name=name)
         there = hub_refuses(hub, {name: "harmless text"},
                             commit=f"name{index:02d}")

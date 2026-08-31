@@ -33,8 +33,8 @@ def forget_the_model():
 def write_model(root, body="", extra=""):
     (root / "model.py").write_text(
         f"{extra}\n"
+        "def parts():\n    return {}\n"
         "def views():\n    return []\n"
-        "def printables():\n    return {}\n"
         f"{body}\n",
         encoding="utf-8",
     )
@@ -46,7 +46,7 @@ def write_model(root, body="", extra=""):
 
 def test_the_model_is_imported_from_the_project(isolated_project):
     write_model(isolated_project)
-    assert load_model().printables() == {}
+    assert load_model().parts() == {}
 
 
 def test_a_model_that_will_not_import_says_why(isolated_project):
@@ -97,7 +97,7 @@ def test_the_src_hint_is_not_offered_when_the_project_has_no_src(isolated_projec
 
 def test_a_model_missing_half_the_contract_is_refused(isolated_project):
     (isolated_project / "model.py").write_text(
-        "def printables():\n    return {}\n", encoding="utf-8")
+        "def parts():\n    return {}\n", encoding="utf-8")
     with pytest.raises(BuildError) as exc:
         load_model()
     assert "does not define views()" in str(exc.value)

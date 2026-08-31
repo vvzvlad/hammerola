@@ -27,7 +27,7 @@ import pytest
 
 from src import onboarding
 from src.buildproc import run_build
-from src.cadbuild.printables import RESERVED_STEMS
+from src.cadbuild.parts import RESERVED_STEMS
 from src.buildproc.limits import DEFAULT_LIMITS, memory_limit_supported
 from src.buildproc.runner import STATUS_OK
 from src.client import pack

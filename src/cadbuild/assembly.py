@@ -7,10 +7,10 @@ a container on the build node, and `_out/` is the only thing that comes back.
 
 import time
 
-from .artifacts import ASSEMBLED_STEM, PREVIEW_SUFFIX, STL_ANGULAR_TOLERANCE, STL_TOLERANCE
+from .artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID, PREVIEW_SUFFIX,
+                        PRINT_VIEW_ID, STL_ANGULAR_TOLERANCE, STL_TOLERANCE)
 from .errors import BuildError
 from .geometry import as_shapes, drop_mesh
-from .views import ASSEMBLED_VIEW_ID, PRINT_VIEW_ID
 
 
 # --------------------------------------------------------------------------
@@ -23,51 +23,70 @@ from .views import ASSEMBLED_VIEW_ID, PRINT_VIEW_ID
 # this side afterwards would mean shipping the STLs back and re-reading them,
 # and rendering in CI would mean the pictures existed only for pushes to main.
 
+def _view_objects(prepared, vid):
+    """The shapes a prepared view draws, in order, or None if there is no such view.
+
+    One leaf is one object, already standing where the view puts it: the `at`
+    of a reference was applied when the view was prepared, so nothing here
+    moves anything.
+    """
+    for view in prepared:
+        if view["id"] == vid:
+            return [node["shape"] for node in view["nodes"]]
+    return None
+
+
 # TWIN of print_plate_shape below, near enough line for line: same walk, same
-# glue. FOUR things differ IN THE CODE, beyond the function name, the docstring
+# glue. TWO things differ IN THE CODE, beyond the function name, the docstring
 # and the wording of the comments, which differ throughout and are not counted
 # here. The list is meant to be exhaustive within that scope -- it exists so the
 # next editor can check the two against it, and a short list defeats that more
 # quietly than no list at all:
 #
 #   1. the view id, in both places it appears -- the one the walk looks for and
-#      the one `as_shapes` is told to blame. This one said `"assembled"` as a
-#      literal where the twin says PRINT_VIEW_ID; it is ASSEMBLED_VIEW_ID now,
-#      which turns a latent divergence back into the same difference twice;
-#   2. what it does when no view carries that id -- this one falls back to the
-#      printables, that one returns None;
-#   3. the signature, which follows from 2: this one needs `printables` for that
-#      fallback, that one takes `prepared` alone;
-#   4. WHERE `Compound` is imported. This one takes it at the top of the
-#      function, that one at the point of use, and there that placement is
-#      load-bearing rather than a style choice -- the comment at that import
-#      says so: the no-view and single-body paths stay importable and
-#      answerable on a python with no CadQuery installed, and tests in
-#      tests/cadbuild/test_assembly.py rely on exactly that, which is why they
-#      are written with no kernel planted at all. No count is written here: it
-#      is a property of those tests and not a number anything checks. Here every
-#      call needs the kernel, the single-body path included.
-def assembled_shape(prepared, printables):
+#      the one `as_shapes` is told to blame: ASSEMBLED_VIEW_ID here,
+#      PRINT_VIEW_ID there;
+#   2. what it does when no view carries that id -- this one raises, that one
+#      returns None, because a model without an `assembled` view is refused
+#      while a model without a `print` view is ordinary.
+#
+# THE LIST WAS FOUR ITEMS LONG until the catalogue landed, and both of the two
+# that went are worth naming so they are not reintroduced as fixes.
+#
+# The SIGNATURE: this one used to take `printables` as well, for a fallback that
+# glued every printable together when no `assembled` view existed. There is no
+# fallback now and there is no second dict to fall back to -- `assembled` is
+# mandatory, and what it references is the authority on where the parts stand.
+# A file made of parts standing in the coordinates they happened to be modelled
+# in was never the assembly anyway; it was a pile.
+#
+# WHERE `Compound` IS IMPORTED: this one took it at the top of the function,
+# which meant every call needed the kernel, the single-body path included. That
+# was defensible while the fallback made the two functions genuinely different
+# shapes; with the fallback gone it was one twin doing the same thing another
+# way. Both now import at the point of use, and there the placement is
+# load-bearing rather than a style choice -- the comment at that import says so:
+# the no-view and single-body paths stay answerable on a python with no CadQuery
+# installed, which is what lets tests/cadbuild/test_assembly.py check them with
+# no kernel planted at all.
+def assembled_shape(prepared):
     """The whole product as one shape: the assembled view, glued.
 
-    The `assembled` view is the authority on where the parts stand, so that is
-    what gets written. Without one, the printables as they are -- for a
-    single-part project that is the part, and for the rest it is at least
-    everything that will be printed, in the coordinates the model handed over.
+    The `assembled` view is the authority on where the parts stand, and every
+    model has one -- prepare_views refuses one that does not -- so there is
+    nothing to fall back to and nothing to decide here.
 
     Glued, not fused: a compound is one file and one download, and it is
     instant, where a boolean union of an assembly is minutes and can fail. The
     result is for looking at, not for slicing.
     """
-    from cadquery.occ_impl.shapes import Compound
-
-    objects = None
-    for view in prepared:
-        if view["id"] == ASSEMBLED_VIEW_ID:
-            objects = view["objects"]
-            break
+    objects = _view_objects(prepared, ASSEMBLED_VIEW_ID)
     if objects is None:
-        objects = list(printables.values())
+        # Defensive half of prepare_views' rule rather than a second policy:
+        # reaching this means the view was dropped between preparing and
+        # exporting, and gluing something else would publish a file called
+        # `assembled.stl` that is not the assembly.
+        raise BuildError(f"there is no {ASSEMBLED_VIEW_ID!r} view to export")
 
     # Every body of every object: an object put together with .add() would
     # otherwise contribute its first solid only, and assembled.stl would be
@@ -76,6 +95,10 @@ def assembled_shape(prepared, printables):
               for shape in as_shapes(obj, ASSEMBLED_VIEW_ID)]
     if len(shapes) == 1:
         return shapes[0], objects
+    # Imported at the point of use rather than at the top of the function: the
+    # two paths above need no kernel at all, and this way the no-view and
+    # single-body cases stay answerable on a python that has no CadQuery in it.
+    from cadquery.occ_impl.shapes import Compound
     return Compound.makeCompound(shapes), objects
 
 
@@ -88,20 +111,19 @@ def assembled_shape(prepared, printables):
 # for the reason the list above assembled_shape gives: a list that names three
 # of four defeats the checking it exists for more quietly than no list at all:
 #
-#   1. which shape function is called, and with it the signature: this one needs
-#      `printables` for the fallback that one has no equivalent of;
+#   1. which shape function is called: assembled_shape here, print_plate_shape
+#      there. The SIGNATURES are the same now -- both take `prepared` and the
+#      output directory -- because the fallback that needed a second dict of
+#      geometry is gone with `printables()` itself;
 #   2. the view id `as_shapes` is told to blame, and the stem the file is
 #      written under, which split the same way: ASSEMBLED_VIEW_ID and
-#      ASSEMBLED_STEM here, PRINT_VIEW_ID for both there. The count line below
-#      said `"assembled"` as a LITERAL until 2026-08-31 -- behaving identically,
-#      because the constant is that string, which is exactly what made it the
-#      latent divergence the list above already claimed to have closed;
+#      ASSEMBLED_STEM here, PRINT_VIEW_ID for both there;
 #   3. this one always writes; that one returns None when no view carries the
 #      id it looks for;
 #   4. that one measures a bounding box before the export and hands it back
 #      beside the count. This one has no reason to take one, so it returns the
 #      count alone.
-def export_assembled(prepared, printables, out_dir):
+def export_assembled(prepared, out_dir):
     """Write `assembled.stl` -- the whole thing in one mesh.
 
     Returns how many bodies went into it. The preview needs that number and
@@ -109,7 +131,7 @@ def export_assembled(prepared, printables, out_dir):
     when the mesh is loaded, so a two-part assembly reads back as a single
     body that is not watertight.
     """
-    shape, objects = assembled_shape(prepared, printables)
+    shape, objects = assembled_shape(prepared)
     path = out_dir / f"{ASSEMBLED_STEM}.stl"
     # relative=False for the same reason as the printables above: OCC's
     # default scales the deflection per face and cracks the mesh where faces
@@ -139,16 +161,13 @@ def export_assembled(prepared, printables, out_dir):
 
 
 # TWIN of assembled_shape above, near enough line for line: same walk, same
-# glue. The four differences are enumerated in full above THAT one and
+# glue. The two differences are enumerated in full above THAT one and
 # deliberately not restated here, for the reason `export_print_plate` gives
-# below -- two lists of the same four are two things to keep true, and a second
-# copy of this one had already drifted into naming three of them.
+# below -- two lists of the same two are two things to keep true, and a second
+# copy of this one had already drifted into naming three of four.
 #
-# This is the end that takes `prepared` alone, that looks for PRINT_VIEW_ID,
-# where None is a legal answer when no view carries that id, and where
-# `Compound` is imported at the point of use rather than at the top of the
-# function -- that last one load-bearing rather than a style choice, for the
-# reason the comment at the import itself gives.
+# This is the end that looks for PRINT_VIEW_ID and where None is a legal answer
+# when no view carries that id.
 def print_plate_shape(prepared):
     """The bed as one shape: the `print` view, glued. `None` when there is none.
 
@@ -171,11 +190,7 @@ def print_plate_shape(prepared):
     file, one download and instant, where a boolean union of a plate is minutes
     and can fail. The result is for looking at, not for slicing.
     """
-    objects = None
-    for view in prepared:
-        if view["id"] == PRINT_VIEW_ID:
-            objects = view["objects"]
-            break
+    objects = _view_objects(prepared, PRINT_VIEW_ID)
     if objects is None:
         return None
 
@@ -197,9 +212,9 @@ def print_plate_shape(prepared):
 # drop_mesh loop are byte-identical in the two, so an edit to either is an edit
 # to consider here. The four differences are enumerated in full above THAT one
 # and deliberately not restated here, because two lists of the same four are two
-# things to keep true: this is the end where the shape function takes `prepared`
-# alone, where PRINT_VIEW_ID is both the view id and the stem, where None is a
-# legal answer, and where the bounding box below is measured.
+# things to keep true: this is the end that calls print_plate_shape, where
+# PRINT_VIEW_ID is both the view id and the stem, where None is a legal answer,
+# and where the bounding box below is measured.
 def export_print_plate(prepared, out_dir):
     """Write `print.stl` -- the bed as it is laid out. `None` without a plate.
 

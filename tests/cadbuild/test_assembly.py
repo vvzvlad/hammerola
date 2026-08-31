@@ -22,14 +22,15 @@ import types
 import pytest
 
 from src.cadbuild import assembly, printables
-from src.cadbuild.artifacts import ASSEMBLED_STEM, PREVIEW_SUFFIX
-from src.cadbuild.assembly import export_print_plate, print_plate_shape
+from src.cadbuild.artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID,
+                                    PREVIEW_SUFFIX, PRINT_VIEW_ID)
+from src.cadbuild.assembly import (assembled_shape, export_print_plate,
+                                   print_plate_shape)
 from src.cadbuild.errors import BuildError
-from src.cadbuild.printables import (RESERVED_STEMS, overview_meshes,
-                                     preview_files)
-from src.cadbuild.views import PRINT_VIEW_ID
+from src.cadbuild.parts import RESERVED_STEMS
+from src.cadbuild.printables import overview_meshes, preview_files
 
-from fakes import Box, Shape, Workplane, part, view
+from fakes import Box, Shape, Workplane, node, part, view
 
 
 class Recording(Shape):
@@ -114,13 +115,52 @@ def exported(monkeypatch):
     return calls, dropped
 
 
+def test_the_assembly_is_built_from_the_assembled_view_and_no_other():
+    """It is the authority on where the parts stand. Taking whichever view came
+    first would put the PLATE into assembled.stl -- parts laid out flat on a
+    bed, published as the product."""
+    standing = part()
+    prepared = [view(PRINT_VIEW_ID, [node("body", part(x=50.0))]),
+                view(ASSEMBLED_VIEW_ID, [node("body", standing)])]
+    shape, objects = assembled_shape(prepared)
+    assert objects == [standing]
+    assert shape is standing.vals()[0]
+
+
+def test_a_build_with_no_assembled_view_has_nothing_to_glue():
+    """prepare_views refuses such a model, so this is the defensive half of that
+    rule -- and it must not be a fallback: gluing something else would publish a
+    file called `assembled.stl` that is not the assembly.
+
+    No fixture, on purpose: this path must be answerable on a python with no
+    CadQuery, which is what moving the `Compound` import to the point of use
+    bought (see the twin list above assembled_shape).
+    """
+    with pytest.raises(BuildError) as exc:
+        assembled_shape([view(PRINT_VIEW_ID, [node("body", part())])])
+    assert "no 'assembled' view" in str(exc.value)
+
+
+def test_every_body_of_every_object_reaches_the_assembly(glued):
+    """The same `.add()` trap as on the plate: `val()` is the first body only,
+    and assembled.stl would be missing parts the viewer shows."""
+    first, second, third = Shape(), Shape(), Shape()
+    prepared = [view(ASSEMBLED_VIEW_ID,
+                     [node("pair", Workplane(first, second)),
+                      node("single", Workplane(third))])]
+    shape, objects = assembled_shape(prepared)
+    assert glued == [[first, second, third]]
+    assert shape == ("compound", [first, second, third])
+    assert len(objects) == 2
+
+
 def test_a_model_with_no_print_view_has_no_plate():
     """`None`, and not an error: a project is not obliged to have a print view.
 
     A single-part model whose one part is already in print orientation has
     nothing to lay out, and a build of it must not fail — nor be told off.
     """
-    prepared = [view(ASSEMBLED_STEM, [part()], ["body"])]
+    prepared = [view(ASSEMBLED_VIEW_ID, [node("body", part())])]
     assert print_plate_shape(prepared) is None
 
 
@@ -131,8 +171,8 @@ def test_the_plate_is_built_from_the_print_view_and_not_the_first_one():
     entirely plausible."""
     on_the_bed = part(x=50.0)
     prepared = [
-        view(ASSEMBLED_STEM, [part()], ["body"]),
-        view(PRINT_VIEW_ID, [on_the_bed], ["body (print)"]),
+        view(ASSEMBLED_VIEW_ID, [node("body", part())]),
+        view(PRINT_VIEW_ID, [node("body", on_the_bed)]),
     ]
     shape, objects = print_plate_shape(prepared)
     assert objects == [on_the_bed]
@@ -149,8 +189,8 @@ def test_every_body_of_every_object_reaches_the_plate(glued):
     """
     first, second, third = Shape(), Shape(), Shape()
     prepared = [view(PRINT_VIEW_ID,
-                     [Workplane(first, second), Workplane(third)],
-                     ["pair", "single"])]
+                     [node("pair", Workplane(first, second)),
+                      node("single", Workplane(third))])]
     shape, objects = print_plate_shape(prepared)
     assert glued == [[first, second, third]]
     assert shape == ("compound", [first, second, third])
@@ -173,7 +213,7 @@ def test_the_plate_is_measured_before_it_is_meshed(exported, out_dir):
     """
     calls, _ = exported
     shape = Recording(calls, box=Box(0, 0, 0, 3, 4, 5))
-    prepared = [view(PRINT_VIEW_ID, [Workplane(shape)], ["body (print)"])]
+    prepared = [view(PRINT_VIEW_ID, [node("body", Workplane(shape))])]
 
     bodies, bbox = export_print_plate(prepared, out_dir)
 
@@ -206,7 +246,7 @@ def test_every_object_on_the_plate_has_its_mesh_dropped(exported, out_dir):
     single = Workplane(Recording(calls))
     # Built with .add(): one object the model handed over, two solids in it.
     pair = Workplane(Recording(calls), Recording(calls))
-    prepared = [view(PRINT_VIEW_ID, [single, pair], ["single", "pair"])]
+    prepared = [view(PRINT_VIEW_ID, [node("single", single), node("pair", pair)])]
 
     bodies, _ = export_print_plate(prepared, out_dir)
 
@@ -230,7 +270,7 @@ def test_a_plate_whose_export_wrote_no_file_is_a_build_error(exported, out_dir):
         def exportStl(self, path, **kwargs):
             self.calls.append("stl")
 
-    prepared = [view(PRINT_VIEW_ID, [Workplane(Silent(calls))], ["body"])]
+    prepared = [view(PRINT_VIEW_ID, [node("body", Workplane(Silent(calls)))])]
     with pytest.raises(BuildError) as exc:
         export_print_plate(prepared, out_dir)
     assert "print.stl was not written" in str(exc.value)
@@ -249,7 +289,7 @@ def test_a_build_with_no_print_view_writes_nothing_at_all(out_dir):
     No fixture: this path must reach neither the kernel nor `drop_mesh`, so the
     test is written on a python that has neither planted.
     """
-    prepared = [view(ASSEMBLED_STEM, [part()], ["body"])]
+    prepared = [view(ASSEMBLED_VIEW_ID, [node("body", part())])]
     assert export_print_plate(prepared, out_dir) is None
     assert list(out_dir.iterdir()) == []
 
@@ -352,9 +392,12 @@ def test_a_stem_rename_that_makes_the_key_illegal_is_refused_here(monkeypatch):
         overview_meshes(plate=False)
     assert "whole/assembled" in str(exc.value)
     # The message has to send the reader to the module the renamed constant is
-    # in, and the stems this map is built from come from two different ones.
+    # in. All three stems this map and the picture map are built from live in
+    # one module now, so the message names one -- it used to name two, because
+    # PRINT_VIEW_ID lived in cadbuild.views until the catalogue needed to
+    # reserve that stem without importing it.
     assert "cadbuild.artifacts" in str(exc.value)
-    assert "cadbuild.views" in str(exc.value)
+    assert "cadbuild.views" not in str(exc.value)
 
 
 def test_a_rendered_file_that_is_not_a_picture_is_refused_rather_than_declared(
