@@ -313,6 +313,19 @@ def build_content_type(name: str) -> tuple[str, dict]:
     return OCTET_TYPE, {"Content-Disposition": "attachment"}
 
 
+def _nonblocking(path, flags):
+    """`open()`'s opener, adding O_NONBLOCK — see `_send_file` for why.
+
+    An opener rather than `os.fdopen(os.open(...))`, and the difference is a
+    descriptor leak rather than style: `os.open` SUCCEEDS on a directory, and
+    the `os.fdopen` that follows then raises `IsADirectoryError` without closing
+    what it was handed. Through an opener the descriptor belongs to CPython's
+    `FileIO` the moment this returns, and `FileIO` closes it on every failure
+    path of its own.
+    """
+    return os.open(path, flags | os.O_NONBLOCK)
+
+
 def _safe_name(name: str) -> bool:
     """One ordinary filename, and nothing that navigates.
 
@@ -334,11 +347,16 @@ def _safe_name(name: str) -> bool:
 
     SERVING GOT STRICTER WHEN THE RULE MOVED, and that was inherited rather than
     chosen: this used to be `bool(name) and not name.startswith(".") and "/" not
-    in name`, and the shared rule adds the non-printable category to it — lone
-    surrogates included, which is what `surrogateescape` makes of undecodable
-    bytes. Builds already on disk sit in immutable directories and cannot be
-    re-pushed, so a name that got in before could now stop being served. Two
-    things are why that is acceptable, and NEITHER of them is
+    in name`, and the shared rule adds the non-printable category to it. Through
+    a URL that newly refuses `Cc` and `Cf` — a `%01`, a U+202E — and NOT a lone
+    surrogate: the segment arrives via `unquote` (`_split` below), whose default
+    is `errors='replace'`, so an undecodable byte is already a U+FFFD, category
+    `So`. Lone surrogates bite on the DECLARATION side, where a `\\udXXX` in a
+    build's JSON becomes a byte again through `surrogateescape` at the `os`
+    layer — the same rule, a different caller. Builds already on disk sit in
+    immutable directories and cannot be re-pushed, so a name that got in before
+    could now stop being served. Two things are why that is acceptable, and
+    NEITHER of them is
     `store.SAFE_COMPONENT` — that alphabet holds the members of the uploaded
     ARCHIVE, which since the move is the model's SOURCE tree, while what gets
     served is what the BUILD wrote, and no alphabet is applied to an output name
@@ -655,9 +673,19 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             # names the same hazard ("a fifo is a read that never returns") for
             # DECLARED names; this is the other half. On a regular file the flag
             # changes nothing about the read below.
+            #
+            # A DIRECTORY AND A FIFO ARE REFUSED IN TWO DIFFERENT PLACES, and
+            # they are not one check: the directory never reaches `S_ISREG` at
+            # all, because `open()` fstats what the opener handed it and raises
+            # `IsADirectoryError` — caught here as the 404; the fifo passes the
+            # open and is refused by `S_ISREG` below. Both land on the same
+            # answer, which is why the leak this shape closed was invisible:
+            # every response was already correct while `os.fdopen(os.open(...))`
+            # lost one descriptor per request on a directory (see
+            # `_nonblocking`), on a public unauthenticated route, until
+            # `accept()` had none left.
             try:
-                handle = os.fdopen(
-                    os.open(resolved, os.O_RDONLY | os.O_NONBLOCK), "rb")
+                handle = open(resolved, "rb", opener=_nonblocking)
             except OSError:
                 return self._error(404, "not found", with_body=with_body)
             with handle:

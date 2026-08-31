@@ -519,6 +519,11 @@ print.json
 model.step            # файлы для скачивания, необязательные
 model.stl
 model.3mf
+assembled.stl         # меши сборки целиком — карта `overview`
+print.stl
+model_preview.png     # картинки — карта `previews`
+assembled_preview.png
+print_preview.png
 model.py              # исходник модели — каталоги разрешены
 enclosure.py
 scripts/build.py

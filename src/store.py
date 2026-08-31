@@ -2649,13 +2649,17 @@ def _hash_output(directory: Path, names) -> dict:
       * WHERE IT LANDS. `app._send_file` resolves the path and refuses anything
         outside `store.root` — on the RESOLVED path, because `latest` is a
         symlink and following it is the point;
-      * WHAT IT IS. `stat.S_ISREG` on the open handle, which is what refuses a
-        directory, a device or a FIFO. A model writes its own output directory
-        and nothing on the build path stops it calling `mkfifo` there, so this
-        one is reachable in practice — and it is REACHED only because the open
-        is `O_RDONLY | O_NONBLOCK`: a plain `open()` on a fifo blocks until a
-        writer appears, which is the serving thread gone for good before
-        anything gets to refuse it;
+      * WHAT IT IS, in TWO places rather than one, and reading them as one is
+        what hid a descriptor leak for a round. A DIRECTORY is refused by the
+        `open()` in `app._send_file` itself — `FileIO` fstats what it was handed
+        and raises `IsADirectoryError` — so it never reaches the check below. A
+        FIFO or a device passes the open and is refused by `stat.S_ISREG` on the
+        handle. A model writes its own output directory and nothing on the build
+        path stops it calling `makedirs` or `mkfifo` there, so both are
+        reachable in practice — and the fifo is REACHED only because the open is
+        `O_RDONLY | O_NONBLOCK`: a plain `open()` on a fifo blocks until a writer
+        appears, which is the serving thread gone for good before anything gets
+        to refuse it;
       * the TYPE. `app.build_content_type` serves the whitelist
         (`BUILD_CONTENT_TYPES`) as itself and hands back everything else as
         `application/octet-stream` with `Content-Disposition: attachment`.

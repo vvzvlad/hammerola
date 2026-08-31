@@ -463,6 +463,41 @@ def test_a_fifo_in_a_build_is_refused_rather_than_waited_on(hub):
                    timeout=5).status_code == 404
 
 
+def test_a_directory_in_a_build_is_refused_without_leaking_a_descriptor(hub):
+    """The refusal was never wrong; only the descriptor count could show this.
+
+    A directory under a build answers 404 both before and after the fix, so
+    nothing about a response can tell the two apart. What the old shape did was
+    `os.fdopen(os.open(...))`: `os.open` SUCCEEDS on a directory, `os.fdopen`
+    then raises `IsADirectoryError` and does NOT close the descriptor it was
+    handed, and the `except OSError` around it turned that into the same correct
+    404 — one descriptor lost per request, forever, on a public unauthenticated
+    route, until `accept()` in socketserver quietly stopped taking connections
+    with the hub still looking alive.
+
+    It is reachable because a model writes its own output directory: `os.makedirs`
+    in `model.py`, publication moves the directory whole, and nothing prunes what
+    was never declared (see `store._hash_output`), so the directory lands at a
+    permanent public URL that anyone can GET in a loop.
+
+    The hub runs in this process, so its descriptors are this process's; the
+    delta is measured rather than compared to zero because httpx opens and
+    closes sockets of its own while the loop runs.
+    """
+    hub.publish("proj1", "abc123", good_build())
+    os.mkdir(hub.project_dir("proj1") / "abc123" / "subdir.json")
+    requests = 50
+    before = len(os.listdir("/dev/fd"))
+    for _ in range(requests):
+        assert hub.get("/project/proj1/abc123/subdir.json").status_code == 404
+    grew = len(os.listdir("/dev/fd")) - before
+    # A leak is exactly one per request; connection churn is a handful either
+    # way. Anything at or above a fifth of the run is the defect back.
+    assert grew < requests // 5, (
+        f"{grew} descriptors left open across {requests} requests for a "
+        f"directory — the open is leaking one per refusal")
+
+
 def test_encoded_traversal_in_the_url_is_refused(hub):
     hub.publish("proj1", "abc123", good_build())
     # %2e%2e decodes to `..`. Decoding happens before validation precisely so that

@@ -219,8 +219,14 @@ def _check_declared_file(name, files: dict, where: str) -> None:
     # src/buildproc/child.py). So membership answers "is it there", and the rule
     # the file server goes by has to be asked separately, below.
     if not isinstance(name, str) or name not in files:
+        # "declare", not "write": `files` is `BuildOutcome.files`, curated as
+        # `shipped` in cadbuild/build.py, and never a walk of the directory — a
+        # build may write a file and leave it undeclared (`store._hash_output`),
+        # and telling that author it "did not write" the file sends them looking
+        # at the wrong half.
         raise ValueError(
-            f"{where} points at {name!r}, which this build did not write")
+            f"{where} points at {name!r}, which this build did not declare "
+            f"(the list is what the build shipped, not what its directory holds)")
     # The name the file server will and will not answer for, asked in the one
     # place that decides it. An entry the server refuses would publish with a
     # 201 and 404 in the browser — a build that is accepted and cannot be opened.

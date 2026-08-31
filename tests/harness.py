@@ -127,7 +127,11 @@ class Hub:
     def request(self, method, path, **kw):
         """For the verbs the two helpers above do not cover (HEAD, mostly)."""
         kw.setdefault("trust_env", self.TRUST_ENV)
-        return httpx.request(method, self.url + path, timeout=10, **kw)
+        # A default, for the reason spelled out on `get` above: passed as a
+        # keyword it collides with a caller's own `timeout=` and raises
+        # TypeError instead of honouring it.
+        kw.setdefault("timeout", 10)
+        return httpx.request(method, self.url + path, **kw)
 
     def publish(self, pid, commit, body, token=TOKEN):
         """Push, wait for the build, and answer as the synchronous endpoint did.
@@ -228,9 +232,13 @@ class Hub:
         headers = kw.pop("headers", {}) or {}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
+        # Both defaults through `setdefault`, so this reads like `get` and
+        # `request` above and a caller's own `timeout=` is honoured rather than
+        # colliding into a TypeError.
+        kw.setdefault("trust_env", self.TRUST_ENV)
+        kw.setdefault("timeout", 10)
         return httpx.request(method, f"{self.url}/api/v1/comments{path}",
-                             headers=headers, timeout=10,
-                             trust_env=self.TRUST_ENV, **kw)
+                             headers=headers, **kw)
 
     def comment_dir(self, pid):
         return self.data / "comments" / pid
