@@ -82,7 +82,32 @@ def test_a_printable_name_that_is_not_a_filename_stem_is_refused():
 def test_a_printable_called_assembled_collides_with_the_build_output():
     with pytest.raises(BuildError) as exc:
         collect_printables(Model({"assembled": part()}))
-    assert "collides with assembled.stl" in str(exc.value)
+    assert "'assembled' is reserved" in str(exc.value)
+    assert "assembled.stl" in str(exc.value)
+    assert "the glued-together assembly" in str(exc.value)
+
+
+def test_a_printable_called_print_collides_with_the_plate():
+    """Same reservation as `assembled`, and a worse one to leave open.
+
+    On a project that HAS a `print` view the part would be exported to
+    print.stl by the loop, the plate would overwrite that file afterwards, and
+    the hub would hash what was left — so the published print.stl would be the
+    bed under the part's own name, with nothing anywhere reporting it.
+
+    The refusal itself is unconditional and does not promise that file: a
+    project with no `print` view writes no plate, and `print` is an entirely
+    ordinary name for a single printed part, so this is the likelier of the two
+    refusals to be read by somebody who has done nothing wrong.
+    """
+    with pytest.raises(BuildError) as exc:
+        collect_printables(Model({"print": part()}))
+    assert "'print' is reserved" in str(exc.value)
+    assert "print.stl" in str(exc.value)
+    assert "the print plate" in str(exc.value)
+    # And it says the name is KEPT for the plate, rather than claiming the build
+    # writes it -- which for this project it would not.
+    assert "collides with" not in str(exc.value)
 
 
 def test_printables_must_return_a_non_empty_dict():

@@ -207,9 +207,11 @@ const HOLD_KEY_LABEL = 'C';
  *
  * The hub publishes `{label: filename}` and nothing that says which part a file
  * belongs to — the answer is in the FILENAME, which is always `<part>.<ext>` for
- * ext in step/stl/3mf (`download_labels` in src/cadbuild/printables.py). Nothing
- * about the wire format changes for this; the grouping is done here, in the one
- * place that needs it.
+ * ext in step/stl/3mf (`download_labels` in src/cadbuild/printables.py). That
+ * holds because `downloads` is per part and nothing else is in it: what the
+ * build writes about ITSELF travels in `meta.overview` and `meta.previews`, so
+ * no name here has to be recognised and excluded. Nothing about the wire format
+ * changes for this; the grouping is done here, in the one place that needs it.
  *
  * READ THE VALUE, NEVER THE KEY, and that is the whole trap: with a single
  * printable the LABEL degenerates to a bare `step` / `stl` / `3mf` with the part
@@ -283,6 +285,17 @@ function rowName(label, file, cut) {
  * the order the hub happened to write them, so picking out every STL means
  * aiming at every third row. Grouped, the same thirty rows are three groups a
  * reader can take whole.
+ *
+ * THE SAME MAP `filesByPart` READS, AND NO OTHER. `meta.overview` and
+ * `meta.previews` — the whole build's own meshes and its pictures — are not
+ * drawn anywhere on this page: they are declared for a client to FETCH, and a
+ * button is a different offer. `print.stl` is the one where drawing it would be
+ * actively wrong: the plate is whatever the `print` view holds, nothing
+ * requires that to be printable parts only, and a button on a public page
+ * invites somebody to slice a plate with a mock of a purchased bearing on it.
+ * `assembled.stl` has been served for this hub's whole life with no button and
+ * nobody has asked for one — the assembly is on screen in 3D, which is the
+ * better answer to the question a button would be for.
  *
  * THE GROUP KEY IS THE EXTENSION OFF THE FILENAME, never the label, and it is
  * the same trap `filesByPart` documents at length one screen up: the label is

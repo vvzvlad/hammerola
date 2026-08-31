@@ -105,8 +105,13 @@ class Hub:
     TRUST_ENV = False
 
     def get(self, path, **kw):
+        # `timeout` is a default rather than fixed, so a test whose SUBJECT is
+        # the request coming back at all can name its own deadline instead of
+        # inheriting one it cannot see — see the fifo test in test_serving.py,
+        # where a hung handler thread has to fail rather than wedge the suite.
         kw.setdefault("trust_env", self.TRUST_ENV)
-        return httpx.get(self.url + path, follow_redirects=False, timeout=10, **kw)
+        kw.setdefault("timeout", 10)
+        return httpx.get(self.url + path, follow_redirects=False, **kw)
 
     def index(self, token=TOKEN):
         """GET /index.json, which takes the token (SPEC 3, and src/app.py).
@@ -406,9 +411,16 @@ def tar_gz(files: dict) -> bytes:
     return buffer.getvalue()
 
 
-def good_build(marker="a", downloads=None, extra_files=None) -> bytes:
+def good_build(marker="a", downloads=None, extra_files=None, **extra) -> bytes:
+    """A publishable archive. `**extra` goes straight into meta.json.
+
+    Forwarded rather than enumerated, because `downloads` is no longer the only
+    map a build declares files in: `overview` and `previews` are read by the
+    client and drawn by nothing, so a test about them has to be able to put one
+    in the document without this signature growing a parameter per field.
+    """
     files = {
-        "meta.json": meta_bytes(downloads=downloads),
+        "meta.json": meta_bytes(downloads=downloads, **extra),
         "assembled.json": view_bytes(marker),
     }
     files.update(extra_files or {})

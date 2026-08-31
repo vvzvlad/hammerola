@@ -11,6 +11,16 @@
 //     matching labels would work on every assembly except the one-part one;
 //   * a printable's name may contain dots, so the split is at the LAST one.
 //
+// What the build writes about ITSELF is not in that map at all, and that is the
+// decision these tests hold. `meta.overview` carries the two whole-build meshes
+// (`assembled.stl`, `print.stl`) and `meta.previews` every picture; NEITHER
+// REACHES EITHER MENU. They exist so a client can be told the files are there —
+// the hub lists no directory — and a picture is looked at rather than
+// downloaded. So both menus read `meta.downloads` and nothing else, and that is
+// what makes the per-part reading of it TRUE rather than patched: `assembled.stl`
+// is indistinguishable in shape from a part's `foo.stl`, so a whole-build entry
+// left in that map lands on whatever node happens to be called `assembled`.
+//
 // The menu itself is assembled through the real `computed()` rather than
 // re-derived here. What is under test is a decision — which rows a row menu gets
 // for a part, for a reference part, for a group and for a build with no files at
@@ -29,6 +39,24 @@ const DOWNLOADS = {
   'post.step': 'post.step', 'post.stl': 'post.stl', 'post.3mf': 'post.3mf',
 }
 
+/**
+ * Everything the same build publishes about ITSELF, in the two maps that carry
+ * it — `overview_meshes` and `preview_files` in src/cadbuild/printables.py.
+ *
+ * Handed to the component so the tests below can assert that it changes NOTHING
+ * on either menu. A fixture that simply left these out would agree with a
+ * browser that had started reading them.
+ */
+const ABOUT_THE_BUILD = {
+  overview: { assembled: 'assembled.stl', print: 'print.stl' },
+  previews: {
+    assembled: 'assembled_preview.png',
+    print: 'print_preview.png',
+    plate: 'plate_preview.png',
+    post: 'post_preview.png',
+  },
+}
+
 /** The same build's tree: a part, a group with a part in it, and a reference. */
 const TREE = {
   id: '/model',
@@ -43,24 +71,39 @@ const TREE = {
 }
 
 /**
+ * The same tree with a reference part called `assembled` on it.
+ *
+ * Entirely legal: a view part needs a non-empty string for a name and nothing
+ * more (`read_parts` in src/cadbuild/views.py), and a PRINTABLE of that name is
+ * refused outright (`collect_printables`) — so a node like this is GUARANTEED to
+ * have no files of its own, which is what makes it the sharpest case there is
+ * for the exclusion below.
+ */
+const TREE_WITH_A_RESERVED_NAME = {
+  ...TREE,
+  children: [...TREE.children, { id: '/model/assembled', name: 'assembled' }],
+}
+
+/**
  * The component as `computed()` sees it, with the row menu open on one node.
  *
  * The state is spelled out rather than defaulted because `computed()` reads
  * nearly all of it: what is being avoided is a field left undefined turning into
  * a `TypeError` halfway down and looking like a failure of the menu.
  */
-function component({ node, downloads = DOWNLOADS, token = null, expanded = {} } = {}) {
+function component({ node, downloads = DOWNLOADS, token = null, expanded = {},
+                     tree = TREE, about = {} } = {}) {
   const c = Object.create(HammerolaViewer.prototype)
   c.props = { commentsOpen: false }
   c.home = null
   c.setState = vi.fn((patch) => { Object.assign(c.state, patch) })
   c.state = {
     meta: {
-      project: 'fixture', commit: 'abc1234', built: '', downloads,
+      project: 'fixture', commit: 'abc1234', built: '', downloads, ...about,
       variants: [{ id: 'assembled', name: 'assembled', file: 'a.json', parts: 3, gzip: 1000 }],
     },
     builds: null,
-    tree: indexTree(TREE),
+    tree: indexTree(tree),
     error: null, viewError: null, pending: null,
     view: 'assembled', tool: null, held: false,
     sel: null, selName: '', hidden: [], ghost: [], expanded,
@@ -78,6 +121,9 @@ function component({ node, downloads = DOWNLOADS, token = null, expanded = {} } 
 }
 
 const menuOn = (options) => component(options).computed().menuItems
+/** Every file either menu offers, whichever group or row it sits in. */
+const offered = (v) => [...v.downloadGroups.flatMap((g) => g.files.map((f) => f.file)),
+                        ...v.menuItems.filter((m) => m.hint).map((m) => m.hint)]
 const labels = (items) => items.map((m) => m.label)
 /** The rows that actually carry a file. */
 const fileRows = (items) => items.filter((m) => m.href)
@@ -280,6 +326,20 @@ describe('the header\'s downloads menu', () => {
     const v = component({ node: '/model/plate', downloads: {} }).computed()
     expect(v.downloadGroups).toEqual([])
   })
+
+  it('reads `meta.downloads` and neither of the maps beside it', () => {
+    // The decision this file was reworked around. `meta.overview` and
+    // `meta.previews` are on the very document this menu is built from, and both
+    // are ignored: a mesh here would offer the plate for slicing — and the plate
+    // is whatever the `print` view holds, which may be a mock of a purchased
+    // bearing — while a picture here is a file saved instead of a picture looked
+    // at, one row per part.
+    const v = component({ node: '/model/plate', about: ABOUT_THE_BUILD }).computed()
+    expect(v.downloadGroups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP'])
+    expect(v.downloadGroups.flatMap((g) => g.files.map((f) => f.file)))
+      .toEqual(['plate.stl', 'post.stl', 'plate.3mf', 'post.3mf',
+                'plate.step', 'post.step'])
+  })
 })
 
 describe('the row menu', () => {
@@ -346,6 +406,29 @@ describe('the row menu', () => {
     const items = menuOn({ node: '/model/plate', downloads: {} })
     expect(labels(items)).toContain('No files in this build')
     expect(fileRows(items)).toHaveLength(0)
+  })
+
+  it('SAYS a part named `assembled` has no files, not "here is the assembly"', () => {
+    // The sharpest case there is, and the one the split was made for. A view
+    // part may be called `assembled` — a name only a PRINTABLE is refused — so
+    // this node is guaranteed to have no files, while `meta.overview.assembled`
+    // on the same document names the whole product. Read together they put the
+    // entire assembly on a reference body's row, with the link working and
+    // nothing anywhere saying whose file it was.
+    const items = menuOn({ node: '/model/assembled', about: ABOUT_THE_BUILD,
+                          tree: TREE_WITH_A_RESERVED_NAME })
+    expect(labels(items)).toContain('No files for this part')
+    expect(fileRows(items)).toHaveLength(0)
+  })
+
+  it('offers no picture on a part that HAS one', () => {
+    // `meta.previews.plate` is this part's own render, and the row still offers
+    // three files. A picture is looked at, not downloaded — and it is declared
+    // so `hammerola artifacts` can fetch it, which is a different reader.
+    const v = component({ node: '/model/plate', about: ABOUT_THE_BUILD }).computed()
+    expect(fileRows(v.menuItems).map((m) => m.hint))
+      .toEqual(['plate.step', 'plate.stl', 'plate.3mf'])
+    expect(offered(v).filter((f) => f.endsWith('.png'))).toEqual([])
   })
 
   it('gives a row that STATES something no handler at all', () => {

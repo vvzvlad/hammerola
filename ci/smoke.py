@@ -440,7 +440,7 @@ print(json.dumps(verdicts))
 # downloaded it. `onboarding._refuse_unimportable` is what closed that: the archive now has to
 # carry everything reachable by imports from `src/client/cli.py`, and refuses with the ValueError
 # `_serve_start` turns into the logged 404 this check reads. So the route is now a real witness
-# for the whole client, not only for the two modules named in `CLIENT_EXTRA_MODULES`.
+# for the whole client, not only for the modules named in `CLIENT_EXTRA_MODULES`.
 #
 # The suite cannot see it either, and this is the sharp half: `tests/test_onboarding.py` builds
 # those archives out of the CHECKOUT, where every file is present by construction, so it goes

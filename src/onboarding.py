@@ -150,12 +150,15 @@ TEMPLATE_DIR = ROOT / "model_template"
 # would break here rather than on somebody's laptop.
 #
 # WHAT GOES IN is every module under `src/client/`, plus the parts of `src/` the
-# client is allowed to reach — `metricsdiff` today. That list is closed under
-# imports and a test proves it (`tests/test_onboarding.py`), because a module
-# added outside `src/client/` and imported from inside it would produce an
-# archive that runs on this machine, where the checkout is on `sys.path`, and
-# dies with an ImportError on the laptop this is built for.
-CLIENT_EXTRA_MODULES = ("src/__init__.py", "src/metricsdiff.py")
+# client is allowed to reach — `buildnames` and `metricsdiff` today, the two
+# pure modules the hub and the client share rather than each keeping a copy of.
+# That list is closed under imports and a test proves it
+# (`tests/test_onboarding.py`), because a module added outside `src/client/` and
+# imported from inside it would produce an archive that runs on this machine,
+# where the checkout is on `sys.path`, and dies with an ImportError on the
+# laptop this is built for.
+CLIENT_EXTRA_MODULES = ("src/__init__.py", "src/buildnames.py",
+                        "src/metricsdiff.py")
 
 # The module the generated `__main__.py` imports, and therefore the root of the
 # closure `_refuse_unimportable` walks. Anything the tool needs is reachable from
@@ -404,15 +407,19 @@ def _refuse_unimportable(members) -> None:
     reaches is not required, and that is honest rather than lax: nothing imports
     it, so its absence breaks nothing.
 
-    TWO OF THE TWENTY ARE OUTSIDE THE CLOSURE and they are outside it for
+    TWO ARCHIVE MEMBERS ARE OUTSIDE THE CLOSURE and they are outside it for
     different reasons — this said "one" until 2026-08-28 and named only the
     first, which is the kind of miscount a test now makes impossible
-    (`tests/test_onboarding.py`). `src/client/__main__.py` is unreachable ON
+    (`tests/test_onboarding.py`). How many members there are ALTOGETHER is
+    deliberately not written beside it: the two are pinned by that test, the
+    total is decoration, and it had already gone stale twice by 2026-08-31.
+    `src/client/__main__.py` is unreachable ON
     PURPOSE: the zipapp's entry point is the generated `CLIENT_MAIN` at the
     archive's root, because a zip's entry point has to sit there. `src/__init__.py`
-    is unreachable by ACCIDENT of how the one import out of the package resolves
-    — `from src.metricsdiff import …` lands on `src/metricsdiff.py` directly, so
-    `src` as a package is never looked up — and unlike `__main__.py` it really
+    is unreachable by ACCIDENT of how the imports out of the package resolve —
+    `from src.buildnames import …` and `from src.metricsdiff import …` each land
+    on the module file directly, so `src` as a package is never looked up — and
+    unlike `__main__.py` it really
     is required. What requires it is not this walk but `CLIENT_EXTRA_MODULES`,
     where it is named and therefore read BY NAME; an image without it raises
     OSError out of `client_bytes` and reaches the same 404.
