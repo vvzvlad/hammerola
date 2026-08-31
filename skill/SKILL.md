@@ -50,21 +50,48 @@ this, `~/.local/bin` is not on it: run the file by its path, or add it.
 ## The working cycle, and why a commit is not optional
 
 ```sh
-hammerola build            # -> the dev slot. Draft. Overwritten by the next build.
+hammerola build            # -> the dev slot. YOUR OWN eyes. Overwritten by the next build.
 hammerola commit -m "..."  # -> an immutable revision, and `latest` moves to it
 ```
+
+**The two verbs are split by AUDIENCE, not by how finished the part is:
+`build` is what YOU look at, `commit` is what the PERSON looks at.** Everything
+shown to a person goes through `commit`. A `dev` URL is never handed over — not
+as a link, not as "have a look meanwhile", not under a picture.
 
 **`build` publishes into `dev`, and a project with only a `dev` build does not
 appear on the hub's front page.** That is not a defect to work around: `dev` is
 one directory that every push overwrites, it has no history, its URL is served
 with no caching, and the hub stores neither source nor log under that slot. It
-is the draft you refresh while you are shaping the part.
+is what you push in order to look at the thing yourself — fetch a picture, read
+`metrics.json` (both below), see whether a number landed where you meant it to.
+A link into it names something the next push destroys, so a person who opens it
+tomorrow is shown a different part and is not told.
+
+**Nothing here rations `build`, and the slot exists so that nothing has to.**
+It is the only pair of eyes you have: there is no CAD kernel on your machine —
+that is the point of the hub — so a model you have not pushed is one nobody has
+looked at, you included. What is left in its place is re-deriving the arithmetic
+by hand, in scripts that restate the constants the part was built from, which is
+the tautology of "Checks that actually check" with the geometry unseen as well.
+Push after every change that moves a number. (51 minutes, eight edits, four of
+them redoing the other four — the console under the barb, the tail, the skirt,
+the centre of mass — and not one build in the whole of it: each was re-derived
+on paper because nothing had been looked at.) A brief that forbids pushing is a
+brief that blinds; `dev` is overwritten by design, so there is nothing to spend.
 
 `commit` is what makes a version exist. The hub names the revision itself, from
 the digest of the sources it received — git is not involved and the client never
 invents an id — stores the code and the log under that name, moves `latest`, and
 the project gets its card. Finished work is committed. If you leave a session
 with the last thing you did being a `build`, nothing you did is on the site.
+
+**The first thing a person is shown is already a commit.** The block layout of
+the next section — the whole part in boxes, before one real solid exists — is
+committed, not built: it is shown, so it is a revision, and being crude does not
+make it a draft in the sense `dev` means. Every later "done, here it is" is a
+commit as well, quoted to the person by its revision. A round of edits that ends
+in a `build` is a round the person has no way to see.
 
 The URL of a commit is the thing the person opens, turns over and prints from.
 Hand it over every time you commit, not once at the end of the job — a person
@@ -108,8 +135,9 @@ minutes before the first solid existed. A short phase, and not a skippable one.
 name five different objects, and the one in the person's head is not the one in
 yours. Say back what the object is as a shape, what it touches and what holds
 it, then put up a block preview — the whole layout in boxes and cylinders, in
-`views()`, pushed with `build` so the person can turn it round. That preview
-closes this phase and is not optional. A build needs a non-empty `printables()`,
+`views()`, published with `commit` so the person can turn it round. That preview
+closes this phase and is not optional; it is shown, so it is a commit, and it is
+the project's first revision. A build needs a non-empty `printables()`,
 so the part goes in there as a box of its overall size and the things around it
 stay mocks in the views. And `checks()` is still the template's, measuring its own
 box and lid: it reddens on the first body of yours (`bracket.stl is 684 bytes,
@@ -129,6 +157,20 @@ cantilever that was not there.) A mock never carries a printable's word in its
 name — `blank`, `panel`, never `lid mock`: coverage counts whole words, so such
 a mock answers for the printable `lid` and the build goes green with the real
 `lid` in no picture. The hub says so in a `warning:` line and publishes.
+
+**An operation nobody named does not exist either.** The part is what comes off
+the printer. Tapping a hole, reaming it, drilling it out, gluing, pressing in a
+heat-set insert, bending, sanding to fit — every one of those is a step somebody
+has to own, with a tool, and it exists only once a person has named it and
+agreed to it. A model that works only after an unnamed operation does not work:
+what will be printed is the thing in `printables()`, and the operation lives
+nowhere but in your head. Where a step IS agreed, it is written down the way
+hardware is — named, with the tool's designation, in `ref/` — and the geometry
+stays the state that comes off the bed. (A socket was drawn as a smooth Ø8.43
+hole "under a tap", so that the nozzle's Ø9.35 thread would have something to
+cut into. Nobody had said a word about tapping, there was no tap, and the
+assembly worked only in a description of it. Threads that are printed are
+printed.)
 
 **Ask whether the assembly is already sold before you design it.** A make-or-buy
 line, with a price and a link, comes before the first geometry. (Four hours went
@@ -225,6 +267,19 @@ behind it is a lie written into the source. (`thread_clearance = 0.30`, carrying
 the comment `# measured fit on the printer`, was never measured: two ruined
 prints, 100 g of plastic, and the part never worked.)
 
+**That is the special case of a general rule: a justification is an assertion,
+and it is checked like one.** "Measured", "in practice", "standard", "in the
+usual case" each claim something the reader cannot see, and a claim with no
+number, no line and no source behind it is worth less than no comment at all —
+it is what stops the next reader from going to look. The failure is not
+carelessness and does not yield to care: through a review, the most expensive
+defect of each round sits not in the original work but in the edit written FOR
+the previous round, and the commonest shape it takes is a smoother-sounding
+general phrase written where the real measurement was lying right there in the
+file. A figure taken off one build is a property of that run, not of the kernel
+or of the process, and the sentence has to say which — write the number and
+where it came from, or write that you do not know.
+
 **`ref/` is published with every build**, and two things follow. Its names obey
 rule 1 below — ASCII, no `×`, no `Ø`, no Cyrillic — and one bad name refuses the
 **whole** push, so a hardware designation goes inside the file and never into its
@@ -303,10 +358,17 @@ section: a working model with the rules written next to the geometry. In short:
   check fails the build, because a log saying "checks passed" for a function
   that looks at nothing is worse than no function at all.
 * **`import checklib`** — reusable geometry checks (`pairwise_interference`,
-  `mating_face_flat`, `material_under_head`). The module lives inside the hub's
-  image; there is nothing to install and nothing to vendor.
+  `mating_face_flat`, `material_under_head`), the fast "is there material at
+  this point" probe (`material_at`), the two that say whether a boolean left
+  anything at all (`volume`, `is_empty` — `assert wp.vals()` cannot answer that,
+  it is true of an emptied body), and `section`, which marks a stretch of
+  `checks()` so the build log prints what it cost. Every one of them reads
+  EVERY body of the part it is handed — including a part assembled with
+  `.add()`, whose bodies may touch or sit inside one another — rather than
+  whichever body happens to be first. The module lives inside the hub's image;
+  there is nothing to install and nothing to vendor.
 
-Those three functions are all that `checklib` checks, and the gate is all of
+Those are all that `checklib` checks, and the gate is all of
 the hub. Nothing anywhere checks an overhang, a minimum wall, whether a tool
 reaches a screw, or where a number came from. Every rule in the next section is
 a check you write yourself or something you go and look at. Of the bed the gate
@@ -373,6 +435,55 @@ for any shape of cone. What caught the others was breaking the solid on purpose:
 a 20 mm drill jig, where the design says 48, passed the check whose entire
 subject was its length.)
 
+**When a check goes red, either the part is wrong or the check is — and which
+one is a decision made out loud, never by reflex.** The cheapest move is always
+to nudge the model until the complaint stops, and it is the one that destroys
+the instrument: the log goes green, the part stays wrong, and that check is
+decorative from then on. The tell is mechanical, and it is the same question as
+"a round of edits that moves no physical number is not started" further down —
+name the physical quantity your edit moved. If the answer is "none, but it
+passes now", you edited the instrument and not the part. (A nozzle's Ø9.35
+thread interfered with its Ø8.43 seat, correctly. Rather than fix the fit, the
+nozzle in the assembly was swapped for a stand-in turned down to the thread's
+root diameter, which slid through — the check went green, and the model of
+record stopped being the thing that gets printed. `assembled.stl` is glued from
+the assembly view, so the downloadable assembly was made of the stand-in too;
+the hub said as much in a `warning:` line about a part matched by name only, and
+the line was read and argued past.)
+
+**Four traps in the CadQuery API itself, and every one of them makes a check
+silently GREEN rather than red.** None raises, so the price is never a failed
+build — it is a check believed to work for years. Measured on cadquery 2.8.0:
+
+* **`.vals()` is true whether or not anything survived a boolean.** A Workplane
+  after `intersect` holds a list of one `Compound`, empty or not, so
+  `assert wp.vals()` cannot go red — `bool(vals)` was `True` at a total volume
+  of `0.0`. Ask for the volume. (In one model that assert counted as a live
+  check for months, and the line under it read the bounding box of an empty
+  compound.)
+* **`BoundingBox()` on an empty solid raises** `Standard_Failure: Bnd_Box is
+  void` — the only loud member of the family, and only if you get that far.
+* **A body a boolean emptied answers as its previous self.**
+  `Workplane.intersect` calls `findSolid(searchParents=True)` and fetches a
+  solid out of the parent chain, so the emptying is invisible one line later: a
+  body of volume 8000 emptied to 0.00 answered the next `intersect` with a
+  4×4×4 probe with **64.00 mm³** — the probe's whole volume, exactly as if the
+  body were intact. The same question put to a bare `Shape`, which has no
+  parent chain behind it, raises `ValueError: Null TopoDS_Shape object`.
+* **A point classifier on a body with no solids in it answers IN everywhere.**
+  probe(0,0,0), probe(1000,1000,1000) and probe(−50000,30000,7000) all came
+  back IN, so a part that quietly came back empty greens every
+  `assert solid(...)` in the file. Here the kernel now covers you:
+  `checklib.material_at` — the point probe below — refuses loudly on a body
+  with no solids in it. That guard is new: it was not there while the traps
+  above were being found, so a check written before it may have been passing on
+  nothing.
+
+All four are found by one question, and it is the cheapest one to put to a
+check, to a review round and to your own last edit: what does this do on the
+input that should FAIL, rather than on the one that passes? Every trap above is
+an answer to it.
+
 **Measure the thing the part exists for, not the proxy you happened to pick.**
 If what matters is how far a lever protrudes, cut it against the housing and
 measure what is left, and do not measure the variable you set the drop from.
@@ -413,11 +524,16 @@ stub of the pair as a ladder over the clearance, each step with its number
 embossed on it, then the full part once a human has printed it and said which
 step works.
 
-**The gauge is a build of its own, into `dev`, and never a part of the
-product.** It comes before the product does — the clearance is not chosen yet,
-so neither is the part that uses it — so `printables()` returns the one gauge,
-`assembled` shows that same gauge, `print` stands it on the bed. That passes the
-view gates whole; no view is deleted or bent around a part that is not the product.
+**The gauge is a commit of its own, and never a part of the product.** A person
+prints it, so it is committed like anything else a person prints: the link they
+work from has to outlive the next push. It comes before the product does — the
+clearance is not chosen yet, so neither is the part that uses it — so
+`printables()` returns the one gauge, `assembled` shows that same gauge, `print`
+stands it on the bed. That passes the view gates whole; no view is deleted or
+bent around a part that is not the product. `latest` sits on the gauge until the
+part that uses its number is committed, and the project's card shows a ladder of
+steps meanwhile: that is the price, and it is smaller than handing over a link
+that dies under the person holding it.
 
 The ladder is one fused body — the steps on a common base, the embossed digits
 unioned to it — for the reason under `printables()`; fetch `<gauge>_preview.png`
@@ -432,12 +548,13 @@ gauge, `checks()` verbatim: `checks: 6 passed`, BUILD GREEN.) Only a `checks()`
 indexing `printables()` by name refuses by itself. The rest holds — a gutted one
 fails the empty-checks gate above, no flag skips checks, and deleting it passes
 and throws away every complaint ever turned into an assertion — so commit the
-product's `checks()` to git first: the hub keeps no `dev` source and the slot is
-overwritten.
+product's `checks()` to git first: the revision the hub keeps is the GAUGE's
+file, with the product's `checks()` already swapped out of it, so
+`hammerola source <gauge>` brings back the gauge's checks and not the product's.
 
-The person prints it and names a step, the number goes into the part, the next
-`build` overwrites `dev`, and not a line of the gauge is left. That is what the
-slot is for.
+The person prints it and names a step, the number goes into the part, and the
+next commit is the product. The gauge's revision stays where it is — the record
+of what was printed and which step won — and nothing overwrites it.
 
 **Fasteners are checked for tool access, as a body**: a cylinder from the head
 along the axis, driver length, swept through the assembly. A fastener with no
@@ -462,6 +579,25 @@ You will usually have no way to time this before pushing: the CAD kernel lives
 in the hub's image, so a model that imports `cadquery` does not necessarily run
 anywhere else at all. Do not calibrate against whatever machine you are on —
 write the checks so the question of speed does not arise.
+
+**When it does arise anyway, mark `checks()` up with `checklib.section("...")`
+and let the hub say where the time went.** It is a context manager around a
+piece of the function; the hub prints the table itself, on a FAILED build as
+well as on a green one, so the marks are the whole of what the model owes.
+Measure before you cut anything: in the model that prompted this the checks
+phase ran 495 seconds and 52% of IT sat in ONE loop inside one section — no
+split by build phase would have shown that — while the check named beforehand
+as the main suspect measured 8.9 s against the ~150 s it had been predicted at.
+
+**The shape of a boolean is measured and not read about, because the sign of
+the effect changes with the geometry.** On one model a single `Common` against
+a compound of 13 bodies came out five times dearer than cutting the 13 bodies
+one at a time — and the geometry it was measured on was never written down,
+which is half the lesson by itself. The same experiment on 13 plain boxes
+against a long bar came out the other way round: 0.020 s as the compound
+against 0.062 s one at a time, three times CHEAPER. There is no rule in that
+pair, and none worth taking from anybody else either: put both forms of your
+question behind a section mark on your own geometry and read the table.
 
 None of what follows is a reason to check less. All three are the same check,
 written so it costs what it should.
@@ -503,22 +639,52 @@ def build_lid():
 
 Worth about a fifth of the run on a model of any size. It is safe because
 CadQuery operations return new objects rather than mutating in place — but if
-you ever mutate a builder's result, do not cache that builder. The one in-place
-change that does happen is not yours: exporting an STL triangulates the shape,
-after which its bounding box is the *mesh's*, out by tenths of a millimetre on
-anything filleted. The hub throws that triangulation away after each export, so
-a cached part handed to both `printables()` and `checks()` still measures as
-itself.
+you ever mutate a builder's result, do not cache that builder.
+
+**The one in-place change that does happen is not yours: triangulating a shape
+leaves the mesh on it, and `BoundingBox()` then measures the mesh.** A cylinder
+r=5 h=10 read `zlen` 10.000000, and 10.003108 after `mesh(0.1)` — which is also
+what the tolerances the hub meshes with give it. The FLAT Z axis grew, so this
+is not the chord of an arc; the box simply reads bigger.
+
+Past that direction, carry no number away from here and take none off a mesh of
+your own. The angular tolerance moves the figure strongly. The axes do not move
+together either: at that same setting the Y axis did not shift AT ALL while X
+and Z both went to 10.003108, because what grows, and by how much, is settled
+by where the triangulation's vertices happened to land. That one figure is
+quoted because two independent runs agreed on it — the rest of the sweep it
+came from did not, a second person on the same version of the kernel getting a
+different number at one of its settings, with neither side finding out why. So
+a bounding box read off a meshed shape says something only with the shape, BOTH
+tolerances and the AXIS named beside it, and even then it is a fact about one
+machine. The direction is what survives all of that, and it tells in
+both signs of the answer: "does it fit the printer" can go falsely red, while a
+clearance reads tighter than it is and an inequality whose grown side is the
+weak one buys itself slack and passes without a word.
+
+The hub drops the triangulation after each export it performs, which is what
+keeps `printables()` and `checks()` measuring the same part. Two things it does
+not cover, both of them yours. A `@cache`d builder hands the SAME object to
+every caller, so a mesh or an export of your own moves what the next reader
+measures — in the run above, the first reader of the cached cylinder got
+10.000000 and the one after that mesh got 10.003108, off a line somewhere else
+in the file. And copies do not share alike: `translate()` builds a fresh TShape
+and stays clean (10.000000 beside a meshed original, and clean too when the
+copy is taken after the `mesh()`), while `.moved()` and `.located()` share the
+original's TShape and read 10.003108 with it. So cache the builders — and do
+not mesh or export inside `checks()`.
 
 **Do not pre-filter pairs before `checklib.pairwise_interference`.** It already
 rejects pairs whose bounding boxes cannot touch, before doing any boolean.
 Hand-written filtering in front of it buys nothing and can only remove pairs the
 check was meant to see.
 
-**If you profile, use a sampling profiler.** `cProfile` reports almost nothing
-here: the CAD kernel spends ~89% of its time in a thread pool that a profiler
-watching the main thread cannot see, so the ordinary tool will tell you the
-build is fast while it takes ten minutes.
+**If you profile, use a sampling profiler — or the section marks above.**
+`cProfile` reports almost nothing here: the CAD kernel spends ~89% of its time
+in a thread pool that a profiler watching the main thread cannot see, so the
+ordinary tool will tell you the build is fast while it takes ten minutes. A
+wall clock around a labelled block cannot be fooled that way, which is the
+second reason to mark the sections up.
 
 ## Four rules that break a push, in the order they bite
 

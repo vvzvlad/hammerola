@@ -74,7 +74,12 @@ def _metrics(hub, pid: str, revision: str):
         return None
     try:
         payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        # `RecursionError` BESIDE THE VALUE ERRORS, for the same reason as in
+        # `hub._payload`: `json.loads` recurses per nesting level, so a body of
+        # `[[[[...]]]]` raises it rather than a `ValueError`, and 400 kB of
+        # brackets is nothing against the reply ceiling. This body comes off the
+        # wire like any other, and uncaught it left the command as a traceback.
         return None
     return payload if isinstance(payload, dict) else None
 

@@ -174,7 +174,9 @@ def collect_printables(model):
 
     Split out from the export so the view gates below can run first: they only
     read names and bounding boxes, and a bounding box is only the shape's own
-    until something tessellates it (see drop_mesh).
+    until something tessellates it -- after that it reads BIGGER, in the one
+    direction, which is what makes the order matter rather than merely tidy
+    (see drop_mesh for the measurements and for what the sign costs).
 
     Every name rule lives here, including the hub's limit on the download
     labels the names turn into -- see download_labels for why that one is not
@@ -237,9 +239,12 @@ def export_printables(printables, out_dir):
             raise BuildError(f"printable {name!r} has non-positive volume ({volume})")
 
         # Measured HERE, before the export, and that is not tidiness: exportStl
-        # meshes the shape in place, and from then on BoundingBox() is the
-        # box of the MESH, out by tenths of a millimetre on anything filleted
-        # (the same trap drop_mesh exists for). Face, edge and solid counts are
+        # meshes the shape in place, and from then on BoundingBox() is the box
+        # of the MESH, which reads BIGGER than the shape and never smaller. The
+        # SIGN is the whole of what matters here; how much bigger depends on the
+        # shape, on both tolerances and on the axis, so the figures live in one
+        # place with the whole signature attached -- geometry.drop_mesh, which
+        # also has what the sign costs. Face, edge and solid counts are
         # topology and do not care, but they are taken here too so the whole
         # measurement comes off one unmeshed shape.
         box = shape.BoundingBox()

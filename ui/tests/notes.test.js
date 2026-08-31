@@ -29,7 +29,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import HammerolaViewer from '../src/HammerolaViewer.jsx'
+import HammerolaViewer, { noteFor, notesWith } from '../src/HammerolaViewer.jsx'
 import { indexTree } from '../src/hub.js'
 import { collect, texts } from './eltree.js'
 
@@ -173,6 +173,212 @@ describe('the author\'s note', () => {
     // an object handed to React as a child throws.
     const v = component({ sel: '/model/lid', notes: { lid: { text: 'nope' } } }).computed()
     expect(v.authorNote).toBe('')
+  })
+})
+
+// -- the key is a PART NAME, and a part name is not a safe key ----------------
+//
+// Both maps are keyed by the part's name and neither is an object this code
+// built: the author's is parsed out of a fetched meta.json, the reader's out of
+// `JSON.parse` on localStorage. A part is allowed to be called `constructor` —
+// the hub's path alphabet says so — and a bare lookup then answers with a
+// function off `Object.prototype`.
+//
+// THREE READS, ONE HELPER, which is what these tests are really about. The guard
+// used to be written out at the newest read and nowhere else; the two older ones
+// had it nowhere, and a fourth would have been added the same way.
+
+describe('noteFor', () => {
+  it('answers the entry the map itself owns', () => {
+    expect(noteFor({ lid: 'M3x8 DIN912' }, 'lid')).toBe('M3x8 DIN912')
+  })
+
+  it('answers nothing for a name that only the PROTOTYPE has', () => {
+    for (const name of ['constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
+      expect(noteFor({}, name), `${name} came off the prototype`).toBe('')
+    }
+    // `__proto__` is the other half of the same trap: it is not an own property
+    // of a literal either, and reading it answers with the prototype object.
+    expect(noteFor({}, '__proto__')).toBe('')
+  })
+
+  it('still answers a part that is REALLY called `constructor`', () => {
+    // The guard is about ownership, not about the spelling of the name: a model
+    // may legitimately publish a part under one of these.
+    expect(noteFor({ constructor: 'M3x8' }, 'constructor')).toBe('M3x8')
+  })
+
+  it('treats anything that is not a string as no note', () => {
+    expect(noteFor({ lid: { text: 'nope' } }, 'lid')).toBe('')
+    expect(noteFor({ lid: 12 }, 'lid')).toBe('')
+  })
+
+  it('answers nothing for a missing map or a missing name', () => {
+    // `meta.notes` is absent on most builds and `selectedName()` is '' on a
+    // group; neither may be an error.
+    expect(noteFor(undefined, 'lid')).toBe('')
+    expect(noteFor(null, 'lid')).toBe('')
+    expect(noteFor('not a map', 'lid')).toBe('')
+    expect(noteFor({ lid: 'x' }, '')).toBe('')
+  })
+})
+
+// -- and the WRITE, which had no guard at all ---------------------------------
+//
+// Three reads went through `noteFor` and the one write did not, which is the
+// half of the trap that loses data rather than throwing. `notes[name] = text` is
+// an ASSIGNMENT, and `__proto__` names an accessor on `Object.prototype` rather
+// than a slot on the object: handed a string that setter does nothing and
+// reports nothing. So a reader writing a note on a part called `__proto__`
+// watched the dialog close exactly as it does on success, `{}` went to
+// localStorage, and `noteFor` afterwards answered with an empty box — honestly,
+// because there was nothing there. Nothing anywhere said so.
+//
+// THE NAME IS LEGAL. The hub's path alphabet allows it and
+// `render._check_part_name` does not object, so this is a part a model may
+// publish rather than an attack.
+
+describe('notesWith', () => {
+  it('writes an ordinary name and reads back through `noteFor`', () => {
+    const next = notesWith({ post: 'press fit' }, 'lid', 'M3x8 DIN912')
+    expect(noteFor(next, 'lid')).toBe('M3x8 DIN912')
+    expect(noteFor(next, 'post')).toBe('press fit')
+  })
+
+  it('really writes a part called `__proto__`, which assignment does not', () => {
+    // The defect in one line: `{}[name] = text` here creates no own property at
+    // all and answers no differently for having tried.
+    const next = notesWith({}, '__proto__', 'thin wall here')
+
+    expect(Object.prototype.hasOwnProperty.call(next, '__proto__'),
+           'the note went to the prototype setter and vanished').toBe(true)
+    expect(noteFor(next, '__proto__')).toBe('thin wall here')
+    // And the map is still a map: writing the note did not move its prototype.
+    expect(Object.getPrototypeOf(next)).toBe(Object.prototype)
+  })
+
+  it('survives the round trip through localStorage', () => {
+    // The map does not stay in this process: `writeNotes` stringifies it and
+    // `readNotes` parses it back, and an own `__proto__` has to make both
+    // crossings — `JSON.parse` DEFINES the key rather than assigning it, which
+    // is what makes this work at all.
+    const written = JSON.stringify(notesWith({ lid: 'M3x8' }, '__proto__', 'thin wall here'))
+    const back = JSON.parse(written)
+
+    expect(noteFor(back, '__proto__')).toBe('thin wall here')
+    expect(noteFor(back, 'lid')).toBe('M3x8')
+  })
+
+  it('writes the other prototype names too, and reads them back', () => {
+    for (const name of ['constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
+      const next = notesWith({}, name, 'M3x8')
+      expect(noteFor(next, name), `${name} did not survive the write`).toBe('M3x8')
+    }
+  })
+
+  it('takes an entry out for an empty note, `__proto__` included', () => {
+    expect(notesWith({ lid: 'x', post: 'y' }, 'lid', '')).toEqual({ post: 'y' })
+
+    const had = notesWith({}, '__proto__', 'x')
+    const gone = notesWith(had, '__proto__', '')
+    expect(Object.prototype.hasOwnProperty.call(gone, '__proto__')).toBe(false)
+    expect(noteFor(gone, '__proto__')).toBe('')
+  })
+
+  it('leaves the map it was given alone', () => {
+    // `saveNotes` puts the answer in state, and state is not edited in place.
+    const before = { lid: 'M3x8' }
+    notesWith(before, 'post', 'press fit')
+    expect(before).toEqual({ lid: 'M3x8' })
+  })
+
+  it('copies a map that already carries a `__proto__` entry', () => {
+    // The spread DEFINES rather than assigns, which is why copying is safe where
+    // writing is not — and why the map that came back from localStorage above
+    // does not lose the entry on the next save.
+    const had = JSON.parse('{"__proto__":"thin wall here","lid":"M3x8"}')
+    const next = notesWith(had, 'post', 'press fit')
+
+    expect(noteFor(next, '__proto__')).toBe('thin wall here')
+    expect(noteFor(next, 'post')).toBe('press fit')
+  })
+
+  it('answers a copy for a missing or unusable map, and for no name', () => {
+    // `notePop` is a part name off the tree and `notes` starts as `{}`, but the
+    // map has been through `JSON.parse` and the name through a menu.
+    expect(notesWith(undefined, 'lid', 'x')).toEqual({ lid: 'x' })
+    expect(notesWith(null, 'lid', 'x')).toEqual({ lid: 'x' })
+    expect(notesWith('not a map', 'lid', 'x')).toEqual({ lid: 'x' })
+    expect(notesWith({ lid: 'x' }, '', 'y')).toEqual({ lid: 'x' })
+  })
+})
+
+describe('saving a note on a part called `__proto__`', () => {
+  it('lands, through the editor the reader actually uses', () => {
+    // END TO END, because the defect was never in the helper: it was in the one
+    // line of `noteSave`, and a reader met it as a dialog that closed like any
+    // other and a note that was simply not there afterwards.
+    const c = component({ mine: {} })
+    c.state.tree = indexTree({ id: '/model', name: 'model',
+                              children: [{ id: '/model/p', name: '__proto__' }] })
+    c.state.sel = '/model/p'
+    c.state.notePop = '__proto__'
+    c.state.noteDraft = 'thin wall here'
+
+    c.computed().noteSave({ stopPropagation() {} })
+
+    expect(noteFor(c.state.notes, '__proto__'),
+           'the note closed the dialog and went nowhere').toBe('thin wall here')
+    // And it comes back out where the reader looks for it.
+    expect(c.computed().noteText).toBe('thin wall here')
+  })
+
+  it('clears again when the reader empties the box', () => {
+    const c = component({ mine: notesWith({}, '__proto__', 'thin wall here') })
+    c.state.tree = indexTree({ id: '/model', name: 'model',
+                              children: [{ id: '/model/p', name: '__proto__' }] })
+    c.state.sel = '/model/p'
+    c.state.notePop = '__proto__'
+    c.state.noteDraft = '   '
+
+    c.computed().noteSave({ stopPropagation() {} })
+
+    expect(noteFor(c.state.notes, '__proto__')).toBe('')
+    expect(c.computed().noteText).toBe('')
+  })
+})
+
+describe('a part called `constructor`', () => {
+  /** That part, selected, with the row menu open on it. */
+  const onIt = (over) => {
+    const c = component({ sel: '/model/lid', ...over })
+    c.state.tree = indexTree({ id: '/model', name: 'model',
+                              children: [{ id: '/model/c', name: 'constructor' }] })
+    c.state.sel = '/model/c'
+    return c
+  }
+
+  it('reads no READER note off the prototype either', () => {
+    // The older of the three reads, and the one nobody looked at when the guard
+    // was written for the author's: same key, same map shape, same failure.
+    expect(onIt({ mine: {} }).computed().noteText).toBe('')
+  })
+
+  it('does not take the row menu down when it is right-clicked', () => {
+    // The read that fails EARLIEST of the three: the `Note` item slices the note
+    // to 22 characters for its hint, and a function has no `slice` — so an
+    // unguarded lookup throws inside `computed()` and the whole page goes with
+    // the menu, on a right-click.
+    const c = onIt({ mine: {} })
+    c.state.menu = { id: '/model/c', x: 0, y: 0 }
+
+    expect(() => c.computed()).not.toThrow()
+    const item = c.computed().menuItems.find((m) => m.label === 'Note')
+    expect(item.hint).toBe('')
+
+    // And the editor it opens starts empty rather than on a function.
+    item.onClick({ stopPropagation() {} })
+    expect(c.state.noteDraft).toBe('')
   })
 })
 

@@ -370,6 +370,24 @@ function clickHref(href) {
  * `click` and `schedule` are arguments so this can be driven with fake timers
  * and a fake clicker — the ORDER and the SPACING are the whole of what it
  * promises, and neither can be observed through a real anchor in a test.
+ *
+ * AND IT CAN BE CALLED OFF, through `signal`. A chain outlives the gesture that
+ * started it by `gap` × (N − 1) — two seconds on ten parts, six on thirty — and
+ * every href in it was captured off `PAGE.base` when the button was pressed. A
+ * reader who switches revision or leaves the page in that window would otherwise
+ * go on being handed files of the build they left, one every fifth of a second,
+ * with nothing on the screen saying where they came from. The abort is checked
+ * at the top of every step, so an already-aborted signal hands over nothing at
+ * all, and it also clears the pending timer — which is a real `clearTimeout` on
+ * the default path and a no-op under an injected `schedule`, where the flag is
+ * what does the work.
+ *
+ * AND THE LISTENER COMES OFF WHEN THE CHAIN ENDS NORMALLY, which is not
+ * housekeeping: the SIGNAL outlives the chain. One controller serves the whole
+ * page (`downloadAll`), so a listener left behind by a chain that finished sits
+ * on it holding this call's `list` and `timer` until the first cancel — one more
+ * for every press of a group link, on a page a reader can keep open all day.
+ * `{once: true}` covers only the other end, an abort that actually fires.
  */
 export function sequentialDownload(hrefs, options) {
   const o = options || {};
@@ -377,13 +395,26 @@ export function sequentialDownload(hrefs, options) {
   const schedule = o.schedule || ((fn, ms) => setTimeout(fn, ms));
   const gap = Number.isFinite(o.delay) ? o.delay : DOWNLOAD_GAP_MS;
   const list = (Array.isArray(hrefs) ? hrefs : []).filter(Boolean);
+  const signal = o.signal || null;
   let at = 0;
+  let timer = null;
+  // Set while this chain is listening; called at every way out of `step`, which
+  // is what makes an empty list and an already-aborted signal leave nothing on
+  // the signal either.
+  let unlisten = null;
+  const done = () => { if (unlisten) { unlisten(); unlisten = null; } };
   const step = () => {
-    if (at >= list.length) return;
+    if (at >= list.length || (signal && signal.aborted)) { done(); return; }
     click(list[at]);
     at += 1;
-    if (at < list.length) schedule(step, gap);
+    if (at < list.length) timer = schedule(step, gap);
+    else done();
   };
+  if (signal) {
+    const cancel = () => { clearTimeout(timer); unlisten = null; };
+    signal.addEventListener('abort', cancel, { once: true });
+    unlisten = () => signal.removeEventListener('abort', cancel);
+  }
   step();
   return list.length;
 }
@@ -409,6 +440,71 @@ export function menuAt(x, y) {
     x: Math.min(x, Math.max(0, window.innerWidth - 246)),
     y: Math.min(y, Math.max(0, window.innerHeight - 300)),
   };
+}
+
+/**
+ * One entry of a note map — the only way a map keyed by PART NAMES may be read.
+ *
+ * There are two such maps on this page and neither is an object this code built:
+ * the AUTHOR's comes out of a fetched meta.json, the READER's out of `JSON.parse`
+ * on localStorage, and both inherit from `Object.prototype`. A part is allowed to
+ * be called `constructor` or `toString` — the hub's own path alphabet says so —
+ * and a bare `map[name]` on one of those answers with a FUNCTION off the
+ * prototype. React refuses to render a function as a child and takes the page
+ * down over a part name; the row menu's hint gets there sooner, slicing what it
+ * thinks is a string. `hasOwnProperty.call` is what asks about the map itself
+ * rather than about everything it inherits.
+ *
+ * ONE HELPER FOR ALL THREE READS, and that is the point of it being a function at
+ * all. The guard used to be spelled out at the newest read and nowhere else,
+ * which is a rule that holds exactly as long as whoever adds the fourth happens
+ * to have seen the third.
+ *
+ * The type check is the same argument for a value the hub would never write but a
+ * fetched document is free to carry: a note that is not a string is no note.
+ */
+export function noteFor(map, name) {
+  if (!name || !map || typeof map !== 'object') return '';
+  if (!Object.prototype.hasOwnProperty.call(map, name)) return '';
+  return typeof map[name] === 'string' ? map[name] : '';
+}
+
+/**
+ * The same map with one entry written, or — for an empty text — taken out.
+ *
+ * THE PAIR TO `noteFor`, and it exists because the READ was guarded and the
+ * WRITE was not. `notes[name] = text` on a plain object is an ASSIGNMENT, and
+ * `__proto__` names an accessor on `Object.prototype` rather than a slot: for a
+ * string value that setter does nothing at all and reports no failure. A part
+ * may be called `__proto__` — the hub's path alphabet allows it and
+ * `render._check_part_name` does not object — so a reader who wrote a note on
+ * one watched the dialog close exactly as it does on success, saw `{}` go to
+ * localStorage, and got an empty box back from `noteFor`, which was answering
+ * honestly. `Object.defineProperty` writes the slot the accessor stands in
+ * front of, and an OWN property then shadows it on the way back out.
+ *
+ * A NEW OBJECT rather than a mutation, because that is what the caller needs:
+ * `saveNotes` puts the result in state, and state is not edited in place.
+ * Copying with the spread is safe where assigning is not — it defines rather
+ * than sets, so a `__proto__` entry already in the map survives the copy.
+ *
+ * `Object.create(null)` was the other way out and is not enough on its own: the
+ * map is not always built here. The reader's comes back through `JSON.parse` on
+ * localStorage and the author's out of a fetched meta.json, and both of those
+ * inherit from `Object.prototype` whatever this function does — which is why
+ * `noteFor` guards the read regardless, and why the fix belongs at the one write
+ * rather than in the shape of the object.
+ */
+export function notesWith(map, name, text) {
+  const next = { ...(map && typeof map === 'object' ? map : null) };
+  if (!name) return next;
+  if (text) {
+    Object.defineProperty(next, name,
+                          { value: text, writable: true, enumerable: true, configurable: true });
+  } else {
+    delete next[name];
+  }
+  return next;
 }
 
 export default class HammerolaViewer extends React.Component {
@@ -444,15 +540,26 @@ export default class HammerolaViewer extends React.Component {
     // the only definition of "fit" available to a side that does not know the
     // model's bounding box.
     this.home = null;
-    // The hidden and translucent parts a revision switch is carrying across, by
-    // NAME, waiting for the tree of the build it switched to (`rejoin`). Not
-    // state: nothing renders it, it lives for one model event, and a re-render
-    // in the middle of a swap has no business seeing a half-applied one.
+    // The hidden and translucent parts another build opening is carrying across,
+    // by NAME, waiting for the tree of the build it opened (`rejoin`). Written
+    // by `leaveBuild` — which is to say by BOTH doors, the picker and the
+    // banner's Switch — and read by exactly one model event. Not state: nothing
+    // renders it, it lives for one model event, and a re-render in the middle of
+    // a swap has no business seeing a half-applied one.
     this.carry = null;
+    // Where the last accepted gesture is taking this page, which is NOT where
+    // the page has got to (`PAGE.slot`) while a swap is on the wire. `popstate`
+    // is compared against this one; see `switchBuild`.
+    this._want = null;
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
       pending: null,          // a newer build, seen by the poll, not applied
+      // A revision picked from the picker is on the wire. It exists to take the
+      // banner's Switch out of service for exactly that window — see
+      // `takePending`, which refuses on it, and `bannerSwitchStyle`, which is
+      // what stops the button looking like it still works.
+      swapping: false,
       // -- what the reader is doing
       view: null, tool: null, held: false, sel: null, selName: '',
       hidden: [], ghost: [], expanded: {},
@@ -548,19 +655,10 @@ export default class HammerolaViewer extends React.Component {
 
       // A view finished rendering, and brought the tree with it.
       [MODEL]: (e) => this.onModel(e.detail),
-      // Block 11: a page that shows nothing has to say why. A silent viewport
-      // leaves this interface drawing a frame around a hole.
-      //
-      // `setState` AND NOT `set()`, and that is load-bearing rather than a
-      // shorthand: `set()` ends in `sync()`, which dispatches `hmr:state`, which
-      // is what the viewport decides a load on. Reporting a failed load through
-      // it would answer the report with another attempt at the same fetch —
-      // forever, at whatever rate the errors come back. The viewport keeps its
-      // own half of this (`loadFailed` in viewport/element.js); this line is the
-      // other half, and neither one alone is enough.
-      [ERROR]: (e) => this.setState({
-        viewError: (e.detail && e.detail.message) || 'the viewport could not render this view',
-      }),
+      // A view would not render. A method rather than a closure, for the reason
+      // `onModel` is one: this map is built in `componentDidMount`, so anything
+      // decided inside it can only be reached by mounting the whole page.
+      [ERROR]: (e) => this.onViewError(e.detail),
       // The hold key, which the viewport owns. Display only — writing `cut` into
       // the tool this interface owns would make the release ambiguous, since the
       // viewport reports back the tool IT believes we set when the key comes up.
@@ -594,11 +692,14 @@ export default class HammerolaViewer extends React.Component {
     // of ours at all, and the URL is the only thing every entry has.
     this._pop = () => {
       const slot = String(location.pathname).split('/')[3] || '';
-      // Nothing to do for the entry this page is already showing. No two
-      // CONSECUTIVE entries can name the same slot — `switchBuild` refuses the
-      // build already on screen, so nothing pushes one — which is why this is a
-      // guard rather than a case that has to be answered.
-      if (!slot || slot === PAGE.slot) return;
+      // "IS THIS THE BUILD WE ARE ALREADY ON" IS NOT ASKED HERE, and it used to
+      // be — against `PAGE.slot`, which during a swap still names the build
+      // being left. Forward onto an entry naming it was thrown away as a no-op
+      // while a swap to somewhere else was in flight, and the swap then landed
+      // under an address bar saying otherwise. `switchBuild` answers it now,
+      // because the thing it has to be asked against — where the page is going
+      // — lives there.
+      if (!slot) return;
       this.switchBuild(PAGE.pid, slot, { push: false })
         .catch((error) => console.error('switch', error));
     };
@@ -625,6 +726,10 @@ export default class HammerolaViewer extends React.Component {
     // The deferred swap goes with them: it holds `this` and would come back on a
     // component that is gone, to `setState` on it.
     clearTimeout(this._swap);
+    // And so does a download chain still stepping. It touches no state, so it
+    // survives an unmount perfectly happily — and goes on handing the browser
+    // files of a build nobody is looking at any more.
+    this.cancelDownloads();
     this._gone = true;
   }
 
@@ -680,27 +785,209 @@ export default class HammerolaViewer extends React.Component {
     // page's own picker only ever lists one project, so this branch is a guard
     // on the day something else calls this rather than a path anybody takes.
     if (pid !== PAGE.pid) { location.href = `/project/${pid}/`; return; }
-    // Already here. Closing the picker is the whole of the answer.
-    if (slot === PAGE.slot) { this.setState({ revOpen: false }); return; }
-
-    // CLOSED BEFORE THE FETCH, not after it. It is the only sign the click
-    // landed on a gesture that now waits on the network, and — because the menu
-    // then stops being on the screen — it is also what keeps a second row from
-    // being picked while the first is still in flight, which would leave two
-    // swaps racing to push two entries and settle two different `PAGE`s.
-    this.setState({ revOpen: false });
-
+    // THE ADDRESS THIS BUILD HAS, computed once and read by both writers below —
+    // the push that lands a swap, and the replace that calls one off. It sits
+    // above the guards rather than beside the push because the cancelling branch
+    // needs it to ANSWER a guard: whether the bar still names the build on
+    // screen. One expression, so the two can never disagree about what the
+    // address of a slot is.
     const path = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
+    // ALREADY GOING THERE, which is not the same question as "already here" and
+    // is the one BOTH DOORS ask. `PAGE` is where the page HAS GOT TO, and a swap
+    // moves it only once its fetch answers, so during one `PAGE.slot` still
+    // names the build being left. `_want` is the destination: the slot of the
+    // last gesture this method accepted, and `PAGE.slot` whenever nothing is in
+    // flight.
+    //
+    // ASKING `PAGE.slot` FROM THE PICKER BURIED A HISTORY ENTRY. Forward onto B
+    // starts a swap; the reader, seeing nothing yet, opens the picker and clicks
+    // row B — `PAGE.slot` was still A, so the click passed for a real gesture
+    // and `pushState` laid a second entry for B on top of the one they were
+    // standing on. Back then looks like nothing happened, and the forward
+    // history is gone.
+    //
+    // The generation below is taken AFTER this line, and this is the case that
+    // needs it there: the gesture asks for what is already on its way, so a bump
+    // here would kill the swap fetching it and leave nothing to land.
+    const here = this._want || PAGE.slot;
+    if (slot === here) { this.setState({ revOpen: false }); return; }
+
+    // ON SCREEN, BUT BEING LEFT — so this gesture asks to STAY, and staying is
+    // not a trip. Reader on B, Back starts a slow swap to A, Forward comes back
+    // to B: the page is showing B and the address says B. There is nothing to
+    // fetch, nothing to push and nothing to leave behind; all that is asked is
+    // that the swap be called off.
+    //
+    // RUNNING THE WHOLE SWAP INSTEAD IS WHAT THIS REPLACES, and it cost more
+    // than the doing-nothing it looked like. `leaveBuild` ran over a build
+    // nobody was leaving, so the selection went, the session's pins went, the
+    // composer lost its part and the measurement went — a reader who pressed
+    // Forward to get back where they already were lost their own work. Then the
+    // viewport was handed a payload IDENTICAL to the one it had: same `base`,
+    // same `buildKey`, same `view`, which `element.js` reads as neither a
+    // reload, a swap nor a retry, so it never called `load()`. No `hmr:model`
+    // came back, `onModel` never ran, and the two things it spends were left
+    // armed — `_refit`, which then made an ordinary live reload re-capture the
+    // frame Fit promises to keep, and `carry`, which rejoined hidden parts BY
+    // NAME onto a tree nobody had switched to and hid a part the reader never
+    // touched. Both fired later, on an unrelated event, which is where the
+    // debugging would have started.
+    if (slot === PAGE.slot) {
+      this._swapGen = (this._swapGen || 0) + 1;
+      this._want = slot;
+      // The swap that just died raised `swapping` on its way out and is not
+      // coming back to put it down; nobody else would, and the banner's Switch
+      // would sit spent for the rest of the page's life.
+      this.setState({ revOpen: false, swapping: false });
+      const variants = (this.state.meta && this.state.meta.variants) || [];
+      // WHAT IS LEFT OUT OF STEP DEPENDS ON WHICH GESTURE CANCELLED, and the two
+      // are exclusive: a `popstate` arrives with the address already correct and
+      // possibly the wrong VIEW on screen, a picker click arrives with the view
+      // untouched and possibly the wrong ADDRESS in the bar.
+      if (push) {
+        // THE SWAP BEING CANCELLED MAY HAVE MOVED THE ADDRESS ALREADY. A picked
+        // swap pushes nothing until its fetch answers, but a `popstate` swap
+        // exists BECAUSE the browser moved first — so Forward onto B, then a
+        // click on the row for A still on screen, leaves the bar saying B with
+        // nothing else on the page to bring the two back together. F5 opens a
+        // build the reader declined, the copied link points at it, and the next
+        // Back reads as "nothing happened". `pageguard` calls that state invalid
+        // in exactly those words.
+        //
+        // REPLACE, NEVER PUSH. The reader did not navigate, they CANCELLED a
+        // navigation, so the entry the browser has already moved to is the one
+        // that has to be corrected. A push would lay a third entry whose Back
+        // goes straight back to the build just declined — the cancelled gesture
+        // returning through the history.
+        //
+        // AND IT IS MEASURED, not inferred from who called. A flag saying "this
+        // swap came from popstate" would be a second copy of a fact the address
+        // already carries, kept in step by hand, in the one method whose last
+        // rounds were all about state falling out of step. The divergence itself
+        // is what has to be repaired, and it is right there to be read.
+        if (location.pathname !== path) {
+          history.replaceState({ hmr: slot }, '',
+                               path + this.viewQuery(this.state.view, variants));
+        }
+      } else {
+        // THE ONE THING THAT CAN STILL BE OUT OF STEP IS THE VIEW: an entry
+        // carries its own `?v=`, and Back onto a different tab of the build on
+        // screen is a real change. It goes through `showView` — the view tab's
+        // own path, the one the reader's own click takes — because a view is not
+        // a build and this method has nothing to add to it.
+        const wanted = this.entryView();
+        if (variants.some((v) => v.id === wanted)) this.showView(wanted);
+      }
+      return;
+    }
+
+    // CLOSED BEFORE THE FETCH, not after it: it is the only sign the click
+    // landed on a gesture that now waits on the network, and a menu left open
+    // over a page that has not moved yet reads as a click that missed.
+    //
+    // IT IS NOT A LOCK, and this comment used to say it was — that closing the
+    // picker "keeps a second row from being picked while the first is still in
+    // flight". False in two directions. `revToggle` puts the menu back with one
+    // click and `onPick` asks nothing before calling this again; and `popstate`
+    // never goes through the picker at all — it is a gesture on the browser's
+    // own chrome, and Back during a slow fetch simply starts a second swap.
+    // Two in flight then settled in whatever order the NETWORK answered: pick
+    // B, reopen, pick C, and a reader whose last word was C ends on B — with
+    // `push C, push B` behind them, an address bar walked BACKWARDS through two
+    // entries neither of which the reader asked for last.
+    //
+    // SO THE NEWEST GESTURE WINS, BY NUMBER RATHER THAN BY REFUSAL. Turning a
+    // row click away while a fetch is out would be a new rule of this interface
+    // — nothing else here works that way, and a picker that ignores a row reads
+    // as a page that has stopped responding — whereas "a newer gesture overrules
+    // an older one" is already this file's rule, written out two paragraphs down
+    // about the deferred take. `popstate` is not an intruder to be turned away
+    // either: Back is a gesture like any other, and it is supposed to win.
+    this.setState({ revOpen: false, swapping: true });
+    // THE NUMBER, taken after the guards above rather than at the top of the
+    // method: those return without touching anything, and a bump there would
+    // cancel a live swap on behalf of a gesture that did nothing.
+    //
+    // Held locally, compared after every await. A swap that finds the field
+    // moved is not the one the reader is waiting for and leaves WITHOUT A TRACE:
+    // no `setState`, no `pushState`, no `rereadPage`. The push is why the check
+    // has to come before it rather than after — a history entry cannot be taken
+    // back, so the superseded swap has to give it up rather than correct it.
+    //
+    // `swapping` BELONGS TO WHICHEVER SWAP IS CURRENT, and only that one lowers
+    // it. A stale swap answering 404 used to run `swapFailed` and hand the
+    // banner's Switch back while a live swap was still on the wire — which is
+    // precisely the window the flag exists to close, reopened by the one thing
+    // that was supposed to be an error path.
+    const gen = (this._swapGen = (this._swapGen || 0) + 1);
+    // AND WHERE THIS PAGE IS NOW HEADED, for the guard above. Written together
+    // with the generation because they answer the same question from two sides:
+    // the number says which swap is current, this says which BUILD it is for.
+    this._want = slot;
+
+    // AND THE BANNER'S SWITCH GOES OUT OF SERVICE FOR THIS WINDOW, which the
+    // picker's own closing was never going to do for it: the banner is not in
+    // the picker, and — see above — the picker does not close for that purpose
+    // anyway. A click on it during this await used to run `takePending` all the
+    // way through — `meta` replaced by the banner's build, its geometry fetched,
+    // "Now viewing …" toasted — and then this method landed the revision that
+    // was actually asked for on top of it. That is exactly the symptom the
+    // paragraph below calls unacceptable, reached by the shorter road: the
+    // DEFERRED take needs a busy viewport to exist at all, while a direct click
+    // needs nothing. `swapping` is refused by `takePending` and drawn by
+    // `bannerSwitchStyle`, because a button that ignores clicks while still
+    // looking like a button is a worse answer than one that looks spent.
+    //
+    // A REVISION ROW IS NOT REFUSED THE SAME WAY, and the asymmetry is the
+    // decision: the banner offers ONE build and the reader has already been told
+    // about it, so a press that lands mid-swap is answered by the swap they
+    // asked for last; the picker offers every build there is, and refusing rows
+    // out of it would be refusing the gesture rather than ordering two of them.
+
+    // AND A DEFERRED TAKE OF THE BANNER'S BUILD GOES, BEFORE THE FETCH FOR THE
+    // SAME REASON. Switch on the banner waits while the reader's hand is on the
+    // model and retries every BUSY_RETRY_MS for up to BUSY_WAIT_MS
+    // (`takePending`) — a quarter of a second against a network round trip, so a
+    // reader who pressed Switch, saw nothing happen and picked a revision from
+    // the picker instead has the deferred timer land INSIDE this await. It
+    // replaces `meta` with the banner's build, tells the viewport to load its
+    // geometry and toasts "Now viewing …", and then this method finishes and
+    // puts the revision that was actually asked for on the screen: one wasted
+    // load of a model nobody chose, and a toast naming a build that is not there.
+    // Cancelling after the await would not reach it — that is the window it
+    // fires in — so it is cancelled here, where the reader's newer gesture is
+    // known and the older one has not yet had a chance to run.
+    //
+    // The OFFER itself is untouched: `pending` still holds it and the banner is
+    // still up, so a swap that then 404s leaves the BUTTON exactly where it was
+    // — `swapFailed` puts `swapping` down and Switch is live again. What is lost
+    // is the PRESS, not the button: the `clearTimeout` on the line below throws
+    // away a Switch that was waiting on a busy viewport, and nothing re-arms it
+    // when the swap fails, so the reader has to press it again. That is the
+    // intended trade — a newer gesture overrules an older one — but it is a
+    // gesture that goes, and "leaves Switch exactly where it was" would read as
+    // "nothing was lost" without this sentence.
+    clearTimeout(this._swap);
+
     let meta = null;
     try {
       // `fresh`, because a POINTER is exactly the name whose content can have
       // been rewritten since the browser last saw it.
       meta = await loadMeta(true, path);
     } catch (error) {
+      // SUPERSEDED SWAPS FAIL SILENTLY. `swapFailed` writes a `viewError`
+      // naming a build the reader has stopped waiting for, and — worse — puts
+      // `swapping` down under the swap that replaced this one. A revision that
+      // 404s while a newer pick is already on the wire is not news: the newer
+      // one will say whatever there is to say.
+      if (gen !== this._swapGen) return;
       this.swapFailed(slot, error);
       return;
     }
-    if (this._gone) return;
+    // NOTHING BELOW THIS LINE MAY RUN FOR A SWAP THAT WAS OVERTAKEN — it pushes
+    // an entry, moves `PAGE` and rebuilds the state, and the entry in particular
+    // is not something a later correction can take back.
+    if (this._gone || gen !== this._swapGen) return;
     const variants = Array.isArray(meta && meta.variants) ? meta.variants : [];
     if (!variants.length) {
       this.swapFailed(slot, new Error('this build lists no views'));
@@ -713,32 +1000,39 @@ export default class HammerolaViewer extends React.Component {
     // reading the current tab there would leave the address bar saying one view
     // while the page showed another, which is the whole failure this entry is
     // about, spelled with the Back button.
-    const wanted = push
-      ? this.state.view
-      : (new URLSearchParams(location.search).get('v') || this.state.view);
+    const wanted = push ? this.state.view : this.entryView();
     // It survives when the target declares one with the same id, and otherwise
     // falls back to the first — exactly what a fresh load of that URL does with
     // a `?v=` naming a view the build does not have.
     const view = variants.some((v) => v.id === wanted) ? wanted : variants[0].id;
-    // AND THE ADDRESS SAYS SO. `?v=` is what `load()` reads on a fresh open, so
-    // the URL this pushes has to carry it wherever the view on screen is not the
-    // one that URL would open on by itself — otherwise the link in the address
-    // bar, copied and sent, shows a different view than the sender was looking
-    // at. Dropped where the view IS the target's first, since the query would
-    // then repeat what the path already answers.
-    const query = view === variants[0].id ? '' : `?v=${encodeURIComponent(view)}`;
+    // AND THE ADDRESS SAYS SO, by the same reading the cancelling branch above
+    // writes its address with.
+    const query = this.viewQuery(view, variants);
 
-    // Hidden and translucent parts are held as leaf ids, and an id is a solid
-    // path that a rebuild is free to renumber; a NAME is what the person
-    // recognises and what they meant. Read here, off the tree that is still on
-    // screen, and rejoined against the new one when it arrives (`rejoin`).
-    this.carry = { hidden: this.namesOf(this.state.hidden),
-                   ghost: this.namesOf(this.state.ghost) };
-    // The plane is asked about the view actually landing on screen, not about
-    // whether the target HAS the old one: a `popstate` can restore a different
-    // view of the same parts, and a depth measured on the other arrangement is
-    // as much about a model that moved as one measured on another build.
-    const sec = this.sectionAcross(view === this.state.view);
+    // EVERYTHING THAT DESCRIBED THE BUILD BEING LEFT GOES HERE, and this is the
+    // one list of it — `takePending` opens a build too and calls the same
+    // method. The plane inside it is asked about the view actually landing on
+    // screen, not about whether the target HAS the old one: a `popstate` can
+    // restore a different view of the same parts, and a depth measured on the
+    // other arrangement is as much about a model that moved as one measured on
+    // another build.
+    //
+    // WHAT ACTUALLY PINS THE POSITION is one statement, not two: the answer is
+    // spread into the `setState` below, so the call has to come before that.
+    // `_refit`, set inside, has to be standing before `onModel` lands, and that
+    // is a fetch away.
+    //
+    // AN EARLIER VERSION OF THIS PARAGRAPH SAID IT HAD TO PRECEDE `rereadPage`
+    // AND THE NEW `meta`, "because the carry is read off the tree that is still
+    // on screen". That is false and is named here so it is not written back:
+    // `rereadPage` writes `PAGE` and nothing else, and `setState({ meta })` does
+    // not touch `tree`. Neither of the two lines below can move a tree — which
+    // is a smaller claim than "the tree has one writer", the version this
+    // paragraph carried for a round. It has three: `onModel` replaces it,
+    // `onViewError` clears it, and the constructor starts it null. The middle
+    // one matters here more than anywhere, because it is the tree going away
+    // WITHOUT a model event — the very case the carry exists for.
+    const gone = this.leaveBuild(view === this.state.view);
 
     if (push) history.pushState({ hmr: slot }, '', path + query);
     // IN PLACE, so every module that imported `PAGE` sees the new revision —
@@ -748,30 +1042,46 @@ export default class HammerolaViewer extends React.Component {
     // the revision that had just left the screen, silently and forever.
     rereadPage(path);
 
+    // AND TWO THINGS ALREADY IN FLIGHT ARE NOW ABOUT A BUILD THIS PAGE HAS LEFT.
+    // Both were started against the `PAGE.base` of the line above, both outlive
+    // the gesture that started them, and neither has any way of noticing that
+    // the page moved underneath it — so the swap has to reach them here, at the
+    // one moment it is certain the move is really happening.
+    //
+    // The POLL is cut off by generation rather than by a timer, because what has
+    // to be dropped is an answer that is already on the wire (`poll`).
+    this._pollGen = (this._pollGen || 0) + 1;
+    // The DOWNLOAD chain is cut off outright. The hrefs were built out of the
+    // previous revision's base (`fileHref` reads `PAGE.base`), so every file
+    // still to come is one the reader has walked away from — handed over one
+    // every fifth of a second, with nothing on the screen saying which build it
+    // came from.
+    //
+    // BOTH OF THESE ARE OUTSIDE `leaveBuild` AND BOTH FOR ONE REASON, which is
+    // the line to hold on to: everything on that list goes with the BUILD, and
+    // these two go with the ADDRESS — the line above is where this page's
+    // address moves. `takePending` opens another build without moving the
+    // address, so it wants the list and neither of these. (The earlier wording
+    // called the download chain "the one thing a swap does that `leaveBuild`
+    // does not", with `_pollGen` sitting two lines above it doing exactly the
+    // same job.)
+    this.cancelDownloads();
+
     this.setState({
       meta,
       view,
-      viewError: null,
-      // MOMENTARY THINGS GO. A selection pointing at a part that may not exist
-      // in this build is worse than no selection, and a menu or a popover that
-      // outlived the model it was opened over is a menu about nothing.
-      sel: null, selName: '', menu: null,
-      revOpen: false, dlOpen: false, secPop: false,
-      tokenPop: false, tokenDraft: '', notePop: null, noteDraft: '',
-      // Both describe geometry that has just left the screen; the viewport
-      // clears its own tape and offsets on every load.
-      measure: null, moved: null,
+      ...gone.state,
       // The poll's offer was about the slot we are leaving. A pinned revision
       // has nothing to offer at all, and the banner would sit there for a build
-      // that is no longer on this page's road.
-      pending: null, bannerGone: false,
-      // The composer is deliberately NOT closed. Half-written text is the most
-      // expensive thing on this page to lose (the same reason Escape spares it),
-      // and the comment lands on the revision now on screen — which is the one
-      // the reader is looking at while they finish the sentence.
-      ...(sec || null),
+      // that is no longer on this page's road. `bannerGone` is lifted rather
+      // than set, unlike in `takePending`: nothing has been offered on the new
+      // road yet, so the next build to arrive there gets its banner.
+      bannerGone: false,
+      // The fetch is answered and landed, so the banner's Switch is a live
+      // button again — for whatever the poll offers on THIS road next.
+      swapping: false,
     }, () => {
-      this.sync(sec ? { __resetCut: true } : null);
+      this.sync(gone.extra);
       // Recorded here for the same reason `componentDidMount` records it: this
       // is an arrival at a pointer URL, and SPEC 9 is about which of the two
       // moving names this reader was last on.
@@ -809,13 +1119,181 @@ export default class HammerolaViewer extends React.Component {
    * camera. Its Retry button re-asks the viewport for the view that IS on screen
    * — a re-render of what is already there, which costs a fetch and nothing
    * else; the way back to the build that failed is the picker, which never left.
+   *
+   * AND THE BANNER GOES BACK INTO SERVICE. `swapping` was raised for the length
+   * of the fetch; a fetch that answered with a 404 is a fetch that is over, and
+   * the offer standing on `pending` is untouched — so the one thing that must
+   * not happen here is the reader being left looking at a spent Switch over a
+   * build that is still perfectly takeable.
    */
   swapFailed(slot, error) {
     console.warn('switch', error);
+    // THE PAGE IS NOT GOING THERE ANY MORE. `_want` is what the "already here"
+    // guard reads for `popstate`, so a failed target left standing in it would
+    // make Back onto the build actually on screen look like a real move — one
+    // pointless fetch of the revision already there. Only the current swap
+    // reaches this method (the generation is checked before the call), so this
+    // cannot put back a destination a newer gesture has since chosen.
+    this._want = PAGE.slot;
     this.setState({
-      revOpen: false,
+      revOpen: false, swapping: false,
       viewError: `${shortId(slot)} did not load — still showing ${shortId(PAGE.slot)}`,
     });
+  }
+
+  /**
+   * WHAT GOES WHEN ANOTHER BUILD OPENS ON THIS PAGE — one list, for the two
+   * doors into one.
+   *
+   * THERE ARE TWO AND THE SECOND ONE IS EASY TO MISS. `switchBuild` is the
+   * reader picking a revision; `takePending` is the reader accepting the
+   * banner's offer, which is just as much another build — a different commit,
+   * built from different sources, with a box of its own. This list used to be
+   * written out inside `switchBuild` and nowhere else, and everything on it was
+   * therefore simply kept across the banner: the pins of the build that left
+   * were drawn on geometry that never carried them, the draft went on posting a
+   * solid path and a 3D point of one build against the commit of another, and
+   * the section plane was never asked whether it still meant anything. TWO
+   * COPIES OF THIS LIST IS THE DEFECT, not the symptom of it — a third would
+   * drift exactly the same way — so it lives here and both callers spread it.
+   *
+   * `keepView` is whether the view id actually landing on screen is the one that
+   * was on it, which is the strongest question the plane can be asked from this
+   * side (`sectionAcross`).
+   *
+   * RETURNED IN TWO HALVES because the section is two things: fields on this
+   * side AND an instruction to the viewport, which holds a cut of its own. A
+   * caller that spread `state` and dropped `extra` would leave the plane
+   * standing in the scene with the slider back at zero.
+   *
+   * THE SIDE EFFECTS BELONG HERE TOO, and they are the same argument: each one
+   * is about the build being left rather than about how the reader left it.
+   *
+   * WHICH IS ALSO WHY TWO THINGS ARE NOT ON IT, and the boundary is worth
+   * naming so neither is "fixed" back in: cutting off the DOWNLOAD CHAIN and
+   * bumping `_pollGen` both live in `switchBuild`, because this list is what
+   * goes with the BUILD and those two go with the ADDRESS. `switchBuild` moves
+   * the address; `takePending` does not. A chain running across the banner is
+   * handing over files that resolve against the pointer exactly as the reader
+   * asked, so cutting it there would truncate a group download — three STLs of
+   * ten, silently — on the strength of a gesture that changed no href.
+   */
+  leaveBuild(keepView) {
+    const sec = this.sectionAcross(keepView);
+    // The frame Fit goes back to belongs to the build it was measured on, and
+    // this is another build. Spent by the model event that lands the swap; see
+    // `onModel`, which is where the argument for it is written out.
+    this._refit = true;
+    // The toast goes: it sits for 2.6 s and says what the page was doing for the
+    // build that has left, so it would otherwise stand over the new one saying
+    // something that has stopped being true.
+    clearTimeout(this._tt);
+    // Hidden and translucent parts are held as leaf ids, and an id is a solid
+    // path that a rebuild is free to renumber; a NAME is what the person
+    // recognises and what they meant. Read HERE — where the tree on screen is
+    // still the one those ids belong to — and rejoined against the new tree when
+    // it arrives (`rejoin`).
+    //
+    // IT IS ON THIS LIST AND NOT IN `switchBuild` BECAUSE IT WAS MISSED ON THE
+    // OTHER DOOR: `takePending` set no carry, so `rejoin` answered null and the
+    // ids of the build that left were sent straight on to the build that
+    // replaced it. A reader who hid a part and pressed Switch watched it come
+    // back — or worse, watched a DIFFERENT part disappear, because the path it
+    // had been renumbered onto belongs to somebody else now — while the toast
+    // said "your frame and tree are kept".
+    //
+    // AND IT IS WRITTEN ONLY WHERE THERE IS A TREE TO READ IT OFF, which is not
+    // a null check but the whole meaning of the field: `carry` describes the
+    // build being LEFT, not what is on the screen now. No tree means the names
+    // cannot be looked up here — it does not mean nothing was hidden — so
+    // writing the empty answer would be recording a fact nobody established.
+    //
+    // The sequence that costs is `onViewError`: a swap whose view never rendered
+    // clears the tree and leaves an UNSPENT carry standing, because `rejoin` is
+    // consumed by a model event that never arrived. A reader who then opens
+    // another build instead of pressing Retry comes through here with
+    // `state.tree` null, and the overwrite threw away names that were still
+    // exactly right — every hidden part back on screen, over a failure two
+    // gestures ago. Kept, they are spent by the next model event to land, which
+    // is what the carry is for.
+    //
+    // A BUILD WITH NO SOLIDS IS THE OTHER CASE AND IS NOT THIS ONE. `indexTree`
+    // always answers with an object, so `state.tree` is falsy only where no
+    // model event ever landed (the initial state, and `onViewError`); a real
+    // build with an empty tree is truthy and clears the carry here, correctly —
+    // nothing in it can be hidden.
+    if (this.state.tree) {
+      this.carry = { hidden: this.namesOf(this.state.hidden),
+                     ghost: this.namesOf(this.state.ghost) };
+    }
+    return {
+      state: {
+        // Cleared so the panel does not describe the build that has left. The
+        // model event that lands this swap clears it again (`onModel`); this is
+        // for the window before it arrives.
+        viewError: null,
+        // MOMENTARY THINGS GO. A selection pointing at a part that may not exist
+        // in this build is worse than no selection, and a menu or a popover that
+        // outlived the model it was opened over is a menu about nothing.
+        //
+        // ONE THING THAT DESCRIBES THE OLD BUILD IS DELIBERATELY NOT HERE, and
+        // it is named so the list does not read as exhaustive: the TREE. It is
+        // REPLACED rather than dropped — `onModel` puts the new build's in when
+        // the view lands — so clearing it here would blink the panel empty on
+        // every switch that works, for the sake of the rare one that does not.
+        // The swap whose view never lands is handled where the failure is known
+        // instead; see `onViewError`.
+        sel: null, selName: '', menu: null,
+        revOpen: false, dlOpen: false, secPop: false,
+        tokenPop: false, tokenDraft: '', notePop: null, noteDraft: '',
+        // Both describe geometry that has just left the screen; the viewport
+        // clears its own tape and offsets on every load.
+        measure: null, moved: null,
+        // Whichever build was on offer, it has been answered — taken by
+        // `takePending` or made irrelevant by `switchBuild` moving the road. The
+        // BANNER is the callers' own business, because "taken" and "no longer
+        // on this road" are different answers.
+        pending: null,
+        // THE COMMENTS FILED IN THIS SESSION GO WITH THEM, and the pins are why.
+        // This list only ever holds what the reader posted while this page was
+        // open — each one against the commit it was posted on — and every pin in
+        // it is a POINT IN THE MODEL SPACE of that build, which `sync` reads
+        // straight out of here and hands to the viewport on the next frame. Kept,
+        // they would be drawn on geometry that never carried them, at coordinates
+        // the new build need not contain at all. Nothing is lost: the comments are
+        // on the hub, filed against the revision they were written about.
+        comments: [], activePin: null,
+        // THE TEXT SURVIVES THE SWAP AND NOTHING POSITIONAL DOES, and the line
+        // between them is what the reader WROTE against what this page MEASURED.
+        //
+        // The sentence is the reader's own and half-written text is the most
+        // expensive thing on this page to lose (the same reason Escape spares it);
+        // it is also still true of the revision now on screen often enough to be
+        // worth keeping, and the reader can read it and decide. Everything else in
+        // the draft is a coordinate this page took off geometry that has left:
+        // which solid was picked, where in space, a measurement between two faces,
+        // a part dragged out of the assembly. `sendComment` posts to `meta.commit`
+        // — which is the NEW build's the moment this lands — so a draft carried
+        // whole files every one of those as a fact about a build they were never
+        // observed on, and the numbers among them go to an agent as a task.
+        //
+        // THE PART'S NAME GOES WITH THEM even though a name outlives a rebuild,
+        // and that is the correction on the obvious answer. `composerPart` renders
+        // it, `sendComment` sends `partId`, so a kept name shows the reader an
+        // attachment the posted comment will not have — worse than showing none,
+        // because the mismatch is invisible. Re-attaching it to the same-named
+        // part of the new build was the other way out and is worse still: it aims
+        // "this chamfer is too sharp" at a chamfer nobody looked at. Unattached
+        // and honest, then; one click puts it back where the reader means it.
+        composer: this.state.composer
+          ? { ...this.state.composer, part: '', partId: null, p: null, meas: null, move: null }
+          : null,
+        // The toast that `clearTimeout(this._tt)` above disarmed.
+        toast: null,
+        ...(sec || null),
+      },
+      extra: sec ? { __resetCut: true } : null,
+    };
   }
 
   /**
@@ -913,15 +1391,76 @@ export default class HammerolaViewer extends React.Component {
       expanded: { ...this.defaultExpanded(tree), ...s.expanded },
       ...(rejoined || null),
     }), () => {
-      // NOT ON A LIVE ONE, which is what keeps the camera across a revision
-      // switch: `home` is the frame the library FITTED, and a swap arrives with
-      // the reader's own frame already restored, so re-reading it here would
-      // record that instead and leave Fit doing nothing.
-      if (!d.live) this.captureHome();
+      // NOT ON A LIVE ONE, which is what keeps the camera across a rebuild
+      // arriving under the pointer: `home` is the frame the library FITTED, and
+      // such a reload comes with the reader's own frame already restored, so
+      // re-reading it here would record that instead and leave Fit doing nothing.
+      //
+      // OPENING ANOTHER BUILD IS THE EXCEPTION, and `_refit` is the two places
+      // that do it saying so: `switchBuild`, where the reader picks a revision,
+      // and `takePending`, where they accept the banner's newer one. Both travel
+      // the same live path — the frame is carried over deliberately — but what
+      // the camera is now pointed at is a DIFFERENT BUILD, and Fit promises
+      // "back to the frame this view opened in" (the button's own tooltip). A
+      // `home` left alone would go on meaning the build this PAGE opened first,
+      // three revisions ago, with nothing about the button saying so.
+      //
+      // Clearing `home` was the alternative and is worse — Fit would then say
+      // there is nothing to fit to, on a page with a model on it.
+      //
+      // SPENT HERE rather than at either setter, exactly like `carry`: one model
+      // event acts on a swap, and the event after a swap whose view never
+      // rendered simply does not arrive — so the next live build takes the flag
+      // instead, which is another build opening and the same operation.
+      if (!d.live || this._refit) this.captureHome();
+      this._refit = false;
       // The rejoined ids have to reach the viewport, and a state event is the
       // only way there. Only when something was rejoined: every other model
       // event would otherwise dispatch one for no change at all.
       if (rejoined) this.sync();
+    });
+  }
+
+  /**
+   * A view would not render. Block 11: a page that shows nothing has to say why,
+   * because a silent viewport leaves this interface drawing a frame around a
+   * hole.
+   *
+   * `setState` AND NOT `set()`, and that is load-bearing rather than a
+   * shorthand: `set()` ends in `sync()`, which dispatches `hmr:state`, which is
+   * what the viewport decides a load on. Reporting a failed load through it
+   * would answer the report with another attempt at the same fetch — forever, at
+   * whatever rate the errors come back. The viewport keeps its own half of this
+   * (`loadFailed` in viewport/element.js); this is the other half, and neither
+   * one alone is enough.
+   *
+   * AND THE TREE GOES WHEN THE FAILURE IS A SWAP'S, which is the answer to a
+   * question `leaveBuild` deliberately does not settle. Everything on that list
+   * is dropped at the swap; the tree is not, because it is REPLACED rather than
+   * dropped — `onModel` puts the new one in when the view lands. That holds for
+   * every swap that works, and it is why clearing the tree in `leaveBuild` would
+   * be the wrong price: the panel would blink empty on every successful
+   * switch, for the sake of the rare one that fails.
+   *
+   * When the view does NOT land, though, no `onModel` ever arrives, and the page
+   * is left half moved: `meta`, the title, the picker and `PAGE.base` are the
+   * new build's while the panel on the left lists the parts of the old one.
+   * Nothing about it looks wrong — the rows are real part names — but
+   * `authorNote` then looks those names up in the NEW build's `meta.notes`, and
+   * every row's menu builds its download links on the NEW base. So the tree is
+   * cleared here, on the error path, where the failure is known.
+   *
+   * `_refit` IS THE QUESTION "did a swap's model never arrive". It is set by
+   * `leaveBuild` and spent by `onModel`, so it is true exactly between another
+   * build opening and its geometry landing — an error inside that window is an
+   * error about a build the tree does not describe. It is NOT spent here: a
+   * Retry that works is still the first model event of that swap, and Fit still
+   * has to be re-homed on it.
+   */
+  onViewError(detail) {
+    this.setState({
+      viewError: (detail && detail.message) || 'the viewport could not render this view',
+      ...(this._refit ? { tree: null } : null),
     });
   }
 
@@ -983,6 +1522,64 @@ export default class HammerolaViewer extends React.Component {
   }
 
   set(patch, extra) { this.setState(patch, () => this.sync(extra)); }
+
+  /**
+   * The READER changing which parts they can see — the one door for it, and the
+   * only thing that writes `hidden` or `ghost` outside a build arriving.
+   *
+   * IT EXISTS TO KEEP THE CARRY HONEST, and a plain `set` is exactly what it
+   * replaces at six call sites: the eye, the ghost square, Isolate, Hide,
+   * Translucent and "show all parts". `this.carry` is a SNAPSHOT of those two
+   * lists as NAMES, taken when another build opens (`leaveBuild`) and spent by
+   * the model event that lands it (`rejoin`). Between those two moments the
+   * reader can still change them, and a snapshot that does not know about the
+   * change is about to be applied to the build that arrives.
+   *
+   * THE WINDOW IS LONG AND THE TREE IN IT IS THE OLD ONE. `leaveBuild` runs
+   * AFTER meta.json has answered, so the window is not the fetch — it is the
+   * geometry download and the render, the slowest part of a swap. All of it is
+   * spent with the LEAVING build's tree still on screen (deliberately: clearing
+   * it would blink the panel empty), and its rows are live. So a click in that
+   * window writes an id of the OLD tree into `hidden`, and it is the snapshot,
+   * taken in names, that is the only thing able to carry it across.
+   *
+   * WHICH IS WHY THE SNAPSHOT IS RECOMPUTED AND NOT DROPPED. Dropping it —
+   * which this method did for one round — leaves `rejoin` with nothing, so the
+   * old id survives as an id and lands on the NEW tree, where the same path can
+   * belong to a different part: measured on a build where `/model/plate` came
+   * back as `post`, the reader hid one part and a different one disappeared.
+   * That is strictly worse than the defect it was meant to fix, and it is the
+   * one this file's own note about `takePending` calls unacceptable.
+   *
+   * AND IT IS RECOMPUTED ONLY IF ONE WAS STANDING. A snapshot written here on
+   * an ordinary page would be a carry with no swap behind it, and the next
+   * model event of any kind — a live reload, a view tab — would spend it,
+   * re-seating names nobody asked to have moved.
+   *
+   * `null` where there is NO TREE, because there is then nothing to read the
+   * names off: that is the `onViewError` state, where the reader's gesture is
+   * all there is and the stale snapshot must not outlive it.
+   *
+   * Hiding those buttons when the tree is gone would be reasonable on its own
+   * and is not a substitute: a button nobody can press does not make a stale
+   * snapshot fresh, and the tree comes back — on a Retry that works — with the
+   * snapshot still standing.
+   */
+  setVisibility(patch, extra) {
+    this.setState(patch, () => {
+      // AFTER the patch, so the names are the ones the reader has just chosen.
+      // Read off `this.carry` a second time rather than off a flag taken before
+      // the write: a model event landing in between spends the snapshot, and
+      // recomputing from a flag would put a spent one back.
+      if (this.carry) {
+        this.carry = this.state.tree
+          ? { hidden: this.namesOf(this.state.hidden),
+              ghost: this.namesOf(this.state.ghost) }
+          : null;
+      }
+      this.sync(extra);
+    });
+  }
 
   toast(msg) {
     clearTimeout(this._tt);
@@ -1104,10 +1701,26 @@ export default class HammerolaViewer extends React.Component {
 
   async poll() {
     if (this._gone) return;
+    // WHICH POLL THIS IS, and the reason it has to be asked. `loadMeta` builds
+    // its URL out of `PAGE.base` at the moment of the call and this then waits on
+    // the network; a revision switch inside that window moves `PAGE`, the build
+    // on screen and the road this page is on, and the answer that lands is about
+    // none of them. Compared against the NEW build's key it differs, so it is
+    // offered as a newer build — on a pinned revision, which has nothing to offer
+    // at all — and taking that offer puts one build's `views` in state beside
+    // another build's `base`, i.e. the viewport fetching geometry at an address
+    // that belongs to neither. `switchBuild` moves this number; a poll that wakes
+    // up on the wrong side of that is thrown away whole, re-arming included,
+    // because the swap armed the next one for the slot it moved to.
+    const gen = this._pollGen = (this._pollGen || 0) + 1;
     let delay = POLL_MS;
     try {
       if (document.visibilityState !== 'hidden') {
-        const next = await loadMeta(true);
+        // Named rather than left to the default, so the request and the
+        // comparison below are visibly about the same build.
+        const base = PAGE.base;
+        const next = await loadMeta(true, base);
+        if (this._gone || gen !== this._pollGen) return;
         const key = buildKey(next);
         if (key && key !== buildKey(this.state.meta)
             && Array.isArray(next.variants) && next.variants.length) {
@@ -1138,10 +1751,28 @@ export default class HammerolaViewer extends React.Component {
    * being rebuilt under the pointer. The wait is bounded (BUSY_WAIT_MS above);
    * `since` is how a retry tells this call when the reader pressed the button,
    * and nothing else passes it.
+   *
+   * AND NOT WHILE A REVISION PICKED FROM THE PICKER IS ON THE WIRE. `swapping`
+   * is that window, and the refusal is HERE rather than in the click handler
+   * because more than one thing reaches this method: the banner's click, the
+   * deferred retry it arms itself, and whatever is added next. `switchBuild`
+   * disarms the deferred one by hand and used to stop there — but a direct press
+   * needs no busy viewport and no timer at all, so it lands in the middle of the
+   * await and runs the whole swap: `meta` replaced, geometry fetched, "Now
+   * viewing …" toasted, and then the revision that was actually asked for
+   * arriving on top of it. Guarding the one handler would leave the method as
+   * the thing anybody can still call wrongly.
+   *
+   * NOTHING IS PUT AWAY BY THE REFUSAL — not `pending`, not `bannerGone` —
+   * because the offer has not been answered, only postponed by a few hundred
+   * milliseconds of network. A swap that then 404s leaves the banner exactly as
+   * it stands and `swapFailed` lowers the flag; the reader presses Switch again
+   * and it works.
    */
   takePending(since) {
     const next = this.state.pending;
-    if (this._gone || !next || !Array.isArray(next.variants) || !next.variants.length) return;
+    if (this._gone || this.state.swapping) return;
+    if (!next || !Array.isArray(next.variants) || !next.variants.length) return;
     // At most one wait at a time: a second press must not leave two timers
     // racing to swap the same build.
     clearTimeout(this._swap);
@@ -1157,24 +1788,48 @@ export default class HammerolaViewer extends React.Component {
     if (busy && Date.now() - asked < BUSY_WAIT_MS) {
       // `pending` is left standing, so the banner stays up and Switch keeps its
       // meaning while the wait runs. The TIMER, meanwhile, is owned by exactly
-      // two other places, and both of them cancel it rather than letting it
+      // three other places, and all of them cancel it rather than letting it
       // arrive: `componentWillUnmount` (it would come back on a component that
-      // is gone) and `dismissPending` (Later is an answer, and a swap that
+      // is gone), `dismissPending` (Later is an answer, and a swap that
       // happened a quarter of a second after it would be this page overruling
-      // the reader).
+      // the reader) and `switchBuild` (the reader picked a revision instead, and
+      // this wait is shorter than the fetch that swap makes).
       this._swap = setTimeout(() => this.takePending(asked), BUSY_RETRY_MS);
       return;
     }
     const keep = next.variants.some((v) => v.id === this.state.view);
+    // THE SAME LIST AS A REVISION SWITCH, through the same method, because this
+    // IS a revision switch: another commit, built from other sources, with a
+    // bounding box of its own. `leaveBuild` carries the whole of it — the pins
+    // and the draft's anchor, the selection, the section plane, the names behind
+    // the hidden parts, and the re-fit Fit needs because the frame it goes back
+    // to was measured on the build that just left.
+    //
+    // CALLED HERE rather than at the top of the method, for the reason `_refit`
+    // used to be set here on its own: the busy branch above returns having
+    // swapped nothing, and everything `leaveBuild` does would then be spent on a
+    // build nobody opened — the reader's draft emptied and their section put
+    // away over a swap that did not happen.
+    //
+    // Below that branch and above the `setState` its answer is spread into: that
+    // is the whole of what fixes the position, here as in `switchBuild`, where
+    // the same sentence used to claim a dependency on `meta` that does not
+    // exist.
+    const gone = this.leaveBuild(keep);
     this.setState({
-      meta: next, pending: null, bannerGone: true,
+      meta: next,
       view: keep ? this.state.view : next.variants[0].id,
+      ...gone.state,
+      // TAKEN, which is why this is the caller's line and not `leaveBuild`'s:
+      // the offer was answered by accepting it, so the banner goes for good
+      // rather than being left ready for the next build to arrive.
+      bannerGone: true,
     }, () => {
       // A changed `buildKey` under the same `view` is what the viewport reads as
       // a live reload: it captures the camera, the visibility and the section,
       // renders the new geometry and puts them all back. Nothing here has to
       // arrange that beyond sending the new numbers.
-      this.sync();
+      this.sync(gone.extra);
       this.toast(`Now viewing ${shortId(next.commit)} — your frame and tree are kept`);
     });
   }
@@ -1370,10 +2025,42 @@ export default class HammerolaViewer extends React.Component {
    * A method rather than a call written straight into the handler, so a test can
    * take it over and read WHICH hrefs the button would fire, in what order,
    * without a jsdom anchor navigating anywhere. The mechanism itself is
-   * `sequentialDownload`, which is tested on its own with a fake clock.
+   * `sequentialDownload`, which is tested on its own with a fake clock; `options`
+   * is the seam that lets the same fake clock reach it THROUGH this method, which
+   * is what a claim about cancelling a chain the page started has to go through.
+   *
+   * ONE SIGNAL FOR THE WHOLE PAGE, not one per press. Two group links pressed in
+   * a row leave two chains stepping at once — thirty files is six seconds, so
+   * that is an ordinary sequence rather than a race — and both of them are about
+   * the build the reader was on, so both have to end together. A controller per
+   * chain would need a list to hold them and nothing to prune it, since a chain
+   * that finished says nothing; one controller is bounded, and the next press
+   * after a cancel gets a fresh one from `cancelDownloads`.
    */
-  downloadAll(hrefs) {
-    return sequentialDownload(hrefs);
+  downloadAll(hrefs, options) {
+    if (!this._dl) this._dl = new AbortController();
+    return sequentialDownload(hrefs, { ...(options || null), signal: this._dl.signal });
+  }
+
+  /** Stop handing over files: the addresses in the chain stopped describing
+   * what is on the screen.
+   *
+   * Called by `switchBuild` and by `componentWillUnmount`, which are the two
+   * moments this page's ADDRESS goes away — the hrefs are `PAGE.base` plus a
+   * file name (`fileHref`), so those are the two moments they stop resolving to
+   * what the reader asked for.
+   *
+   * `takePending` IS NOT ONE OF THEM, deliberately, and it once was: the banner
+   * moves `meta` and leaves `PAGE.base` where it is, so a chain running across
+   * it goes on fetching from the pointer — which is the same address the reader
+   * pressed the button on. Cutting it there truncated group downloads (three
+   * STLs of ten, no message) over a gesture that changed no href, and left the
+   * asymmetry that gives the game away: Later does not cancel anything, and it
+   * is the same page, the same chain and the same pointer.
+   */
+  cancelDownloads() {
+    if (this._dl) this._dl.abort();
+    this._dl = null;
   }
 
   subtitle() {
@@ -1417,10 +2104,14 @@ export default class HammerolaViewer extends React.Component {
     return this.state.selName || '';
   }
 
-  /** The READER's note: this browser's, for this project, never sent anywhere. */
+  /** The READER's note: this browser's, for this project, never sent anywhere.
+   *
+   * Through `noteFor` like both other reads of a note map: this one is parsed out
+   * of localStorage, which is no more this code's own object than a fetched
+   * document is.
+   */
   selectedNote() {
-    const name = this.selectedName();
-    return (name && this.state.notes[name]) || '';
+    return noteFor(this.state.notes, this.selectedName());
   }
 
   /**
@@ -1429,21 +2120,14 @@ export default class HammerolaViewer extends React.Component {
    *
    * ABSENT IS NORMAL. A build with nothing to say carries no `notes` key at all,
    * and neither does any build published before the key existed; the two are one
-   * document here, and asking about one of them must not be an error.
+   * document here, and asking about one of them must not be an error — which is
+   * also `noteFor`'s answer to a map that is missing altogether.
    *
-   * READ WITH `hasOwnProperty`, not with a bare lookup: this object is parsed
-   * out of a fetched document, so it inherits from `Object.prototype`, and a
-   * part legitimately called `constructor` or `toString` would otherwise pick up
-   * a FUNCTION off the prototype — which React then refuses to render, taking
-   * the whole page down over a part name. The type guard after it is the same
-   * argument for a value the hub would never write but a document can carry.
+   * Through `noteFor` because a part name is not a safe key: see its own note for
+   * what a part called `constructor` does to a bare lookup.
    */
   authorNote() {
-    const name = this.selectedName();
-    const notes = this.state.meta && this.state.meta.notes;
-    if (!name || !notes || typeof notes !== 'object') return '';
-    if (!Object.prototype.hasOwnProperty.call(notes, name)) return '';
-    return typeof notes[name] === 'string' ? notes[name] : '';
+    return noteFor(this.state.meta && this.state.meta.notes, this.selectedName());
   }
 
   /**
@@ -1456,6 +2140,39 @@ export default class HammerolaViewer extends React.Component {
   showView(id) {
     if (id === this.state.view) return;
     this.set({ view: id });
+  }
+
+  /**
+   * The view a history entry is asking for: its own `?v=`, or the one showing.
+   *
+   * ONE READING FOR THE TWO PLACES THAT NEED IT — `switchBuild`, both where it
+   * opens another build and where it only calls a swap off. The fallback is the
+   * current view because `?v=` is DROPPED where the view is the build's first
+   * (see the push in `switchBuild`), so an entry without one carries no opinion
+   * that could be read off it.
+   */
+  entryView() {
+    return new URLSearchParams(location.search).get('v') || this.state.view;
+  }
+
+  /**
+   * The query an address needs so that opening it lands on `view`.
+   *
+   * `?v=` is what `load()` reads on a fresh open, so an address written by this
+   * page has to carry it wherever the view showing is not the one that address
+   * would open on by itself — otherwise the link in the bar, copied and sent,
+   * shows a different view than the sender was looking at. Dropped where the
+   * view IS the build's first, since the query would then repeat what the path
+   * already answers.
+   *
+   * ONE READING FOR THE TWO PLACES THAT WRITE AN ADDRESS — the push that lands a
+   * swap and the replace that calls one off. It was written out at the first and
+   * missing from the second, which is how the fix for a divergence over the
+   * BUILD arrived carrying a divergence over the VIEW.
+   */
+  viewQuery(view, variants) {
+    const first = variants[0] && variants[0].id;
+    return view === first ? '' : `?v=${encodeURIComponent(view)}`;
   }
 
   /**
@@ -1528,8 +2245,12 @@ export default class HammerolaViewer extends React.Component {
         // A group toggles as a whole: anything still visible means hide it all,
         // nothing visible means show it all. Expressed in LEAF ids — see
         // hub.indexTree for why.
-        onVis: stop(() => this.set({ hidden: this.toggle(s.hidden, node.leaves) })),
-        onGhost: stop(() => this.set({ ghost: this.toggle(s.ghost, node.leaves) })),
+        // `setVisibility` and not `set`, here and at every other writer of these
+        // two lists: a swap in flight is carrying them across BY NAME, and a row
+        // clicked in that window is a row of the leaving build's tree — the only
+        // moment those ids can still be read. See the method.
+        onVis: stop(() => this.setVisibility({ hidden: this.toggle(s.hidden, node.leaves) })),
+        onGhost: stop(() => this.setVisibility({ ghost: this.toggle(s.ghost, node.leaves) })),
         onSelect: stop(() => this.set({ sel: node.id, selName: node.name })),
         // The other door into this menu is a right-click on the part in the
         // SCENE (`sceneMenu`), and the two share `menuAt` so they cannot open in
@@ -1663,7 +2384,12 @@ export default class HammerolaViewer extends React.Component {
     // -- context menu on a tree row
     const mNode = this.node(s.menu && s.menu.id);
     const mName = mNode ? mNode.name : '';
-    const note = mNode ? s.notes[mNode.name] : '';
+    // Through `noteFor` like every other read of a note map. This one throws
+    // EARLIEST of the three when it is not: the item below slices the note to 22
+    // characters for its hint, and a part called `constructor` hands a bare
+    // lookup a function, which has no `slice` — so the whole menu, and with it
+    // `computed()` and the page, ends on a right-click.
+    const note = noteFor(s.notes, mName);
     // `href` turns the row into a real `<a download>` — see the files block
     // below — and `tone` is 'top' for a rule above the row, 'said' for a row that
     // states something rather than doing it.
@@ -1713,11 +2439,11 @@ export default class HammerolaViewer extends React.Component {
     const menuItems = !mNode ? [] : [
       mi('Isolate', 'show only this', () => {
         const keep = new Set(mNode.leaves);
-        this.set({ hidden: tree.leaves.filter((id) => !keep.has(id)),
-                   sel: mNode.id, selName: mNode.name });
+        this.setVisibility({ hidden: tree.leaves.filter((id) => !keep.has(id)),
+                             sel: mNode.id, selName: mNode.name });
       }),
-      mi('Hide', '', () => this.set({ hidden: this.toggle(s.hidden, mNode.leaves) })),
-      mi('Translucent', 'see through it', () => this.set({ ghost: this.toggle(s.ghost, mNode.leaves) })),
+      mi('Hide', '', () => this.setVisibility({ hidden: this.toggle(s.hidden, mNode.leaves) })),
+      mi('Translucent', 'see through it', () => this.setVisibility({ ghost: this.toggle(s.ghost, mNode.leaves) })),
       ...(viewer || mNode.isNode ? [] : [mi('Note', note ? (note.length > 22 ? `${note.slice(0, 22)}…` : note) : '',
         () => this.setState({ notePop: mNode.name, noteDraft: note || '' }))]),
       // Files hang on a PART, so a group row has none of its own — the same rule
@@ -1797,15 +2523,6 @@ export default class HammerolaViewer extends React.Component {
       // the word under the cursor is noise, and `dev` and `latest` are shown
       // whole already.
       slotTitle: shortId(PAGE.slot) === PAGE.slot ? '' : PAGE.slot,
-      // `latest` FOLLOWS COMMITS, and it used to say it followed CI. That was
-      // true before the migration, when a Gitea workflow built every model; the
-      // hub builds them now and `hammerola commit` is what moves this pointer,
-      // so the old label named a machine that no longer touches this project.
-      // `tests/test_ui_source.py` pins the retired string out of the tree —
-      // it survived a cleanup that swept the page and the docs precisely
-      // because it is computed inside a component, where nothing could point
-      // at it.
-      slotBadge: PAGE.slot === 'dev' ? 'auto-updates' : PAGE.slot === 'latest' ? 'follows commits' : 'pinned',
       slotDate: meta ? stamp(meta.built) : '',
       revToggle: stop(() => this.setState({ revOpen: !s.revOpen, dlOpen: false, tokenPop: false })),
       revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid #d3d8de;background:#fff;border-radius:6px;cursor:pointer',
@@ -1897,7 +2614,11 @@ export default class HammerolaViewer extends React.Component {
         expanded: Object.fromEntries(Array.from(tree ? tree.nodes.values() : [])
           .filter((n) => n.isNode).map((n) => [n.id, true])) }),
       collapseAll: () => this.setState({ expanded: {} }),
-      showAll: () => this.set({ hidden: [], ghost: [] }),
+      // RENDERED ABOVE THE ROWS AND OUTSIDE THE `hasTree` BRANCH, so this one is
+      // pressable on a page whose tree never arrived — which is exactly the
+      // state where a swap's carry is the only record of what was hidden. Hence
+      // `setVisibility`; see the method.
+      showAll: () => this.setVisibility({ hidden: [], ghost: [] }),
       rows,
 
       // The section is a ROW in the tree with its own eye, not a mode with a
@@ -1977,6 +2698,18 @@ export default class HammerolaViewer extends React.Component {
       bannerStyle: chip(!!s.pending && !s.bannerGone, '#fff', '#d3d8de', '#1c1f23') + ';padding:8px 8px 8px 14px',
       bannerId: s.pending ? shortId(s.pending.commit) : '',
       bannerSwitch: () => this.takePending(),
+      // A REVISION PICKED FROM THE PICKER TAKES THIS BUTTON OUT OF SERVICE, and
+      // it has to SHOW that, which is the whole reason this style is computed
+      // rather than written into the element. `takePending` refuses on
+      // `swapping` either way, so without the washed-out blue and the plain
+      // cursor the reader would be pressing a button that looks exactly as
+      // clickable as it did a second ago and does nothing at all — which is the
+      // failure the refusal was added to prevent, wearing the refusal's clothes.
+      // It lasts one fetch: `swapFailed` and the swap's own landing both lower
+      // the flag.
+      bannerSwitchStyle: `padding:5px 12px;background:${s.swapping ? '#9cbde3' : '#1f7ae0'};`
+        + `color:#fff;border-radius:5px;font:600 12px ${SANS};`
+        + `cursor:${s.swapping ? 'default' : 'pointer'}`,
       bannerLater: () => this.dismissPending(),
 
       movedChipStyle: chip(!!s.moved, '#fdf0d8', '#f0dcae', '#6b5210'),
@@ -2045,10 +2778,10 @@ export default class HammerolaViewer extends React.Component {
       noteType: (e) => this.setState({ noteDraft: e.target.value }),
       noteCancel: stop(() => this.setState({ notePop: null })),
       noteSave: stop(() => {
-        const notes = { ...s.notes };
-        if (s.noteDraft.trim()) notes[s.notePop] = s.noteDraft.trim();
-        else delete notes[s.notePop];
-        this.saveNotes(notes);
+        // Through `notesWith` rather than `notes[name] = …`: the key is a PART
+        // NAME, and a part called `__proto__` turns that assignment into a
+        // silent no-op — see the function's own note.
+        this.saveNotes(notesWith(s.notes, s.notePop, s.noteDraft.trim()));
         this.setState({ notePop: null });
       }),
 
@@ -2103,7 +2836,6 @@ export default class HammerolaViewer extends React.Component {
             <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>
               <span style={css(v.statusDotStyle)} />
               <span style={css(`font:600 12px ${MONO}`)}>{v.slot}</span>
-              <span style={css(`font:500 10.5px ${MONO};color:#fff;background:#5b6470;padding:2px 6px;border-radius:4px`)}>{v.slotBadge}</span>
               <span style={css(`font:400 11px ${MONO};color:#787f87`)}>{v.slotDate}</span>
               <span style={css('font-size:9px;color:#9aa1a9')}>&#9662;</span>
             </div>
@@ -2367,7 +3099,7 @@ export default class HammerolaViewer extends React.Component {
                 <span style={css(`font:500 12.5px ${SANS}`)}>
                   Build <b style={{ fontFamily: MONO }}>{v.bannerId}</b> is ready &mdash; you are viewing {v.slot}
                 </span>
-                <span onClick={v.bannerSwitch} style={css(`padding:5px 12px;background:#1f7ae0;color:#fff;border-radius:5px;font:600 12px ${SANS};cursor:pointer`)}>Switch</span>
+                <span onClick={v.bannerSwitch} style={css(v.bannerSwitchStyle)}>Switch</span>
                 <span onClick={v.bannerLater} style={css(`padding:5px 10px;color:#5b6470;border-radius:5px;font:500 12px ${SANS};cursor:pointer`)}>Later</span>
               </div>
             </div>
@@ -2442,7 +3174,13 @@ export default class HammerolaViewer extends React.Component {
               <div style={css('display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #e3e6ea')}>
                 <span style={css(`width:20px;height:20px;border-radius:10px 10px 10px 3px;background:#1f7ae0;color:#fff;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO}`)}>{v.nextLabel}</span>
                 <span style={css(`font:600 12px ${SANS}`)}>Task for the agent</span>
-                <span style={css(`font:400 11px ${MONO};color:#8a9099`)}>&middot; {v.composerPart}</span>
+                {/* Only when there IS a part: the separator belongs to the name,
+                    and a draft that lost its attachment to a revision swap would
+                    otherwise keep a lone middle dot standing where it used to
+                    be — a leftover pointing at the build the page has left. */}
+                {v.composerPart
+                  ? <span style={css(`font:400 11px ${MONO};color:#8a9099`)}>&middot; {v.composerPart}</span>
+                  : null}
                 <span style={css('flex:1')} />
                 <span onClick={v.compCancel} style={css('color:#9aa1a9;cursor:pointer')}>&#10005;</span>
               </div>

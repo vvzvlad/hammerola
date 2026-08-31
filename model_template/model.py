@@ -248,32 +248,76 @@ def checks(out_dir):
     Two reporting styles, both in use below: `assert cond, "why"` for a
     one-line fact, and a list of problem strings for the checklib calls, so one
     run reports everything that is wrong rather than the first thing.
+
+    `checklib.section(...)` marks the stretches, and the build prints what each
+    one cost -- on a failed run as well as a passing one. It is worth doing from
+    the first model rather than added when something gets slow: a check that
+    probes a grid or scans a channel can quietly become most of the build, and
+    the per-phase seconds the build prints on its own cannot point inside a
+    phase. Sections are ordinary `with` blocks on purpose -- the hub counts the
+    checks by reading this function's source, so a check has to stay in this
+    body rather than move into a decorated helper.
     """
     base = build_base()
     lid = build_lid()
     problems = []
 
-    # 1. The lid has to drop into the tray with a real gap. Both numbers are
+    # 1. BOTH PARTS SURVIVED THE OPERATIONS THAT MADE THEM, and this goes first
+    #    because everything below reads faces off them. An emptied result is NOT
+    #    falsy -- `.vals()` on it is a list holding one empty Compound, so
+    #    `assert base.vals()` is an assert that cannot fail -- and the volume is
+    #    what tells the two apart.
+    #
+    #    WHAT IT BUYS IS THE MESSAGE. Without it an emptied base dies below in
+    #    `base.faces(">Z")` with `ValueError: Can not return the Nth element of
+    #    an empty list` (measured on cadquery 2.8.0), which names neither the
+    #    part nor the operation that emptied it.
+    #
+    #    IT STANDS AGAINST AN OPERATION, NOT A SCENARIO, and that distinction is
+    #    worth keeping when you copy this: `shell` and the booleans CAN return a
+    #    body with nothing in it, which is reason enough to check. It is not
+    #    guarding a case reproduced on these two parts. A WALL too thick for
+    #    LENGTH/WIDTH does not empty the base -- measured, it grows towards solid
+    #    and then the kernel refuses outright: WALL 2.4 -> 13653 mm3, 10.0 ->
+    #    39845, 19.9 -> 47845, 20.0 -> `Standard_Failure: BRep_API: command not
+    #    done`. And the lid as written cannot come back empty at all, being the
+    #    union of two boxes that are each non-empty; its line is here for the
+    #    edit that makes that union a cut, and so that each part is named by a
+    #    check of its own.
+    with checklib.section("solids survived"):
+        assert not checklib.is_empty(base), (
+            "the base came back empty: the shell left no solid behind. Look at "
+            "the shell and the face it was taken from, not at the checks")
+        assert not checklib.is_empty(lid), (
+            "the lid came back empty: an operation in build_lid() returned no "
+            "solid")
+
+    # 2. The lid has to drop into the tray with a real gap. Both numbers are
     #    read off the finished solids: the cavity is the inner wire of the rim
     #    face, the lip is the topmost face of the lid in print orientation.
-    rim = max(base.faces(">Z").vals(), key=lambda face: face.Area())
-    cavity = min((wire.BoundingBox() for wire in rim.Wires()),
-                 key=lambda box: box.xlen)
-    lip = lid.faces(">Z").val().BoundingBox()
-    for axis, gap in (("X", (cavity.xlen - lip.xlen) / 2.0),
-                      ("Y", (cavity.ylen - lip.ylen) / 2.0)):
-        assert FIT_MIN <= gap <= FIT_MAX, (
-            f"the lid-to-base gap along {axis} is {gap:.2f} mm per side, "
-            f"outside {FIT_MIN}..{FIT_MAX} mm")
+    with checklib.section("lid fit"):
+        rim = max(base.faces(">Z").vals(), key=lambda face: face.Area())
+        cavity = min((wire.BoundingBox() for wire in rim.Wires()),
+                     key=lambda box: box.xlen)
+        lip = lid.faces(">Z").val().BoundingBox()
+        for axis, gap in (("X", (cavity.xlen - lip.xlen) / 2.0),
+                          ("Y", (cavity.ylen - lip.ylen) / 2.0)):
+            assert FIT_MIN <= gap <= FIT_MAX, (
+                f"the lid-to-base gap along {axis} is {gap:.2f} mm per side, "
+                f"outside {FIT_MIN}..{FIT_MAX} mm")
 
-    # 2. Nothing may share space with anything else once it is assembled. Every
+    # 3. Nothing may share space with anything else once it is assembled. Every
     #    pair, from checklib, rather than a hand-written list: the pair nobody
     #    thought of is exactly the pair that breaks. Parts that only touch face
     #    to face intersect in zero volume, so a seated lid passes.
-    problems += checklib.pairwise_interference(
-        [base, lid_as_assembled()], ["base", "lid"])
+    #
+    #    This is the section that grows: it is one boolean per pair of parts,
+    #    and the number of pairs grows with the square of the part count.
+    with checklib.section("interference"):
+        problems += checklib.pairwise_interference(
+            [base, lid_as_assembled()], ["base", "lid"])
 
-    # 3. The shell has to have left a floor and a hollow. Asked as two POINTS,
+    # 4. The shell has to have left a floor and a hollow. Asked as two POINTS,
     #    with checklib.material_at -- never as a boolean against a small cube.
     #    The point probe costs microseconds where the boolean costs
     #    milliseconds, and a model that scans a channel or grids a face does
@@ -285,37 +329,41 @@ def checks(out_dir):
     #    surface answers about the surface -- and a cube, which answers about a
     #    small NEIGHBOURHOOD, would give a different answer there. Put the point
     #    where material is required and the two questions become the same one.
-    solid = checklib.material_at(base)
-    assert solid(0.0, 0.0, WALL / 2.0), (
-        "the tray has no floor at its centre: the shell took it away")
-    assert not solid(0.0, 0.0, HEIGHT - WALL / 2.0), (
-        "the tray is solid where the cavity should be")
+    with checklib.section("material probes"):
+        solid = checklib.material_at(base)
+        assert solid(0.0, 0.0, WALL / 2.0), (
+            "the tray has no floor at its centre: the shell took it away")
+        assert not solid(0.0, 0.0, HEIGHT - WALL / 2.0), (
+            "the tray is solid where the cavity should be")
 
-    # 4. Both sides of the joint have to stay flat all the way to the edge. One
+    # 5. Both sides of the joint have to stay flat all the way to the edge. One
     #    chamfer there and the box stands open by the size of the bevel -- and
     #    it reads as a modelling detail rather than as a fault.
-    problems += checklib.mating_face_flat(base, HEIGHT, name="base rim")
-    problems += checklib.mating_face_flat(lid, LID_THICKNESS,
-                                          name="lid underside")
+    with checklib.section("mating faces"):
+        problems += checklib.mating_face_flat(base, HEIGHT, name="base rim")
+        problems += checklib.mating_face_flat(lid, LID_THICKNESS,
+                                              name="lid underside")
 
-    # 5. Every part fits a printer that exists, in the orientation it is
+    # 6. Every part fits a printer that exists, in the orientation it is
     #    exported in, and the mesh that came out of it is a real one.
-    for name, part in printables().items():
-        box = part.val().BoundingBox()
-        over = [f"{axis} ({length:.2f} mm)"
-                for axis, length in (("X", box.xlen), ("Y", box.ylen),
-                                     ("Z", box.zlen))
-                if length > MIN_PRINTER_MM + PRINTER_TOL]
-        assert not over, (
-            f"{name} measures {box.xlen:.1f}x{box.ylen:.1f}x{box.zlen:.1f} mm "
-            f"and is over {MIN_PRINTER_MM:.0f} mm along {', '.join(over)}. "
-            f"That ceiling is not anyone's bed -- it is the size below which "
-            f"printers essentially do not exist. Ask which printer this is for "
-            f"and put its real build volume in MIN_PRINTER_MM.")
+    with checklib.section("printability"):
+        for name, part in printables().items():
+            box = part.val().BoundingBox()
+            over = [f"{axis} ({length:.2f} mm)"
+                    for axis, length in (("X", box.xlen), ("Y", box.ylen),
+                                         ("Z", box.zlen))
+                    if length > MIN_PRINTER_MM + PRINTER_TOL]
+            assert not over, (
+                f"{name} measures {box.xlen:.1f}x{box.ylen:.1f}x{box.zlen:.1f} "
+                f"mm and is over {MIN_PRINTER_MM:.0f} mm along "
+                f"{', '.join(over)}. That ceiling is not anyone's bed -- it is "
+                f"the size below which printers essentially do not exist. Ask "
+                f"which printer this is for and put its real build volume in "
+                f"MIN_PRINTER_MM.")
 
-        stl = Path(out_dir) / f"{name}.stl"
-        size = stl.stat().st_size if stl.exists() else 0
-        assert size >= MIN_STL_BYTES, (
-            f"{stl.name} is {size} bytes, which is not a printable mesh")
+            stl = Path(out_dir) / f"{name}.stl"
+            size = stl.stat().st_size if stl.exists() else 0
+            assert size >= MIN_STL_BYTES, (
+                f"{stl.name} is {size} bytes, which is not a printable mesh")
 
     return problems

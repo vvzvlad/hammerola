@@ -4,6 +4,7 @@
 from datetime import datetime, timezone
 import json
 import shutil
+import time
 
 from .artifacts import ASSEMBLED_STEM, PREVIEW_SUFFIX
 from .assembly import export_assembled, export_print_plate, render_previews
@@ -17,8 +18,32 @@ from .project import load_project
 from .views import PRINT_VIEW_ID, collect_notes, export_views, prepare_views
 
 
+# WHERE THE TIME WENT, phase by phase, in the same shape every other timing in
+# this build is printed in (`  name: 1.2s`, one decimal -- see
+# assembly.render_previews and views.export_views).
+#
+# Each phase prints as it finishes rather than all of them in a block at the
+# end, and that is the difference between a table and no table at all: a build
+# that fails does so INSIDE a phase, and a summary printed after the last one
+# never runs. What survives on the log is every phase that completed. The
+# broken one is the one with NO line -- these print after the work, so a phase
+# that raised never reaches its own print, and the first name missing from the
+# list is where the build stopped. That is a reading, not a label: the log does
+# not say which phase failed, it stops before saying it.
+#
+# PHASES ARE THE COARSE HALF ON PURPOSE. On a real model measured 2026-08-29 the
+# checks phase was 495 seconds and 52% of it sat in ONE loop inside it -- a
+# number no per-phase breakdown can produce. `checklib.section(...)` is the
+# other half, and the two exist together (SPEC: the build prints both tables).
+def _phase(name, since):
+    """`  name: 1.2s`, and the moment to measure the next phase from."""
+    print(f"  {name}: {time.monotonic() - since:.1f}s")
+    return time.monotonic()
+
+
 def build(out_dir, preview_mode="iso"):
     """Full local build. Returns (pid, meta, list of files to ship)."""
+    started = time.monotonic()
     pid, project, title = load_project()
     model = load_model()
 
@@ -44,23 +69,34 @@ def build(out_dir, preview_mode="iso"):
     # short enough to read the rewritten views printed in the message.
     #
     # THEN THE VIEW GATES. Both read bounding boxes and names, and an export
-    # meshes the shape in place: from then on OCCT measures bounding boxes off
-    # the mesh, which on a filleted part is out by tenths of a millimetre (that
-    # is what drop_mesh is for). They are also the cheapest checks in the run,
-    # so a model laid out wrong fails in milliseconds instead of after the
-    # exports.
+    # meshes the shape in place: from then on the box OCCT hands back is the
+    # MESH's, reading bigger than the shape and never smaller. A gate about
+    # extents therefore belongs before any export, whatever the size of the
+    # difference (drop_mesh has the measurements and how far they travel; gate
+    # has what this particular gate would and would not notice). They are also
+    # the cheapest checks in the run, so a model laid out wrong fails in
+    # milliseconds instead of after the exports.
     printables = collect_printables(model)
     # printables goes in because a view is coloured by what is printed: a part
     # the gate can match to one gets a palette colour, everything else grey.
     prepared = prepare_views(model.views(), printables)
     check_print_layout(prepared)
     check_printables_shown(prepared, printables)
+    # Everything above is the model's own geometry being computed -- the @cache
+    # builders run for the first time here, which on a heavy model is most of
+    # this number rather than the gates it is measured at the end of.
+    phase = _phase("geometry", started)
 
     print("exporting printables:")
     downloads, part_metrics = export_printables(printables, out_dir)
+    phase = _phase("printables", phase)
+
     # After the geometry gate (the STLs it checks are on disk now), before the
     # slow tessellation and before anything is packed.
     checks_passed = run_checks(model, out_dir)
+    # Two lines about checks, and they answer different questions: run_checks
+    # prints how many there were, this prints what they cost.
+    phase = _phase("checks", phase)
 
     print("rendering:")
     assembled_parts = export_assembled(prepared, printables, out_dir)
@@ -95,9 +131,17 @@ def build(out_dir, preview_mode="iso"):
     written = render_previews(out_dir, stems, preview_mode, parts=parts)
     overview = overview_meshes(plate is not None)
     previews = preview_files(written)
+    # The two lines above cost nothing, so this measures what the section really
+    # spent -- and the name undersells it: `export_print_plate` above lays the
+    # bed out as SOLIDS and writes an STL of them, so this phase carries a
+    # modelling step and not only the drawing of pictures.
+    phase = _phase("rendering", phase)
 
     print("tessellating views:")
     views = export_views(prepared, out_dir)
+    # The last phase, so its return value goes nowhere -- everything after this
+    # is writing two small JSON documents, and the total below covers it.
+    _phase("tessellation", phase)
 
     # THREE MAPS AND NOT ONE, because "a client may fetch this" and "the page
     # draws a button for this" used to be the same statement and they are not
@@ -176,4 +220,8 @@ def build(out_dir, preview_mode="iso"):
     # (it builds a dict) but is counted one by one against the ceiling on how
     # many files a build may declare (`limits.output_files`).
     files = list(dict.fromkeys(shipped))
+    # The total, and it is deliberately not the sum of the phases above: the
+    # writing of meta.json and metrics.json belongs to no phase, and a total
+    # that quietly excluded it would make the phases look like the whole build.
+    _phase("total", started)
     return pid, meta, files

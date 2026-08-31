@@ -193,8 +193,16 @@ def test_a_stack_holding_something_that_is_not_geometry_is_refused():
 
 
 def test_drop_mesh_walks_every_body(monkeypatch):
-    """Per body, not `val()`: a shape shares its triangulation through the
-    TShape, and a second body left meshed makes the next BoundingBox() wrong."""
+    """Per body, not `val()`: each body carries its own triangulation, so one
+    left meshed makes the next BoundingBox() read that body off its mesh.
+
+    THE WALK IS ALL THIS CAN SEE. `Clean_s` is a stub here, so nothing about
+    what a mesh does to a box, or about which copies of a shape share one, can
+    be asserted from this test -- that used to be a sentence in this docstring
+    ("a shape shares its triangulation through the TShape") standing in for
+    evidence, and it was half wrong: a `translate()` copy shares nothing.
+    `test_drop_mesh.py` is where those claims are measured on the real kernel.
+    """
     cleaned = []
     monkeypatch.setitem(
         sys.modules, "OCP",

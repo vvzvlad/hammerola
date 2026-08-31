@@ -492,3 +492,99 @@ def test_neither_push_failure_lets_the_hub_choose_what_reaches_the_terminal(
     whole = printed.out + printed.err
     assert "\x1b" not in whole, "an escape sequence from the hub reached stderr"
     assert len(whole) < 4000, f"{len(whole)} characters"
+
+
+# -- which stream each of the wait's two accounts goes to --------------------
+@pytest.fixture
+def flaky_hub():
+    """A "hub" whose first poll is answered by the EDGE and not by it.
+
+    The 404 is Traefik's own — Go's `http.NotFound`, byte for byte as it was
+    measured on the deployment — so the client cannot identify it as the hub's
+    verdict and outlives it; the build then reports `building` and `done`. That
+    is the incident of `tests/client/test_polling.py` driven through the actual
+    command, which is the only place the two streams exist at all.
+    """
+    import http.server
+    import json as _json
+    import threading
+
+    polls = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _send(self, code, body, content_type="application/json"):
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+            self._send(202, _json.dumps({"job": "j1",
+                                         "revision": "r" * 64}).encode())
+
+        def do_GET(self):
+            if self.path.endswith("/log"):
+                # Deliberately says neither "building" nor "still waiting": the
+                # log is the other thing on stdout, and a word of it landing in
+                # either assertion below would make the test pass for the wrong
+                # reason.
+                return self._send(200, b"nothing to say\n", "text/plain")
+            polls.append(self.path)
+            if len(polls) == 1:
+                return self._send(404, b"404 page not found\n",
+                                  "text/plain; charset=utf-8")
+            state = "building" if len(polls) == 2 else "done"
+            self._send(200, _json.dumps(
+                {"state": state,
+                 "build_url": "/project/demo0001/dev/"}).encode())
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever,
+                     kwargs={"poll_interval": 0.01}, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_the_build_states_go_to_stdout_and_the_connection_goes_to_stderr(
+        model, monkeypatch, capsys, flaky_hub):
+    """The two callbacks are bound to two streams and NOTHING observed it.
+
+    `_publish` hands `on_state` to stdout and `on_notice` to stderr with a
+    comment saying exactly that, and all three ways of breaking it survived the
+    suite: dropping the `on_notice=` argument entirely (the connection then goes
+    unreported, which is the silence that made the incident confusing), and
+    sending either callback to the other stream. `await_job` is tested against a
+    socket everywhere else, but the callbacks there are lists — the streams
+    exist only here, at the end of the real command.
+
+    It matters beyond tidiness: the states are the progress of the build, which
+    is what this command is REPORTING and what a caller redirects or pipes,
+    while a notice is about the connection and belongs with the other things
+    that went wrong on the way.
+    """
+    from src.client import hub as hub_module
+
+    # Both cadences, so an outage costs a hundredth of a second rather than the
+    # production second. The behaviour is what is under test, not the numbers.
+    monkeypatch.setattr(hub_module, "POLL_FIRST_SECONDS", 0.01)
+    monkeypatch.setattr(hub_module, "POLL_ERROR_FIRST_SECONDS", 0.01)
+    monkeypatch.setenv("HUB_URL", flaky_hub)
+
+    assert run(model, "build") == 0
+
+    printed = capsys.readouterr()
+    assert "still waiting, the build may be running" in printed.err, printed.err
+    assert "still waiting" not in printed.out, (
+        "a notice about the CONNECTION was printed as build progress")
+    assert "  building" in printed.out, printed.out
+    assert "  done" in printed.out, printed.out
+    assert "building" not in printed.err, (
+        "the build's own progress was reported as something that went wrong")
