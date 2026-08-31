@@ -2091,6 +2091,16 @@ class Store:
                         # succeeded; if it raises, nothing owns `fd` any more and
                         # nothing will ever close it — one leaked descriptor per
                         # member, on a process that also serves every read.
+                        #
+                        # `app._nonblocking` argues against this exact shape and
+                        # both are correct: an opener is owned by `FileIO` on
+                        # every failure path of its own, while this is owned only
+                        # because the guard here exists. What keeps this one off
+                        # the opener is `dir_fd=parent_fd` in
+                        # `_create_member_file` — `open()`'s opener is called
+                        # with `(path, flags)` and nothing else, so the directory
+                        # descriptor would have to ride in on a closure. It
+                        # could; this is a choice rather than an impossibility.
                         os.close(fd)
                         raise
                     with out:
@@ -2659,7 +2669,15 @@ def _hash_output(directory: Path, names) -> dict:
         reachable in practice — and the fifo is REACHED only because the open is
         `O_RDONLY | O_NONBLOCK`: a plain `open()` on a fifo blocks until a writer
         appears, which is the serving thread gone for good before anything gets
-        to refuse it;
+        to refuse it. THE PERIMETER OF THIS WHOLE LIST IS
+        `/project/<pid>/<commit>/`, and outside it the hazard is open as a
+        CLASS rather than at a countable set of places: anything that reads the
+        volume with a plain `open`/`read_text` and no `S_ISREG` wedges its
+        handler for good — the comment queue's listing, a rename, a delete, the
+        two log routes, and that enumeration went stale once already, which is
+        why it is not the point. `EDIT_TOKEN` in front of a route limits who
+        pulls the trigger, never who lays the trap: it is laid by the BUILD.
+        Issue #74 carries the inventory; when it closes, this comes out;
       * the TYPE. `app.build_content_type` serves the whitelist
         (`BUILD_CONTENT_TYPES`) as itself and hands back everything else as
         `application/octet-stream` with `Content-Disposition: attachment`.

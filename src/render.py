@@ -226,7 +226,7 @@ def _check_declared_file(name, files: dict, where: str) -> None:
         # at the wrong half.
         raise ValueError(
             f"{where} points at {name!r}, which this build did not declare "
-            f"(the list is what the build shipped, not what its directory holds)")
+            "(the list is what the build shipped, not what its directory holds)")
     # The name the file server will and will not answer for, asked in the one
     # place that decides it. An entry the server refuses would publish with a
     # 201 and 404 in the browser — a build that is accepted and cannot be opened.

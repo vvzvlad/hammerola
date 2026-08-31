@@ -322,6 +322,11 @@ def _nonblocking(path, flags):
     what it was handed. Through an opener the descriptor belongs to CPython's
     `FileIO` the moment this returns, and `FileIO` closes it on every failure
     path of its own.
+
+    NOT a rule for the whole repository, and the counter-example is deliberate:
+    `Store._extract_members` keeps the `os.fdopen` shape with a hand-rolled
+    `os.close` in its error branch, correctly, because its `os.open` carries
+    `dir_fd=parent_fd`, which an opener's `(path, flags)` signature cannot pass.
     """
     return os.open(path, flags | os.O_NONBLOCK)
 
@@ -351,12 +356,18 @@ def _safe_name(name: str) -> bool:
     a URL that newly refuses `Cc` and `Cf` — a `%01`, a U+202E — and NOT a lone
     surrogate: the segment arrives via `unquote` (`_split` below), whose default
     is `errors='replace'`, so an undecodable byte is already a U+FFFD, category
-    `So`. Lone surrogates bite on the DECLARATION side, where a `\\udXXX` in a
-    build's JSON becomes a byte again through `surrogateescape` at the `os`
-    layer — the same rule, a different caller. Builds already on disk sit in
-    immutable directories and cannot be re-pushed, so a name that got in before
-    could now stop being served. Two things are why that is acceptable, and
-    NEITHER of them is
+    `So`. Lone surrogates are a DECLARATION-side matter, and only in ONE range:
+    `\\udc80`-`\\udcff` is what `surrogateescape` turns back into a byte at the
+    `os` layer, so a name carrying one can exist on disk (`os.stat('/tmp/x')`
+    with `x = '\\udcff'` raises `FileNotFoundError` — the encode succeeded),
+    while any other lone surrogate never reaches the filesystem at all
+    (`'\\ud800'` raises `UnicodeEncodeError: surrogates not allowed`). Even in
+    that range the `Cs` clause is the SECOND thing such a name meets:
+    `render._check_declared_file` asks `name not in files` first, so a name out
+    of a build's JSON reads as "did not declare" unless the build really wrote
+    it AND declared it. Builds already on disk sit in immutable directories and
+    cannot be re-pushed, so a name that got in before could now stop being
+    served. Two things are why that is acceptable, and NEITHER of them is
     `store.SAFE_COMPONENT` — that alphabet holds the members of the uploaded
     ARCHIVE, which since the move is the model's SOURCE tree, while what gets
     served is what the BUILD wrote, and no alphabet is applied to an output name

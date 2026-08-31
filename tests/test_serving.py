@@ -483,6 +483,12 @@ def test_a_directory_in_a_build_is_refused_without_leaking_a_descriptor(hub):
     The hub runs in this process, so its descriptors are this process's; the
     delta is measured rather than compared to zero because httpx opens and
     closes sockets of its own while the loop runs.
+
+    `/dev/fd` IS TAKEN DELIBERATELY and carries no `skipif`: it is not a POSIX
+    guarantee, but it is present everywhere this suite runs — on macOS, and in
+    the `python:3.11-slim` container CI runs pytest in, where it is a symlink to
+    `/proc/self/fd`. A platform without it should fail loudly here rather than
+    skip, because a skip is how a leak check stops checking.
     """
     hub.publish("proj1", "abc123", good_build())
     os.mkdir(hub.project_dir("proj1") / "abc123" / "subdir.json")

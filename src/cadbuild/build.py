@@ -132,9 +132,10 @@ def build(out_dir, preview_mode="iso"):
     overview = overview_meshes(plate is not None)
     previews = preview_files(written)
     # The two lines above cost nothing, so this measures what the section really
-    # spent -- and the name undersells it: `export_print_plate` above lays the
-    # bed out as SOLIDS and writes an STL of them, so this phase carries a
-    # modelling step and not only the drawing of pictures.
+    # spent -- and the name undersells it: `export_print_plate` above fuses the
+    # `print` view into one compound, measures it and writes an STL, so the
+    # phase carries a modelling step and not only the drawing of pictures. The
+    # LAYOUT itself is the author's, made in views(); this only collects it.
     phase = _phase("rendering", phase)
 
     print("tessellating views:")
