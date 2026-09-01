@@ -67,15 +67,14 @@ def test_a_simple_model_builds_and_reports_what_it_wrote(project):
 
         os.chdir("/")
 
-        def printables():
-            return {"body": cq.Workplane("XY").box(20, 10, 5)}
+        def parts():
+            return {"body": {"shape": cq.Workplane("XY").box(20, 10, 5),
+                             "kind": "printable"}}
 
         def views():
-            body = printables()["body"]
-            part = [{"shape": body, "name": "body"}]
             return [
-                {"id": "print", "name": "print", "parts": part},
-                {"id": "assembled", "name": "assembled", "parts": part},
+                {"id": "print", "name": "print", "parts": ["body"]},
+                {"id": "assembled", "name": "assembled", "parts": ["body"]},
             ]
     """)
 

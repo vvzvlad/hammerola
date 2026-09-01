@@ -10,12 +10,12 @@ import pytest
 
 from src import render
 from src.cadbuild.errors import BuildError
-from src.cadbuild.hubspec import (LABEL_RE, MAX_NOTE_CHARS, MAX_NOTES,
+from src.cadbuild.hubspec import (LABEL_RE, MAX_NOTE_CHARS, MAX_PARTS,
                                   MAX_VIEW_DEPTH, MAX_VIEW_NAME_CHARS,
                                   MEMBER_RE, RESERVED_NAMES, hub_text_problem)
 from src.cadbuild.palette import HARDWARE_COLOR, MOCK_COLOR, PART_PALETTE
-from src.cadbuild.parts import (catalogue_colors, check_stem, printable_keys,
-                                read_catalogue)
+from src.cadbuild.parts import (KINDS, catalogue_colors, check_stem,
+                                printable_keys, read_catalogue)
 from src.cadbuild.project import MAX_TITLE_CHARS
 
 from fakes import part
@@ -107,7 +107,11 @@ def test_every_text_ceiling_here_equals_the_hub_s():
     them together.
     """
     assert MAX_NOTE_CHARS == render.MAX_TEXT
-    assert MAX_NOTES == render.MAX_NOTES
+    # How big the catalogue may be. It was `MAX_NOTES` on both sides and it
+    # counted the parts carrying a note; what makes meta.json enormous is the
+    # number of RECORDS, so the ceiling and both its names moved to that
+    # (issue #75).
+    assert MAX_PARTS == render.MAX_PARTS
     # The view's caption reaches the hub through meta.json's `views`, and the
     # project's title and slug through `title` and `project`. All three are
     # `_plain_text` on the far side.
@@ -117,6 +121,22 @@ def test_every_text_ceiling_here_equals_the_hub_s():
     # at all, but it is the same trade: the hub walks the tree and refuses one
     # deeper than this, so a build that emitted one would be a 422.
     assert MAX_VIEW_DEPTH == render.MAX_VIEW_DEPTH
+
+
+def test_the_three_kinds_are_the_three_the_hub_publishes():
+    """What a record may say a part IS, held to EQUALITY across the wire.
+
+    The hub transcribes this list (`render.PART_KINDS`) and refuses a kind that
+    is not on it, because the browser draws a record by its kind and one nothing
+    recognises is a part nobody can draw. Equality rather than containment, and
+    both directions cost something real: a kind this half invents is a whole
+    build answered with a 422, and a kind the hub would take that no build emits
+    is a case on the serving side that nothing produces.
+    """
+    assert set(KINDS) == set(render.PART_KINDS)
+    # ...and the one the rest of the document is keyed off: only a printable
+    # ships files, on both sides of the wire.
+    assert render.KIND_PRINTABLE in KINDS
 
 
 def test_hub_text_problem_answers_a_non_string_rather_than_crashing():
@@ -310,9 +330,21 @@ def test_a_note_carrying_a_non_printable_character_is_refused_here():
     assert "non-printable" in refusal({"body": entry(note="M3x8\x00DIN912")})
 
 
-def test_more_notes_than_the_hub_accepts_are_refused():
-    catalogue = {f"part{i}": entry(note="x") for i in range(MAX_NOTES + 1)}
-    assert str(MAX_NOTES) in refusal(catalogue)
+def test_a_catalogue_bigger_than_the_hub_accepts_is_refused():
+    """The COUNT of records, which is what really decides meta.json's size.
+
+    It used to count the parts carrying a NOTE, and the case below is the one
+    that ceiling could not see: not one of these entries has a note, and the
+    document they make is just as unloadable. The hub refuses it on arrival
+    (`render.MAX_PARTS`), so a build that accepted it would be a whole model
+    computed and then answered with a 422.
+    """
+    assert str(MAX_PARTS) in refusal(
+        {f"part{i}": entry() for i in range(MAX_PARTS + 1)})
+    # ...and the last legal size is legal, so this is a ceiling rather than an
+    # off-by-one nobody can reach.
+    read = read_catalogue(Model({f"part{i}": entry() for i in range(MAX_PARTS)}))
+    assert len(read) == MAX_PARTS
 
 
 # --------------------------------------------------------------------------

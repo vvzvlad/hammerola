@@ -385,26 +385,61 @@ def stop_hub(hub):
 
 
 # -- archive building -------------------------------------------------------
-def meta_bytes(views=None, downloads=None, **extra):
-    """A meta.json in the wire format of SPEC 7 (`views`, not `variants`)."""
+def meta_bytes(views=None, parts=None, **extra):
+    """A meta.json in the wire format of SPEC 7, as issue #75 left it.
+
+    TWO FIELDS CARRY THE WHOLE SHAPE and they are the two arguments here:
+    `parts` is the catalogue — the one place a part exists, keyed by the name
+    that IS its identity — and `views` is a list of tabs, each naming the
+    catalogue keys it shows. The four flat maps the document used to carry
+    (`downloads`, `overview`, `previews`, `notes`) are gone: a file now belongs
+    to the part or the view it is OF, and a note sits inside the record it is
+    about.
+
+    The default pair is the smallest document the hub accepts, and the two
+    halves agree by construction: the view shows both keys the catalogue
+    declares.
+    """
     payload = {
         "project": "demo",
         "title": "Demo project",
         "built": "2026-08-21T04:16:00Z",
         "views": views if views is not None else [
             {"id": "assembled", "name": "assembled",
-             "file": "assembled.json", "parts": 2},
+             "file": "assembled.json", "parts": ["lid", "pin"]},
         ],
+        "parts": parts if parts is not None else {
+            "lid": {"kind": "printable"},
+            "pin": {"kind": "printable"},
+        },
     }
-    if downloads is not None:
-        payload["downloads"] = downloads
     payload.update(extra)
     return json.dumps(payload).encode("utf-8")
 
 
-def view_bytes(marker="a"):
-    """Stand-in for a tessellation. Only its bytes matter to the hub."""
-    return json.dumps({"shapes": [marker], "name": "root"}).encode("utf-8")
+def view_bytes(marker="a", keys=("lid", "pin")):
+    """Stand-in for a tessellation: a root group over one keyed leaf per key.
+
+    IT NAMES KEYS NOW, and the reason is a check that did not exist when it did
+    not. The hub holds a view file's leaves against the `parts` list its
+    meta.json declares for that view, in both directions
+    (`render._match_selection`), and refuses a leaf carrying no key at all — so
+    a stand-in of unkeyed leaves is a document no push can carry, and one
+    naming the wrong keys is a 422. The default is the default `meta_bytes`
+    selection, so the two halves agree by construction exactly as they did
+    before; a test that declares another selection passes its own keys here.
+
+    The shape is the exported one: a node with `parts` is a GROUP and carries no
+    key of its own, and each leaf under it names the catalogue record it is of.
+    `marker` is what makes two of these differ by bytes, which several tests
+    read back off the wire.
+    """
+    return json.dumps({
+        "name": "root",
+        "id": "/root",
+        "parts": [{"name": key, "id": f"/root/{key}", "key": key,
+                   "shape": {"marker": marker}} for key in keys],
+    }).encode("utf-8")
 
 
 def tar_gz(files: dict) -> bytes:
@@ -419,17 +454,28 @@ def tar_gz(files: dict) -> bytes:
     return buffer.getvalue()
 
 
-def good_build(marker="a", downloads=None, extra_files=None, **extra) -> bytes:
+def good_build(marker="a", extra_files=None, view_keys=None, **extra) -> bytes:
     """A publishable archive. `**extra` goes straight into meta.json.
 
-    Forwarded rather than enumerated, because `downloads` is no longer the only
-    map a build declares files in: `overview` and `previews` are read by the
-    client and drawn by nothing, so a test about them has to be able to put one
-    in the document without this signature growing a parameter per field.
+    Forwarded rather than enumerated, and that stays true through issue #75:
+    the fields a test may want to put in the document are not a fixed list —
+    `parts`, a `views` entry's `overview` or `preview`, a stray key the hub is
+    supposed to drop — so this signature would otherwise grow a parameter per
+    field. `downloads` was one such parameter until the map it named stopped
+    existing, which is exactly the drift the forwarding avoids.
+
+    `view_keys` IS THE ONE EXCEPTION AND IS NAMED RATHER THAN FORWARDED,
+    because it goes into the OTHER file: the hub holds the view file's leaves
+    against the `parts` the meta declares for that view, so a test narrowing
+    the catalogue has to narrow the stand-in view with it. It is not derived
+    from `views` on purpose — several tests here hand the hub a document that
+    is meant to be refused, and a helper that quietly repaired the halves into
+    agreement would take the refusal away.
     """
     files = {
-        "meta.json": meta_bytes(downloads=downloads, **extra),
-        "assembled.json": view_bytes(marker),
+        "meta.json": meta_bytes(**extra),
+        "assembled.json": (view_bytes(marker) if view_keys is None
+                           else view_bytes(marker, keys=view_keys)),
     }
     files.update(extra_files or {})
     return tar_gz(files)

@@ -26,7 +26,7 @@ is the deformed hatch (see views.py), which has to name a reason.
 from .artifacts import ASSEMBLED_STEM, PRINT_VIEW_ID
 from .errors import BuildError
 from .geometry import as_shape
-from .hubspec import MAX_NOTE_CHARS, MAX_NOTES, MEMBER_RE, hub_text_problem
+from .hubspec import MAX_NOTE_CHARS, MAX_PARTS, MEMBER_RE, hub_text_problem
 from .palette import HARDWARE_COLOR, MOCK_COLOR, palette_colors
 
 
@@ -227,6 +227,21 @@ def read_catalogue(model):
             'parts() must return a non-empty dict: {"lid": {"shape": lid, '
             '"kind": "printable"}, ...}'
         )
+    # HOW BIG THE CATALOGUE MAY BE, counted before a single entry is read --
+    # the hub's own ceiling (`render.MAX_PARTS`), mirrored here for the reason
+    # every ceiling in hubspec is: a catalogue this build accepts and the hub
+    # then refuses is a whole build's geometry spent on a 422.
+    #
+    # IT USED TO COUNT THE PARTS CARRYING A NOTE, which was the same number
+    # doing a job it could not do: what makes meta.json enormous is the number
+    # of RECORDS, and the ones without a note -- a hundred thousand bought
+    # screws -- were exactly what the count could not see.
+    if len(catalogue) > MAX_PARTS:
+        raise BuildError(
+            f"parts() returned {len(catalogue)} entries, over the {MAX_PARTS} "
+            "the hub accepts from one build. Every entry is published in "
+            "meta.json, which every visitor of the build downloads."
+        )
 
     read = {}
     for key, record in catalogue.items():
@@ -293,13 +308,6 @@ def read_catalogue(model):
             f"{KIND_PRINTABLE!r}."
         )
 
-    noted = [key for key, record in read.items() if record["note"] is not None]
-    if len(noted) > MAX_NOTES:
-        raise BuildError(
-            f"{len(noted)} parts carry a note, over the {MAX_NOTES} the hub "
-            "accepts from one build. Notes are for the parts somebody has to "
-            "be told something about, not for every part in the tree."
-        )
     return read
 
 

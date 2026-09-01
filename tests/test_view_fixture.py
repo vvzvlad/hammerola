@@ -90,15 +90,107 @@ def test_fixture_is_committed_and_stays_small(committed):
     assert committed["name"], "the root node has no name to build paths from"
 
 
-def test_fixture_would_survive_the_hub_s_own_gate():
+def _keys_in(node) -> dict:
+    """A catalogue declaring exactly the keys this view file names, and no more.
+
+    `check_view_file` cross-checks every leaf `key` against the catalogue of the
+    build it belongs to (issue #75), and a view file does not carry that
+    catalogue — referential integrity is a property of the PAIR, which is why the
+    argument exists at all. So the one built here says nothing about the project:
+    it is derived from the file, which leaves every other rule in the walk doing
+    its job (a key still has to be a legal part name) and takes only the one
+    check this file cannot answer on its own out of play.
+
+    Written as a walk rather than as a fixed map on purpose: it has to keep
+    answering for whatever the generator writes, including the day it writes
+    keys of its own (see `_with_keys`).
+    """
+    found = {}
+    key = node.get("key")
+    if isinstance(key, str):
+        found[key] = {"kind": "printable"}
+    for child in node.get("parts", ()):
+        found.update(_keys_in(child))
+    return found
+
+
+def _with_keys(node) -> dict:
+    """The fixture with a `key` on every leaf that has none — and why it is here.
+
+    THE COMMITTED FIXTURE PREDATES THE FIELD. `parts()` became a catalogue in
+    issue #75 and a leaf now names the record it is of, which the hub REQUIRES:
+    a node with nothing under it and no `key` is a 422, because `views[].parts`
+    is otherwise an unsigned promise about what the file shows. This document
+    was generated before that and carries not one key, so the gate below would
+    refuse it — and it would be refusing the FIXTURE'S AGE rather than anything
+    about the format the browser half reads.
+
+    Regenerating it is the real fix and belongs to the step that repoints the
+    browser half; it cannot happen here, because that rewrites `ui/`. So the
+    staleness is patched at the one field it is about and nothing else: every
+    other rule in the walk — the name alphabet, the colours, the depth, the tree
+    — still runs over exactly what is committed.
+
+    The name is what the key is filled in with, and that is not arbitrary: a
+    catalogue is keyed by the name that IS the part's identity, so a leaf named
+    `lid` is the record `lid`. It is also why this becomes a NO-OP rather than a
+    lie the day the generator stamps keys itself — a leaf that already carries
+    one is left alone, so a regenerated fixture is checked as it stands.
+    """
+    copy = dict(node)
+    children = node.get("parts")
+    if children is None:
+        if copy.get("key") is None:
+            copy["key"] = copy.get("name")
+        return copy
+    copy["parts"] = [_with_keys(child) for child in children]
+    return copy
+
+
+def test_fixture_would_survive_the_hub_s_own_gate(committed, tmp_path):
     """It has to be a payload the hub would ACCEPT, not merely one it can parse.
 
     `check_view_file` is what every pushed view goes through, and it is the only
     thing standing between a push and the DOM. A fixture that could not get past
     it would be testing the browser half against a document the hub would have
     refused.
+
+    What is checked is the fixture with its leaf keys filled in — `_with_keys`
+    has the argument for that, and for why it stops mattering rather than
+    hardening into a fixture nobody notices is stale.
     """
-    check_view_file(FIXTURE, "assembled")
+    # THE LINE THAT RETIRES `_with_keys`, and the only thing that ever will.
+    # That helper bridges the fixture's AGE, and a bridge over a gap that has
+    # closed goes on working perfectly: a regenerated document keeps the keys it
+    # carries (the helper fills in only a leaf that has none), so it would sit
+    # here as a permanent no-op with nothing anywhere going red. So the no-op is
+    # asserted instead — the day the committed file names one key of its own,
+    # this fails and says what to do about it.
+    assert _keys_in(committed) == {}, (
+        "the committed fixture now carries keys of its own — drop `_with_keys` "
+        "and hand `check_view_file` the committed document unchanged")
+
+    keyed = _with_keys(committed)
+    path = tmp_path / "assembled.json"
+    path.write_text(json.dumps(keyed), encoding="utf-8")
+
+    shown = check_view_file(path, "assembled", _keys_in(keyed))
+
+    # The RETURN VALUE, which is the half `meta.json` is then held against
+    # (`_match_selection`): every leaf the walk reached, named.
+    #
+    # THE NAMES IN IT ARE TRUE BY CONSTRUCTION while `_with_keys` is here, and
+    # saying so is the point of this comment — it used to claim the comparison
+    # avoided walking the document twice, which `_with_keys` had already made
+    # untrue from the other side: it copies each leaf's `name` into its `key`,
+    # and this fixture is flat, so both sets are built out of the same four
+    # strings. What is left is a witness for `check_view_file` rather than for
+    # the fixture, and it is worth having as one: the walk has to REACH every
+    # leaf and report one key per leaf, instead of stopping at the root or
+    # folding them together. The names become an independent fact again the day
+    # the fixture carries keys of its own — the day the assertion at the top of
+    # this test retires the helper.
+    assert shown == {part["name"] for part in committed["parts"]}
 
 
 def test_fixture_is_a_tree_with_siblings_and_a_mesh_on_every_leaf(committed):
@@ -130,6 +222,15 @@ def exported_tree(directory: Path) -> list[dict]:
     file that passes it (the test above asserts exactly that). What this buys is
     a test of the publishing half that needs no CAD kernel, i.e. one that runs in
     the place the kernel-bound test cannot.
+
+    STILL ON THE OLD DOCUMENT, deliberately, and it is the only thing in tests/
+    that is: `parts` is an integer here and the hub takes a list of catalogue
+    keys (issue #75). It is not fixed in place because it cannot be — the meta
+    these entries go into is assembled by `meta_json` in
+    `ui/tests/fixtures/make_fixture.py`, which writes no `parts` catalogue at
+    all, so any keys named here would point at nothing. The generator and the
+    committed fixture are rewritten together in the step that repoints the
+    browser half, and this list is named there rather than guessed at now.
     """
     directory.mkdir(parents=True)
     payload = FIXTURE.read_bytes()

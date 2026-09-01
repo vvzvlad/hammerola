@@ -256,7 +256,11 @@ def test_builds_json_is_served_and_not_cached(hub):
 
 def test_downloads_are_served_as_bytes(hub):
     hub.publish("proj1", "abc123", good_build(
-        downloads={"stl": "model.stl"}, extra_files={"model.stl": b"solid demo"}))
+        parts={"lid": {"kind": "printable", "files": {"stl": "model.stl"}}},
+        views=[{"id": "assembled", "name": "assembled",
+                "file": "assembled.json", "parts": ["lid"]}],
+        view_keys=("lid",),
+        extra_files={"model.stl": b"solid demo"}))
     r = hub.get("/project/proj1/abc123/model.stl")
     assert r.status_code == 200
     assert r.content == b"solid demo"
@@ -277,7 +281,11 @@ def test_a_preview_is_served_as_a_picture_and_not_as_a_download(hub):
     """
     png = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
     hub.publish("proj1", "abc123", good_build(
-        previews={"assembled": "assembled_preview.png"},
+        parts={"lid": {"kind": "printable",
+                       "preview": "assembled_preview.png"}},
+        views=[{"id": "assembled", "name": "assembled",
+                "file": "assembled.json", "parts": ["lid"]}],
+        view_keys=("lid",),
         extra_files={"assembled_preview.png": png}))
     r = hub.get("/project/proj1/abc123/assembled_preview.png")
     assert r.status_code == 200
@@ -289,7 +297,7 @@ def test_a_preview_is_served_as_a_picture_and_not_as_a_download(hub):
 
 
 def test_a_declared_preview_survives_publication_without_becoming_a_button(hub):
-    """`previews` reaches the reader intact and `downloads` stays untouched.
+    """A part's picture reaches the reader intact and its files stay untouched.
 
     That is exactly what a per-part picture is: it is DECLARED, so a client can
     be told it exists without assembling its URL out of a part name and a
@@ -297,15 +305,26 @@ def test_a_declared_preview_survives_publication_without_becoming_a_button(hub):
     the part is already on the page in 3D. The hub is what could conflate the
     two — it rewrites this document — so the split is asserted on the far side
     of a real publication rather than on what the build handed over.
+
+    THE SPLIT IS NOW INSIDE ONE RECORD (issue #75) rather than between two flat
+    maps, which makes conflating them cheaper rather than harder: `preview` and
+    `files` sit two lines apart in `_catalogue`, both go through the same
+    `_check_declared_file`, and only the key each is emitted under keeps a
+    picture out of the download row.
     """
     png = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
     hub.publish("proj1", "abc123", good_build(
-        previews={"base": "base_preview.png"},
-        extra_files={"base_preview.png": png}))
+        parts={"base": {"kind": "printable", "preview": "base_preview.png",
+                        "files": {"stl": "base.stl"}}},
+        views=[{"id": "assembled", "name": "assembled",
+                "file": "assembled.json", "parts": ["base"]}],
+        view_keys=("base",),
+        extra_files={"base_preview.png": png, "base.stl": b"solid base"}))
     meta = hub.get("/project/proj1/abc123/meta.json").json()
-    assert meta["previews"] == {"base": "base_preview.png"}
-    assert "base_preview.png" not in meta.get("downloads", {}).values()
-    assert "base_preview.png" not in [v["file"] for v in meta["variants"]]
+    record = meta["parts"]["base"]
+    assert record["preview"] == "base_preview.png"
+    assert "base_preview.png" not in record["files"].values()
+    assert "base_preview.png" not in [v["file"] for v in meta["views"]]
 
     r = hub.get("/project/proj1/abc123/base_preview.png")
     assert r.status_code == 200
@@ -538,7 +557,44 @@ def test_index_json_lists_projects_after_pushes(hub):
         # Everything the index page renders must be present, or the card shows
         # "undefined" and nothing in the console says why.
         assert set(card) >= {"pid", "project", "title", "commit", "built",
-                             "first_built", "dev", "parts", "variants", "mb"}
+                             "first_built", "dev", "printables", "views",
+                             "mb"}
+
+
+def test_a_card_counts_the_printed_parts_and_not_the_bought_ones(hub):
+    """`printables`, and the two numbers it is deliberately NOT.
+
+    It is not `len(meta["parts"])` — the literal translation of the old field
+    now that `parts` is a catalogue — because that counts the bought screws and
+    the scenery: the catalogue below holds one printed part, one piece of
+    hardware and one mock, and "3 parts" on the front page would be a promise
+    about a print job that does not exist. And it is not the old
+    `max(v["parts"] for v in variants)` either, which measured the busiest VIEW:
+    the two views below show different subsets, so a card reading the biggest
+    one would say 2.
+
+    The field was RENAMED for exactly this reason (issue #75): a number that
+    changes meaning under a name that does not is a card that goes on rendering
+    something plausible and wrong, with nobody told.
+    """
+    hub.publish("proj1", "abc123", good_build(
+        parts={"lid": {"kind": "printable"},
+               "screw": {"kind": "hardware"},
+               "hand": {"kind": "mock"}},
+        views=[{"id": "assembled", "name": "assembled",
+                "file": "assembled.json", "parts": ["lid", "screw", "hand"]},
+               {"id": "print", "name": "as printed",
+                "file": "print.json", "parts": ["lid"]}],
+        view_keys=("lid", "screw", "hand"),
+        # TWO FILES RATHER THAN TWO POINTERS AT ONE, because the two views show
+        # different subsets and a view's `parts` now has to be exactly what its
+        # file shows — one file cannot answer for both selections at once. That
+        # is also what a build writes: `export_views` tessellates each view and
+        # names the field off the nodes it just wrote.
+        extra_files={"print.json": view_bytes(keys=("lid",))}))
+    card = {c["pid"]: c for c in hub.index().json()}["proj1"]
+    assert card["printables"] == 1
+    assert card["views"] == 2
 
 
 def test_a_card_says_whether_the_project_has_a_dev_slot(hub):

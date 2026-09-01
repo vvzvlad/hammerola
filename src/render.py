@@ -41,23 +41,54 @@ from src.buildnames import _first_nonprintable, unservable_reason
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
-# A download label ends up as a button caption. Kept to the same shape as a file
-# name so it can never carry markup, a quote or a control character: the pages
-# build their DOM with textContent, and this is the second line of that defence.
+# The key a part files an exported file under — `stl`, `step`, `3mf` — which
+# ends up as a download button's caption. Kept to the same shape as a file name
+# so it can never carry markup, a quote or a control character: the pages build
+# their DOM with textContent, and this is the second line of that defence. It
+# held the label of the flat `downloads` map before issue #75 moved those files
+# under the part they belong to; the caption argument moved with them unchanged.
 SAFE_LABEL = re.compile(r"\A[A-Za-z0-9._-]{1,32}\Z")
 
 # Free-text fields shown on the index and the build page. Long enough for a real
 # title, short enough that one push cannot push every other card off the screen.
 MAX_TEXT = 200
 
-# How many parts of one build may carry an author's note. A per-note length
-# ceiling is not enough on its own, and the count is not a tidiness rule: every
-# note is legal at 200 characters, so 100 000 of them make a 20 MB meta.json
-# that every visitor of that build page downloads — under a year of `immutable`,
-# from a push that can never be taken back. It also bounds the work the
-# validation loop below does per push, which is the other half of accepting a
-# document whose size the sender chooses.
-MAX_NOTES = 200
+# How many parts one build's catalogue may carry. Not a tidiness rule: every
+# record is legal at its own ceilings — a 200-character key, a 200-character
+# note — so 100 000 of them make a 20 MB meta.json that every visitor of that
+# build page downloads, under a year of `immutable`, from a push that can never
+# be taken back. It also bounds the work the validation loop below does per
+# push, which is the other half of accepting a document whose size the sender
+# chooses.
+#
+# IT WAS CALLED `MAX_NOTES` AND COUNTED THE PARTS THAT CARRIED A NOTE, back
+# when notes were a flat map of their own. Issue #75 moved the note inside the
+# record it is about, so there is no count of notes left to take — and the
+# records WITHOUT one are exactly what a note-shaped ceiling could not see: a
+# catalogue of a hundred thousand bought screws costs the same megabytes and
+# carries no note at all. Renamed on both sides of the wire at once
+# (`cadbuild.hubspec.MAX_PARTS`), because a ceiling whose name says notes and
+# whose job is the catalogue is a number nobody can reason about; the two are
+# held equal by tests/cadbuild/test_naming.py.
+#
+# WHAT IT DOES NOT BOUND is the number of FILES the catalogue points at — that
+# is `_spend_file_budget` below, and it is a different bound from a different
+# source.
+MAX_PARTS = 200
+
+# What a catalogue entry may say a part IS. A TRANSCRIPTION of
+# `cadbuild.parts.KINDS` and deliberately not an import: nothing on the serving
+# side may reach into the build half, which runs inside the build process. The
+# two lists are held equal by tests/cadbuild/test_naming.py, from the one side
+# allowed to see both.
+#
+# AN UNKNOWN KIND IS REFUSED rather than carried through. The browser draws a
+# record BY its kind — a printable gets download buttons, a bought part gets
+# none — so a kind nothing recognises is a part nobody can draw, and "render
+# what you know and drop the rest" is a way for a push to choose which of its
+# parts a reader never sees.
+KIND_PRINTABLE = "printable"
+PART_KINDS = (KIND_PRINTABLE, "hardware", "mock")
 
 # `built` is displayed like the rest but it is a TIMESTAMP, so its ceiling is the
 # length of one, with room for a long timezone spelling — not the free-text one.
@@ -89,7 +120,15 @@ SAFE_COLOR = re.compile(r"\A(#[0-9A-Fa-f]{3,8}|[A-Za-z]{1,32})\Z")
 # index and normal buffers that make up ~99% of a 2 MB view — is dropped as the
 # parser produces it (see `_view_fields`), so validating a view costs the size of
 # its largest single buffer rather than the size of the whole parsed document.
-VIEW_KEPT_KEYS = ("name", "color", "parts")
+#
+# `key` IS ON THIS LIST BECAUSE OF WHAT DROPPING IT COSTS. `export_views` stamps
+# the catalogue key on every leaf (issue #75) and the browser looks the record
+# up by it, so it is a string that travels from a push into the DOM — and while
+# it was not on this list it was the one such string NOTHING checked: the parser
+# threw it away before the walk below could see it. A key that is not on this
+# list is a key that is not validated, which is the whole reason the list is
+# written out rather than being "whatever the walk happens to read".
+VIEW_KEPT_KEYS = ("name", "color", "parts", "key")
 
 # Depth ceiling for the part tree. A real assembly nests a handful of levels; this
 # only exists so a hand-made file cannot make the walk below run forever.
@@ -197,19 +236,22 @@ def _check_part_name(value, where: str) -> None:
 
 
 def _check_declared_file(name, files: dict, where: str) -> None:
-    """The file one entry of a build's four file-declaring maps points at.
+    """Every file this document points at, wherever it is pointed at from.
 
-    FOUR CALLERS: `views[].file`, and one entry each of `downloads`, `overview`
-    and `previews`. One helper for all four because they make the same claim
-    about a name — "this build wrote a file called that, and the hub will hand
-    it back" — and differ only in what the KEY beside it means: a view id, a
-    button caption, a part's stem. Each of the questions below is a way the push
-    is accepted and then serves something other than what was measured here, so
-    they move together or not at all. `views` was the last to arrive and it
-    arrived through a bug: it kept an inline check of its own that asked
-    membership, `/` and `GENERATED_FILES` and neither of the two clauses the
-    shared rule had grown, so the exact defect issue #53 exists to kill was
-    still live on the one map without which a build page is empty.
+    FIVE CALLERS NOW, and they are no longer four flat maps: a view's `file`,
+    its `overview` mesh and its `preview` picture, and — on a catalogue
+    record — each of its exported `files` and its own `preview`. One helper for
+    all of them because they make the same claim about a name — "this build
+    wrote a file called that, and the hub will hand it back" — and differ only
+    in what OWNS the name, which is now stated by where the pointer sits
+    instead of being parsed out of a key (issue #75). Each of the questions
+    below is a way the push is accepted and then serves something other than
+    what was measured here, so they move together or not at all. `views` was
+    the last of the old four to arrive and it arrived through a bug: it kept an
+    inline check of its own that asked membership, `/` and `GENERATED_FILES`
+    and neither of the two clauses the shared rule had grown, so the exact
+    defect issue #53 exists to kill was still live on the one map without which
+    a build page is empty.
     """
     # `files` is what the build DECLARED it wrote, hashed by `_hash_output`. It
     # is a real file under this build — `runner._verify_output_file` checked
@@ -245,42 +287,43 @@ def _check_declared_file(name, files: dict, where: str) -> None:
 
 
 def _check_map_size(value, field: str, files: dict) -> None:
-    """How many entries one file-declaring map may carry, counted before the loop.
+    """How many entries one file-declaring collection may carry, counted first.
 
-    FOUR CALLERS, AND ONE OF THEM IS A LIST: `downloads`, `overview` and
-    `previews` are objects, `views` is an array of objects. The argument is
-    therefore any sized collection rather than a dict — nothing here looks
-    inside it, and "entries" is the right word for a row of either. `views` is
-    the most expensive of the four by orders of magnitude, which is why it may
-    least of all go uncounted: every entry costs a full parse of its view file
-    (`check_view_file`) and a full gzip of it (`measure_view`), measured at
-    ~18 ms on a 0.9 MB view, and N entries may point at ONE file — `seen`
-    forbids a duplicate view id, not a duplicate file name. A hundred thousand
-    of them is hours of CPU inside `_finish_staging`, in a build worker thread,
-    with two of those in the whole process.
+    ONE CALLER LEFT, AND IT IS A LIST: `views`. The three flat maps that shared
+    this — `downloads`, `overview`, `previews` — are gone with issue #75, and
+    what replaced them is bounded differently: a catalogue is counted against
+    `MAX_PARTS` and the files its records point at are counted against
+    `_spend_file_budget`. The argument is still any sized collection rather than
+    a dict — nothing here looks inside it, and "entries" is the right word for a
+    row of either. `views` was always the most expensive of the four by orders
+    of magnitude, which is why it may least of all go uncounted: every entry
+    costs a full parse of its view file (`check_view_file`) and a full gzip of
+    it (`measure_view`), measured at ~18 ms on a 0.9 MB view, and N entries may
+    point at ONE file — `seen` forbids a duplicate view id, not a duplicate file
+    name. A hundred thousand of them is hours of CPU inside `_finish_staging`,
+    in a build worker thread, with two of those in the whole process.
 
-    Counted FIRST, before the loop, exactly as `notes` is counted below — the
-    ORDER is what the two share and it is the whole of what they share: refusing
-    after walking the document is paying for precisely what the ceiling exists
-    to refuse to pay for. What it stops is the shape a per-entry rule cannot
-    see: every entry legal, in enormous numbers.
+    Counted FIRST, before the loop, exactly as the catalogue is counted below —
+    the ORDER is what the two share and it is the whole of what they share:
+    refusing after walking the document is paying for precisely what the ceiling
+    exists to refuse to pay for. What it stops is the shape a per-entry rule
+    cannot see: every entry legal, in enormous numbers.
 
-    IT IS NOT PARITY WITH `MAX_NOTES` AND MUST NOT BE READ AS ONE. That number
+    IT IS NOT PARITY WITH `MAX_PARTS` AND MUST NOT BE READ AS ONE. That number
     is 200; this ceiling is `len(files)`, and on the build path `files` is
     bounded by `limits.output_files` — 4096. So a model that writes 4096 tiny
-    files may legally declare on the order of four thousand entries in EACH of
-    `downloads`, `overview` and `previews`, with the `overview`/`previews` keys
-    running to MAX_TEXT and the file names to no length ceiling at all
+    files may legally declare on the order of four thousand views, each with a
+    name running to MAX_TEXT and a file name with no length ceiling at all
     (`buildnames.unservable_reason` has none, deliberately). That is a
     `meta.json` of a few megabytes, served under a year of `immutable` to every
-    visitor of that build — where the notes ceiling permits tens of kilobytes.
-    Different orders of magnitude, so "for the same reason" is exactly what must
-    not be said about the pair: what they share is the ORDER of the count, and
-    nothing else.
+    visitor of that build — where the catalogue ceiling permits tens of
+    kilobytes. Different orders of magnitude, so "for the same reason" is
+    exactly what must not be said about the pair: what they share is the ORDER
+    of the count, and nothing else.
 
     STILL WORTH HAVING, AND ACCEPTED RATHER THAN TIGHTENED. What it buys is the
     shape check it was added for: "unbounded" becomes "bounded by what the build
-    actually wrote", so no map can be enormous without the FILES being enormous
+    actually wrote", so no list can be enormous without the FILES being enormous
     too, and the millions-pointing-at-one-file shape is gone. What is left is a
     ceiling that is loose rather than absent, and three things are why no number
     is put in front of it. Reaching it takes a model that really writes
@@ -303,20 +346,19 @@ def _check_map_size(value, field: str, files: dict) -> None:
 
     THE BOUND IS THE BUILD'S OWN FILE COUNT, and it is derived rather than
     chosen: every entry here has to name a member of `files`, so a build that
-    really produced what it describes cannot declare more entries than it
-    published files — `downloads` names three per part, `previews` one per part
-    plus one of each whole-build mesh, `overview` at most two, `views` one file
-    per view (`export_views` writes `<vid>.json`), and every one of those names
-    is on that list. Beyond it, entries are repeats of a name already declared,
-    which is the millions-pointing-at-one-file shape and nothing an honest build
-    does.
+    really produced what it describes cannot declare more views than it
+    published files — `export_views` writes one `<vid>.json` per view, and every
+    one of those names is on that list. Beyond it, entries are repeats of a name
+    already declared, which is the millions-pointing-at-one-file shape and
+    nothing an honest build does.
 
-    A constant would be worse here, not tidier. MAX_NOTES is a count of PARTS,
-    so `downloads` would need three times it and the four callers would stop
-    sharing a rule. `files` is already capped — by `limits.output_files`, on the
-    build path — so this inherits a ceiling instead of inventing a second one
-    that can drift from it. ONE SOURCE, NOT TWO, and MAX_MEMBERS is not the
-    second: there is no archive path here at all.
+    A constant would be worse here, not tidier. MAX_PARTS is a count of
+    CATALOGUE RECORDS, and a view is not one of those — a project may draw more
+    tabs than it has parts, or one tab of two hundred. `files` is already
+    capped — by `limits.output_files`, on the build path — so this inherits a
+    ceiling instead of inventing a second one that can drift from it. ONE
+    SOURCE, NOT TWO, and MAX_MEMBERS is not the second: there is no archive path
+    here at all.
     `build_meta` is called from `Store._finish_staging` alone, and the `files`
     it is handed is always `_hash_output(staging, names)` — what the BUILD
     declared it wrote. The mapping `_unpack` builds out of an archive's members
@@ -330,50 +372,259 @@ def _check_map_size(value, field: str, files: dict) -> None:
             f"one of them")
 
 
-def _stem_map(raw: dict, field: str, files: dict) -> dict:
-    """One of the two maps a build declares keyed by a STEM: `overview`,
-    `previews`.
+def _spend_file_budget(left: int, count: int, where: str, files: dict) -> int:
+    """How many file pointers the CATALOGUE may hold in total, spent as counted.
 
-    `overview` is the whole build's own meshes (`assembled.stl`, and the print
-    plate where the project has a `print` view); `previews` is every picture it
-    rendered, one per part plus one of each of those two. They are two maps and
-    not one for exactly one reason: keyed by the stem, `assembled` names
-    `assembled.stl` in the first and `assembled_preview.png` in the second, so
-    one map loses one of them.
+    THE SAME BOUND `_check_map_size` APPLIES TO A LIST, applied to a document
+    where the pointers are spread over records instead of sitting in one map —
+    which is precisely what stops the bound getting weaker as the shape changes.
+    Per record it would: a record may legally point at `len(files)` names, so
+    MAX_PARTS records could point at 200 × 4096 of them, and that is a fifty-
+    megabyte `meta.json` served under a year of `immutable` — an order worse
+    than the three flat maps this replaced, from a change that was supposed to
+    move a bound rather than loosen it. One budget for the whole catalogue keeps
+    the old total exactly.
 
-    Neither is `downloads`, and that is the other half of the same decision:
-    that map is read as PER PART — cut up by splitting `<part>.<ext>` off each
-    file name — so a whole-build file left in it is attributed to a part called
-    `assembled`, a name a view part may legally carry.
+    IT IS DERIVED AND IT IS NOT TIGHT AGAINST AN HONEST BUILD, which is what
+    makes it usable: every pointer here has to name a file this build published,
+    a printable owns its own three exports plus its own picture, and no two
+    records own one file — so an honest catalogue spends strictly less than it
+    is given (`meta.json` and `metrics.json` are published and pointed at by
+    nobody). Beyond the budget, pointers are repeats of a name already spoken
+    for, which is nothing a build does.
 
-    READ WITH AN EXPLICIT `is None`, never `raw.get(field) or {}`: that spelling
-    turns a falsy non-object — `[]`, `""`, `0` — into "nothing here" and
-    publishes a push that described something else, in silence. It is the rule
-    for every optional object on this document, and `downloads` was the last
-    place it was not followed: it read `or {}` until the review of issue #53, so
-    `downloads: 0` published a build with no download buttons and told nobody.
+    The views' own three pointers are NOT on this budget: they are bounded as
+    ENTRIES by `_check_map_size`, at three pointers per entry, which is the same
+    order the old document allowed across its three maps.
     """
-    value = raw.get(field)
-    if value is None:
-        value = {}
-    if not isinstance(value, dict):
-        raise ValueError(f"`{field}` must be an object mapping stem -> filename")
-    _check_map_size(value, field, files)
-    for stem, name in value.items():
-        # The key is a part NAME — it is what a reader matches against the parts
-        # in the view file to find the picture of one — so it is held to a part
-        # name's rule, exactly as a note's key is. SAFE_LABEL would be the wrong
-        # rule in the direction that refuses honest pushes: it caps at 32
-        # characters, and the ceilings a part name really has are far above that
-        # — 128 on the build side (MEMBER_RE) and MAX_TEXT here — so a name of,
-        # say, 48 characters publishes today. It publishes on a single-printable
-        # build in particular, where the download labels degenerate to
-        # `stl`/`step`/`3mf` with the name gone from them, so nothing about that
-        # project ever met the caption rule. The key has a ceiling; what it does
-        # not have is a CAPTION's ceiling.
-        _check_part_name(stem, f"a stem in `{field}`")
-        _check_declared_file(name, files, f"`{field}` entry {stem!r}")
-    return value
+    left -= count
+    if left < 0:
+        raise ValueError(
+            f"the catalogue points at more files than the {len(files)} this "
+            f"build published, and {where} is where it ran past them; every "
+            f"one of them has to name a file the build shipped")
+    return left
+
+
+def _check_note(value, key: str) -> None:
+    """The AUTHOR's note on a part: text written in model.py, shown to a reader.
+
+    It used to be an entry of a flat `notes` map keyed by part name; issue #75
+    moved it inside the record it is about, which is the only change — the rules
+    are the ones it always had, and they are here rather than inline so the
+    record reader stays readable.
+
+    Angle brackets are banned for the BOUNDARY rather than for any one
+    renderer: this text arrives from a push, i.e. from anybody who can land a
+    commit in a model repository, and where the browser half ends up putting it
+    is a decision made later, on a page that is permanent, immutable and shares
+    an origin with every other project on the host. Text that cannot open an
+    element cannot become markup whatever renders it — the same argument that
+    holds for a part name. NOT for `title` and `project`, and that is the code
+    rather than an omission here: those two go through `_plain_text` alone, so a
+    bracket in a title is published. Read this sentence before "fixing" either
+    side into agreement.
+
+    AN EMPTY STRING IS REFUSED RATHER THAN NORMALIZED AWAY, and refusing is the
+    decision. `_catalogue` below states the rule this closes — absent rather
+    than empty on the way out, so a reader never has two ways of asking one
+    question — and this field was where it was first kept honestly: `""` passed
+    every rule here and was emitted as `"note": ""`, a second spelling of "no
+    note" for every reader downstream. `files` is refused the same way now, and
+    that is this argument applied where it used to be contradicted — an empty
+    map was DROPPED there, in silence. Dropping it silently
+    would be the hub editing a document it did not write; refusing teaches the
+    one push that can reach this, which is a hand-made one. An honest client
+    never lands here — `cadbuild.build` writes the key under `if
+    record["note"]:` — so the strictness costs nobody anything.
+
+    PADDING IS REFUSED FOR THE SAME REASON, and the fact that decides it was
+    stated in neither half until now: `cadbuild.parts._check_note` NORMALIZES a
+    note — it strips it, refuses what is left over when that is empty, and
+    publishes the STRIPPED string — while nothing here normalizes anything. So
+    the boundary between the two runs through "refuse what arrives padded", not
+    through "tolerate it". A paragraph here used to claim the opposite, that
+    `" "` is a note the build really does publish and refusing it would turn a
+    legal build into a 422; both halves of that were false, and the hole it
+    guarded was real. `"   "` published, which is a THIRD spelling of "nothing
+    to say" beside an absent key and the `""` refused above; and one authored
+    text published as two different documents — ` M3x8 ` from a hand-made push,
+    `M3x8` from the build — so a byte comparison of two revisions reports a
+    change nobody made (issue #10).
+
+    WHAT THE RULE BUYS is that this side becomes the exact COMPLEMENT of the
+    other: everything `cadbuild._check_note` can produce (stripped, non-empty)
+    passes here, and everything it cannot produce is refused. That is the shape
+    `kind` already has, where the two lists are asserted equal outright
+    (tests/cadbuild/test_naming.py); stripping it here instead would be a second
+    and opposite answer to the question the paragraph above answers, in the same
+    function. Nothing honest is turned away, and for the same reason as above:
+    `cadbuild.build` writes the key under `if record["note"]:`, and the value it
+    writes came back stripped from the gate.
+    """
+    if not isinstance(value, str):
+        raise ValueError(
+            f"the note on part {key!r} is {value!r}, which is not a string")
+    if not value:
+        raise ValueError(
+            f"the note on part {key!r} is empty; a note with no text is not a "
+            f"note — leave the key out rather than writing \"\"")
+    if value != value.strip():
+        raise ValueError(
+            f"the note on part {key!r} starts or ends with whitespace: "
+            f"{value!r}; the build strips a note before it publishes one, so "
+            f"this is text no build can write — send it without the padding, "
+            f"and leave the key out when the padding is all there is to it")
+    _plain_text(value, f"note on part {key!r}")
+    if "<" in value or ">" in value:
+        raise ValueError(
+            f"the note on part {key!r} contains an angle bracket: {value!r}")
+
+
+def _catalogue(raw: dict, files: dict) -> dict:
+    """`parts`: every part of this build, filed under the key that IS its name.
+
+    THE KEY IS THE IDENTITY (issue #75), and this map is where it is declared.
+    It travels from the model's own parts() through the view files and this
+    document into the browser unchanged, so nothing downstream reconstructs
+    which part is which by matching a shape or by splitting a file name — which
+    is what the four flat maps this replaces made every reader do, and what the
+    viewer got wrong on a part with a dot in its name.
+
+    REQUIRED AND NON-EMPTY, exactly like `views`: a build whose catalogue holds
+    nothing printable is refused by the build's own gate, so a document with no
+    catalogue is not one this hub can have written — and `_usable_meta` in
+    store.py refuses the same shape from the other end, which is the pairing
+    that has to stay true. Accepting an empty one here would publish a build the
+    index then silently declines to list.
+
+    EVERY OPTIONAL FIELD BELOW IS READ WITH AN EXPLICIT `is None`, never
+    `record.get(field) or {}`. That spelling turns a falsy non-object — `[]`,
+    `""`, `0` — into "nothing here" and publishes a push that described
+    something else, in silence; it is the rule for every optional field on this
+    document, and it outlived `_stem_map`, the helper whose docstring used to
+    carry it. `downloads` was the last place it was not followed — it read
+    `or {}` until the review of issue #53, so `downloads: 0` published a build
+    with no download buttons and told nobody.
+
+    ABSENT RATHER THAN EMPTY, AND EVERY FIELD IS HELD TO IT THE SAME WAY: by
+    refusing the empty spelling, never by dropping it. `files: {}` is a 422
+    exactly as `note: ""` is, and for the reason `_check_note` argues at
+    length — the hub does not get to edit a document it did not write, and only
+    a hand-made push can carry either value, since `cadbuild.build` writes each
+    of those keys under a test that it has something to put there. `files` was
+    the exception until the review of this change: `if exported:` dropped an
+    empty map in SILENCE, in this same walk, a dozen lines from the field that
+    refuses the identical claim — so one document's one rule had two opposite
+    answers depending on which key it was asked about, and the drop was the very
+    edit the refusal next door exists to avoid. `preview` needs no clause of its
+    own and is not a third case: `""` is not a file this build declared, so
+    `_check_declared_file` has already refused it.
+
+    A FIELD WRITTEN `null` IS THEREFORE AN ABSENT ONE, uniformly, and that is a
+    reading rather than an oversight: `null` is the JSON spelling of "nothing
+    here", and this document is REBUILT rather than passed through, so the two
+    spellings collapse into the one a reader sees. `notes: {"lid": null}` used to
+    be a 422 -- the flat map's VALUES were notes, and a null one was a broken
+    row -- and the danger that refusal covered is still closed, from the other
+    end: a null never reaches the browser, because the key is not emitted. What
+    changed is the verdict on the push, not what is served. `kind` is the one
+    field this does not apply to, because it is not optional: `kind: null` is
+    refused with every other non-kind.
+    """
+    catalogue = raw.get("parts")
+    if not isinstance(catalogue, dict) or not catalogue:
+        raise ValueError(
+            "meta.json must carry a non-empty `parts` catalogue: an object "
+            "keyed by part name, one entry per part, `kind` on every entry")
+    # Counted BEFORE the walk, for the reason `_check_map_size` gives at length:
+    # refusing after walking the document is paying for exactly what the ceiling
+    # exists to refuse to pay for.
+    if len(catalogue) > MAX_PARTS:
+        raise ValueError(
+            f"`parts` carries {len(catalogue)} entries, more than the "
+            f"{MAX_PARTS} one build may declare")
+
+    budget = len(files)
+    read = {}
+    for key, record in catalogue.items():
+        # The key is a part NAME — it is what the viewer puts on a tree row and
+        # what every other side of this document points at — so it is held to
+        # the part-name rule. SAFE_LABEL would be the wrong rule in the
+        # direction that refuses honest pushes: it caps at 32 characters, and
+        # the ceilings a part name really has are far above that — 128 on the
+        # build side (MEMBER_RE) and MAX_TEXT here. A key has a ceiling; what it
+        # does not have is a CAPTION's ceiling.
+        _check_part_name(key, "a key in `parts`")
+        where = f"part {key!r}"
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"{where} is {record!r}, which is not an object; every entry "
+                f"is written {{\"kind\": \"printable\", ...}}")
+
+        kind = record.get("kind")
+        if kind not in PART_KINDS:
+            raise ValueError(
+                f"{where} has kind {kind!r}, which is not one of "
+                f"{', '.join(repr(k) for k in PART_KINDS)}")
+        entry = {"kind": kind}
+
+        declared = record.get("files")
+        if declared is not None:
+            # A kind that ships nothing may not name a file, and the pair is
+            # refused rather than half-read: `kind` is how the browser decides
+            # whether to offer a download at all, so a bought screw carrying an
+            # STL is a record whose two halves say different things and no
+            # reader can be right about both.
+            if kind != KIND_PRINTABLE:
+                raise ValueError(
+                    f"{where} is {kind!r} and still declares files; only "
+                    f"{KIND_PRINTABLE!r} is exported")
+            if not isinstance(declared, dict):
+                raise ValueError(
+                    f"the files of {where} must be an object mapping extension "
+                    f"-> filename")
+            # REFUSED, NOT DROPPED — the docstring above has the argument, and
+            # it is the one `_check_note` makes about `""` on the field this
+            # same loop reads two blocks down.
+            if not declared:
+                raise ValueError(
+                    f"{where} declares an empty `files`; a record with nothing "
+                    f"exported leaves the key out rather than writing {{}}, "
+                    f"which the hub would otherwise have to edit away")
+            budget = _spend_file_budget(
+                budget, len(declared), f"the files of {where}", files)
+            exported = {}
+            for extension, name in declared.items():
+                # The extension is what the download button is captioned with,
+                # so it is whitelisted rather than escaped — the rule the old
+                # `downloads` label was held to, on the field that inherited its
+                # job.
+                if not isinstance(extension, str) or not SAFE_LABEL.match(
+                        extension):
+                    raise ValueError(
+                        f"{where} declares a file under {extension!r}, which "
+                        f"must match {SAFE_LABEL.pattern}")
+                _check_declared_file(name, files, f"the {extension} of {where}")
+                exported[extension] = name
+            # Unconditional: `declared` was refused if it was empty, and every
+            # entry of it either produced one here or raised.
+            entry["files"] = exported
+
+        preview = record.get("preview")
+        if preview is not None:
+            budget = _spend_file_budget(
+                budget, 1, f"the picture of {where}", files)
+            _check_declared_file(preview, files, f"the picture of {where}")
+            entry["preview"] = preview
+
+        note = record.get("note")
+        if note is not None:
+            _check_note(note, key)
+            entry["note"] = note
+
+        read[key] = entry
+    return read
 
 
 def _check_color(value, where: str) -> None:
@@ -396,8 +647,9 @@ def _check_color(value, where: str) -> None:
                 f"{SAFE_COLOR.pattern}")
 
 
-def check_view_file(path: Path, view_id: str) -> None:
-    """Refuse a view whose part tree could inject markup into the page.
+def check_view_file(path: Path, view_id: str, catalogue: dict) -> set:
+    """Refuse a view whose part tree could inject markup into the page, and
+    report which catalogue keys it names.
 
     This is the ONLY thing standing between a push and the DOM here. The vendored
     viewer builds its tree with
@@ -413,6 +665,48 @@ def check_view_file(path: Path, view_id: str) -> None:
     posting elsewhere or an `<a>` covering the page, and a build URL is permanent,
     immutable and shares an origin with every other project on the host.
 
+    `key` IS THE THIRD STRING NOW, and it is why this takes a catalogue.
+    `export_views` stamps the catalogue key on every leaf (issue #75) and the
+    browser looks the record up by it, so it reaches the page exactly as `name`
+    does and is held to the same rule. It is also the one field here that can be
+    checked against something rather than only for shape: a key naming a record
+    the catalogue does not declare is a part the reader can find nothing about,
+    and refusing it is what makes "this view shows that part" a fact instead of
+    two strings that happen to be equal.
+
+    WHAT THE CROSS-CHECK IS NOT is a claim that the right geometry is under the
+    right key. Which solid was stamped with which key is decided inside the
+    build process, which runs the model's own code — so this can only hold the
+    document together, never hold it to the truth. Referential integrity is the
+    whole of what is on offer here, and it is worth having on its own.
+
+    A LEAF HAS TO CARRY A `key`, AND THE KEYS SEEN ARE RETURNED. The two halves
+    are one repair, and what they repair is the only promise `views[].parts` in
+    meta.json makes: that a reader learns what is in a tab WITHOUT fetching a
+    multi-megabyte view file. Until the two documents were compared, nothing
+    signed that promise — a view file of unkeyed leaves published beside a list
+    naming three parts, `hammerola status` and the build page repeated the
+    three, and the only thing that could contradict them was the very download
+    the field exists to avoid. Into an immutable directory, under a year of
+    cache, undoable only by deleting the project.
+
+    THE LEAF/GROUP DISTINCTION IS `parts`, and reading it is a transcription
+    rather than the hub deciding the shape of a document it did not write. This
+    walk already descends into a node precisely because it has `parts` (below);
+    the vendored viewer decides the same way (`isShapeTree(shape) { return
+    "parts" in shape; }`); and the build writes a group as
+    `{"version", "name", "id", "loc", "parts"}` with no key and a leaf with one.
+    So a node with no `parts` under it is a leaf, and a leaf with no key is a
+    part a reader can find nothing about — the reconstruction-by-name the
+    catalogue exists to end.
+
+    EVERY `key` IN THE FILE GOES INTO THE SET, wherever it sits, because a key
+    is a claim about what this view shows and this walk is not the place to
+    decide which nodes a future viewer will read one from. A group carrying one
+    is not something the build writes; if a push writes it anyway, it is
+    declared like any other. What the set is FOR is `_match_selection`, which
+    holds it against the view's declared `parts` — equality in both directions.
+
     Walked iteratively, with a depth ceiling, so neither a deeply nested tree nor
     a wide one can turn a malformed upload into a RecursionError.
     """
@@ -427,6 +721,7 @@ def check_view_file(path: Path, view_id: str) -> None:
     if not isinstance(doc, dict):
         raise ValueError(f"view {view_id!r} must be a JSON object")
 
+    seen: set[str] = set()
     stack = [(doc, 0)]
     while stack:
         node, depth = stack.pop()
@@ -434,12 +729,33 @@ def check_view_file(path: Path, view_id: str) -> None:
             raise ValueError(
                 f"view {view_id!r} nests parts deeper than {MAX_VIEW_DEPTH}")
         where = f"view {view_id!r}"
+        # THE TWO STRINGS THAT REACH THE DOM COME FIRST, and the order is about
+        # the MESSAGE rather than about safety — every clause below refuses the
+        # same push. A node that is hostile AND has no key is hostile, and being
+        # told about a missing key would send its author looking at the wrong
+        # thing; it would also let the day a build writes a keyed hostile node
+        # go unnoticed here.
         name = node.get("name")
         if name is not None:
             _check_part_name(name, f"part name in {where}")
         if node.get("color") is not None:
             _check_color(node["color"], f"part {name!r} in {where}")
+        # Read before the key is judged, because it is what says whether this
+        # node is a leaf at all — the same question the descent below asks.
         parts = node.get("parts")
+        key = node.get("key")
+        if key is not None:
+            _check_part_name(key, f"part key in {where}")
+            if key not in catalogue:
+                raise ValueError(
+                    f"{where} shows a part keyed {key!r}, which the `parts` "
+                    f"catalogue does not declare")
+            seen.add(key)
+        elif parts is None:
+            raise ValueError(
+                f"{where} has a leaf with no `key`: a node with no `parts` "
+                f"under it is one part, and every part names the `parts` "
+                f"catalogue record it is of")
         if parts is None:
             continue
         if not isinstance(parts, list):
@@ -448,6 +764,7 @@ def check_view_file(path: Path, view_id: str) -> None:
             if not isinstance(part, dict):
                 raise ValueError(f"{where} has a part that is not an object")
             stack.append((part, depth + 1))
+    return seen
 
 
 class _ByteCounter:
@@ -490,30 +807,142 @@ def measure_view(path: Path) -> tuple[int, int]:
     return raw, counter.total
 
 
+def _view_parts(view: dict, view_id: str, catalogue: dict) -> list:
+    """`views[].parts`: WHICH parts this view shows, by catalogue key.
+
+    A LIST OF KEYS AND NOT A COUNT, and that swap is the whole of issue #75 on
+    this document. A number was a fact about the view FILE that no reader could
+    reconcile with anything else: five pins are five references to one catalogue
+    record, so the count disagreed with the parts map beside it, and a reader
+    wanting to know what was in a tab had to fetch a multi-megabyte view file to
+    find out.
+
+    EVERY KEY HAS TO BE ONE THE CATALOGUE DECLARES, and that check is the reason
+    the field is worth having at all: it turns "this view shows that part" from
+    two strings that happen to be equal into something the hub can refuse. Held
+    to no name rule of its own here — membership in the catalogue is stricter
+    than `_check_part_name`, since every key in it already passed exactly that.
+
+    COUNTED BEFORE THE WALK, against the size of the catalogue. Deduplication on
+    the build side is not a bound on this side: the document arrives from a
+    push, and the build that wrote it is not a witness the hub has. The
+    duplicate refusal below is what makes the count exact — a list with no
+    repeats, every entry a distinct catalogue key, cannot be longer than the
+    catalogue — but it is reached one entry at a time, and the ceiling is here
+    so a list of a hundred thousand repeats is refused before any of it is
+    walked.
+
+    ASKED BEFORE THE VIEW FILE IS OPENED, and that is why the comparison with
+    the file is a second function rather than an argument to this one. Everything
+    here is a dict lookup; what follows it in `build_meta` is a full parse of the
+    view file and a full gzip of it, in a build worker of which the process has
+    two. A push naming one 200 MB view and writing `"parts": "x"` used to pay
+    both before this line could produce the 422 — precisely the bill
+    `_check_map_size` refuses to pay one paragraph over.
+    """
+    refs = view.get("parts")
+    if not isinstance(refs, list):
+        raise ValueError(
+            f"view {view_id!r} must list the catalogue keys it shows in "
+            f"`parts`, as an array of strings")
+    if len(refs) > len(catalogue):
+        raise ValueError(
+            f"view {view_id!r} names {len(refs)} parts, more than the "
+            f"{len(catalogue)} the catalogue declares")
+    seen: set[str] = set()
+    for ref in refs:
+        if not isinstance(ref, str):
+            raise ValueError(
+                f"view {view_id!r} names {ref!r} as a part, which is not a "
+                f"catalogue key")
+        if ref not in catalogue:
+            raise ValueError(
+                f"view {view_id!r} shows {ref!r}, which the `parts` catalogue "
+                f"does not declare")
+        if ref in seen:
+            raise ValueError(
+                f"view {view_id!r} names {ref!r} twice; the list says WHICH "
+                f"parts a view shows, not how many times each appears in it")
+        seen.add(ref)
+    return list(refs)
+
+
+def _match_selection(declared: list, shown: set, view_id: str) -> None:
+    """`views[].parts` has to be EXACTLY the keys its view file names.
+
+    THE TWO DOCUMENTS ARE ONE CLAIM, and until they were compared nothing here
+    held them together: `_view_parts` above checked the list against the
+    catalogue, `check_view_file` checked the file against the catalogue, and
+    neither ever met the other. So a view file of two unkeyed leaves published
+    beside `"parts": ["lid", "pin", "m3"]`, and so did a `"parts": []` beside a
+    file full of them — a tab promising three parts and showing one, repeated by
+    `hammerola status` and by the card on the build page, into an immutable
+    directory under a year of cache.
+
+    EQUALITY AND NOT CONTAINMENT, because the field is DERIVED and not chosen:
+    `cadbuild.views.export_views` writes it as
+    `list(dict.fromkeys(node["key"] for node in nodes))` — the keys of the
+    leaves, deduplicated, in the order the author wrote them. So the set is the
+    whole of what an honest build can put here, and either direction of
+    disagreement is a document that lies about itself: a key declared and not
+    shown is a part a reader is promised and cannot find, a key shown and not
+    declared is a part in the tab that the summary never mentions.
+
+    ORDER IS NOT COMPARED, and that is not laxity. The list's order is the
+    author's statement about the assembly (`_view_parts` copies rather than
+    sorts it), while the walk that produced `shown` descends a stack and cannot
+    report an order at all. What is checked is membership, in both directions.
+    """
+    missing = [key for key in declared if key not in shown]
+    extra = sorted(shown.difference(declared))
+    if not missing and not extra:
+        return
+    problems = []
+    if missing:
+        problems.append(
+            f"declares {', '.join(repr(key) for key in missing)}, which its "
+            f"view file never shows")
+    if extra:
+        problems.append(
+            f"shows {', '.join(repr(key) for key in extra)}, which it does not "
+            f"declare")
+    raise ValueError(
+        f"view {view_id!r} " + " and ".join(problems) + "; `parts` has to be "
+        f"exactly the catalogue keys the view file names")
+
+
 def build_meta(pid: str, commit: str, raw: dict, staging: Path,
                files: dict, published: str, dev: bool = False) -> dict:
     """Validate the uploaded meta.json and normalize it for the viewer.
 
-    Two renames happen on purpose. The wire format calls the list `views` (SPEC 7)
-    because that is what it is to whoever writes a model; the viewer inherited
-    `variants` from the prototype and there is no reason to touch working frontend
-    code over a word. The mapping is one line and lives here.
+    NOTHING IS RENAMED ANY MORE. `views` used to be handed to the browser as
+    `variants` — a word the viewer had inherited from the prototype, translated
+    here in one line so working frontend code did not have to be touched over
+    it. Issue #75 rewrites that half around catalogue keys anyway, so the line
+    stopped buying anything and started costing the usual price of two names for
+    one thing. A view is called a view all the way through.
+
+    THE CATALOGUE IS READ FIRST, and the order is load-bearing rather than
+    tidy: every view names the keys it shows and every leaf of every view file
+    carries one, so `parts` has to exist before any of them can be checked
+    against it.
 
     `bytes` and `gzip` are measured SERVER-SIDE rather than trusted from the
     upload: they are shown in the view picker, so a wrong number is a wrong
     promise about what clicking costs, and CI has no reason to compute them.
     """
+    catalogue = _catalogue(raw, files)
+
     views = raw.get("views")
     if not isinstance(views, list) or not views:
         raise ValueError("meta.json must list at least one view in `views`")
-    # COUNTED BEFORE THE WALK, like the three maps below and more urgently than
-    # any of them: an entry here costs a parse and a gzip of a whole view file
-    # rather than a dict lookup. Same bound and same derivation — every entry
-    # has to name a file this build published, and an honest build writes one
-    # view file per view.
+    # COUNTED BEFORE THE WALK, and more urgently than the catalogue is: an entry
+    # here costs a parse and a gzip of a whole view file rather than a dict
+    # lookup. Same bound and same derivation — every entry has to name a file
+    # this build published, and an honest build writes one view file per view.
     _check_map_size(views, "views", files)
 
-    variants = []
+    rendered = []
     seen: set[str] = set()
     for view in views:
         if not isinstance(view, dict):
@@ -526,7 +955,7 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
             raise ValueError(f"view id {view_id!r} appears twice")
         seen.add(view_id)
 
-        # THE SAME QUESTION THE OTHER THREE MAPS ARE ASKED, through the same
+        # THE SAME QUESTION EVERY OTHER POINTER IS ASKED, through the same
         # helper. This loop used to ask a version of it inline — membership, `/`
         # and `GENERATED_FILES` — and that version never grew the leading-dot
         # and non-printable clauses the shared rule has, so a view file called
@@ -535,102 +964,51 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
         name = view.get("file")
         _check_declared_file(name, files, f"view {view_id!r}")
 
+        # BEFORE THE FILE IS TOUCHED, and the order is the whole point: what
+        # this answers costs a lookup per key, while the two lines under it cost
+        # a full parse of the view file and a full gzip of it — up to
+        # MAX_BUILD_BYTES of it, in one of two build workers. It used to be
+        # asked where its value is used, five lines down, so `"parts": "x"` was
+        # a 422 bought at the price of the whole file.
+        selected = _view_parts(view, view_id, catalogue)
+
         # The bytes of this file are handed to `viewer.render()` verbatim, so the
         # push does not stop being untrusted input at the archive boundary: what
-        # is inside a view reaches the DOM as well.
-        check_view_file(staging / name, view_id)
-
-        try:
-            parts = int(view.get("parts") or 0)
-        except (TypeError, ValueError) as error:
-            raise ValueError(
-                f"view {view_id!r} has a non-numeric `parts`") from error
+        # is inside a view reaches the DOM as well — and, since issue #75, every
+        # leaf of it names a catalogue key, which is checked against the
+        # catalogue this document declares rather than merely for shape.
+        shown = check_view_file(staging / name, view_id, catalogue)
+        # The half that CANNOT be asked before the walk, because it is about
+        # what the walk found: the summary above and the file have to name the
+        # same parts, or the summary is a promise nothing keeps.
+        _match_selection(selected, shown, view_id)
 
         # Measured SERVER-SIDE, from the file that was actually unpacked.
         size, compressed = measure_view(staging / name)
-        variants.append({
+        entry = {
             "id": view_id,
             "name": _plain_text(str(view.get("name") or view_id), "view name"),
             "file": name,
-            "parts": parts,
+            "parts": selected,
             "bytes": size,
             "gzip": compressed,
-        })
-
-    # READ WITH AN EXPLICIT `is None`, for the reason `_stem_map` gives at
-    # length: `raw.get("downloads") or {}` — which is what stood here — turns
-    # every falsy non-object into "no downloads at all", so `downloads: 0`
-    # published a build whose buttons had silently vanished, with nothing
-    # anywhere saying the push had described something else.
-    downloads = raw.get("downloads")
-    if downloads is None:
-        downloads = {}
-    if not isinstance(downloads, dict):
-        raise ValueError("`downloads` must be an object mapping label -> filename")
-    # THE SAME CEILING AS THE TWO MAPS BELOW, from the same helper: this map had
-    # the gap first and for longer — a label is capped at 32 characters and a
-    # count of them was capped at nothing, so a hundred thousand legal labels
-    # made the same enormous, permanent, `immutable` meta.json.
-    _check_map_size(downloads, "downloads", files)
-    for label, name in downloads.items():
-        # The label becomes a button caption, so it is whitelisted rather than
-        # escaped: nothing that matches this can be markup in any context.
-        if not isinstance(label, str) or not SAFE_LABEL.match(label):
-            raise ValueError(
-                f"download label {label!r} must match {SAFE_LABEL.pattern}")
-        _check_declared_file(name, files, f"download {label!r}")
-
-    # What the build published about the WHOLE of itself, and about each part in
-    # a picture. Neither map draws anything on either page — they are how a
-    # CLIENT is told a file exists, since the hub enumerates no directory — and
-    # both are validated all the same, because a name in either is a name this
-    # service will be asked for.
-    overview = _stem_map(raw, "overview", files)
-    previews = _stem_map(raw, "previews", files)
-
-    # The AUTHOR's note on a part: text written in model.py, keyed by part name,
-    # shown to whoever opens the build. Absent is the ordinary case, and stays
-    # absent below — a build with no notes and a build from before notes existed
-    # have to be one document here.
-    #
-    # NOT `raw.get("notes") or {}`: that spelling turns a falsy non-object —
-    # `[]`, `""`, `0` — into "no notes at all" and publishes a push that
-    # described something else entirely, in silence. Every optional object on
-    # this document is read this way now; `downloads` above was the last one
-    # that was not, and it stood here as the counter-example until issue #53.
-    notes = raw.get("notes")
-    if notes is None:
-        notes = {}
-    if not isinstance(notes, dict):
-        raise ValueError("`notes` must be an object mapping part name -> text")
-    # Counted BEFORE the loop: refusing after walking the document is paying for
-    # exactly what the ceiling exists to refuse to pay for.
-    if len(notes) > MAX_NOTES:
-        raise ValueError(
-            f"`notes` carries {len(notes)} entries, more than the {MAX_NOTES} "
-            f"one build may declare")
-    for name, text in notes.items():
-        # The key IS a part name — it is matched against the ones in the view
-        # file — so it is held to the part-name rule and not to the softer
-        # free-text one.
-        _check_part_name(name, "a note's part name")
-        if not isinstance(text, str):
-            raise ValueError(
-                f"the note on part {name!r} is {text!r}, which is not a string")
-        _plain_text(text, f"note on part {name!r}")
-        # Angle brackets are banned here for the BOUNDARY rather than for any
-        # one renderer: this text arrives from a push, i.e. from anybody who can
-        # land a commit in a model repository, and where the browser half ends
-        # up putting it is a decision made later, on a page that is permanent,
-        # immutable and shares an origin with every other project on the host.
-        # Text that cannot open an element cannot become markup whatever renders
-        # it — the same argument that holds for a part name. NOT for `title` and
-        # `project`, and that is the code rather than an omission here: those two
-        # go through `_plain_text` alone, so a bracket in a title is published.
-        # Read this sentence before "fixing" either side into agreement.
-        if "<" in text or ">" in text:
-            raise ValueError(
-                f"the note on part {name!r} contains an angle bracket: {text!r}")
+        }
+        # The whole-view mesh and the whole-view picture: `assembled.stl` and
+        # `assembled_preview.png`, and the same pair for `print` where the
+        # project has that view. OPTIONAL because most views have neither — the
+        # build hangs them on the two ids it renders — and read with an explicit
+        # `is None` like every other optional field here.
+        overview = view.get("overview")
+        if overview is not None:
+            _check_declared_file(
+                overview, files, f"the mesh of view {view_id!r}")
+            entry["overview"] = overview
+        preview = view.get("preview")
+        if preview is not None:
+            _check_declared_file(
+                preview, files, f"the picture of view {view_id!r}")
+            entry["preview"] = preview
+        rendered.append(entry)
 
     # Both are shown verbatim on the index and the build page. The pages render
     # them with textContent, but a push is not allowed to smuggle control
@@ -667,21 +1045,14 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
         # Arrival time, recorded separately so two builds carrying the same
         # `built` still have a stable order.
         "published": published,
-        "variants": variants,
-        "downloads": {str(k): str(v) for k, v in downloads.items()},
+        # REBUILT, not passed through. Both of these were assembled field by
+        # field out of the upload above, so a key of the pushed document that
+        # nothing here reads cannot reach the browser by riding along — which is
+        # what makes "an unvalidated field is a field that does not exist here"
+        # true rather than aspirational.
+        "views": rendered,
+        "parts": catalogue,
     }
-    # Emitted only when there is something to emit: an empty object here would
-    # be a build SAYING it has no notes, and the browser half would then have
-    # two ways of asking the same question — one of which no older build gives.
-    # The same rule, and the same reason, for the two maps beside it: a build
-    # that rendered no pictures and a build made before `previews` existed have
-    # to reach a reader as one document.
-    if overview:
-        meta["overview"] = dict(overview)
-    if previews:
-        meta["previews"] = dict(previews)
-    if notes:
-        meta["notes"] = dict(notes)
     return meta
 
 
@@ -739,7 +1110,7 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
     there is no retention (SPEC 5.3): builds are never swept, so the oldest one
     stays the oldest.
     """
-    total_gzip = sum(v["gzip"] for v in meta["variants"])
+    total_gzip = sum(v["gzip"] for v in meta["views"])
     return {
         "pid": meta["pid"],
         "project": meta["project"],
@@ -748,7 +1119,23 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
         "built": meta["built"],
         "first_built": first_built,
         "dev": bool(dev),
-        "parts": max(v["parts"] for v in meta["variants"]),
-        "variants": len(meta["variants"]),
+        # HOW MANY PARTS GET PRINTED, and the field is called `printables`
+        # because it answers a different question from the one the old field
+        # asked. That one was `max(v["parts"] for v in meta["variants"])` — the
+        # part COUNT of the biggest view — and the literal translation of it now
+        # that `parts` is a catalogue, `len(meta["parts"])`, would count the
+        # bought screws and the scenery along with the printed parts: three
+        # printed parts and nine screws would read "12 parts" on the front page.
+        # The kind is what finally makes the honest number expressible.
+        #
+        # THE NAME CHANGES ON PURPOSE, and the same goes for `views` below. A
+        # field that keeps its name and changes its meaning breaks its readers
+        # in silence — a card would go on rendering a number that is no longer
+        # the number it says — while a field that DISAPPEARS breaks them loudly,
+        # at the one moment somebody is there to fix it. The browser half is
+        # repointed at these in the step that rewrites it (issue #75).
+        "printables": sum(1 for record in meta["parts"].values()
+                          if record["kind"] == KIND_PRINTABLE),
+        "views": len(meta["views"]),
         "mb": f"{total_gzip / 1e6:.1f}",
     }

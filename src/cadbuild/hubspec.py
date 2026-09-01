@@ -28,10 +28,19 @@ MAX_BUILD_BYTES = 64 * 1024 * 1024
 # accepts and the hub then refuses would be a whole build spent on a 422.
 # tests/cadbuild/test_views.py holds the numbers here against the hub's.
 MAX_NOTE_CHARS = 200
-# ...and the same argument for HOW MANY parts may carry one: the hub caps the
-# count too (`render.MAX_NOTES`), because a per-note ceiling leaves the total
-# unbounded.
-MAX_NOTES = 200
+# ...and the same argument for HOW BIG THE CATALOGUE MAY BE: the hub caps that
+# too (`render.MAX_PARTS`), because a per-record ceiling leaves the total
+# unbounded -- a hundred thousand legal records make a meta.json nobody can
+# load, served under a year of `immutable`.
+#
+# IT WAS `MAX_NOTES` AND COUNTED THE PARTS CARRYING A NOTE. The note moved
+# inside the record it is about, so there is no count of notes left to take --
+# and the records without one are exactly what a note-shaped ceiling could not
+# see: a catalogue of bought screws costs the same megabytes and carries no
+# note at all. Renamed on both sides at once, because the two are compared by
+# name in tests/cadbuild/test_naming.py and a ceiling whose name says notes and
+# whose job is the catalogue is a number nobody can reason about.
+MAX_PARTS = 200
 # ...and for the VIEW's own name -- the caption in the picker, written into
 # meta.json by export_views and checked there again by the hub
 # (`render._plain_text(..., "view name")`). Same ceiling, same argument.

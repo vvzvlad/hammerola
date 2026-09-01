@@ -142,7 +142,7 @@ def test_readers_never_see_a_missing_or_partial_latest(hub):
                 # The view named by THIS meta.json has to be readable in the same
                 # directory: that is what "not half-published" means.
                 view = hub.get("/project/proj1/latest/" +
-                               payload["variants"][0]["file"])
+                               payload["views"][0]["file"])
                 if view.status_code != 200:
                     failures.append(
                         f"{commit}: view -> HTTP {view.status_code}")
@@ -192,11 +192,22 @@ def _slot_build(marker, view):
     implementation that filled the live directory file by file would be caught
     with the view half-written rather than only in the instant between two
     renames.
+
+    The padding rides INSIDE the leaf's shape, which is where a real one's
+    buffers are: the file has to be a document the hub accepts — one keyed leaf
+    per part its meta.json declares (`render._match_selection`) — and `shape` is
+    dropped by the parser's `object_pairs_hook`, so two megabytes on disk still
+    cost the walk nothing. Both properties above survive: the name is unique and
+    the file is big.
     """
-    body = json.dumps({"shapes": [marker], "pad": "x" * 2_000_000}).encode()
+    body = json.dumps({
+        "name": "root", "id": "/root",
+        "parts": [{"name": "lid", "id": "/root/lid", "key": "lid",
+                   "shape": {"marker": marker, "pad": "x" * 2_000_000}}],
+    }).encode()
     return tar_gz({
         "meta.json": meta_bytes(views=[{"id": "a", "name": "a",
-                                        "file": view, "parts": 1}]),
+                                        "file": view, "parts": ["lid"]}]),
         view: body,
     })
 
@@ -264,7 +275,7 @@ def test_readers_of_the_slot_never_see_a_mixture(hub):
         if meta.status_code != 200:
             return None
         try:
-            return meta.json()["variants"][0]["file"]
+            return meta.json()["views"][0]["file"]
         except Exception as error:  # noqa: BLE001 - recorded, not raised
             mixtures.append(f"torn meta.json: {type(error).__name__} {error}")
             return None
@@ -336,17 +347,55 @@ def test_a_damaged_meta_on_disk_does_not_break_the_next_publish(hub):
     hub.publish("proj1", "good1", _build("good", "2026-08-01T00:00:00Z"))
     pdir = hub.project_dir("proj1")
 
+    stamps = {"built": "2026-08-02T00:00:00Z",
+              "published": "2026-08-02T00:00:00Z"}
+    catalogue = {"lid": {"kind": "printable"}}
     damaged = {
         "empty": "{}",
         "notdict": "[]",
-        "novariants": json.dumps({
-            "pid": "proj1", "project": "p", "title": "t", "commit": "novariants",
-            "built": "2026-08-02T00:00:00Z", "published": "2026-08-02T00:00:00Z",
-            "variants": []}),
+        "noviews": json.dumps({
+            "pid": "proj1", "project": "p", "title": "t", "commit": "noviews",
+            "parts": catalogue, "views": [], **stamps}),
+        # NEW WITH THE CATALOGUE (issue #75), and it is the half a document can
+        # lose on its own: `views` and `parts` are written by one pass, so a
+        # truncated meta.json can carry a whole `views` and no catalogue at all
+        # -- and every reader of a view's part list then resolves keys against
+        # nothing. `_usable_meta` refuses it for the same reason it refuses no
+        # views, and `render._catalogue` refuses the same shape from the other
+        # end, which is the pairing that has to stay true.
+        "noparts": json.dumps({
+            "pid": "proj1", "project": "p", "title": "t", "commit": "noparts",
+            "views": [{"parts": ["lid"], "gzip": 10}], **stamps}),
+        "emptyparts": json.dumps({
+            "pid": "proj1", "project": "p", "title": "t", "commit": "emptyparts",
+            "views": [{"parts": ["lid"], "gzip": 10}], "parts": {}, **stamps}),
+        # THE TWO FIELDS `index_card` ACTUALLY SUBSCRIPTS, and each of them was
+        # a clause of `_usable_meta` that nothing here exercised — delete either
+        # line and the whole suite stayed green. What they cost is concrete:
+        # `_refresh_index` does not wrap `index_card` per project, so a KeyError
+        # from one damaged build takes down the rewrite of the WHOLE index and
+        # answers the next publish of any project with a 500 — after that build
+        # is already on disk.
+        #
+        # WHAT GOES RED HERE IS THE LISTING, not that 500, and the difference is
+        # worth knowing before reading a failure. These builds are stamped older
+        # than `good2`, and `index_card` is only ever handed the NEWEST meta, so
+        # what a missing clause produces here is a build appearing in
+        # `builds.json` — the assertion below. The 500 is the same hole entered
+        # from the other end, on the day the damaged build is the newest one.
+        "nogzip": json.dumps({
+            "pid": "proj1", "project": "p", "title": "t", "commit": "nogzip",
+            "views": [{"parts": ["lid"]}], "parts": catalogue, **stamps}),
+        # A record with no `kind` is the same failure one level down: the card
+        # counts the printables, so it reads `kind` off every record.
+        "nokind": json.dumps({
+            "pid": "proj1", "project": "p", "title": "t", "commit": "nokind",
+            "views": [{"parts": ["lid"], "gzip": 10}],
+            "parts": {"lid": {}}, **stamps}),
         "wrongdir": json.dumps({
             "pid": "proj1", "project": "p", "title": "t", "commit": "elsewhere",
-            "built": "2026-08-02T00:00:00Z", "published": "2026-08-02T00:00:00Z",
-            "variants": [{"parts": 1, "gzip": 10}]}),
+            "views": [{"parts": ["lid"], "gzip": 10}], "parts": catalogue,
+            **stamps}),
     }
     for name, text in damaged.items():
         (pdir / name).mkdir()

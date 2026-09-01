@@ -779,8 +779,12 @@ def test_a_real_export_is_a_document_the_hub_would_accept(out_dir):
 
     assert entries[0]["parts"] == ["lid", "pin", "board"]
     # The hub reads the file off disk, so this is fed the path rather than a
-    # document -- it is the real check, not a transcription of it.
-    render.check_view_file(out_dir / entries[0]["file"], entries[0]["id"])
+    # document -- it is the real check, not a transcription of it. The
+    # catalogue goes with it because the hub holds every `key` in the file
+    # against the one meta.json declares (issue #75), and THIS is the pairing
+    # that check exists for: what export_views stamped on the leaves has to be
+    # what the same build published as its catalogue.
+    render.check_view_file(out_dir / entries[0]["file"], entries[0]["id"], cat)
 
     doc = json.loads((out_dir / entries[0]["file"]).read_text(encoding="utf-8"))
     housing = doc["parts"][0]

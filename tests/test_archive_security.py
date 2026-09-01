@@ -1944,7 +1944,7 @@ def test_a_view_file_inside_a_subdirectory_is_refused(hub):
     body = raw_tar_gz([
         file_entry("meta.json", meta_bytes(views=[
             {"id": "assembled", "name": "assembled",
-             "file": "views/assembled.json", "parts": 2}])),
+             "file": "views/assembled.json", "parts": ["lid"]}])),
         file_entry("views/assembled.json", view_bytes()),
     ])
     r = hub.publish("proj1", "abc123", body)
@@ -1955,9 +1955,16 @@ def test_a_view_file_inside_a_subdirectory_is_refused(hub):
 
 def test_a_download_inside_a_subdirectory_is_refused(hub):
     # The same rule for the other kind of reference in meta.json: a download is
-    # a button that links to a build URL, and those are flat too.
+    # a button that links to a build URL, and those are flat too. The reference
+    # hangs off the part it belongs to now (issue #75) rather than off a flat
+    # `downloads` map, which changes where it is written and nothing about the
+    # rule -- a name is checked the same wherever the document names one.
     body = raw_tar_gz([
-        file_entry("meta.json", meta_bytes(downloads={"step": "out/model.step"})),
+        file_entry("meta.json", meta_bytes(
+            parts={"lid": {"kind": "printable",
+                           "files": {"step": "out/model.step"}}},
+            views=[{"id": "assembled", "name": "assembled",
+                    "file": "assembled.json", "parts": ["lid"]}])),
         file_entry("assembled.json", view_bytes()),
         file_entry("out/model.step", b"ISO-10303-21;\n"),
     ])
@@ -2723,5 +2730,5 @@ def test_a_valid_build_still_publishes(hub):
     assert hub.publish("proj1", "abc123", body).status_code == 201
     meta = json.loads(
         (hub.project_dir("proj1") / "abc123" / "meta.json").read_text())
-    assert meta["variants"][0]["file"] == "assembled.json"
+    assert meta["views"][0]["file"] == "assembled.json"
     assert os.readlink(hub.project_dir("proj1") / "latest") == "abc123"

@@ -118,16 +118,17 @@ def test_a_changed_payload_replaces_the_slot_whole(hub):
     """
     hub.publish_dev("proj1", tar_gz({
         "meta.json": meta_bytes(views=[{"id": "a", "name": "a",
-                                        "file": "old.json", "parts": 1}]),
-        "old.json": view_bytes("v1")}))
+                                        "file": "old.json", "parts": ["lid"]}]),
+        "old.json": view_bytes("v1", keys=("lid",))}))
     assert hub.get("/project/proj1/dev/old.json").status_code == 200
 
     hub.publish_dev("proj1", tar_gz({
         "meta.json": meta_bytes(views=[{"id": "a", "name": "a",
-                                        "file": "new.json", "parts": 1}]),
-        "new.json": view_bytes("v2")}))
+                                        "file": "new.json", "parts": ["lid"]}]),
+        "new.json": view_bytes("v2", keys=("lid",))}))
 
-    assert hub.get("/project/proj1/dev/new.json").content == view_bytes("v2")
+    assert hub.get("/project/proj1/dev/new.json").content == view_bytes(
+        "v2", keys=("lid",))
     assert hub.get("/project/proj1/dev/old.json").status_code == 404, (
         "a file from the previous local build survived the swap, so the slot is "
         "being written into rather than replaced")
