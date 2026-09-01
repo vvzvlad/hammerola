@@ -6,7 +6,9 @@ module of its own rather than a function beside any one of them:
   * the file server asks it of every request for
     `/project/<pid>/<commit>/<name>` (`_safe_name` in src/app.py);
   * the publishing half asks it of every name a push DECLARES
-    (`_check_declared_file` in src/render.py, on all four of its maps);
+    (`_check_declared_file` in src/render.py, from all five of the places a
+    pointer can sit — a view's `file`, its `overview` and its `preview`, and a
+    catalogue record's exported `files` and its own `preview`);
   * the client asks it of every name the hub's answer hands back, before
     writing that name to the author's disk (`src/client/artifacts.py`).
 
