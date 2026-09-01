@@ -51,12 +51,34 @@ def outline(node: dict) -> dict:
 
     What survives is exactly what the browser half reads and what a format change
     would move: the field names at each level, the tree, the part names, the
-    colours, and — for a leaf — the names of the mesh buffers and how long each
-    one is relative to the others.
+    catalogue keys, the colours, and — for a leaf — the names of the mesh
+    buffers and how long each one is relative to the others.
+
+    THE KEY IS A VALUE HERE AND NOT MERELY A FIELD NAME, which is what `fields`
+    alone left out. `shaped_document` stamps each leaf's key on BY POSITION
+    (`zip(flat, nodes)`) and says in its own words what a mismatch would mean:
+    "silently, and permanently, into an immutable build".
+
+    BE PRECISE ABOUT WHICH FAILURE THIS ROW ADDS, because the obvious answer is
+    wrong and believing it would cost the row that does the work. An
+    `ocp_tessellate` handing `parts` back in a different order is caught by
+    `name` and `id`, and always was: `export_views` passes `names=[node["key"]
+    ...]`, so a name travels with its mesh and a reorder desynchronises the two
+    within a leaf. What the key adds is the failure the names cannot see — a
+    change to where `shaped_document` stamps the key FROM, so that keys stop
+    tracking the list the names came out of. Do not read this row as making
+    `name` and `id` redundant: on a view holding one part twice the keys are
+    equal by design (`pin`, `pin(2)`, both keyed `pin`), and there the names
+    are the only witness left.
+
+    `.get` rather than `[...]`: a group node carries no key (the build writes
+    none, `treeFromShapes` refuses one that was written by hand), and this walk
+    descends through groups too.
     """
     row = {
         "fields": sorted(node),
         "name": node.get("name"),
+        "key": node.get("key"),
         "id": node.get("id"),
         "color": node.get("color"),
         "alpha": node.get("alpha"),
@@ -102,8 +124,14 @@ def _keys_in(node) -> dict:
     check this file cannot answer on its own out of play.
 
     Written as a walk rather than as a fixed map on purpose: it has to keep
-    answering for whatever the generator writes, including the day it writes
-    keys of its own (see `_with_keys`).
+    answering for whatever the generator writes, and the generator's model is
+    free to change under it.
+
+    EVERY RECORD IS `printable`, which is a shortcut and worth naming as one:
+    the kinds are the generator's to declare (three printables and one piece of
+    hardware today), and nothing this map is handed to reads a kind —
+    `check_view_file` asks membership and nothing else. A caller that publishes
+    rather than validates needs more than this (see `exported_tree`).
     """
     found = {}
     key = node.get("key")
@@ -114,39 +142,6 @@ def _keys_in(node) -> dict:
     return found
 
 
-def _with_keys(node) -> dict:
-    """The fixture with a `key` on every leaf that has none — and why it is here.
-
-    THE COMMITTED FIXTURE PREDATES THE FIELD. `parts()` became a catalogue in
-    issue #75 and a leaf now names the record it is of, which the hub REQUIRES:
-    a node with nothing under it and no `key` is a 422, because `views[].parts`
-    is otherwise an unsigned promise about what the file shows. This document
-    was generated before that and carries not one key, so the gate below would
-    refuse it — and it would be refusing the FIXTURE'S AGE rather than anything
-    about the format the browser half reads.
-
-    Regenerating it is the real fix and belongs to the step that repoints the
-    browser half; it cannot happen here, because that rewrites `ui/`. So the
-    staleness is patched at the one field it is about and nothing else: every
-    other rule in the walk — the name alphabet, the colours, the depth, the tree
-    — still runs over exactly what is committed.
-
-    The name is what the key is filled in with, and that is not arbitrary: a
-    catalogue is keyed by the name that IS the part's identity, so a leaf named
-    `lid` is the record `lid`. It is also why this becomes a NO-OP rather than a
-    lie the day the generator stamps keys itself — a leaf that already carries
-    one is left alone, so a regenerated fixture is checked as it stands.
-    """
-    copy = dict(node)
-    children = node.get("parts")
-    if children is None:
-        if copy.get("key") is None:
-            copy["key"] = copy.get("name")
-        return copy
-    copy["parts"] = [_with_keys(child) for child in children]
-    return copy
-
-
 def test_fixture_would_survive_the_hub_s_own_gate(committed, tmp_path):
     """It has to be a payload the hub would ACCEPT, not merely one it can parse.
 
@@ -155,42 +150,33 @@ def test_fixture_would_survive_the_hub_s_own_gate(committed, tmp_path):
     it would be testing the browser half against a document the hub would have
     refused.
 
-    What is checked is the fixture with its leaf keys filled in — `_with_keys`
-    has the argument for that, and for why it stops mattering rather than
-    hardening into a fixture nobody notices is stale.
+    THE COMMITTED DOCUMENT GOES IN UNCHANGED, which it did not use to: the
+    generator predated the catalogue key, a leaf with no `key` is a 422, and a
+    helper here filled one in from each leaf's name so the walk was refusing
+    nothing but the fixture's age. Regenerating the fixture is what retired it.
     """
-    # THE LINE THAT RETIRES `_with_keys`, and the only thing that ever will.
-    # That helper bridges the fixture's AGE, and a bridge over a gap that has
-    # closed goes on working perfectly: a regenerated document keeps the keys it
-    # carries (the helper fills in only a leaf that has none), so it would sit
-    # here as a permanent no-op with nothing anywhere going red. So the no-op is
-    # asserted instead — the day the committed file names one key of its own,
-    # this fails and says what to do about it.
-    assert _keys_in(committed) == {}, (
-        "the committed fixture now carries keys of its own — drop `_with_keys` "
-        "and hand `check_view_file` the committed document unchanged")
+    declared = _keys_in(committed)
+    assert declared, (
+        "the fixture names no catalogue key at all, so the cross-check in "
+        "`check_view_file` has nothing to cross-check and this test is idle — "
+        "regenerate it with `make ui-fixture`")
 
-    keyed = _with_keys(committed)
     path = tmp_path / "assembled.json"
-    path.write_text(json.dumps(keyed), encoding="utf-8")
+    path.write_text(json.dumps(committed), encoding="utf-8")
 
-    shown = check_view_file(path, "assembled", _keys_in(keyed))
+    shown = check_view_file(path, "assembled", declared)
 
     # The RETURN VALUE, which is the half `meta.json` is then held against
-    # (`_match_selection`): every leaf the walk reached, named.
-    #
-    # THE NAMES IN IT ARE TRUE BY CONSTRUCTION while `_with_keys` is here, and
-    # saying so is the point of this comment — it used to claim the comparison
-    # avoided walking the document twice, which `_with_keys` had already made
-    # untrue from the other side: it copies each leaf's `name` into its `key`,
-    # and this fixture is flat, so both sets are built out of the same four
-    # strings. What is left is a witness for `check_view_file` rather than for
-    # the fixture, and it is worth having as one: the walk has to REACH every
-    # leaf and report one key per leaf, instead of stopping at the root or
-    # folding them together. The names become an independent fact again the day
-    # the fixture carries keys of its own — the day the assertion at the top of
-    # this test retires the helper.
-    assert shown == {part["name"] for part in committed["parts"]}
+    # (`_match_selection`): every leaf the walk reached, named. Read off the
+    # `key` field of each committed leaf rather than off its `name`, which is
+    # the comparison that became possible when the fixture started carrying
+    # keys — the two strings are equal on this document (the tessellator names a
+    # leaf by its key and only disambiguates repeats, and there are none here),
+    # so naming the field under test is what keeps this a witness for the walk
+    # rather than for the equality. What it witnesses: the walk has to REACH
+    # every leaf and report one key per leaf, instead of stopping at the root or
+    # folding them together.
+    assert shown == {part["key"] for part in committed["parts"]}
 
 
 def test_fixture_is_a_tree_with_siblings_and_a_mesh_on_every_leaf(committed):
@@ -214,33 +200,52 @@ def test_fixture_is_a_tree_with_siblings_and_a_mesh_on_every_leaf(committed):
         assert len(shape["vertices"]) % 3 == 0
 
 
-def exported_tree(directory: Path) -> list[dict]:
-    """A stand-in for `export()`: the committed payload under both view names.
+def exported_tree(directory: Path) -> tuple[list[dict], dict]:
+    """A stand-in for `export()`: the two maps meta.json is assembled out of.
 
-    Enough to publish, because publishing never looks at what is inside a view
-    file beyond what `check_view_file` checks — and the committed fixture is a
-    file that passes it (the test above asserts exactly that). What this buys is
-    a test of the publishing half that needs no CAD kernel, i.e. one that runs in
-    the place the kernel-bound test cannot.
+    The committed payload under both view names, plus the catalogue that
+    declares what those files show. Enough to publish, because publishing never
+    looks at what is inside a view file beyond what `check_view_file` checks —
+    and the committed fixture is a file that passes it (the test above asserts
+    exactly that). What this buys is a test of the publishing half that needs no
+    CAD kernel, i.e. one that runs in the place the kernel-bound test cannot.
 
-    STILL ON THE OLD DOCUMENT, deliberately, and it is the only thing in tests/
-    that is: `parts` is an integer here and the hub takes a list of catalogue
-    keys (issue #75). It is not fixed in place because it cannot be — the meta
-    these entries go into is assembled by `meta_json` in
-    `ui/tests/fixtures/make_fixture.py`, which writes no `parts` catalogue at
-    all, so any keys named here would point at nothing. The generator and the
-    committed fixture are rewritten together in the step that repoints the
-    browser half, and this list is named there rather than guessed at now.
+    EVERYTHING IS DERIVED FROM THE FIXTURE, and none of it is typed out, because
+    the hub holds the two documents to each other: every key a view declares has
+    to be a record in `parts` (`render._view_parts`), the declared list has to be
+    EXACTLY the keys the view file carries (`render._match_selection`), and a
+    `printable` that declares no files is refused (`render._catalogue`). A list
+    written out here would therefore not go quietly stale — it would go red the
+    next time the generator's model changes, which is a test failing for a
+    reason that is nothing to do with what it tests.
+
+    THE KINDS ARE NOT THE GENERATOR'S, and that is the one place this document
+    is a stand-in rather than a copy: every record is `printable` with a single
+    exported file, because that is the cheapest shape `_catalogue` accepts. What
+    the real build declares — three formats a part, one entry of `hardware` with
+    a note and no files — is the kernel-bound test's business next door. The
+    dummy files are written beside the views because a declared name has to be
+    one the build really shipped (`render._check_declared_file` looks it up in
+    the hash of what was published).
     """
     directory.mkdir(parents=True)
     payload = FIXTURE.read_bytes()
     for name in ("assembled.json", "print.json"):
         (directory / name).write_bytes(payload)
+    keys = list(_keys_in(json.loads(payload)))
+    parts = {}
+    for key in keys:
+        (directory / f"{key}.stl").write_bytes(b"solid stand-in\n")
+        parts[key] = {"kind": "printable", "files": {"stl": f"{key}.stl"}}
+    # Both views are the same bytes, so both show the same parts. That is what
+    # makes the second entry legal rather than lazy: `_match_selection` compares
+    # the declaration with the FILE, and the file here is `assembled.json` twice.
     return [
         {"id": "assembled", "name": "assembled", "file": "assembled.json",
-         "parts": 4},
-        {"id": "print", "name": "as printed", "file": "print.json", "parts": 3},
-    ]
+         "parts": keys},
+        {"id": "print", "name": "as printed", "file": "print.json",
+         "parts": keys},
+    ], parts
 
 
 def test_publish_to_data_lands_a_build_and_a_rerun_keeps_the_slot(tmp_path):
@@ -265,12 +270,16 @@ def test_publish_to_data_lands_a_build_and_a_rerun_keeps_the_slot(tmp_path):
     data_dir = tmp_path / "data"
 
     first = tmp_path / "first"
-    module.publish_to_data(first, exported_tree(first), data_dir)
+    module.publish_to_data(first, *exported_tree(first), data_dir)
 
     slot = data_dir / "project" / module.FIXTURE_PID / "dev"
     assert (slot / "assembled.json").read_bytes() == FIXTURE.read_bytes()
     meta = json.loads((slot / "meta.json").read_text(encoding="utf-8"))
-    assert [variant["id"] for variant in meta["variants"]] == ["assembled", "print"]
+    assert [view["id"] for view in meta["views"]] == ["assembled", "print"]
+    # The catalogue survived the round trip, which is the half a view's `parts`
+    # list points at: `build_meta` rebuilds both field by field and refuses a
+    # view naming a key this map does not declare.
+    assert sorted(meta["parts"]) == sorted(meta["views"][0]["parts"])
     assert meta["dev"] is True, "the local slot has to be published as a dev build"
     # Nothing may be left behind in the project directory: the staging tree is
     # the caller's to remove on every path that is not the rename.
@@ -284,7 +293,7 @@ def test_publish_to_data_lands_a_build_and_a_rerun_keeps_the_slot(tmp_path):
     module.FIXTURE_TITLE = "a different title"
 
     second = tmp_path / "second"
-    module.publish_to_data(second, exported_tree(second), data_dir)
+    module.publish_to_data(second, *exported_tree(second), data_dir)
 
     assert (slot / "sentinel.txt").is_file(), (
         "the slot was rewritten by a re-run that published the same views — the "

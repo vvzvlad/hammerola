@@ -5,16 +5,19 @@
 // from the VIEW FILE rather than from the library, so a test written against a
 // hand-made `{name, color, parts}` would be checking this code against
 // somebody's idea of the exporter. `tests/fixtures/assembled.json` came out of
-// `src/cadbuild/views.py` — the same two functions a real build calls — and
-// `tests/fixtures/make_fixture.py` regenerates it. Nothing below hard-codes a
-// part name or a colour: every expected value is read out of the file.
+// the hub's own build half — the catalogue reader, the view preparation, the
+// three gates and the two exporters, in the order `src/cadbuild/build.py` calls
+// them — and `tests/fixtures/make_fixture.py` regenerates it. Nothing below
+// hard-codes a part name or a colour: every expected value is read out of the
+// file.
 //
-// THE FIXTURE'S TREE IS TWO LEVELS DEEP, because that is what the pipeline can
-// produce: one view part is exactly one leaf (`prepare_views` refuses a
-// `cq.Assembly`). The FORMAT nests — src/render.py validates to a depth of 64 —
-// so the recursion is covered separately, against a tree built by nesting the
-// fixture's own real nodes. That test is honest about being synthetic; it has
-// to be, because no model can emit one today.
+// THE FIXTURE'S TREE IS TWO LEVELS DEEP because its model asks for no more:
+// one reference is exactly one leaf (`read_catalogue` refuses a `cq.Assembly`),
+// and a view nests only where it declares a group — `{"group": "housing",
+// "parts": [...]}`, which `export_views` does write into the file, and which
+// src/render.py validates to a depth of 64. So the recursion is covered
+// separately here, against a tree built by nesting the fixture's own real
+// nodes.
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -94,13 +97,32 @@ describe('treeFromShapes', () => {
 
   // -- the catalogue key (issue #75) ------------------------------------------
   //
-  // KEYS ARE ADDED HERE, NOT IN THE FIXTURE, and that is not laziness: the
-  // committed `assembled.json` predates the key and regenerating it is a step of
-  // its own. So these tests nest the fixture's own real nodes and stamp keys on
-  // them — the same shape `export_views` now writes, arranged in the test that
-  // makes the claim. The nodes stay real; only the key is arranged.
+  // THE FIXTURE CARRIES ITS OWN KEYS: `export_views` stamps the catalogue key
+  // on every leaf it writes, and the committed `assembled.json` was regenerated
+  // behind that — one key per leaf, each equal to that leaf's name, which holds
+  // here only because this model references no part twice.
+  //
+  // WHAT THE TESTS BELOW DO TO THOSE KEYS IS NOT ONE THING, and the differences
+  // are worth having straight before reading them:
+  //
+  //   * most REPLACE the values, because the case under test is one the
+  //     fixture's own model has no reason to hold — one key on two leaves
+  //     (written out by hand), a key that is not a string (through `keyed()`);
+  //   * the FIRST one replaces them for a different reason, since a key
+  //     travelling through is the ordinary case rather than an odd one:
+  //     re-keying is what makes the assertion about the `key` FIELD instead of
+  //     leaning on `key === name`, which is a coincidence of this model;
+  //   * one SUBTRACTS the field, because the exporter writes a key on every
+  //     leaf, so a leaf without one has to be made;
+  //   * one ADDS the field where the build writes none — on a GROUP — which is
+  //     a document the hub accepts and this side is the only side that refuses.
+  //
+  // So nothing here reads a COMMITTED key value, and that is covered rather
+  // than missing: `outline()` in tests/test_view_fixture.py holds every leaf's
+  // key string against what the real exporter produces (on a workstation — that
+  // comparison needs the CAD kernel and skips in CI).
 
-  /** The fixture's leaves, each stamped with a catalogue key of its own. */
+  /** The fixture's leaves, re-keyed — by default each one gets a key of its own. */
   const keyed = (key = (leaf, at) => `part${at}`) => ({
     ...assembled,
     parts: assembled.parts.map((node, at) => ({ ...node, key: key(node, at) })),
@@ -134,16 +156,25 @@ describe('treeFromShapes', () => {
   })
 
   it('leaves a leaf that names no key at `null` rather than guessing at its name', () => {
-    // The fixture as it stands: the committed `assembled.json` predates the key
-    // (the note above), so not one of its leaves names one. THAT IS THE READER
-    // HERE, and an old build is not — a document from before the catalogue
-    // never gets this far, since the page reads its `meta.views` unguarded
-    // before it fetches a view file at all and such a document named the list
-    // `variants`. A fallback to `name` would put back exactly the
-    // identity-by-string the catalogue replaced, and would be worse than the
-    // original: the key now EXISTS, so the fallback would hide its absence
-    // rather than stand in for a field nobody has.
-    const tree = treeFromShapes(assembled, statesFor(PATHS))
+    // ARRANGED BY TAKING THE KEY AWAY, which is the one test in this block that
+    // subtracts rather than adds: every leaf the exporter writes names a key,
+    // so an unkeyed one has to be made. THE READER OF THIS IS A HAND-MADE PUSH
+    // and not an old build — a document from before the catalogue never gets
+    // this far, since the page reads its `meta.views` unguarded before it
+    // fetches a view file at all and such a document named the list `variants`.
+    // A fallback to `name` would put back exactly the identity-by-string the
+    // catalogue replaced, and would be worse than the original: the key now
+    // EXISTS, so the fallback would hide its absence rather than stand in for a
+    // field nobody has.
+    const unkeyed = {
+      ...assembled,
+      parts: assembled.parts.map((node) => {
+        const copy = { ...node }
+        delete copy.key
+        return copy
+      }),
+    }
+    const tree = treeFromShapes(unkeyed, statesFor(PATHS))
     for (const [at, row] of tree.children.entries()) {
       expect(row.key, `row ${at} invented a key`).toBeNull()
       expect(row.name).toBe(LEAVES[at].node.name)
@@ -194,10 +225,11 @@ describe('treeFromShapes', () => {
   })
 
   it('nests: a child node carries children and no `known` flag of its own', () => {
-    // SYNTHETIC, deliberately and unavoidably: `prepare_views` refuses an
-    // assembly, so no build emits a nested view file today. The NODES are real
-    // — they are the fixture's own leaves — and only the nesting is arranged
-    // here, which is exactly the part src/render.py already validates for.
+    // SYNTHETIC, and by choice rather than by necessity: `export_views` writes
+    // group nodes for a view that declares them, and this fixture's model
+    // declares none. The NODES are real — they are the fixture's own leaves —
+    // and only the nesting is arranged here, which is exactly the part
+    // src/render.py already validates for.
     const [first, second, ...others] = assembled.parts
     const nested = {
       ...assembled,
