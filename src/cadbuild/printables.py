@@ -106,8 +106,11 @@ def export_printables(catalogue, out_dir):
     formats, which is a change of shape rather than of content: it used to be
     `{label: filename}` with the label being `<part>.<ext>` (or a bare `stl` on
     a single-part project), and every reader then had to split the part back out
-    of the label -- `filesByPart` in the viewer did exactly that, by cutting at
-    the last dot, so a part with a dot in its name landed on the wrong row. The
+    of the label -- the browser's downloads menu (ui/src/HammerolaViewer.jsx)
+    did exactly that, by cutting at the last dot, so a part with a dot in its
+    name landed on the wrong row. Do not grep for the function that did it: it
+    was deleted with the parse, and naming it here would send the next reader
+    looking for a symbol this repository no longer has anywhere. The
     ownership is now stated instead of parsed, which also takes the hub's
     32-character label ceiling out of the build: there is no label.
     """
