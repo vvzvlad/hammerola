@@ -385,6 +385,27 @@ def stop_hub(hub):
 
 
 # -- archive building -------------------------------------------------------
+# THE EXPORTS THE DEFAULT CATALOGUE NAMES, as archive members. Two rules the hub
+# grew to mirror what a build can actually produce make these compulsory rather
+# than decorative: a catalogue with no printable in it is a 422, and so is a
+# printable that declares no `files` (`render._catalogue`) — while
+# `cadbuild.printables.export_printables` writes STEP, STL and 3MF for every
+# printable it finds. So the smallest archive this suite can publish is the
+# document, the view file, and one export per printable.
+#
+# A CONSTANT AND NOT TWO LITERALS PER TEST, because a test builds its archive by
+# hand exactly when it wants to vary ONE thing about it: spelling the exports
+# out at each of those sites would put the fixture's own invariant — the
+# catalogue names these two names — in a hundred places that are about something
+# else. `good_build` splices it in; a test using `tar_gz` directly writes
+# `**DEFAULT_EXPORTS` beside its own members. A test that hands `meta_bytes` its
+# OWN `parts` names its own files and carries them itself.
+DEFAULT_EXPORTS = {
+    "lid.stl": b"solid lid\nendsolid lid\n",
+    "pin.stl": b"solid pin\nendsolid pin\n",
+}
+
+
 def meta_bytes(views=None, parts=None, **extra):
     """A meta.json in the wire format of SPEC 7, as issue #75 left it.
 
@@ -399,6 +420,17 @@ def meta_bytes(views=None, parts=None, **extra):
     The default pair is the smallest document the hub accepts, and the two
     halves agree by construction: the view shows both keys the catalogue
     declares.
+
+    EVERY DEFAULT PRINTABLE CARRIES AN EXPORT, because a printable that carries
+    none is a 422 (`render._catalogue`) and a catalogue with no printable in it
+    is another — the two rules the hub grew to mirror what a build can actually
+    produce, `export_printables` writing STEP, STL and 3MF for every printable
+    it finds. ONE export each rather than three: what the fixture stands for is
+    the SHAPE — a printable owns a non-empty `files` naming files this build
+    published — and two more names per part would be two more archive members
+    in every test that pushes one, for nothing. `good_build` is what puts
+    `lid.stl` and `pin.stl` in the archive; a test that hands this its own
+    `parts` names its own files and takes them there too.
     """
     payload = {
         "project": "demo",
@@ -409,8 +441,8 @@ def meta_bytes(views=None, parts=None, **extra):
              "file": "assembled.json", "parts": ["lid", "pin"]},
         ],
         "parts": parts if parts is not None else {
-            "lid": {"kind": "printable"},
-            "pin": {"kind": "printable"},
+            "lid": {"kind": "printable", "files": {"stl": "lid.stl"}},
+            "pin": {"kind": "printable", "files": {"stl": "pin.stl"}},
         },
     }
     payload.update(extra)
@@ -476,6 +508,16 @@ def good_build(marker="a", extra_files=None, view_keys=None, **extra) -> bytes:
         "meta.json": meta_bytes(**extra),
         "assembled.json": (view_bytes(marker) if view_keys is None
                            else view_bytes(marker, keys=view_keys)),
+        # THE TWO EXPORTS THE DEFAULT CATALOGUE NAMES. They are here
+        # unconditionally rather than only when `parts` was left alone, because
+        # `extra` is forwarded rather than inspected and this would otherwise
+        # have to guess what the caller's own catalogue points at. The cost of
+        # a member nobody's document names is two more names in `files`, which
+        # is the ceiling `_check_map_size` and `_spend_file_budget` derive from
+        # — so the tests ABOUT those ceilings build their archives with
+        # `tar_gz` directly and count their own members, exactly as they did
+        # before.
+        **DEFAULT_EXPORTS,
     }
     files.update(extra_files or {})
     return tar_gz(files)

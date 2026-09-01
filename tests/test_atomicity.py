@@ -18,7 +18,7 @@ import os
 import threading
 import time
 
-from harness import meta_bytes, tar_gz, view_bytes
+from harness import DEFAULT_EXPORTS, meta_bytes, tar_gz, view_bytes
 
 from src import store
 from src.store import LEFTOVER_MAX_AGE_SECONDS, Store
@@ -28,6 +28,7 @@ def _build(marker, built, padding=0):
     files = {
         "meta.json": meta_bytes(built=built),
         "assembled.json": view_bytes(marker),
+        **DEFAULT_EXPORTS,
     }
     if padding:
         # Bulk makes unpacking take long enough that a reader has a real chance of
@@ -209,6 +210,7 @@ def _slot_build(marker, view):
         "meta.json": meta_bytes(views=[{"id": "a", "name": "a",
                                         "file": view, "parts": ["lid"]}]),
         view: body,
+        **DEFAULT_EXPORTS,
     })
 
 

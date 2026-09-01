@@ -13,12 +13,12 @@ tests/test_ui_source.py (`test_the_build_picker_reads_the_fields_builds_json_car
 which is where it stayed live when the old page viewer was deleted.
 """
 
-from harness import meta_bytes, tar_gz, view_bytes
+from harness import DEFAULT_EXPORTS, meta_bytes, tar_gz, view_bytes
 
 
 def _build(marker, built="2026-08-21T04:16:00Z"):
     return tar_gz({"meta.json": meta_bytes(built=built),
-                   "assembled.json": view_bytes(marker)})
+                   "assembled.json": view_bytes(marker), **DEFAULT_EXPORTS})
 
 
 def _picker(hub, pid="proj1"):

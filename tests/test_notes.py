@@ -34,7 +34,8 @@ not in a file of their own.
 
 import json
 
-from harness import good_build, meta_bytes, tar_gz, view_bytes
+from harness import (DEFAULT_EXPORTS, good_build, meta_bytes, tar_gz,
+                     view_bytes)
 
 from src.cadbuild import paths
 from src.cadbuild.errors import BuildError
@@ -58,6 +59,17 @@ from src.render import MAX_PARTS, MAX_TEXT
 # equality, and the asymmetry is argued there.
 
 
+# THE EXPORT THE CATALOGUE'S ONE PRINTABLE DECLARES — an archive member and a
+# pointer in the document at once, because the hub now requires both halves of
+# that statement: a `printable` declaring no files is a 422 and so is a
+# catalogue with no printable in it (`render._catalogue`). One name whatever the
+# keys are, and deliberately so: nothing in this file is about the export, so
+# `lid.stl` beside a key spelled `корпус` is a stand-in rather than a claim
+# about how a build names what it writes.
+PRINTABLE_EXPORT = "lid.stl"
+PRINTABLE_EXPORT_BYTES = b"solid lid\nendsolid lid\n"
+
+
 def publish_notes(hub, notes, commit="abc123"):
     """Push one build whose catalogue carries these notes, keyed by part.
 
@@ -69,14 +81,29 @@ def publish_notes(hub, notes, commit="abc123"):
     (`render._match_selection`), so a stand-in file naming the default pair
     would answer every case below with a mismatch instead of a verdict about
     the note.
+
+    THE FIRST KEY IS THE PRINTABLE AND THE REST ARE HARDWARE, which is forced
+    rather than chosen: every key used to be `printable` with nothing exported,
+    a record no build writes and one the hub refuses now. Which key carries the
+    export changes nothing any case below asks — `_catalogue` reads `note`
+    after `kind` and independently of it, so a note is answered the same on
+    either kind — while making them ALL printable would spend one pointer of
+    the catalogue's file budget per key, and
+    test_a_catalogue_bigger_than_the_ceiling_is_refused pushes MAX_PARTS of
+    them through here.
     """
-    parts = {key: {"kind": "printable", "note": note}
-             for key, note in notes.items()}
+    parts = {}
+    for index, (key, note) in enumerate(notes.items()):
+        parts[key] = (
+            {"kind": "printable", "files": {"stl": PRINTABLE_EXPORT},
+             "note": note} if index == 0
+            else {"kind": "hardware", "note": note})
     body = tar_gz({"meta.json": meta_bytes(
         parts=parts,
         views=[{"id": "assembled", "name": "assembled",
                 "file": "assembled.json", "parts": list(parts)}]),
-        "assembled.json": view_bytes(keys=tuple(parts))})
+        "assembled.json": view_bytes(keys=tuple(parts)),
+        PRINTABLE_EXPORT: PRINTABLE_EXPORT_BYTES})
     return hub.publish("proj1", commit, body)
 
 
@@ -159,6 +186,39 @@ def test_a_catalogue_that_is_not_an_object_is_refused(hub):
         assert not (hub.project_dir("proj1") / "abc123").exists()
 
 
+def test_a_catalogue_record_that_is_not_an_object_is_refused(hub):
+    """The map is an object; so is every ROW of it, and that was unwitnessed.
+
+    The case above asks the question of the catalogue as a whole. This asks it
+    of one entry — and until it was written nothing did: replacing the clause in
+    `render._catalogue` with `pass` left the entire suite green. What it costs
+    is not a laxer 201 but a 500, because the very next line is
+    `record.get("kind")` and a string has no `.get`. So the rule that turns a
+    malformed push into a 422 is the one being checked here, and the message is
+    read for that reason.
+
+    THE RECORD BESIDE IT IS A GOOD ONE, so the catalogue still has a printable
+    in it and the refusal cannot be "nothing to print" — the rule this document
+    would otherwise be answered by. `views` names only that good key, which is
+    what keeps `_view_parts` and `_match_selection` out of the way as well.
+    """
+    for bad in ("lid.stl", ["lid.stl"], 3, True, []):
+        body = tar_gz({
+            "meta.json": meta_bytes(
+                parts={"lid": {"kind": "printable",
+                               "files": {"stl": PRINTABLE_EXPORT}},
+                       "pin": bad},
+                views=[{"id": "assembled", "name": "assembled",
+                        "file": "assembled.json", "parts": ["lid"]}]),
+            "assembled.json": view_bytes(keys=("lid",)),
+            PRINTABLE_EXPORT: PRINTABLE_EXPORT_BYTES})
+        reply = hub.publish("proj1", "abc123", body)
+        assert reply.status_code == 422, (bad, reply.text)
+        assert (f"part 'pin' is {bad!r}, which is not an object"
+                in reply.json()["error"]), (bad, reply.text)
+        assert not (hub.project_dir("proj1") / "abc123").exists()
+
+
 def test_a_note_that_is_not_a_string_is_refused(hub):
     for bad in (42, ["M3x8"], {"text": "M3x8"}):
         assert "not a string" in refused(hub, {"lid": bad}), bad
@@ -181,7 +241,12 @@ def test_a_note_written_null_is_a_part_with_no_note(hub):
     """
     assert publish_notes(hub, {"lid": None}).status_code == 201
     served = hub.get("/project/proj1/abc123/meta.json").json()["parts"]
-    assert served["lid"] == {"kind": "printable"}
+    # Still an EXACT comparison, which is the whole point of it — the record has
+    # to carry no `note` key at all, not merely a falsy one. What it compares
+    # against grew the export `publish_notes` now has to declare for the hub to
+    # take the push (see PRINTABLE_EXPORT); nothing about the note changed.
+    assert served["lid"] == {"kind": "printable",
+                             "files": {"stl": PRINTABLE_EXPORT}}
 
 
 def test_a_note_longer_than_the_free_text_ceiling_is_refused(hub):
@@ -499,13 +564,19 @@ def test_an_empty_files_map_is_refused_exactly_as_an_empty_note_is(hub):
     `preview` is deliberately not a third case here: `""` is not a file the
     build declared, so `_check_declared_file` has always refused it.
     """
-    for record, fragment in (({"kind": "printable", "files": {}}, "empty `files`"),
-                             ({"kind": "printable", "note": ""}, "is empty")):
+    # THE NOTE CASE CARRIES A REAL `files`, and it has to: a printable that
+    # declares none is refused before the walk reaches `note` at all, so
+    # without it this half would be asserting the wrong verdict's message.
+    for record, fragment in (
+            ({"kind": "printable", "files": {}}, "empty `files`"),
+            ({"kind": "printable", "files": {"stl": PRINTABLE_EXPORT},
+              "note": ""}, "is empty")):
         body = tar_gz({"meta.json": meta_bytes(
             parts={"lid": record},
             views=[{"id": "assembled", "name": "assembled",
                     "file": "assembled.json", "parts": ["lid"]}]),
-            "assembled.json": view_bytes(keys=("lid",))})
+            "assembled.json": view_bytes(keys=("lid",)),
+            PRINTABLE_EXPORT: PRINTABLE_EXPORT_BYTES})
         reply = hub.publish("proj1", "abc123", body)
         assert reply.status_code == 422, reply.text
         assert fragment in reply.json()["error"], record
@@ -581,7 +652,8 @@ def test_a_note_that_is_falsy_and_not_a_string_is_still_refused(hub):
 def hub_refuses_meta(hub, commit, **fields):
     """Does a real push whose meta.json carries these fields get turned away?"""
     body = tar_gz({"meta.json": meta_bytes(**fields),
-                   "assembled.json": view_bytes()})
+                   "assembled.json": view_bytes(),
+                   **DEFAULT_EXPORTS})
     reply = hub.publish("proj1", commit, body)
     assert reply.status_code in (201, 422), reply.text
     return reply.status_code == 422

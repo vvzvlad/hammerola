@@ -202,11 +202,12 @@ def _leaves(node):
     `parts` is what decides it, here and in `render.check_view_file` and in the
     vendored viewer (`isShapeTree(shape) { return "parts" in shape; }`). Written
     out a third time rather than imported because the point is that all three
-    ask the same question.
+    ask the same question — which means asking it the same way: the PRESENCE of
+    the field, never `is None`, since a null `parts` is a group to the viewer
+    and reading it as a leaf is how a build publishes and never opens.
     """
-    children = node.get("parts")
-    if children is None:
+    if "parts" not in node:
         yield node
         return
-    for child in children:
+    for child in node["parts"]:
         yield from _leaves(child)

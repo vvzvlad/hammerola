@@ -13,7 +13,8 @@ import os
 import re
 
 import pytest
-from harness import good_build, meta_bytes, tar_gz, view_bytes
+from harness import (DEFAULT_EXPORTS, good_build, meta_bytes, tar_gz,
+                     view_bytes)
 
 from src.app import STATIC_DIR
 
@@ -238,7 +239,7 @@ def test_latest_serves_the_newest_build(hub):
     hub.publish("proj1", "aaa111", good_build("first"))
     hub.publish("proj1", "bbb222", tar_gz({
         "meta.json": meta_bytes(built="2026-08-22T10:00:00Z"),
-        "assembled.json": view_bytes("second")}))
+        "assembled.json": view_bytes("second"), **DEFAULT_EXPORTS}))
 
     served = hub.get("/project/proj1/latest/assembled.json").content
     assert served == view_bytes("second")
@@ -281,7 +282,10 @@ def test_a_preview_is_served_as_a_picture_and_not_as_a_download(hub):
     """
     png = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
     hub.publish("proj1", "abc123", good_build(
-        parts={"lid": {"kind": "printable",
+        # `files` beside the picture because a printable that exports nothing
+        # is a 422 (`render._catalogue`); `lid.stl` is a member `good_build`
+        # already ships. What this test is about is the PICTURE, two lines down.
+        parts={"lid": {"kind": "printable", "files": {"stl": "lid.stl"},
                        "preview": "assembled_preview.png"}},
         views=[{"id": "assembled", "name": "assembled",
                 "file": "assembled.json", "parts": ["lid"]}],
@@ -578,7 +582,10 @@ def test_a_card_counts_the_printed_parts_and_not_the_bought_ones(hub):
     something plausible and wrong, with nobody told.
     """
     hub.publish("proj1", "abc123", good_build(
-        parts={"lid": {"kind": "printable"},
+        # The printable owns an export because every printable does — the
+        # count under test is of RECORDS by kind, and `lid.stl` is a member
+        # `good_build` already ships.
+        parts={"lid": {"kind": "printable", "files": {"stl": "lid.stl"}},
                "screw": {"kind": "hardware"},
                "hand": {"kind": "mock"}},
         views=[{"id": "assembled", "name": "assembled",

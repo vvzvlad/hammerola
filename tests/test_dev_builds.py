@@ -23,13 +23,14 @@ overwrites it. Four claims carry it and all four are tested here:
 import json
 import os
 
-from harness import good_build, meta_bytes, tar_gz, view_bytes
+from harness import DEFAULT_EXPORTS, good_build, meta_bytes, tar_gz, view_bytes
 
 
 def _build(marker, built="2026-08-21T04:16:00Z"):
     return tar_gz({
         "meta.json": meta_bytes(built=built),
         "assembled.json": view_bytes(marker),
+        **DEFAULT_EXPORTS,
     })
 
 
@@ -119,13 +120,13 @@ def test_a_changed_payload_replaces_the_slot_whole(hub):
     hub.publish_dev("proj1", tar_gz({
         "meta.json": meta_bytes(views=[{"id": "a", "name": "a",
                                         "file": "old.json", "parts": ["lid"]}]),
-        "old.json": view_bytes("v1", keys=("lid",))}))
+        "old.json": view_bytes("v1", keys=("lid",)), **DEFAULT_EXPORTS}))
     assert hub.get("/project/proj1/dev/old.json").status_code == 200
 
     hub.publish_dev("proj1", tar_gz({
         "meta.json": meta_bytes(views=[{"id": "a", "name": "a",
                                         "file": "new.json", "parts": ["lid"]}]),
-        "new.json": view_bytes("v2", keys=("lid",))}))
+        "new.json": view_bytes("v2", keys=("lid",)), **DEFAULT_EXPORTS}))
 
     assert hub.get("/project/proj1/dev/new.json").content == view_bytes(
         "v2", keys=("lid",))
@@ -366,7 +367,7 @@ def test_a_local_push_needs_the_token_like_any_other(hub):
 def test_a_broken_local_archive_is_refused_like_any_other(hub):
     """Validation is the ordinary path: the route only decides where it lands."""
     assert hub.publish_dev("proj1", b"not a tarball").status_code == 422
-    no_view = tar_gz({"meta.json": meta_bytes(views=[])})
+    no_view = tar_gz({"meta.json": meta_bytes(views=[]), **DEFAULT_EXPORTS})
     assert hub.publish_dev("proj1", no_view).status_code == 422
     assert _dirs_on_disk(hub, "proj1") == []
 
@@ -380,7 +381,8 @@ def test_a_refused_push_leaves_the_slot_showing_what_it_had(hub):
     hub.publish_dev("proj1", _build("good"))
     assert hub.publish_dev("proj1", b"not a tarball").status_code == 422
     assert hub.publish_dev(
-        "proj1", tar_gz({"meta.json": meta_bytes(views=[])})).status_code == 422
+        "proj1", tar_gz({"meta.json": meta_bytes(views=[]),
+                         **DEFAULT_EXPORTS})).status_code == 422
 
     assert hub.get("/project/proj1/dev/assembled.json").content == view_bytes("good")
     assert _dirs_on_disk(hub, "proj1") == ["dev"]

@@ -531,6 +531,30 @@ def _catalogue(raw: dict, files: dict) -> dict:
     changed is the verdict on the push, not what is served. `kind` is the one
     field this does not apply to, because it is not optional: `kind: null` is
     refused with every other non-kind.
+
+    A PRINTABLE CARRIES FILES, AND THE CATALOGUE CARRIES A PRINTABLE. Those are
+    the two claims this side makes about what a BUILD can produce, and both
+    arrived late because their MIRROR IMAGES were already here: a non-printable
+    that declares files is a 422 four lines from the printable that declared
+    none and was accepted, and "the catalogue is non-empty" stood next to
+    "something in it is printed" without it. Both are checked on the build side
+    and can be read there: `cadbuild.printables.export_printables` writes STEP,
+    STL and 3MF for EVERY printable and `cadbuild.build` files them under the
+    record, so a printable with no `files` is a record no build wrote; and
+    `cadbuild.parts.read_catalogue` refuses a catalogue whose every entry is
+    hardware or a mock, in as many words ("the catalogue has nothing to
+    print").
+
+    WHAT IS DELIBERATELY NOT ASKED HERE, so that nobody completes the symmetry
+    later: the build ALSO guarantees a view called `assembled` and an
+    `overview` on it (`cadbuild.views`), and neither is required by this side.
+    `assembled` is an id the BUILD half invented; the serving half knows
+    nothing about a view beyond its `id`, its `file` and the keys it selects,
+    and demanding a particular id would write the build half's vocabulary into
+    the receiving side — a coupling that does not exist today and costs more
+    than the hole it closes. The two rules above need no such vocabulary:
+    `printable` is a word this module already spells (`KIND_PRINTABLE`) and
+    `files` is a field it already reads.
     """
     catalogue = raw.get("parts")
     if not isinstance(catalogue, dict) or not catalogue:
@@ -570,7 +594,20 @@ def _catalogue(raw: dict, files: dict) -> dict:
         entry = {"kind": kind}
 
         declared = record.get("files")
-        if declared is not None:
+        if declared is None:
+            # THE OTHER HALF OF THE CLAUSE BELOW, and it was missing while that
+            # clause stood four lines away: a build exports STEP, STL and 3MF
+            # for every printable it finds, so "printable" and "has files" are
+            # one statement made twice, and a record making only half of it is
+            # one no build wrote. Refused for the reason the other half is: the
+            # browser draws a record BY its kind, so a printable with nothing to
+            # download is a row promising buttons that are not there.
+            if kind == KIND_PRINTABLE:
+                raise ValueError(
+                    f"{where} is {kind!r} and declares no files; every "
+                    f"printable is exported, so a printable with nothing "
+                    f"exported is a record no build writes")
+        else:
             # A kind that ships nothing may not name a file, and the pair is
             # refused rather than half-read: `kind` is how the browser decides
             # whether to offer a download at all, so a bought screw carrying an
@@ -624,6 +661,20 @@ def _catalogue(raw: dict, files: dict) -> dict:
             entry["note"] = note
 
         read[key] = entry
+
+    # THE MIRROR OF `read_catalogue` ON THE BUILD SIDE, which refuses a
+    # catalogue whose every entry is hardware or a mock. A model project exists
+    # to produce a part, so a document describing nothing but bought screws and
+    # scenery was not written by a build of one — and the front page would list
+    # it as a build with nothing in it to print. Checked AFTER the walk and not
+    # before it, because `kind` is what answers it and the walk is what
+    # validates `kind`; a pre-pass would be a second reading of the same field,
+    # free to disagree with this one about what counts.
+    if not any(entry["kind"] == KIND_PRINTABLE for entry in read.values()):
+        raise ValueError(
+            f"the catalogue has nothing to print: not one of its "
+            f"{len(read)} entries is {KIND_PRINTABLE!r}, and a build of a "
+            f"model produces at least one part")
     return read
 
 
@@ -700,6 +751,20 @@ def check_view_file(path: Path, view_id: str, catalogue: dict) -> set:
     part a reader can find nothing about — the reconstruction-by-name the
     catalogue exists to end.
 
+    IT IS THE PRESENCE OF THE FIELD AND NOT ITS VALUE, which is the viewer's
+    rule quoted verbatim above: `"parts" in shape`. Asking `is None` instead
+    made `{"key": "lid", "parts": null}` a LEAF here — a document this accepted,
+    while the viewer read the same node as a group and ran
+    `for (const shape of shapes.parts)` over a null. That is the failure issue
+    #53 is about, arriving through the other door: a 201 into an immutable
+    directory under a year of cache, and a build that never opens. Both
+    spellings agree on every node a build writes and disagree on exactly one
+    hand-made value, so the cheap way to keep them agreeing is to ask the
+    question the same way. `null` now reaches the list check below and is
+    refused in its words. `VIEW_KEPT_KEYS` is what makes the presence readable
+    at all: the parser drops the fields not on it, and `parts` is on it, so a
+    key written in the file is a key in the node here.
+
     EVERY `key` IN THE FILE GOES INTO THE SET, wherever it sits, because a key
     is a claim about what this view shows and this walk is not the place to
     decide which nodes a future viewer will read one from. A group carrying one
@@ -741,7 +806,10 @@ def check_view_file(path: Path, view_id: str, catalogue: dict) -> set:
         if node.get("color") is not None:
             _check_color(node["color"], f"part {name!r} in {where}")
         # Read before the key is judged, because it is what says whether this
-        # node is a leaf at all — the same question the descent below asks.
+        # node is a leaf at all — the same question the descent below asks, and
+        # the one the vendored viewer asks as `"parts" in shape`. PRESENCE, not
+        # value: see the docstring on why `null` may not be read as "leaf".
+        has_parts = "parts" in node
         parts = node.get("parts")
         key = node.get("key")
         if key is not None:
@@ -751,12 +819,12 @@ def check_view_file(path: Path, view_id: str, catalogue: dict) -> set:
                     f"{where} shows a part keyed {key!r}, which the `parts` "
                     f"catalogue does not declare")
             seen.add(key)
-        elif parts is None:
+        elif not has_parts:
             raise ValueError(
                 f"{where} has a leaf with no `key`: a node with no `parts` "
                 f"under it is one part, and every part names the `parts` "
                 f"catalogue record it is of")
-        if parts is None:
+        if not has_parts:
             continue
         if not isinstance(parts, list):
             raise ValueError(f"{where} has a non-list `parts`")

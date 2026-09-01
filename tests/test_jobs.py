@@ -30,9 +30,9 @@ from pathlib import Path
 
 import httpx
 import pytest
-from harness import (TOKEN, PublishReply, copying_builder, failing_builder,
-                     good_build, meta_bytes, start_hub, stop_hub, tar_gz,
-                     view_bytes)
+from harness import (DEFAULT_EXPORTS, TOKEN, PublishReply, copying_builder,
+                     failing_builder, good_build, meta_bytes, start_hub,
+                     stop_hub, tar_gz, view_bytes)
 from loguru import logger
 
 from src import jobs as jobs_module
@@ -150,7 +150,11 @@ def _staged(store, pid, commit, marker):
     staging.mkdir()
     (staging / "meta.json").write_bytes(meta_bytes())
     (staging / "assembled.json").write_bytes(view_bytes(marker))
-    return staging, ("meta.json", "assembled.json")
+    # The exports the default catalogue names: a printable that declares none is
+    # a 422, so a "finished build's output" that left them out is not one.
+    for name, data in DEFAULT_EXPORTS.items():
+        (staging / name).write_bytes(data)
+    return staging, ("meta.json", "assembled.json", *DEFAULT_EXPORTS)
 
 
 class _CountedHandle:
@@ -398,7 +402,8 @@ def test_the_build_gets_the_sources_and_a_separate_output_directory(hub_factory)
     seen = recorder.seen
     assert seen["pid"] == "proj1"
     assert seen["project_dir"] != seen["out_dir"]
-    assert seen["sources"] == ["assembled.json", "meta.json"]
+    assert seen["sources"] == sorted(
+        ["assembled.json", "meta.json", *DEFAULT_EXPORTS])
     # The sources sit at the root of the data directory, under a dot name the
     # file server refuses; the output sits inside the project, because that is
     # where it has to be for the publish to be one rename.
@@ -1752,6 +1757,8 @@ def test_a_task_a_worker_already_took_is_not_torn_down_by_the_stop(tmp_path):
     sources.mkdir(parents=True)
     (sources / "meta.json").write_bytes(meta_bytes())
     (sources / "assembled.json").write_bytes(view_bytes("a"))
+    for name, data_bytes in DEFAULT_EXPORTS.items():
+        (sources / name).write_bytes(data_bytes)
     record = jobs.create("proj1", "c2")
 
     try:

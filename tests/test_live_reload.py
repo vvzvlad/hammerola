@@ -20,7 +20,7 @@ tests/test_ui_source.py; `_key` below is pinned against the interface's own
 import re
 from pathlib import Path
 
-from harness import meta_bytes, tar_gz, view_bytes
+from harness import DEFAULT_EXPORTS, meta_bytes, tar_gz, view_bytes
 
 from src.store import POINTER_NAMES
 
@@ -29,7 +29,7 @@ HUB_JS = Path(__file__).resolve().parent.parent / "ui" / "src" / "hub.js"
 
 def _build(marker, built="2026-08-21T04:16:00Z"):
     return tar_gz({"meta.json": meta_bytes(built=built),
-                   "assembled.json": view_bytes(marker)})
+                   "assembled.json": view_bytes(marker), **DEFAULT_EXPORTS})
 
 
 def _key(meta):
