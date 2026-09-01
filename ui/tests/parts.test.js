@@ -208,9 +208,17 @@ describe('treeFromShapes', () => {
     // a claim about what the view shows and that walk is not the place to
     // decide which nodes carry one. So a hand-made file with a key on a group
     // is a document the hub ACCEPTS, and what refuses to let it make an
-    // assembly answer for a catalogue record is `treeFromShapes` here (see
-    // `indexTree` in hub.js: one place decides, and it is the one reading the
-    // view file).
+    // assembly answer for a catalogue record is `treeFromShapes` here — the
+    // group branch returns before the line that reads `key`, so a group leaves
+    // this walk carrying no such field at all. THE SUBJECT IS THIS FUNCTION AND
+    // NOT `indexTree`, which is the distinction hub.js's own note on `key`
+    // exists to draw: that walk copies `key` across on whatever node it is
+    // handed, group or leaf, and enforces nothing — "THIS FIELD ENFORCES
+    // NOTHING AND COPIES WHAT IT IS GIVEN", in its words. What makes copying it
+    // safe is that on a tree which came through HERE a group has none to copy;
+    // the only way to hand that walk a keyed group is to build the tree BY
+    // HAND, which `ui/tests/repeats.test.js` does, and that walk reports the
+    // key it was given.
     const [first, second, ...others] = keyed().parts
     const nested = {
       ...assembled,
@@ -313,6 +321,19 @@ describe('applyHidden', () => {
     const [written] = viewer.setStates.mock.calls[0]
     for (const path of PATHS) expect(written[path]).toEqual([1, 1])
   })
+
+  it('hides SEVERAL named leaves, which is how one row hides five copies', () => {
+    // The row `pin ×5` is one eye over five solids, and the interface hands
+    // over all five paths (hub.indexTree). Nothing here had to change for that
+    // — the list was always a list — and this is what says so.
+    const viewer = fakeViewer({ states: statesFor(PATHS) })
+    const wanted = PATHS.slice(0, 2)
+    applyHidden(viewer, wanted)
+
+    const [written] = viewer.setStates.mock.calls[0]
+    for (const path of wanted) expect(written[path]).toEqual([0, 0])
+    for (const path of PATHS.slice(2)) expect(written[path]).toEqual([1, 1])
+  })
 })
 
 describe('applyGhost', () => {
@@ -337,6 +358,15 @@ describe('applyGhost', () => {
     for (const path of PATHS) expect(groups[path].transparent).toBe(true)
   })
 
+  it('ghosts SEVERAL named leaves, the same way hiding takes several', () => {
+    const { groups, viewer } = scene()
+    const wanted = PATHS.slice(0, 2)
+    applyGhost(viewer, wanted)
+
+    for (const path of wanted) expect(groups[path].transparent).toBe(true)
+    for (const path of PATHS.slice(2)) expect(groups[path].transparent).toBe(false)
+  })
+
   it('turns it off again, and asks for one re-render rather than one per part', () => {
     const { groups, viewer } = scene()
     applyGhost(viewer, [PATHS[0]])
@@ -352,7 +382,7 @@ describe('applySelected', () => {
   it('clears the previous highlight before painting the new one', () => {
     const viewer = fakeViewer({ states: statesFor(PATHS) })
     const highlight = internals(viewer).nestedGroup.highlight
-    applySelected(viewer, PATHS[1])
+    applySelected(viewer, [PATHS[1]])
 
     expect(highlight.clear).toHaveBeenCalled()
     expect(highlight.selectSolid).toHaveBeenCalledWith(PATHS[1], true)
@@ -361,7 +391,34 @@ describe('applySelected', () => {
   it('clears and paints nothing when the selection goes away', () => {
     const viewer = fakeViewer({ states: statesFor(PATHS) })
     const highlight = internals(viewer).nestedGroup.highlight
-    applySelected(viewer, null)
+    applySelected(viewer, [])
+
+    expect(highlight.clear).toHaveBeenCalled()
+    expect(highlight.selectSolid).not.toHaveBeenCalled()
+  })
+
+  it('paints EVERY path it is given, which is how one row lights up five copies',
+    () => {
+      // The row `pin ×5` is one selection over five solids (hub.indexTree), so
+      // the highlight has to be painted five times into the texture `clear()`
+      // just reset.
+      const viewer = fakeViewer({ states: statesFor(PATHS) })
+      const highlight = internals(viewer).nestedGroup.highlight
+      applySelected(viewer, PATHS)
+
+      expect(highlight.clear).toHaveBeenCalledTimes(1)
+      expect(highlight.selectSolid.mock.calls.map(([path]) => path)).toEqual(PATHS)
+      // One re-render for the lot, not one per copy.
+      expect(viewer.update).toHaveBeenCalledTimes(1)
+    })
+
+  it('takes a bare path as NO selection rather than as a list of one', () => {
+    // A sender still on the old shape has to fail visibly: read as a list of
+    // one it would light up the first copy of a five-copy row and leave the
+    // other four dark, with nothing anywhere saying why.
+    const viewer = fakeViewer({ states: statesFor(PATHS) })
+    const highlight = internals(viewer).nestedGroup.highlight
+    applySelected(viewer, PATHS[1])
 
     expect(highlight.clear).toHaveBeenCalled()
     expect(highlight.selectSolid).not.toHaveBeenCalled()
@@ -376,23 +433,37 @@ describe('movePart and resetMoves', () => {
     return { home, groups, viewer, vp: fakeViewport(viewer) }
   }
 
+  /** The same, with every path movable and each one parked somewhere else.
+   *
+   *  HOMES DELIBERATELY APART: five copies of a part are five solids standing in
+   *  five places, so a move that read one home and wrote it to all of them would
+   *  stack them — and would pass against a scene where every home is `[0,0,0]`.
+   */
+  function crowd() {
+    const homes = PATHS.map((path, at) => [at, at * 2, at * 3])
+    const groups = Object.fromEntries(
+      PATHS.map((path, at) => [path, fakeGroup(homes[at])]))
+    const viewer = fakeViewer({ states: statesFor(PATHS), groups })
+    return { homes, groups, viewer, vp: fakeViewport(viewer) }
+  }
+
   it('offsets a part from where the BUILD put it, not from the origin', () => {
     const { home, groups, vp } = scene()
-    expect(movePart(vp, PATHS[0], [10, 0, 0])).toBe(true)
+    expect(movePart(vp, [PATHS[0]], [10, 0, 0])).toBe(true)
     expect([groups[PATHS[0]].position.x, groups[PATHS[0]].position.y,
             groups[PATHS[0]].position.z]).toEqual([home[0] + 10, home[1], home[2]])
   })
 
   it('remembers home on the FIRST touch, so a second move is not cumulative', () => {
     const { home, groups, vp } = scene()
-    movePart(vp, PATHS[0], [10, 0, 0])
-    movePart(vp, PATHS[0], [4, 0, 0])
+    movePart(vp, [PATHS[0]], [10, 0, 0])
+    movePart(vp, [PATHS[0]], [4, 0, 0])
     expect(groups[PATHS[0]].position.x).toBe(home[0] + 4)
   })
 
   it('puts everything back exactly where the build had it', () => {
     const { home, groups, vp } = scene()
-    movePart(vp, PATHS[0], [10, -5, 2])
+    movePart(vp, [PATHS[0]], [10, -5, 2])
     resetMoves(vp)
 
     const at = groups[PATHS[0]].position
@@ -402,13 +473,65 @@ describe('movePart and resetMoves', () => {
 
   it('refuses a delta that is not three finite numbers', () => {
     const { vp } = scene()
-    expect(movePart(vp, PATHS[0], [1, NaN, 3])).toBe(false)
+    expect(movePart(vp, [PATHS[0]], [1, NaN, 3])).toBe(false)
     expect(vp.moved.size).toBe(0)
   })
 
   it('says so when the part cannot be moved at all', () => {
     const { vp } = scene()
     expect(movableGroup(vp.viewer, '/Group/not a part')).toBeNull()
-    expect(movePart(vp, '/Group/not a part', [1, 1, 1])).toBe(false)
+    expect(movePart(vp, ['/Group/not a part'], [1, 1, 1])).toBe(false)
+  })
+
+  // -- a row that stands for several copies (issue #75) ------------------------
+
+  it('moves EVERY path by the one delta, each from its own home', () => {
+    const { homes, groups, vp } = crowd()
+    expect(movePart(vp, PATHS, [10, -5, 2])).toBe(true)
+
+    PATHS.forEach((path, at) => {
+      const now = groups[path].position
+      expect([now.x, now.y, now.z], `copy ${at} did not travel from its own home`)
+        .toEqual([homes[at][0] + 10, homes[at][1] - 5, homes[at][2] + 2])
+    })
+    // One re-render for the row, not one per copy.
+    expect(vp.viewer.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('puts every copy back, because reset walks what was moved', () => {
+    const { homes, groups, vp } = crowd()
+    movePart(vp, PATHS, [10, -5, 2])
+    expect(vp.moved.size).toBe(PATHS.length)
+    resetMoves(vp)
+
+    PATHS.forEach((path, at) => {
+      const now = groups[path].position
+      expect([now.x, now.y, now.z], `copy ${at} was left where it was dragged`)
+        .toEqual(homes[at])
+    })
+    expect(vp.moved.size).toBe(0)
+  })
+
+  it('moves NOTHING when one path of the row cannot be moved', () => {
+    // Half a row moved is two copies of one part standing in different places
+    // while the chip calls it a move of the row.
+    const { homes, groups, vp } = crowd()
+    const stranger = '/Group/not a part'
+    expect(movePart(vp, [PATHS[0], stranger, PATHS[1]], [10, 0, 0])).toBe(false)
+
+    PATHS.forEach((path, at) => {
+      const now = groups[path].position
+      expect([now.x, now.y, now.z], `copy ${at} moved anyway`).toEqual(homes[at])
+    })
+    expect(vp.moved.size).toBe(0)
+  })
+
+  it('refuses an empty list and a bare path alike', () => {
+    // The bare path is the old signature: taken as a list it would iterate the
+    // STRING and ask for a group called `/`.
+    const { vp } = crowd()
+    expect(movePart(vp, [], [10, 0, 0])).toBe(false)
+    expect(movePart(vp, PATHS[0], [10, 0, 0])).toBe(false)
+    expect(vp.moved.size).toBe(0)
   })
 })

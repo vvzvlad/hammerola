@@ -275,7 +275,7 @@ export function fakeViewport(viewer, state = {}) {
   return {
     viewer,
     state: {
-      hidden: [], ghost: [], selected: null,
+      hidden: [], ghost: [], selected: [],
       cut: false, cutOffset: 0, cutFlip: false, pins: [],
       ...state,
     },

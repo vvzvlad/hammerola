@@ -35,13 +35,13 @@ vi.mock('../src/viewport/picking.js', async (importOriginal) => ({
 }))
 
 import { HmrViewport } from '../src/viewport/element.js'
-import { EVENT_FACE, EVENT_MENU, EVENT_PICK } from '../src/viewport/events.js'
+import { EVENT_FACE, EVENT_MENU, EVENT_MOVED, EVENT_PICK } from '../src/viewport/events.js'
 import { internals } from '../src/viewport/internals.js'
 import { CLICK_PX } from '../src/viewport/options.js'
 import { faceNormalAt, pickEntity } from '../src/viewport/picking.js'
 import { placeSectionPlane, sectionOffset } from '../src/viewport/section.js'
 import { installTools } from '../src/viewport/tools.js'
-import { fakeViewer, fakeViewport } from './fakes.js'
+import { fakeGroup, fakeViewer, fakeViewport } from './fakes.js'
 
 const teardowns = []
 
@@ -58,8 +58,7 @@ const teardowns = []
  *     HTMLElement, but nothing built it through the DOM, so the inherited one
  *     would throw.
  */
-function toolViewport(state = {}) {
-  const viewer = fakeViewer()
+function toolViewport(state = {}, viewer = fakeViewer()) {
   const vp = Object.create(HmrViewport.prototype)
   Object.assign(vp, fakeViewport(viewer, state))
   vp.holdActive = false
@@ -370,5 +369,166 @@ describe('where the section drag says the plane ended up', () => {
 
     expect(emitted(vp)).not.toContain(EVENT_FACE)
     expect(vp.state.cutOffset).toBe(0)
+  })
+})
+
+describe('what a drag with the move tool takes with it', () => {
+  // A ROW MAY STAND FOR SEVERAL SOLIDS (issue #75): the interface collapses
+  // adjacent copies of one part into `pin ×5` and sends every one of their paths
+  // as the selection, so a drag moves the row rather than the first of it. The
+  // paths are the fake scene's own groups; the camera is the same one the
+  // section drag above is written against.
+
+  const PINS = ['/Group/pin', '/Group/pin(2)']
+
+  /** The move tool, armed, over a scene of three movable solids. */
+  function moving(selected) {
+    const groups = Object.fromEntries(
+      [...PINS, '/Group/lid'].map((path) => [path, fakeGroup()]))
+    const viewer = fakeViewer({ groups })
+    const vp = toolViewport({ tool: 'move', selected }, viewer)
+    return { groups, vp }
+  }
+
+  /** Where a group ended up, as three numbers. */
+  const at = (group) => [group.position.x, group.position.y, group.position.z]
+
+  /** A press on the canvas and a drag of 200 px across it. */
+  const dragFrom = (vp) => {
+    pointerDown(vp, [100, 100])
+    pointerMove([300, 100])
+  }
+
+  it('takes every path of the selected row, from one grab on one of them', () => {
+    const { groups, vp } = moving(PINS)
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+    dragFrom(vp)
+
+    expect(vp.moved.size, 'the second copy stayed behind').toBe(2)
+    expect(at(groups[PINS[1]])).toEqual(at(groups[PINS[0]]))
+    expect(at(groups[PINS[0]])).not.toEqual([0, 0, 0])
+    expect(at(groups['/Group/lid']), 'a part outside the row was dragged too')
+      .toEqual([0, 0, 0])
+  })
+
+  it('reports how many went, so the chip does not claim the whole row', () => {
+    const { vp } = moving(PINS)
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+    dragFrom(vp)
+
+    const [first] = details(vp, EVENT_MOVED)
+    expect(first.count).toBe(2)
+    expect(first.id).toBe(PINS[0])
+  })
+
+  it('takes the one part that was grabbed when nothing is selected', () => {
+    // The viewport is told which paths are selected and knows nothing about the
+    // rest, so a grab out of the blue moves what was grabbed. The pick this
+    // press emits is what puts the whole row under the next drag.
+    const { groups, vp } = moving([])
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+    dragFrom(vp)
+
+    expect(vp.moved.size).toBe(1)
+    expect(at(groups[PINS[1]])).toEqual([0, 0, 0])
+    expect(details(vp, EVENT_MOVED)[0].count).toBe(1)
+    expect(emitted(vp)).toContain(EVENT_PICK)
+  })
+
+  it('moves nothing when the grab lands on a part outside the selection', () => {
+    const { groups, vp } = moving(PINS)
+    pickEntity.mockReturnValue({ id: '/Group/lid', name: 'lid', point: [0, 0, 0] })
+    const event = pointerDown(vp, [100, 100])
+    pointerMove([300, 100])
+
+    expect(vp.moved.size).toBe(0)
+    for (const path of [...PINS, '/Group/lid']) {
+      expect(at(groups[path]), `${path} moved anyway`).toEqual([0, 0, 0])
+    }
+    expect(emitted(vp)).not.toContain(EVENT_MOVED)
+    // And the press DEGRADED rather than being swallowed: it was left with the
+    // trackball, so the drag rotates the model instead of doing nothing at all.
+    expect(event.preventDefault).not.toHaveBeenCalled()
+  })
+
+  describe('a second drag, after one copy went on its own', () => {
+    // THE ORDINARY WAY the copies of a row end up standing apart — the other is
+    // `movePart` throwing half way down its list, which is a failure rather than
+    // a gesture (see the anchor note in `tools.js`). With nothing
+    // selected a grab drags the copy it hit, and the pick that same press emits
+    // selects the whole row — so the very next drag is a drag of all of it. The
+    // second gesture applies one delta to every path from its OWN home, so they
+    // converge whatever happens here; what the anchor decides is WHICH of them
+    // arrives at the meeting point by jumping.
+
+    /** The first gesture: one copy, dragged alone out of an empty selection. */
+    function droveOneCopy(grabbed) {
+      const { groups, vp } = moving([])
+      pickEntity.mockReturnValue({ id: grabbed, name: 'pin', point: [0, 0, 0] })
+      dragFrom(vp)
+      pointerUp([300, 100])
+
+      const [first] = details(vp, EVENT_MOVED)
+      expect(first.count, 'the first gesture took more than the grabbed copy')
+        .toBe(1)
+      expect(first.delta.some((v) => v !== 0), 'it moved nowhere').toBe(true)
+      // What the interface does with that pick, spelled out: the row is
+      // selected now.
+      vp.state = { ...vp.state, selected: PINS }
+      return { groups, vp, first }
+    }
+
+    /** The delta of the last `hmr:moved` that went out. */
+    const lastDelta = (vp) => details(vp, EVENT_MOVED).pop().delta
+
+    it('leaves the grabbed copy where it was and brings the row to it', () => {
+      // The reader keeps hold of the SECOND copy — the one carrying the offset
+      // — so it must not snap back towards home under the cursor. The same
+      // travel a second time therefore lands it at twice the first delta, which
+      // is exactly what a jump home would not do.
+      const { groups, vp, first } = droveOneCopy(PINS[1])
+      expect(at(groups[PINS[0]]), 'the sibling came along on the first drag')
+        .toEqual([0, 0, 0])
+
+      dragFrom(vp)
+
+      const delta = lastDelta(vp)
+      expect(delta).toEqual(first.delta.map((v) => v * 2))
+      expect(at(groups[PINS[1]]), 'the copy under the hand jumped').toEqual(delta)
+      expect(at(groups[PINS[0]]), 'the row did not close up').toEqual(delta)
+    })
+
+    it('does the same when the grabbed copy is the row\'s first', () => {
+      // The other side of the rule, and the case where the anchor and the
+      // `wanted[0]` it falls back to are the same path — so this one cannot
+      // fail on that regression, and the test above is what does. It is here
+      // because "the copy under the hand" has to hold whichever copy that is:
+      // an anchor read off the END of the list passes the test above — where
+      // the end and the grabbed copy are the same path — and fails this one.
+      const { groups, vp, first } = droveOneCopy(PINS[0])
+
+      dragFrom(vp)
+
+      const delta = lastDelta(vp)
+      expect(delta).toEqual(first.delta.map((v) => v * 2))
+      expect(at(groups[PINS[0]]), 'the copy under the hand jumped').toEqual(delta)
+      expect(at(groups[PINS[1]])).toEqual(delta)
+    })
+  })
+
+  it('refuses the whole row when one copy of it is not in the scene', () => {
+    // All or nothing: half a row moved is two copies of one part standing in
+    // different places under a chip that calls it a move of the row. Refused at
+    // the PRESS, which is what leaves the gesture to the trackball — refusing it
+    // in `movePart` alone would arm a drag that then quietly does nothing.
+    const { groups, vp } = moving([...PINS, '/Group/pin(3)'])
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+    const event = pointerDown(vp, [100, 100])
+    pointerMove([300, 100])
+
+    expect(vp.moved.size).toBe(0)
+    for (const path of PINS) expect(at(groups[path])).toEqual([0, 0, 0])
+    expect(emitted(vp)).not.toContain(EVENT_MOVED)
+    expect(event.preventDefault).not.toHaveBeenCalled()
   })
 })

@@ -325,22 +325,103 @@ export function buildKey(meta) {
 }
 
 // -- the part tree ----------------------------------------------------------
-// It arrives on `hmr:model` as `{id, name, color, children?, known?}` nested as
-// deep as the model nests — the shape `treeFromShapes` builds from the pushed
-// view file. There is no flat list of nodes anywhere and there is not going to
+// It arrives on `hmr:model` as `{id, name, color, children?, key?, known?}`
+// nested as deep as the model nests — the shape `treeFromShapes` builds from
+// the pushed view file; `children` is a group's own field and `key`/`known` are
+// a leaf's. There is no flat list of nodes anywhere and there is not going to
 // be one: this IS the assembly structure, and reading it is a walk.
 
 /** Same ceiling the hub refuses a push over (render.MAX_VIEW_DEPTH). */
 const MAX_DEPTH = 64;
 
 /**
+ * The catalogue key of a raw LEAF, or `null` for everything else.
+ *
+ * A group answers `null` whatever it carries: an assembly is not a part, so two
+ * adjacent groups are never "the same thing twice" however their keys read.
+ *
+ * THIS IS NOT "a group has no key" BEING ENFORCED A SECOND TIME, and `indexTree`
+ * below explains why the two must not be collapsed into one. The key that walk
+ * reports outward is whatever THE TREE IT WAS HANDED carried, untouched — which
+ * is not the same as what the view file carried, since `treeFromShapes` never
+ * puts one on a group on the way here. This function settles ONE local question
+ * — may these two siblings draw as one row — and answers it `no` for groups on
+ * its own account, rather than by disbelieving what it was given.
+ */
+const leafKey = (raw) => (
+  raw && typeof raw === 'object' && !Array.isArray(raw.children)
+    && typeof raw.key === 'string' && raw.key ? raw.key : null);
+
+/**
+ * Two adjacent siblings the tree draws as ONE row: the same part, twice.
+ *
+ * THE KEY IS THE IDENTITY and the name is not consulted at all — the
+ * tessellator names the repeats apart (`pin`, `pin(2)`) precisely so the paths
+ * stay unique, so a comparison of names would find no repeats anywhere.
+ *
+ * `known` HAS TO AGREE, and that is the one thing here beyond "same key". A row
+ * is a promise about what its eye and its ghost square act on, and `known` is
+ * exactly the flag `treeFromShapes` sets false on a leaf "nothing can be done
+ * to"; a row saying `pin ×5` while two of the five are unreachable would break
+ * that promise silently. Kept apart, each row means what `known` has always
+ * meant on this side — the `?` drawn against it in the meta column — and
+ * neither row lies about its count.
+ */
+const repeats = (a, b) => {
+  const key = leafKey(a);
+  return key !== null && key === leafKey(b)
+    && (a.known !== false) === (b.known !== false);
+};
+
+/**
+ * Raw siblings grouped into the rows they draw as: a run of repeats is one row.
+ *
+ * ADJACENT ONLY, and that is a decision rather than a shortcut (issue #75). A
+ * view's groups are the author's own structure, so two pins in `housing` and one
+ * in `fasteners` are `pin ×2` in the first and `pin` in the second — pulling
+ * them into a single row would answer a question about the whole build in a
+ * place that is describing one group.
+ */
+const runsOf = (children) => {
+  const runs = [];
+  children.forEach((raw, at) => {
+    const run = runs.length ? runs[runs.length - 1] : null;
+    if (run && repeats(run[run.length - 1].raw, raw)) run.push({ raw, at });
+    else runs.push([{ raw, at }]);
+  });
+  return runs;
+};
+
+/**
  * The viewport's tree, indexed so rows can be rendered and addressed.
  *
- * Returns `{nodes, roots, leaves}`: a Map of id -> node, the ids at the top
- * level (the viewport sends one root), and every leaf id in document order. A
- * node carries `leaves`, the ids of the solids underneath it, and that list is
- * what every group-level action is expressed in — hiding a node means hiding ITS
- * LEAVES, never the node id.
+ * Returns `{nodes, roots, leaves}`: a Map of PATH -> the row that stands for it,
+ * the ids at the top level (the viewport sends one root), and every leaf path in
+ * document order. A node carries `leaves`, the ids of the solids underneath it,
+ * and that list is what every group-level action is expressed in — hiding a node
+ * means hiding ITS LEAVES, never the node id.
+ *
+ * A ROW MAY STAND FOR SEVERAL SOLIDS EVEN WHEN IT IS NOT A GROUP (issue #75):
+ * adjacent siblings that are the same part collapse into one row, drawn `pin
+ * ×5`. Its `id` is the FIRST of their paths — so it is still a path, still
+ * unique and still a usable React key — and `leaves` holds all of them, which is
+ * exactly the list hiding, ghosting and isolating were already written in. THE
+ * COUNT IS NEVER STORED: it is `leaves.length`, computed where it is drawn, so
+ * there is no second number that can disagree with the assembly.
+ *
+ * EVERY ONE OF THOSE PATHS IS A KEY OF `nodes`, all of them answering with the
+ * same row. That is what lets a pick or a right-click in the SCENE — which names
+ * the solid the reader hit, `/model/pin(2)` and not the row — find the row it
+ * belongs to. IT IS ALSO WHAT CARRIES A HIDDEN PART ACROSS A SWITCH, and the two
+ * halves of that are worth naming apart, because only one of them reads a path.
+ * `namesOf` is the one that does: it walks the hidden ids through this map, so a
+ * later copy answers with its row's name whether or not the run's FIRST path is
+ * on the list — hiding is expressed in leaves, so `['/model/pin(2)']` on its own
+ * is an ordinary state, and without every path being a key it would carry no
+ * name at all. `rejoin` is handed those NAMES and never a path; what it walks is
+ * `leaves`, through this same map, to turn each name back into every id the new
+ * tree spells it under. `nodes.size` therefore counts paths and not rows, which
+ * is what it counted before this collapsing existed.
  *
  * That last part is a decision worth a sentence, because the viewport supports
  * BOTH: its `covers()` matches a hidden entry against a leaf path by prefix, so
@@ -364,11 +445,32 @@ const MAX_DEPTH = 64;
  * the catalogue replaced (issue #75).
  *
  * A GROUP HAS NONE EITHER, and that is `treeFromShapes`'s doing rather than
- * this walk's: it puts a key on leaves only, so a group arrives here without
- * one. The rule is not repeated here because the hub does not enforce it on the
- * other side — `check_view_file` declares a key wherever it sits — so a second
- * copy of the rule would be this side quietly disagreeing with the document it
- * was handed. One place decides, and it is the one that reads the view file.
+ * this walk's: it assigns `key` on the leaf branch alone — a group row is
+ * returned on the branch above that line — so a group reaches here carrying no
+ * such field at all, whatever the view file wrote on it. Over there that is
+ * stated as a RULE, and it is the rule that actually holds, because the hub
+ * does not enforce it (`check_view_file` declares a key wherever it sits, in
+ * its own words): the browser is where a keyed group stops.
+ *
+ * THIS FIELD ENFORCES NOTHING AND COPIES WHAT IT IS GIVEN — a second copy of
+ * the rule here would be this side quietly disagreeing with the document it was
+ * handed. That is not the same as saying a pushed group's key is carried out
+ * untouched: no such key ever arrives, because the storey above never put one on.
+ * The only way to hand this walk a keyed group is to build the tree BY HAND,
+ * which is what `ui/tests/repeats.test.js` does. TWO PLACES DECIDE where a key
+ * may sit, not one — `check_view_file` on the way in, which permits it
+ * anywhere, and `treeFromShapes` on the way to the screen, which does not — and
+ * the second of them is on this side of the wire.
+ *
+ * `leafKey` ABOVE READS LIKE THAT SECOND COPY AND ANSWERS A DIFFERENT QUESTION,
+ * which is why both stand and neither is the other's bug to fix. It blanks a
+ * group's key for the COLLAPSING DECISION ALONE — are these two siblings one
+ * thing twice — and an assembly is never that, whatever key it arrives
+ * carrying, so two keyed groups stay two rows (`repeats`, pinned by a test in
+ * ui/tests/repeats.test.js). That says nothing about what a row REPORTS: `key`
+ * here is still whatever the tree carried, group or leaf. Reporting is where
+ * this walk defers to what it was handed; collapsing is a judgement it has to
+ * make itself.
  */
 export function indexTree(root) {
   const nodes = new Map();
@@ -376,18 +478,32 @@ export function indexTree(root) {
   const leaves = [];
   const used = new Set();
 
-  const walk = (raw, index, parent, depth) => {
-    if (!raw || typeof raw !== 'object' || depth > MAX_DEPTH) return null;
-    const name = typeof raw.name === 'string' && raw.name
-      ? raw.name
-      : `part ${index + 1}`;
-    // The viewport's `id` is the part's path and is what it will name in
-    // `hmr:pick` and match `hidden`/`ghost` against, so it is the identity here
-    // too. The fallbacks exist only so a malformed tree cannot collapse two rows
-    // into one React key.
-    let id = typeof raw.id === 'string' && raw.id ? raw.id : `${parent || ''}/${name}`;
+  const nameOf = (raw, index) => (typeof raw.name === 'string' && raw.name
+    ? raw.name
+    : `part ${index + 1}`);
+
+  // The viewport's `id` is the part's path and is what it will name in
+  // `hmr:pick` and match `hidden`/`ghost` against, so it is the identity here
+  // too. The fallbacks exist only so a malformed tree cannot collapse two rows
+  // into one React key. Called EXACTLY ONCE per raw node and in document order,
+  // because it claims the name it hands back.
+  const pathOf = (raw, index, parent) => {
+    let id = typeof raw.id === 'string' && raw.id
+      ? raw.id
+      : `${parent || ''}/${nameOf(raw, index)}`;
     while (used.has(id)) id = `${id}~${used.size}`;
     used.add(id);
+    return id;
+  };
+
+  // `run` is one ROW: its own raw node first, then the repeats collapsed into
+  // it. Everything but `leaves` is read off the first, which is the one whose
+  // path names the row.
+  const walk = (run, parent, depth) => {
+    const { raw, at: index } = run[0];
+    if (!raw || typeof raw !== 'object' || depth > MAX_DEPTH) return null;
+    const name = nameOf(raw, index);
+    const id = pathOf(raw, index, parent);
 
     const children = Array.isArray(raw.children) ? raw.children : null;
     const node = {
@@ -408,19 +524,22 @@ export function indexTree(root) {
     else roots.push(id);
 
     if (children) {
-      children.forEach((child, at) => walk(child, at, id, depth + 1));
-      node.leaves = node.children.flatMap((cid) => {
-        const kid = nodes.get(cid);
-        return kid.isNode ? kid.leaves : [cid];
-      });
+      runsOf(children).forEach((kid) => walk(kid, id, depth + 1));
+      // One reading for both kinds of child, now that a leaf row carries every
+      // path it stands for: a group's leaves are its rows' leaves, end to end.
+      node.leaves = node.children.flatMap((cid) => nodes.get(cid).leaves);
     } else {
-      node.leaves = [id];
-      leaves.push(id);
+      node.leaves = run.map(({ raw: r, at }, n) => (
+        n === 0 ? id : pathOf(r, at, parent)));
+      node.leaves.forEach((path) => {
+        nodes.set(path, node);
+        leaves.push(path);
+      });
     }
     return id;
   };
 
-  walk(root, 0, null, 0);
+  walk([{ raw: root, at: 0 }], null, 0);
   return { nodes, roots, leaves };
 }
 
@@ -429,6 +548,22 @@ export function indexTree(root) {
 // rendered as text by React and never as markup, which is the rule every page
 // on this site keeps and for the same reason: a build URL is permanent,
 // immutable and shares an origin with every other project here.
+
+/**
+ * A part's name, and how many copies of it the thing being labelled stands for.
+ *
+ * `pin ×5` for five, plain `pin` for one — never `pin ×1`, which would put a
+ * number on every row in the tree to say nothing. The sign is U+00D7 MULTIPLI-
+ * CATION SIGN and not the letter `x`.
+ *
+ * THE COUNT IS ALWAYS PASSED IN, never stored beside a name: on a tree row and
+ * on that row's context menu it is `leaves.length` off the row, and on the
+ * moved chip it is what the viewport reported it actually moved. A `qty`
+ * written down anywhere is a number that can disagree with the assembly, which
+ * is the whole reason this is derived (issue #75).
+ */
+export const countedName = (name, count) =>
+  (count > 1 ? `${name} ×${count}` : String(name));
 
 /** `dev` stays `dev`; a commit is shown at the length people read. */
 export const shortId = (commit) =>

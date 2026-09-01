@@ -183,14 +183,25 @@ export function applyGhost(viewer, ghost) {
  * one; anything else needs the id-level API, which is not what a part selection
  * is. The library's own picking writes into the same bit set, which is a
  * conflict only while a select tool is armed — and none is, at `tools: false`.
+ *
+ * A LIST, because a row may stand for several solids: five copies of one part
+ * collapse into `pin ×5` in the tree (hub.indexTree), and selecting that row
+ * lights up all five. One highlight per path, into the one texture `clear()`
+ * just reset.
+ *
+ * A BARE STRING IS NOT A SELECTION and selects nothing — deliberately, rather
+ * than being taken as a list of one. This reads what arrives on `hmr:state`, so
+ * a sender still on the old shape has to fail visibly here; accepting it would
+ * leave four of the five pins dark with nothing anywhere saying why.
  */
 export function applySelected(viewer, selected) {
   const g = internals(viewer);
   const hl = g && g.nestedGroup && g.nestedGroup.highlight;
   if (!hl) return;
+  const list = Array.isArray(selected) ? selected : [];
   try {
     hl.clear();
-    if (selected) hl.selectSolid(selected, true);
+    for (const path of list) if (path) hl.selectSolid(path, true);
     viewer.update(true, false);
   } catch (error) {
     console.warn("select", error);
@@ -223,19 +234,43 @@ export function movableGroup(viewer, path) {
 }
 
 /**
- * Offset one part from where the build put it. `delta` is world units.
+ * Offset a part from where the build put it. `delta` is world units.
  *
  * NOT a change to the model, and the interface has to say so (ui-brief block 6):
  * nothing is written anywhere, the next rebuild puts the part back, and the
  * offset travels to the agent as part of a sentence rather than as a result.
+ *
+ * SEVERAL PATHS, ONE DELTA: a row that collapsed five copies of one part
+ * (hub.indexTree) moves as one thing, so every instance takes the same offset
+ * from its OWN home — which is why `home` is remembered per path and not per
+ * row.
+ *
+ * ALL OR NOTHING, AS FAR AS THE PRE-CHECK REACHES. One path that cannot be
+ * moved refuses the whole gesture before anything has moved, because half a row
+ * moved is two copies of one part standing in different places while the chip
+ * calls it a move of `pin ×5`. On a single path that is exactly what this always
+ * did.
+ *
+ * PAST THAT CHECK IT IS NOT ATOMIC, and the limit is worth naming rather than
+ * implying: the loop below writes one group at a time, so a `position.set` that
+ * throws on the third path leaves the first two displaced and recorded in
+ * `vp.moved`. The answer is `false` and no unwinding. What that leaves is a
+ * scene out of step with the row, not a scene nothing can fix — `resetMoves`
+ * walks exactly the paths `vp.moved` holds and puts every one of them back from
+ * `partHome`, and that recovery is what this leans on instead.
  */
-export function movePart(vp, path, delta) {
-  const group = movableGroup(vp.viewer, path);
-  if (!group || !finite3(delta)) return false;
-  const base = home(vp, path, group);
+export function movePart(vp, paths, delta) {
+  const list = Array.isArray(paths) ? paths : [];
+  if (!list.length || !finite3(delta)) return false;
+  const groups = list.map((path) => movableGroup(vp.viewer, path));
+  if (groups.some((group) => !group)) return false;
   try {
-    group.position.set(base[0] + delta[0], base[1] + delta[1], base[2] + delta[2]);
-    vp.moved.set(path, delta);
+    list.forEach((path, at) => {
+      const base = home(vp, path, groups[at]);
+      groups[at].position.set(
+        base[0] + delta[0], base[1] + delta[1], base[2] + delta[2]);
+      vp.moved.set(path, delta);
+    });
     vp.viewer.update(true, false);
     return true;
   } catch (error) {

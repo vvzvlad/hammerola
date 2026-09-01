@@ -1,21 +1,24 @@
 // <hmr-viewport> — the DIFFING, and nothing that needs a WebGL context.
 //
-// Two halves are under test and they are the two the element does on every
-// keystroke somewhere in the interface: `setState`, which decides whether a
-// patch is a reload, a live swap or an ordinary change, and `reconcile`, which
-// brings the scene in line with `state` while writing as little as it can get
-// away with.
+// Every `hmr:state` runs through `setState`, which decides whether a patch is a
+// reload, a live swap or an ordinary change — and only an ORDINARY one runs on
+// into `reconcile`, which brings the scene in line with `state` while writing as
+// little as it can get away with. A PATCH THAT DECIDES ON A LOAD DOES NOT, and
+// the test `does not reconcile on the way to a reload` is what pins it:
+// `setState` hands off to `load()` and returns before reaching `reconcile()`.
+// `reconcile` then comes out of `show` on the way back. State
+// arrives far oftener than a reader changes anything — dragging the
+// section-plane slider pushes state per step (`setSecOff` in HammerolaViewer
+// goes through `set`, which syncs) — which is why what these two DON'T write is
+// the subject here.
 //
-// THE ELEMENT IS NEVER UPGRADED HERE. `connectedCallback` builds a real
-// three-cad-viewer against a real canvas, and there is no GPU in a test runner;
-// the instance below is the prototype with exactly the fields these two methods
-// read. `show()` is left out for the same reason — it builds the widget out of a
-// payload, which is the half that needs the library — and `load` is stubbed
-// wherever a test only cares that it was reached.
+// There is no GPU in a test runner, so the instance below is the prototype with
+// exactly the fields these two methods read. `load` is stubbed wherever a test
+// only cares that it was reached.
 //
 // `load` ITSELF IS EXERCISED in one place, and only as far as it gets without
-// the library: its two early exits, the view that names no file and the fetch
-// that comes back 404. Both are about what the element REMEMBERS afterwards, and
+// the library: the view that names no file and the fetch that comes back 404.
+// Both are about what the element REMEMBERS afterwards, and
 // that memory is what stops the interface's next patch — one arrives on every
 // click in the tree — from asking the hub for the same missing file again.
 //
@@ -77,15 +80,17 @@ import { fakeViewer } from './fakes.js'
  * fields `connectedCallback` would have set.
  *
  * `applied` starts exactly as the element starts it, `selected` UNDEFINED rather
- * than null — the sentinel that makes the first reconcile clear a highlight the
- * library may have painted on its own.
+ * than an empty list — the sentinel that makes the first reconcile clear a
+ * highlight the library may have painted on its own. `state.selected` is a LIST
+ * of paths since issue #75, because a tree row may stand for several copies of
+ * one part.
  */
 function element(state = {}, viewer = fakeViewer()) {
   const vp = Object.create(HmrViewport.prototype)
   vp.viewer = viewer
   vp.booted = true
   vp.state = {
-    hidden: [], ghost: [], selected: null, camera: null,
+    hidden: [], ghost: [], selected: [], camera: null,
     cut: false, cutOffset: 0, cutFlip: false, pins: [],
     base: null, views: [], view: null, buildKey: null, tool: null,
     ...state,
@@ -145,14 +150,14 @@ describe('reconcile', () => {
     vp.reconcile()
     expect(applyHidden).toHaveBeenCalledWith(vp.viewer, ['/Group/a'])
     expect(applyGhost).toHaveBeenCalledWith(vp.viewer, ['/Group/b'])
-    // Even though the selection is null: `applied.selected` is `undefined` until
+    // Even though nothing is selected: `applied.selected` is `undefined` until
     // the first pass, so this is the call that clears whatever the library
     // highlighted on its own.
-    expect(applySelected).toHaveBeenCalledWith(vp.viewer, null)
+    expect(applySelected).toHaveBeenCalledWith(vp.viewer, [])
   })
 
   it('writes nothing on a second pass with the same state', () => {
-    const vp = settled({ hidden: ['/Group/a'], selected: '/Group/b' })
+    const vp = settled({ hidden: ['/Group/a'], selected: ['/Group/b'] })
     vp.reconcile()
     expect(applyHidden).not.toHaveBeenCalled()
     expect(applyGhost).not.toHaveBeenCalled()
@@ -186,10 +191,29 @@ describe('reconcile', () => {
   })
 
   it('applies a selection change, including back to nothing', () => {
-    const vp = settled({ selected: '/Group/a' })
-    vp.state = { ...vp.state, selected: null }
+    const vp = settled({ selected: ['/Group/a'] })
+    vp.state = { ...vp.state, selected: [] }
     vp.reconcile()
-    expect(applySelected).toHaveBeenCalledWith(vp.viewer, null)
+    expect(applySelected).toHaveBeenCalledWith(vp.viewer, [])
+  })
+
+  it('compares the SELECTION by value too, which React makes necessary', () => {
+    // The selection became a list in issue #75, and `selectedPaths` in
+    // HammerolaViewer mints a fresh one on EVERY push — all three of its
+    // branches build a new array, so this is not a property of the empty
+    // selection in particular. An identity check here would therefore re-paint
+    // the highlight on every `hmr:state`, and one of those goes out per step of
+    // the section-plane slider — while `hidden` and `ghost` beside it are
+    // handed straight out of state by `sync` and do keep their identity.
+    const vp = settled({ selected: ['/Group/a'] })
+    vp.state = { ...vp.state, selected: ['/Group/a'] }   // equal, not identical
+    vp.reconcile()
+    expect(applySelected).not.toHaveBeenCalled()
+
+    // …and a copy MORE is a change, so the guard is not simply always silent.
+    vp.state = { ...vp.state, selected: ['/Group/a', '/Group/b'] }
+    vp.reconcile()
+    expect(applySelected).toHaveBeenCalledWith(vp.viewer, ['/Group/a', '/Group/b'])
   })
 
   describe('the camera', () => {
@@ -457,7 +481,7 @@ describe('load', () => {
       expect(vp.loadFailed).toBe('a.json')
 
       vp.setState({ hidden: ['/Group/a'] })
-      vp.setState({ selected: '/Group/a' })
+      vp.setState({ selected: ['/Group/a'] })
       expect(fetching).toHaveBeenCalledTimes(1)
 
       vi.unstubAllGlobals()
@@ -676,8 +700,7 @@ describe('the widgets connectedCallback puts on the page', () => {
   // THE ELEMENT IS REALLY UPGRADED HERE, and this is the only block in the file
   // that does it. Nothing on this path reaches the library: `connectedCallback`
   // builds the container, the overlay and the view cube, and the viewer itself
-  // is not constructed until `show()` — which is why the header above can say
-  // the element is never upgraded and this can still work.
+  // is not constructed until `show()`.
   //
   // WHAT IT IS FOR: nothing else, anywhere, notices whether the cube is mounted.
   // Deleting the two lines in `element.js` that create and append it left every

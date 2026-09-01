@@ -224,13 +224,24 @@ export function installTools(vp) {
     if (delta[0] === d.last[0] && delta[1] === d.last[1]
         && delta[2] === d.last[2]) return;
     d.last = delta;
-    if (!movePart(vp, d.path, delta)) return;
+    if (!movePart(vp, d.paths, delta)) return;
     // On the snapped value CHANGING, not on every frame: the interface shows
     // this number and puts it in a sentence, and sixty updates a second of a
     // number that did not change is a re-render for nothing.
+    //
+    // `count` IS WHAT MOVED and not what the row holds — the two differ, which
+    // is why it is reported rather than looked up on the other side. A grab made
+    // with NOTHING SELECTED drags the one copy it hit, because the viewport is
+    // told which paths are selected and knows nothing about the rest; the pick
+    // this press emits selects the whole row, so the NEXT drag takes all of it.
+    //
+    // A GRAB OUTSIDE A STANDING SELECTION IS NOT THAT CASE, and the two are easy
+    // to run together: `onDown` answers it with `null`, so the press degrades to
+    // a rotation and this event is never emitted at all.
     emit(vp, EVENT_MOVED, {
-      id: d.path,
-      name: d.path.split("/").filter(Boolean).pop(),
+      id: d.paths[0],
+      name: d.paths[0].split("/").filter(Boolean).pop(),
+      count: d.paths.length,
       delta,
     });
   };
@@ -379,11 +390,17 @@ export function installTools(vp) {
       // The selected part if there is one, otherwise whatever was grabbed — and
       // then the interface is told, so its selection follows the hand rather
       // than the reader having to select first and drag second.
-      const wanted = vp.state.selected && hit && hit.id !== vp.state.selected
-        ? null                                  // grabbed a different part
-        : vp.state.selected || (hit && hit.id) || null;
+      //
+      // A LIST BECAUSE THE SELECTION IS ONE: a row standing for five copies of
+      // one part sends all five paths, and grabbing any of them drags the row.
+      const sel = Array.isArray(vp.state.selected) ? vp.state.selected : [];
+      const wanted = sel.length
+        ? (hit && !sel.includes(hit.id)
+          ? null                                // grabbed a different part
+          : sel)
+        : (hit && hit.id ? [hit.id] : null);
       const ndc = wanted ? ndcAt(g.canvas, event) : null;
-      if (!wanted || !ndc || !movableGroup(viewer, wanted)) {
+      if (!wanted || !ndc || !wanted.every((path) => movableGroup(viewer, path))) {
         // Nothing here to drag. The press DEGRADES to a plain one rather than
         // being dropped: a click still selects and a drag still rotates, which
         // is how a reader reaches the part they meant to move without leaving
@@ -391,11 +408,36 @@ export function installTools(vp) {
         press.tool = null;
         return;
       }
-      if (!vp.state.selected && hit) {
+      if (!sel.length && hit) {
         emit(vp, EVENT_PICK, { id: hit.id, name: hit.name, point: hit.point });
       }
-      const base = vp.moved.get(wanted) || [0, 0, 0];
-      press.move = { path: wanted, ndc, base, last: base };
+      // THE ANCHOR IS THE COPY UNDER THE HAND, and the copies of a row do not
+      // always agree on where they are.
+      //
+      // A gesture applies ONE delta to all of its paths, each from its OWN home
+      // (`movePart`), so whatever offsets the paths carried before it are
+      // replaced by a single one: the row converges back into one thing, which
+      // is what a row claims to be. TWO THINGS DRIVE THEM APART, and the second
+      // is the one that gets forgotten. The ordinary one: a grab made with
+      // NOTHING SELECTED drags the one copy it hit, since the viewport is only
+      // told which paths are selected (see the note on `count` in `dragPart`),
+      // and the pick that press emits then puts the whole row under this one.
+      // The other is a FAILURE: past its pre-check `movePart` is not atomic, so
+      // a `position.set` that throws on the third path leaves the first two
+      // displaced and recorded in `vp.moved` (the note on it in `parts.js` says
+      // why that is answered with `false` and no unwinding). Neither one changes
+      // what is chosen here, and neither strands a part — `resetMoves` walks
+      // exactly the paths `vp.moved` holds. So the convergence is not avoidable,
+      // and the only thing left to choose is WHO does not jump to reach it. It
+      // is the grabbed copy: under direct manipulation the part the reader is
+      // holding must not leap out from under the cursor, while a sibling
+      // snapping into line beside it reads as the row closing up.
+      //
+      // `wanted[0]` is the fallback for a gesture with no hit at all — a press
+      // on empty space while a selection stands, which drags the selection.
+      const anchor = hit && wanted.includes(hit.id) ? hit.id : wanted[0];
+      const base = vp.moved.get(anchor) || [0, 0, 0];
+      press.move = { paths: wanted, ndc, base, last: base };
     }
     // Take the press away from the trackball. A capture-phase listener on the
     // CONTAINER runs before the canvas's own pointerdown handler, so stopping it

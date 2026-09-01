@@ -779,9 +779,7 @@ describe('the row menu', () => {
     // menu that go that way: everything it LOOKS UP is by the key, while the
     // heading and `Copy name` are about the row a reader right-clicked. The row
     // is `reference spacer` and the part is `spacer`, so each of these is a
-    // claim about which of the two strings is being shown — and on a view
-    // holding two of one part the row's name is the only string that tells the
-    // rows apart, which is exactly what somebody copying one is after.
+    // claim about which of the two strings is being shown.
     const c = component({ node: '/model/spacer' })
     const written = []
     c.toast = vi.fn()

@@ -88,7 +88,7 @@ import {
   VIEWPORT_TAG,
 } from './events.js';
 import {
-  PAGE, ASSEMBLED_VIEW_ID, isPointerPage, buildKey, indexTree,
+  PAGE, ASSEMBLED_VIEW_ID, isPointerPage, buildKey, countedName, indexTree,
   loadMeta, loadBuilds, rereadPage, shortId, stamp, mb,
 } from './hub.js';
 import {
@@ -332,8 +332,7 @@ export function groupDownloads(parts) {
  * `undefined.length` would take the header down.
  *
  * IT COUNTS DISTINCT PARTS. Five copies of one pin name `pin` once, so a plate
- * of a lid and five pins reads "2 parts" — which is what a catalogue key means
- * and what the tree will say too once repeats are drawn as one row.
+ * of a lid and five pins reads "2 parts" — which is what a catalogue key means.
  */
 function viewPartCount(view) {
   return Array.isArray(view && view.parts) ? view.parts.length : 0;
@@ -616,8 +615,63 @@ export default class HammerolaViewer extends React.Component {
 
     this._h = {
       [PICK]: (e) => {
+        // THE ROW, not the solid. A pick names the copy the reader hit —
+        // `/model/pin(2)` — and `sel` has always been a row id, which is what
+        // every reader that resolves it through `node()` takes it for: `selRow`
+        // in `computed`, `selectedPaths`, `selectedKey` and `measAdd`. A row
+        // standing for five copies is reached by any of its paths
+        // (hub.indexTree), so this is a lookup rather than a special case; an id
+        // arriving before the tree does keeps the path it came with.
+        //
+        // `selName` GOES THROUGH THE SAME ROW, because the pair is ONE answer
+        // about ONE thing: `sel` is what a comment is filed against and
+        // `selName` is what the reader is shown it was filed against. Left the
+        // solid's, they part company on a collapsed run — pick the third copy
+        // and `sel` is `/model/pin` while `selName` is `pin(3)`, an id naming
+        // the FIRST copy under a name no row is drawn under at all, since issue
+        // #75 collapses that run into `pin ×3`.
+        //
+        // THE TREE STANDS WHENEVER THE PICK RESOLVES — it is what resolves it —
+        // so wherever there is a row at all, the row's name is available at the
+        // moment the field is WRITTEN, and every reader of it comes later.
+        // Keeping the solid's name for the sake of those readers stores a second
+        // answer rather than a truer one. EVERY OTHER WRITER THAT PUTS A NAME
+        // HERE ALREADY DOES EXACTLY THIS, and a grep for the field is what says
+        // so rather than a count to be taken on trust: five assignments, of
+        // which two carry a name — the tree row's `onSelect` and the menu's
+        // Isolate, both off a row's own `name` — and two carry `''`, the initial
+        // state and `leaveBuild`. This is the fifth.
+        //
+        // WHAT THE DIVERGENCE COST IS NOT HYPOTHETICAL, and it is reached
+        // without ever leaving the build. `measAdd` fills a comment out of the
+        // pair — `partId` off `sel`, `part` off the row or, where the tree
+        // cannot answer, off `selName` — and the tree stops answering in a view
+        // that does not SHOW this part. Not on any view tab: a path is the
+        // assembly structure spelled out (`treeFromShapes` builds it as parent
+        // plus `/name`), so a view laying the same parts out under the same
+        // names holds the same paths and `node(s.sel)` answers there too.
+        // What carries the pair across is that `showView` touches neither half
+        // and neither does `onModel` — so a pick in one view and a measurement
+        // in another that dropped the part lands on that fallback with both
+        // halves still set. Diverged, it posts the first copy's path to the hub
+        // under the third copy's name.
+        //
+        // `onModel` DOES NOT "REPLACE ONLY THE TREE", and the precision matters
+        // to anyone walking this route: it writes `tree`, `view`, `viewError`,
+        // `expanded` and whatever `rejoin` returned, and it CLEARS `measure` and
+        // `moved`. What it leaves untouched is this pair, which is the whole of
+        // the argument. A measurement taken BEFORE the tab was changed does not
+        // survive to `measAdd` — the order that reaches it is pick, tab,
+        // measurement.
+        //
+        // THE SOLID'S NAME IS STILL THE FALLBACK, for a path no row claims — a
+        // pick that arrived before the tree did, which is the same case `sel`
+        // answers by keeping the path it came with.
         const id = (e.detail && e.detail.id) || null;
-        this.set({ sel: id, selName: (e.detail && e.detail.name) || '', menu: null });
+        const picked = (e.detail && e.detail.name) || '';
+        const node = this.node(id);
+        this.set({ sel: node ? node.id : id,
+                   selName: (node && node.name) || picked, menu: null });
       },
       [MENU]: (e) => this.sceneMenu(e.detail),
       // The plane moved: either it was just laid on a face, or a drag of it
@@ -625,9 +679,60 @@ export default class HammerolaViewer extends React.Component {
       // slider has to span, so neither number is invented on this side.
       [FACE]: (e) => {
         const d = e.detail || {};
+        // THE ROW'S NAME, found by looking the seeded PATH up — the fourth
+        // FIELD filled with a solid's name out of a viewport event's detail,
+        // after `selName` (`hmr:pick`), the moved chip (`hmr:moved`) and
+        // `composer.part` (`hmr:place`). COUNTED AS FIELDS AND NOT AS THINGS ON
+        // SCREEN, because `selName` is not one: it has a single reader,
+        // `measAdd`, which copies it into `composer.part` — the third entry — so
+        // counting what a person sees would count that one twice.
+        //
+        // THE PLACES THAT DRAW A NAME OFF THE ROW ITSELF SIT OUTSIDE THIS
+        // COUNT, and are named so the inventory does not read short: the tree
+        // row, the context menu's header and the toast `Copy name` raises, all
+        // three in `computed`. Each takes `node.name` off the row it is
+        // drawing, so none of them ever had anything to repair.
+        //
+        // EACH OF THREE ROUNDS OF REVIEW TOOK ITS OWN FINDING FOR THE LAST OF
+        // THE FOUR FIELDS COUNTED ABOVE, which is why that count names the set
+        // rather than declaring it closed. WHAT PUT SO MUCH ON IT is that issue
+        // #75 changed two things and not one. It changed BEHAVIOUR — a run of
+        // copies collapses into one row (`indexTree`), a selection became a
+        // list of paths (`selectedPaths`, and `selected` in element.js),
+        // `hmr:moved` grew a `count` (events.js), `movePart` takes paths — and
+        // it changed what a NAME MEANS: a name that stood for ONE SOLID now
+        // stands for a row of several, or for no row at all once the copies it
+        // numbers have collapsed into one. THAT LAST CLAUSE IS THE COLLAPSED
+        // CASE ONLY, and stating it flat would contradict `repeats` in hub.js:
+        // a run broken by, say, another part standing between the copies or by
+        // a `known` that disagrees, still draws a row called `pin(2)`, and
+        // `tests/repeats.test.js` builds such trees under `indexTree keeps
+        // apart what is not one row`. A NAME IS NO LONGER SOMETHING TO IDENTIFY
+        // A SOLID BY, which is the whole of the second change.
+        //
+        // Only the first reads off a diff; this one reaches every surface that
+        // DRAWS a name, whose own code did not have to move to start lying, so
+        // the sweep had to be an inventory of surfaces — and it is written down
+        // in `tests/repeats.test.js` rather than left to memory.
+        //
+        // `hmr:face` names the SOLID the plane was laid on (`seedCut` takes the
+        // name off the owner path, `reportCut` reads it back off the seed), so
+        // a cut placed on the second copy arrives as `pin(2)`, and no row is
+        // drawn under that name once the run has collapsed into one: the panel
+        // would head the cut with a part the reader cannot find in the tree.
+        // Where the run did NOT collapse, the same lookup answers with that
+        // copy's own row, so this is one path and not two. A lookup BY PATH and
+        // never the identity-by-name #75 forbids; `d.name` is kept only for a
+        // path no row claims, which is a face clicked before the tree landed, and
+        // `'face'` for a hit that named no owner at all.
+        //
+        // BARE, on the same ground as `hmr:place`: the plane lies on ONE face
+        // of ONE solid, so a count here would tally parts the cut was never
+        // aimed at.
+        const row = this.node(d.id);
         this.set({
           secOn: true,
-          secFace: d.name || 'face',
+          secFace: (row && row.name) || d.name || 'face',
           secOff: Number.isFinite(d.offset) ? d.offset : this.state.secOff,
           secRange: Array.isArray(d.range) ? d.range : this.state.secRange,
           tool: null,
@@ -646,15 +751,59 @@ export default class HammerolaViewer extends React.Component {
         const d = (e.detail && e.detail.delta) || [];
         if (d.length !== 3 || !d.every(Number.isFinite)) return;
         const mag = Math.round(Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) * 10) / 10;
-        this.setState({ moved: { id: e.detail.id, name: e.detail.name, mag } });
+        // THE NAME IS THE ROW's, found by looking the dragged PATH up — the
+        // same `node()` the pick handler above and the menu header in
+        // `computed` go through. The viewport names the SOLID it grabbed, so a
+        // drag of the second copy arrives as `pin(2)`, and no row is drawn under
+        // that name once the run has collapsed into one: the chip would carry a
+        // part the reader cannot find anywhere in the tree. Where the run did
+        // not collapse, that copy is a row itself and the lookup simply finds
+        // it. This is a lookup BY PATH and not the identity-by-name that #75
+        // forbids — `e.detail.name` is kept only for a path no row claims, which
+        // is a drag that landed before the tree did.
+        //
+        // THE COUNT STAYS THE VIEWPORT's, because the two differ: a drag begun
+        // with NOTHING SELECTED moves the one copy it grabbed, out of a row that
+        // holds five. Reading the row's count here would put "×5" on a chip
+        // about one part, and the chip is what the reader attaches to a comment.
+        const row = this.node(e.detail.id);
+        const name = countedName((row && row.name) || e.detail.name,
+                                 e.detail.count);
+        this.setState({ moved: { id: e.detail.id, name, mag } });
       },
       [PLACE]: (e) => {
         // A comment is a task for the agent, and only the customer files one.
         if (this.viewer()) return;
         const d = e.detail || {};
+        // THE ROW'S NAME, found by looking the picked PATH up — the door onto
+        // `composer.part` that a POINT PLACED IN THE SCENE opens (the inventory
+        // of the three is on `movedAttach`), and the same repair the other two
+        // carry. `hmr:place` names the SOLID under the cursor — `pickEntity`
+        // takes the name off the picked path — so a point on the second copy
+        // arrives as `pin(2)`, and no row is drawn under that name once the run
+        // has collapsed into one: the composer would head itself with a part the
+        // reader cannot find in the tree. Where the run did not collapse, the
+        // lookup lands on that copy's own row. A lookup BY PATH and never the
+        // identity-by-name #75 forbids; `d.name` is kept only for a path no row
+        // claims, which is a point placed before the tree landed.
+        //
+        // BARE, like `measAdd` and unlike `movedAttach`: a point sits on one
+        // solid, so a count here would tally parts the reader never touched.
+        //
+        // TWO POINTS ON TWO COPIES COLLAPSED INTO ONE ROW THEREFORE BOTH READ
+        // `pin`, and that is an accepted consequence of #75 rather than an
+        // oversight — the row is what the reader can find in the tree. They are
+        // still told apart, by the pin drawn on the model and by the `partId`
+        // posted with each, which stays the copy's own path. Nor is titling a
+        // comment off whatever row `node()` answers with new here: `measAdd` has
+        // always been written that way, and what #75 changed is which row that
+        // is — on that door the two copies collapse in the id as well, since
+        // `sel` is the row's.
+        const row = this.node(d.id);
         this.set({
           composer: {
-            part: d.name || 'model', partId: d.id || null, p: d.p || null,
+            part: (row && row.name) || d.name || 'model',
+            partId: d.id || null, p: d.p || null,
             text: '', photo: null,
             meas: this.state.measure ? this.state.measure.full : null,
           },
@@ -1491,9 +1640,36 @@ export default class HammerolaViewer extends React.Component {
     return open;
   }
 
+  /** The ROW a path belongs to — its own, or the one that collapsed it. */
   node(id) {
     const tree = this.state.tree;
     return id && tree ? tree.nodes.get(id) || null : null;
+  }
+
+  /**
+   * The solids the selection covers, as the viewport wants them.
+   *
+   * A LIST since issue #75, because a row may stand for five copies of one part
+   * and selecting it lights up all five. An ordinary leaf answers with the one
+   * path it always did.
+   *
+   * A GROUP KEEPS ITS OWN ID and is deliberately NOT expanded to its leaves:
+   * `selectSolid` has never had anything to say about a node path, so selecting
+   * an assembly highlights nothing today, and lighting up every part under it
+   * would be a different feature arriving inside this one. `[sel]` where there
+   * is no tree yet, which is the same path this sent before.
+   *
+   * A COPY OF `leaves` AND NOT THE ARRAY ITSELF, because this is the boundary:
+   * the list leaves on `hmr:state` and the viewport keeps what it was given
+   * (`applied.selected` in element.js). Handing over the node's own array would
+   * put the tree's list in another module's hands, and it is the list the eye,
+   * the ghost square and Isolate are all expressed in — a sort or a splice over
+   * there would silently be an edit to the tree.
+   */
+  selectedPaths() {
+    const node = this.node(this.state.sel);
+    if (node && !node.isNode) return node.leaves.slice();
+    return this.state.sel ? [this.state.sel] : [];
   }
 
   // -- the one place the interface writes to the viewport -------------------
@@ -1521,7 +1697,7 @@ export default class HammerolaViewer extends React.Component {
         // meta.json.
         buildKey: buildKey(meta),
 
-        hidden: s.hidden, ghost: s.ghost, selected: s.sel,
+        hidden: s.hidden, ghost: s.ghost, selected: this.selectedPaths(),
         cut: s.secOn, cutOffset: s.secOff, cutFlip: s.secFlip, tool: s.tool,
         // `single` is the only mode this can be in today: `diff` asks the
         // viewport to ghost both revisions and light up the difference, and
@@ -2122,7 +2298,9 @@ export default class HammerolaViewer extends React.Component {
    *
    * A GROUP HAS NONE, which is the rule it always had said in the new
    * vocabulary: an assembly is not a part, so it has no record, no note and no
-   * files — and `indexTree` puts a key on leaves only.
+   * files — and `treeFromShapes` is what puts a key on leaves only, one storey
+   * above the tree this reads: `indexTree` copies through whatever it is
+   * handed.
    *
    * NEITHER DOES A LEAF THAT NAMES NO KEY, and it is answered with '' rather
    * than with the row's name. That fallback is the identity-by-string this
@@ -2251,6 +2429,17 @@ export default class HammerolaViewer extends React.Component {
     const stop = (fn) => (e) => { e.stopPropagation(); fn(e); };
     const hiddenSet = new Set(s.hidden);
     const ghostSet = new Set(s.ghost);
+    // THE SELECTED ROW, RESOLVED — not `sel` compared against each row's id.
+    // Since issue #75 a row may stand for several copies of its part, and `sel`
+    // may hold the path of a copy that is not the first: the pick handler
+    // resolves it through `node()`, but only if the tree had already landed,
+    // and nothing resolves it afterwards (`onModel` leaves `sel` alone).
+    // Compared raw, such a selection lights up all five copies in the SCENE —
+    // `selectedPaths()` resolves the same value — and no row at all in the
+    // panel. Every path of a row is a key of `nodes` (`indexTree`), so this is
+    // the same Map lookup that side already makes; hoisted out of the row loop
+    // because `sel` cannot change while `computed()` runs.
+    const selRow = this.node(s.sel);
 
     // -- the tree: a flat list of rows, indented by depth
     const rows = [];
@@ -2263,7 +2452,9 @@ export default class HammerolaViewer extends React.Component {
       const visible = node.leaves.filter((id) => !hiddenSet.has(id)).length;
       const eye = visible === 0 ? 'off' : visible === node.leaves.length ? 'on' : 'part';
       const ghosted = node.leaves.length > 0 && node.leaves.every((id) => ghostSet.has(id));
-      const selected = s.sel === node.id;
+      // `null` for an empty or stale `sel`, and a row is always an object, so
+      // no row is drawn selected — which is what the raw comparison did too.
+      const selected = selRow === node;
       const meta_ = node.isNode
         ? (eye === 'part' ? `${visible}/${node.leaves.length}` : String(node.leaves.length))
         : (node.known ? '' : '?');
@@ -2276,7 +2467,17 @@ export default class HammerolaViewer extends React.Component {
           && this.setState({ expanded: { ...s.expanded, [node.id]: !expanded } })),
         eyeOuter: eyeOuter(eye), eyeDot: eyeDot(eye), ghostIcon: ghostIcon(ghosted),
         dotStyle: 'width:9px;height:9px;border-radius:3px;flex:none;margin:0 4px 0 2px;background:' + (node.color || 'transparent') + (node.isNode ? ';border:1px solid #c3c8cf;background:transparent' : ''),
-        name: node.name,
+        // `pin ×5` where the row collapsed five copies of one part (issue #75).
+        // A GROUP NEVER GETS ONE, and the reason is that it would not be the
+        // same quantity: a group's `leaves` is every leaf path UNDERNEATH it
+        // (`indexTree`), so `housing ×3` reads as three housings when the three
+        // are the parts inside one. That the number is already in `meta_` on the
+        // right — as `visible/total` while SOME BUT NOT ALL of them are hidden,
+        // bare with none hidden and bare again with every one of them hidden,
+        // since that is `eye === 'off'` and not `'part'` — is a second and
+        // smaller remark: it says why the count is still visible on the row, not
+        // why it is kept out of the name.
+        name: node.isNode ? node.name : countedName(node.name, node.leaves.length),
         nameStyle: 'white-space:nowrap;cursor:pointer;padding-right:4px;font:' + (node.isNode ? '600 12px ' : '400 12px ') + MONO + ';color:' + (eye === 'off' ? '#9aa1a9' : '#2a2e33'),
         meta: meta_,
         // Said out loud rather than dropped: a leaf the viewport could not match
@@ -2425,13 +2626,31 @@ export default class HammerolaViewer extends React.Component {
     // -- context menu on a tree row
     const mNode = this.node(s.menu && s.menu.id);
     // TWO NAMES, AND THE MENU USES BOTH FOR DIFFERENT THINGS. `mName` is the
-    // row's own label and is what the menu is headed with and what Copy name
-    // copies — it addresses the ROW, which is one solid in one view. `mKey` is
+    // row's own label and is what the menu is headed with — it addresses the
+    // ROW, which is one solid in one view UNLESS the row collapsed repeats of
+    // one part, and then it is all of them. `mKey` is
     // the catalogue key and is what everything about the PART is looked up
     // under: its note, its files. A group has no key and neither has a leaf
     // that names none, and in both cases the answer is that this row has
     // nothing in the catalogue — never the name used as a stand-in (issue #75).
-    const mName = mNode ? mNode.name : '';
+    //
+    // THE COUNT IS ON THE HEADER because the items below it act on the whole
+    // row: Hide takes `mNode.leaves`, so a menu headed plain `pin` over a row
+    // of five would hide five parts having named one. Copy name is the other
+    // half of the same decision and deliberately copies `mNode.name` bare —
+    // what goes on the clipboard is a part's name, not a tally of it.
+    //
+    // A GROUP IS EXCLUDED, on the same ground the tree row gives next door: it
+    // would not be the same quantity. A group's `leaves` is every leaf path
+    // UNDERNEATH it (`indexTree`), so `housing ×7` reads as seven housings when
+    // the seven are the parts inside one. Hide does act on all seven — the
+    // argument above holds for a group word for word — but a header naming the
+    // wrong quantity is worse than one naming none. What does NOT carry over is
+    // the tree row's second remark, that the number is drawn on the right
+    // anyway: this menu has no meta column, so nothing here shows it at all.
+    const mName = mNode && !mNode.isNode
+      ? countedName(mNode.name, mNode.leaves.length)
+      : (mNode ? mNode.name : '');
     const mKey = (mNode && mNode.key) || '';
     // Through `noteFor` like the other read of the reader's map. This one throws
     // EARLIEST of the two when it is not: the item below slices the note to 22
@@ -2745,10 +2964,9 @@ export default class HammerolaViewer extends React.Component {
         + (!s.compare && (authorNote || (!viewer && readerNote)) ? 'block' : 'none'),
       // THE HEADING IS THE CATALOGUE KEY AND NOT THE ROW'S LABEL, because that
       // is what the two notes below it are actually about. The row is one solid
-      // in one view and a view may hold several of the same part — the
-      // tessellator tells those apart by name (`pin`, `pin(2)`) — so a heading
-      // taken from the row would put `pin(2)` over a note that belongs to every
-      // pin in the build, i.e. claim an identity the note does not have.
+      // in one view UNLESS the row collapsed repeats of one part, and then it is
+      // all of them — so a heading taken from the row would claim an identity
+      // the note does not have.
       noteName: this.selectedKey(),
       authorNoteStyle: 'display:' + (authorNote ? 'block' : 'none') + ';margin-top:5px',
       authorNote,
@@ -2798,6 +3016,57 @@ export default class HammerolaViewer extends React.Component {
       movedChipStyle: chip(!!s.moved, '#fdf0d8', '#f0dcae', '#6b5210'),
       movedText: s.moved ? `${s.moved.name} moved ${s.moved.mag} mm` : '',
       movedReset: () => this.set({ moved: null }, { __resetMove: true }),
+      // `part` IS A DISPLAYED STRING AND NOTHING MORE, and it is displayed
+      // TWICE rather than once: `composerPart` heads the composer with it, and
+      // `sendComment` copies it into this session's record of the comment, out
+      // of which `computed` builds the thread in the rail — which is where it
+      // stays on screen long after the composer has closed. What is POSTED is
+      // `partId`; this string is never a field of the request.
+      //
+      // THREE DOORS FILL IT WITH A NAME, and this note is the inventory of how
+      // they differ, so it has to name all three: the `hmr:place` handler (a
+      // point picked in the scene), this one (a drag) and `measAdd` below (a
+      // measurement). A FOURTH WRITER IS NOT A DOOR, and is named so the
+      // inventory reads as complete rather than as one entry short: `leaveBuild`
+      // writes `part: ''`, emptying the field instead of filling it, because the
+      // build the attachment was made against has left. All three doors name the
+      // ROW and not the solid the viewport reported, because where a run has
+      // collapsed the solid's own name — `pin(2)` — is drawn on no row at all.
+      // WHERE IT HAS NOT — a part standing between the copies, or a `known` that
+      // splits the run — that solid is a row of its own and the lookup lands on
+      // it, so the collapsed case is the one this is FOR rather than the only
+      // one it is right in. What they still word differently is the COUNT.
+      //
+      // THEY ALSO DIFFER IN THE GRANULARITY OF THE `partId` BESIDE IT, which is
+      // the field that actually reaches the hub, and this inventory used to
+      // compare the doors on the count alone. `hmr:place` posts the exact solid
+      // the point sits on (`/model/pin(2)`); `measAdd` posts `sel`, which the
+      // pick handler resolved to the ROW, i.e. the first path of the run; and
+      // this door posts the first of the paths that actually MOVED — the row's
+      // own id where the row was dragged, one copy's own path where a grab with
+      // NOTHING SELECTED took that copy alone (see `count` in `tools.js`). That
+      // spread is not a drift to be levelled: a point is anchored to the solid
+      // it was placed on, a measurement and a drag are about the row, and each
+      // door posts the narrowest thing its own gesture was about.
+      //
+      // THIS DOOR CARRIES ONE AND THE OTHER TWO DO NOT, because only this one
+      // reports something that ACTED on parts. A drag moves every selected path
+      // at once, so `s.moved.name` is counted by the MOVED handler out of the
+      // viewport's own `count` — what actually travelled, which is the whole of
+      // what the reader is reporting. A measurement moves nothing: it is
+      // anchored to whatever happens to be selected, so `pin ×5` there would
+      // claim five copies were measured when the faces were two — and a placed
+      // point sits on one solid, which is the same answer for its own reason.
+      // The measurement's qualifier about spanning parts rides in the
+      // measurement text instead (`measureLabel`), where it is a fact about the
+      // number.
+      //
+      // THE COUNT ITSELF DOES REACH THE HUB, and only this FIELD does not — be
+      // exact about which. This door also writes `move`, spelled out of the
+      // same counted name, and `sendComment` splices that into the comment
+      // TEXT: `moved: pin ×3 by 3 mm (temporary, not in the model)` is what the
+      // hub stores and the agent reads. So the wording chosen here is a display
+      // detail of `part` alone.
       movedAttach: () => this.set({
         composer: {
           part: s.moved.name, partId: s.moved.id, p: null, text: '', photo: null,
@@ -2819,6 +3088,12 @@ export default class HammerolaViewer extends React.Component {
       measAddStyle: 'cursor:pointer;text-decoration:underline'
         + (viewer ? ';display:none' : ''),
       measAdd: () => {
+        // The ROW's plain name where the tree can answer, and `selName` where
+        // it cannot — which is the row's name too, since the pick handler
+        // resolves it while the tree is still standing; the picked solid's name
+        // survives in it only for a path no row ever claimed. Bare either way.
+        // See `movedAttach` above for why this door words `part` without a
+        // count, and for exactly how much of that wording stays on the screen.
         const node = this.node(s.sel);
         this.set({
           composer: {
