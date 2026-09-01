@@ -22,6 +22,46 @@ import { finite3 } from "./math.js";
  * never be interpolated into markup — the hub validates it (`_check_color`) and
  * React escapes it, and both of those hold only as long as nobody builds a style
  * string out of it by hand.
+ *
+ * A ROW CARRIES TWO NAMES AND THEY ARE NOT THE SAME THING (issue #75). `id` is
+ * the PATH — parent path plus `/name`, the key the vendored library answers to
+ * — and `key` is the CATALOGUE key, the identity of the part in
+ * `meta.parts`. They differ wherever a view shows one part twice: the
+ * tessellator tells the repeats apart by name (`pin`, `pin(2)`) so that the
+ * paths stay unique, while both leaves carry the key `pin` and therefore the
+ * same files, the same note and the same kind. Every operation here is on the
+ * path; everything the interface looks UP is by the key.
+ *
+ * ONLY A LEAF GETS ONE, and that is a rule rather than an accident of the
+ * fixture: a leaf is one part and a group is not a part at all, so a group with
+ * a `key` on it would be a hand-made push making an assembly answer for a
+ * catalogue record. Every leaf on a document that came through the front door
+ * carries one, because `check_view_file` in src/render.py refuses a push whose
+ * leaf does not.
+ *
+ * THREE SIDES DECIDE LEAF-OR-GROUP AND THIS ONE ASKS A DIFFERENT QUESTION. The
+ * hub asks whether the FIELD IS THERE (`"parts" in node`, check_view_file); the
+ * vendored library asks the same (`isShapeTree`: `return "parts" in shape`);
+ * this walk asks the TYPE OF THE VALUE, `Array.isArray(node.parts)`. On one
+ * node they part company — `{"key": "lid", "parts": null}` is a group to the
+ * other two and a leaf here, so this walk would take a key off a node they
+ * would descend into, and the library would run `for (const shape of
+ * shapes.parts)` over a null.
+ *
+ * WHAT KEEPS THAT HARMLESS IS THE REFUSAL ON THE RECEIVING SIDE, not any
+ * agreement between the rules: the hub reads that node as a group and then
+ * throws it out on `isinstance(parts, list)`, so no build carrying one is ever
+ * served. Whoever loosens that refusal — asking `is None` in place of `in`,
+ * which is exactly the edit `check_view_file` argues against by name — brings
+ * the divergence back to life, and this walk starts reading keys off nodes the
+ * viewer is meanwhile crashing on.
+ *
+ * A LEAF WITHOUT ONE KEEPS `null` AND IS NEVER GUESSED AT. The old viewer
+ * reconstructed a part's identity by comparing strings — the stem of a filename
+ * against the name on the row — and got it wrong on any part with a dot in its
+ * name; falling back to `name` here would put that back, and worse, because the
+ * key now exists and the fallback would hide its absence. No key means the row
+ * has no link to the catalogue: no files, no note, nothing.
  */
 export function treeFromShapes(shapes, states) {
   const known = states && typeof states === "object" ? states : null;
@@ -38,6 +78,7 @@ export function treeFromShapes(shapes, states) {
       row.children = kids.map((kid) => walk(kid, path));
       return row;
     }
+    row.key = typeof node.key === "string" && node.key ? node.key : null;
     // A leaf the library does not know is a leaf nothing can be done to. Said
     // out loud rather than dropped: a tree missing a row reads as a build with
     // fewer parts, while a row marked unknown reads as what it is.

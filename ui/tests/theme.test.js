@@ -185,8 +185,10 @@ function component({ theme = 'light', viewer = {} } = {}) {
   })
   c.state = {
     meta: {
-      project: 'fixture', commit: 'abc1234', built: '', downloads: {},
-      variants: [{ id: 'assembled', name: 'assembled', file: 'a.json', parts: 3, gzip: 1000 }],
+      project: 'fixture', commit: 'abc1234', built: '',
+      parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
+      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+                parts: ['lid'], gzip: 1000 }],
     },
     builds: null,
     tree: indexTree({ id: '/model', name: 'model', children: [] }),

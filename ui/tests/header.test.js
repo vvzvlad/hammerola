@@ -82,8 +82,10 @@ function component({ builds = null, rail = null, props = {} } = {}) {
   c.setState = vi.fn((patch) => { Object.assign(c.state, patch) })
   c.state = {
     meta: {
-      project: 'fixture', commit: REV, built: '2026-08-27T18:20:00Z', downloads: {},
-      variants: [{ id: 'assembled', name: 'assembled', file: 'a.json', parts: 3, gzip: 1000 }],
+      project: 'fixture', commit: REV, built: '2026-08-27T18:20:00Z',
+      parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
+      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+                parts: ['lid'], gzip: 1000 }],
     },
     builds,
     tree: indexTree({ id: '/model', name: 'model', children: [] }),
@@ -105,6 +107,86 @@ function component({ builds = null, rail = null, props = {} } = {}) {
   }
   return c
 }
+
+// -- the line under the title, and the tab strip ------------------------------
+//
+// `views[].parts` NAMES the catalogue keys a view shows and used to COUNT them
+// (issue #75). THE FIELD KEPT ITS NAME AND CHANGED ITS TYPE, which is the one
+// shape of change nothing here could see: `${current.parts} parts` went on
+// rendering perfectly happily, as `lid,post,pin parts`. So both readers of it
+// are asserted on their text, which is what a reader is actually shown.
+
+describe('what the header says about this build', () => {
+  /** The page on a build with the given views, opened on the first of them. */
+  const showing = (views) => {
+    const c = component()
+    c.state.meta.views = views
+    c.state.view = views[0].id
+    return c
+  }
+
+  const VIEWS = [
+    { id: 'assembled', name: 'assembled', file: 'a.json',
+      parts: ['lid', 'post', 'pin'], gzip: 1_400_000 },
+    { id: 'print', name: 'print', file: 'p.json', parts: ['lid'], gzip: 600_000 },
+  ]
+
+  it('counts the parts of THIS view and sizes the whole build', () => {
+    // The count is the LENGTH of the list and nothing else, so what it counts
+    // is whatever the hub put on the list.
+    //
+    // "COUNTS DISTINCT PARTS, SO FIVE OF ONE PIN IS ONE PART" WAS A SECOND
+    // TEST HERE, on `['lid', 'pin']`, and it was a second name for this one
+    // assertion: it exercised the same expression and no mutation reddened it
+    // alone. The property it named is real and it belongs to the BUILD —
+    // `list(dict.fromkeys(node["key"] for node in nodes))` in
+    // src/cadbuild/views.py — so the only suite that can assert it is the
+    // Python one, and it does: `test_a_real_export_is_a_document_the_hub_would
+    // _accept` in tests/cadbuild/test_views.py exports a view holding two
+    // `pin` leaves and expects `["lid", "pin", "board"]` (it needs the kernel,
+    // so it skips in CI). A browser-side case that cannot fail on any of that
+    // was hiding where the property lives rather than covering it. Merged
+    // rather than deleted so the sentence stays where somebody looks for it.
+    expect(showing(VIEWS).computed().subtitle).toBe('3 parts · 2 views · 2.0 MB')
+  })
+
+  it('says the same on every tab, without fetching a single view file', () => {
+    // The promise the field exists to keep, and the reason it is a list rather
+    // than the geometry: a reader learns what is in a tab before opening it.
+    expect(showing(VIEWS).computed().viewTabs.map((t) => t.hint))
+      .toEqual(['3 parts · 1.4 MB', '1 parts · 0.6 MB'])
+  })
+
+  it('says nothing rather than NaN when a view declares no list at all', () => {
+    // A hand-made document, or one this page did not get from a push: no
+    // `parts` on the view at all. `undefined.length` would take the header
+    // down, and `${undefined} parts` would put the word "undefined" on the
+    // page.
+    const c = showing([{ id: 'assembled', name: 'assembled', file: 'a.json', gzip: 0 }])
+    expect(c.computed().subtitle).toBe('0 parts · 1 view · 0.0 MB')
+    expect(c.computed().viewTabs[0].hint).toBe('0 parts · 0.0 MB')
+  })
+
+  it('says nothing when the field is a NUMBER, either', () => {
+    // The other shape of the same hand-made document, and it is not the one
+    // above: the field is there and it is a number. `3` has no `.length`, so
+    // the guard has to be `Array.isArray` and not "is it there"; asserting the
+    // absent case alone leaves the reading that would put `undefined parts` on
+    // the header.
+    //
+    // A NUMBER HERE IS NOT AN OLD BUILD, tempting as the reading is: `parts`
+    // was indeed a count before issue #75, but it sat on `variants[]`, and the
+    // rename to `views` came in the same commit as the change of type
+    // (`build_meta` in src/render.py, before 5683fea). `subtitle()` reads
+    // `meta.views` unguarded before it ever calls this, so a genuine old
+    // document never reaches this guard at all. Nothing here opens one; what
+    // this covers is a document somebody wrote by hand.
+    const c = showing([{ id: 'assembled', name: 'assembled', file: 'a.json',
+                        parts: 3, gzip: 0 }])
+    expect(c.computed().subtitle).toBe('0 parts · 1 view · 0.0 MB')
+    expect(c.computed().viewTabs[0].hint).toBe('0 parts · 0.0 MB')
+  })
+})
 
 // -- which revision this is --------------------------------------------------
 

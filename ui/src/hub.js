@@ -13,7 +13,7 @@
 //                                       reader was last on (SPEC 9)
 //     /project/<pid>/<slot>/            the page, where <slot> is a commit id
 //                                       or one of the two moving names
-//     /project/<pid>/<slot>/meta.json   this build: title, views, downloads
+//     /project/<pid>/<slot>/meta.json   this build: title, views, part catalogue
 //     /project/<pid>/builds.json        the picker: pointers plus the history
 //     /project/<pid>/<slot>/<view file> the geometry, ~2 MB of it
 //
@@ -183,13 +183,23 @@ export const projectUrl = (pid) => `/project/${encodeURIComponent(pid)}/`;
  * `first` is the one field whose NAME differs from what the mock asked for, and
  * deliberately: the mock wanted a creation date, the hub has the oldest build it
  * holds, and those are different claims — see `render.index_card`.
+ *
+ * `printables` IS COUNTED AND NAMED, and the word on the card changed with the
+ * field (issue #75). It used to read `card.parts`, which was the part count of
+ * the biggest view; the catalogue's `parts` is now every part a build declares
+ * — the bought screws and the scenery included — so a card built from its size
+ * would tell somebody a three-part model with nine screws had twelve parts to
+ * print. The hub therefore counts the printable records and calls the field
+ * `printables`, and this line says the same word rather than a friendlier one:
+ * "parts" over a number that counts only what gets printed is the very
+ * mismatch the rename exists to end.
  */
 export function projectCard(card) {
   return {
     pid: card.pid,
     title: card.title || card.project || card.pid,
     slug: card.project,
-    meta: `${card.parts} parts · ${card.variants} views · ${card.mb} MB`,
+    meta: `${card.printables} printables · ${card.views} views · ${card.mb} MB`,
     rev: shortId(card.commit),
     dev: !!card.dev,
     built: card.built,
@@ -345,6 +355,20 @@ const MAX_DEPTH = 64;
  * library's own state map. Such a row is still drawn, deliberately: a tree
  * missing a row reads as a build with fewer parts, while a row marked unknown
  * reads as what it is.
+ *
+ * `key` IS THE OTHER NAME A ROW HAS, and it is carried through untouched from
+ * the view file (`treeFromShapes` says why the two exist). `id` is the path the
+ * viewport operates on; `key` is the entry in `meta.parts` — the files, the
+ * note, the kind. It is `null` on a leaf that names none, and it is NEVER
+ * filled in from `name`: guessing the identity out of a string is exactly what
+ * the catalogue replaced (issue #75).
+ *
+ * A GROUP HAS NONE EITHER, and that is `treeFromShapes`'s doing rather than
+ * this walk's: it puts a key on leaves only, so a group arrives here without
+ * one. The rule is not repeated here because the hub does not enforce it on the
+ * other side — `check_view_file` declares a key wherever it sits — so a second
+ * copy of the rule would be this side quietly disagreeing with the document it
+ * was handed. One place decides, and it is the one that reads the view file.
  */
 export function indexTree(root) {
   const nodes = new Map();
@@ -369,6 +393,8 @@ export function indexTree(root) {
     const node = {
       id,
       name,
+      // The catalogue key, or nothing at all. No fallback: see the note above.
+      key: typeof raw.key === 'string' && raw.key ? raw.key : null,
       color: typeof raw.color === 'string' ? raw.color : null,
       isNode: !!children,
       known: raw.known !== false,

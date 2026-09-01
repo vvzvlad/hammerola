@@ -166,8 +166,12 @@ describe('the token', () => {
 // -- the notes ---------------------------------------------------------------
 // A note is a property of a PART and belongs to the project rather than to a
 // build: "3.2 mm wall, printer minimum, leave it" is true before a rebuild and
-// after one. There is no endpoint for them, so they live here, keyed by part
-// name — a name survives a rebuild and an id does not.
+// after one. There is no endpoint for them, so they live here, keyed by the
+// part's CATALOGUE KEY since issue #75 — the identity the model declares, which
+// survives a rebuild and does not change between the print view and the
+// assembled one the way a row's name does. Nothing in THIS module knows that:
+// it stores whatever map it is handed under the project's key, which is why the
+// change cost it no code and no test.
 
 describe('the notes', () => {
   const notes = { 'bracket-left': '3.2 mm wall, leave it', clamp: 'reprint in PETG' }

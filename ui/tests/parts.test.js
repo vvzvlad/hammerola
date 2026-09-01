@@ -92,6 +92,107 @@ describe('treeFromShapes', () => {
     for (const row of tree.children) expect(row.known).toBe(true)
   })
 
+  // -- the catalogue key (issue #75) ------------------------------------------
+  //
+  // KEYS ARE ADDED HERE, NOT IN THE FIXTURE, and that is not laziness: the
+  // committed `assembled.json` predates the key and regenerating it is a step of
+  // its own. So these tests nest the fixture's own real nodes and stamp keys on
+  // them — the same shape `export_views` now writes, arranged in the test that
+  // makes the claim. The nodes stay real; only the key is arranged.
+
+  /** The fixture's leaves, each stamped with a catalogue key of its own. */
+  const keyed = (key = (leaf, at) => `part${at}`) => ({
+    ...assembled,
+    parts: assembled.parts.map((node, at) => ({ ...node, key: key(node, at) })),
+  })
+
+  it('carries the leaf\'s catalogue key through as it came', () => {
+    const source = keyed()
+    const tree = treeFromShapes(source, statesFor(PATHS))
+    expect(tree.children.map((row) => row.key))
+      .toEqual(source.parts.map((node) => node.key))
+  })
+
+  it('keeps the key and the path APART, so one part may appear twice', () => {
+    // The whole reason a row has two names. A view holding two copies of one
+    // part gets two leaves with the same key and different names — `pin` and
+    // `pin(2)`, which is how the tessellator keeps the paths unique — and the
+    // interface then operates on the path while looking everything up by the
+    // key.
+    const [first, second] = assembled.parts
+    const source = {
+      ...assembled,
+      parts: [{ ...first, name: 'pin', key: 'pin' },
+              { ...second, name: 'pin(2)', key: 'pin' }],
+    }
+    const paths = leavesOf(source).map((leaf) => leaf.path)
+    const rows = treeFromShapes(source, statesFor(paths)).children
+
+    expect(rows.map((row) => row.id)).toEqual(paths)
+    expect(rows[0].id).not.toBe(rows[1].id)
+    expect(rows.map((row) => row.key)).toEqual(['pin', 'pin'])
+  })
+
+  it('leaves a leaf that names no key at `null` rather than guessing at its name', () => {
+    // The fixture as it stands: the committed `assembled.json` predates the key
+    // (the note above), so not one of its leaves names one. THAT IS THE READER
+    // HERE, and an old build is not — a document from before the catalogue
+    // never gets this far, since the page reads its `meta.views` unguarded
+    // before it fetches a view file at all and such a document named the list
+    // `variants`. A fallback to `name` would put back exactly the
+    // identity-by-string the catalogue replaced, and would be worse than the
+    // original: the key now EXISTS, so the fallback would hide its absence
+    // rather than stand in for a field nobody has.
+    const tree = treeFromShapes(assembled, statesFor(PATHS))
+    for (const [at, row] of tree.children.entries()) {
+      expect(row.key, `row ${at} invented a key`).toBeNull()
+      expect(row.name).toBe(LEAVES[at].node.name)
+    }
+  })
+
+  it('refuses a key that is not a non-empty string', () => {
+    // A view file is a pushed document, so this side reads what it was handed
+    // rather than a promise about it: a key of `12` would be looked up in
+    // `meta.parts` and answer for whatever sits under `"12"`.
+    //
+    // THE EMPTY STRING IS NOT LIKE THE OTHERS, and the difference is why the
+    // second half of `typeof node.key === "string" && node.key` must stay.
+    // `render._check_part_name` refuses every non-string here, but it has no
+    // lower bound at all, so `""` passes it, `_catalogue` takes a `parts` map
+    // keyed by it, and `check_view_file` hands it back as a declared key. This
+    // line is the only thing anywhere that rejects it.
+    for (const bad of [12, '', null, {}, ['pin']]) {
+      const source = keyed(() => bad)
+      const rows = treeFromShapes(source, statesFor(PATHS)).children
+      expect(rows.every((row) => row.key === null), `${JSON.stringify(bad)} got through`)
+        .toBe(true)
+    }
+  })
+
+  it('gives a GROUP no key at all, not even one written into the file', () => {
+    // A group is not a part: it has no record, so no files, no note and no
+    // kind. The build does not write one, and THIS SIDE IS THE ONLY SIDE THAT
+    // SAYS SO: `check_view_file` takes such a file — "EVERY `key` IN THE FILE
+    // GOES INTO THE SET, wherever it sits", in its own words, because a key is
+    // a claim about what the view shows and that walk is not the place to
+    // decide which nodes carry one. So a hand-made file with a key on a group
+    // is a document the hub ACCEPTS, and what refuses to let it make an
+    // assembly answer for a catalogue record is `treeFromShapes` here (see
+    // `indexTree` in hub.js: one place decides, and it is the one reading the
+    // view file).
+    const [first, second, ...others] = keyed().parts
+    const nested = {
+      ...assembled,
+      parts: [{ name: 'subassembly', color: null, key: 'lid', parts: [first, second] },
+              ...others],
+    }
+    const paths = leavesOf(nested).map((leaf) => leaf.path)
+    const branch = treeFromShapes(nested, statesFor(paths)).children[0]
+
+    expect(branch.key).toBeUndefined()
+    expect(branch.children.map((row) => row.key)).toEqual([first.key, second.key])
+  })
+
   it('nests: a child node carries children and no `known` flag of its own', () => {
     // SYNTHETIC, deliberately and unavoidably: `prepare_views` refuses an
     // assembly, so no build emits a nested view file today. The NODES are real

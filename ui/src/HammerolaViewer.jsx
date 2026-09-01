@@ -17,17 +17,18 @@
  *   DIFF           -> nothing. The hub has no endpoint that compares two
  *                     builds (plan step 8), so the panel is drawn and says so.
  *   notes          -> TWO different things that share one word, and the box on
- *                     the canvas labels them rather than stacking them. The
- *                     READER's is localStorage, keyed by part NAME, per
- *                     project, and never leaves this browser — there is still
- *                     no route that writes it anywhere. The AUTHOR's is
- *                     published content: written in `model.py`, validated at
- *                     build and again at publish, and carried in the build's
- *                     own `meta.notes` — a flat map from part NAME to text. It
- *                     is shown to EVERYONE, exactly like the part's name, and
- *                     `meta.notes` is absent on a build that carries none (and
- *                     on every build published before the key existed), which
- *                     is the ordinary case rather than an error.
+ *                     the canvas labels them rather than stacking them. Both
+ *                     hang on the CATALOGUE KEY (issue #75), which is the
+ *                     part's identity rather than the label a view happens to
+ *                     put on a row. The READER's is localStorage, per project,
+ *                     and never leaves this browser — there is still no route
+ *                     that writes it anywhere. The AUTHOR's is published
+ *                     content: written in `model.py`, validated at build and
+ *                     again at publish, and carried as `note` INSIDE the
+ *                     build's own `meta.parts[key]`. It is shown to EVERYONE,
+ *                     exactly like the part's name, and a part with nothing to
+ *                     say carries no `note` key at all, which is the ordinary
+ *                     case rather than an error.
  *   comments       -> the write endpoint is real, used, and since step 0 it
  *                     REQUIRES the token. The FEED is still not fetched, but the
  *                     reason has changed and the difference matters to whoever
@@ -203,45 +204,54 @@ const BUSY_WAIT_MS = 5000;
 const HOLD_KEY_LABEL = 'C';
 
 /**
- * `meta.downloads` regrouped as part name -> the files published for that part.
+ * One entry of `meta.parts`, or `null` — the ONLY way this page reads the
+ * catalogue.
  *
- * The hub publishes `{label: filename}` and nothing that says which part a file
- * belongs to — the answer is in the FILENAME, which is always `<part>.<ext>` for
- * ext in step/stl/3mf (`download_labels` in src/cadbuild/printables.py). That
- * holds because `downloads` is per part and nothing else is in it: what the
- * build writes about ITSELF travels in `meta.overview` and `meta.previews`, so
- * no name here has to be recognised and excluded. Nothing about the wire format
- * changes for this; the grouping is done here, in the one place that needs it.
+ * THE KEY IS THE IDENTITY (issue #75) and it comes out of a pushed document, so
+ * it is a string somebody else chose: a part may be called `constructor` or
+ * `__proto__`, which `render._check_part_name` does not object to. A bare
+ * `parts[key]` on a map that came back from `JSON.parse` answers those with a
+ * FUNCTION off `Object.prototype`, and the reads below then slice it, spread it
+ * or hand it to React — the same trap `noteFor` documents further down, on the
+ * other map keyed by a part's name.
  *
- * READ THE VALUE, NEVER THE KEY, and that is the whole trap: with a single
- * printable the LABEL degenerates to a bare `step` / `stl` / `3mf` with the part
- * name gone from it, while the filename does not degenerate at all. A menu built
- * by matching labels against a part name would therefore work on every assembly
- * except the one-part one, which is the smallest and most common case there is.
- *
- * SPLIT AT THE LAST DOT: a printable's name may itself contain dots (MEMBER_RE
- * allows them), so `v1.2.plate.stl` is the part `v1.2.plate`, not `v1`.
- *
- * A Map rather than an object, because the keys are model-supplied strings and
- * `__proto__` is a legal printable name — assigning it on an object literal
- * silently stores nothing.
+ * A NON-OBJECT RECORD IS NO RECORD. The hub refuses one, but this side reads a
+ * fetched document rather than a promise about it, and a `"lid": 3` would
+ * otherwise reach `record.files` and read `undefined` off a number.
  */
-export function filesByPart(downloads) {
-  const out = new Map();
-  Object.values((downloads && typeof downloads === 'object') ? downloads : {})
-    .forEach((value) => {
-      const file = String(value);
-      const cut = file.lastIndexOf('.');
-      // No extension, or nothing before the dot: not a `<part>.<ext>` name, and
-      // guessing at one would put a row in the menu that downloads nothing.
-      if (cut <= 0 || cut === file.length - 1) return;
-      const name = file.slice(0, cut);
-      if (!out.has(name)) out.set(name, []);
-      // In the order the hub wrote them — step, stl, 3mf — rather than sorted,
-      // so the menu lists what was published in the order it was published.
-      out.get(name).push({ ext: file.slice(cut + 1), file });
-    });
-  return out;
+export function partRecord(parts, key) {
+  if (!key || !parts || typeof parts !== 'object') return null;
+  if (!Object.prototype.hasOwnProperty.call(parts, key)) return null;
+  const record = parts[key];
+  return record && typeof record === 'object' ? record : null;
+}
+
+/**
+ * The files of one catalogue record, as `[{ext, file}]`.
+ *
+ * `files` IS THE WHOLE ANSWER AND NOTHING IS DERIVED FROM A NAME. The hub
+ * publishes `{extension: filename}` per part (`_catalogue` in src/render.py),
+ * which is what this page used to reconstruct by cutting a filename at its last
+ * dot and treating the stem as the part — a reconstruction that was wrong for
+ * any part with a dot in its name and that the catalogue exists to make
+ * unnecessary.
+ *
+ * ONLY `files`, AND `preview` IS NEXT DOOR ON PURPOSE. A record may carry the
+ * part's own render; a picture is looked at rather than saved, and it is
+ * declared so `hammerola artifacts` can fetch it. Reading one field and not its
+ * neighbour is what keeps that true now that the two sit in the same object.
+ *
+ * The pair is checked rather than trusted: a filename that is not a non-empty
+ * string makes a row that downloads nothing, which is worse than not being
+ * offered at all.
+ */
+function fileList(record) {
+  const files = record && typeof record.files === 'object' && record.files
+    ? record.files : null;
+  if (!files) return [];
+  return Object.entries(files)
+    .filter(([ext, file]) => ext && typeof file === 'string' && file)
+    .map(([ext, file]) => ({ ext, file }));
 }
 
 /**
@@ -257,67 +267,45 @@ export function filesByPart(downloads) {
  */
 const PRINT_FIRST = ['STL', '3MF', 'STEP'];
 
-/** The row's own name inside its group: the label with its format taken off.
- *
- * The label the hub publishes is `<part>.<ext>` — except with a SINGLE printable,
- * where it degenerates to a bare `step` / `stl` / `3mf` and the part name is gone
- * from it (`download_labels` in src/cadbuild/printables.py). Stripping the format
- * off THAT leaves nothing at all, so the filename's stem answers instead: the
- * filename never degenerates, which is the same fact `filesByPart` above is built
- * on.
- */
-function rowName(label, file, cut) {
-  const ext = file.slice(cut + 1);
-  let name = label;
-  // Case-insensitively, because the strip has to hold for whatever case the
-  // label arrived in while the group is keyed by the uppercased one.
-  if (name.toLowerCase().endsWith(ext.toLowerCase())) {
-    name = name.slice(0, name.length - ext.length);
-  }
-  if (name.endsWith('.')) name = name.slice(0, -1);
-  return name || file.slice(0, cut);
-}
-
 /**
- * `meta.downloads` as ordered groups of one FORMAT each, rows ordered by part.
+ * `meta.parts` as ordered groups of one FORMAT each, rows ordered by part.
  *
  * Flat, this menu is one row per file — thirty of them on a ten-part build, in
  * the order the hub happened to write them, so picking out every STL means
  * aiming at every third row. Grouped, the same thirty rows are three groups a
  * reader can take whole.
  *
- * THE SAME MAP `filesByPart` READS, AND NO OTHER. `meta.overview` and
- * `meta.previews` — the whole build's own meshes and its pictures — are not
- * drawn anywhere on this page: they are declared for a client to FETCH, and a
- * button is a different offer. `print.stl` is the one where drawing it would be
- * actively wrong: the plate is whatever the `print` view holds, nothing
- * requires that to be printable parts only, and a button on a public page
- * invites somebody to slice a plate with a mock of a purchased bearing on it.
- * `assembled.stl` has been served for this hub's whole life with no button and
- * nobody has asked for one — the assembly is on screen in 3D, which is the
- * better answer to the question a button would be for.
+ * THE ROW'S NAME IS THE CATALOGUE KEY, full stop. It used to be the hub's
+ * download LABEL with the format stripped off the end of it, and that strip
+ * existed only because the label degenerated to a bare `stl` on a one-part
+ * build; there is no label any more and nothing to guess at — the key IS the
+ * part's name, on a build with one printable exactly as on a build with thirty.
  *
- * THE GROUP KEY IS THE EXTENSION OFF THE FILENAME, never the label, and it is
- * the same trap `filesByPart` documents at length one screen up: the label is
- * the thing that degenerates on a one-part build, and the filename is the thing
- * that does not.
+ * THE CATALOGUE AND NOTHING ELSE, which is what keeps the whole-build meshes
+ * out of this menu now that they have moved next to the views. `overview` and
+ * `preview` on a VIEW — `assembled.stl`, `print.stl` and their pictures — are
+ * declared for a client to FETCH, and a button is a different offer.
+ * `print.stl` is the one where drawing it would be actively wrong: the plate is
+ * whatever the `print` view holds, nothing requires that to be printable parts
+ * only, and a button on a public page invites somebody to slice a plate with a
+ * mock of a purchased bearing on it. `assembled.stl` has been served for this
+ * hub's whole life with no button and nobody has asked for one — the assembly
+ * is on screen in 3D, which is the better answer to the question a button would
+ * be for.
  *
- * A Map for the same reason as `filesByPart`: the keys come off model-supplied
- * filenames, so `__proto__` is reachable and an object literal would silently
- * store nothing under it.
+ * A Map because the group key is an extension out of a pushed document, so
+ * `__proto__` is reachable and an object literal would silently store nothing
+ * under it.
  */
-export function groupDownloads(downloads) {
+export function groupDownloads(parts) {
   const groups = new Map();
-  Object.entries((downloads && typeof downloads === 'object') ? downloads : {})
-    .forEach(([label, value]) => {
-      const file = String(value);
-      const cut = file.lastIndexOf('.');
-      // No extension, or nothing before the dot: the same rule as `filesByPart`,
-      // and the same reason — a row built out of one downloads nothing.
-      if (cut <= 0 || cut === file.length - 1) return;
-      const ext = file.slice(cut + 1).toUpperCase();
-      if (!groups.has(ext)) groups.set(ext, []);
-      groups.get(ext).push({ label: rowName(String(label), file, cut), file });
+  Object.entries((parts && typeof parts === 'object') ? parts : {})
+    .forEach(([key, record]) => {
+      fileList(record).forEach(({ ext, file }) => {
+        const group = ext.toUpperCase();
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push({ label: key, file });
+      });
     });
   const text = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
   const rank = (ext) => {
@@ -330,6 +318,25 @@ export function groupDownloads(downloads) {
       ext,
       files: groups.get(ext).slice().sort((a, b) => text(a.label, b.label)),
     }));
+}
+
+/**
+ * How many parts one view shows, out of the summary the hub publishes for it.
+ *
+ * `views[].parts` IS A LIST OF CATALOGUE KEYS. It used to be a count, and the
+ * change is the whole of issue #75 in one field: a view now NAMES what it
+ * shows, so the tab strip and the subtitle can say what is in a tab without
+ * fetching the two megabytes of geometry to find out, and the hub holds that
+ * list against the view file itself (`_match_selection` in src/render.py). A
+ * non-list is nothing rather than `NaN`: this is a fetched document, and
+ * `undefined.length` would take the header down.
+ *
+ * IT COUNTS DISTINCT PARTS. Five copies of one pin name `pin` once, so a plate
+ * of a lid and five pins reads "2 parts" — which is what a catalogue key means
+ * and what the tree will say too once repeats are drawn as one row.
+ */
+function viewPartCount(view) {
+  return Array.isArray(view && view.parts) ? view.parts.length : 0;
 }
 
 /**
@@ -443,37 +450,41 @@ export function menuAt(x, y) {
 }
 
 /**
- * One entry of a note map — the only way a map keyed by PART NAMES may be read.
+ * One entry of the READER's note map — the only way a map keyed by a part's
+ * identity may be read.
  *
- * There are two such maps on this page and neither is an object this code built:
- * the AUTHOR's comes out of a fetched meta.json, the READER's out of `JSON.parse`
- * on localStorage, and both inherit from `Object.prototype`. A part is allowed to
- * be called `constructor` or `toString` — the hub's own path alphabet says so —
- * and a bare `map[name]` on one of those answers with a FUNCTION off the
- * prototype. React refuses to render a function as a child and takes the page
- * down over a part name; the row menu's hint gets there sooner, slicing what it
- * thinks is a string. `hasOwnProperty.call` is what asks about the map itself
- * rather than about everything it inherits.
+ * The map is not an object this code built: it comes back out of `JSON.parse`
+ * on localStorage and inherits from `Object.prototype`. A part is allowed to be
+ * called `constructor` or `toString` — the hub's own path alphabet says so, and
+ * `render._check_part_name` lets a CATALOGUE KEY be either — and a bare
+ * `map[key]` on such an object answers with a FUNCTION off the prototype. React
+ * refuses to render a function as a child and takes the page down over a part
+ * name; the row menu's hint gets there sooner, slicing what it thinks is a
+ * string. `hasOwnProperty.call` is what asks about the map itself rather than
+ * about everything it inherits.
  *
- * ONE HELPER FOR ALL THREE READS, and that is the point of it being a function at
+ * ONE HELPER FOR BOTH READS, and that is the point of it being a function at
  * all. The guard used to be spelled out at the newest read and nowhere else,
- * which is a rule that holds exactly as long as whoever adds the fourth happens
- * to have seen the third.
+ * which is a rule that holds exactly as long as whoever adds the next one
+ * happens to have seen the last. The AUTHOR's note used to be a third read of
+ * an identically-shaped map; it now lives inside the catalogue record and is
+ * reached through `partRecord`, which makes the same argument for the same
+ * reason.
  *
  * The type check is the same argument for a value the hub would never write but a
  * fetched document is free to carry: a note that is not a string is no note.
  */
-export function noteFor(map, name) {
-  if (!name || !map || typeof map !== 'object') return '';
-  if (!Object.prototype.hasOwnProperty.call(map, name)) return '';
-  return typeof map[name] === 'string' ? map[name] : '';
+export function noteFor(map, key) {
+  if (!key || !map || typeof map !== 'object') return '';
+  if (!Object.prototype.hasOwnProperty.call(map, key)) return '';
+  return typeof map[key] === 'string' ? map[key] : '';
 }
 
 /**
  * The same map with one entry written, or — for an empty text — taken out.
  *
  * THE PAIR TO `noteFor`, and it exists because the READ was guarded and the
- * WRITE was not. `notes[name] = text` on a plain object is an ASSIGNMENT, and
+ * WRITE was not. `notes[key] = text` on a plain object is an ASSIGNMENT, and
  * `__proto__` names an accessor on `Object.prototype` rather than a slot: for a
  * string value that setter does nothing at all and reports no failure. A part
  * may be called `__proto__` — the hub's path alphabet allows it and
@@ -489,20 +500,19 @@ export function noteFor(map, name) {
  * than sets, so a `__proto__` entry already in the map survives the copy.
  *
  * `Object.create(null)` was the other way out and is not enough on its own: the
- * map is not always built here. The reader's comes back through `JSON.parse` on
- * localStorage and the author's out of a fetched meta.json, and both of those
- * inherit from `Object.prototype` whatever this function does — which is why
- * `noteFor` guards the read regardless, and why the fix belongs at the one write
- * rather than in the shape of the object.
+ * map is not built here at all — it comes back through `JSON.parse` on
+ * localStorage and inherits from `Object.prototype` whatever this function does
+ * — which is why `noteFor` guards the read regardless, and why the fix belongs
+ * at the one write rather than in the shape of the object.
  */
-export function notesWith(map, name, text) {
+export function notesWith(map, key, text) {
   const next = { ...(map && typeof map === 'object' ? map : null) };
-  if (!name) return next;
+  if (!key) return next;
   if (text) {
-    Object.defineProperty(next, name,
+    Object.defineProperty(next, key,
                           { value: text, writable: true, enumerable: true, configurable: true });
   } else {
-    delete next[name];
+    delete next[key];
   }
   return next;
 }
@@ -742,10 +752,10 @@ export default class HammerolaViewer extends React.Component {
       return null;
     });
     const wanted = new URLSearchParams(location.search).get('v');
-    const variant = meta.variants.find((v) => v.id === wanted) || meta.variants[0];
+    const opening = meta.views.find((v) => v.id === wanted) || meta.views[0];
     // `view` is what makes the viewport fetch and render: it starts null on both
     // sides, so this first sync is also the load.
-    this.setState({ meta, builds, view: variant.id },
+    this.setState({ meta, builds, view: opening.id },
                   () => { this.sync(); this.schedulePoll(POLL_MS); });
   }
 
@@ -839,7 +849,7 @@ export default class HammerolaViewer extends React.Component {
       // coming back to put it down; nobody else would, and the banner's Switch
       // would sit spent for the rest of the page's life.
       this.setState({ revOpen: false, swapping: false });
-      const variants = (this.state.meta && this.state.meta.variants) || [];
+      const views = (this.state.meta && this.state.meta.views) || [];
       // WHAT IS LEFT OUT OF STEP DEPENDS ON WHICH GESTURE CANCELLED, and the two
       // are exclusive: a `popstate` arrives with the address already correct and
       // possibly the wrong VIEW on screen, a picker click arrives with the view
@@ -867,7 +877,7 @@ export default class HammerolaViewer extends React.Component {
         // is what has to be repaired, and it is right there to be read.
         if (location.pathname !== path) {
           history.replaceState({ hmr: slot }, '',
-                               path + this.viewQuery(this.state.view, variants));
+                               path + this.viewQuery(this.state.view, views));
         }
       } else {
         // THE ONE THING THAT CAN STILL BE OUT OF STEP IS THE VIEW: an entry
@@ -876,7 +886,7 @@ export default class HammerolaViewer extends React.Component {
         // own path, the one the reader's own click takes — because a view is not
         // a build and this method has nothing to add to it.
         const wanted = this.entryView();
-        if (variants.some((v) => v.id === wanted)) this.showView(wanted);
+        if (views.some((v) => v.id === wanted)) this.showView(wanted);
       }
       return;
     }
@@ -988,8 +998,8 @@ export default class HammerolaViewer extends React.Component {
     // an entry, moves `PAGE` and rebuilds the state, and the entry in particular
     // is not something a later correction can take back.
     if (this._gone || gen !== this._swapGen) return;
-    const variants = Array.isArray(meta && meta.variants) ? meta.variants : [];
-    if (!variants.length) {
+    const views = Array.isArray(meta && meta.views) ? meta.views : [];
+    if (!views.length) {
       this.swapFailed(slot, new Error('this build lists no views'));
       return;
     }
@@ -1004,10 +1014,10 @@ export default class HammerolaViewer extends React.Component {
     // It survives when the target declares one with the same id, and otherwise
     // falls back to the first — exactly what a fresh load of that URL does with
     // a `?v=` naming a view the build does not have.
-    const view = variants.some((v) => v.id === wanted) ? wanted : variants[0].id;
+    const view = views.some((v) => v.id === wanted) ? wanted : views[0].id;
     // AND THE ADDRESS SAYS SO, by the same reading the cancelling branch above
     // writes its address with.
-    const query = this.viewQuery(view, variants);
+    const query = this.viewQuery(view, views);
 
     // EVERYTHING THAT DESCRIBED THE BUILD BEING LEFT GOES HERE, and this is the
     // one list of it — `takePending` opens a build too and calls the same
@@ -1446,9 +1456,10 @@ export default class HammerolaViewer extends React.Component {
    * is left half moved: `meta`, the title, the picker and `PAGE.base` are the
    * new build's while the panel on the left lists the parts of the old one.
    * Nothing about it looks wrong — the rows are real part names — but
-   * `authorNote` then looks those names up in the NEW build's `meta.notes`, and
-   * every row's menu builds its download links on the NEW base. So the tree is
-   * cleared here, on the error path, where the failure is known.
+   * `authorNote` then looks their catalogue keys up in the NEW build's
+   * `meta.parts`, and every row's menu builds its download links on the NEW
+   * base. So the tree is cleared here, on the error path, where the failure is
+   * known.
    *
    * `_refit` IS THE QUESTION "did a swap's model never arrive". It is set by
    * `leaveBuild` and spent by `onModel`, so it is true exactly between another
@@ -1502,7 +1513,7 @@ export default class HammerolaViewer extends React.Component {
         // own list, passed through rather than reshaped: the viewport reads `id`
         // and `file` off it, which is exactly what src/render.py writes.
         base: PAGE.base,
-        views: (meta && meta.variants) || [],
+        views: (meta && meta.views) || [],
         view: s.view,
         // What makes one build different from the last. The viewport uses it to
         // tell a LIVE RELOAD (same view, new geometry — keep the frame) from a
@@ -1723,7 +1734,7 @@ export default class HammerolaViewer extends React.Component {
         if (this._gone || gen !== this._pollGen) return;
         const key = buildKey(next);
         if (key && key !== buildKey(this.state.meta)
-            && Array.isArray(next.variants) && next.variants.length) {
+            && Array.isArray(next.views) && next.views.length) {
           // `bannerGone` is lifted only for a build this page has not offered
           // yet. The same build is seen again on every poll for as long as
           // nobody takes it, so clearing the flag unconditionally would put the
@@ -1772,7 +1783,7 @@ export default class HammerolaViewer extends React.Component {
   takePending(since) {
     const next = this.state.pending;
     if (this._gone || this.state.swapping) return;
-    if (!next || !Array.isArray(next.variants) || !next.variants.length) return;
+    if (!next || !Array.isArray(next.views) || !next.views.length) return;
     // At most one wait at a time: a second press must not leave two timers
     // racing to swap the same build.
     clearTimeout(this._swap);
@@ -1797,7 +1808,7 @@ export default class HammerolaViewer extends React.Component {
       this._swap = setTimeout(() => this.takePending(asked), BUSY_RETRY_MS);
       return;
     }
-    const keep = next.variants.some((v) => v.id === this.state.view);
+    const keep = next.views.some((v) => v.id === this.state.view);
     // THE SAME LIST AS A REVISION SWITCH, through the same method, because this
     // IS a revision switch: another commit, built from other sources, with a
     // bounding box of its own. `leaveBuild` carries the whole of it — the pins
@@ -1818,7 +1829,7 @@ export default class HammerolaViewer extends React.Component {
     const gone = this.leaveBuild(keep);
     this.setState({
       meta: next,
-      view: keep ? this.state.view : next.variants[0].id,
+      view: keep ? this.state.view : next.views[0].id,
       ...gone.state,
       // TAKEN, which is why this is the caller's line and not `leaveBuild`'s:
       // the offer was answered by accepting it, so the banner goes for good
@@ -2063,12 +2074,20 @@ export default class HammerolaViewer extends React.Component {
     this._dl = null;
   }
 
+  /** The line under the title: this view's part count, the build's total size.
+   *
+   * `views[].parts` IS A LIST OF CATALOGUE KEYS AND NOT A NUMBER (issue #75) —
+   * exactly the parts this view shows, named so that a reader learns what is in
+   * a tab without fetching two megabytes to find out. So the count is the
+   * list's length, and it counts DISTINCT parts: a plate holding five copies of
+   * one pin names `pin` once, and says two parts rather than six.
+   */
   subtitle() {
     const meta = this.state.meta;
-    const current = meta.variants.find((v) => v.id === this.state.view) || meta.variants[0];
-    const total = meta.variants.reduce((sum, v) => sum + Number(v.gzip || 0), 0);
-    const views = meta.variants.length === 1 ? '1 view' : `${meta.variants.length} views`;
-    return `${current.parts} parts · ${views} · ${mb(total)}`;
+    const current = meta.views.find((v) => v.id === this.state.view) || meta.views[0];
+    const total = meta.views.reduce((sum, v) => sum + Number(v.gzip || 0), 0);
+    const tabs = meta.views.length === 1 ? '1 view' : `${meta.views.length} views`;
+    return `${viewPartCount(current)} parts · ${tabs} · ${mb(total)}`;
   }
 
   /**
@@ -2097,37 +2116,60 @@ export default class HammerolaViewer extends React.Component {
     this.setState({ menu: id ? { id, ...menuAt(d.x, d.y) } : null });
   }
 
-  /** A note hangs on a part NAME, so a group row has none of its own. */
-  selectedName() {
+  /**
+   * The CATALOGUE KEY of the selected row: what a note, a file and a kind hang
+   * on.
+   *
+   * A GROUP HAS NONE, which is the rule it always had said in the new
+   * vocabulary: an assembly is not a part, so it has no record, no note and no
+   * files — and `indexTree` puts a key on leaves only.
+   *
+   * NEITHER DOES A LEAF THAT NAMES NO KEY, and it is answered with '' rather
+   * than with the row's name. That fallback is the identity-by-string this
+   * whole change deletes (issue #75): the name on a row is the tessellator's,
+   * chosen to keep two copies of one part apart (`pin`, `pin(2)`), and looking
+   * a note up under it would find the wrong record or none while looking
+   * exactly like it worked. A build the hub accepted always carries the key —
+   * `check_view_file` refuses a leaf without one — so the empty answer is for a
+   * document this page did not get from a push it can trust.
+   */
+  selectedKey() {
     const node = this.node(this.state.sel);
-    if (node) return node.isNode ? '' : node.name;
-    return this.state.selName || '';
+    return (node && node.key) || '';
   }
 
   /** The READER's note: this browser's, for this project, never sent anywhere.
    *
-   * Through `noteFor` like both other reads of a note map: this one is parsed out
-   * of localStorage, which is no more this code's own object than a fetched
+   * KEYED BY THE CATALOGUE KEY since issue #75, and the notes a browser wrote
+   * before that stop being found. That is accepted rather than migrated: a note
+   * belongs to the PART, and the old key was a display name that a rebuild is
+   * free to change — reading the old entries would mean matching on exactly the
+   * string this change stopped trusting.
+   *
+   * Through `noteFor` like the other read of this map: it is parsed out of
+   * localStorage, which is no more this code's own object than a fetched
    * document is.
    */
   selectedNote() {
-    return noteFor(this.state.notes, this.selectedName());
+    return noteFor(this.state.notes, this.selectedKey());
   }
 
   /**
-   * The AUTHOR's note on the selected part — `model.py`, published in this
-   * build's meta.json under the same part NAME the reader's notes use.
+   * The AUTHOR's note on the selected part — written in `model.py` and
+   * published inside this build's catalogue record for it.
    *
-   * ABSENT IS NORMAL. A build with nothing to say carries no `notes` key at all,
-   * and neither does any build published before the key existed; the two are one
-   * document here, and asking about one of them must not be an error — which is
-   * also `noteFor`'s answer to a map that is missing altogether.
+   * ABSENT IS NORMAL, and it now has two spellings that mean the same thing: a
+   * part with nothing to say carries no `note` key inside its record, and a
+   * part that is not in the catalogue at all has no record. Neither is an
+   * error, and `partRecord` answers both with `null`.
    *
-   * Through `noteFor` because a part name is not a safe key: see its own note for
-   * what a part called `constructor` does to a bare lookup.
+   * Through `partRecord` because the key comes out of a pushed document: see
+   * its own note for what a part called `constructor` does to a bare lookup.
    */
   authorNote() {
-    return noteFor(this.state.meta && this.state.meta.notes, this.selectedName());
+    const record = partRecord(
+      this.state.meta && this.state.meta.parts, this.selectedKey());
+    return record && typeof record.note === 'string' ? record.note : '';
   }
 
   /**
@@ -2170,8 +2212,8 @@ export default class HammerolaViewer extends React.Component {
    * missing from the second, which is how the fix for a divergence over the
    * BUILD arrived carrying a divergence over the VIEW.
    */
-  viewQuery(view, variants) {
-    const first = variants[0] && variants[0].id;
+  viewQuery(view, views) {
+    const first = views[0] && views[0].id;
     return view === first ? '' : `?v=${encodeURIComponent(view)}`;
   }
 
@@ -2337,10 +2379,11 @@ export default class HammerolaViewer extends React.Component {
     });
     const cmpReady = s.cmp.length === 2;
 
-    // -- the downloads, from meta.downloads: label -> file name
+    // -- the downloads, out of the part catalogue: key -> {extension -> file}
+    const catalogue = (meta && meta.parts) || null;
     const fileHref = (file) => PAGE.base + encodeURIComponent(String(file));
     const dlRowStyle = `display:flex;align-items:center;gap:10px;padding:6px 14px 6px 22px;text-decoration:none;color:#2a2e33;font:400 12px ${SANS}`;
-    const downloadGroups = groupDownloads(meta && meta.downloads).map((g) => ({
+    const downloadGroups = groupDownloads(catalogue).map((g) => ({
       key: g.ext,
       ext: g.ext,
       files: g.files.map((f) => ({
@@ -2364,8 +2407,6 @@ export default class HammerolaViewer extends React.Component {
       onAll: () => this.downloadAll(g.files.map((f) => fileHref(f.file))),
     }));
     const anyDownloads = downloadGroups.length > 0;
-    // The same files, cut up by part, for the row menu below.
-    const partFiles = filesByPart(meta && meta.downloads);
 
     const threads = s.comments.map((c) => ({
       key: c.id, label: c.label, part: c.part, time: c.time, text: c.text, meas: c.meas,
@@ -2383,13 +2424,21 @@ export default class HammerolaViewer extends React.Component {
 
     // -- context menu on a tree row
     const mNode = this.node(s.menu && s.menu.id);
+    // TWO NAMES, AND THE MENU USES BOTH FOR DIFFERENT THINGS. `mName` is the
+    // row's own label and is what the menu is headed with and what Copy name
+    // copies — it addresses the ROW, which is one solid in one view. `mKey` is
+    // the catalogue key and is what everything about the PART is looked up
+    // under: its note, its files. A group has no key and neither has a leaf
+    // that names none, and in both cases the answer is that this row has
+    // nothing in the catalogue — never the name used as a stand-in (issue #75).
     const mName = mNode ? mNode.name : '';
-    // Through `noteFor` like every other read of a note map. This one throws
-    // EARLIEST of the three when it is not: the item below slices the note to 22
+    const mKey = (mNode && mNode.key) || '';
+    // Through `noteFor` like the other read of the reader's map. This one throws
+    // EARLIEST of the two when it is not: the item below slices the note to 22
     // characters for its hint, and a part called `constructor` hands a bare
     // lookup a function, which has no `slice` — so the whole menu, and with it
     // `computed()` and the page, ends on a right-click.
-    const note = noteFor(s.notes, mName);
+    const note = noteFor(s.notes, mKey);
     // `href` turns the row into a real `<a download>` — see the files block
     // below — and `tone` is 'top' for a rule above the row, 'said' for a row that
     // states something rather than doing it.
@@ -2422,15 +2471,27 @@ export default class HammerolaViewer extends React.Component {
      * against the same base URL the header builds, so middle-click and "save
      * link as" work on it like any other link on the page.
      *
-     * BOTH EMPTY CASES SAY SO OUT LOUD. A reference part — a tree node that is
-     * not in `printables()` — has no files and never will, and a menu that
-     * silently dropped the item would read as a menu that forgot. Same for a
-     * build that ships nothing: the header's menu has a sentence for that case
-     * and this one must not be worse.
+     * BOTH EMPTY CASES SAY SO OUT LOUD. A part that is not printed — a bought
+     * screw, a mock of something bought — has no files and never will, and a
+     * menu that silently dropped the item would read as a menu that forgot.
+     * Same for a build that ships nothing: the header's menu has a sentence for
+     * that case and this one must not be worse.
+     *
+     * A ROW WITH NO KEY LANDS ON THE SAME SENTENCE, through `partRecord`
+     * answering `null` for an empty key. It is the honest answer: the row names
+     * no catalogue entry, so there is nothing here that is this row's.
+     *
+     * TAKEN OFF `files` AND NEVER OFF `kind`, though the two say the same thing
+     * on any document the hub accepted (`_catalogue` refuses a printable with
+     * no files and a non-printable with some). `files` is what actually names
+     * the files, so reading it is one question with one answer; reading `kind`
+     * and then trusting `files` to match would be two, free to disagree on the
+     * one document nobody validated. `preview` sits in the same record and is
+     * deliberately not read: see `fileList`.
      */
-    const fileRows = (name) => {
+    const fileRows = (key) => {
       if (!anyDownloads) return [mi('No files in this build', '', () => {}, 'said')];
-      const files = partFiles.get(name) || [];
+      const files = fileList(partRecord(catalogue, key));
       if (!files.length) return [mi('No files for this part', 'not a printable', () => {}, 'said')];
       return files.map((f, at) => mi(f.ext.toUpperCase(), f.file, () => {},
                                      at === 0 ? 'top' : '', fileHref(f.file)));
@@ -2444,11 +2505,27 @@ export default class HammerolaViewer extends React.Component {
       }),
       mi('Hide', '', () => this.setVisibility({ hidden: this.toggle(s.hidden, mNode.leaves) })),
       mi('Translucent', 'see through it', () => this.setVisibility({ ghost: this.toggle(s.ghost, mNode.leaves) })),
-      ...(viewer || mNode.isNode ? [] : [mi('Note', note ? (note.length > 22 ? `${note.slice(0, 22)}…` : note) : '',
-        () => this.setState({ notePop: mNode.name, noteDraft: note || '' }))]),
+      // A NOTE IS FILED UNDER THE CATALOGUE KEY, so a row that has none is not
+      // offered one — and the reason is the WRITE, not the catalogue. A note
+      // lives in localStorage and is never looked up in `meta.parts`: a leaf
+      // whose key the catalogue does not declare gets this item and should,
+      // because the reader's sentence is theirs rather than the build's. What
+      // an empty key breaks is `notesWith`, which hands the map back UNTOUCHED
+      // (`if (!key) return next`) — so the item on such a row would take the
+      // text, close the dialog exactly as a successful save closes it, and
+      // store nothing, with nothing anywhere saying so.
+      //
+      // DO NOT "FIX" THIS INTO `partRecord(...)`: that would take the note away
+      // from a keyed leaf the catalogue happens not to declare, which is a row
+      // this page is built to survive.
+      //
+      // `mKey` is empty on a group and on a leaf that names no key, which is
+      // why the condition asks about it rather than about `isNode`.
+      ...(viewer || !mKey ? [] : [mi('Note', note ? (note.length > 22 ? `${note.slice(0, 22)}…` : note) : '',
+        () => this.setState({ notePop: mKey, noteDraft: note || '' }))]),
       // Files hang on a PART, so a group row has none of its own — the same rule
       // and the same reason as the note above it. A group is not a printable and
-      // never has files under its own name, so the union of its leaves' files is
+      // has no catalogue record of its own, so the union of its leaves' files is
       // a set this menu would be INVENTING; and bulk by the axis a reader
       // actually asks along — one format, all parts — is in the header's menu,
       // where each group has a "download all" of its own.
@@ -2462,7 +2539,7 @@ export default class HammerolaViewer extends React.Component {
       // page that cannot answer a prompt — an agent — and a file whose name the
       // page never chose. Those are the reasons to prefer one archive over N
       // links; "the browser refuses" is not one, because it does not.
-      ...(mNode.isNode ? [] : fileRows(mNode.name)),
+      ...(mNode.isNode ? [] : fileRows(mKey)),
       mi('Copy name', '', () => {
         try {
           navigator.clipboard.writeText(mNode.name);
@@ -2574,10 +2651,10 @@ export default class HammerolaViewer extends React.Component {
       threads,
 
       // Views come from the model's code: as many tabs as it declares.
-      viewTabs: ((meta && meta.variants) || []).map((v) => ({
+      viewTabs: ((meta && meta.views) || []).map((v) => ({
         key: v.id,
         label: v.name,
-        hint: `${v.parts} parts · ${mb(v.gzip)}`,
+        hint: `${viewPartCount(v)} parts · ${mb(v.gzip)}`,
         style: tab(s.view === v.id),
         onClick: () => this.showView(v.id),
       })),
@@ -2666,7 +2743,13 @@ export default class HammerolaViewer extends React.Component {
       // note on a build a viewer is looking at is the ordinary case.
       noteBoxStyle: 'position:absolute;right:14px;top:14px;width:250px;padding:9px 11px;background:#fdf6e3;border:1px solid #eadfc0;border-radius:7px;box-shadow:0 4px 16px rgba(20,24,28,.1);z-index:11;display:'
         + (!s.compare && (authorNote || (!viewer && readerNote)) ? 'block' : 'none'),
-      noteName: this.selectedName(),
+      // THE HEADING IS THE CATALOGUE KEY AND NOT THE ROW'S LABEL, because that
+      // is what the two notes below it are actually about. The row is one solid
+      // in one view and a view may hold several of the same part — the
+      // tessellator tells those apart by name (`pin`, `pin(2)`) — so a heading
+      // taken from the row would put `pin(2)` over a note that belongs to every
+      // pin in the build, i.e. claim an identity the note does not have.
+      noteName: this.selectedKey(),
       authorNoteStyle: 'display:' + (authorNote ? 'block' : 'none') + ';margin-top:5px',
       authorNote,
       // The rule above it only when there IS something above it — otherwise the
@@ -2684,7 +2767,7 @@ export default class HammerolaViewer extends React.Component {
       editNoteStyle: 'cursor:pointer;color:#8a9099;font-weight:400;text-transform:lowercase'
         + (viewer ? ';display:none' : ''),
       editNoteLabel: readerNote ? 'edit yours' : 'add yours',
-      editNote: stop(() => this.setState({ notePop: this.selectedName(), noteDraft: this.selectedNote() })),
+      editNote: stop(() => this.setState({ notePop: this.selectedKey(), noteDraft: this.selectedNote() })),
 
       cmpA: s.cmp[0] || '', cmpB: s.cmp[1] || '',
       exitCompare: stop(() => this.setState({ compare: false })),
@@ -2778,9 +2861,10 @@ export default class HammerolaViewer extends React.Component {
       noteType: (e) => this.setState({ noteDraft: e.target.value }),
       noteCancel: stop(() => this.setState({ notePop: null })),
       noteSave: stop(() => {
-        // Through `notesWith` rather than `notes[name] = …`: the key is a PART
-        // NAME, and a part called `__proto__` turns that assignment into a
-        // silent no-op — see the function's own note.
+        // Through `notesWith` rather than `notes[key] = …`: the key is a
+        // CATALOGUE KEY out of a pushed document, and a part called `__proto__`
+        // turns that assignment into a silent no-op — see the function's own
+        // note.
         this.saveNotes(notesWith(s.notes, s.notePop, s.noteDraft.trim()));
         this.setState({ notePop: null });
       }),
@@ -3303,7 +3387,7 @@ export default class HammerolaViewer extends React.Component {
             })}
           </div>
 
-          {/* ── the note editor: bound to a part NAME, for the whole project ── */}
+          {/* ── the note editor: bound to a CATALOGUE KEY, for the project ── */}
           <div onClick={(e) => e.stopPropagation()} style={css(v.notePopStyle)}>
             <div style={css(`font:600 12px ${SANS};margin-bottom:2px`)}>
               Note &middot; <span style={css(`font:500 11.5px ${MONO};color:#5b6470`)}>{v.notePopName}</span>
