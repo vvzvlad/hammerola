@@ -10,7 +10,7 @@ three of them in this suite. A uniquely named module cannot be confused.
 import json
 import subprocess
 
-from harness import meta_bytes, view_bytes
+from harness import DEFAULT_EXPORTS, meta_bytes, view_bytes
 
 MODEL_SOURCE = """\
 import cadquery as cq
@@ -38,6 +38,12 @@ def make_model(root, pid="demo0001", title="Demo project", extra=None):
     (root / "model.py").write_text(MODEL_SOURCE, encoding="utf-8")
     (root / "meta.json").write_bytes(meta_bytes())
     (root / "assembled.json").write_bytes(view_bytes())
+    # The exports the default catalogue names. A printable that declares none is
+    # a 422 (`render._catalogue`), so the smallest publishable tree now carries
+    # one file per printable — see `harness.DEFAULT_EXPORTS`, which is where the
+    # names live, since the document naming them comes from there too.
+    for name, data in DEFAULT_EXPORTS.items():
+        (root / name).write_bytes(data)
     for name, data in (extra or {}).items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)

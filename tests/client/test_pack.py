@@ -95,9 +95,11 @@ def test_the_source_tree_is_packed_with_relative_paths(tmp_path):
         "scripts/gen.py": "print('hi')\n",
         "ref/vendor/part.step": "ISO-10303-21;\n",
     })
+    # `lid.stl` and `pin.stl` are the exports the model directory's own
+    # catalogue names (`modeldir.make_model`), not something the packer added.
     assert members(root) == [
-        "assembled.json", "meta.json", "model.py", "project.json",
-        "ref/vendor/part.step", "scripts/gen.py",
+        "assembled.json", "lid.stl", "meta.json", "model.py", "pin.stl",
+        "project.json", "ref/vendor/part.step", "scripts/gen.py",
     ]
 
 
@@ -118,8 +120,8 @@ def test_hidden_entries_are_dropped_rather_than_refused(tmp_path):
     (root / "._model.py").write_bytes(b"\x00\x05\x16\x07")
 
     packed = pack(root)
-    assert packed.names == ("assembled.json", "meta.json", "model.py",
-                            "project.json")
+    assert packed.names == ("assembled.json", "lid.stl", "meta.json",
+                            "model.py", "pin.stl", "project.json")
     assert b"super-secret" not in packed.body
 
 
@@ -132,8 +134,8 @@ def test_build_output_and_caches_are_dropped(tmp_path):
     (root / "model.pyc").write_bytes(b"\x00")
     (root / "model.py~").write_text("older\n")
 
-    assert members(root) == ["assembled.json", "meta.json", "model.py",
-                             "project.json"]
+    assert members(root) == ["assembled.json", "lid.stl", "meta.json",
+                             "model.py", "pin.stl", "project.json"]
 
 
 def test_the_old_publishers_output_is_refused_rather_than_dropped(tmp_path):
