@@ -202,7 +202,7 @@ jobs:
         # into it. `memory.peak` in a cgroup counts reclaimable PAGE CACHE, which this run
         # generates in quantity — apt, pip and untarring the workspace — and the kernel keeps
         # that cache for as long as the limit leaves room for it, so the peak RISES WITH THE
-        # LIMIT and then saturates somewhere BELOW it. Measured on cirunner-docker (Debian
+        # LIMIT and then saturates somewhere BELOW it. Measured on the self-hosted runner (Debian
         # 13, x86_64, 8 vcpu, 19 GB) with this exact command: 2.86 GB under a 4g limit,
         # 2.00 GB under 2g, 769 MB under 768m. It does not merely fill whatever it is given —
         # 2.86 is well short of 4 — and that is what makes the number so plausible and so
@@ -567,13 +567,10 @@ jobs:
         # second time: two splits of the same variable are one edit away from disagreeing, and
         # the guard would then be vouching for a list the loop does not use.
         for tag in "$@"; do tag_args="$tag_args --tag $tag"; done
-        # --pull is required here: unlike GitHub's ephemeral runners, cirunner-docker
-        # is self-hosted with a persistent docker daemon, so a once-pulled base image
+        # --pull is required here: unlike GitHub's ephemeral runners, the self-hosted
+        # runner has a persistent docker daemon, so a once-pulled base image
         # would sit in its cache for months and every build would inherit an
         # unpatched base layer.
-        # cirunner-docker is the runner VM and the name its own `docker info` reports; the
-        # `hatbox` this comment used to say is the Proxmox hypervisor underneath it, not the
-        # daemon — one machine, two levels, and only the inner one runs anything here.
         # `$tag_args` MUST stay unquoted, and it is the one expansion in these workflows that
         # must: it holds several words (`--tag a --tag b`), and quoting it would hand docker a
         # single argument with spaces in it, failing every build with an unknown-flag error.
