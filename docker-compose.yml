@@ -133,7 +133,11 @@ services:
         max-size: 10m
     labels:
       traefik.enable: "true"
-      traefik.http.routers.hammerola.rule: Host(`3d.vvzvlad.xyz`)
+      # Placeholder host, like the rest of this template: the domain a deployment
+      # answers on is set in its Portainer stack, not here (today hammerola.vvzvlad.xyz,
+      # stack 223 on slug). Held the predecessor's real 3d.vvzvlad.xyz until 2026-09-02,
+      # when cad_snapshot_hub was decommissioned and that DNS record was deleted.
+      traefik.http.routers.hammerola.rule: Host(`hammerola.example.com`)
       traefik.http.services.hammerola.loadBalancer.server.port: 8000
       traefik.http.routers.hammerola.entrypoints: websecure
       traefik.http.routers.hammerola.tls: "true"
