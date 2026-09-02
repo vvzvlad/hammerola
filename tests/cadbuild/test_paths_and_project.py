@@ -93,9 +93,85 @@ def test_a_complete_project_json_reads_back(isolated_project):
 
 
 def test_the_slug_comes_from_the_title_not_the_directory(tmp_path):
-    """Inside the builder image the directory is /src for every project."""
+    """Inside the hub the directory is the unpack directory of one push."""
     root = write_project(tmp_path / "src", id="aabbccddeeff",
                          title="Насос для шликера (slip-pump)")
+    set_project_root(root)
+    _pid, project, _title = load_project()
+    assert project == "slip-pump"
+
+
+def test_a_project_nothing_names_publishes_under_its_id_and_never_the_directory(
+        tmp_path):
+    """THE INCIDENT, reproduced with the directory that caused it.
+
+    `hammerola create` used to write only `id` and `title`, so a title with no
+    brackets left `load_project` falling through to `root.name` — and inside the
+    hub `root` is the directory a push was unpacked into,
+    `.src-<uuid4 hex>` (`store.SOURCE_PREFIX`). The front page then carried a
+    card called `.src-89fb7abdeb1d48b5985bcb519850b284`: a name belonging to
+    nobody, different on the next push.
+
+    The directory is named like the real one rather than like an abstraction,
+    because the two halves of the failure are exactly that the name is
+    unrecognisable and that it is the hub's own.
+    """
+    staging = tmp_path / ".src-89fb7abdeb1d48b5985bcb519850b284"
+    root = write_project(staging, id="2486c8fd2b05",
+                         title="Foam cover reverse-engineered from a 3D scan")
+    set_project_root(root)
+    _pid, project, _title = load_project()
+    assert project == "2486c8fd2b05"
+    assert project != root.name
+
+
+def test_a_project_with_no_title_falls_back_to_its_id_as_well(tmp_path):
+    """The same fallback one line up, and it was the same directory name.
+
+    `title` is shown on the index card beside `project`, so a hand-written
+    project.json with no title published the unpack directory's name there too.
+    Here nothing names the project either, so both land on the id -- which is
+    the id only because that is where `project` itself ended up; the next test
+    is the one that separates the two.
+    """
+    root = write_project(tmp_path / ".src-89fb7abdeb1d48b5985bcb519850b284",
+                         id="2486c8fd2b05")
+    set_project_root(root)
+    _pid, _project, title = load_project()
+    assert title == "2486c8fd2b05"
+
+
+def test_a_missing_title_falls_back_to_the_project_and_not_to_the_id(tmp_path):
+    """The title falls back to the PROJECT, exactly as the hub's own does.
+
+    `render.build_meta` resolves `title = raw["title"] or project`, so a
+    project.json naming a slug and no title has to show that slug -- not the
+    twelve hex characters of the id. Reaching for `pid` here instead would be
+    one half of the system silently correcting the other, which is the drift
+    that made this whole change necessary.
+    """
+    root = write_project(tmp_path / ".src-89fb7abdeb1d48b5985bcb519850b284",
+                         id="2486c8fd2b05", project="slip-pump")
+    set_project_root(root)
+    _pid, project, title = load_project()
+    assert project == "slip-pump"
+    assert title == "slip-pump"
+
+
+def test_an_empty_project_key_is_the_same_as_no_key_at_all(tmp_path):
+    """ABSENT RATHER THAN EMPTY, checked on the side that READS the key.
+
+    `hammerola create` omits `project` when it cannot work a slug out, and
+    `tests/client/test_setup.py` pins that it writes no key rather than an empty
+    string. This is the other half: a project.json that DOES carry `""` -- from
+    an older client, a hand edit, or a copied file -- must resolve exactly like
+    one that carries nothing, i.e. fall through to the title's brackets. Without
+    it the client's rule would be the only thing standing between an empty
+    string and a card with no name on it.
+    """
+    root = write_project(tmp_path / ".src-89fb7abdeb1d48b5985bcb519850b284",
+                         id="2486c8fd2b05", project="",
+                         title="Slip pump (slip-pump)")
     set_project_root(root)
     _pid, project, _title = load_project()
     assert project == "slip-pump"

@@ -327,8 +327,9 @@ def test_the_client_archive_carries_every_module_it_imports(hub):
     """The failure this catches happens on somebody ELSE's machine.
 
     `src/client/*.py` is globbed into the archive, so a new client module is
-    carried automatically. A module OUTSIDE that package — `src/buildnames.py`
-    and `src/metricsdiff.py` today — is named by hand in `CLIENT_EXTRA_MODULES`,
+    carried automatically. A module OUTSIDE that package — `src/buildnames.py`,
+    `src/metricsdiff.py` and `src/projectslug.py` today — is named by hand in
+    `CLIENT_EXTRA_MODULES`,
     and a further one added without that line produces an archive that works
     perfectly here,
     where the whole checkout is on `sys.path`, and dies with an ImportError the
@@ -734,6 +735,7 @@ def test_a_start_route_that_cannot_import_is_a_404_and_not_a_dropped_socket(
     # module the refusal is never asked about.
     "src/metricsdiff.py",
     "src/buildnames.py",
+    "src/projectslug.py",
 ])
 def test_the_hub_refuses_a_client_that_is_missing_a_module_it_imports(gone):
     """THE FAILURE HAS NO OTHER WITNESS, which is why the refusal exists.

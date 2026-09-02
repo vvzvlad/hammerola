@@ -127,12 +127,14 @@ constant of the image and says nothing about the deployment.
 `src/onboarding.py` carries the argument for the boolean and for why it is
 never a count.
 
-Then, in a model's directory:
+Then, in the part's own directory — named first, because the name is what
+`create` reads:
 
 ```bash
-hammerola create --title "T13 ceiling mount"   # once per project: project.json + the template
-hammerola build                                # publish the working copy into `dev`
-hammerola commit -m "thicker plate"            # publish an immutable revision
+mkdir t13-ceiling-mount && cd t13-ceiling-mount                    # the directory names the project
+hammerola create --title "T13 ceiling mount (t13-ceiling-mount)"   # once: project.json + template
+hammerola build                                                    # publish the working copy into `dev`
+hammerola commit -m "thicker plate"                                # publish an immutable revision
 ```
 
 `create` fetches the starter template from the hub and unpacks it beside the
@@ -140,6 +142,13 @@ hammerola commit -m "thicker plate"            # publish an immutable revision
 over anything that is already there, and `--no-template` is the form for a
 directory that already has a model, or for a machine with no hub to reach: the
 id has always been minted locally and still is.
+
+The title ends with the directory's own slug in brackets, and `create` writes
+that slug into `project.json` as a third key, `project` — the latin name the hub
+publishes under, on the index card and in the build page header. It is decided
+here because here is the only machine where it exists: a push is unpacked on the
+hub under a name of the hub's own, so a build that worked the answer out for
+itself would name the project after that.
 
 Both publishing verbs do the same four things: pack the tree, post it, wait on
 the build job the hub answers with, and print what the build printed — plus, for
