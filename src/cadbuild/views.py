@@ -32,10 +32,10 @@ Three forms of reference, and no fourth:
     is no "in place" to be a different shape in, and the plate is a file
     (see _refuse_deformed_on_the_plate).
 
-A group -- `{"group": "housing", "parts": [...]}`, nested as deep as the author
-likes -- is presentation and nothing else: it is the author's own structure,
-not a classification by kind, and no gate can see it. Every gate reads the flat
-list of leaves.
+A group -- `{"group": "housing", "parts": [...]}`, nested to `MAX_VIEW_DEPTH`
+and REFUSED past it -- is presentation and nothing else: it is the author's own
+structure, not a classification by kind, and no gate can see it. Every gate
+reads the flat list of leaves.
 """
 
 import json

@@ -313,7 +313,7 @@ def _turns_about_z_only(at):
 
 
 def check_assembled_coverage(prepared, catalogue):
-    """Every printable has to be IN the assembled view, by name.
+    """Every printable has to be IN the assembled view, by catalogue key.
 
     A part can be modelled, exported, downloadable and checked, and still be
     missing from the one picture the product is judged by -- and a design

@@ -1,7 +1,7 @@
 """The model.py printed in README.md, built the way a real push is built.
 
 THIS FILE EXISTS BECAUSE THE README CARRIES A SECOND COPY OF THE CONTRACT.
-`printables()`, `views()`, `checks()` and `import checklib` are one agreement
+`parts()`, `views()`, `checks()` and `import checklib` are one agreement
 between a model and the hub, and it is written down in two places on purpose:
 `model_template/`, which issue #31 put on the hub and which
 `hammerola create` unpacks, and the block in README.md, which is the one a
@@ -226,8 +226,9 @@ def test_the_readme_example_builds_and_passes_the_gate(built):
 
     assert outcome.status == STATUS_OK, outcome.log
     assert outcome.pid == PID
-    # The key of `printables()` is the filename stem, which is what the README
-    # says about it two paragraphs down.
+    # `plate` is the catalogue key and the export is named after it -- which is
+    # the claim the block's own parts() docstring makes ("the stem it is
+    # exported under"), measured here against what the build actually wrote.
     assert "plate.stl" in outcome.files, outcome.log
     assert "meta.json" in outcome.files, outcome.log
     for name in outcome.files:
@@ -388,7 +389,9 @@ def test_the_views_the_example_declares_are_the_ones_it_publishes(built):
     meta = json.loads((built.out / "meta.json").read_text(encoding="utf-8"))
     assert [(view["id"], view["name"]) for view in meta["views"]] == [
         ("assembled", "assembled"), ("print", "as printed")]
-    # A project with ONE printable labels its buttons by extension alone, so
-    # the stem shows up in the filename rather than in the key
-    # (src/cadbuild/printables.py::download_labels).
-    assert meta["downloads"]["stl"] == "plate.stl"
+    # And the catalogue reaches meta.json under the key the example gives it,
+    # with the file it was exported to filed under the part it is of -- the
+    # other half of the same claim the block's parts() docstring makes about
+    # its key, checked against the document the viewer reads.
+    assert meta["parts"]["plate"]["kind"] == "printable"
+    assert meta["parts"]["plate"]["files"]["stl"] == "plate.stl"
