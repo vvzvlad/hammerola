@@ -7,18 +7,21 @@ be a project that cannot publish, handed to somebody who has no way of telling
 whether the fault is theirs. Written as prose in a README it would rot in
 silence. As a directory the suite pushes through the real build, it cannot.
 
-TWO TESTS, AND ONLY ONE OF THEM RUNS IN CI. The kernel is not importable in the
-test container (both workflows run the suite in a bare `python:3.11-slim`, where
-`import cadquery` dies on `libGL.so.1`), so the build test skips there exactly as
-`tests/test_view_fixture.py` does — its docstring carries the full accounting of
-what that costs. The other test needs no kernel at all and is the one that keeps
-running on every push: it asks whether the template is a tree the hub would
-ACCEPT, which is the half that breaks from an ordinary edit — a file added under
-a name the path alphabet refuses takes the whole push down, and takes it down for
-every project created from the template afterwards.
+THE BUILD TEST IS THE ONLY ONE HERE THAT NEEDS THE CAD KERNEL, AND IT IS THE ONE
+CI CANNOT RUN. The kernel is not importable in the test container (both workflows
+run the suite in a bare `python:3.11-slim`, where `import cadquery` dies on
+`libGL.so.1`), so it skips there exactly as `tests/test_view_fixture.py` does —
+its docstring carries the full accounting of what that costs. Everything else in
+this file needs no kernel at all and keeps running on every push: those ask
+whether the template is a tree the hub would ACCEPT, which is the half that
+breaks from an ordinary edit — a file added under a name the path alphabet
+refuses takes the whole push down, and takes it down for every project created
+from the template afterwards. Stated by which half a test is in rather than by
+counting them, because the count is what went stale here before.
 """
 
 import ast
+import json
 import tarfile
 import io
 from pathlib import Path
@@ -27,7 +30,8 @@ import pytest
 
 from src import onboarding
 from src.buildproc import run_build
-from src.cadbuild.parts import RESERVED_STEMS
+from src.cadbuild.artifacts import PREVIEW_SUFFIX
+from src.cadbuild.parts import KIND_PRINTABLE, KINDS, RESERVED_STEMS
 from src.buildproc.limits import DEFAULT_LIMITS, memory_limit_supported
 from src.buildproc.runner import STATUS_OK
 from src.client import pack
@@ -140,13 +144,20 @@ def test_the_template_carries_no_project_json():
 
 
 def test_the_model_defines_the_contract_it_is_the_example_of():
-    """views(), printables(), checks() and `import checklib`, read out of the
+    """parts(), views(), checks() and `import checklib`, read out of the
     source rather than by importing it — this test runs where there is no CAD
     kernel to import it with."""
     tree = ast.parse((TEMPLATE_DIR / "model.py").read_text(encoding="utf-8"))
     defined = {node.name for node in tree.body
                if isinstance(node, ast.FunctionDef)}
-    assert {"views", "printables", "checks"} <= defined
+    assert {"parts", "views", "checks"} <= defined
+    # AND printables() IS GONE. Presence is all the line above can see, and a
+    # leftover printables() would sail through it: the build ignores the
+    # function entirely, so the template would go on publishing while teaching
+    # a half of the contract that no longer exists to everybody who copies it.
+    assert "printables" not in defined, (
+        "the template still defines printables(), which parts() replaced. The "
+        "build ignores it, so nothing else in this suite would notice")
     imported = {alias.name for node in ast.walk(tree)
                 if isinstance(node, ast.Import) for alias in node.names}
     assert "checklib" in imported, (
@@ -156,7 +167,7 @@ def test_the_model_defines_the_contract_it_is_the_example_of():
 
 
 def test_the_template_warns_about_every_stem_the_build_takes_for_itself():
-    """`printables()` must name all of RESERVED_STEMS, not just `assembled`.
+    """`parts()` must name all of RESERVED_STEMS, not just `assembled`.
 
     The template is the one worked example every author copies, and a stem it
     fails to mention is a `BuildError` on somebody else's first build with no
@@ -167,14 +178,14 @@ def test_the_template_warns_about_every_stem_the_build_takes_for_itself():
     """
     tree = ast.parse((TEMPLATE_DIR / "model.py").read_text(encoding="utf-8"))
     doc = next(ast.get_docstring(node) for node in tree.body
-               if isinstance(node, ast.FunctionDef) and node.name == "printables")
+               if isinstance(node, ast.FunctionDef) and node.name == "parts")
     for stem in RESERVED_STEMS:
         # The FILE, not the bare stem: `print` on its own also appears in this
         # docstring as the name of a view, so a docstring that had dropped the
         # warning would still contain the word.
         assert f"{stem}.stl" in doc, (
-            f"the build refuses a printable called {stem!r} (RESERVED_STEMS in "
-            "cadbuild.printables) and the template never says so")
+            f"the build refuses a catalogue key {stem!r} (RESERVED_STEMS in "
+            "cadbuild.parts) and the template never says so")
 
 
 def test_the_archive_the_hub_serves_is_this_directory():
@@ -252,6 +263,54 @@ def test_the_template_builds_the_way_the_hub_builds_it(tmp_path):
         f"the build published {sorted(outcome.files)}, missing "
         f"{sorted(set(EXPECTED_ARTEFACTS) - set(outcome.files))}")
 
+    # AND NOTHING AT ALL FOR WHAT IS NOT PRINTED — the other direction, which
+    # the subset above structurally cannot see: it catches a file that went
+    # MISSING and never one that APPEARED. WHAT IT IS FOR IS A REGRESSION ON THE
+    # BUILD SIDE, in the export path: the day exporting stops asking the kind and
+    # writes screw.stl, screw.step, screw.3mf and screw_preview.png, the page
+    # grows download buttons under a bought M3 screw — and the one model
+    # everybody copies is what offers them. Half (a) below sees that through the
+    # names filed under the record in meta.json, half (b) through the names the
+    # build declared at all. Asked of the catalogue the build PUBLISHED rather
+    # than of a list of names written out here, so renaming a part in the
+    # template leaves this covering it. Deliberately not a strict equality
+    # against EXPECTED_ARTEFACTS: that would freeze the whole list and fail on
+    # every unrelated addition.
+    #
+    # TWO THINGS IT CANNOT SEE, so that nobody reads more into it. An entry whose
+    # `kind` came back `printable` is not in `not_printed` at all, so neither
+    # half ever looks at it — a catalogue record with no kind is refused earlier
+    # and elsewhere, by `cadbuild.parts.read_catalogue`, which raises rather than
+    # defaulting one. And `outcome.files` is the DECLARED list rather than a
+    # listing of the output directory, so a file written and declared by nobody
+    # is invisible to both halves here.
+    meta = json.loads(
+        (tmp_path / "out" / "meta.json").read_text(encoding="utf-8"))
+    # ALL THREE KINDS ARE REPRESENTED, asserted rather than assumed: the loop
+    # below passes by having nothing to say once the catalogue is printables
+    # only, and `not_printed` being non-empty does not catch that — deleting the
+    # screw leaves the board, and the template stops being the worked example of
+    # `hardware` with every test in this file green.
+    kinds = {entry["kind"] for entry in meta["parts"].values()}
+    assert kinds == set(KINDS), (
+        f"the template's catalogue covers {sorted(kinds)}, not {sorted(KINDS)}. "
+        f"It is the one worked example of every kind there is, and the loop "
+        f"below only says anything about the kinds that are in it")
+    not_printed = {key: entry for key, entry in meta["parts"].items()
+                   if entry["kind"] != KIND_PRINTABLE}
+    for key, entry in sorted(not_printed.items()):
+        assert "files" not in entry, (
+            f"meta.json offers {entry.get('files')} for {key!r}, which is "
+            f"{entry['kind']}: that is a download button under something "
+            f"nobody prints")
+        exported = sorted(name for name in outcome.files
+                          if Path(name).stem == key
+                          or name == f"{key}{PREVIEW_SUFFIX}")
+        assert exported == [], (
+            f"the build wrote {exported} for {key!r}, which is "
+            f"{entry['kind']}. Nothing is exported for a part that is bought "
+            f"or is only there to show what the design fits around")
+
     # THE GATE'S WARNINGS ARE FAILURES HERE, and only here: they are advice to
     # an author about their own model, and this model is the example everybody
     # copies. A template that publishes while telling its reader that a part is
@@ -272,3 +331,23 @@ def test_the_template_builds_the_way_the_hub_builds_it(tmp_path):
         f"the template's checks() no longer reports a COUNT of checks passed, "
         f"so the example teaches a shape the counter cannot read:\n"
         f"{outcome.log}")
+
+    # AND THE INTERFERENCE SECTION LEFT ITS NUMBER BEHIND. The comment in the
+    # template telling the reader not to delete that section as a duplicate of
+    # the shared gate rests on exactly this file: the gate returns a verdict and
+    # records nothing, so `assembly.interference_mm3` is the only place a joint
+    # that started sharing volume shows up as a changed number between two
+    # revisions — which is what `hammerola diff` reads. Without this the
+    # argument is prose, and prose is what rots on this contract.
+    #
+    # THE PAIR, NOT THE VALUE. 0.0 today, but a seated lid is a face-to-face
+    # touch and the kernel is free to answer a rounding error there; what has to
+    # hold is that the pair is measured and written down at all.
+    metrics = json.loads(
+        (tmp_path / "out" / "metrics.json").read_text(encoding="utf-8"))
+    measured = (metrics.get("assembly") or {}).get("interference_mm3") or {}
+    assert "base|lid" in measured, (
+        f"metrics.json records interference for {sorted(measured)}, not for "
+        f"the base-to-lid pair the template's checks() measures. The comment "
+        f"arguing that section is not a duplicate of the gate has nothing left "
+        f"to stand on")
