@@ -10,6 +10,15 @@ module of its own rather than a function beside any one of them:
   * the client asks it of every name the hub's answer hands back, before
     writing that name to the author's disk (`src/client/artifacts.py`).
 
+THOSE THREE ARE THE CALLERS OF THE NAME RULE, and they are not everyone who
+imports this file. One PIECE of it travels further: `first_nonprintable`, the
+category-C scan, has three readers of its own — `unservable_reason` below,
+`render._plain_text` of every displayed field, and `_clean_title` in
+src/client/project.py of a project TITLE, which asks what a file may be called
+at no point. That is why the scan is public and carries a docstring of its own,
+and it is also what widens the stdlib rule further down from one verb to every
+command the tool has.
+
 IT WAS WRITTEN OUT THREE TIMES BEFORE THIS FILE EXISTED — once inside each of
 those three callers, and no two of the copies said the same thing.
 `app._safe_name` was self-contained and refused a leading dot: `bool(name) and
@@ -36,8 +45,15 @@ rule about its own URLs. `store.py`, the obvious address next door to
 store -> render`, so `render` may import neither of those two.
 
 STDLIB ONLY, and that is a rule rather than a coincidence: the client imports
-this module and installs nothing, so one dependency here breaks `hammerola
-artifacts` on every laptop that is not a checkout of this repository.
+this module and installs nothing, so one dependency here breaks it on every
+laptop that is not a checkout of this repository. THE RADIUS IS THE WHOLE TOOL
+and not the one verb that reads a build's file names — `src/client/project.py`
+imports this for the scan above, and `admin`, `artifacts`, `cli`, `queue`,
+`revdiff`, `setup`, `sources` and `status` all import THAT, so an import added
+here fails every `hammerola` command before it parses its arguments. `create
+--no-template` included, which `skill/SKILL.md` calls the one form of any
+command that needs no hub at all — so the failure reaches even the reader who
+has not got as far as having one.
 
 TWO THINGS ARE DELIBERATELY NOT HERE, named so the next reader does not reopen
 them:
@@ -62,15 +78,24 @@ import unicodedata
 from typing import Optional
 
 
-def _first_nonprintable(value: str):
+def first_nonprintable(value: str):
     """The first character Unicode files under C, or None if there is none.
 
-    A function of its own because two different answers are built out of one
-    loop: a ValueError naming a field (`_plain_text` in src/render.py, which
-    imports this) and a reason a FILE NAME cannot be served
-    (`unservable_reason`, below). Written twice, the two would be free to
-    disagree about what "printable" means — and the second one is the half that
-    decides what a build may call a file it publishes.
+    A function of its own because three different answers are built out of one
+    loop: a ValueError naming a field (`_plain_text` in src/render.py), a reason
+    a FILE NAME cannot be served (`unservable_reason`, below), and a refusal of
+    a project title on the author's own machine (`_clean_title` in
+    src/client/project.py). Written out three times, the three would be free to
+    disagree about what "printable" means — and they did: the client spelled it
+    `ord(char) < 0x20 or ord(char) == 0x7F`, which is a SUBSET of category Cc —
+    the C0 controls and DEL, 33 of the 65, but not C1 (U+0080-U+009F) — while
+    this refuses all of category C. So U+202E RIGHT-TO-LEFT OVERRIDE (Cf)
+    passed `hammerola create` and was refused inside the build, and U+0085 NEL
+    would have gone through without even leaving Cc.
+
+    PUBLIC because that third caller lives in another package: `src/client/`
+    importing an underscore name out of `src/` would be borrowing a private,
+    where what it needs is the rule itself.
     """
     for char in value:
         # Cc control, Cf format, Cs surrogate, Co private use, Cn unassigned.
@@ -132,7 +157,7 @@ def unservable_reason(name) -> Optional[str]:
     # smuggled into it reverses the line that reports it. That command asks this
     # very function about the name before writing it, which is the half that
     # used to be a copy catching neither this nor anything else.
-    bad = _first_nonprintable(name)
+    bad = first_nonprintable(name)
     if bad is not None:
         return (f"carries the non-printable character {bad!r}; a file name is "
                 f"read by a person and written to their disk, and the C "

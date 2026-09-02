@@ -52,6 +52,23 @@ def test_the_artifact_ceiling_is_what_a_build_may_write_into_one_file():
         "read the comment on MAX_ARTIFACT_BYTES before removing either")
 
 
+def test_the_text_ceiling_is_the_hubs():
+    """The number `hammerola create` holds the `project` key to.
+
+    Two modules apply it and neither is importable from the client: `render`
+    measures every field of a meta.json against MAX_TEXT on the way in, and
+    `cadbuild.project.MAX_TITLE_CHARS` mirrors it so a build fails before the
+    422 rather than after it. The client's copy is the third, and it is the one
+    that keeps a long DIRECTORY name from being written into project.json at all
+    — so all three are compared here, in the same direction.
+    """
+    from src.cadbuild.project import MAX_TITLE_CHARS
+    from src.render import MAX_TEXT
+
+    assert limits.MAX_TEXT_CHARS == MAX_TEXT
+    assert limits.MAX_TEXT_CHARS == MAX_TITLE_CHARS
+
+
 def test_the_size_ceiling_matches_the_hubs_default():
     """The DEFAULT, which is all the client can know.
 

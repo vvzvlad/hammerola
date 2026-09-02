@@ -45,7 +45,11 @@ def driven(monkeypatch):
         return [f"{stem}{PREVIEW_SUFFIX}" for stem in stems]
 
     for name, value in (
-        ("load_project", lambda: ("abc123def456", "scratch", "Scratch")),
+        # A title in the form the hub asks for, because the test below asserts
+        # this build warns about NOTHING: a title with no slug in its brackets
+        # is one of the two things `build` now prints a `warning:` line for.
+        ("load_project",
+         lambda: ("abc123def456", "scratch", "Scratch (scratch)")),
         ("load_model", lambda: SimpleNamespace(views=lambda: [])),
         ("collect_printables", lambda model: {"base": part()}),
         ("prepare_views", lambda views, printables: []),
@@ -172,3 +176,40 @@ def test_every_file_the_maps_offer_is_on_the_list_that_gets_verified(
     assert len(files) == len(set(files))
     # And meta.json is the document the viewer reads, so it has to be there.
     assert json.loads((out_dir / "meta.json").read_text(encoding="utf-8"))
+
+
+def test_a_title_carrying_no_slug_is_warned_about_next_to_the_name_it_publishes(
+        driven, monkeypatch, out_dir, capsys):
+    """The wiring, not the rule — `title_problem` is pinned in its own file.
+
+    What this holds is that the warning is REACHED and that it is printed as a
+    warning: it is the only thing on a build log that says the card on the front
+    page will carry an id where a name should be, and the whole failure it
+    reports is one nobody looked at.
+    """
+    monkeypatch.setattr(build_module, "load_project",
+                        lambda: ("2486c8fd2b05", "2486c8fd2b05",
+                                 "Foam cover reverse-engineered from a 3D scan"))
+    monkeypatch.setattr(build_module, "export_print_plate",
+                        lambda prepared, out_dir: (2, None))
+
+    build(out_dir)
+
+    warnings = [line for line in capsys.readouterr().out.splitlines()
+                if line.startswith("warning:")]
+    assert len(warnings) == 1, warnings
+    assert "2486c8fd2b05" in warnings[0]
+
+
+def test_a_build_publishing_under_the_slug_its_title_carries_says_nothing(
+        driven, monkeypatch, out_dir, capsys):
+    """The other side, and the one that matters more: every project already on
+    this hub is in this shape, and a warning that fires on all of them is a
+    warning nobody reads."""
+    monkeypatch.setattr(build_module, "export_print_plate",
+                        lambda prepared, out_dir: (2, None))
+
+    build(out_dir)
+
+    assert [line for line in capsys.readouterr().out.splitlines()
+            if line.startswith("warning:")] == []

@@ -237,9 +237,15 @@ def test_the_template_builds_the_way_the_hub_builds_it(tmp_path):
         target = project / path.relative_to(TEMPLATE_DIR)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(path.read_bytes())
-    # The one file `hammerola create` writes and the template does not carry.
+    # The one file `hammerola create` writes and the template does not carry,
+    # in the shape that command really writes it: THREE keys, the third being
+    # the slug the project publishes under. It matters here rather than being
+    # decoration, because the warnings assertion below is absolute — a title
+    # with no slug in its brackets is a `warning:` line of its own, and the
+    # template would then fail its own build test over the fixture's wording.
     (project / PROJECT_FILE).write_text(
-        '{"id": "abc123def456", "title": "Template under test"}',
+        '{"id": "abc123def456", "project": "template-under-test",'
+        ' "title": "Template under test (template-under-test)"}',
         encoding="utf-8")
 
     outcome = run_build(project, tmp_path / "out", pid="abc123def456",

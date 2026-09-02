@@ -1,6 +1,6 @@
 """What the hub will accept, as the client knows it.
 
-A COPY of six numbers and two patterns — and the copy is deliberate, because
+A COPY of seven numbers and two patterns — and the copy is deliberate, because
 this file has to import on a laptop's bare python3 (see `src/client/__init__.py`
 for why the client takes nothing from requirements.txt) and `src.store` pulls in
 loguru and half the service.
@@ -53,6 +53,25 @@ MAX_MEMBERS = 1024
 # and `dev` is the one the client spells itself.
 DEV_SLOT = "dev"
 RESERVED_BUILD_NAMES = frozenset({"latest", DEV_SLOT})
+
+# What ONE piece of text the hub SHOWS may be, in characters. Authority:
+# `src.render.MAX_TEXT`, which `_plain_text` measures every field of a meta.json
+# against -- the title and the project name among them.
+#
+# `hammerola create` holds BOTH names it writes to it -- `project` and `title`
+# -- because both can be filled in from the DIRECTORY's name, which nobody chose
+# with a ceiling in mind and which a filesystem lets run to 255 characters. Past
+# this the build raises rather than publishes
+# (`cadbuild.project.load_project`, MAX_TITLE_CHARS), after the upload and
+# inside the job.
+#
+# THE TWO ARE HELD TO IT DIFFERENTLY, and the difference is what each has to
+# fall back on. A too-long slug is passed over: the title's brackets are asked
+# next and the project id stands behind them, so the key is simply left out. A
+# too-long title stops the command instead — the only fallback for a title is a
+# name nobody chose, and truncating somebody's project name silently is worse
+# than asking for `--title`.
+MAX_TEXT_CHARS = 200
 
 # Ceiling on the request body AND on the unpacked total. Authority: the DEFAULT
 # of `src.settings.Settings.max_build_bytes`, and "default" is the whole
