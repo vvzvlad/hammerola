@@ -1,6 +1,30 @@
-# Deploy template. Pull the prebuilt image from the Gitea registry — do NOT build on prod.
-# Values below are PLACEHOLDERS (XXX), not real secrets.
+# EXAMPLE compose — an illustration of how this service is configured, NOT a copy of what runs.
 #
+# What it is for: showing which variables the service reads, which volumes and ports it needs,
+# and which labels matter. Copy it as a starting point for a deployment. That is the whole job.
+#
+# It is NOT kept in sync with the running deployment and MUST NOT BE. Wherever this service
+# actually runs — in this fleet, a Portainer stack — THAT deployment is the only source of truth
+# for what it does: its variables, its volume paths, its domain, its image tag. This file cannot
+# answer any of those questions, and it is not trying to. A difference between the two is
+# therefore NOT a defect and NOT something to reconcile: there is nothing here to bring into
+# agreement. Do not "fix" this file against a running deployment, and do not change a deployment
+# to match this file.
+#
+# NOTHING REAL GOES IN HERE. Not a password, not a token, not a key, not a host. Every value below
+# is a PLACEHOLDER: `XXX` for a secret, `example.com` or `example.lc` for a name, a documentation
+# address (RFC 5737 — 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24) for an IP. That holds INSIDE
+# COMMENTS TOO, and it holds for a value that is only a default rather than a credential. Never
+# write a real one here, and never "correct" a placeholder to the value some deployment happens to
+# use. Naming a real host is precisely what makes the next reader believe this file describes
+# production — the mistake this header exists to prevent, and one that keeps being made. Several
+# of these repositories are public and mirrored: a secret committed here is a secret published.
+#
+# ONE deliberate exception: the registry host, wherever it appears — in the image path or in a
+# comment. It is real, because without it there is nothing to pull.
+#
+# Deploy from a prebuilt image — a `build:` here, where present, is for running locally.
+
 # This is the WEB-SERVICE variant (published via Traefik). For a polling bot with
 # no inbound port, drop `networks`, the Traefik labels and the healthcheck.
 
@@ -109,7 +133,7 @@ services:
       # travels is the value.
       EDIT_TOKEN: XXX
       # Everything below has a default in src/settings.py and is spelled out here
-      # only where the deployment disagrees with it. DATA_DIR must match the mount
+      # only where a different value is wanted. DATA_DIR must match the mount
       # point of the volume declared above.
       DATA_DIR: /app/data
       # No retention variable exists: a published build is never deleted
@@ -133,10 +157,10 @@ services:
         max-size: 10m
     labels:
       traefik.enable: "true"
-      # Placeholder host, like the rest of this template: the domain a deployment
-      # answers on is set in its Portainer stack, not here (today hammerola.vvzvlad.xyz,
-      # stack 223 on slug). Held the predecessor's real 3d.vvzvlad.xyz until 2026-09-02,
-      # when cad_snapshot_hub was decommissioned and that DNS record was deleted.
+      # Placeholder host, like the rest of this template. The domain a deployment answers
+      # on is set in ITS OWN Portainer stack, never here — so this line is a shape to copy,
+      # not a value to look up, and it must not be "corrected" to whatever domain some
+      # deployment happens to use.
       traefik.http.routers.hammerola.rule: Host(`hammerola.example.com`)
       traefik.http.services.hammerola.loadBalancer.server.port: 8000
       traefik.http.routers.hammerola.entrypoints: websecure
@@ -156,15 +180,10 @@ services:
       # :latest moves (Scope=labeled, rolled back on failure, and polled on an interval that is
       # a Portainer setting rather than a constant — 5 minutes on our instance today, 6 hours
       # by the product's own default, so read it there before timing anything against it). This is
-      # the ONE label the convention carries — the watchtower-family key that used to sit
-      # beside it is gone, and that is unconditional rather than a default: as of the
+      # the key the fleet uses. The `com.centurylinklabs.watchtower.*` family is legacy and is
+      # being migrated away — do not add one back. The SIDECARS are gone too: as of the
       # 2026-08-17 consolidation no watchtower and no autoheal container was left on any
-      # environment of this fleet, and not a single `com.centurylinklabs.watchtower.*` or bare
-      # `autoheal` label either (that bare key is the sidecar's own — it is NOT
-      # `io.portainer.autoheal.enable`, which belongs to our Portainer build and is the subject
-      # of the auto-heal paragraph below). A second key here would be dead text that still
-      # READS like a working fallback, which is worse than no fallback at all. Do not add one
-      # back.
+      # environment of this fleet.
       #
       # What this label does not do is guarantee updates by itself. Everything described
       # above — the 5-minute poll, the health gate below, the rollback — is a property of the
