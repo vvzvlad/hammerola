@@ -109,7 +109,8 @@ did not ship", not as a warning.
 ## Starting a project
 
 ```sh
-hammerola create --title "Ceiling mount for a T13 sensor"
+mkdir t13-ceiling-mount && cd t13-ceiling-mount
+hammerola create --title "Ceiling mount for a T13 sensor (t13-ceiling-mount)"
 ```
 
 In an empty directory. It writes `project.json` with a fresh twelve-character id
@@ -117,11 +118,41 @@ and unpacks the starter template beside it — a `model.py` that builds as it
 stands, and a `.gitignore`. It overwrites nothing: an existing `project.json`,
 or a template file already there, stops the whole command.
 
-**Commit `project.json` and never edit the id.** Every permanent URL of the
-project is built from it, so changing it does not rename anything — it starts a
-different project and orphans everything published under the old one. The title
-is changed with `hammerola rename "..."`; there is no command that changes an id
-because there is no route for it.
+**The title is what it is and what it is for, then the directory's own slug in
+brackets** — `Ceiling mount for a T13 sensor (t13-ceiling-mount)`, `Насос для
+шликера (slip-pump)`. The bracketed half is not decoration: projects are made by
+copying an existing one, and the title is the field a copy forgets to change, so
+a slug that no longer matches is how you find out. A title with no slug in it
+builds and publishes; the log says so in a `warning:` line, because there is
+then nothing tying the words on the card to this project rather than another.
+
+`create` writes that slug into `project.json` as a third key, `project` — the
+name the hub publishes under, the one on the index card and in the build page
+header. **The directory is where it comes from, so name the directory first**:
+the hub never sees the directory (a push is unpacked under a name of the hub's
+own), which is why the name has to travel in the file. Where the directory does
+not yield a name the hub will publish under — spaces, Cyrillic, a leading dot,
+or, when a `--title` was given, simply longer than the 200 characters the hub
+shows — `create` falls back to the slug in the title's own brackets, and only
+when neither yields one does it write no key at all. With no `--title` an
+over-long directory name stops the command instead, because it would have become
+the title as well. A project that reaches the hub with nothing naming it publishes
+under its id, which is the card with no name on it that this key exists to
+prevent.
+
+That key is written once, at `create`. `hammerola rename "..."` moves the TITLE
+and nothing else, and there is no command that changes `project` — renaming the
+directory afterwards leaves the file saying what it said, and `create` says so
+at the time with a `note:` when the directory and the title's brackets disagree.
+
+**Commit `project.json`. The `id` is the key never edited by hand; `project` is
+the one key that is.** Every permanent URL of the project is built from the id,
+so changing it does not rename anything — it starts a different project and
+orphans everything published under the old one, and there is no command for it
+because there is no route. The title moves with `hammerola rename`. `project`
+has no command either, so changing the published name means editing that one
+line and pushing — knowingly: every later build publishes under the new name,
+while everything already published keeps the old one.
 
 `hammerola create --no-template` skips the download for a directory that already
 has a model, and is the one form that needs no hub at all.

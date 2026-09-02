@@ -16,6 +16,7 @@ from .modelchecks import run_checks
 from .parts import printable_keys, read_catalogue
 from .printables import export_printables, overview_meshes, preview_files
 from .project import load_project
+from .project_title import title_problem
 from .views import export_views, prepare_views
 
 
@@ -53,6 +54,29 @@ def build(out_dir, preview_mode="iso"):
     out_dir.mkdir(parents=True)
 
     print(f"project {project} ({pid})")
+    # RIGHT UNDER THE NAME IT IS ABOUT, and a warning rather than a refusal --
+    # the same trade `_warn_if_checklib_shadowed` makes, for the same reason: a
+    # part that is modelled and ready to print must not fail to publish over the
+    # wording of its own name. What it catches is a card nobody can identify.
+    # WHAT FOLLOWS IS WHY THE WARNING EXISTS, NOT WHAT IT CAN SAY: there are
+    # eight message branches in `title_problem`, and the one most authors
+    # actually meet is in none of the three below -- a plain `hammerola create`
+    # with no `--title` writes the directory's slug into both fields, so the
+    # card reads `t13-ceiling-mount` over `t13-ceiling-mount` and the warning is
+    # the bare-slug sentence. The three this was built for: NOTHING names the
+    # project, so it publishes under its own id; the `project` key names it but
+    # the title carries no slug, so nothing in the words on the card ties them
+    # to the name it publishes under; or the title carries SOMEBODY ELSE's slug,
+    # which is what a project copied from another one looks like. Only the first
+    # ends in publication under the id -- an earlier version of this comment
+    # attached that consequence to the second as well, which stopped being true
+    # when `hammerola create` began writing the key. `title_problem` is handed
+    # the resolved `project` and not a directory name, and `pid` alongside it so
+    # it can tell the case where the two are the same -- read its docstring
+    # before changing any of the three arguments.
+    problem = title_problem(title, project, pid)
+    if problem:
+        print(f"warning: {problem}")
 
     # Names, then the view gates -- everything that can be wrong before a
     # single triangle exists, in the order it costs least to find out.

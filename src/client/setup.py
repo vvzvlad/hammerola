@@ -33,6 +33,7 @@ from pathlib import Path
 from src.client import config, project, unpack
 from src.client.errors import ClientError
 from src.client.hub import QUERY_TIMEOUT, Hub, HubError
+from src.projectslug import slug_from_title
 
 # Prompts. Written out here rather than inline so the two questions read as one
 # form, and so a test can drive them by name.
@@ -51,6 +52,31 @@ _LABEL = len(config.EDIT_TOKEN_VAR) + 1
 SHADOWED = ("note: {name} is set in this shell's environment, and that wins "
             "over the file above.\n"
             "  `unset {name}` for the login to take effect here.")
+
+# Said when the DIRECTORY and the TITLE name two different slugs. The directory
+# wins, silently — `project._project_slug` asks it first — and the disagreement
+# is worth a line because nothing later resolves it:
+# `cadbuild.project_title.title_problem` reads it as a title copied from another
+# project, and `cadbuild/build.py` prints that warning on every build. This is
+# the only place both names are in front of somebody: the build log names the
+# two slugs and never says that one of them is a directory.
+#
+# THE REMEDY IT NAMES HAS TO BE ONE THAT WORKS, and the first version's was not:
+# it said "rename the directory", which changes nothing at all. The `project`
+# key is written once, here, by `create_project`, and `load_project` reads that
+# key before it looks at anything else — so after creation neither the directory
+# nor the title can move the slug the project publishes under. What is left is
+# the two below: bring the TITLE's brackets to the key (`hammerola rename`
+# rewrites the title and leaves `project` alone), or edit the key itself.
+SLUG_DISAGREEMENT = (
+    "note: the directory is named {directory!r}, and the title's brackets say "
+    "{titled!r}.\n"
+    "  The directory wins: the \"project\" key now says {directory!r} and "
+    "nothing recomputes it,\n"
+    "  so renaming the directory later changes nothing. Every build warns until "
+    "the two agree:\n"
+    "  `hammerola rename \"<what and what for> ({directory})\"`, or edit that "
+    "key to {titled!r}.")
 
 
 def login(args) -> int:
@@ -199,10 +225,24 @@ def create(args) -> int:
     written = _write_template(root, template)
 
     print(f"created {root / project.PROJECT_FILE}")
-    print(f"  id     {payload['id']}")
-    print(f"  title  {payload['title']}")
+    print(f"  id       {payload['id']}")
+    print(f"  title    {payload['title']}")
+    # Printed only when it was written, exactly as the file carries it: this is
+    # the name the hub publishes under -- the one on the index card and in the
+    # build page header -- and a line saying nothing would be indistinguishable
+    # from a project that has one. Its absence is said by the build log instead,
+    # where the id that stood in for it is also printed.
+    if project.PROJECT_KEY in payload:
+        print(f"  project  {payload[project.PROJECT_KEY]}")
     for name in written:
-        print(f"  wrote  {name}")
+        print(f"  wrote    {name}")
+    # The key differing from the title's brackets means it came from the
+    # DIRECTORY: `_project_slug` returns one or the other unchanged, so a key
+    # that is not the title's slug is the directory's name.
+    slug = payload.get(project.PROJECT_KEY, "")
+    titled = slug_from_title(payload["title"])
+    if slug and titled and slug != titled:
+        print(SLUG_DISAGREEMENT.format(directory=slug, titled=titled))
     # The one rule about the file, said at the one moment somebody is looking at
     # it. Every permanent URL of this project is built from that id, so an edit
     # to it does not rename anything — it starts a different project and leaves

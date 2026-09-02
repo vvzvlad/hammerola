@@ -6,11 +6,16 @@ publish over somebody else's project the first time a directory was renamed.
 `project.json` is the file `hammerola create` writes — once, at the start — and
 the one every model repository already carries.
 
-WRITTEN ONCE AND THEN LEFT ALONE. SPEC §3.1 states the rule as "we do not edit
-this file by hand", which is why minting the id belongs to this tool: a rule
-about not typing something is kept by not having to type it. `create_project`
-below is the only thing here that writes, and it refuses to write over an id
-that already exists.
+THE ID IS WRITTEN ONCE AND THEN LEFT ALONE, and it is the id alone: SPEC §3.1
+binds "not edited by hand" to that one key, because every permanent URL is built
+from it. The other two are edited — `title` by `hammerola rename`, and `project`
+by hand, which is the ONLY way to change the published slug once the key exists,
+since nothing recomputes it. Minting the id belongs to this tool for the rule
+that does hold: a rule about not typing something is kept by not having to type
+it. `create_project` below is the only thing here that writes a NEW file, and it
+refuses to write over an id that already exists; `write_project_title` rewrites
+one key of an existing one and is the reason "left alone" cannot be said of the
+whole file.
 
 WHICH REVISION IS NOT ASKED HERE, and it is not asked of git anywhere. The
 identifier of a revision is minted by the HUB, out of the sources it receives
@@ -27,9 +32,16 @@ import os
 import secrets
 from pathlib import Path
 
-from src.client.limits import SAFE_ID
+from src.buildnames import first_nonprintable
+from src.client.limits import MAX_TEXT_CHARS, SAFE_ID
+from src.projectslug import slug_from_directory, slug_from_title
 
 PROJECT_FILE = "project.json"
+
+# The key that says what this project is CALLED, as against what it is
+# identified by. It is written here and nowhere else, because here is the only
+# machine where the answer exists: see `_project_slug`.
+PROJECT_KEY = "project"
 
 # How wide the identifier is, in hex characters (SPEC §3.1: `7f3c1a9e04d2`).
 # Twelve, so it is short enough to read out of a URL and wide enough that two
@@ -162,6 +174,13 @@ def create_project(root: Path, title: str = "") -> dict:
         )
 
     payload = {"id": new_project_id(), "title": _clean_title(title, root)}
+    # ABSENT RATHER THAN EMPTY when nothing here can name the project, and the
+    # difference is what the hub reads: a missing key lets it answer with the
+    # project id, while `""` would be this directory asserting that it has no
+    # name and would still leave the hub to guess. See `_project_slug`.
+    slug = _project_slug(root, payload["title"])
+    if slug:
+        payload[PROJECT_KEY] = slug
     try:
         root.mkdir(parents=True, exist_ok=True)
         # `x` rather than `w`: `path.exists()` above answered a moment ago, and
@@ -177,21 +196,114 @@ def create_project(root: Path, title: str = "") -> dict:
     return payload
 
 
+def _project_slug(root: Path, title: str) -> str:
+    """The latin name this project publishes under, or "" when it has none.
+
+    THIS IS THE ONE QUESTION ONLY THIS MACHINE CAN ANSWER, which is why the key
+    is written at `create` time rather than worked out by the hub. The slug is
+    the name of the author's directory and of their repository; on the hub a
+    push is unpacked into `.src-<uuid4 hex>`, so the same question answered
+    there gives the hub's own bookkeeping. It did, once, onto the front page:
+    a project card reading `.src-89fb7abdeb1d48b5985bcb519850b284`.
+
+    THE DIRECTORY BEFORE THE TITLE, and the hub then ranks the two the same way
+    round rather than the opposite way. What this writes is the key the hub
+    reads FIRST: `cadbuild.project.load_project` resolves the `project` key,
+    then the title's brackets, then the id. So the directory's name reaches the
+    build AS that key, ahead of the brackets there exactly as it is ahead of
+    them here. The directory itself is in no chain on that side -- deliberately:
+    `slug_from_directory` is the one name `cadbuild/project_title.py` does not
+    re-export, because the answer there is the `.src-<uuid>` above. It goes
+    first here because somebody chose it, and the convention `project_title`
+    checks is that it and the title's brackets agree.
+
+    Empty when neither is a slug (`Корпус/` titled "Корпус"), and that is not a
+    failure: the id still names the project everywhere it matters, and the build
+    log says so once. Refusing to create a project over the spelling of a folder
+    would be a wall in front of the first command anybody runs.
+
+    THE CEILING IS CHECKED HERE AND NOT LEFT TO THE HUB, and the candidate it
+    can ever turn away is the DIRECTORY's. A path component may be 255
+    characters long, `SLUG_RE` has no length in it, and a `project` past
+    MAX_TEXT_CHARS is a BuildError raised inside the job -- so a directory named
+    at the filesystem's limit would take every push of that project down. The
+    BRACKET candidate cannot reach it at all: this function's one caller runs
+    `_clean_title` first, which refuses a title over MAX_TEXT_CHARS, and what
+    the brackets hold is a substring of that title. The condition still covers
+    both because it is one test in the loop -- and it is what would go on
+    holding if those two calls were ever run the other way round. A
+    candidate that is too long is PASSED OVER rather than truncated: half a name
+    is not the project's name, and the next candidate (or the id behind it) is a
+    true answer where a cut one is not. `_clean_title` holds the same ceiling and
+    REFUSES instead, because a title has nothing to fall through to; read the
+    reason there before making these two agree.
+    """
+    for slug in (slug_from_directory(Path(root).resolve().name),
+                 slug_from_title(title)):
+        if slug and len(slug) <= MAX_TEXT_CHARS:
+            return slug
+    return ""
+
+
 def _clean_title(title: str, root: Path) -> str:
     """The human-readable name, or the directory's own name as a stand-in.
 
-    A single printable line. The title is shown on the index card and on the
-    build page, so a control character in it is a caption that rewrites the line
-    around it — the hub applies the same rule to the title in `meta.json`
-    (`render._plain_text`) and this keeps the refusal on the machine where the
-    name is being chosen.
+    A single printable line, no longer than the hub will show. Both rules are
+    the far side's, and a title that breaks either is a `BuildError` raised
+    inside the job: `cadbuild.project.load_project` holds the title to the same
+    ceiling and to the same character rule. Checking here keeps that refusal on
+    the machine where the name is being chosen.
+
+    THE CHARACTER RULE IS IMPORTED RATHER THAN RESTATED, and that import is the
+    whole of it. This spelled the rule itself once — `ord(char) < 0x20 or
+    ord(char) == 0x7F`, which is a SUBSET of Unicode category Cc (the C0
+    controls and DEL, not the C1 block U+0080-U+009F) — while the far side
+    refuses all of category C, so U+202E RIGHT-TO-LEFT OVERRIDE (Cf) was
+    accepted here and refused inside the job. That is the same defect
+    `src/cadbuild/project.py` records having fixed on the build side, in the
+    same spelling, reintroduced on this one. `buildnames.first_nonprintable` is
+    the scan both sides now ask, and nothing else comes with it: a title is
+    allowed the angle brackets a part name is not, and that rule lives with the
+    caller that wants it.
+
+    THE LENGTH IS CHECKED EVEN THOUGH THE TITLE IS USUALLY TYPED, because the
+    line above is where it stops being typed: with no `--title` the title is the
+    DIRECTORY's name, and a path component may be 255 characters. Adding the
+    ceiling to `_project_slug` alone moved that failure rather than fixing it —
+    the `project` key was left out and the same over-long name went into `title`
+    instead, so the push still died in the job.
+
+    THAT REMEDY NAMES A FLAG, so the branch printing it has to belong to the one
+    command that has the flag, and it does: `create_project` is the only caller
+    that can reach the stand-in, because `write_project_title` refuses an empty
+    title before calling this at all. Read its docstring before removing that
+    guard — the two are one decision.
+
+    REFUSED, where a too-long slug is passed over, and the difference is that
+    there is nothing here to fall through to: the slug has a second source and
+    the id behind that, while the only fallback for a title is a name nobody
+    chose. So this one stops the command and says what to pass.
     """
-    title = (title or "").strip() or root.resolve().name or "untitled"
-    for char in title:
-        if ord(char) < 0x20 or ord(char) == 0x7F:
-            raise ProjectError(
-                "the project title contains a control character; it is shown "
-                "verbatim on the site and has to be one printable line")
+    given = (title or "").strip()
+    title = given or root.resolve().name or "untitled"
+    bad = first_nonprintable(title)
+    if bad is not None:
+        raise ProjectError(
+            f"the project title carries the non-printable character {bad!r}; "
+            f"the build refuses one, and a title has to be one line a person "
+            f"can read")
+    if len(title) > MAX_TEXT_CHARS:
+        remedy = (
+            "  Shorten it."
+            if given else
+            f"  It was taken from the directory name, which is "
+            f"{len(title)} characters long.\n"
+            f"  Pass `--title \"<what it is and what it is for> (<slug>)\"`."
+        )
+        raise ProjectError(
+            f"the project title is {len(title)} characters; the hub shows at "
+            f"most {MAX_TEXT_CHARS} and a build refuses a longer one.\n"
+            f"{remedy}")
     return title
 
 
@@ -212,7 +324,22 @@ def write_project_title(root: Path, title: str) -> str:
     Written through a temporary file and renamed, so an interrupted rename leaves
     the previous file intact rather than a truncated one. This file carries the
     project id; a half-written one is a directory that can no longer publish.
+
+    AN EMPTY TITLE IS REFUSED HERE, one line before `_clean_title` would take it,
+    and that guard is what keeps this path away from the stand-in below it. That
+    function answers a missing title with the DIRECTORY's name, which is right
+    for `create` — a fresh project has no other name — and a guess here, where
+    the caller passed an argument saying what the title should be. It also put a
+    message in front of the wrong reader: the stand-in carries the ceiling on a
+    directory name, so `rename ""` under an over-long directory printed the
+    remedy for `create`, naming a `--title` flag this command does not have.
     """
+    if not (title or "").strip():
+        raise ProjectError(
+            "the new title is empty.\n"
+            "  Pass the name the project should have: "
+            "\"<what it is and what it is for> (<slug>)\".")
+
     path = root / PROJECT_FILE
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))

@@ -150,15 +150,15 @@ TEMPLATE_DIR = ROOT / "model_template"
 # would break here rather than on somebody's laptop.
 #
 # WHAT GOES IN is every module under `src/client/`, plus the parts of `src/` the
-# client is allowed to reach — `buildnames` and `metricsdiff` today, the two
-# pure modules the hub and the client share rather than each keeping a copy of.
-# That list is closed under imports and a test proves it
+# client is allowed to reach — `buildnames`, `metricsdiff` and `projectslug`
+# today, the pure modules the hub and the client share rather than each keeping
+# a copy of. That list is closed under imports and a test proves it
 # (`tests/test_onboarding.py`), because a module added outside `src/client/` and
 # imported from inside it would produce an archive that runs on this machine,
 # where the checkout is on `sys.path`, and dies with an ImportError on the
 # laptop this is built for.
 CLIENT_EXTRA_MODULES = ("src/__init__.py", "src/buildnames.py",
-                        "src/metricsdiff.py")
+                        "src/metricsdiff.py", "src/projectslug.py")
 
 # The module the generated `__main__.py` imports, and therefore the root of the
 # closure `_refuse_unimportable` walks. Anything the tool needs is reachable from

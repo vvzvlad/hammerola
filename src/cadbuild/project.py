@@ -42,22 +42,51 @@ def load_project():
     if not MEMBER_RE.match(pid):
         raise BuildError(f"project id {pid!r} is not a safe path component")
 
-    title = str(data.get("title") or "").strip() or root.name
-    # The slug out of the title BEFORE the directory name, and that order is
-    # the whole point. This value is what gets written into metrics.json as the
-    # name of the project, and metrics.json is written where the geometry is
-    # computed -- inside the builder image, where the sources live in /src and
-    # root.name is `src` for every project in the fleet. The title travels in
-    # project.json, so the slug in its brackets is the same string on both
-    # sides of the container, and it is the only thing here that identifies
-    # which project a published snapshot belongs to.
+    # NEITHER OF THESE MAY FALL BACK TO `root.name`, and the line that did is
+    # named here so it is not put back. This package runs in exactly one place
+    # -- the hub's build process, chdir'd into the directory a push was unpacked
+    # into (`buildproc/child.py`, `store.SOURCE_PREFIX`) -- so `root.name` is
+    # `.src-<uuid4 hex>`: the hub's own bookkeeping, different on every push,
+    # never evidence about the author's project. It published a card reading
+    # `.src-89fb7abdeb1d48b5985bcb519850b284` on the front page.
+    #
+    # WHAT REPLACES IT IS THE HUB'S OWN CHAIN, transcribed. `render.build_meta`
+    # resolves the same two fields out of a meta.json that leaves them empty:
+    #
+    #     project = raw["project"] or pid
+    #     title   = raw["title"]   or project
+    #
+    # so the title falls back to the PROJECT and not to the id. Reaching for
+    # `pid` here instead was one side silently correcting the other -- exactly
+    # the drift this comment claims to prevent: `{"id": "2486c8fd2b05",
+    # "project": "slip-pump"}` with no title published `2486c8fd2b05` where the
+    # hub's rule gives `slip-pump`.
+    #
+    # THE ORDER OF THE TWO STATEMENTS IS THE PART THAT NEEDS CARE, because the
+    # chain is circular if either is read off the other's resolved value: the
+    # title falls back to the project, and the project falls back to the slug in
+    # the title's brackets. It is broken on the RAW title -- a title that is
+    # absent has no brackets to read, and `slug_from_title("")` is `""`, so
+    # nothing is lost by asking before the fallback rather than after it.
+    #
+    # WHAT SHOULD NAME THE PROJECT is the `project` key, which is why it is
+    # first: the slug is a fact about the AUTHOR's directory, so it is worked out
+    # where that directory exists and travels in project.json (`hammerola
+    # create`, `src/projectslug.py`). The title's own brackets are the second
+    # chance -- the same string, in a field written by hand -- and `pid` is what
+    # is left when a project.json names it nowhere. It is the honest last
+    # resort: already validated (MEMBER_RE, above) and always non-empty. `build`
+    # warns on the log when it comes to that (`project_title`).
+    raw_title = str(data.get("title") or "").strip()
     project = (str(data.get("project") or "").strip()
-               or project_title.slug_from_title(title)
-               or root.name)
+               or project_title.slug_from_title(raw_title)
+               or pid)
+    title = raw_title or project
     # Both go through the hub's own text rule, transcribed once in views.py.
     # This used to be a check of its own -- a ceiling plus `ord(ch) < 32 or
-    # ord(ch) == 127` -- and that spelling covered Unicode category Cc and
-    # nothing else, so U+202E RIGHT-TO-LEFT OVERRIDE (Cf) went through here and
+    # ord(ch) == 127` -- and that spelling covered only PART of Unicode category
+    # Cc (the C0 controls and DEL, not the C1 block U+0080-U+009F), so U+202E
+    # RIGHT-TO-LEFT OVERRIDE (Cf) went through here and
     # was refused by the hub after the geometry had been computed. Not a
     # cosmetic difference either: that character reverses the text AROUND the
     # field it sits in, i.e. the rest of the card. Angle brackets are allowed

@@ -20,7 +20,7 @@ import pytest
 from harness import TOKEN
 from modeldir import make_model
 
-from src.client import config, pack, project, setup
+from src.client import config, limits, pack, project, setup
 from src.client.cli import main
 
 
@@ -198,6 +198,207 @@ def test_create_writes_a_fresh_id_and_takes_the_directory_name_as_the_title(
     assert len(payload["id"]) == 12
     assert all(c in "0123456789abcdef" for c in payload["id"])
     assert payload["id"] in capsys.readouterr().out
+
+
+def test_create_names_the_project_after_the_directory_it_is_made_in(
+        tmp_path, capsys):
+    """THE KEY THAT WAS NOT BEING WRITTEN, and the machine that is the only one
+    able to write it.
+
+    The slug is the name of the author's directory and of their repository. On
+    the hub a push is unpacked into `.src-<uuid4 hex>`, so a build that worked
+    the answer out for itself published a card called
+    `.src-89fb7abdeb1d48b5985bcb519850b284`. It travels in project.json because
+    this is where the question has an answer.
+
+    Printed as well as written: it is the name the index card carries, so
+    somebody reading the output of `create` has to be able to see it.
+    """
+    root = tmp_path / "t13-ceiling-mount"
+    assert main(["-C", str(root), "create", "--no-template"]) == 0
+
+    payload = json.loads((root / "project.json").read_text(encoding="utf-8"))
+    assert payload[project.PROJECT_KEY] == "t13-ceiling-mount"
+    # The LINE, not the string: with no `--title` the title is the directory
+    # name too, so anything looser would pass on the title alone.
+    assert [line for line in capsys.readouterr().out.splitlines()
+            if line.startswith("  project")] == ["  project  t13-ceiling-mount"]
+
+
+def test_a_directory_that_cannot_be_a_slug_falls_back_to_the_titles_brackets(
+        tmp_path):
+    """The directory first, the title second — and the second is what is left
+    when somebody works in `Корпус/`."""
+    root = tmp_path / "Корпус"
+    assert main(["-C", str(root), "create", "--no-template",
+                 "--title", "Потолочный корпус (t13-ceiling-mount)"]) == 0
+
+    payload = json.loads((root / "project.json").read_text(encoding="utf-8"))
+    assert payload[project.PROJECT_KEY] == "t13-ceiling-mount"
+
+
+def test_a_project_nothing_here_can_name_gets_no_key_rather_than_an_empty_one(
+        tmp_path, capsys):
+    """ABSENT, NOT `""`, and the difference is what the hub reads.
+
+    A missing key lets `load_project` answer with the project id, which at least
+    names this project; an empty one is a project.json ASSERTING it has no name
+    and leaves the hub in the same position with a field to explain. Creating
+    the project still succeeds — refusing over the spelling of a folder would be
+    a wall in front of the first command anybody runs.
+    """
+    root = tmp_path / "Корпус"
+    assert main(["-C", str(root), "create", "--no-template",
+                 "--title", "Потолочный корпус"]) == 0
+
+    payload = json.loads((root / "project.json").read_text(encoding="utf-8"))
+    assert project.PROJECT_KEY not in payload
+    assert [line for line in capsys.readouterr().out.splitlines()
+            if line.startswith("  project")] == []
+
+
+def test_a_directory_name_too_long_to_publish_is_passed_over(tmp_path):
+    """The one name in project.json nobody typed, so the ceiling is checked here.
+
+    A path component may be 255 characters and `SLUG_RE` has no length in it, so
+    a directory can be a perfectly good slug that the hub will not take: over
+    MAX_TEXT_CHARS `load_project` raises, inside the job, on every push of that
+    project. The title's brackets are asked next — they are a name somebody DID
+    type — and this is the case that separates "passed over" from "truncated":
+    a cut directory name would win here and would be nobody's project.
+    """
+    root = tmp_path / ("a" * (limits.MAX_TEXT_CHARS + 1))
+    assert main(["-C", str(root), "create", "--no-template",
+                 "--title", "Ceiling mount (t13-ceiling-mount)"]) == 0
+
+    payload = json.loads((root / "project.json").read_text(encoding="utf-8"))
+    assert payload[project.PROJECT_KEY] == "t13-ceiling-mount"
+
+
+def test_a_name_at_the_ceiling_is_still_written(tmp_path):
+    """The other side of the same line: 200 characters is a name the hub takes."""
+    name = "b" * limits.MAX_TEXT_CHARS
+    root = tmp_path / name
+    assert main(["-C", str(root), "create", "--no-template"]) == 0
+
+    payload = json.loads((root / "project.json").read_text(encoding="utf-8"))
+    assert payload[project.PROJECT_KEY] == name
+
+
+def test_a_directory_name_too_long_to_BE_a_title_stops_the_command(
+        tmp_path, capsys):
+    """WHERE THE CEILING ON THE SLUG ALONE ONLY MOVED THE FAILURE.
+
+    With no `--title` the title is the directory name too, so passing an
+    over-long name over for the `project` key left the same string in `title`
+    and the push still died inside the job — after the upload, with `hammerola`
+    having said nothing. Refused here instead, on the machine that can still fix
+    it, and the message has to name the flag that does: there is no shorter name
+    for this command to fall back to.
+    """
+    root = tmp_path / ("c" * (limits.MAX_TEXT_CHARS + 1))
+    assert main(["-C", str(root), "create", "--no-template"]) == 1
+
+    error = capsys.readouterr().err
+    assert str(limits.MAX_TEXT_CHARS) in error
+    assert "--title" in error
+    # Nothing written: a directory holding an id and no model is the state
+    # `create` is built never to leave behind.
+    assert not (root / "project.json").exists()
+
+
+def test_a_title_somebody_typed_too_long_is_refused_as_well(tmp_path, capsys):
+    """Same ceiling, different remedy: this one was typed, so it can be
+    shortened, and the flag has nothing to do with it."""
+    root = tmp_path / "demo"
+    assert main(["-C", str(root), "create", "--no-template",
+                 "--title", "x" * (limits.MAX_TEXT_CHARS + 1)]) == 1
+
+    error = capsys.readouterr().err
+    assert str(limits.MAX_TEXT_CHARS) in error
+    assert "--title" not in error
+    assert not (root / "project.json").exists()
+
+
+def test_a_title_carrying_u202e_is_refused_here_and_not_inside_the_job(
+        tmp_path, capsys):
+    """THE CLIENT'S OWN SPELLING OF "PRINTABLE" LET THIS THROUGH.
+
+    It read `ord(char) < 0x20 or ord(char) == 0x7F` — a SUBSET of Unicode
+    category Cc, the C0 controls and DEL but not C1 (U+0080-U+009F) — while the
+    build refuses all of category C, so U+202E
+    RIGHT-TO-LEFT OVERRIDE (Cf) was accepted by `create` and killed the job
+    after the sources had been uploaded. The same defect is recorded as fixed on
+    the build side in `src/cadbuild/project.py`; the fix here is to import that
+    scan rather than spell it again.
+    """
+    root = tmp_path / "slip-pump"
+    # Escaped rather than pasted: the literal character reverses the rest of
+    # this line in every editor that renders it, including this file.
+    title = "Slip pump \u202epmup (slip-pump)"
+    assert main(["-C", str(root), "create", "--no-template",
+                 "--title", title]) == 1
+
+    error = capsys.readouterr().err
+    assert repr("\u202e") in error
+    assert not (root / "project.json").exists()
+
+
+def test_a_directory_and_a_title_naming_two_slugs_is_said_here(tmp_path, capsys):
+    """THE DISAGREEMENT IS ONLY VISIBLE ON THIS MACHINE, so it is said here.
+
+    In `mount/` with a title ending `(t13-ceiling-mount)` the directory wins
+    silently, and every later build then prints a warning that reads as a title
+    copied from another project — which is not what happened, and the log it
+    prints in never says that one of the two names is a directory. The project
+    is still created: the two names disagreeing is not an error, it is a thing
+    to know.
+    """
+    root = tmp_path / "mount"
+    assert main(["-C", str(root), "create", "--no-template",
+                 "--title", "Ceiling mount (t13-ceiling-mount)"]) == 0
+
+    payload = json.loads((root / "project.json").read_text(encoding="utf-8"))
+    assert payload[project.PROJECT_KEY] == "mount"
+    out = capsys.readouterr().out
+    note = [line for line in out.splitlines() if line.startswith("note:")]
+    assert len(note) == 1, out
+    assert "mount" in note[0] and "t13-ceiling-mount" in note[0]
+    # The remedy it offers has to be one that moves the key — see the test
+    # below for the one it used to offer, which does not.
+    assert "hammerola rename" in out
+
+
+def test_renaming_the_directory_afterwards_does_not_move_the_key(tmp_path):
+    """WHAT THE NOTE ABOVE USED TO RECOMMEND, AND WHY IT NO LONGER DOES.
+
+    "rename the directory" was a remedy that produces no change whatsoever:
+    `create_project` writes the `project` key once, and `cadbuild.project`
+    reads that key before it looks at anything else — so once the file exists,
+    the directory can be called anything and the project goes on publishing
+    under the name it was created with. The two remedies the note names now are
+    the two that do reach the disagreement: the title's brackets, which
+    `hammerola rename` rewrites, and the key itself.
+    """
+    root = tmp_path / "mount"
+    assert main(["-C", str(root), "create", "--no-template",
+                 "--title", "Ceiling mount (t13-ceiling-mount)"]) == 0
+
+    renamed = tmp_path / "t13-ceiling-mount"
+    root.rename(renamed)
+    payload = json.loads((renamed / "project.json").read_text(encoding="utf-8"))
+    assert payload[project.PROJECT_KEY] == "mount"
+
+
+def test_two_names_that_agree_are_not_remarked_on(tmp_path, capsys):
+    """The ordinary case, and the reason the note is conditional: a line printed
+    every time is a line nobody reads."""
+    root = tmp_path / "t13-ceiling-mount"
+    assert main(["-C", str(root), "create", "--no-template",
+                 "--title", "Ceiling mount (t13-ceiling-mount)"]) == 0
+
+    assert [line for line in capsys.readouterr().out.splitlines()
+            if line.startswith("note:")] == []
 
 
 def test_two_projects_do_not_get_the_same_id(tmp_path):

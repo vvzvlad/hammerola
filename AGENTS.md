@@ -311,7 +311,29 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   file 0600 after checking the password against the hub — ONE secret for the
   whole system, `EDIT_TOKEN`, no second key for comments), `create`
   (`project.py`, mints the
-  twelve hex characters of SPEC §3.1 and refuses to write over an existing id;
+  twelve hex characters of SPEC §3.1 and refuses to write over an existing id.
+  It writes a THIRD key, `project` — the latin slug the hub publishes under,
+  taken from the author's DIRECTORY and, failing that, from the brackets of the
+  title. That key exists because this is the only machine where the question has
+  an answer: on the hub a push is unpacked into `.src-<uuid4 hex>`, so a build
+  that worked the name out for itself put a card called
+  `.src-89fb7abdeb1d48b5985bcb519850b284` on the front page. It is ABSENT rather
+  than empty when neither source yields a slug — a missing key lets the hub
+  answer with the project id, while `""` is a file asserting the project has no
+  name. BOTH NAMES IT WRITES ARE HELD TO `limits.MAX_TEXT_CHARS`, because the
+  directory's name can become either of them and a path component may be 255
+  characters; they are held to it DIFFERENTLY, and that asymmetry is the
+  decision: an over-long slug is passed over (the title's brackets are asked
+  next, and the id stands behind them), while an over-long title stops the
+  command — nothing to fall through to but a name nobody chose. WHICH of the two
+  fires follows from that, and it is never both: with no `--title` the title IS
+  the directory's name, so the title's ceiling stops the command before the slug
+  is asked at all; the slug's ceiling fires only when a `--title` WAS given and
+  the directory alone is over-long, and then the brackets answer instead. `create` also
+  prints a `note:` when the directory and the title's brackets name two
+  different slugs: the directory wins silently, and this is the only machine
+  that can see both. Nothing changes the key afterwards: `rename` moves the
+  TITLE, and a directory renamed later leaves the file saying what it said;
   `setup.py` then unpacks the starter template beside it, fetching it from
   `/start` — the one family of routes this tool asks for with NO token, and
   that is a property of the ROUTE and not of this command: `skill` asks the
@@ -372,12 +394,26 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   the declaration takes and the server refuses publishes with a 201 into an
   IMMUTABLE directory under a year of cache and then 404s on every GET, so the
   build is accepted and impossible to open, from a push that can never be taken
-  back (issue #53). IT IS A MODULE OF ITS OWN because none of the three could
+  back (issue #53). ONE PIECE OF IT IS SHARED WIDER THAN THAT RULE:
+  `first_nonprintable`, the category-C scan, is also what `render._plain_text`
+  holds every displayed field to and what `client/project.py::_clean_title`
+  refuses a project title with. It is public for that last caller, which arrived
+  after spelling the scan itself as `ord(char) < 0x20 or ord(char) == 0x7F` — a
+  SUBSET of category Cc (the C0 controls and DEL, not the C1 block
+  U+0080–U+009F), so U+202E passed `hammerola create` and killed the build.
+  THAT IMPORT ALSO SETS THE BLAST RADIUS of the stdlib rule below:
+  `src/client/project.py` is imported by `admin`, `artifacts`, `cli`, `queue`,
+  `revdiff`, `setup`, `sources` and `status`, so a dependency added to
+  `buildnames` fails EVERY `hammerola` command at import time — not just the one
+  verb that reads a build's file names.
+  IT IS A MODULE OF ITS OWN because none of the three could
   host it: the import edge runs `app → store → render`, so `render` may import
   neither `app` nor `store` — which also closes `store.py`, the obvious address
   next door to `SAFE_COMPONENT` — and the client is stdlib-only and may not
   import the service at all. STDLIB ONLY for that last reason, and it travels in
-  `onboarding.CLIENT_EXTRA_MODULES` beside `src/metricsdiff.py`. WHAT ENFORCES
+  `onboarding.CLIENT_EXTRA_MODULES` beside `src/metricsdiff.py` and
+  `src/projectslug.py` — three modules now, all shared for the same reason and
+  all held to the same rule. WHAT ENFORCES
   the stdlib rule is TWO tests, and they are not the same rule:
   `tests/test_buildnames.py::test_the_shared_module_imports_nothing_but_the_standard_library`
   names this file and allows the standard library and nothing else, while
@@ -409,6 +445,28 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   name it used to define. `tests/test_metricsdiff.py` asserts the two sides hold
   the same objects (`is`, not `==`) and that this module imports only the
   standard library, which is what lets the client have it at all
+- `src/projectslug.py` — what a project is CALLED, as against what it is
+  identified by: the slug alphabet, the brackets at the end of a title, and the
+  two ways of arriving at one. TWO READERS ON TWO MACHINES, which is the whole
+  reason it is here rather than in either of them. `hammerola create` asks on the
+  AUTHOR's machine, where the directory is the answer, and writes it into
+  project.json as the `project` key; `src/cadbuild/project_title.py` re-exports
+  it inside the hub's build process, which is rooted at the directory a push was
+  unpacked into and therefore must never ask that question — `slug_from_directory`
+  is the one name it deliberately does NOT import, because the answer there is
+  `.src-<uuid4 hex>` and that is the incident (a front-page card reading
+  `.src-89fb7abdeb1d48b5985bcb519850b284`). It is NOT a copy: the shape of a copy
+  is `cad_publish/hubspec.py`, which held the same rule in a repository that
+  could not see the original and broke publication, so the rule was MOVED here
+  and both sides import it, exactly as `src/metricsdiff.py` did. STDLIB ONLY,
+  and enforced the same two ways as `src/buildnames.py` above:
+  `tests/test_projectslug.py` names this file and allows nothing but the standard
+  library, and `tests/client/test_stdlib_only.py` reaches it through
+  `onboarding.CLIENT_EXTRA_MODULES`. THE ZIPAPP DOES NOT CATCH IT either — same
+  reason, `_import_closure` walks only `src` imports — so a dependency added here
+  is served with a 200 and breaks the laptop that downloaded it. The same suite
+  asserts the two sides hold the same objects (`is`, not `==`), which is what
+  makes the re-export a shared rule rather than a second one that agrees today
 - `src/onboarding.py` — what the hub hands somebody who has just found it, and
   the only place the `/start` routes are named: the agent skill, the client as
   ONE executable file (a zipapp built at request time out of `src/client/` —

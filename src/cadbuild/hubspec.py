@@ -149,11 +149,3 @@ DEV_LABEL = "dev"
 # would mean a test id the build no longer recognises, and the entire safety of
 # the flag is that refusal.
 TEST_ID = "local-test-do-not-publish"
-
-# The title that goes with it, when project.json carries none. Russian on
-# purpose, unlike every other string in this package: this is not interface
-# text but a project TITLE, and project_title.title_problem requires Cyrillic
-# words in front of the slug. An English one would make `cad-publish preview`
-# warn about the title of a checkout that is deliberately not a project. The
-# slug half is formatted with the directory name for the same rule.
-TEST_TITLE = "Локальный прогон шаблона, не проект ({slug})"

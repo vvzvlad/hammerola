@@ -34,10 +34,10 @@ from pathlib import Path
 # answers it now, and `tests/test_buildnames.py` asserts the three sides hold
 # the same OBJECT rather than a copy of it — which is what fails on the day
 # somebody inlines one again.
-# `_first_nonprintable` travels with it because `_plain_text` below asks the same
+# `first_nonprintable` travels with it because `_plain_text` below asks the same
 # question of every displayed field, and the two must not drift apart on what
 # "printable" means.
-from src.buildnames import _first_nonprintable, unservable_reason
+from src.buildnames import first_nonprintable, unservable_reason
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
@@ -148,7 +148,7 @@ def _plain_text(value: str, field: str, limit: int = MAX_TEXT) -> str:
     """
     if len(value) > limit:
         raise ValueError(f"`{field}` is longer than {limit} characters")
-    bad = _first_nonprintable(value)
+    bad = first_nonprintable(value)
     if bad is not None:
         raise ValueError(
             f"`{field}` contains a non-printable character {bad!r}")

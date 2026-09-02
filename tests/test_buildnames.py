@@ -16,6 +16,12 @@ tests pin is that this stays true: that nothing re-inlines a copy, and that the
 shared module stays importable on a laptop's bare python3, which is the property
 that made the move possible at all.
 
+The CATEGORY SCAN inside that rule has a fourth reader, and it is pinned here
+for the same reason: `_clean_title` in `src/client/project.py` refuses a project
+title before `hammerola create` writes it, and it used to spell the scan itself
+— narrower than the one the far side applies, so a title it accepted killed the
+build.
+
 What the rule ANSWERS is pinned where its callers are:
 `tests/test_publish.py::test_the_file_server_and_a_push_agree_on_what_a_build_file_may_be_called`
 walks a table of names through all three doors.
@@ -27,6 +33,7 @@ from pathlib import Path
 
 from src import app, buildnames, render
 from src.client import artifacts
+from src.client import project as client_project
 
 SHARED = Path(buildnames.__file__)
 
@@ -36,7 +43,7 @@ def test_the_publishing_half_re_exports_the_shared_objects_and_not_copies():
     copy looks like on the day it is made, and this has to fail then rather than
     a year later, when the two have quietly drifted apart."""
     assert render.unservable_reason is buildnames.unservable_reason
-    assert render._first_nonprintable is buildnames._first_nonprintable
+    assert render.first_nonprintable is buildnames.first_nonprintable
 
 
 def test_the_client_asks_the_hubs_own_rule_and_not_an_approximation_of_it():
@@ -51,6 +58,20 @@ def test_the_client_asks_the_hubs_own_rule_and_not_an_approximation_of_it():
     saves the file, and it was the clause the copy did not have.
     """
     assert artifacts.unservable_reason is buildnames.unservable_reason
+
+
+def test_the_client_scans_project_titles_with_the_shared_rule_too():
+    """The second copy the client held, and the one that had already gone wrong.
+
+    `_clean_title` refuses a title before `hammerola create` writes it, and it
+    spelled the character rule itself: `ord(char) < 0x20 or ord(char) == 0x7F`,
+    which is a SUBSET of Unicode category Cc — the C0 controls and DEL, but not
+    C1 (U+0080-U+009F). The far side refuses all of category C,
+    so U+202E RIGHT-TO-LEFT OVERRIDE passed `create` and killed the build
+    instead — the same defect `src/cadbuild/project.py` records having fixed on
+    the build side, in that same spelling.
+    """
+    assert client_project.first_nonprintable is buildnames.first_nonprintable
 
 
 def test_the_file_server_answers_through_the_same_module():

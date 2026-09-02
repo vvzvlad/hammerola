@@ -21,6 +21,7 @@ import pytest
 from harness import TOKEN, comment_payload, copying_builder
 from modeldir import make_model
 
+from src.client import limits
 from src.client.cli import main
 
 
@@ -109,15 +110,24 @@ def test_there_is_no_way_to_ask_for_an_id_rename(hub, model, capsys):
 
 def test_rename_keeps_everything_else_in_project_json(hub, model, capsys):
     """A project.json is a file people put things in; a rename may not be a
-    quiet way of dropping them."""
+    quiet way of dropping them.
+
+    THE `project` KEY IS NAMED HERE rather than left to "everything else",
+    because a message depends on it: `hammerola create` offers this command as
+    the way to make a title's brackets agree with the slug the project
+    publishes under, and that only reaches the disagreement while a rename
+    moves the title and leaves the key alone.
+    """
     payload = project_json(model)
     payload["notes"] = {"printer": "X1C"}
+    payload["project"] = "demo-part"
     (model / "project.json").write_text(json.dumps(payload))
     publish(model, capsys)
 
     assert run(model, "rename", "Renamed") == 0
     capsys.readouterr()
     assert project_json(model)["notes"] == {"printer": "X1C"}
+    assert project_json(model)["project"] == "demo-part"
 
 
 def test_renaming_a_project_that_was_never_pushed_still_works(hub_factory,
@@ -167,8 +177,100 @@ def test_a_title_the_site_would_have_to_render_verbatim_is_refused(hub, model,
                                                                    capsys):
     publish(model, capsys)
     assert run(model, "rename", "two\nlines") == 1
-    assert "control character" in capsys.readouterr().err
+    assert "non-printable character" in capsys.readouterr().err
     assert project_json(model)["title"] == "Demo project"
+
+
+def test_a_title_over_the_hubs_ceiling_is_refused_by_rename_as_well(
+        hub, model, capsys):
+    """`rename` and `create` share `_clean_title`, so `rename` inherits BOTH of
+    its refusals — and only the character one was covered here.
+
+    The ceiling is the far side's: `cadbuild.project.load_project` measures the
+    title against `MAX_TITLE_CHARS`, so a longer one is a `BuildError` raised
+    inside the job, after the sources have gone up. Refusing it at the keyboard
+    is the whole point of the check being in this tool at all.
+    """
+    publish(model, capsys)
+    assert run(model, "rename", "x" * (limits.MAX_TEXT_CHARS + 1)) == 1
+
+    error = capsys.readouterr().err
+    assert str(limits.MAX_TEXT_CHARS) in error
+    assert project_json(model)["title"] == "Demo project"
+
+
+def test_an_empty_rename_is_refused_instead_of_taking_the_directorys_name(
+        hub, model, capsys):
+    """THE OTHER BRANCH OF `_clean_title`, AND THE ONE THAT MISADVISED.
+
+    `create` answers a missing title with the DIRECTORY's name, which is right
+    for it and a guess here: `rename` was handed an argument saying what the
+    title should be. That stand-in also carries the ceiling on a directory name,
+    so `rename ""` under an over-long directory printed `create`'s remedy —
+    `Pass --title "..."` — for a command with no such flag. The guard in
+    `write_project_title` is what keeps this path off that branch, so the test
+    is that the refusal is about the ARGUMENT and mentions no flag at all.
+    """
+    publish(model, capsys)
+    assert run(model, "rename", "") == 1
+
+    error = capsys.readouterr().err
+    assert "--title" not in error
+    assert "empty" in error
+    # Not renamed to the directory's own name, which is what it used to do.
+    assert project_json(model)["title"] == "Demo project"
+    assert model.name not in error
+
+
+def test_each_remedy_the_create_note_names_ends_with_the_build_warning_gone(
+        tmp_path, capsys, monkeypatch):
+    """WHAT ROUND 4 EXISTED FOR, asserted the only way that could have caught it.
+
+    `hammerola create` prints a note when the directory and the title's brackets
+    name two different slugs, and its first version recommended renaming the
+    directory — which changes nothing, because the `project` key is written once
+    and read first. A substring assertion on the note could not tell the
+    difference. So this follows each remedy the note names through to the thing
+    the author is trying to stop: the line `cadbuild/build.py` prints on every
+    build.
+
+    IT LIVES IN THIS FILE because the remedy is a COMMAND, and this is the file
+    with a hub behind it — `rename` writes the local file and then tells the
+    hub. The build half is imported rather than transcribed: `load_project`
+    resolves the published name and `title_problem` judges it, which is the pair
+    `build()` calls, and a copy of that chain here could agree with the note
+    while the build did something else.
+    """
+    from src.cadbuild.project import load_project
+    from src.cadbuild.project_title import title_problem
+
+    root = tmp_path / "mount"
+    assert main(["-C", str(root), "create", "--no-template",
+                 "--title", "Ceiling mount (t13-ceiling-mount)"]) == 0
+    printed = capsys.readouterr().out
+    assert "hammerola rename" in printed and "\"project\" key" in printed
+    monkeypatch.chdir(root)
+
+    def resolved():
+        pid, published, title = load_project()
+        return published, title_problem(title, published, pid)
+
+    published, problem = resolved()
+    assert published == "mount" and problem is not None
+
+    # Remedy A, the command the note prints: bring the TITLE's brackets to the
+    # name this project already publishes under.
+    assert run(root, "rename", "Ceiling mount (mount)") == 0
+    capsys.readouterr()
+    assert resolved() == ("mount", None)
+
+    # Remedy B, its alternative: move the KEY to the slug the title carries.
+    # From the same starting point, because the two are not steps.
+    payload = project_json(root)
+    payload["title"] = "Ceiling mount (t13-ceiling-mount)"
+    payload["project"] = "t13-ceiling-mount"
+    (root / "project.json").write_text(json.dumps(payload))
+    assert resolved() == ("t13-ceiling-mount", None)
 
 
 # -- rm ----------------------------------------------------------------------
