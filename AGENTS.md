@@ -699,6 +699,19 @@ be shorter, and renaming it breaks links, so it is not covered by this rule.
   message it prints looks entirely normal. `python -m` resolves the module against the
   interpreter that was actually invoked — the one `make` just created, here.
 - Tests are required for new code; in CI `build` depends on `test`.
+- **An assertion about how the code behaves, which has to stay true, belongs in a TEST rather
+  than in a comment or a document.** A comment that says what the code does is a claim with no
+  enforcement: it goes false on an ordinary edit, nothing reports it, and the next reader spends
+  their time discovering that the file lied; a test making the same claim fails on the edit that
+  falsifies it. Much here already works that way — `tests/test_workflow_steps.py` compares the
+  `run:` bodies this file requires to be byte-identical across the two workflows (no count
+  here: the one below is pinned, a second copy would not be), `ci/smoke.py` counts its own
+  verdicts, `tests/test_metricsdiff.py` checks an identity where an equality would pass, and
+  `tests/test_template.py` refuses a template that still defines `printables` — the build
+  ignores that function outright, so a leftover one publishes fine and nothing else would
+  notice. The corollary is what makes the rule actionable: when you
+  catch yourself writing "keep X and Y in step" or "this must match Z", that sentence is the
+  specification for a test, and the comment is the version that cannot fail.
 - Runtime dependencies are pinned with `==`, and a dependency the code imports DIRECTLY is
   named in `requirements.txt` even when it already arrives through another package's extra.
   Inheriting it means an unrelated upgrade up the tree can take it away, and the import then
