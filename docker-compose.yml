@@ -20,10 +20,32 @@
 # production — the mistake this header exists to prevent, and one that keeps being made. Several
 # of these repositories are public and mirrored: a secret committed here is a secret published.
 #
-# ONE deliberate exception: the registry host, wherever it appears — in the image path or in a
-# comment. It is real, because without it there is nothing to pull.
+# TWO deliberate exceptions, and they are exceptions of different kinds. The first is the
+# registry host, wherever it appears — in the image path or in a comment. It is real, because
+# without it there is nothing to pull.
 #
-# Deploy from a prebuilt image — a `build:` here, where present, is for running locally.
+# The second is the values that name the TARGET HOST'S OWN INFRASTRUCTURE rather than stand in
+# for anything: the external network `docker_main_net` and the certresolver `letsEncrypt`. Those
+# two are not placeholders and must never be swapped back into placeholders — CHECK THEM AGAINST
+# THE HOST you are deploying onto and spell them the way that host spells them. Do that IN THE
+# COPY YOU DEPLOY, never in this file: editing this file against a deployment is the one thing
+# the paragraph above forbids outright.
+#
+# Getting one wrong forks, and only one branch of the fork is silent. `docker_main_net` is
+# declared `external: true`, so a name no network on the host answers to stops the deploy dead —
+# `network docker_main_net declared as external, but could not be found` — the same loud refusal
+# the external-volume note below describes. The silent branch is a name that DOES exist while
+# the reverse proxy is not attached to it: the container joins a network nobody routes from,
+# comes up healthy, the logs stay clean, and Traefik answers 502 for everything it was supposed
+# to serve. A wrong `letsEncrypt` does neither — Traefik does not know the resolver, falls back
+# to its own default self-signed certificate, and the route keeps working while every browser
+# reaching it stops on a certificate error.
+#
+# `TZ` is not a third exception: it names nobody's infrastructure, and there is nothing to check
+# it against. It is a deployment's own choice, and copying this one as it stands costs nothing
+# but the timezone its log timestamps are printed in.
+#
+# Deploy from a prebuilt image — never build on the host that serves it.
 
 # This is the WEB-SERVICE variant (published via Traefik). For a polling bot with
 # no inbound port, drop `networks`, the Traefik labels and the healthcheck.
@@ -103,7 +125,7 @@ services:
     volumes:
       - hammerola:/app/data          # all mutable state survives restart/update
     # Configuration belongs in this block, or in a file that TRAVELS with the stack (committed
-    # beside this compose file and deployed from the repository). What it must never become is
+    # beside the copy of this file that a stack actually deploys). What it must never become is
     # an `env_file:` pointing at an absolute path on the host — `/data/hammerola/app.env` and
     # the like. Portainer executes compose INSIDE ITS OWN container, so such a path is resolved
     # in the Portainer server's filesystem, not on the host this stack runs on: the file you can
@@ -157,7 +179,7 @@ services:
         max-size: 10m
     labels:
       traefik.enable: "true"
-      # Placeholder host, like the rest of this template. The domain a deployment answers
+      # Placeholder host, like the rest of this example. The domain a deployment answers
       # on is set in ITS OWN Portainer stack, never here — so this line is a shape to copy,
       # not a value to look up, and it must not be "corrected" to whatever domain some
       # deployment happens to use.
@@ -180,10 +202,15 @@ services:
       # :latest moves (Scope=labeled, rolled back on failure, and polled on an interval that is
       # a Portainer setting rather than a constant — 5 minutes on our instance today, 6 hours
       # by the product's own default, so read it there before timing anything against it). This is
-      # the key the fleet uses. The `com.centurylinklabs.watchtower.*` family is legacy and is
-      # being migrated away — do not add one back. The SIDECARS are gone too: as of the
+      # the ONE label the convention carries — the watchtower-family key that used to sit
+      # beside it is gone, and that is unconditional rather than a default: as of the
       # 2026-08-17 consolidation no watchtower and no autoheal container was left on any
-      # environment of this fleet.
+      # environment of this fleet, and not a single `com.centurylinklabs.watchtower.*` or bare
+      # `autoheal` label either (that bare key is the sidecar's own — it is NOT
+      # `io.portainer.autoheal.enable`, which belongs to our Portainer build and is the subject
+      # of the auto-heal paragraph below). A second key here would be dead text that still
+      # READS like a working fallback, which is worse than no fallback at all. Do not add one
+      # back.
       #
       # What this label does not do is guarantee updates by itself. Everything described
       # above — the 5-minute poll, the health gate below, the rollback — is a property of the
@@ -205,7 +232,7 @@ services:
       # at deploy time, in the Portainer that actually claims the environment, and the answer
       # is current by construction.
       #
-      # ONE label is what this template carries, and the reason is not that the other one was
+      # ONE label is what this example carries, and the reason is not that the other one was
       # forgotten. Our Portainer build also has an AUTO-HEAL that restarts containers
       # docker reports `unhealthy`, opted into per container with `io.portainer.autoheal.enable`.
       # Put both labels on one container and auto-heal can MASK the health gate described under
@@ -256,7 +283,7 @@ services:
       # whole interval after start, and probes at `start-interval` (5s by default) only during
       # a start period. So `interval: 30m` with no start_period GUARANTEES the container is
       # still `starting` when the deadline expires, and a perfectly good image is rolled back
-      # for nothing. That happened on this fleet on 2026-08-15 to `zakhar-voice-assistant`:
+      # for nothing. That happened on this fleet on 2026-08-15 to a voice-assistant service:
       # health `starting`, probe log empty — never probed once. Nor does it heal itself: after
       # a rollback the updater suppresses that container for 24h, until the remote digest
       # changes (the cooldown lives in Portainer's memory, so a restart clears it), so the

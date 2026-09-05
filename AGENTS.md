@@ -697,7 +697,7 @@ proxmox_dns` finds nothing on the host that runs it.
 Underscores rather than hyphens because the name also has to be a legal Python
 package/module name — otherwise the repo name and the import name diverge the
 moment anything is imported. The only place a hyphen is acceptable is a DNS name
-(`proxdns.borneo.lc`), which is a separate, externally-visible identifier: it may
+(`proxdns.example.lc`), which is a separate, externally-visible identifier: it may
 be shorter, and renaming it breaks links, so it is not covered by this rule.
 
 ## Conventions
