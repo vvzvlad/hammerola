@@ -83,6 +83,31 @@ PLANE_TOL = 1e-3
 # the number trustworthy. Thin walls are looked at by eye, on the preview and
 # in the slicer.
 
+# The nozzle a part is assumed to be printed through, in millimetres. A DEFAULT
+# AND NOT A FACT, and the distinction is the whole reason it is written down
+# once: it is one machine's number, and every caller that needed it would
+# otherwise invent its own. A project printing through a different nozzle passes
+# its own value and declares it with `measured()` (issue #56 "Provenance of
+# numbers"); this constant is what stands in for a project that has not said,
+# never a statement about the machine that will actually print the part.
+NOZZLE_MM = 0.4
+# Two extrusion widths. A wall thinner than that is printed as a single line,
+# and a single line comes out at whatever width the slicer felt like: the
+# nominal thickness stops being a dimension. This is the number a 0.5 mm thread
+# crest on a 0.4 mm nozzle was under, and the 100 g of scrap that followed.
+EXTRUSION_LINES = 2
+
+
+def minimum_feature(nozzle_mm=NOZZLE_MM, lines=EXTRUSION_LINES):
+    """The thinnest wall this machine prints as a dimension rather than a line.
+
+    Millimetres. Under it the slicer stops laying the wall the model asked for
+    and lays whatever single bead it can, so the dimension in the model and the
+    dimension on the part stop being the same number. That is why this is a
+    floor under a FEATURE and not a tolerance on one.
+    """
+    return nozzle_mm * lines
+
 
 # --------------------------------------------------------------------------
 # 0. Where a number came from
