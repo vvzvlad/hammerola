@@ -1,7 +1,7 @@
 ---
 name: hammerola
-description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part".
-version: 7
+description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part", "CadQuery", "STL".
+version: 8
 ---
 
 # hammerola
@@ -339,6 +339,156 @@ mirror, nor the cut-off moved by a millimetre. In another project a dimension
 along a wall went 170 → 139 → 112 → 100 → 88 → 78 → 48.5 mm over eight rounds of
 shouting.)
 
+## What the printer does to your numbers
+
+None of what follows is a property of geometry: it is what ONE machine was
+measured to do — calipers on real PETG parts, 0.4 nozzle. So a constant that
+carries one of these corrections is `checklib.derived(value, note)` and the note
+says which correction it carries. `measured` is for a line in this project's own
+`ref/measurements.md`, and nothing here was measured on your part.
+
+| Feature | Comes out | Measured on |
+|---|---|---|
+| Hole | **0.22 mm under** nominal | Ø5.00 bore printed 4.78 |
+| Straight wall | **0.18 mm under** nominal | a 4.60 D-flat printed 4.42 |
+| Outside diameter | **0.20 mm under** nominal | Ø8.00 journal printed 7.80 |
+
+Everything comes out smaller here, holes and shafts alike, and that cuts both
+ways. A **hole** gains interference for free: a Ø22 bearing seat at zero nominal
+clearance pressed onto a Ø22 608 exactly right, so a seat like that is not
+"corrected" for shrinkage — the shrinkage IS the press fit. A **shaft** loses
+it: the Ø8 journal for that same bearing printed 7.80 against an 8.05 bore, and
+had to go to Ø8.35 nominal to land at 8.15. So `nominal = what you want
+measured + the loss above`, and **do not carry over the common "holes shrink,
+shafts grow" rule** — it is wrong on this machine and it gets the shaft
+correction backwards, which is exactly how a journal ends up 0.25 mm loose in
+its bearing.
+
+Bias each correction toward whichever error is cheaper to rescue on a print that
+came out wrong: a shaft 0.05 too fat is sandpaper, a round hole that binds opens
+with a drill, but **a flat wall cannot be rescued at all** — leave that one the
+loosest of the three. That is about rescuing a bad print, not about designing
+against one: an operation nobody named still does not exist (above).
+
+**The minimums below are the defaults for a 0.4 nozzle**, and nothing checks a
+single one of them — the gate reads the layout of the bed, not the printing. A
+minimum that matters on THIS part is an `assert` in `checks()`, where it fails
+the build, rather than a number in a comment.
+
+| Property | Minimum | Comfortable |
+|---|---|---|
+| Wall thickness | 1.2 mm | 2.0 mm |
+| Layer height | 0.08 mm | 0.2 mm |
+| Hole clearance | 0.2 mm | 0.3 mm |
+| Press-fit interference | 0.1 mm | 0.15 mm |
+| Feature size | 0.4 mm (the nozzle) | 0.8 mm |
+| Fillet radius on the bottom | 0.5 mm | 1.0 mm |
+| Unsupported bridge | — | under 20 mm |
+| Overhang | — | under 45° from vertical |
+
+TPU wants larger clearances (~0.5 mm) because it flexes, PETG is stickier and
+takes +0.1 mm on a fit, ABS shrinks 0.5–0.7 % so critical dimensions scale up.
+For a fit that has to work on the FIRST print, use the measured offsets above
+instead of any of this.
+
+**The orientation you model is the orientation it prints in.** A view may not
+re-orient a part onto the plate — the gate refuses that — so a part stands in
+`parts()` the way it will stand on the bed, and Z is up, which is what
+`checklib` assumes as well (`material_under_head` probes along Z,
+`mating_face_flat` takes the height of the joint). Design around the overhangs
+rather than around supports, keep a flat face down, and chamfer the bottom edges
+rather than filleting them: a fillet on the bed edge needs support to print.
+Write the intended orientation next to the geometry — nothing else records it.
+
+**Fasteners: M3 is the standard, M2 is not.** Unless the part is genuinely tiny,
+or it mates with bought hardware that dictates otherwise, use M3: M2 threads in
+printed PETG strip almost immediately and buy back nothing worth having.
+
+| | |
+|---|---|
+| Clearance hole | 3.4 |
+| Self-tapping pilot, PETG/PLA | 2.5 |
+| Socket cap head, DIN 912 | Ø5.5 × 3.0 |
+| Countersunk, cross-recessed, DIN 965 | head Ø**5.6** max, cone depth **1.65** |
+| Countersunk, hex socket, ISO 10642 / DIN 7991 | head Ø**6.0** nominal (5.81 max), cone depth **1.70** |
+
+**Never type a countersink depth — derive it.** The cone is 90°, so
+`depth = (head diameter − clearance diameter) / 2`, which in the model is a
+`checklib.derived(...)` off the two constants above it; writing it out by hand is
+how 1.5 gets into a part that needed 1.3. Cut it deeper than that and the head
+never touches the cone at all — it lands on the sharp lip of the mouth and works
+as a wedge splitting the plate.
+
+**Name the standard next to the number, and say WHICH diameter it is.** The two
+countersunk M3 heads differ by about 0.4 mm — DIN 965 is Ø5.6, ISO 10642 is
+Ø6.0 — so a socket head dropped into a DIN 965 pocket stands ~0.2 mm proud, and
+proud is not cosmetic when the face has to seat flat against a slide, a mating
+part or a wall. DIN and its ISO "equivalent" are not one table either: at M4 the
+head is Ø7.5 against Ø8.4. And one screw carries three published head diameters
+— for ISO 10642 M3 you will find 6.72 (theoretical, to the sharp corner), 6.0
+(nominal) and 5.81 (dk max, the real head) — of which only the last two describe
+metal you can touch. So the designation in `ref/hardware/` names the standard
+AND which of the three the number is. Beware the source, too: fasteners.eu
+serves the DIN 7991 table under an address with ISO 10642 in it, which is how
+the wrong pairing gets copied in the first place.
+
+## CadQuery, where it bites
+
+**Hollow with a boolean, not with `.shell()`.** `.shell()` is fragile: it fails
+on tapered bodies, on lofts, on unions of several primitives and on anything
+carrying many fillets. The pattern that holds:
+
+```python
+outer = (cq.Workplane("XY")
+         .box(WIDTH, DEPTH, HEIGHT, centered=(True, True, False))
+         .edges("|Z").fillet(CORNER_R))
+inner = (cq.Workplane("XY")
+         .workplane(offset=FLOOR_T)
+         .box(WIDTH - 2 * WALL, DEPTH - 2 * WALL, HEIGHT,
+              centered=(True, True, False))
+         .edges("|Z").fillet(max(0.1, CORNER_R - WALL)))
+body = outer.cut(inner)
+```
+
+Reach for `.shell()` only on a single simple primitive with one wall thickness
+on every side.
+
+**Fillet before you cut, and from the largest radius down.** A fillet on a clean
+primitive succeeds; the same fillet on the edges left behind by holes, slots and
+pockets fails or returns bad geometry. Chamfers likewise.
+
+**Never wrap a fillet in `try/except` that shrinks the radius until it works.**
+A fillet that fails is telling you the radius or the geometry is wrong — a wall
+thinner than the radius, adjacent faces the fillet would degenerate — and the
+`except` publishes a part whose radius nobody chose, with a log saying the build
+passed.
+
+**Give a cut meant to pass just through a face 0.01 mm of overshoot.** Coplanar
+faces are where invalid, non-watertight bodies come from, and the build log is
+where you see it (`valid, volume … cm3, watertight, one body`). Fix the boolean;
+there is nothing to paper over it with here.
+
+**`centered=(True, True, False)` on `.box()`** puts the bottom at Z = 0, so
+`.faces("<Z")` is the bed and the part sits where the checks expect it.
+
+**`.hole()` cuts through the whole part** by default; `.cboreHole()` and
+`.cskHole()` are the counterbore and the countersink.
+
+**A positive `taper` in `.extrude()` narrows the shape**, a negative one flares
+it out — the opposite of what most people expect, and silent either way.
+
+**`.loft()` is fragile.** Between a profile and a scaled copy of itself use
+`.extrude(taper=…)`; keep the loft for genuinely different profiles, a circle
+into a rectangle.
+
+**A screw boss is pushed, drawn and extruded — and only then drilled**, so the
+hole is cut in the boss rather than through the wall it stands on:
+
+```python
+.pushPoints(SEATS).circle(BOSS_OD / 2).extrude(BOSS_H)
+.pushPoints(SEATS).hole(SCREW_D + FIT_CLEARANCE)
+```
+
 ## The contract with model.py
 
 The template `create` unpacks is the live example — read it rather than this
@@ -474,8 +624,10 @@ section: a working model with the rules written next to the geometry. In short,
   there is nothing to install and nothing to vendor.
 
 Those are all that `checklib` checks, and the gate is all of
-the hub. Nothing anywhere checks an overhang, a minimum wall, whether a tool
-reaches a screw, or where a number came from. Every rule in the next section is
+the hub. Nothing anywhere checks an overhang, a minimum wall or whether a tool
+reaches a screw. Where a number CAME FROM is the one exception, and it is
+checked strictly — a module-level float with no `measured`, `derived` or
+`estimated` around it stops the build (above). Every rule in the next section is
 a check you write yourself or something you go and look at. Of the BED the gate
 reads the layout and not the printing: parts standing inside one another — by
 more than 0.05 mm on all three axes — refuse the build, and so does a view that
