@@ -46,11 +46,12 @@ vi.mock('../src/viewport/section.js', () => ({
 }))
 
 // The hatch, mocked for ONE question this file can answer and hatch.test.js
-// cannot: is it reached at all. What it DOES with a scene, and that a throw from
-// it never leaves it, are properties of the module and are tested against the
-// real thing over there.
+// cannot: is it reached at all, and does the toggle reach it from reconcile.
+// What it DOES with a scene, and that a throw from it never leaves it, are
+// properties of the module and are tested against the real thing over there.
 vi.mock('../src/viewport/hatch.js', () => ({
   safeHatch: vi.fn(() => 0),
+  setCutHatch: vi.fn(() => 0),
 }))
 
 // The library's own loader, replaced so `show()` can be driven as far as its
@@ -67,7 +68,7 @@ vi.mock('../src/viewport/library.js', () => ({
 import '../src/viewport/index.js'
 import { HmrViewport } from '../src/viewport/element.js'
 import { EVENT_ERROR, EVENT_MODEL, TAG } from '../src/viewport/events.js'
-import { safeHatch } from '../src/viewport/hatch.js'
+import { safeHatch, setCutHatch } from '../src/viewport/hatch.js'
 import { loadViewerLibrary } from '../src/viewport/library.js'
 import {
   applyGhost, applyHidden, applySelected, resetMoves,
@@ -91,11 +92,14 @@ function element(state = {}, viewer = fakeViewer()) {
   vp.booted = true
   vp.state = {
     hidden: [], ghost: [], selected: [], camera: null,
-    cut: false, cutOffset: 0, cutFlip: false, pins: [],
+    cut: false, cutOffset: 0, cutFlip: false, cutHatch: true, pins: [],
     base: null, views: [], view: null, buildKey: null, tool: null,
     ...state,
   }
-  vp.applied = { hidden: null, ghost: null, selected: undefined, camera: null }
+  vp.applied = {
+    hidden: null, ghost: null, selected: undefined, camera: null,
+    cutHatch: null,
+  }
   vp.sectionSeed = null
   vp.moved = new Map()
   vp.partHome = new Map()
@@ -272,6 +276,34 @@ describe('reconcile', () => {
       vp.reconcile()
       expect(applySection).not.toHaveBeenCalled()
       expect(suspendSectionCut).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('the hatch over the cut', () => {
+    it('reaches the scene when cutHatch changes, and only then', () => {
+      // The toggle is a uniform write inside the library's materials, not a
+      // reload and not a recompile — but it is still work per state event, and
+      // one event goes out per section-slider step, so it is memo'd against
+      // `applied` like the three fields above it.
+      const vp = settled({ cutHatch: true })
+      vp.state = { ...vp.state, cutHatch: false }
+      vp.reconcile()
+      expect(setCutHatch).toHaveBeenCalledTimes(1)
+      expect(setCutHatch.mock.calls[0][1]).toBe(false)
+      expect(vp.applied.cutHatch).toBe(false)
+      vp.reconcile()
+      expect(setCutHatch).toHaveBeenCalledTimes(1)   // equal again: nothing written
+    })
+
+    it('re-asserts itself after a render has rebuilt the caps', () => {
+      // `show()` patches fresh materials with the current answer and resets
+      // `applied`; the first reconcile afterwards asserts the same value once,
+      // the same way `hidden` and `ghost` do.
+      const vp = settled({ cutHatch: false })
+      vp.applied.cutHatch = null
+      vp.reconcile()
+      expect(setCutHatch).toHaveBeenCalledTimes(1)
+      expect(setCutHatch.mock.calls[0][1]).toBe(false)
     })
   })
 
@@ -610,14 +642,31 @@ describe('show', () => {
     expect(types).not.toContain(EVENT_ERROR)
     expect(vp.loadFailed).toBeNull()
 
-    // The guarded entry point, once, on THIS scene's internals.
+    // The guarded entry point, once, on THIS scene's internals — carrying the
+    // checkbox's current answer, so a scene never renders hatched against the
+    // reader's setting.
     expect(safeHatch).toHaveBeenCalledTimes(1)
     expect(safeHatch.mock.calls[0][0].clipping).toBe(viewer.clipping)
+    expect(safeHatch.mock.calls[0][1]).toBe(vp.state.cutHatch)
     // ...and AFTER `render()`, which is the whole of when it is possible: the
     // library builds the cap meshes in there and throws them away on `clear()`,
     // so the same call one line earlier would patch nothing and say nothing.
     expect(safeHatch.mock.invocationCallOrder[0])
       .toBeGreaterThan(viewer.render.mock.invocationCallOrder[0])
+  })
+
+  it('renders a scene unhatched when the box is unticked', async () => {
+    // The flag is the point of the wire: without it the viewport would hatch
+    // every cut face whatever the section popover says.
+    const { vp, viewer } = rendering()
+    vp.state = { ...vp.state, cutHatch: false }
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+
+    const types = vp.dispatchEvent.mock.calls.map(([event]) => event.type)
+    expect(types).toContain(EVENT_MODEL)
+    expect(safeHatch).toHaveBeenCalledTimes(1)
+    expect(safeHatch.mock.calls[0][0].clipping).toBe(viewer.clipping)
+    expect(safeHatch.mock.calls[0][1]).toBe(false)
   })
 
   it('colours each cut face with the part it cuts', async () => {

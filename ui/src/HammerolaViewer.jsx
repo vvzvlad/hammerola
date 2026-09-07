@@ -1698,7 +1698,8 @@ export default class HammerolaViewer extends React.Component {
         buildKey: buildKey(meta),
 
         hidden: s.hidden, ghost: s.ghost, selected: this.selectedPaths(),
-        cut: s.secOn, cutOffset: s.secOff, cutFlip: s.secFlip, tool: s.tool,
+        cut: s.secOn, cutOffset: s.secOff, cutFlip: s.secFlip, cutHatch: s.hatch,
+        tool: s.tool,
         // `single` is the only mode this can be in today: `diff` asks the
         // viewport to ghost both revisions and light up the difference, and
         // there is no difference to light up until the hub can compute one.
@@ -2937,10 +2938,7 @@ export default class HammerolaViewer extends React.Component {
       flipSec: stop(() => this.set({ secFlip: !s.secFlip })),
       resetSec: stop(() => this.set({ secOn: false, secFace: null, secOff: 0, secFlip: false },
                                      { __resetCut: true })),
-      // Local, and it stays local until the viewport takes a field for it: the
-      // contract carries no `hatch`, and inventing one here would be a field
-      // only one side has ever heard of.
-      toggleHatch: stop(() => this.setState({ hatch: !s.hatch })),
+      toggleHatch: stop(() => this.set({ hatch: !s.hatch })),
       hatchBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;' + (s.hatch ? 'background:#1f7ae0;color:#fff' : 'border:1px solid #c3c8cf;background:#fff;color:transparent'),
       hatchMark: s.hatch ? '✓' : '',
 

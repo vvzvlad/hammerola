@@ -270,13 +270,99 @@ export function fakeGroup(position = [0, 0, 0]) {
   return group
 }
 
+// -- the section caps, for the hatch -------------------------------------------
+//
+// Transcribed from static/_v/three-cad-viewer.esm.js, not invented: the
+// `PlaneMesh` constructor (:91056-91101) and `Clipping._createStencils`
+// (:91254-91300), which is what builds `Clipping._capUnits` — one entry PER
+// SOLID, `{ solid, stencilGroups, capMeshes, radiusPx }`, with `capMeshes`
+// pushed plane-major so they are ordered by plane within the unit. The solids'
+// tree paths arrive with `/` already replaced by `|`, as the bundle spells it
+// (`group.name = path.replaceAll("/", this.delim)`, delim `|`).
+
+/** A world matrix as `Object3D.matrixWorld` carries one: column-major, as the
+ *  bundle's `makeReflectionMatrix`/`compose` results are read back. Diagonal
+ *  scale plus translation only, which is all the hatch arithmetic can see a
+ *  difference between. */
+export function fakeMatrix({ scale = [1, 1, 1], position = [0, 0, 0] } = {}) {
+  const e = new Array(16).fill(0)
+  e[0] = scale[0]; e[5] = scale[1]; e[10] = scale[2]; e[15] = 1
+  e[12] = position[0]; e[13] = position[1]; e[14] = position[2]
+  return { elements: e }
+}
+
+/** A cap material as the library builds one: a `MeshStandardMaterial` with
+ *  three.js's default no-op `onBeforeCompile`, and the `userData` box every
+ *  THREE material carries. */
+export function fakeCapMaterial() {
+  return {
+    defines: { STANDARD: '' },
+    needsUpdate: false,
+    onBeforeCompile: function noop() {},
+    userData: {},
+  }
+}
+
+/** A `PlaneMesh` as its constructor leaves it: the fields it writes (`type`,
+ *  `index`, `plane`, `size`, `center`) on a `PlaneGeometry(2, 2)` that
+ *  `updateMatrixWorld` scales to `0.5 * size` — so one uv unit ACROSS the cap
+ *  quad is `size` world units, the fact the hatch's pitch arithmetic rides on.
+ *  `size` is the clipping region's size and every cap of a scene carries the
+ *  same one.
+ *
+ *  The `plane` is the `CenteredPlane` the constructor was handed, and its
+ *  `normal` is a THREE `Vector3` — read as `.x/.y/.z`, NOT as the array the
+ *  slider-side model above uses. Same library, two shapes, depending on which
+ *  side of `clipPlanes[i]` you stand on. */
+export function fakeCap(index, size, normal = [0, 0, 1]) {
+  const [nx, ny, nz] = norm(normal)
+  return {
+    type: `StencilPlane-${index}-0`,
+    index,
+    plane: { normal: { x: nx, y: ny, z: nz }, constant: 0, center: [0, 0, 0] },
+    size,
+    center: [0, 0, 0],
+    material: fakeCapMaterial(),
+  }
+}
+
+/** An `ObjectGroup` as `_createStencils` reads one: `name` is the tree path,
+ *  and `front` carries the LOCAL bounding box the library computes at build
+ *  time (`front.geometry.computeBoundingBox()`, bundle :87756) plus the
+ *  `matrixWorld` that takes it to world. Defaults to the suite's 10 mm cube. */
+export function fakeSolidObject(name, { min = [0, 0, 0], max = [10, 10, 10], matrix } = {}) {
+  return {
+    name,
+    front: {
+      matrixWorld: matrix || fakeMatrix(),
+      geometry: {
+        boundingBox: {
+          min: { x: min[0], y: min[1], z: min[2] },
+          max: { x: max[0], y: max[1], z: max[2] },
+        },
+      },
+    },
+  }
+}
+
+/** `Clipping._createStencils`' answer for a scene: one unit per solid, each
+ *  holding one cap per plane, planes in the library's own order. */
+export function fakeCapUnits(solids, { size = 36, planes = [[0, 0, 1], [0, 1, 0], [1, 0, 0]] } = {}) {
+  return solids.map((solid) => ({
+    solid,
+    stencilGroups: [],
+    capMeshes: planes.map((n, i) => fakeCap(i, size, n)),
+    radiusPx: 0,
+  }))
+}
+
 /** The `vp` an adapter function is called with, without booting an element. */
 export function fakeViewport(viewer, state = {}) {
   return {
     viewer,
     state: {
       hidden: [], ghost: [], selected: [],
-      cut: false, cutOffset: 0, cutFlip: false, pins: [],
+      cut: false, cutOffset: 0, cutFlip: false, cutHatch: true, pins: [],
       ...state,
     },
     sectionSeed: null,
