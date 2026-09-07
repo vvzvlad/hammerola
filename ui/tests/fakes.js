@@ -205,6 +205,11 @@ export function fakeViewer({
     idPicker: {},
     nestedGroup: {
       groups,
+      // `NestedGroup` carries the viewport size its edge materials are
+      // resolution'd against — the constructor takes width/height and
+      // `_renderEdges` feeds them to `createEdgeMaterial`.
+      width: rect.width,
+      height: rect.height,
       highlight: { clear: vi.fn(), selectSolid: vi.fn() },
     },
     display: {},
@@ -256,17 +261,309 @@ export function fakeViewer({
   return viewer
 }
 
-/** A group as `nestedGroup.groups[path]` holds one: a position and a toggle. */
+/** A group as `nestedGroup.groups[path]` holds one: a position and a toggle.
+ *
+ *  `setTransparent` is `ObjectGroup.setTransparent` in its effect: the FACE
+ *  materials go to `opacity * alpha` when on and back to `alpha` when off —
+ *  the value the ghost pass reads back off `front.material`. */
 export function fakeGroup(position = [0, 0, 0]) {
   const group = {
     opacity: 1,
+    alpha: 1,
     transparent: false,
+    front: { material: { opacity: 1 } },
     position: {
       x: position[0], y: position[1], z: position[2],
       set(x, y, z) { this.x = x; this.y = y; this.z = z },
     },
-    setTransparent: vi.fn((on) => { group.transparent = on }),
+    setTransparent: vi.fn((on) => {
+      group.transparent = on
+      group.front.material.opacity = on ? group.opacity * group.alpha : group.alpha
+    }),
   }
+  return group
+}
+
+// -- the section caps, for the hatch -------------------------------------------
+//
+// Transcribed from static/_v/three-cad-viewer.esm.js, not invented: the
+// `PlaneMesh` constructor (:91056-91101) and `Clipping._createStencils`
+// (:91254-91300), which is what builds `Clipping._capUnits` — one entry PER
+// SOLID, `{ solid, stencilGroups, capMeshes, radiusPx }`, with `capMeshes`
+// pushed plane-major so they are ordered by plane within the unit. The solids'
+// tree paths arrive with `/` already replaced by `|`, as the bundle spells it
+// (`group.name = path.replaceAll("/", this.delim)`, delim `|`).
+
+/** A world matrix as `Object3D.matrixWorld` carries one: column-major, as the
+ *  bundle's `makeReflectionMatrix`/`compose` results are read back. Diagonal
+ *  scale plus translation only, which is all the hatch arithmetic can see a
+ *  difference between. */
+export function fakeMatrix({ scale = [1, 1, 1], position = [0, 0, 0] } = {}) {
+  const e = new Array(16).fill(0)
+  e[0] = scale[0]; e[5] = scale[1]; e[10] = scale[2]; e[15] = 1
+  e[12] = position[0]; e[13] = position[1]; e[14] = position[2]
+  return { elements: e }
+}
+
+/** A cap material as the library builds one: a `MeshStandardMaterial` with
+ *  three.js's default no-op `onBeforeCompile`, and the `userData` box every
+ *  THREE material carries. */
+export function fakeCapMaterial() {
+  return {
+    defines: { STANDARD: '' },
+    needsUpdate: false,
+    onBeforeCompile: function noop() {},
+    userData: {},
+  }
+}
+
+/** A `PlaneMesh` as its constructor leaves it: the fields it writes (`type`,
+ *  `index`, `plane`, `size`, `center`) on a `PlaneGeometry(2, 2)` that
+ *  `updateMatrixWorld` scales to `0.5 * size` — so one uv unit ACROSS the cap
+ *  quad is `size` world units, the fact the hatch's pitch arithmetic rides on.
+ *  `size` is the clipping region's size and every cap of a scene carries the
+ *  same one.
+ *
+ *  The `plane` is the `CenteredPlane` the constructor was handed, and its
+ *  `normal` is a THREE `Vector3` — read as `.x/.y/.z`, NOT as the array the
+ *  slider-side model above uses. Same library, two shapes, depending on which
+ *  side of `clipPlanes[i]` you stand on. */
+export function fakeCap(index, size, normal = [0, 0, 1]) {
+  const [nx, ny, nz] = norm(normal)
+  return {
+    type: `StencilPlane-${index}-0`,
+    index,
+    plane: { normal: { x: nx, y: ny, z: nz }, constant: 0, center: [0, 0, 0] },
+    size,
+    center: [0, 0, 0],
+    material: fakeCapMaterial(),
+  }
+}
+
+/** An `ObjectGroup` as `_createStencils` reads one: `name` is the tree path,
+ *  and `front` carries the LOCAL bounding box the library computes at build
+ *  time (`front.geometry.computeBoundingBox()`, bundle :87756) plus the
+ *  `matrixWorld` that takes it to world. Defaults to the suite's 10 mm cube. */
+export function fakeSolidObject(name, { min = [0, 0, 0], max = [10, 10, 10], matrix } = {}) {
+  return {
+    name,
+    front: {
+      matrixWorld: matrix || fakeMatrix(),
+      geometry: {
+        boundingBox: {
+          min: { x: min[0], y: min[1], z: min[2] },
+          max: { x: max[0], y: max[1], z: max[2] },
+        },
+      },
+    },
+  }
+}
+
+/** `Clipping._createStencils`' answer for a scene: one unit per solid, each
+ *  holding one cap per plane, planes in the library's own order. */
+export function fakeCapUnits(solids, { size = 36, planes = [[0, 0, 1], [0, 1, 0], [1, 0, 0]] } = {}) {
+  return solids.map((solid) => ({
+    solid,
+    stencilGroups: [],
+    capMeshes: planes.map((n, i) => fakeCap(i, size, n)),
+    radiusPx: 0,
+  }))
+}
+
+// -- the fat-line stack, for the section outline -------------------------------
+//
+// Transcribed from static/_v/three-cad-viewer.esm.js, not invented. The trio
+// the outline harvests off a live solid's edges: `LineSegmentsGeometry
+// .setPositions` (:79789) keeps the segments in ONE interleaved buffer of
+// stride 6 — `instanceStart` reads xyz at offset 0, `instanceEnd` at offset 3
+// — and `LineMaterial` keeps `color`, `linewidth`, `resolution` and `opacity`
+// in uniforms its own accessor properties mirror, with shader clipping turned
+// on in the constructor and kept by `ShaderMaterial.copy` (:37707).
+
+/** A `THREE.Color` as `LineMaterial.uniforms.diffuse.value` holds one. */
+function fakeColor(hex = 0xffffff) {
+  const color = { r: 1, g: 1, b: 1 }
+  color.setHex = (value) => {
+    color.r = ((value >> 16) & 255) / 255
+    color.g = ((value >> 8) & 255) / 255
+    color.b = (value & 255) / 255
+    return color
+  }
+  color.clone = () => {
+    const copy = fakeColor()
+    copy.r = color.r
+    copy.g = color.g
+    copy.b = color.b
+    return copy
+  }
+  return color.setHex(hex)
+}
+
+/** A `THREE.Vector2` as `LineMaterial.uniforms.resolution.value` holds one. */
+function fakeVector2(x = 0, y = 0) {
+  return {
+    x, y,
+    set(x2, y2) { this.x = x2; this.y = y2; return this },
+    clone() { return fakeVector2(this.x, this.y) },
+  }
+}
+
+function LineMaterial(parameters = {}) {
+  this.isLineMaterial = true
+  this.type = "LineMaterial"
+  this.uniforms = {
+    diffuse: { value: fakeColor(parameters.color ?? 0xffffff) },
+    // From `UniformsLib.common`, which `ShaderLib.line.uniforms` merges in.
+    opacity: { value: 1 },
+    linewidth: { value: parameters.linewidth ?? 1 },
+    resolution: { value: fakeVector2(1, 1) },
+  }
+  this.clipping = true
+  this.clippingPlanes = null
+  this.clipIntersection = false
+  this.transparent = true
+  this.needsUpdate = false
+  const material = this
+  Object.defineProperties(material, {
+    color: { get() { return material.uniforms.diffuse.value } },
+    opacity: {
+      get() { return material.uniforms.opacity.value },
+      set(value) { material.uniforms.opacity.value = value },
+    },
+    linewidth: {
+      get() { return material.uniforms.linewidth.value },
+      set(value) { material.uniforms.linewidth.value = value },
+    },
+    resolution: {
+      get() { return material.uniforms.resolution.value },
+      set(value) { material.uniforms.resolution.value.copy(value) },
+    },
+  })
+}
+
+// `ShaderMaterial.clone` is `new this.constructor().copy(source)`; the copy
+// takes fresh uniform values, so nothing is shared with its source.
+LineMaterial.prototype.clone = function clone() {
+  const material = new LineMaterial({ linewidth: this.uniforms.linewidth.value })
+  const source = this.uniforms.diffuse.value
+  const copy = material.uniforms.diffuse.value
+  copy.r = source.r
+  copy.g = source.g
+  copy.b = source.b
+  material.uniforms.resolution.value = this.uniforms.resolution.value.clone()
+  material.clipping = this.clipping
+  material.clippingPlanes = this.clippingPlanes
+  material.clipIntersection = this.clipIntersection
+  return material
+}
+
+function LineSegmentsGeometry() {
+  this.isLineSegmentsGeometry = true
+  this.type = "LineSegmentsGeometry"
+  this.instanceCount = 0
+  this.setPositionsCalls = 0
+}
+
+// The bundle wraps a plain array in a Float32Array and stores everything in
+// one interleaved buffer; the two attributes are views onto it.
+LineSegmentsGeometry.prototype.setPositions = function setPositions(array) {
+  const lineSegments = array instanceof Float32Array ? array : new Float32Array(array)
+  const buffer = { array: lineSegments, stride: 6 }
+  this.instanceStart = { data: buffer, itemSize: 3, offset: 0 }
+  this.instanceEnd = { data: buffer, itemSize: 3, offset: 3 }
+  this.instanceCount = lineSegments.length / 6
+  this.setPositionsCalls += 1
+  return this
+}
+
+function LineSegments2(geometry, material) {
+  this.isLineSegments2 = true
+  // Via the `Mesh` base — what makes `_forEachMaterial` treat the outline as
+  // a mesh (`isMesh`, bundle :81773).
+  this.isMesh = true
+  this.type = "LineSegments2"
+  this.geometry = geometry
+  this.material = material
+  this.name = ""
+  this.renderOrder = 0
+  this.visible = true
+}
+
+/** A solid's `edges` overlay as `_renderEdges` (:87558) leaves it: a
+ *  `LineSegments2` over a fresh geometry, under a `LineMaterial` whose
+ *  resolution the factory sets from the NestedGroup's own width and height.
+ *  The geometry starts empty — the donor's own segments are the scene's edge
+ *  list, which no test here needs to spell out. */
+export function fakeEdges({ width = 800, height = 600 } = {}) {
+  const material = new LineMaterial()
+  material.resolution.set(width, height)
+  return new LineSegments2(new LineSegmentsGeometry(), material)
+}
+
+/** `BufferGeometry.computeBoundingBox` as renderShape triggers it (:87756):
+ *  a scan of the position attribute — the index is not consulted. */
+function computeBoundingBox(geometry) {
+  const { array } = geometry.attributes.position
+  const min = { x: Infinity, y: Infinity, z: Infinity }
+  const max = { x: -Infinity, y: -Infinity, z: -Infinity }
+  for (let at = 0; at < array.length; at += 3) {
+    min.x = Math.min(min.x, array[at])
+    max.x = Math.max(max.x, array[at])
+    min.y = Math.min(min.y, array[at + 1])
+    max.y = Math.max(max.y, array[at + 1])
+    min.z = Math.min(min.z, array[at + 2])
+    max.z = Math.max(max.z, array[at + 2])
+  }
+  geometry.boundingBox = { min, max }
+}
+
+/** An ObjectGroup as `NestedGroup.renderShape` (:87667) leaves one — the
+ *  shape a GPU-less test can intersect. `front.geometry` carries the
+ *  tessellation exactly as the bundle sets it: a position BufferAttribute of
+ *  xyz triples and the triangle index, the bounding box computed at build
+ *  time, and the edges overlay attached only when the shape lists edges at
+ *  all. `children` and `add` stand in for the Object3D base. */
+export function fakeShapeSolid(name, { positions, index, matrix, edges = true } = {}) {
+  const front = {
+    name,
+    matrixWorld: matrix || fakeMatrix(),
+    // The face material `createFrontFaceMaterial` builds, in the two fields
+    // anything outside the library reads off it: `setStates` writes `visible`
+    // when a part is hidden, `setTransparent` writes `opacity` when it is
+    // ghosted, and both start where a shown, solid part starts.
+    material: { visible: true, opacity: 1 },
+    geometry: {
+      attributes: {
+        position: { array: positions, itemSize: 3, count: positions.length / 3 },
+      },
+      index: { array: index },
+    },
+  }
+  if (front.geometry.boundingBox == null) computeBoundingBox(front.geometry)
+  const group = {
+    name,
+    front,
+    edges: edges ? fakeEdges() : null,
+    // The ObjectGroup fields the part passes drive (`applyGhost`), plus the
+    // `position` object `movePart` writes the move through.
+    opacity: 1,
+    alpha: 1,
+    transparent: false,
+    position: {
+      x: 0, y: 0, z: 0,
+      set(x, y, z) { this.x = x; this.y = y; this.z = z },
+    },
+    // `ObjectGroup.setTransparent` in its effect: the FACE materials go to
+    // `opacity * alpha` when on and back to `alpha` when off — the value the
+    // ghost pass reads back off `front.material`.
+    setTransparent: vi.fn((on) => {
+      group.transparent = on
+      front.material.opacity = on ? group.opacity * group.alpha : group.alpha
+    }),
+    children: [],
+    add(child) { group.children.push(child) },
+  }
+  if (group.edges) group.edges.name = name
   return group
 }
 
@@ -276,7 +573,7 @@ export function fakeViewport(viewer, state = {}) {
     viewer,
     state: {
       hidden: [], ghost: [], selected: [],
-      cut: false, cutOffset: 0, cutFlip: false, pins: [],
+      cut: false, cutOffset: 0, cutFlip: false, cutHatch: true, pins: [],
       ...state,
     },
     sectionSeed: null,

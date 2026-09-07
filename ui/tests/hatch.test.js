@@ -10,37 +10,61 @@
 //   * the shader chunk it splices at disappearing from the vendored three.js;
 //   * the splice landing in the wrong place, i.e. after the colour space
 //     conversion instead of before it;
-//   * the cap materials moving, so nothing gets patched at all;
+//   * the uniform declarations losing their anchor, which is a shader that no
+//     longer compiles;
+//   * the cap units moving, so nothing gets patched at all;
 //   * the patch becoming per-material, which would silently share one compiled
-//     program between caps that wanted different ones.
+//     program between caps that wanted different ones;
+//   * the per-part fields collapsing — every part onto one slope, the pitch
+//     following the scene instead of the part, the angle drifting between
+//     revisions — none of which draws a word from any console;
+//   * the checkbox unwiring itself, so toggling `cutHatch` stops reaching the
+//     caps at all.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { hatchMarker, hatchSectionCaps, hatchShader, safeHatch }
-  from '../src/viewport/hatch.js'
+import {
+  HATCH_SLOPES, hatchMarker, hatchSectionCaps, hatchShader, hatchTargetLines,
+  safeHatch, setCutHatch,
+} from '../src/viewport/hatch.js'
+import { fakeCapMaterial, fakeCapUnits, fakeMatrix, fakeSolidObject } from './fakes.js'
 
-/** A cap material as the library builds one: a `MeshStandardMaterial` with
- *  three.js's default no-op `onBeforeCompile`. */
-const fakeMaterial = () => ({
-  defines: { STANDARD: '' },
-  needsUpdate: false,
-  onBeforeCompile: function noop() {},
-})
-
-/** `internals()`'s answer, with the cap meshes the library hangs off
- *  `Clipping._planeMeshGroup` — one per (plane, solid), plane-major. */
-const fakeInternals = (count = 6) => ({
+/** `internals()`'s answer for a scene with one solid per NAME: three caps per
+ *  solid, one per clip plane, as `Clipping._createStencils` builds them. The
+ *  solids all start as the same 10 mm cube at the origin; a test after a
+ *  different part reshapes them with `min`/`max`/`matrix`, or trims the plane
+ *  list with `planes`. */
+const fakeInternals = (names, { size = 36, planes, ...box } = {}) => ({
   clipping: {
-    _planeMeshGroup: {
-      children: Array.from({ length: count }, () => ({ material: fakeMaterial() })),
-    },
+    _capUnits: fakeCapUnits(
+      names.map((name) => fakeSolidObject(name, box)),
+      { size, planes },
+    ),
   },
 })
 
-const capsOf = (g) => g.clipping._planeMeshGroup.children.map((c) => c.material)
+const unitsOf = (g) => g.clipping._capUnits
+
+const capsOf = (g) => unitsOf(g).flatMap((u) => u.capMeshes.map((c) => c.material))
+
+/** The slope a cap was hatched at, in degrees, read back out of the direction
+ *  uniform — the +90 of the module's dot direction undone. Rounded: a slope
+ *  that survives degrees → radians → degrees with anything left over was never
+ *  one of the set's. */
+const slopeOf = (hatch) =>
+  Math.round((Math.atan2(hatch.dirY, hatch.dirX) * 180 / Math.PI - 90 + 540) % 180)
+
+/** Compile one patched material the way three.js would call the patch: with
+ *  the material as `this` and a fresh parameters object. Returns the shader so
+ *  a test can reach the live uniforms. */
+const compile = (material) => {
+  const shader = { uniforms: {}, fragmentShader: 'uniform vec3 diffuse;\n' }
+  hatchShader.call(material, shader)
+  return shader
+}
 
 /** A file of this repository, read from `process.cwd()`.
  *
@@ -90,7 +114,7 @@ function meshphysicalFragment(source) {
 
 describe('hatchSectionCaps', () => {
   it('patches every cap the library built', () => {
-    const g = fakeInternals()
+    const g = fakeInternals(['|model|lid', '|model|body'])
     expect(hatchSectionCaps(g)).toBe(6)
     for (const m of capsOf(g)) {
       expect(m.onBeforeCompile).toBe(hatchShader)
@@ -99,18 +123,25 @@ describe('hatchSectionCaps', () => {
       // a cap has no map of any kind to ask on its behalf.
       expect(m.defines.USE_UV).toBe('')
       expect(m.defines.STANDARD).toBe('')     // and nothing it had is lost
+      // The part's numbers ride on the MATERIAL, from where the patch reads
+      // them at compile time.
+      for (const field of ['periods', 'dirX', 'dirY', 'phase', 'on']) {
+        expect(typeof m.userData.hatch[field]).toBe('number')
+      }
     }
   })
 
   it('gives every cap THE SAME patch, which is what keeps it to one program', () => {
     // three.js's default `customProgramCacheKey` is `onBeforeCompile.toString()`,
-    // so one function object across the caps means one compiled program. The day
-    // a hatch parameter becomes per-material it has to move out of the shared
-    // function or be declared in a cache key of its own — a `toString()` cannot
-    // see a closure, and every cap would silently take whichever program was
-    // compiled first.
-    const g = fakeInternals()
+    // so one function object across the caps means one compiled program. The
+    // per-part numbers therefore may NOT live in the function — a `toString()`
+    // cannot see a closure, and every cap would silently take whichever
+    // program was compiled first — they travel as uniform VALUES read off
+    // `this.userData`. The assertion below holds the function to that: a per-part
+    // number leaking into its source would carry the tree path's own delimiter.
+    const g = fakeInternals(['|model|lid', '|model|body'])
     hatchSectionCaps(g)
+    expect(hatchShader.toString()).not.toContain('|')
     const patches = new Set(capsOf(g).map((m) => m.onBeforeCompile))
     expect(patches.size).toBe(1)
     // ...while the MATERIALS stay distinct, and this line really does check
@@ -124,18 +155,20 @@ describe('hatchSectionCaps', () => {
   })
 
   it('does nothing the second time, so a re-render does not recompile', () => {
-    const g = fakeInternals(2)
+    const g = fakeInternals(['|model|lid', '|model|body'])
     hatchSectionCaps(g)
     for (const m of capsOf(g)) m.needsUpdate = false
-    expect(hatchSectionCaps(g)).toBe(2)
+    expect(hatchSectionCaps(g)).toBe(6)
     for (const m of capsOf(g)) expect(m.needsUpdate).toBe(false)
   })
 
-  it('says so when the cap materials are not where it expects them', () => {
+  it('says so when the cap units are not where it expects them', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const g = fakeInternals(4)
-    g.clipping._planeMeshGroup.children[1].material = { onBeforeCompile: null }
-    g.clipping._planeMeshGroup.children[2].material = null
+    const g = fakeInternals(['|model|lid', '|model|body', '|model|pin'])
+    const units = unitsOf(g)
+    units[0] = null                                  // a unit that never got filled
+    units[1].solid.front = null                      // a solid with no mesh to measure
+    units[2].capMeshes[1].material = null            // a cap with nothing to patch
     expect(hatchSectionCaps(g)).toBe(2)
     expect(warn).toHaveBeenCalledTimes(1)      // once per render, not per cap
     warn.mockRestore()
@@ -143,9 +176,170 @@ describe('hatchSectionCaps', () => {
 
   it('is quiet about a scene with no caps in it, which is a scene with no solids', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    expect(hatchSectionCaps(fakeInternals(0))).toBe(0)
+    expect(hatchSectionCaps(fakeInternals([]))).toBe(0)
     expect(hatchSectionCaps({ clipping: {} })).toBe(0)
     expect(hatchSectionCaps(null)).toBe(0)
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
+  })
+})
+
+describe('one field per part', () => {
+  it('hatches every cap of ONE solid out of the same angle and phase', () => {
+    // The field belongs to the PART: its three caps — one per clip plane — are
+    // three windows onto one hatch, and reading them back apart would put a
+    // seam through a single body.
+    const g = fakeInternals(['|model|lid'])
+    hatchSectionCaps(g)
+    const fields = capsOf(g).map((m) => m.userData.hatch)
+    for (const field of fields) {
+      expect(slopeOf(field)).toBe(slopeOf(fields[0]))
+      expect(field.phase).toBe(fields[0].phase)
+    }
+  })
+
+  it('puts two neighbouring parts on different slopes', () => {
+    // The drawing convention the owner asked for, on the names a real model's
+    // tree produces. It is a property of THESE two keys under the module's one
+    // hash — determinism is the decision, and a guarantee over every possible
+    // pair is not reachable with one — so this pins the example rather than
+    // proving a theorem.
+    const g = fakeInternals(['|model|lid', '|model|body'])
+    hatchSectionCaps(g)
+    // One cap per UNIT — `capsOf` flattens, and its first two entries would be
+    // two planes of the same solid, which share their slope by design.
+    const [lid, body] = unitsOf(g).map((u) => u.capMeshes[0].material.userData.hatch)
+    expect(slopeOf(lid)).not.toBe(slopeOf(body))
+  })
+
+  it('draws every angle from the one fixed set, 45 degrees included', () => {
+    // The set is the readability guarantee: whatever the hash picks, no two
+    // choices can sit closer to each other than the set's own gap.
+    const names = ['|model|lid', '|model|body', '|model|wall', '|model|board',
+                   '|model|base', '|model|post', '|model|pin', '|model|plate']
+    const g = fakeInternals(names)
+    hatchSectionCaps(g)
+    const slopes = capsOf(g)
+      .filter((m) => m.userData.hatch)
+      .map((m) => slopeOf(m.userData.hatch))
+    expect(slopes.length).toBeGreaterThan(0)
+    for (const s of slopes) expect(HATCH_SLOPES).toContain(s)
+    expect(HATCH_SLOPES).toContain(45)
+    // ...and no two members of the set are within a readable distance of each
+    // other. Slopes live on a half turn: 175 and 5 are 10 degrees apart as
+    // numbers and 10 degrees apart on the paper too.
+    for (let i = 0; i < HATCH_SLOPES.length; i++) {
+      for (let j = i + 1; j < HATCH_SLOPES.length; j++) {
+        expect(Math.abs(HATCH_SLOPES[i] - HATCH_SLOPES[j])).toBeGreaterThanOrEqual(30)
+      }
+    }
+  })
+
+  it('gives the same part the same angle twice, revisions included', () => {
+    // THE stability the owner bought with a hash: nothing about the answer
+    // depends on which other parts exist, where the part sits, or when the
+    // question is asked — which is what lets two revisions of one model be
+    // compared by eye.
+    const first = fakeInternals(['|model|lid'])
+    const second = fakeInternals(['|model|lid'])
+    hatchSectionCaps(first)
+    hatchSectionCaps(second)
+    const a = capsOf(first)[0].userData.hatch
+    const b = capsOf(second)[0].userData.hatch
+    expect(b.dirX).toBe(a.dirX)
+    expect(b.dirY).toBe(a.dirY)
+    expect(b.phase).toBe(a.phase)
+  })
+
+  it('measures the part in WORLD space, not in its own local one', () => {
+    // The bounding box is LOCAL (`front.geometry.boundingBox`) and the scene is
+    // not obliged to leave a solid unscaled. A part built at half scale but
+    // placed twice as large covers twice the plane, and the hatch has to count
+    // what is on the screen, not what is in the file.
+    const g = fakeInternals(['|model|lid'])
+    unitsOf(g)[0].solid.front.matrixWorld = fakeMatrix({ scale: [2, 2, 2] })
+    hatchSectionCaps(g)
+    // A 10 mm cube at scale 2 spans 20 mm: half the periods per uv unit of the
+    // unscaled 10 mm one under the same 36 mm region.
+    const scaled = capsOf(g)[0].userData.hatch.periods
+    const plain = fakeInternals(['|model|lid'])
+    hatchSectionCaps(plain)
+    expect(scaled).toBeCloseTo(capsOf(plain)[0].userData.hatch.periods / 2, 12)
+  })
+})
+
+describe('pitch', () => {
+  it('lays TARGET_LINES lines across the part, not across the region', () => {
+    // The owner's formula, read back off a stored uniform: one uv unit of the
+    // cap quad is `cap.size` world units, so periods x extent / size IS the
+    // number of lines the part gets. The 10 mm cube cut by the Z plane shows
+    // its 10 mm extent; the 36 mm region spans the uv.
+    const g = fakeInternals(['|model|lid'])
+    hatchSectionCaps(g)
+    const hatch = capsOf(g)[0].userData.hatch
+    expect(hatch.periods).toBe(36 * hatchTargetLines / 10)
+  })
+
+  it('keeps the line count over a part as the region grows around it', () => {
+    // What "the pitch follows the part" buys: the same bracket in a 36 mm
+    // scene and a 400 mm one is hatched with the same number of lines, though
+    // the two store very different periods per uv unit.
+    for (const size of [36, 400]) {
+      const g = fakeInternals(['|model|lid'], { size })
+      hatchSectionCaps(g)
+      const hatch = capsOf(g)[0].userData.hatch
+      expect(hatch.periods * 10 / size).toBeCloseTo(hatchTargetLines, 12)
+    }
+  })
+
+  it('counts the extent IN the plane of the cut', () => {
+    // A 10 x 20 x 30 block: the Z plane crosses the 10 x 20 face, the Y plane
+    // the 10 x 30 one, and the pitch of each follows ITS face — one hatch per
+    // part per plane, not one per part.
+    const g = fakeInternals(['|model|lid'], {
+      min: [0, 0, 0], max: [10, 20, 30], planes: [[0, 0, 1], [0, 1, 0]],
+    })
+    hatchSectionCaps(g)
+    const [z, y] = capsOf(g).map((m) => m.userData.hatch)
+    expect(z.periods).toBe(36 * hatchTargetLines / 20)
+    expect(y.periods).toBe(36 * hatchTargetLines / 30)
+  })
+})
+
+describe('setCutHatch', () => {
+  it('flips the live uniform on every patched cap, and recompiles nothing', () => {
+    const g = fakeInternals(['|model|lid'])
+    expect(hatchSectionCaps(g)).toBe(3)
+    const shaders = capsOf(g).map(compile)
+    for (const m of capsOf(g)) m.needsUpdate = false
+    expect(setCutHatch(g, false)).toBe(3)
+    capsOf(g).forEach((m, i) => {
+      expect(m.userData.hatch.on).toBe(0)
+      expect(shaders[i].uniforms.hatchOn.value).toBe(0)
+      expect(m.needsUpdate).toBe(false)          // the whole point: no recompile
+    })
+    expect(setCutHatch(g, true)).toBe(3)
+    expect(capsOf(g)[0].userData.hatch.on).toBe(1)
+    expect(shaders[0].uniforms.hatchOn.value).toBe(1)
+  })
+
+  it('leaves the answer where the NEXT compile will read it', () => {
+    // The uniform is the live half; `userData.hatch` is what a later recompile
+    // — a context loss, a light state change — rebuilds from. Toggling only
+    // the uniform would bring the hatch back on the next compile.
+    const g = fakeInternals(['|model|lid'])
+    hatchSectionCaps(g)
+    setCutHatch(g, false)
+    const shaders = capsOf(g).map(compile)
+    for (const s of shaders) expect(s.uniforms.hatchOn.value).toBe(0)
+  })
+
+  it('is quiet about scenes and materials it does not recognise', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(setCutHatch(null, true)).toBe(0)
+    expect(setCutHatch({ clipping: {} }, true)).toBe(0)
+    const g = fakeInternals(['|model|lid'])
+    expect(setCutHatch(g, false)).toBe(0)        // present, but not patched yet
     expect(warn).not.toHaveBeenCalled()
     warn.mockRestore()
   })
@@ -159,8 +353,8 @@ describe('safeHatch', () => {
    *  a revoked reference — throws where a plain read returns undefined. A getter
    *  is simply the cheapest way to produce that from a test. */
   const hostile = () => {
-    const g = fakeInternals(1)
-    Object.defineProperty(g.clipping._planeMeshGroup.children[0], 'material', {
+    const g = fakeInternals(['|model|lid'], { planes: [[0, 0, 1]] })
+    Object.defineProperty(g.clipping._capUnits[0].capMeshes[0], 'material', {
       get() { throw new TypeError('the library moved it') },
     })
     return g
@@ -185,10 +379,20 @@ describe('safeHatch', () => {
     // ordinary path is the count of caps patched, unchanged, and the caps are
     // really patched — a wrapper that swallowed the work as well as the throw
     // would satisfy the test above and nothing else.
-    const g = fakeInternals(3)
+    const g = fakeInternals(['|model|lid', '|model|body', '|model|pin'],
+                            { planes: [[0, 0, 1]] })
     expect(safeHatch(g)).toBe(3)
     for (const m of capsOf(g)) expect(m.onBeforeCompile).toBe(hatchShader)
     expect(safeHatch(null)).toBe(0)
+  })
+
+  it('hands the checkbox through, so a scene can come up unhatched', () => {
+    // `show()` renders with the reader's current answer, not with the default:
+    // a scene that lands while the box is unticked is patched but hatching
+    // nothing, which is what keeps the later toggle a pure uniform write.
+    const g = fakeInternals(['|model|lid'], { planes: [[0, 0, 1]] })
+    expect(safeHatch(g, false)).toBe(1)
+    expect(capsOf(g)[0].userData.hatch.on).toBe(0)
   })
 })
 
@@ -220,6 +424,46 @@ describe('hatchShader', () => {
     const shader = { fragmentShader: 'void main() {}' }
     hatchShader(shader)
     expect(shader.fragmentShader).toBe('void main() {}')
+  })
+
+  it('declares every uniform it reads, at global scope ahead of main', () => {
+    // The five identifiers exist for the GLSL compiler only because the
+    // declarations are spliced in beside three.js's own uniform block. Losing
+    // that splice is a shader that fails to compile — and a cut face that
+    // renders as an error where the fill used to be.
+    const material = fakeCapMaterial()
+    material.userData.hatch = { periods: 2, dirX: 1, dirY: 0, phase: 0.5, on: 1 }
+    const shader = { uniforms: {}, fragmentShader: 'uniform vec3 diffuse;\n' + TAIL }
+    hatchShader.call(material, shader)
+    for (const name of ['hatchPeriods', 'hatchDirX', 'hatchDirY', 'hatchPhase',
+                        'hatchOn']) {
+      const declaration = shader.fragmentShader.indexOf(`uniform float ${name};`)
+      expect(declaration).toBeGreaterThan(-1)
+      // The marker sits inside `main()`, so ahead of it is what makes these
+      // declarations legal; the shader's own diffuse uniform is the anchor.
+      expect(declaration)
+        .toBeLessThan(shader.fragmentShader.indexOf(hatchMarker))
+    }
+  })
+
+  it('carries the part\'s numbers in as uniform VALUES, off this.userData', () => {
+    // three.js calls `material.onBeforeCompile(parameters, renderer)`, so `this`
+    // is the material and the numbers were written there by `patchCapMaterial`.
+    // This is the half that lets every cap share ONE compiled program while
+    // hatching to its own pitch and slope.
+    const material = fakeCapMaterial()
+    const hatch = { periods: 2.5, dirX: -0.5, dirY: 0.5, phase: 0.25, on: 0 }
+    material.userData.hatch = hatch
+    const shader = { uniforms: {}, fragmentShader: 'uniform vec3 diffuse;\n' + TAIL }
+    hatchShader.call(material, shader)
+    expect(shader.uniforms.hatchPeriods.value).toBe(2.5)
+    expect(shader.uniforms.hatchDirX.value).toBe(-0.5)
+    expect(shader.uniforms.hatchDirY.value).toBe(0.5)
+    expect(shader.uniforms.hatchPhase.value).toBe(0.25)
+    expect(shader.uniforms.hatchOn.value).toBe(0)
+    // ...and the handle the toggle needs later: the shader object itself, kept
+    // on the material so `.value` can be rewritten without a recompile.
+    expect(material.userData.hatchShader).toBe(shader)
   })
 
   it('splices at a chunk the VENDORED three.js still has', () => {

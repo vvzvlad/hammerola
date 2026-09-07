@@ -22,7 +22,7 @@
 import {
   EVENT_ERROR, EVENT_MODEL, EVENT_STATE, EVENT_TOOL, emit,
 } from "./events.js";
-import { safeHatch } from "./hatch.js";
+import { safeHatch, setCutHatch } from "./hatch.js";
 import { installHoldKey } from "./holdkey.js";
 import { installIdleClock, captureLive, restoreLive, cameraState, isBusy, snapshot }
   from "./live.js";
@@ -63,6 +63,7 @@ const INITIAL_STATE = {
   cut: false,
   cutOffset: 0,
   cutFlip: false,
+  cutHatch: true,
   tool: null,
   pins: [],
   camera: null,
@@ -105,7 +106,10 @@ export class HmrViewport extends HTMLElement {
     this.appendChild(this.box);
 
     this.state = { ...INITIAL_STATE };
-    this.applied = { hidden: null, ghost: null, selected: undefined, camera: null };
+    this.applied = {
+      hidden: null, ghost: null, selected: undefined, camera: null,
+      cutHatch: null,
+    };
     this.viewer = null;
     this.view = null;
     this.tab = "tree";          // the library's own runtime default
@@ -445,6 +449,10 @@ export class HmrViewport extends HTMLElement {
       // that moment would have `keepSectionCut` re-assert clipping on a scene
       // that is being torn down.
       this.sectionSeed = null;
+      // The outline children hung on the scene's own ObjectGroups, so they are
+      // gone with it — the rebuild memo has to be, or it would suppress the
+      // first outline of the new scene (outline.js).
+      this.sectionOutlineKey = null;
       this.measurePicks = [];
       this.measureLabel = null;
       // The offsets belong to the geometry that is going away — a rebuild puts
@@ -483,10 +491,17 @@ export class HmrViewport extends HTMLElement {
       // the next `hmr:state` retrying. The guard lives at hatch.js's definition
       // rather than in a `try` written around this line, because there a test
       // can make the patching really throw instead of reading this file.
-      safeHatch(g);
+      //
+      // The checkbox rides along: a scene rendered while `cutHatch` is unticked
+      // comes up patched but hatching nothing, so the toggle stays a uniform
+      // write whatever order the reader does things in.
+      safeHatch(g, this.state.cutHatch);
       this.view = named;
       this.lastPick = null;
-      this.applied = { hidden: null, ghost: null, selected: undefined, camera: null };
+      this.applied = {
+        hidden: null, ghost: null, selected: undefined, camera: null,
+        cutHatch: null,
+      };
       this.reconcile();
       if (keep) restoreLive(this, keep);
       this.overlay.refresh();
@@ -558,6 +573,16 @@ export class HmrViewport extends HTMLElement {
     // alone.
     if (s.cut && this.sectionSeed) applySection(this);
     else if (!s.cut) suspendSectionCut(this);
+    // The hatch over the cut face. A `cutHatch` change arrives HERE — it
+    // triggers no reload — and reconcile runs on EVERY state event, one per
+    // section-slider step, so the change is memo'd against `applied` like the
+    // three fields above and the toggle it triggers is a UNIFORM WRITE, not a
+    // recompile (hatch.js `setCutHatch`). After a render this re-asserts the
+    // value the fresh materials were patched with, exactly like the lists do.
+    if (!same(s.cutHatch, this.applied.cutHatch)) {
+      setCutHatch(internals(this.viewer), s.cutHatch);
+      this.applied.cutHatch = s.cutHatch;
+    }
     this.overlay.setPins(s.pins);
   }
 
