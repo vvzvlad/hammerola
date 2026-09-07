@@ -155,9 +155,12 @@ material_under_head = _impl.material_under_head
 minimum_feature = _impl.minimum_feature
 name_pairs = _impl.name_pairs
 pairwise_interference = _impl.pairwise_interference
+recorded_clearance = _impl.recorded_clearance
 recorded_interference = _impl.recorded_interference
 recorded_sections = _impl.recorded_sections
 section = _impl.section
+swept_clearance = _impl.swept_clearance
+tool_access = _impl.tool_access
 volume = _impl.volume
 
 # One import form to avoid elsewhere in this repository. When this shim has run
@@ -190,8 +193,11 @@ __all__ = [
     "minimum_feature",
     "name_pairs",
     "pairwise_interference",
+    "recorded_clearance",
     "recorded_interference",
     "recorded_sections",
     "section",
+    "swept_clearance",
+    "tool_access",
     "volume",
 ]

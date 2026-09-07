@@ -100,19 +100,30 @@ def first_layer_area(mesh):
 
     The bed is wherever the part's own lowest point is: `mesh.bounds[0][2]`.
     THAT IS THE WHOLE INTERPRETATION, and it is deliberate -- "no first layer"
-    means a part with no flat bottom OF ITS OWN (a sphere, a cylinder on its
-    side, a part standing on an edge), NOT a part whose zmin is something other
-    than zero. Reading it the second way would refuse every centred box in the
-    README and in the fixtures, which is the false red this repository already
-    decided costs more than a miss.
+    means a part with no flat bottom OF ITS OWN (a part standing on an edge, a
+    pyramid on its apex), NOT a part whose zmin is something other than zero.
+    Reading it the second way would refuse every centred box in the README and
+    in the fixtures, which is the false red this repository already decided
+    costs more than a miss.
 
     A triangle is on the bed when all three of its vertices sit within
-    STL_TOLERANCE of that lowest point AND its normal points down. The
-    tolerance is STL_TOLERANCE and no other number: it is the chord deviation
-    this very mesh was written with, so it is exactly how far a vertex of a
-    genuinely flat face may have drifted off the plane. The normal is what
-    keeps a thin wall's TOP face out of the sum when it happens to land in the
-    same band.
+    STL_TOLERANCE of that lowest point AND its normal points down. The normal
+    is what keeps a thin wall's TOP face out of the sum when it happens to land
+    in the same band.
+
+    WHAT THE TOLERANCE BAND ACTUALLY ADMITS is worth stating, because the
+    obvious reading of it is wrong: a genuinely flat face has no drift at all
+    (OCC meshes a plane exactly), so the band is not there for it. What lands
+    inside the band is the bottom ROW OF FACETS of a CURVED surface, and how
+    much of one depends on the radius and on the tessellation. Measured, with
+    this mesh's own STL_TOLERANCE: a cylinder lying on its side comes to
+    11.97 mm2 at r=2, 9.97 at r=5, 19.94 at r=10 and 35.65 at r=20; a sphere to
+    0.1371 mm2 at r=3 and to exactly 0 at r=10. So this does NOT catch a part
+    resting on a line, and mostly does not catch one resting on a point. THE
+    GAP IS DELIBERATE and is not to be closed with a tighter band: that strip
+    is roughly what a slicer really lays down under a curved bottom, and the
+    part does print. What the check is for is the part that touches at nothing
+    whatsoever.
     """
     lowest = float(mesh.bounds[0][2])
     on_bed = mesh.triangles[:, :, 2].max(axis=1) - lowest <= STL_TOLERANCE

@@ -113,9 +113,10 @@ def test_a_slab_tilted_by_one_degree_is_refused_and_that_is_correct():
 def test_the_thinnest_dimension_this_nozzle_can_print():
     """The arithmetic the bbox refusal is made of, at the default nozzle.
 
-    Not a test of `minimum_feature` -- that is checklib's -- but of the
-    comparison this gate makes with it: half a millimetre is under one pass of
-    a 0.4 nozzle laid twice, and 0.8 is exactly it.
+    Not a test of `minimum_feature` -- that one is in
+    test_checklib_printability.py -- but of the comparison this gate makes with
+    it: half a millimetre is under one pass of a 0.4 nozzle laid twice, and 0.8
+    is exactly it.
     """
     assert 0.5 < minimum_feature()
     assert not 0.8 < minimum_feature()
@@ -129,12 +130,16 @@ def _cq():
                "docstring")
 
 
-def test_a_sphere_is_refused_because_it_rests_on_a_point(out_dir):
+def test_a_slab_on_its_edge_is_refused_because_nothing_lies_flat(out_dir):
+    """A sphere would NOT prove this: gate part 2 refuses it as not watertight
+    before the bed is ever measured, so the message is what is asserted here."""
     cq = _cq()
-    read = catalogue(ball=("printable", cq.Workplane("XY").sphere(10)))
+    slab = cq.Workplane("XY").box(20, 10, 5).rotate((0, 0, 0), (1, 0, 0), 45)
+    read = catalogue(tilted_slab=("printable", slab))
     with pytest.raises(BuildError) as refused:
         export_printables(read, out_dir)
-    assert "'ball'" in str(refused.value)
+    message = str(refused.value)
+    assert "'tilted_slab'" in message and "touches the bed at nothing" in message
 
 
 def test_a_half_millimetre_slab_is_refused_on_its_smallest_dimension(out_dir):

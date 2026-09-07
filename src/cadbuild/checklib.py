@@ -1221,3 +1221,311 @@ def material_under_head(part, centre, head_diameter, depth, name="part", angles=
             "move the screw inwards, or grow the boss."
         ]
     return []
+
+
+# --------------------------------------------------------------------------
+# 4. Room for the tool that drives a fastener
+# --------------------------------------------------------------------------
+
+def tool_access(obstacles, names, *, origin, direction, diameter, length,
+                name="fastener", rings=4, around=16, ignore=()):
+    """A straight cylinder from a fastener head must be empty.
+
+    Catches: a screw that is modelled, seated and unreachable -- a boss in the
+    driver's way, a wall 3 mm from the head, a lid that has to go on before the
+    screw can. Every view of the assembly looks right and the thing cannot be
+    put together.
+
+    `origin` is (x, y, z) of the head's seat and `direction` a vector pointing
+    the way the tool comes FROM. It is normalised here and is NOT required to
+    be Z, which is what separates this from `material_under_head`: a screw
+    going in sideways is checked where it is, not on a rotated copy of the
+    part. `diameter` is what has to be clear -- the driver, the socket, the
+    ratchet head, whichever of them is fattest -- and `length` how far it has
+    to stay clear for.
+
+    `obstacles` are the parts that might be in the way, positioned as
+    assembled, and `names` their labels, one per object. Parts that are allowed
+    to sit in the path -- the one the screw goes through, a part fitted after
+    the fastener is already in -- go into `ignore` by name. A name there that
+    is not among `names` is refused rather than passed over, on the same
+    reasoning as `pairwise_interference`'s `allowed_touching`: an exemption for
+    a part that is not there exempts nothing.
+
+    THE CYLINDER IS PROBED, NOT INTERSECTED: `around` points on each of `rings`
+    radii, at `int(length / (diameter / 2)) + 2` levels along the axis, each
+    point asked of every obstacle's classifier (`material_at`). The cost is
+    `rings x around x levels` classifier calls per obstacle -- 448 of them for
+    an 8 mm tool over a 20 mm reach at the default `rings` and `around`,
+    measured at about 9 ms per obstacle on one workstation. That is NOT the cheaper of the two, and the reason for it is
+    therefore not the one at `material_at`: intersecting one cylinder with the
+    same obstacle measured about 3 ms. What the sampling buys is the ANSWER --
+    how much of the path is blocked and how far along it the first blocked
+    point sits, which is what the problem string below is written out of and
+    what one intersection volume does not say.
+
+    KNOWN GAP, and it follows from the sampling rather than from an oversight:
+    a blade thinner than the spacing between two probe points slips between
+    them and is not seen. Raise `rings` and `around` where a part like that is
+    what you are looking for.
+
+    Returns a list of problem strings, one per part found in the path.
+    """
+    # Plain Python first, over EVERY obstacle, before `material_at` below
+    # reaches for the kernel. Same order and same reason as material_at's own
+    # type check: leaving each object to be checked by its own material_at call
+    # would answer about the argument for the first obstacle and about
+    # libGL.so.1 for the second, on a machine with no OpenCASCADE. Nothing is
+    # kept -- the probes are built from the objects themselves further down.
+    obstacles = list(obstacles)
+    for index, obstacle in enumerate(obstacles):
+        _shapes(obstacle, f"obstacle #{index}")
+    names = list(names)
+    if len(names) != len(obstacles):
+        raise ValueError(
+            f"tool_access({name}) got {len(obstacles)} obstacles but "
+            f"{len(names)} names")
+
+    if diameter <= 0 or length <= 0:
+        raise ValueError(
+            f"tool_access({name}): diameter is {diameter!r} and length is "
+            f"{length!r}, and both are sizes of the space the tool needs. With "
+            "either at zero or below there is no cylinder to probe and the "
+            "check passes for every assembly ever handed to it.")
+
+    if rings <= 0 or around <= 0:
+        raise ValueError(
+            f"tool_access({name}): rings is {rings!r} and around is "
+            f"{around!r}, and they are how densely that cylinder is sampled. "
+            "With either at zero or below not one point is probed, so the "
+            "check passes for every assembly ever handed to it -- the same "
+            "silence a diameter of zero buys. These two are the dials the "
+            "docstring invites raising, which is where the typo comes from.")
+
+    unknown = sorted(set(ignore) - set(names))
+    if unknown:
+        raise ValueError(
+            f"tool_access({name}): ignore names "
+            f"{', '.join(repr(x) for x in unknown)}, which is not among the "
+            f"obstacles handed in ({', '.join(repr(n) for n in names)}). "
+            "A part that is not there is not in the way of anything.")
+
+    ox, oy, oz = origin
+    dx, dy, dz = direction
+    span = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if span == 0:
+        raise ValueError(
+            f"tool_access({name}): direction is {tuple(direction)!r}, which "
+            "names no axis -- a tool goes in ALONG something. Unguarded this "
+            "divides by zero deep inside checklib and reports a line number "
+            "that has nothing to do with the model.")
+    ux, uy, uz = dx / span, dy / span, dz / span
+
+    # Two unit vectors across the axis, to spread the ring points on. The
+    # helper is picked away from the axis itself, so the cross product is never
+    # the zero vector and the frame never collapses.
+    hx, hy, hz = (0.0, 0.0, 1.0) if abs(uz) < 0.9 else (1.0, 0.0, 0.0)
+    ax, ay, az = uy * hz - uz * hy, uz * hx - ux * hz, ux * hy - uy * hx
+    scale = math.sqrt(ax * ax + ay * ay + az * az)
+    ax, ay, az = ax / scale, ay / scale, az / scale
+    bx, by, bz = uy * az - uz * ay, uz * ax - ux * az, ux * ay - uy * ax
+
+    radius = diameter / 2.0
+    levels = int(length / radius) + 2
+    total = levels * rings * around
+    problems = []
+
+    for index, label in enumerate(names):
+        if label in ignore:
+            continue
+        inside = material_at(obstacles[index], label)
+        hits = 0
+        first = None
+        for k in range(levels):
+            # Mid-cell sampling, for the reason material_under_head gives: the
+            # seat is a boundary and a point sitting on it answers about the
+            # part the screw goes into, not about the way to it.
+            travel = length * (k + 0.5) / levels
+            cx, cy, cz = ox + ux * travel, oy + uy * travel, oz + uz * travel
+            for ring in range(rings):
+                offset = radius * (ring + 1) / rings
+                for step in range(around):
+                    theta = 2.0 * math.pi * step / around
+                    across, along = math.cos(theta), math.sin(theta)
+                    px = cx + offset * (ax * across + bx * along)
+                    py = cy + offset * (ay * across + by * along)
+                    pz = cz + offset * (az * across + bz * along)
+                    if inside(px, py, pz):
+                        hits += 1
+                        if first is None:
+                            first = (px, py, pz, travel)
+        if first is not None:
+            px, py, pz, travel = first
+            problems.append(
+                f"{name}: {label!r} is in the way of the tool -- {hits} of "
+                f"{total} points in the {diameter:g} mm cylinder running "
+                f"{length:g} mm from ({ox:g}, {oy:g}, {oz:g}) sit inside it, "
+                f"the first {travel:.1f} mm out at "
+                f"({px:.1f}, {py:.1f}, {pz:.1f}). Nothing can reach the head "
+                "past it: move the fastener, cut the obstruction back, or name "
+                "the part in ignore if the tool goes in before that part does."
+            )
+    return problems
+
+
+# --------------------------------------------------------------------------
+# 5. A mating pair along its degree of freedom
+# --------------------------------------------------------------------------
+
+# Every pair swept_clearance has run and what the run measured: how many stops,
+# the tightest gap seen and the stop it was at.
+#
+# The same kind of record as _INTERFERENCE above, and kept for the same reason
+# -- the numbers are taken as the check goes, so cadbuild.metrics can put them
+# in metrics.json without a single extra boolean, and a gap that reads 0.40 mm
+# today and 0.05 mm tomorrow is a pair that grew together. Accumulates over the
+# run: a model may sweep several pairs, and each call adds its own. Keyed by
+# `label`, and a SECOND sweep under the same label writes over the first rather
+# than keeping the tighter of the two -- a pair run along two degrees of freedom
+# (a lid that drops and then slides) wants a `label=` of its own for each.
+# Nothing is lost by that but the number: the problem strings come back per
+# call either way. A pair whose every stop the kernel refused is absent rather
+# than zero -- absence means "not measured", never "touching".
+_CLEARANCE = {}
+
+
+def recorded_clearance():
+    """`{label: {...}}` for every pair swept_clearance has measured so far."""
+    # Copied one level deeper than recorded_interference, which hands back
+    # floats: the values here are dicts, and a shallow copy would hand the
+    # caller the very record the build reports.
+    return {label: dict(record) for label, record in _CLEARANCE.items()}
+
+
+def swept_clearance(moving_positions, fixed, *, names=("moving", "fixed"),
+                    min_gap=None, tol=DEFAULT_VOLUME_TOL, label=None):
+    """One mating pair, run along its degree of freedom, measured at every stop.
+
+    Catches: a lid that fits where it ends up and fouls the rim halfway down; a
+    hinge that clears at both ends of its travel and not in the middle.
+    `pairwise_interference` looks at the assembly AS ASSEMBLED, which is
+    exactly the one position such a pair is clean in.
+
+    `moving_positions` is the moving part ALREADY PLACED at each stop -- a list
+    the model builds, because only the model knows the kinematics. Ten to
+    twenty stops is the useful range; fewer than two is not a sweep at all and
+    is refused.
+
+    Both numbers are taken at every stop: the volume the two share -- an
+    interference is a hard problem string, the same rule pairwise_interference
+    applies, and `tol` is the same boolean-noise tolerance -- and the minimum
+    distance between the two solids. `min_gap` is optional: given, a stop
+    closer than that is a problem; omitted, the gap is only measured and
+    recorded, and nothing is judged by it.
+
+    WHAT IS RECORDED, under `label`: `{"positions": n, "min_gap_mm": x,
+    "at": i}` -- how many stops were run, the tightest gap seen and the stop it
+    was at. `recorded_clearance()` reads it back, and that is where it stops
+    TODAY: nothing outside checklib calls it. Putting it into metrics.json as
+    `assembly.clearance` -- beside the volumes pairwise_interference records,
+    which cadbuild.metrics already publishes -- is issue #58's work, and until
+    it lands a model that sweeps a pair sees the problem strings and no number.
+    `label` defaults to `"moving|fixed"` from `names`, in the order
+    they were given: unlike a pair of neighbours those two names are not
+    interchangeable -- one of them is the part that moves -- so they are not
+    sorted into the key the way pairwise_interference sorts its pair.
+
+    Cost: a bounding-box reject, then one boolean and one distance per body
+    pair per stop. A boolean on a real part is tens of milliseconds and a
+    distance about the same, so eighteen stops is well under a second against a
+    build ceiling of 900 seconds (buildproc.limits.DEFAULT_WALL_SECONDS).
+
+    Returns a list of problem strings.
+    """
+    moving_name, fixed_name = names
+    # The count is answered before any geometry is touched. It is a statement
+    # about the LIST that was handed in rather than about a solid, and it has
+    # to answer on a machine with no kernel for the same reason the type check
+    # below runs before the OCP import.
+    positions = list(moving_positions)
+    if len(positions) < 2:
+        raise ValueError(
+            f"swept_clearance({moving_name}|{fixed_name}) got "
+            f"{len(positions)} position(s). A sweep is the moving part at "
+            "several stops along its travel; one position is the assembly as "
+            "assembled, which is what pairwise_interference already checks. "
+            "Ten to twenty stops is the useful range.")
+
+    moving = [_shapes(obj, f"{moving_name} at position #{index}")
+              for index, obj in enumerate(positions)]
+    still = _shapes(fixed, fixed_name)
+
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+
+    if label is None:
+        label = f"{moving_name}|{fixed_name}"
+    fixed_boxes = [body.BoundingBox() for body in still]
+    problems = []
+    closest = None  # (gap, stop) -- the tightest approach measured so far
+
+    for index, bodies in enumerate(moving):
+        shared = 0.0
+        gap = None
+        failure = None
+        for left in bodies:
+            left_box = left.BoundingBox()
+            for right, right_box in zip(still, fixed_boxes):
+                # The reject skips the BOOLEAN and nothing else: boxes that
+                # cannot touch cannot share volume, but the distance between
+                # them is the very number this check exists to take.
+                if not _boxes_apart(left_box, right_box, 0.0):
+                    try:
+                        common = left.intersect(right)
+                    except Exception as exc:  # OCCT gives up on some pairs
+                        failure = f"{type(exc).__name__}: {exc}"
+                        break
+                    shared += sum(solid.Volume() for solid in common.Solids())
+                try:
+                    measure = BRepExtrema_DistShapeShape(left.wrapped,
+                                                         right.wrapped)
+                except Exception as exc:
+                    failure = f"{type(exc).__name__}: {exc}"
+                    break
+                if not measure.IsDone():
+                    failure = "BRepExtrema_DistShapeShape came back not done"
+                    break
+                distance = measure.Value()
+                if gap is None or distance < gap:
+                    gap = distance
+            if failure is not None:
+                break
+
+        if failure is not None:
+            # One stop the kernel could not do is reported and the sweep goes
+            # on: the stops around it are still worth measuring, and raising
+            # here would take a whole build down over one degenerate pair.
+            problems.append(
+                f"cannot measure {moving_name!r} against {fixed_name!r} at "
+                f"position {index} of {len(moving)}: the measurement failed "
+                f"({failure}). Check this pair by eye.")
+            continue
+
+        if shared > tol:
+            problems.append(
+                f"{moving_name!r} runs into {fixed_name!r} at position "
+                f"{index} of {len(moving)}, where they share {shared:.2f} mm3. "
+                "Two parts cannot occupy the same volume anywhere along the "
+                "travel, not only where they end up.")
+        if gap is not None and (closest is None or gap < closest[0]):
+            closest = (gap, index)
+
+    if closest is not None:
+        # Recorded whether it is a problem or not -- see _CLEARANCE.
+        _CLEARANCE[label] = {"positions": len(moving),
+                             "min_gap_mm": closest[0], "at": closest[1]}
+        if min_gap is not None and closest[0] < min_gap:
+            problems.append(
+                f"{moving_name!r} comes within {closest[0]:.2f} mm of "
+                f"{fixed_name!r} at position {closest[1]} of {len(moving)}, "
+                f"closer than the {min_gap:g} mm this pair asked for.")
+    return problems
