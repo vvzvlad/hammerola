@@ -149,6 +149,12 @@ def _wall():
             .translate((4, 0, 10)))
 
 
+def _lid_across(centre):
+    """A 2 mm plate lying ACROSS the path, centred at that height above the seat."""
+    cq = _cq()
+    return cq.Workplane("XY").box(40, 40, 2).translate((0, 0, centre))
+
+
 def _socket():
     """A box with a narrow mouth over a wider cavity.
 
@@ -214,6 +220,22 @@ def test_a_part_named_in_ignore_is_not_in_the_way():
     assert checklib.tool_access(
         [_wall()], ["wall"], origin=(0, 0, 10), direction=(0, 0, 1),
         diameter=8, length=20, ignore=("wall",)) == []
+
+
+def test_a_lid_across_the_path_is_seen_wherever_along_it_the_lid_sits():
+    """The AXIAL spacing, which nothing else in this file exercises.
+
+    `_wall()` runs parallel to the tool, so it is present at every level and any
+    spacing at all finds it; a lid is present at one level or at none. These
+    four heights are ones the axial step walked straight over while it was tied
+    to the tool's radius rather than being a length.
+    """
+    for centre in (2.5, 6.0, 11.5, 14.0):
+        problems = checklib.tool_access(
+            [_lid_across(centre)], ["lid"], origin=(0, 0, 0),
+            direction=(0, 0, 1), diameter=8, length=20)
+        assert len(problems) == 1, f"the lid at z={centre} was walked over"
+        assert "'lid'" in problems[0]
 
 
 def test_a_lid_that_fits_through_the_mouth_clears_every_stop():

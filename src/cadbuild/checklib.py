@@ -1253,21 +1253,29 @@ def tool_access(obstacles, names, *, origin, direction, diameter, length,
     a part that is not there exempts nothing.
 
     THE CYLINDER IS PROBED, NOT INTERSECTED: `around` points on each of `rings`
-    radii, at `int(length / (diameter / 2)) + 2` levels along the axis, each
-    point asked of every obstacle's classifier (`material_at`). The cost is
-    `rings x around x levels` classifier calls per obstacle -- 448 of them for
-    an 8 mm tool over a 20 mm reach at the default `rings` and `around`,
-    measured at about 9 ms per obstacle on one workstation. That is NOT the cheaper of the two, and the reason for it is
-    therefore not the one at `material_at`: intersecting one cylinder with the
-    same obstacle measured about 3 ms. What the sampling buys is the ANSWER --
-    how much of the path is blocked and how far along it the first blocked
-    point sits, which is what the problem string below is written out of and
-    what one intersection volume does not say.
+    radii, at a level every 0.5 mm along the axis, each point asked of every
+    obstacle's classifier (`material_at`). The cost is `rings x around x levels`
+    classifier calls per obstacle -- 2624 of them for an 8 mm tool over a 20 mm
+    reach at the default `rings` and `around`, measured at about 25 ms per
+    obstacle on one workstation. That is NOT the cheaper of the two, and the
+    reason for it is therefore not the one at `material_at`: intersecting one
+    cylinder with the same obstacle measured about 7 ms. What the sampling buys
+    is the ANSWER -- how much of the path is blocked and how far along it the
+    first blocked point sits, which is what the problem string below is written
+    out of and what one intersection volume does not say.
 
     KNOWN GAP, and it follows from the sampling rather than from an oversight:
-    a blade thinner than the spacing between two probe points slips between
-    them and is not seen. Raise `rings` and `around` where a part like that is
-    what you are looking for.
+    something thinner than the spacing between two probe points slips between
+    them unseen. THE THREE AXES ARE SPACED DIFFERENTLY, so which dial helps
+    depends on how the thin thing lies. ACROSS the path -- the lid again -- the
+    spacing is the 0.5 mm axial step above, which `rings` and `around` do not
+    touch at all and which nothing here exposes: a 0.6 mm blade was seen at
+    every one of 81 heights, a 0.4 mm one missed at 13 of them. ALONG the path
+    -- a fin standing edge-on inside the cylinder -- the spacing is
+    `radius / rings` outwards (1 mm at the defaults for an 8 mm tool) and
+    `2 pi radius / around` around (about 1.6 mm on the outermost ring), and
+    THOSE are the two to raise. The axis itself carries no ring, so a rod
+    thinner than `2 x radius / rings` standing on it is the same gap.
 
     Returns a list of problem strings, one per part found in the path.
     """
@@ -1299,8 +1307,8 @@ def tool_access(obstacles, names, *, origin, direction, diameter, length,
             f"{around!r}, and they are how densely that cylinder is sampled. "
             "With either at zero or below not one point is probed, so the "
             "check passes for every assembly ever handed to it -- the same "
-            "silence a diameter of zero buys. These two are the dials the "
-            "docstring invites raising, which is where the typo comes from.")
+            "silence a diameter of zero buys. Pass positive counts: the "
+            "defaults are rings=4 and around=16.")
 
     unknown = sorted(set(ignore) - set(names))
     if unknown:
@@ -1331,7 +1339,16 @@ def tool_access(obstacles, names, *, origin, direction, diameter, length,
     bx, by, bz = uy * az - uz * ay, uz * ax - ux * az, ux * ay - uy * ax
 
     radius = diameter / 2.0
-    levels = int(length / radius) + 2
+    # THE AXIAL STEP IS A LENGTH, not a share of the tool's radius, and that is
+    # a correction rather than a preference. A step of one radius is 2.86 mm for
+    # an 8 mm tool over a 20 mm reach, and an obstruction ACROSS the path -- the
+    # lid at the top of the Catches list -- is thin along the axis and wide
+    # across it: a 2 mm lid was walked straight over at 8 of the 30 heights it
+    # was tried at, and raising `rings` and `around` did nothing about it,
+    # because neither touches this axis. 0.5 mm is the step material_under_head
+    # samples depth with, and it is well under `minimum_feature()`, so a wall
+    # thick enough for this nozzle to print is thicker than one step.
+    levels = max(3, int(length / 0.5) + 1)
     total = levels * rings * around
     problems = []
 

@@ -116,8 +116,9 @@ def first_layer_area(mesh):
     (OCC meshes a plane exactly), so the band is not there for it. What lands
     inside the band is the bottom ROW OF FACETS of a CURVED surface, and how
     much of one depends on the radius and on the tessellation. Measured, with
-    this mesh's own STL_TOLERANCE: a cylinder lying on its side comes to
-    11.97 mm2 at r=2, 9.97 at r=5, 19.94 at r=10 and 35.65 at r=20; a sphere to
+    this mesh's own STL_TOLERANCE: a cylinder 40 mm LONG lying on its side comes
+    to 11.97 mm2 at r=2, 9.97 at r=5, 19.94 at r=10 and 35.65 at r=20 -- the
+    strip is a strip, so those scale with the length -- and a sphere to
     0.1371 mm2 at r=3 and to exactly 0 at r=10. So this does NOT catch a part
     resting on a line, and mostly does not catch one resting on a point. THE
     GAP IS DELIBERATE and is not to be closed with a tighter band: that strip
