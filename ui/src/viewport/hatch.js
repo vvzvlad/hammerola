@@ -234,9 +234,16 @@ export function hatchShader(shader) {
 function patchCapMaterial(material, params) {
   if (!material) return false;
   if (material.onBeforeCompile === hatchShader) {
-    // Same function object, same cache key, same program: a second pass over an
-    // already-patched cap only refreshes the numbers, and must NOT set
-    // `needsUpdate` — that is what keeps a re-render from recompiling.
+    // Same function object, same cache key, same program, and NO `needsUpdate`
+    // — that is what keeps a re-render from recompiling. What this leaves
+    // behind is worth being exact about: the numbers land where the NEXT
+    // compile reads them, and not in the uniforms a compiled shader is already
+    // drawing from, so a cap patched twice with different numbers goes on
+    // showing the first set. `setCutHatch` is the one that writes both,
+    // because the checkbox has to move a live cap. No product path reaches
+    // this branch with different numbers — `safeHatch` runs once per `show()`,
+    // on caps the library has just built — so the branch stays as it is
+    // rather than growing a second uniform writer for a case nobody has.
     material.userData.hatch = params;
     return true;
   }

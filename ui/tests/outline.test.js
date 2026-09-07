@@ -132,8 +132,13 @@ describe('sectionOutline', () => {
 
   it('cuts a cube corner-on along the hexagon it is', () => {
     const { solid, vp, g } = cubeScene()
-    // Plane x + y + z = 3, through the cube's centre corner-on.
-    sectionOutline(vp, g, [1, 1, 1], -3)
+    // Plane x + y + z = 3, through the cube's centre corner-on. THE NORMAL IS
+    // UNIT, which is the module's precondition and not decoration: with a bare
+    // [1, 1, 1] this call still draws a hexagon, but on a different plane from
+    // the one the library would clip with for the same pair — and a test is
+    // the first thing the next caller copies.
+    const third = 1 / Math.sqrt(3)
+    sectionOutline(vp, g, [third, third, third], -Math.sqrt(3))
     const segments = segmentsOf(outlineOf(solid))
     // Six cut faces, two triangles each, both crossed.
     expect(segments).toHaveLength(12)

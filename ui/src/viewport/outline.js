@@ -158,9 +158,10 @@ function planeThroughTriangles(positions, index, n, c) {
       if (!Number.isFinite(da) || !Number.isFinite(db) || (da > 0) === (db > 0)) {
         continue;
       }
-      const span = da - db;
-      if (span === 0) continue;
-      const t = da / span;
+      // No zero-divide guard, and none is possible: the test above passed, so
+      // one of the two is strictly positive and the other is not, and both are
+      // finite — `da - db` is therefore strictly positive.
+      const t = da / (da - db);
       const a = index[triangle + corner] * 3;
       const b = index[triangle + next] * 3;
       crossings.push([
@@ -189,6 +190,15 @@ function planeThroughTriangles(positions, index, n, c) {
  * path calls `refreshSectionOutline` instead of trusting the key. `show()`
  * clears the memo when it swaps the scene, because the old outline objects
  * died with the groups they hung on.
+ *
+ * `normal` MUST BE UNIT, the same precondition `sectionValueFor` states in
+ * section.js and for the same reason: the world constant below is
+ * `value - normal . centre`, which is `CenteredPlane.setConstant` only when the
+ * normal has length one. Give it a longer one and this draws a contour on a
+ * different plane from the one the library is clipping with — silently, since
+ * both are perfectly good planes. Every caller satisfies it: the seed is
+ * normalised in `placeSectionPlane`, and the other two read the library's own
+ * plane, which `setClipNormal` normalised.
  */
 export function sectionOutline(vp, g, normal, value) {
   const [nx, ny, nz] = read3(normal);
