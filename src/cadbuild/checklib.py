@@ -1255,9 +1255,11 @@ def tool_access(obstacles, names, *, origin, direction, diameter, length,
     THE CYLINDER IS PROBED, NOT INTERSECTED: `around` points on each of `rings`
     radii, at a level every 0.5 mm along the axis, each point asked of every
     obstacle's classifier (`material_at`). The cost is `rings x around x levels`
-    classifier calls per obstacle -- 2624 of them for an 8 mm tool over a 20 mm
-    reach at the default `rings` and `around`, measured at about 25 ms per
-    obstacle on one workstation. That is NOT the cheaper of the two, and the
+    classifier calls per obstacle -- 2624 of them over a 20 mm reach at the
+    default `rings` and `around`, measured at about 25 ms per obstacle on one
+    workstation. The count follows from the REACH alone now and no longer from
+    the diameter, so a thinner tool is not a cheaper one. That is NOT the
+    cheaper of the two ways of asking, and the
     reason for it is therefore not the one at `material_at`: intersecting one
     cylinder with the same obstacle measured about 7 ms. What the sampling buys
     is the ANSWER -- how much of the path is blocked and how far along it the
@@ -1269,9 +1271,12 @@ def tool_access(obstacles, names, *, origin, direction, diameter, length,
     them unseen. THE THREE AXES ARE SPACED DIFFERENTLY, so which dial helps
     depends on how the thin thing lies. ACROSS the path -- the lid again -- the
     spacing is the 0.5 mm axial step above, which `rings` and `around` do not
-    touch at all and which nothing here exposes: a 0.6 mm blade was seen at
-    every one of 81 heights, a 0.4 mm one missed at 13 of them. ALONG the path
-    -- a fin standing edge-on inside the cylinder -- the spacing is
+    touch at all and which nothing here exposes. Anything one step thick or
+    more meets a level wherever it sits; anything THINNER fits between two of
+    them, and then whether it is seen depends on WHERE along the reach it
+    happens to sit -- a 0.4 mm blade is found at some heights and missed at
+    others, so there is no miss rate to quote, only that boundary. ALONG the
+    path -- a fin standing edge-on inside the cylinder -- the spacing is
     `radius / rings` outwards (1 mm at the defaults for an 8 mm tool) and
     `2 pi radius / around` around (about 1.6 mm on the outermost ring), and
     THOSE are the two to raise. The axis itself carries no ring, so a rod
@@ -1345,9 +1350,12 @@ def tool_access(obstacles, names, *, origin, direction, diameter, length,
     # lid at the top of the Catches list -- is thin along the axis and wide
     # across it: a 2 mm lid was walked straight over at 8 of the 30 heights it
     # was tried at, and raising `rings` and `around` did nothing about it,
-    # because neither touches this axis. 0.5 mm is the step material_under_head
-    # samples depth with, and it is well under `minimum_feature()`, so a wall
-    # thick enough for this nozzle to print is thicker than one step.
+    # because neither touches this axis. WHY HALF A MILLIMETRE: it is under
+    # `minimum_feature()`, so a wall thick enough for this nozzle to print is
+    # thicker than one step and cannot fall between two levels. Both halves of
+    # that are behaviour rather than taste, so both are tests instead of this
+    # sentence -- see the two named `..._axial_step_...` in
+    # tests/cadbuild/test_checklib_printability.py.
     levels = max(3, int(length / 0.5) + 1)
     total = levels * rings * around
     problems = []

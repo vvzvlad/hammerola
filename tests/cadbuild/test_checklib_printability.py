@@ -54,6 +54,18 @@ def test_minimum_feature_is_the_nozzle_laid_down_twice():
     assert checklib.minimum_feature(nozzle_mm=0.4, lines=3) == pytest.approx(1.2)
 
 
+def test_the_axial_step_is_under_the_thinnest_wall_this_nozzle_prints():
+    """Why `tool_access` samples along the path every half millimetre.
+
+    An obstruction ACROSS the path is seen only if it is at least one step
+    thick, so the step is chosen under the thinnest wall this nozzle can lay
+    down: a wall a model may legitimately have cannot fall between two levels.
+    A wider nozzle would want a shorter step, and this is what says so -- in
+    the file rather than in the comment at the step itself.
+    """
+    assert checklib.minimum_feature() > 0.5
+
+
 def test_tool_access_refuses_a_sampling_that_probes_nothing():
     """Zero rings or zero points around buys the same silence a zero diameter does."""
     with pytest.raises(ValueError, match="rings is 0"):
@@ -149,10 +161,10 @@ def _wall():
             .translate((4, 0, 10)))
 
 
-def _lid_across(centre):
-    """A 2 mm plate lying ACROSS the path, centred at that height above the seat."""
+def _lid_across(centre, thickness=2.0):
+    """A plate lying ACROSS the path, centred at that height above the seat."""
     cq = _cq()
-    return cq.Workplane("XY").box(40, 40, 2).translate((0, 0, centre))
+    return cq.Workplane("XY").box(40, 40, thickness).translate((0, 0, centre))
 
 
 def _socket():
@@ -236,6 +248,23 @@ def test_a_lid_across_the_path_is_seen_wherever_along_it_the_lid_sits():
             direction=(0, 0, 1), diameter=8, length=20)
         assert len(problems) == 1, f"the lid at z={centre} was walked over"
         assert "'lid'" in problems[0]
+
+
+def test_a_thin_blade_across_the_path_pins_the_axial_step():
+    """The NUMBER, which the lid above does not hold.
+
+    A 2 mm lid is found at every height by any step up to about 1.9 mm, so that
+    test would stay green on a step four times the current one. A blade of
+    0.6 mm -- under `minimum_feature()`, so under anything the check undertakes
+    to see -- is found at these eight heights and only these steps: the current
+    one, and nothing longer than 0.65 mm. Lengthening the step therefore fails
+    here rather than silently widening the gap the docstring describes.
+    """
+    for centre in (0.7, 3.3, 5.1, 7.7, 9.4, 13.6, 17.2, 19.3):
+        problems = checklib.tool_access(
+            [_lid_across(centre, thickness=0.6)], ["blade"], origin=(0, 0, 0),
+            direction=(0, 0, 1), diameter=8, length=20)
+        assert len(problems) == 1, f"the 0.6 mm blade at z={centre} was missed"
 
 
 def test_a_lid_that_fits_through_the_mouth_clears_every_stop():
