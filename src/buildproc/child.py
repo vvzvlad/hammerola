@@ -55,9 +55,36 @@ from pathlib import Path
 # --- exit codes owned by the CHILD -----------------------------------------
 # 1 is missing on purpose and is documented rather than assigned: that is what
 # `faulthandler.dump_traceback_later(..., exit=True)` exits with when its
-# deadline passes (it calls `_exit(1)` after printing the stack). Everything
-# this module does itself therefore avoids 1, so a 1 coming out of here means
-# the in-child watchdog fired and the log holds the stack it printed.
+# deadline passes (it calls `_exit(1)` after printing the stack).
+#
+# THE HUB'S OWN BUG WAS THAT 1 MEANT TWO THINGS, and that is what `main`'s
+# blanket handler below is for. 1 is ALSO what CPython exits with on an
+# exception nobody caught, so any bug in THIS module -- and in particular in
+# its own last-resort printing -- was reported to the parent as a hang:
+# `runner` maps 1 to STATUS_HANG and the pusher is told "the build stopped
+# responding; its stack is in the log", with no stack in it and an operator
+# sent looking for a stuck thread that never existed. A model reaches that
+# without meaning to: `sys.stdout.close()` in a model.py (or a library doing it
+# on the way out) makes `traceback.print_exc()` raise, from inside the handler
+# that was reporting the first failure.
+#
+# So the property is "nothing this module does exits 1", and it is held by one
+# guard rather than by auditing every line: `main` catches BaseException and
+# answers EXIT_CRASHED, and every print on a failure path goes through `_say`
+# or `_print_exc_quietly`, neither of which raises. The watchdog is untouched
+# by that -- `dump_traceback_later` calls `_exit(1)` from C and raises nothing
+# -- so a 1 still means the watchdog fired and the log holds the stack it
+# printed.
+#
+# EACH GUARD IS PINNED ON ITS OWN, in `tests/buildproc/test_build_child.py`,
+# and separately is the only way it counts: the end-to-end case (a model that
+# closes stdout and stderr) is held by `_print_exc_quietly` ALONE -- delete
+# `_say`'s guard and `main`'s blanket handler both, keep that one, and
+# `test_a_model_that_closes_the_log_is_not_reported_as_a_hang` stays green. So
+# the other two have witnesses of their own,
+# `test_the_blanket_handler_in_main_answers_for_anything_at_all` and
+# `test_the_log_line_never_raises_even_with_nowhere_to_write`, because an
+# end-to-end test would let either be deleted in silence.
 EXIT_OK = 0
 EXIT_HANG_DUMP = 1
 EXIT_BUILD_FAILED = 3      # BuildError: the model or a gate said no
@@ -80,11 +107,69 @@ _OPTIONS = {
 }
 
 
+def _say(text):
+    """One line of the build log, or none. NEVER RAISES.
+
+    Writing is the one realistic way a function whose whole job is printing
+    fails, and a model.py decides whether it does: `sys.stdout.close()` is a
+    line somebody writes by accident, and `sys.stderr` goes the same way.
+    Unguarded, that raise leaves `main` and the interpreter exits 1, which the
+    parent reads as the in-child watchdog (see the exit codes above).
+
+    THE STREAM IS `sys.stderr` AND IT DOES NOT MATTER WHICH: `runner` starts
+    the process with `stderr=subprocess.STDOUT`, so both land in one log in
+    write order, and both are flushed here.
+    """
+    try:
+        print(text, file=sys.stderr, flush=True)
+    except BaseException:  # nowhere left to report to
+        pass
+
+
+def _print_exc_quietly():
+    """`traceback.print_exc()`, and never a second exception out of it.
+
+    This is the guard that carries the end-to-end case: a model.py whose log
+    stream is gone by the time it fails. Writing the traceback then raises, out
+    of the handler that was reporting the FIRST failure, and the build is
+    reported as a hang rather than as the crash it was.
+
+    `BaseException`, because the exit code is what turns on it and the
+    interpreter exits 1 for anything at all that gets out of here.
+    """
+    try:
+        traceback.print_exc()
+    except BaseException:  # nowhere left to report to
+        pass
+
+
 def main(argv):
+    """`_run`, with the one guarantee the parent reads the exit code under.
+
+    NOTHING LEAVES THIS FUNCTION BY RAISING, because the code the interpreter
+    would then exit with is the watchdog's (see the exit codes above). It is a
+    blanket handler rather than an audit of every line for the reason the audit
+    kept failing everywhere else in this change: the property belongs in one
+    place, and a line added below must not be able to take it away.
+
+    `BaseException` IS THE WIDTH AND NOT A HABIT: the interpreter exits 1 for
+    anything uncaught, `Exception` or not. Both halves of that -- the handler
+    being here at all, and it being this wide -- are red under
+    `test_the_blanket_handler_in_main_answers_for_anything_at_all`, which calls
+    this function directly rather than through a build.
+    """
+    try:
+        return _run(argv)
+    except BaseException:
+        _print_exc_quietly()
+        return EXIT_CRASHED
+
+
+def _run(argv):
     try:
         opts = _parse(argv[1:])
     except ValueError as exc:
-        print(f"buildproc: {exc}", file=sys.stderr, flush=True)
+        _say(f"buildproc: {exc}")
         return EXIT_INVOCATION
 
     # 1. The second echelon against a hang, and the only one that says where.
@@ -111,7 +196,7 @@ def main(argv):
     try:
         _cap_occt_threads(opts["occt_threads"])
     except RuntimeError as exc:
-        print(f"buildproc: {exc}", file=sys.stderr, flush=True)
+        _say(f"buildproc: {exc}")
         return EXIT_UNCAPPED
 
     # 3. Into the model's tree. Models read their own files by relative path
@@ -128,7 +213,7 @@ def main(argv):
         from src.cadbuild.build import build
         from src.cadbuild.errors import BuildError
     except Exception:
-        traceback.print_exc()
+        _print_exc_quietly()
         return EXIT_CRASHED
 
     # Pinned rather than searched for. `project_root()` would otherwise walk UP
@@ -181,14 +266,14 @@ def main(argv):
         # Distinguished from a crash by its own exit code because the hub
         # reports the two differently -- one is the pusher's problem and the
         # other is ours (SPEC 8A.2 step 6).
-        print(f"build failed: {exc}", file=sys.stderr, flush=True)
+        _say(f"build failed: {exc}")
         return EXIT_BUILD_FAILED
     except BaseException:  # noqa: B036 -- see below
         # BaseException, not Exception: a model that calls sys.exit() or gets a
         # KeyboardInterrupt would otherwise leave through the interpreter's own
         # path with a code this component never assigned, and the parent would
         # read the model's chosen number as if the machinery had produced it.
-        traceback.print_exc()
+        _print_exc_quietly()
         return EXIT_CRASHED
 
     # A CLAIM, not a report -- see the module docstring. It carries the one
@@ -203,9 +288,9 @@ def main(argv):
             json.dumps({"files": files}, ensure_ascii=False),
             encoding="utf-8")
     except OSError:
-        traceback.print_exc()
+        _print_exc_quietly()
         return EXIT_CRASHED
-    print(f"build ok: {pid}, {len(files)} files", flush=True)
+    _say(f"build ok: {pid}, {len(files)} files")
     return EXIT_OK
 
 

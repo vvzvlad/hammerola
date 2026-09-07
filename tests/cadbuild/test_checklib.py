@@ -10,6 +10,7 @@ would be two records, one of which nobody reads.
 import contextlib
 import importlib
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -84,6 +85,217 @@ def test_the_record_is_shared_between_the_two_names():
     assert top_level.recorded_interference() == {"a|b": 1.5}
 
 
+def test_a_model_declares_its_numbers_through_the_top_level_name():
+    """The three constructors and the class, reached the way a model reaches
+    them. The generic re-export test above already requires them to BE there;
+    this is about them being the same objects, which `provenance` depends on:
+    it asks `isinstance(value, checklib.Number)` against the implementation's
+    class, and a second class would make every declared number look bare.
+    """
+    assert top_level.Number is checklib.Number
+    for name in ("measured", "derived", "estimated"):
+        assert getattr(top_level, name) is getattr(checklib, name)
+    assert isinstance(top_level.measured(1.0, "ref/m.md"), checklib.Number)
+    assert top_level.KINDS == (top_level.MEASURED, top_level.DERIVED,
+                               top_level.ESTIMATED)
+
+
+def test_the_note_ceiling_is_the_one_the_rest_of_the_system_holds_text_to():
+    """One number, written in four files that cannot import each other.
+
+    This module is loaded BY PATH by the root shim, under a name that never goes
+    through `src`, so it may not import `hubspec` or the serving half -- exactly
+    the situation `tests/client/test_limits.py` is in and answers the same way.
+    The value is transcribed and the test is what makes it a shared rule.
+
+    THEY ARE ONE RULE BY DECISION AND NOT BY CONSEQUENCE, which is worth being
+    exact about because three of the four are enforced somewhere and this one is
+    not: nothing mechanically holds a NOTE under `render.MAX_TEXT`, since
+    metrics.json is served as a file and never passes through `_plain_text`. So
+    a note is bounded here and nowhere else, and this equality is a choice --
+    one ceiling on author-visible text rather than four that drift. The cost is
+    that re-reasoning about the heading ceiling silently moves the note's, and
+    the reason it is worth paying is that narrowing this one later would
+    retroactively refuse builds that used to pass, into revisions that are
+    immutable. Overturn it deliberately or not at all; the argument is written
+    out at MAX_NOTE_CHARS.
+    """
+    from src import render
+    from src.cadbuild import hubspec
+    from src.client.limits import MAX_TEXT_CHARS
+
+    assert checklib.MAX_NOTE_CHARS == hubspec.MAX_NOTE_CHARS
+    assert checklib.MAX_NOTE_CHARS == render.MAX_TEXT
+    # The fourth copy, on the other side of the wire. `tests/client/test_limits.py`
+    # ties it to the serving half; this ties it to the build half, so the four
+    # are one chain rather than two pairs.
+    assert checklib.MAX_NOTE_CHARS == MAX_TEXT_CHARS
+
+
+def test_the_note_rule_agrees_with_what_the_hub_would_accept():
+    """The scan here and `first_nonprintable` are a third and a first copy.
+
+    Written out separately because of the import rule above, so the two are run
+    over one corpus and required to agree -- a rule tightened on one side fails
+    here instead of drifting.
+
+    TWO DELIBERATE DIFFERENCES, both kept out of the corpus because requiring
+    agreement on them would be requiring the wrong thing:
+
+      * ANGLE BRACKETS. The hub bans them in a TITLE and not in a note
+        (`hub_text_problem(..., angle_brackets_ok=True)` is how a note is
+        checked), so this module says nothing about them.
+      * U+2028 and U+2029. This module refuses them and `first_nonprintable`
+        does not, because they are Zl and Zp rather than category C. That is a
+        rule laid ON TOP of the shared scan and not a drift in it: a note is
+        printed into a build log that is read a line at a time, and
+        `str.splitlines()` breaks on both -- see `_LINE_SEPARATORS`. Whether
+        `buildnames` should learn the same is a separate question with a wider
+        blast radius (a file name, a project title) and is not answered here.
+    """
+    from src.buildnames import first_nonprintable
+
+    corpus = [
+        "an ordinary note",
+        "",
+        "two\nlines",
+        "a\ttab",
+        "a\x7fdelete",
+        "anext-line, which is C1 and not C0",
+        "a‮reordering override",
+        "a\ud800lone surrogate",
+        "é accented, which is fine",
+        "x" * checklib.MAX_NOTE_CHARS,
+    ]
+    for text in corpus:
+        ours = checklib._text_problem(text, "note")
+        theirs = first_nonprintable(text)
+        assert (ours is None) == (theirs is None), (
+            f"{text!r}: this module says {ours!r} and buildnames says "
+            f"{theirs!r} -- the two scans have drifted apart")
+
+
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029"])
+def test_a_note_cannot_split_a_line_of_the_build_log(separator):
+    """U+2028 and U+2029 pass every printability test and still split a line.
+
+    They are the two characters that get into a note by accident and cannot be
+    seen afterwards: an editor or a paste from a PDF puts one in, it renders as
+    nothing, and `_text_problem`'s category-C scan walks past it -- Zl and Zp are
+    Separator, not C. `str.splitlines()`, which is how a build log is read back,
+    breaks on both, so one line of the author's note becomes two and the second
+    one has no label on it. The first assertion is that mechanism, written out so
+    the test does not rest on the reader remembering it.
+    """
+    two_lines = f"estimate: WALL = 2.4 -- ok{separator}measured on the v2 body"
+    assert len(two_lines.splitlines()) == 2, (
+        "the premise: python really does split a line here")
+
+    with pytest.raises(ValueError) as exc:
+        checklib.estimated(2.4, two_lines)
+    assert "splits a line" in str(exc.value)
+    # And in a source, which is printed by the same build and read by the same
+    # scan -- the refusal is about the string, not about which field holds it.
+    with pytest.raises(ValueError) as exc:
+        checklib.measured(2.4, f"ref/m.md{separator}x")
+    assert "splits a line" in str(exc.value)
+
+
+def test_the_ceiling_says_something_different_about_a_path_and_a_sentence():
+    """One advice sentence used to be written about a note and printed for both.
+
+    Both halves of it are false of a `source`: `provenance.report()` publishes
+    `notes` and nothing else, so a source never reaches metrics.json at all, and
+    "put the working in the measurement journal" is not something anybody can do
+    to a file path. What the two share is the count and the number.
+    """
+    over = "x" * (checklib.MAX_NOTE_CHARS + 1)
+    note = checklib._text_problem(over, "note")
+    source = checklib._text_problem(over, "source")
+
+    for message in (note, source):
+        assert message.startswith(f"is {len(over)} characters, and the ceiling "
+                                  f"is {checklib.MAX_NOTE_CHARS}.")
+    assert "metrics.json" in note and "journal" in note
+    assert "metrics.json" not in source and "journal" not in source
+    assert "#heading" in source, "it says what a source is instead"
+
+
+def test_the_note_ceiling_says_the_same_thing_to_every_kind():
+    """The advice is chosen by FIELD, so it has to be true of all three kinds.
+
+    It ended "put the working in the measurement journal", which is advice for
+    `measured()` alone -- `derived()` is explicitly for a figure that follows
+    from other numbers, a published standard among them, and has no journal
+    behind it, so a derivation with an over-long note was sent to a file that
+    does not exist and need not. One sentence reaches all three because
+    `_text_problem` is handed the field and not the kind, which is what this
+    holds: whatever it says has to hold for whichever kind tripped it.
+    """
+    over = "x" * (checklib.MAX_NOTE_CHARS + 1)
+    advice = checklib._TOO_LONG_ADVICE["note"]
+    for kind, call in (
+            ("measured", lambda: checklib.measured(2.4, "ref/m.md", over)),
+            ("derived", lambda: checklib.derived(2.4, over)),
+            ("estimated", lambda: checklib.estimated(2.4, over))):
+        with pytest.raises(ValueError) as exc:
+            call()
+        assert advice in str(exc.value), (
+            f"{kind}() is told something else about a note over the ceiling, "
+            f"so the one sentence is no longer the one sentence")
+    assert "measurement journal" not in advice, (
+        "that clause is advice for measured() alone, and this sentence is "
+        "printed for derived() and estimated() as well -- a derivation has no "
+        "journal behind it, which is the whole point of the kind")
+
+
+@pytest.mark.parametrize("note, expected", [
+    ("x" * 201, "201 characters"),
+    ("a note\nover two lines", "not a printable character"),
+    ("‮reordered", "not a printable character"),
+    ("\ud800 decoded with surrogateescape", "not a printable character"),
+])
+def test_a_note_that_cannot_be_published_is_refused_where_it_is_written(
+        note, expected):
+    """A ValueError at the declaration, not a UnicodeEncodeError three files on.
+
+    Both of these used to be accepted by the constructor and then kill the
+    build: `print(f"estimate: ...")` and `json.dumps(..., ensure_ascii=False)`
+    each raise UnicodeEncodeError on a surrogate, and neither is a BuildError,
+    so the build ended in EXIT_CRASHED -- the hub reporting its own fault for a
+    string the model wrote. A ValueError raised while model.py is being imported
+    is wrapped by `geometry.load_model` into a BuildError, i.e. EXIT_BUILD_FAILED.
+    """
+    with pytest.raises(ValueError) as exc:
+        checklib.estimated(1.0, note)
+    assert expected in str(exc.value)
+    assert "estimated()" in str(exc.value), "the message names the call"
+
+
+def test_the_ceiling_holds_the_source_as_well_as_the_note():
+    """`measured()`'s source is author text on the same journey, so the same
+    rule. It is the one that appears in the refusal message, too."""
+    with pytest.raises(ValueError) as exc:
+        checklib.measured(1.0, "x" * 201)
+    assert "source" in str(exc.value)
+
+
+def test_a_note_exactly_at_the_ceiling_is_accepted():
+    """The boundary, from the side that has to keep working: an off-by-one here
+    refuses a note that is exactly at the ceiling, and the starter template
+    every project copies runs close to it.
+
+    HOW CLOSE IS NOT WRITTEN HERE, and that is the correction rather than a
+    vagueness. The sentence used to give a figure -- "the template's longest
+    note is 130 characters" -- which was wrong when it was written (130 was the
+    fourth longest; the longest was 182) and had nothing to fail on either way.
+    `tests/test_template.py::test_every_note_in_the_template_fits_under_the_ceiling`
+    measures it instead.
+    """
+    number = checklib.estimated(1.0, "x" * checklib.MAX_NOTE_CHARS)
+    assert len(number.note) == checklib.MAX_NOTE_CHARS
+
+
 def test_everything_a_model_calls_is_re_exported():
     """The shim carries every public name the implementation defines.
 
@@ -97,8 +309,6 @@ def test_everything_a_model_calls_is_re_exported():
     Public means "defined here and not underscored". Imported modules are
     excluded, or the shim would be required to re-export `math`.
     """
-    import types
-
     public = {
         name for name, value in vars(checklib).items()
         if not name.startswith("_") and not isinstance(value, types.ModuleType)
@@ -117,11 +327,31 @@ def test_the_shims_declared_list_matches_what_it_actually_exports():
     `from checklib import *` reads __all__; `checklib.x` reads the assignment.
     A name in one and not the other works through one door and not the other,
     which is worse than being absent from both.
+
+    BOTH DIRECTIONS, AND ONLY ONE OF THEM USED TO BE CHECKED. `bound` was built
+    by filtering `__all__` itself -- `{name for name in declared if
+    hasattr(...)}` -- so it could never hold a name `declared` did not, and the
+    equality was `declared >= bound` wearing a `==`. Delete `"Number",` from
+    __all__ and keep the assignment, and this passed: `checklib.Number` went on
+    working while `from checklib import *` stopped binding the class both halves
+    of the provenance rule test with `isinstance`. So `bound` is read off the
+    MODULE now, the same way `test_everything_a_model_calls_is_re_exported`
+    above reads the implementation, and the two directions have separate
+    messages because they want opposite fixes.
     """
     declared = set(top_level.__all__)
-    bound = {name for name in declared if hasattr(top_level, name)}
-    assert declared == bound, (
-        f"__all__ names {sorted(declared - bound)} that are not bound")
+    bound = {
+        name for name, value in vars(top_level).items()
+        if not name.startswith("_") and not isinstance(value, types.ModuleType)
+    }
+    assert bound, "no public names found on the shim: the derivation is broken"
+    assert not declared - bound, (
+        f"__all__ names {sorted(declared - bound)}, which the shim does not "
+        f"bind, so `from checklib import *` raises AttributeError on it")
+    assert not bound - declared, (
+        f"the shim binds {sorted(bound - declared)} and __all__ does not name "
+        f"them, so `checklib.<name>` reaches them and `from checklib import *` "
+        f"does not")
 
 
 def test_the_shim_survives_a_model_project_that_has_a_src_of_its_own(tmp_path):

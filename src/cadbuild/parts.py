@@ -27,6 +27,7 @@ from .artifacts import ASSEMBLED_STEM, PRINT_VIEW_ID
 from .errors import BuildError
 from .geometry import as_shape
 from .hubspec import MAX_NOTE_CHARS, MAX_PARTS, MEMBER_RE, hub_text_problem
+from .modelchecks import call_model
 from .palette import HARDWARE_COLOR, MOCK_COLOR, palette_colors
 
 
@@ -119,8 +120,10 @@ def _check_key(key):
         raise BuildError(
             f"catalogue key {key!r} is a {type(key).__name__} and not a "
             "string. A key is the part's identity: the stem it is exported "
-            "under, the label the viewer shows, and the name every view "
-            "points at."
+            "under, the name every view points at, and -- through those "
+            "references -- the name the viewer's tree shows. (It is the "
+            "reference that carries the name into the viewer, not this entry: "
+            "a part no view points at is drawn nowhere and labelled nothing.)"
         )
     if not MEMBER_RE.match(key):
         raise BuildError(
@@ -220,8 +223,15 @@ def read_catalogue(model):
     ORDER IS PRESERVED, because reproducibility depends on it: the export loop,
     the metrics and the picture list all walk this dict, and a build that
     reordered them would produce a different log for an unchanged model.
+
+    A DOOR INTO THE MODEL (`modelchecks.MODEL_DOORS` is the list of them): the
+    call is what raises an author's exception as `parts() raised TypeError
+    (model.py:12): ...` instead of leaving the build to report that the hub
+    crashed. Only the CALL is guarded -- what comes back is read below, and a
+    bug of OURS in that reading is a bug of ours, not something to hand the
+    author as "the model said no".
     """
-    catalogue = model.parts()
+    catalogue = call_model("parts()", model.parts)
     if not isinstance(catalogue, dict) or not catalogue:
         raise BuildError(
             'parts() must return a non-empty dict: {"lid": {"shape": lid, '

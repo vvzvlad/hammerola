@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part".
-version: 6
+version: 7
 ---
 
 # hammerola
@@ -296,11 +296,17 @@ from `media_type` unedited carries the `+` of `image/svg+xml`, which refuses
 the whole push by rule 1 below.
 
 **`ref/measurements.md` is the log of raw measurements**: date, what was
-measured, with what, the number. Every constant of a fit, a clearance or an
-interference cites a line in it. The word "measured" in a comment with no line
-behind it is a lie written into the source. (`thread_clearance = 0.30`, carrying
-the comment `# measured fit on the printer`, was never measured: two ruined
-prints, 100 g of plastic, and the part never worked.)
+measured, with what, the number. Every constant that CLAIMS to be measured cites
+a line in it — `checklib.measured(v, "ref/measurements.md#screw")`, and the
+build refuses the push when the file or the heading is not there. A constant
+nobody measured says so with `checklib.estimated(...)` instead; what is refused
+is the third option, a number with no statement about it at all. Most fits and
+clearances start out estimated and that is honest — the starter template's
+`LIP_CLEARANCE`, `BOSS_RELIEF` and `BOARD_CLEARANCE` all are. The word
+"measured" in a comment with no line behind it is a lie written into the source.
+(`thread_clearance = 0.30`, carrying the comment `# measured fit on the
+printer`, was never measured: two ruined prints, 100 g of plastic, and the part
+never worked.)
 
 **That is the special case of a general rule: a justification is an assertion,
 and it is checked like one.** "Measured", "in practice", "standard", "in the
@@ -604,12 +610,20 @@ returned a body without the boss; the check stayed green for 3 h 38 min.)
 
 **Every fit number has a provenance**: measured, with its line in the
 measurements log; derived, from a number you name; or an estimate — and an
-estimate never drives geometry. It is printed from `checks()` instead, which is
-what puts it in the build log; commit, and `hammerola log <revision>` still has
-it. Print it from a `build` and it lives at that build's job and nowhere else,
-addressed by an id rather than by the slot (below). (43 minutes of argument
-about sediment washout in which both sides were estimates: the velocity differed
-by 5.5×, the threshold had a 3× spread.)
+estimate is DECLARED as one rather than avoided. `checklib.estimated(v, "what
+would settle it")` builds, drives geometry like any other number, and is the
+right answer for most fits before anything has been printed — most of the
+starter template's own numbers are estimates, and they drive its geometry. What
+an estimate must never do is be quoted back as though it were a measurement.
+Each estimate prints an `estimate:` line of its
+own in the build log and travels into `metrics.json` with its note, so a
+`commit` keeps both and `hammerola log <revision>` still has the log. Estimate
+from a `build` and the note is in the dev slot's `metrics.json` like any other
+number's; it is the LOG that lives only at that build's job, addressed by an id
+rather than by the slot (below). (43 minutes of argument about sediment washout
+in which both sides were estimates: the velocity differed by 5.5×, the threshold
+had a 3× spread. Neither was labelled — that is the failure, not that they were
+estimates.)
 
 **A number is quoted against what reproduces it.** Below what the process holds,
 a difference stops being an argument about the part: an FDM machine lays layers

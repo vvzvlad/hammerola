@@ -5,6 +5,13 @@ with the triangulation an export leaves behind."""
 import sys
 
 from .errors import BuildError
+from .modelchecks import call_model, model_site
+# Rendering a value the model decides. `shown` calls `str()` INSIDE itself,
+# which is what a handler already building a refusal needs: an `__str__` with a
+# bug in it would otherwise raise out of the `except` and replace the message.
+# See `modeltext` for what these promise -- and, just as much, for what they do
+# not.
+from .modeltext import MAX_MESSAGE_CHARS, shown
 from .paths import project_root
 
 
@@ -28,6 +35,21 @@ def load_model():
     the project is whichever one the run is in -- and a path pinned at import
     would be the wrong project's the moment anything imported this module
     before the root was known.
+
+    THE MESSAGE NAMES THE LINE, and this is the door where that matters most.
+    `provenance` looks only at module-level names, so a note with a newline in
+    it is almost always written at the top level of model.py -- and it is then
+    raised HERE, during the import, rather than at any of the doors
+    `modelchecks.call_model` guards (`MODEL_DOORS` is the list). Those answer
+    `(model.py:5)`; this one
+    answered with no file and no line at all, leaving an author with forty
+    constants to find the one that is wrong by reading.
+
+    `model_site` AND NOT `fail_site`, deliberately: with no model.py to import
+    there is no model frame in the traceback, and `fail_site` would fall back to
+    naming a file of the hub's -- `importing model.py failed (geometry.py:<line>)`
+    for a file that is not there. Saying nothing is the right answer to "which
+    line of the model" when the model does not exist.
     """
     root_path = project_root()
     root = str(root_path)
@@ -39,7 +61,8 @@ def load_model():
         import model
     except Exception as exc:
         raise BuildError(
-            f"importing model.py failed: {exc}"
+            f"importing model.py failed{model_site(exc)}: "
+            f"{shown(exc, str, limit=MAX_MESSAGE_CHARS)}"
             f"{_shadowed_src_hint(root_path, exc)}") from exc
     for name in ("parts", "views"):
         if not callable(getattr(model, name, None)):
@@ -75,8 +98,9 @@ def _shadowed_src_hint(root, exc):
     if not isinstance(exc, ImportError):
         return ""
     blamed = getattr(exc, "name", None) or ""
+    said = str(exc)
     if not (blamed == "src" or blamed.startswith("src.")
-            or "'src" in str(exc) or "checklib" in str(exc)):
+            or "'src" in said or "checklib" in said):
         return ""
     if not ((root / "src").is_dir() or (root / "src.py").is_file()):
         return ""
@@ -89,6 +113,36 @@ def _shadowed_src_hint(root, exc):
         "implementation by file path), so if that is the import that failed, "
         "the shim has been changed back to importing it by name."
     )
+
+
+def checklib_shadow():
+    """Where the model's `import checklib` landed, when it was not ours.
+
+    `None` when the model imported the package's own copy, or imported none at
+    all. Otherwise the path of the copy it did import, as a string -- `'?'` for
+    a module with no `__file__`, because the caller is building a sentence and
+    "somewhere" is still worth saying.
+
+    PUBLIC BECAUSE TWO REFUSALS NEED THE SAME ANSWER, and the second one arrived
+    long after this: `provenance.check` refuses a model whose numbers do not
+    declare themselves, and a project with its own checklib is told exactly that
+    about numbers it DID declare -- through the shadowing copy, whose `Number`
+    is a different class. Naming the cause is the difference between a message
+    the author can act on and one that sends them to rewrite correct lines. The
+    detection is one function rather than two because the ONE thing it turns on
+    -- which attribute identity distinguishes our module from an older copy --
+    is exactly the sort of fact a second implementation gets subtly wrong.
+    """
+    import sys
+
+    shadow = sys.modules.get("checklib")
+    if shadow is None:
+        return None
+    from . import checklib as ours
+
+    if getattr(shadow, "recorded_interference", None) is ours.recorded_interference:
+        return None
+    return getattr(shadow, "__file__", "?")
 
 
 def _warn_if_checklib_shadowed():
@@ -107,17 +161,11 @@ def _warn_if_checklib_shadowed():
     works, and a build must not fail over a half-finished migration. Deleting
     checklib.py from the project is the whole of the fix.
     """
-    import sys
-
-    shadow = sys.modules.get("checklib")
+    shadow = checklib_shadow()
     if shadow is None:
         return
-    from . import checklib as ours
-
-    if getattr(shadow, "recorded_interference", None) is ours.recorded_interference:
-        return
     print(
-        f"warning: model.py imported checklib from {getattr(shadow, '__file__', '?')}, "
+        f"warning: model.py imported checklib from {shadow}, "
         "not the one in cadbuild. The project's own copy shadows it, and "
         "the interference volumes checklib records will not reach "
         "metrics.json -- the build measures them and writes none. Delete "
@@ -125,15 +173,57 @@ def _warn_if_checklib_shadowed():
     )
 
 
+# What a message calls the doors below. They share a sentence because they are
+# one question asked of the same object -- "give me the geometry you are" -- and
+# the author cannot act on which spelling of it the hub happened to use.
+A_SHAPE = "reading a shape model.py handed over"
+
+
+def _first_body(obj):
+    """`obj.val()`, or `obj` where there is no stack.
+
+    A FUNCTION SO THAT IT CAN BE A DOOR, which is the whole reason it is not
+    written inline: `val()` runs inside the CAD kernel, and the kernel's frames
+    are not the model's, so `raised_by_the_model` cannot answer for what happens
+    in here (see `modelchecks.MODEL_DOORS`). Everything in the expression is
+    guarded rather than the call alone: `hasattr` swallows AttributeError and
+    nothing else, so a `val` PROPERTY that raises raises here too.
+    """
+    return obj.val() if hasattr(obj, "val") else obj
+
+
+def _every_body(obj):
+    """`obj.vals()` as a list, or `[obj]`. The other half of `_first_body`."""
+    return list(obj.vals()) if hasattr(obj, "vals") else [obj]
+
+
 def as_shape(obj, where):
     """Accept a Workplane or a bare Shape, return something with isValid().
 
     THE FIRST body only. Use it where one body is all there can be, and
     as_shapes() everywhere completeness matters -- see there.
+
+    A DOOR INTO THE MODEL, and one of a PAIR with `as_shapes` below
+    (`modelchecks.MODEL_DOORS` lists both). THESE TWO ARE THE DOORS THAT BUY
+    THE EXIT CODE rather than only the message, which is what earns them their
+    place on a list otherwise made of calls into model.py: the object is the
+    author's, but the code that raises is the CAD KERNEL's, in site-packages,
+    so nothing on the traceback sits under the project root and
+    `raised_by_the_model` answers False for a fault that is entirely theirs.
+    Measured before the guard existed: a `val()` that raises left the build
+    process as a bare exception, i.e. EXIT_CRASHED, and the hub told whoever
+    pushed that it had fallen over.
+
+    THE GUARD IS INSIDE THESE TWO FUNCTIONS rather than at the call sites.
+    Which of the two a caller reaches does not follow from anything -- parts
+    arrive HERE, views, the gate and the assembly arrive THERE -- and both are
+    called from several modules; a rule applied at the sites somebody thought
+    about is the failure this whole area keeps repeating.
     """
-    shape = obj.val() if hasattr(obj, "val") else obj
+    shape = call_model(A_SHAPE, _first_body, obj)
     if not hasattr(shape, "isValid"):
-        raise BuildError(f"{where}: expected a CadQuery object, got {type(obj).__name__}")
+        raise BuildError(f"{where}: expected a CadQuery object, "
+                         f"got {type(obj).__name__}")
     return shape
 
 
@@ -151,8 +241,10 @@ def as_shapes(obj, where):
     A bare Shape has no stack and stands for itself. A Compound is one object
     with several bodies inside it and `vals()` returns it whole, which is
     right: it is handled as the one thing the model handed over.
+
+    A DOOR, for the reason `as_shape` above gives at length.
     """
-    shapes = list(obj.vals()) if hasattr(obj, "vals") else [obj]
+    shapes = call_model(A_SHAPE, _every_body, obj)
     if not shapes:
         raise BuildError(f"{where}: holds no geometry at all (an empty stack)")
     for shape in shapes:

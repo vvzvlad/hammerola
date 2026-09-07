@@ -24,6 +24,12 @@ the root of a project -- a model is imported with its own directory first on
 would then be written into one copy and read out of the other. The build warns
 and publishes anyway, with the numbers missing from metrics.json.
 
+`ref/measurements.md` beside this file is the other half of the parameter block
+below: every number written as `checklib.measured(...)` names a heading in it,
+and the build refuses a source that points at no such file or no such heading.
+A project that measures nothing needs no such file -- `estimated()` always
+builds -- but every number still has to say which of the three it is.
+
 NOTHING IS INSTALLED FOR A MODEL. The image has cadquery, trimesh, numpy,
 matplotlib and Pillow, plus the standard library, and a `requirements.txt` next
 to this file is not read by anything -- that is a security decision and not an
@@ -48,34 +54,113 @@ import checklib
 
 # --------------------------------------------------------------------------
 # Parameters -- millimetres, and everything the geometry is driven by.
+#
+# EVERY ONE OF THEM SAYS WHERE IT CAME FROM, and the build refuses one that
+# does not: a module-level UPPER_SNAKE name bound to a bare float stops the
+# push. Three ways to say it, and the third always builds --
+#
+#     checklib.measured(v, "ref/measurements.md#heading")  somebody measured it,
+#                                                          and it is written
+#                                                          down there
+#     checklib.derived(v, "what it follows from")          it follows from
+#                                                          other numbers
+#     checklib.estimated(v, "what would settle it")        nobody measured it
+#
+# -- so most of a first model is honestly `estimated`, and the build says so in
+# its log rather than letting a guess pass for a figure somebody took. A
+# `measured` source that points at no file, or at no heading in one, is a
+# refused build: a measurement nobody can go and read is an estimate with
+# better manners.
+#
+# `MIN_STL_BYTES` at the end of this block is an `int` and is outside the rule
+# entirely -- a count is not a dimension.
 # --------------------------------------------------------------------------
 
-LENGTH = 60.0            # outer X of both parts
-WIDTH = 40.0             # outer Y of both parts
-HEIGHT = 20.0            # outer Z of the base; the lid sits on top of this
-WALL = 2.4               # wall and floor thickness
-CORNER_RADIUS = 3.0      # vertical corner fillet, outer
+LENGTH = checklib.estimated(
+    60.0, "outer X of both parts: the box was drawn round the board with room "
+          "to spare. Settled by the place this actually has to fit")
+WIDTH = checklib.estimated(
+    40.0, "outer Y of both parts, chosen the same way as LENGTH and settled "
+          "by the same thing")
+HEIGHT = checklib.estimated(
+    20.0, "outer Z of the base; the lid sits on top of this. Settled by the "
+          "tallest thing that has to go inside")
+WALL = checklib.estimated(
+    2.4, "wall and floor thickness: four perimeters at a 0.6 mm nozzle. "
+         "Settled by printing one and pressing on it")
+CORNER_RADIUS = checklib.estimated(
+    3.0, "vertical corner fillet, outer. Chosen to look right; nothing but a "
+         "printed part will settle it")
 
-LID_THICKNESS = 2.4      # the flat plate of the lid
-LIP_HEIGHT = 3.0         # how deep the lid plugs into the base
-LIP_CLEARANCE = 0.25     # per-side gap between the lip and the inner wall
+LID_THICKNESS = checklib.derived(
+    WALL, "the flat plate of the lid is a wall -- the same thickness, arrived "
+          "at the same way, so it moves when WALL moves")
+LIP_HEIGHT = checklib.estimated(
+    3.0, "how deep the lid plugs into the base. Settled by whether the box "
+         "stays shut when it is picked up by the lid")
+LIP_CLEARANCE = checklib.estimated(
+    0.25, "per-side gap between the lip and the inner wall. Settled by "
+          "printing the pair on the machine that will print them")
+
+# The screw itself -- a bought part, drawn as a shank and a head. No thread:
+# nothing is exported for it and nobody prints it. It is written BEFORE the
+# posts below because they are drawn FROM it: TAP_DIA and CLEAR_DIA are
+# expressions in SCREW_DIA, so moving this group down the file is a NameError
+# on import rather than a matter of taste.
+#
+# The figures are the standard's, and the journal says so: three out of the bag
+# were measured to check that the bag holds what the label claims, and the
+# numbers here are the nominal ones rather than the mean of the three. The notes
+# say that too -- "caliper, 3 samples" would be claiming the figure came out of
+# the caliper.
+SCREW_DIA = checklib.measured(
+    3.0, "ref/measurements.md#screw",
+    "DIN912 nominal; 3 samples across the shank confirm the bag")
+SCREW_LENGTH = checklib.measured(
+    8.0, "ref/measurements.md#screw",
+    "DIN912 nominal, under the head, which is how a screw is measured; "
+    "3 samples confirm the bag")
+SCREW_HEAD_DIA = checklib.measured(
+    5.5, "ref/measurements.md#screw",
+    "DIN912 nominal; 3 samples confirm the bag")
+SCREW_HEAD_HEIGHT = checklib.measured(
+    3.0, "ref/measurements.md#screw",
+    "DIN912 nominal; 3 samples confirm the bag")
 
 # The four screw posts. They stand on the tray floor and reach the rim, so the
 # screws pull the lid down onto something solid rather than onto the walls.
-BOSS_INSET = 8.0         # screw axis in from each outer face
-BOSS_DIA = 7.0           # outer diameter of a post
-BOSS_RELIEF = 0.4        # per-side gap between a post and the hole in the lip
-TAP_DIA = 2.5            # the screw cuts its own thread in this
-TAP_DEPTH = 7.0          # how far down a post the tapping hole runs
-CLEAR_DIA = 3.4          # M3 clearance through the lid: the screw has to pull
-                         # the lid down, not thread into it
-
-# The screw itself -- a bought part, drawn as a shank and a head. No thread:
-# nothing is exported for it and nobody prints it.
-SCREW_DIA = 3.0
-SCREW_LENGTH = 8.0       # under the head, which is how a screw is measured
-SCREW_HEAD_DIA = 5.5
-SCREW_HEAD_HEIGHT = 3.0
+BOSS_INSET = checklib.estimated(
+    8.0, "screw axis in from each outer face: far enough in that the post "
+         "clears the corner fillet. Settled by looking at the assembled view")
+TAP_DIA = checklib.derived(
+    SCREW_DIA - 0.5, "the tapping drill for M3 -- the screw's own diameter "
+                     "less 0.5 mm, so the screw cuts its own thread in this")
+# THE DERIVATION RUNS THIS WAY ROUND ON PURPOSE, and it is worth a line because
+# the other way round is the easy mistake. BOSS_DIA is the number somebody
+# actually chose; the wall left round the tap hole is what FOLLOWS from it.
+# Written the other way -- an estimated wall with the diameter derived from it --
+# would state a dependency that never happened, and `derived` exists to say
+# which number came from which.
+BOSS_DIA = checklib.estimated(
+    7.0, "outer diameter of a screw post: enough to leave wall all round an M3 "
+         "tapping hole. Nobody measured how little would do -- settled by "
+         "printing a post and tapping it")
+BOSS_WALL = checklib.derived(
+    (BOSS_DIA - TAP_DIA) / 2.0,
+    "what BOSS_DIA leaves round the tapping hole, per side. Nothing draws with "
+    "it: it is an expression so that the figure moves when either input does, "
+    "instead of going stale in a comment")
+BOSS_RELIEF = checklib.estimated(
+    0.4, "per-side gap between a post and the hole in the lip. Settled by "
+         "printing the pair")
+TAP_DEPTH = checklib.estimated(
+    7.0, "how far down a post the tapping hole runs: longer than the screw "
+         "needs. Settled by the screw that ends up in it -- its length, less "
+         "what the lid takes, plus a turn")
+CLEAR_DIA = checklib.derived(
+    SCREW_DIA + 0.4, "M3 clearance through the lid -- the screw's diameter "
+                     "plus 0.4 mm, so the screw pulls the lid down rather "
+                     "than threading into it")
 
 # The board the box closes over -- a mock, so nothing is exported for it and
 # nobody prints it. What it earns its place with is the FIT: it is notched round
@@ -83,29 +168,43 @@ SCREW_HEAD_HEIGHT = 3.0
 # it as a mock rather than as something to make, and it is a leaf of the
 # `assembled` tree you can look at on its own. It is NOT in
 # assembled_preview.png -- that picture is of a shut, opaque box -- so it is
-# something you open the viewer for. These three numbers are chosen to fit
-# inside LENGTH and WIDTH above, not the other way round.
-BOARD_LENGTH = 45.0
-BOARD_WIDTH = 28.0
-BOARD_THICKNESS = 1.6
-BOARD_CLEARANCE = 0.5    # per-side gap where it is notched round the posts
+# something you open the viewer for. Its three sizes are measured off the real
+# board; LENGTH and WIDTH above are what was then drawn around them, not the
+# other way round.
+BOARD_LENGTH = checklib.measured(
+    45.0, "ref/measurements.md#board", "caliper, 3 samples")
+BOARD_WIDTH = checklib.measured(
+    28.0, "ref/measurements.md#board", "caliper, 3 samples")
+BOARD_THICKNESS = checklib.measured(
+    1.6, "ref/measurements.md#board", "caliper over the bare laminate, "
+                                      "away from a pad, 3 samples")
+BOARD_CLEARANCE = checklib.estimated(
+    0.5, "per-side gap where it is notched round the posts. Settled by whether "
+         "the board drops in without being pushed")
 
-PRINT_GAP = 8.0          # space between the two parts in the `print` view
+PRINT_GAP = checklib.estimated(
+    8.0, "space between the two parts in the `print` view: wide enough for a "
+         "brim. Settled by the slicer, not by the design")
 
-# What `checks()` holds the model to. These are limits rather than geometry:
-# below FIT_MIN the lid becomes a press fit, above FIT_MAX it rattles.
-FIT_MIN = 0.15
-FIT_MAX = 0.40
+# What `checks()` holds the model to. These are limits rather than geometry.
+FIT_MIN = checklib.estimated(
+    0.15, "below this the lid becomes a press fit. Settled by printing the "
+          "pair and trying it")
+FIT_MAX = checklib.estimated(
+    0.40, "above this the lid rattles. Settled the same way as FIT_MIN")
 
 # NOT the bed of anybody's printer -- nobody named one. This is the size below
 # which FDM printers essentially do not exist, so a part that fits inside it
 # raises no question. A part that grows past it is the moment to ask which
 # printer this is for and to put that machine's real build volume here.
-MIN_PRINTER_MM = 180.0
+MIN_PRINTER_MM = checklib.estimated(
+    180.0, "settled by naming the printer this is for and putting its real "
+           "build volume here")
 # Slack on that ceiling: a bounding box carries the kernel's own numerical error
 # (a fillet or a boolean leaves a micron or so), and without this a part drawn
 # exactly 180 mm wide fails with the unanswerable "X (180 > 180 mm)".
-PRINTER_TOL = 0.05
+PRINTER_TOL = checklib.estimated(
+    0.05, "a rounding allowance rather than a dimension; nothing measures it")
 
 # A "valid" solid that exports a stub file is a bug, and the export is the thing
 # people actually print.
@@ -466,12 +565,14 @@ def checks(out_dir):
     #    worth keeping when you copy this: `shell` and the booleans CAN return a
     #    body with nothing in it, which is reason enough to check. It is not
     #    guarding a case reproduced on these two parts. A WALL too thick for
-    #    LENGTH/WIDTH does not empty the base -- measured, it grows towards solid
-    #    and then the kernel refuses outright: WALL 2.4 -> 13653 mm3, 10.0 ->
-    #    39845, 19.9 -> 47845, 20.0 -> `Standard_Failure: BRep_API: command not
-    #    done`. The lid's line is here for the edit that turns one of its
-    #    booleans into a cut that takes everything, and so that each part is
-    #    named by a check of its own.
+    #    LENGTH/WIDTH does not empty the base -- it grows towards solid and then
+    #    the kernel refuses outright. Measured on cadquery 2.8.0, as the volume
+    #    of what build_base() RETURNS rather than of the tray before the posts
+    #    go on: WALL 2.4 -> 16225 mm3, 10.0 -> 39725, 19.9 -> 47708, and at 20.0
+    #    the kernel raises `Standard_Failure: BRep_API: command not done`.
+    #    The lid's line is here for the edit that turns one of its booleans into
+    #    a cut that takes everything, and so that each part is named by a check
+    #    of its own.
     with checklib.section("solids survived"):
         assert not checklib.is_empty(base), (
             "the base came back empty: the shell left no solid behind. Look at "

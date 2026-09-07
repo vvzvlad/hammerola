@@ -2,6 +2,7 @@
 """The local build: gate the model, export it, write _out/."""
 
 from datetime import datetime, timezone
+import functools
 import json
 import shutil
 import time
@@ -11,12 +12,26 @@ from .assembly import export_assembled, export_print_plate, render_previews
 from .gate import (check_assembled_coverage, check_interference,
                    check_print_layout)
 from .geometry import load_model
+from .errors import BuildError
 from .metrics import METRICS_NAME, collect_metrics, write_metrics
-from .modelchecks import run_checks
+from .modelchecks import (call_model, fail_site, raised_by_the_model,
+                          run_checks)
+from .modeltext import MAX_MESSAGE_CHARS, shown
 from .parts import printable_keys, read_catalogue
+from .paths import project_root
 from .printables import export_printables, overview_meshes, preview_files
 from .project import load_project
 from .project_title import title_problem
+# THE MODULE AND NOT ITS NAMES, which is the one import here written that way.
+# Everything it exports is a bare verb, and every one of them would need an
+# alias to read as anything at a call site in this file: `collect` and `report`
+# sit beside `collect_metrics` and `report_metrics`, which are about something
+# else entirely, and `check` on its own says nothing at all.
+# `provenance.check(...)` says which. HOW MANY OF THEM THIS FILE USES IS
+# DELIBERATELY NOT WRITTEN DOWN: the sentence that was said four and then named
+# three, leaving `unwrapped` to be found by whoever noticed the arithmetic, and
+# a fifth function would have made it false with nothing to fail on.
+from . import provenance
 from .views import export_views, prepare_views
 
 
@@ -43,6 +58,55 @@ def _phase(name, since):
     return time.monotonic()
 
 
+def _answers_for_the_model(run):
+    """The one handler that decides whose fault a failed build was.
+
+    SUFFICIENT AND NOT NECESSARY: a frame from the model's own tree on the
+    stack proves the fault is the author's, and its ABSENCE PROVES NOTHING.
+    What it buys is that a mistake in a model.py ends the build as
+    EXIT_BUILD_FAILED -- "the model said no" -- wherever the author's code left
+    a frame, INCLUDING the places nobody thought to wrap. That is most of them,
+    and the reason `modelchecks.MODEL_DOORS` still exists is the rest: at a
+    door the message names the entrance and the line (`parts() raised TypeError
+    (model.py:5)`), where this can only say that the model's own code raised
+    something, and at the two round `as_shape`/`as_shapes` the fault leaves NO
+    model frame at all, because the code that raises is the CAD kernel's.
+
+    A `BuildError` PASSES THROUGH UNTOUCHED for the reason `call_model` gives:
+    everything below already speaks in those terms, and wrapping a considered
+    refusal again would put a second sentence in front of it.
+
+    `Exception` AND NOT `BaseException`, also for `call_model`'s reason: a
+    `SystemExit` out of a model is terminal on every path already
+    (`buildproc.child` catches BaseException), so there is no green-and-published
+    outcome to guard against -- and the one place that DOES need to tell a
+    SystemExit apart, `run_checks`, has its own branch for it.
+
+    A DECORATOR AND NOT A `try:` AROUND THE BODY, for one measurable reason:
+    the site in `MODEL_DOORS` is read out of a real traceback by
+    `tests/cadbuild/test_model_doors.py`, and the `views()` entry there is
+    rooted at `build.build`. Splitting the body into an inner `_build` would
+    rename it to `build._build` -- a rewrite of the list to keep a refactor
+    invisible.
+    """
+    @functools.wraps(run)
+    def answering(*args, **kwargs):
+        try:
+            return run(*args, **kwargs)
+        except BuildError:
+            raise
+        except Exception as exc:
+            if not raised_by_the_model(exc):
+                raise
+            raise BuildError(
+                f"model.py's own code raised {type(exc).__name__}"
+                f"{fail_site(exc)}: "
+                f"{shown(exc, str, limit=MAX_MESSAGE_CHARS)}") from exc
+
+    return answering
+
+
+@_answers_for_the_model
 def build(out_dir, preview_mode="iso"):
     """Full local build. Returns (pid, meta, list of files to ship)."""
     started = time.monotonic()
@@ -78,6 +142,18 @@ def build(out_dir, preview_mode="iso"):
     if problem:
         print(f"warning: {problem}")
 
+    # WHERE THE NUMBERS CAME FROM, first of all of these. It is a rule about
+    # the SOURCE -- the case of a name and the type of a value, read off the
+    # file the model was imported from -- so it costs a parse and no geometry
+    # at all, and it belongs at the head of the section below rather than
+    # anywhere further down. It is spoken here, after `load_model()` and after
+    # the line naming the project, so that the estimates it prints are attached
+    # to a project the reader has already been told the name of.
+    declared = provenance.collect(model)
+    bare = provenance.unwrapped(model)
+    provenance.check(declared, bare, project_root())
+    provenance_summary = provenance.report(declared)
+
     # Names, then the view gates -- everything that can be wrong before a
     # single triangle exists, in the order it costs least to find out.
     #
@@ -98,8 +174,14 @@ def build(out_dir, preview_mode="iso"):
     # has what these gates would and would not notice). They are also the
     # cheapest checks in the run, so a model laid out wrong fails in
     # milliseconds instead of after the exports.
+    #
+    # `views()` IS A DOOR INTO THE MODEL (`modelchecks.MODEL_DOORS` is the
+    # list) and this is where it sits, because unlike `parts()` there is no
+    # single function of ours that both calls it and reads it. Its answer goes
+    # straight into `prepare_views`, which is called from elsewhere too and
+    # therefore cannot own the call.
     catalogue = read_catalogue(model)
-    prepared = prepare_views(model.views(), catalogue)
+    prepared = prepare_views(call_model("views()", model.views), catalogue)
     check_print_layout(prepared, catalogue)
     check_assembled_coverage(prepared, catalogue)
     # The catalogue, because the gate reads each leaf's KIND out of it: a mock
@@ -238,7 +320,8 @@ def build(out_dir, preview_mode="iso"):
     )
     # Written after the checks, because it carries what they measured and how
     # many of them there were.
-    write_metrics(out_dir, collect_metrics(project, part_metrics, checks_passed))
+    write_metrics(out_dir, collect_metrics(project, part_metrics, checks_passed,
+                                           provenance_summary))
 
     # metrics.json is named HERE and not derived from meta.json like the rest.
     # meta.json lists what the viewer loads, and the viewer never loads this --

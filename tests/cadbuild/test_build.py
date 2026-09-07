@@ -15,15 +15,21 @@ NOT patched — they are pure, and what they declare is the other half of the
 branch under test.
 """
 
+from pathlib import Path
 from types import SimpleNamespace
+import importlib.util
 import json
+import textwrap
 
 import pytest
 
 from src.cadbuild import build as build_module
+from src.cadbuild import paths
+from src.cadbuild import provenance as real_provenance
 from src.cadbuild.artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID,
                                     PREVIEW_SUFFIX, PRINT_VIEW_ID)
 from src.cadbuild.build import build
+from src.cadbuild.errors import BuildError
 
 from fakes import catalogue
 
@@ -86,12 +92,274 @@ def driven(monkeypatch):
         ("export_views", lambda prepared, out_dir: [
             {"id": view["id"], "name": view["id"], "file": f"{view['id']}.json",
              "parts": ["base"]} for view in prepared]),
-        ("collect_metrics", lambda project, parts, passed: {}),
+        # The provenance rule reads model.py back OFF DISK to find the line of
+        # every number in it, and the model here is a SimpleNamespace with no
+        # file behind it. Faked as one object rather than three names because
+        # `build` imports the module, not its functions.
+        ("provenance", SimpleNamespace(collect=lambda model: [],
+                                       unwrapped=lambda model: [],
+                                       check=lambda entries, bare, root: None,
+                                       report=lambda entries: {})),
+        ("collect_metrics",
+         lambda project, parts, passed, provenance: {}),
         ("write_metrics", lambda out_dir, metrics: None),
         ("render_previews", render_previews),
     ):
         monkeypatch.setattr(build_module, name, value)
     return state
+
+
+@pytest.fixture
+def with_the_real_rule(driven, monkeypatch, isolated_project):
+    """`driven`, but with the REAL provenance module over a real model.py.
+
+    THIS FIXTURE EXISTS BECAUSE THE RULE COULD BE DELETED FROM `build()` AND THE
+    SUITE STAYED GREEN. Removing the `provenance.check(...)` line gave an
+    identical green run of tests/cadbuild, tests/buildproc and
+    tests/test_template.py: the fixture above replaces the whole module with a
+    stub, `tests/cadbuild/test_provenance.py` calls `collect`/`check` through a
+    helper of its own, and the one end-to-end witness -- the template build --
+    is importorskip'ped wherever the CAD kernel is absent, i.e. in both CI
+    containers. So the rule was tested thoroughly and its CALL was not tested at
+    all. Nothing here needs a kernel: everything that would touch one is already
+    faked by `driven`, and what is real is the parse, the walk and the refusal.
+
+    Returns a function that writes model.py and points `build` at it.
+    """
+    monkeypatch.setattr(build_module, "provenance", real_provenance)
+    written = SimpleNamespace(passed=None)
+
+    def collect_metrics(project, parts, checks_passed, provenance):
+        # What `report()` handed back, captured where `build` puts it. It is the
+        # third of the three calls, and the only one whose result leaves the
+        # function -- so it is what says the three ran in the right order.
+        written.passed = provenance
+        return {}
+
+    monkeypatch.setattr(build_module, "collect_metrics", collect_metrics)
+
+    def write(source):
+        path = isolated_project / "model.py"
+        # The contract goes AFTER, so line 1 of the file is the first line the
+        # test wrote and a test asserting a line number is not agreeing with the
+        # length of a preamble. `read_catalogue` is faked, but `build` calls
+        # `model.views()` itself.
+        path.write_text(
+            textwrap.dedent(source).lstrip("\n")
+            + "\n\ndef parts():\n    return {}\n\n\ndef views():\n    return []\n",
+            encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("model_under_build", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        monkeypatch.setattr(build_module, "load_model", lambda: module)
+        return written
+
+    return write
+
+
+def test_build_refuses_a_model_whose_numbers_declare_nothing(
+        with_the_real_rule, out_dir, capsys):
+    """The call, not the rule: `build()` itself, over a file on disk.
+
+    A bare module-level UPPER_SNAKE float has to stop the build HERE, in the
+    function that is supposed to ask. Delete the `provenance.check(...)` line
+    from `build()` and this goes red -- which is the whole point of it, and is
+    how it was verified.
+
+    The model also carries a declared number, which pins the ORDER of the three
+    lines: `check` refuses before `report` prints, so a build that is not going
+    to happen does not first announce its estimates. Swap those two and the last
+    assertion goes red.
+    """
+    with_the_real_rule("""
+        import checklib
+
+        BOSS_SLOP = 0.35
+        WALL = checklib.estimated(2.4, "a first guess, nobody measured")
+    """)
+
+    with pytest.raises(BuildError) as exc:
+        build(out_dir)
+
+    message = str(exc.value)
+    assert "BOSS_SLOP" in message
+    assert "line 3" in message, "and it names where to go"
+    assert "WALL" not in message, "the declared one is not on the list"
+    assert "estimate:" not in capsys.readouterr().out
+
+
+def test_build_accepts_the_same_number_once_it_is_declared(
+        with_the_real_rule, out_dir, capsys):
+    """The other direction, and it is not optional: a test that only proves a
+    refusal is satisfied by a `check` that refuses everything."""
+    state = with_the_real_rule("""
+        import checklib
+
+        BOSS_SLOP = checklib.estimated(0.35, "a first guess, nobody measured")
+    """)
+
+    build(out_dir)
+
+    assert "estimate: BOSS_SLOP" in capsys.readouterr().out
+    assert state.passed == {
+        "measured": 0, "derived": 0, "estimated": 1,
+        "estimates": ["BOSS_SLOP"],
+        "notes": {"BOSS_SLOP": "a first guess, nobody measured"},
+    }, ("the summary `report()` built reached metrics.json -- which is also "
+        "what says `collect` ran before `report`, since a report of an empty "
+        "list is `{}`")
+
+
+def test_the_numbers_walk_answers_for_the_model_the_way_every_other_door_does(
+        with_the_real_rule, out_dir):
+    """Reading the numbers RUNS THE MODEL'S CODE, which is not obvious.
+
+    Nothing in `provenance.collect` calls a function the author wrote -- it
+    walks `vars(model)` and parses a file -- so the two lines look like a pass
+    over data rather than a door. They are not: everything the walk touches
+    inside a container is the model's, and `.items()` on a dict SUBCLASS is the
+    plainest case of it. It can raise anything at all.
+
+    THE VERDICT IS THE POINT AND NOT THE MESSAGE. Without `call_model` around
+    them the raise leaves `build()` bare, which leaves the build PROCESS bare,
+    which the hub reports as EXIT_CRASHED (4) -- the hub's own fault -- for a
+    line the model wrote. `pytest.raises(BuildError)` is what says so here: the
+    unwrapped ValueError fails this test rather than satisfying it.
+
+    IT USED TO REACH THAT THROUGH A KEY'S `__repr__`, and that is no longer a
+    raise at all -- `_one_level` renders the key with `modeltext.shown`, which
+    answers `<unprintable: ValueError>` rather than taking the build down. The
+    test beside this one is the witness for that half; this one had to move to a
+    door the chokepoint does not stand in, because a walk over the model's own
+    objects has more of them than rendering.
+    """
+    with_the_real_rule("""
+        import checklib
+
+
+        class Awkward(dict):
+            def items(self):
+                raise ValueError("the table decided not to say")
+
+
+        TABLE = Awkward({"lid": checklib.estimated(1.0, "settled by eye")})
+    """)
+
+    with pytest.raises(BuildError) as exc:
+        build(out_dir)
+
+    message = str(exc.value)
+    assert "raised ValueError" in message
+    assert "the table decided not to say" in message
+    assert "model.py:" in message, (
+        "the refusal names the model's own line, which is the whole of what "
+        "`fail_site` is doing in this path")
+
+
+def test_a_key_that_will_not_render_costs_its_name_and_not_the_build(
+        with_the_real_rule, out_dir, capsys):
+    """The other half of the door above, and the reason `shown` swallows.
+
+    `check()` exists to answer a model in ONE error listing every number that
+    declares nothing, and `report()` to list every estimate. One `__repr__` with
+    a bug in it, among fifty entries, must not reduce either to a line about a
+    RuntimeError -- so the rendering of a value is where the exception stops,
+    and what the author loses is that entry's NAME rather than the message.
+
+    The placeholder names the exception on purpose: `<unprintable>` alone sends
+    an author looking for a bug in the hub.
+    """
+    with_the_real_rule("""
+        import checklib
+
+
+        class Weird:
+            def __repr__(self):
+                raise ValueError("the key decided not to say")
+
+
+        TABLE = {Weird(): checklib.estimated(1.0, "settled by eye"),
+                 "lid": checklib.estimated(2.0, "settled by eye")}
+    """)
+
+    build(out_dir)
+
+    printed = [line for line in capsys.readouterr().out.splitlines()
+               if line.startswith("estimate:")]
+    assert len(printed) == 2, (
+        "the entry beside the broken one is what the swallow buys, and it is "
+        "the whole argument for swallowing")
+    assert any("<unprintable: ValueError>" in line for line in printed), printed
+
+
+def test_the_rule_is_asked_about_the_project_being_built(
+        with_the_real_rule, out_dir, isolated_project, monkeypatch):
+    """The THIRD argument, asserted AS an argument and not through an outcome.
+
+    `check` resolves every `measured()` source against the root it is handed, so
+    a build passing the wrong one would report a journal as missing that is
+    sitting right there -- or, worse, resolve against a directory that is not
+    the push's.
+
+    IT USED TO BE ASSERTED THROUGH THE OUTCOME -- a journal at the root, a build
+    that does not raise -- and that could not tell the right argument from a
+    lucky one: `isolated_project` chdirs into the root it pins, so `Path.cwd()`
+    and `project_root()` are the same directory and replacing one with the other
+    left this green.
+
+    THE DECOY IS WHAT MOVES THE ASSERTION ONTO THE ARGUMENT. Chdir'ing away is
+    enough to make the substitution fail, but it fails by not resolving the
+    journal -- an outcome again, and one that says nothing about a root that
+    resolves and is still the wrong directory. With the same journal reachable
+    from the working directory too, `Path.cwd()` builds perfectly well and the
+    only thing left that can tell the two apart is the spy.
+
+    `paths.project_root()` and not `build_module.project_root`: the second is
+    the very name under test, so a substituted one would be compared against
+    itself and agree.
+    """
+    (isolated_project / "ref").mkdir(exist_ok=True)
+    journal = "# Measurements\n\n## Lid fit\n\n0.25 mm on the calipers\n"
+    (isolated_project / "ref" / "measurements.md").write_text(
+        journal, encoding="utf-8")
+    # The decoy, at the same relative path under the directory the build runs
+    # IN rather than the directory it is ABOUT.
+    (isolated_project / "ref" / "ref").mkdir()
+    (isolated_project / "ref" / "ref" / "measurements.md").write_text(
+        journal, encoding="utf-8")
+    with_the_real_rule("""
+        import checklib
+
+        GAP = checklib.measured(0.25, "ref/measurements.md#lid-fit")
+    """)
+
+    handed = []
+    real_check = real_provenance.check
+
+    def spy(declared, bare, root):
+        handed.append(root)
+        return real_check(declared, bare, root)
+
+    monkeypatch.setattr(build_module.provenance, "check", spy)
+    # Somewhere INSIDE the project, so nothing else about the build moves: the
+    # root is still found from here, and only the answer to "what is the working
+    # directory" changes.
+    monkeypatch.chdir(isolated_project / "ref")
+
+    build(out_dir)  # no BuildError: the source resolved under the project root
+
+    assert handed == [paths.project_root()]
+    assert handed != [Path.cwd()], (
+        "and the two are different directories here, which is what makes the "
+        "assertion above discriminating rather than a coincidence")
+
+    # And the outcome as well, so the argument is one `check` actually resolves
+    # against rather than one it takes and ignores: the project's journal gone,
+    # the decoy left where it is.
+    (isolated_project / "ref" / "measurements.md").unlink()
+    with pytest.raises(BuildError) as exc:
+        build(out_dir)
+    assert "ref/measurements.md" in str(exc.value)
 
 
 @pytest.fixture

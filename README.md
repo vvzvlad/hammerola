@@ -223,6 +223,19 @@ optional and holds this part to its own numbers. The geometry comes from
 `cadquery`, and the shared checks from `checklib` — the third bullet below says
 what that one carries.
 
+**And every number in it says where it came from**, which is a ground a push is
+refused on and not a convention: a module-level `UPPER_SNAKE` name bound to a
+plain float stops the build. `checklib.measured`, `derived` and `estimated` are
+how it says which. `estimated` always builds, so this is a rule about SAYING
+rather than about measuring — most of a first model is honestly a set of
+choices, and the log lists them. `measured` is the one with a cost attached: its
+source has to name a file that exists in the project, and — if it names a
+heading after a `#` — a heading that is really in that file. How
+many of each kind a build declared reaches `metrics.json` exactly, and so do the
+notes and the names of the estimates — each list up to the first 256 of them,
+after which the file says how many it left out rather than growing without a
+ceiling.
+
 ```python
 """A flat mounting plate: one printed part, driven by the numbers at the top."""
 
@@ -230,12 +243,17 @@ import cadquery as cq
 
 import checklib
 
-LENGTH = 60.0     # along X
-WIDTH = 40.0      # along Y
-THICKNESS = 4.0   # of the plate
-HOLE = 5.5        # M5 clearance, ISO 273
-HEAD = 8.5        # M5 socket cap head, ISO 4762
-INSET = 8.0       # hole centres in from each edge
+# Every number says where it came from, and the build refuses one that does not:
+# `measured(v, "file.md#heading")` for a figure somebody took, `derived(v, why)`
+# for one that follows from others, `estimated(v, what_would_settle_it)` for one
+# nobody measured. The last always builds, and the log says which numbers it was.
+LENGTH = checklib.estimated(60.0, "along X; whatever this bolts to settles it")
+WIDTH = checklib.estimated(40.0, "along Y; the same")
+THICKNESS = checklib.estimated(4.0, "of the plate; settled by bending one")
+HOLE = checklib.derived(5.5, "M5 clearance, ISO 273 medium")
+HEAD = checklib.derived(8.5, "M5 socket cap head diameter, ISO 4762")
+INSET = checklib.estimated(8.0, "hole centres in from each edge; chosen to "
+                                "look right")
 
 
 def hole_centres():

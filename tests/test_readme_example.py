@@ -59,6 +59,11 @@ import pytest
 
 from src.buildproc import DEFAULT_LIMITS, STATUS_OK, run_build
 from src.buildproc.limits import memory_limit_supported
+# THE REAL MODULE, reached through the package rather than through
+# `sys.modules["checklib"]` -- which one test below replaces with a stand-in.
+# Both DECLARATIONS and that stand-in's fall-through read it.
+from src.cadbuild import checklib as checklib_declarations
+from src.cadbuild import provenance
 
 
 README = Path(__file__).resolve().parent.parent / "README.md"
@@ -97,6 +102,20 @@ GONE = ("README.md no longer carries a python block, so the model example is "
 # Set on the stand-in module below, so the guard can tell THIS file's `checklib`
 # from the real one without importing either.
 RECORDER_MARK = "_readme_example_recorder"
+
+# The half of `checklib` that is not a check and is therefore NOT stood in for:
+# saying where a number came from. The example declares its constants with these
+# at module level, so the stand-in has to hand back the real ones -- see the
+# Recorder below for what happens when it does not.
+#
+# DERIVED FROM `KINDS` RATHER THAN SPELLED OUT, because `KINDS` is exactly the
+# property of the module that tells a declaration from a check -- which the
+# spelled-out version denied there was one of. Spelled out it was also inert:
+# the example only ever touches `derived` and `estimated`, so the other six
+# entries were never looked up, and renaming `KINDS` in checklib left this file
+# green. Derived, the rename is an ImportError here on the next run.
+DECLARATIONS = ({"Number", "KINDS"} | set(checklib_declarations.KINDS)
+                | {kind.upper() for kind in checklib_declarations.KINDS})
 
 
 def _recorder_installed():
@@ -336,9 +355,19 @@ def test_the_example_calls_the_shared_check_once_per_hole(built, monkeypatch):
         Generic rather than a stub of `material_under_head` by name: the
         example is free to reach for a different shared check, and this should
         then still be able to say it reached for one.
+
+        EXCEPT THE NUMBER DECLARATIONS, which are handed through to the real
+        module. They are not checks, they run at module level rather than
+        inside `checks()`, and a stand-in returning `[]` for them would bind
+        every constant in the block to a list -- the example then dies on
+        `LENGTH - 2 * INSET` before `checks()` is ever reached, with a
+        TypeError that says nothing about the calls this test is watching.
         """
 
         def __getattr__(self, attribute):
+            if attribute in DECLARATIONS:
+                return getattr(checklib_declarations, attribute)
+
             def check(*args, **kwargs):
                 calls.append((attribute, _no_addresses(args), _no_addresses(kwargs)))
                 return []
@@ -395,3 +424,53 @@ def test_the_views_the_example_declares_are_the_ones_it_publishes(built):
     # its key, checked against the document the viewer reads.
     assert meta["parts"]["plate"]["kind"] == "printable"
     assert meta["parts"]["plate"]["files"]["stl"] == "plate.stl"
+
+
+# The prose sentence about what metrics.json carries, and the number in it.
+NOTES_CEILING = re.compile(r"up to the first (\d+) of them")
+
+
+def test_the_readme_gives_the_ceiling_metrics_json_really_holds(capsys):
+    """A number in the prose is a claim, and this is the one that keeps it true.
+
+    THE SENTENCE USED TO BE UNCONDITIONAL -- "what each build declared reaches
+    `metrics.json`, notes and all" -- and `provenance.MAX_LISTED` makes it false
+    at 257 declarations: the counts stay exact, the two author-text lists are
+    cut, and the file says how many it dropped. So the sentence now gives the
+    ceiling, and a figure in a document has nothing to fail on unless something
+    reads it. This reads it.
+
+    TWO LISTS AND NOT ONE, which the sentence also used to get wrong: the same
+    ceiling cuts `notes` and `estimates`, and naming only the notes left a
+    reader to discover the other cut from a list that was shorter than the
+    count beside it. That is the whole failure the ceiling's own
+    `*_omitted` fields exist to prevent, undone in prose.
+
+    NO KERNEL AND NO BUILD, unlike everything else in this file: it is a
+    sentence checked against a constant, so it runs in both CI containers where
+    the example itself is unwatched.
+    """
+    found = NOTES_CEILING.findall(README.read_text(encoding="utf-8"))
+    assert len(found) == 1, (
+        f"README.md states the metrics.json note ceiling {len(found)} times "
+        f"and this expects exactly one. If the sentence was reworded, reword "
+        f"NOTES_CEILING with it -- a pattern that stops matching is a claim "
+        f"that stops being checked while the suite stays green")
+    assert int(found[0]) == provenance.MAX_LISTED, (
+        f"README.md promises the first {found[0]} notes and "
+        f"provenance.MAX_LISTED is {provenance.MAX_LISTED}")
+
+    # BOTH LISTS, because one number in the document stands for both cuts. A
+    # ceiling that grew a second constant would leave the sentence true of one
+    # list and false of the other, with nothing saying which.
+    entries = [
+        provenance.Entry(
+            name=f"WALL_{index}",
+            number=checklib_declarations.estimated(1.0, f"settle {index}"),
+            line=index + 1)
+        for index in range(provenance.MAX_LISTED + 3)]
+    summary = provenance.report(entries)
+    capsys.readouterr()  # report() prints a line per estimate; not the subject
+    assert len(summary["notes"]) == provenance.MAX_LISTED
+    assert len(summary["estimates"]) == provenance.MAX_LISTED
+    assert summary["notes_omitted"] == summary["estimates_omitted"] == 3

@@ -5,7 +5,7 @@ The checks themselves live in `src/cadbuild/checklib.py`; this is the top-level
 name they are reachable under. It exists for exactly one reason: every project
 in the fleet has `import checklib` at the top of its model.py, next to
 `import mocks`, and that line is a contract with nine repositories the same way
-`views()` and `printables()` are.
+`parts()` and `views()` are.
 
 WHY IT SITS AT THE REPOSITORY ROOT rather than inside the package. A model is
 imported with its own directory first on sys.path (geometry.load_model), and
@@ -135,9 +135,18 @@ def _implementation():
 _impl = _implementation()
 
 DEFAULT_VOLUME_TOL = _impl.DEFAULT_VOLUME_TOL
+DERIVED = _impl.DERIVED
+ESTIMATED = _impl.ESTIMATED
+KINDS = _impl.KINDS
+MAX_NOTE_CHARS = _impl.MAX_NOTE_CHARS
+MEASURED = _impl.MEASURED
 NORMAL_TOL = _impl.NORMAL_TOL
+Number = _impl.Number
 PLANE_TOL = _impl.PLANE_TOL
+derived = _impl.derived
+estimated = _impl.estimated
 is_empty = _impl.is_empty
+measured = _impl.measured
 material_at = _impl.material_at
 mating_face_flat = _impl.mating_face_flat
 material_under_head = _impl.material_under_head
@@ -158,10 +167,19 @@ volume = _impl.volume
 # package from a new entry point.
 __all__ = [
     "DEFAULT_VOLUME_TOL",
+    "DERIVED",
+    "ESTIMATED",
+    "KINDS",
+    "MAX_NOTE_CHARS",
+    "MEASURED",
     "NORMAL_TOL",
+    "Number",
     "PLANE_TOL",
+    "derived",
+    "estimated",
     "is_empty",
     "material_at",
+    "measured",
     "mating_face_flat",
     "material_under_head",
     "name_pairs",

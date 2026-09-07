@@ -158,13 +158,25 @@ def source_fingerprints(root=None):
             "code": code.hexdigest() if readable else ""}
 
 
-def collect_metrics(project, parts, checks_passed):
-    """The build's numbers, in the shape metrics.json is written in."""
+def collect_metrics(project, parts, checks_passed, provenance):
+    """The build's numbers, in the shape metrics.json is written in.
+
+    `provenance` is what `cadbuild.provenance.report` handed back at the top of
+    the build: how many of this model's numbers were measured, derived or
+    merely chosen, which ones nobody measured, and the note each declaration
+    carries -- the sentence `derived()` promises its author will end up here. It
+    is a REQUIRED argument rather than one with a default, because a default
+    would let a caller drop the whole record by forgetting it, and the file
+    would still look complete.
+    """
     return {
         "version": METRICS_VERSION,
         "project": project,
         "built": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": source_fingerprints(),
+        # Beside `source` because it is about the same thing the two hashes
+        # above are: the model as it was written, not the solid that came out.
+        "provenance": provenance,
         "parts": parts,
         # Empty unless the model's checks() called checklib.pairwise_interference
         # -- these are volumes it measured, never volumes computed for this file.

@@ -57,6 +57,53 @@ def test_a_model_that_will_not_import_says_why(isolated_project):
     assert "importing model.py failed" in str(exc.value)
 
 
+def test_the_import_names_the_line_the_model_failed_on(isolated_project):
+    """`importing model.py failed (model.py:3)` -- the door that named nothing.
+
+    THIS IS THE DOOR IT MATTERS MOST AT, and it was the one door with no line.
+    `provenance` looks only at MODULE-LEVEL names, so a note the constructor
+    refuses is almost always written at the top of model.py and is raised during
+    the IMPORT rather than inside parts(), views() or checks() -- the three that
+    already answered `(model.py:5)`. Without it an author with forty constants
+    is told only that one of them has a newline in it, and finds out which by
+    reading.
+
+    THE END-TO-END WITNESS FOR THIS PATH IS THE EXIT CODE and lives where an
+    exit code exists:
+    `tests/buildproc/test_build_child.py::test_a_note_that_cannot_be_published_is_a_failed_build`.
+    """
+    (isolated_project / "model.py").write_text(
+        'import checklib\n'
+        '\n'
+        'GAP = checklib.estimated(0.3, "0.3 clearance\\nmeasured on the v2 body")\n',
+        encoding="utf-8")
+    with pytest.raises(BuildError) as exc:
+        load_model()
+    message = str(exc.value)
+    assert "importing model.py failed (model.py:3)" in message, message
+    assert "not a printable character" in message
+
+
+def test_a_model_that_is_not_there_names_no_file_at_all(isolated_project):
+    """The case the obvious fix above breaks: no model.py, so no model frame.
+
+    Every frame of that traceback is the hub's, so naming the deepest of them --
+    which is what `fail_site` does, and what the three doors below want it to --
+    answers `importing model.py failed (geometry.py:<line>)`: the author of a
+    missing file sent to a file of ours, which is the very defect the line above
+    exists to end. `model_site` says nothing instead, and nothing is the honest
+    answer to "which line of the model" when there is no model.
+    """
+    with pytest.raises(BuildError) as exc:
+        load_model()
+    message = str(exc.value)
+    assert "importing model.py failed" in message
+    assert "No module named 'model'" in message
+    assert ".py:" not in message, (
+        f"the refusal for a missing model.py names a file and a line, and every "
+        f"file on that traceback is the hub's: {message}")
+
+
 def test_a_project_with_a_src_of_its_own_is_named_when_an_import_of_src_fails(
         isolated_project):
     """`No module named 'src....'` from a model.py points at the model.
