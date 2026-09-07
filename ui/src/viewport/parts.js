@@ -4,6 +4,7 @@
 
 import { internals } from "./internals.js";
 import { finite3 } from "./math.js";
+import { outlineChild, refreshSectionOutline } from "./outline.js";
 
 /**
  * The part tree, built from the VIEW FILE rather than from the library.
@@ -117,6 +118,8 @@ const covers = (entry, path) => path === entry || path.startsWith(`${entry}/`);
  */
 export function applyHidden(viewer, hidden) {
   const states = statesOf(viewer);
+  const g = internals(viewer);
+  const groups = g && g.nestedGroup && g.nestedGroup.groups;
   const list = Array.isArray(hidden) ? hidden : [];
   const next = {};
   let changed = false;
@@ -127,6 +130,12 @@ export function applyHidden(viewer, hidden) {
     if (!Array.isArray(now) || now[0] !== want[0] || now[1] !== want[1]) {
       changed = true;
     }
+    // `setStates` reaches the library's own materials, never the outline
+    // child, so its visibility is carried here in the same pass — and BEFORE
+    // the early return below: an outline built while its part was hidden
+    // would otherwise stay visible until the states themselves moved again.
+    const outline = groups ? outlineChild(groups[path]) : null;
+    if (outline) outline.visible = !off;
     next[path] = want;
   }
   if (!changed) return;
@@ -162,6 +171,14 @@ export function applyGhost(viewer, ghost) {
     try {
       if (on) group.opacity = 0.25;
       group.setTransparent(on);
+      // `setTransparent` reaches only the library's own face materials; the
+      // outline rides along at the FACE'S opacity — read after the toggle, by
+      // then the library has ghosted or restored it — because the cut face
+      // inherits the body's transparency and the contour is that face's edge.
+      // A literal would ghost a part with `alpha < 1` to a flat 0.25 and
+      // restore it to fully opaque over its translucent body.
+      const outline = outlineChild(group);
+      if (outline) outline.material.opacity = group.front.material.opacity;
       touched = true;
     } catch (error) {
       console.warn("ghost", error);
@@ -272,11 +289,41 @@ export function movePart(vp, paths, delta) {
       vp.moved.set(path, delta);
     });
     vp.viewer.update(true, false);
-    return true;
   } catch (error) {
     console.warn("move", error);
     return false;
   }
+  // A moved part cuts differently through the standing plane, and no plane
+  // write follows to rebuild for it: drop the memo and redraw here. OUTSIDE
+  // the try — a refresh that failed must not report a move that happened as
+  // refused.
+  //
+  // AFTER the render above and followed by ANOTHER one, which is the whole
+  // shape of this. The rebuild reads `matrixWorld`, and only a render
+  // refreshes it, so it cannot come first; and the library draws on demand
+  // only, so a rebuild after the last draw would sit in memory while the
+  // screen kept the contour the part carried off the plane with it.
+  //
+  // GATED ON THE PAIR `reconcile` ITSELF USES, and on the pair rather than on
+  // the seed alone: `suspendSectionCut` parks the plane and empties the
+  // contours but deliberately KEEPS the seed, so that turning the cut back on
+  // needs no second click — which means a seed says "a cut was placed once",
+  // not "a cut is on screen". Reading a part around with the cut switched off
+  // is an ordinary thing to do, and on the seed alone every snap step of it
+  // paid for a walk over every solid and a second identical frame, to write
+  // emptiness into geometries that were already empty.
+  if (vp.sectionSeed && vp.state && vp.state.cut) {
+    try {
+      refreshSectionOutline(vp, internals(vp.viewer));
+      vp.viewer.update(true, false);
+    } catch (error) {
+      // Wrapped like every other reach into the library in this file. Outside
+      // the `try` above so a decoration cannot report a move that happened as
+      // refused — and caught, so it cannot do it by throwing either.
+      console.warn("outline", error);
+    }
+  }
+  return true;
 }
 
 /** Put every moved part back where the build had it. */
@@ -295,4 +342,15 @@ export function resetMoves(vp) {
   }
   vp.moved.clear();
   if (vp.viewer) vp.viewer.update(true, false);
+  // Same shape as `movePart`, for the same reasons: after the render that
+  // refreshed the matrices, gated on a cut that is actually on screen, drawn
+  // again so the corrected contour gets there, and caught.
+  if (vp.viewer && vp.sectionSeed && vp.state && vp.state.cut) {
+    try {
+      refreshSectionOutline(vp, internals(vp.viewer));
+      vp.viewer.update(true, false);
+    } catch (error) {
+      console.warn("outline", error);
+    }
+  }
 }

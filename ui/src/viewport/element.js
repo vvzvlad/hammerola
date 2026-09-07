@@ -449,6 +449,10 @@ export class HmrViewport extends HTMLElement {
       // that moment would have `keepSectionCut` re-assert clipping on a scene
       // that is being torn down.
       this.sectionSeed = null;
+      // The outline children hung on the scene's own ObjectGroups, so they are
+      // gone with it — the rebuild memo has to be, or it would suppress the
+      // first outline of the new scene (outline.js).
+      this.sectionOutlineKey = null;
       this.measurePicks = [];
       this.measureLabel = null;
       // The offsets belong to the geometry that is going away — a rebuild puts

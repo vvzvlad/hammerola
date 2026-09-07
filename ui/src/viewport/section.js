@@ -10,6 +10,7 @@
 import { internals } from "./internals.js";
 import { clamp, dot3, finite3, sub3, unit3, vec3 } from "./math.js";
 import { MIN_SINE, SECTION_BIAS, SECTION_INDEX } from "./options.js";
+import { clearSectionOutlines, sectionOutline } from "./outline.js";
 
 /** Half the grid: the range the library's own clip sliders span. */
 export function sectionLimit(viewer) {
@@ -164,10 +165,13 @@ const sliderSafe = (v) => (v === -1 ? -1 + 1e-9 : v);
  * the pair is one call once the value is known in advance, and the only thing
  * left in front of it is arithmetic that writes nothing.
  */
-function standSection(viewer, g, normal, point) {
+function standSection(vp, g, normal, point) {
+  const viewer = vp.viewer;
   const value = sectionValueFor(viewer, g, normal, point);
   if (value === null) return null;
   const safe = sliderSafe(value);
+  // The contour exists before the write, whose call ends in a render.
+  sectionOutline(vp, g, normal, safe);
   viewer.setClipNormal(SECTION_INDEX, normal, safe, true);
   return safe;
 }
@@ -266,7 +270,7 @@ export function applySection(vp, given) {
               seed.point[1] + seed.normal[1] * depth,
               seed.point[2] + seed.normal[2] * depth];
   try {
-    const value = standSection(viewer, g, n, at);
+    const value = standSection(vp, g, n, at);
     if (value === null) return false;
     seed.value = value;
     // A plane placed while some other tab is open would be a cut nobody can see.
@@ -356,6 +360,10 @@ export function dragSection(vp, g, axis, dx, dy) {
   // range while this function went on reporting the distance it had covered,
   // and a part 2 mm across is an ordinary thing to publish here.
   const next = sliderSafe(sectionValue(viewer, v - step));
+  // As in `standSection`: the contour exists before the write that renders.
+  // A drag moves the plane ALONG its normal, so the normal in force is the
+  // plane's own.
+  sectionOutline(vp, g, g.plane.normal, next);
   viewer.setClipSlider(SECTION_INDEX, next, true);
   return v - next;
 }
@@ -399,6 +407,12 @@ export function suspendSectionCut(vp) {
   const viewer = vp.viewer;
   if (!viewer) return;
   try {
+    const g = internals(viewer);
+    // The contour goes with the cut — BEFORE the slider write, which renders,
+    // exactly as the two build sites put the contour BEFORE theirs — and the
+    // memo with the contour, so the next placement or drag rebuilds instead
+    // of being suppressed by a key whose outlines no longer exist.
+    clearSectionOutlines(vp, g);
     const lim = sectionLimit(viewer);
     // The far edge of the grid is where `resetClip` parks the slider and is the
     // library's own spelling of "cuts nothing". Chosen over `resetClip` because
@@ -406,7 +420,6 @@ export function suspendSectionCut(vp) {
     // re-derive an orientation the reader already chose.
     if (lim !== null) viewer.setClipSlider(SECTION_INDEX, lim, true);
     viewer.setLocalClipping(false);
-    const g = internals(viewer);
     if (g && g.clipping && typeof g.clipping.setVisible === "function") {
       g.clipping.setVisible(false);
     }
