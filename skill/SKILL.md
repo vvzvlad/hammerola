@@ -1,7 +1,7 @@
 ---
 name: hammerola
-description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with views() and printables(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part".
-version: 6
+description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part".
+version: 7
 ---
 
 # hammerola
@@ -165,14 +165,16 @@ minutes before the first solid existed. A short phase, and not a skippable one.
 **A word is not a specification.** "Bracket", "mount", "holder", "cover" each
 name five different objects, and the one in the person's head is not the one in
 yours. Say back what the object is as a shape, what it touches and what holds
-it, then put up a block preview — the whole layout in boxes and cylinders, in
-`views()`, published with `commit` so the person can turn it round. That preview
-closes this phase and is not optional; it is shown, so it is a commit, and it is
-the project's first revision. A build needs a non-empty `printables()`,
-so the part goes in there as a box of its overall size and the things around it
-stay mocks in the views. And `checks()` is still the template's, measuring its own
-box and lid: it reddens on the first body of yours (`bracket.stl is 684 bytes,
-which is not a printable mesh`; other geometry hits its lid-gap assert first).
+it, then put up a block preview — the whole layout in boxes and cylinders, as a
+catalogue and an `assembled` view, published with `commit` so the person can
+turn it round. That preview closes this phase and is not optional; it is shown,
+so it is a commit, and it is the project's first revision. A build needs at
+least one `printable` in the catalogue, so the part goes in as a box of its
+overall size and the things around it go in beside it as `mock` and `hardware`.
+And `checks()` is still the template's. What reddens is the one section of it
+NOT written about the template's own parts: the last one walks `parts()` rather
+than naming anything, so it lands on YOUR catalogue — and a block preview is a
+box (`bracket.stl is 684 bytes, which is not a printable mesh`).
 Rewrite it to what little is known — envelope ≤ space available — or delete it;
 gutting it is the form that fails. ("Semicircular bracket" went into geometry 36 seconds
 after it was read: 3 h 48 min of work and a 227-line file were thrown away.)
@@ -184,18 +186,20 @@ after the parts that mount on it, and immediately produced two interferences.
 Trigger ergonomics took 5 h 02 min and four rejections while no hand existed as
 a body; one iteration was enough once it did. A wall and a plywood stack that
 existed only in the chat produced, twice in a row, a resonance calculation for a
-cantilever that was not there.) A mock never carries a printable's word in its
-name — `blank`, `panel`, never `lid mock`: coverage counts whole words, so such
-a mock answers for the printable `lid` and the build goes green with the real
-`lid` in no picture. The hub says so in a `warning:` line and publishes.
+cantilever that was not there.) Each of them is a catalogue record of its own:
+`hardware` for what is bought and goes into the product, `mock` for what is
+there so the picture makes sense. Which of the two you write is what the gates
+then read — hardware is asked whether it shares space with anything, a mock is
+scenery and is not asked, and neither of them may stand on the plate.
 
 **An operation nobody named does not exist either.** The part is what comes off
 the printer. Tapping a hole, reaming it, drilling it out, gluing, pressing in a
 heat-set insert, bending, sanding to fit — every one of those is a step somebody
 has to own, with a tool, and it exists only once a person has named it and
 agreed to it. A model that works only after an unnamed operation does not work:
-what will be printed is the thing in `printables()`, and the operation lives
-nowhere but in your head. Where a step IS agreed, it is written down the way
+what will be printed is the `printable` record of the catalogue, and the
+operation lives nowhere but in your head. Where a step IS agreed, it is written
+down the way
 hardware is — named, with the tool's designation, in `ref/` — and the geometry
 stays the state that comes off the bed. (A socket was drawn as a smooth Ø8.43
 hole "under a tap", so that the nozzle's Ø9.35 thread would have something to
@@ -292,11 +296,17 @@ from `media_type` unedited carries the `+` of `image/svg+xml`, which refuses
 the whole push by rule 1 below.
 
 **`ref/measurements.md` is the log of raw measurements**: date, what was
-measured, with what, the number. Every constant of a fit, a clearance or an
-interference cites a line in it. The word "measured" in a comment with no line
-behind it is a lie written into the source. (`thread_clearance = 0.30`, carrying
-the comment `# measured fit on the printer`, was never measured: two ruined
-prints, 100 g of plastic, and the part never worked.)
+measured, with what, the number. Every constant that CLAIMS to be measured cites
+a line in it — `checklib.measured(v, "ref/measurements.md#screw")`, and the
+build refuses the push when the file or the heading is not there. A constant
+nobody measured says so with `checklib.estimated(...)` instead; what is refused
+is the third option, a number with no statement about it at all. Most fits and
+clearances start out estimated and that is honest — the starter template's
+`LIP_CLEARANCE`, `BOSS_RELIEF` and `BOARD_CLEARANCE` all are. The word
+"measured" in a comment with no line behind it is a lie written into the source.
+(`thread_clearance = 0.30`, carrying the comment `# measured fit on the
+printer`, was never measured: two ruined prints, 100 g of plastic, and the part
+never worked.)
 
 **That is the special case of a general rule: a justification is an assertion,
 and it is checked like one.** "Measured", "in practice", "standard", "in the
@@ -332,57 +342,121 @@ shouting.)
 ## The contract with model.py
 
 The template `create` unpacks is the live example — read it rather than this
-section: a working model with the rules written next to the geometry. In short:
+section: a working model with the rules written next to the geometry. In short,
+`model.py` defines `parts()` and `views()`, may define `checks()`, and may
+`import checklib`.
 
-* **`views()`** — a list of tabs, each `{"id", "name", "parts": [...]}`, each
-  part `{"shape": <CadQuery object>, "name": "<label>"}` with optional `color`,
-  `alpha` and `note`. Every printable has to appear in some view. Two ids mean
-  more than that: an `assembled` view, if the project has one, must show every
-  printable, and in `print` no two parts may stand inside one another — that
-  view is the bed, unless the pair really is nested and the view says so in its
-  `"nested_ok": [("a", "b")]`.
-* **`"note"`, a key on a part in `views()`** — the fifth one, optional, beside
-  `color` and `alpha`: `{"shape": ..., "name": "lid", "note": "M3×8 DIN912"}`.
-  It is the AUTHOR's note — written here, published with the build, shown
-  beside the part to whoever opens the model in the browser. Not the reader's
-  note (that one is theirs, lives in their browser and never comes back here)
-  and not a comment (written by a viewer, queued, addressed to you). Put in it
-  what the geometry cannot say: the catalogue name of the screw, a link to the
-  datasheet, the fit that was taken, why a number is the number it is. One
+* **`parts()` — the catalogue, and the one place geometry lives.** A non-empty
+  dict of records: `{"lid": {"shape": <CadQuery object>, "kind": "printable"}}`,
+  with `color` and `note` optional. **The key IS the part's identity** — the
+  stem it is exported under, the row the viewer's tree shows, the name every
+  view points at, what it is filed under in `meta.json`. There is no display
+  name beside it, deliberately: a second name is a second identity to keep in
+  step with the first. A key is letters, digits, dot, dash and underscore,
+  starting with a letter or a digit, up to 128 characters; `assembled` and
+  `print` are refused, because the build keeps those two stems for the assembly
+  and for the plate. A key inside a record that the build does not read — a
+  misspelt `colour` — is a warning rather than a refusal, and the part is
+  painted by its KIND as if you had written nothing: the palette for a
+  printable, dark grey for hardware, light grey for a mock. A misspelt `colour`
+  on a screw therefore leaves it grey, not in the colour you wrote.
+* **`kind` is required and has no default**, and it decides what the build does
+  with the entry: `printable` is exported and gets download buttons, `hardware`
+  is bought and goes into the product (a screw, a bearing, a heat-set insert),
+  `mock` is only there so the picture makes sense (the wall the bracket bolts
+  to, the barrel the frame stands in, the board the case closes over). There is
+  no default on purpose — one would put download buttons under a mock of a
+  bought bearing. At least one entry has to be `printable`. Colour follows the
+  kind unless the record names its own: a palette entry for a printable, dark
+  grey for hardware, light grey for a mock, so a glance at the picture says what
+  is being printed and what is not. The palette entry is chosen by the KEY, so a
+  part keeps its colour while the catalogue around it is edited.
+* **`views()` — tabs made of REFERENCES into the catalogue.** A list of
+  `{"id", "name", "parts": [...]}`, where `name` is the caption in the picker
+  and falls back to the id. **A view carries no geometry of its own**, so it
+  cannot show a part the catalogue does not have and cannot show a look-alike in
+  place of one. Each entry of `parts` is written as:
+  * `"lid"` — the catalogue key: the part exactly as the catalogue holds it;
+  * `{"part": "pin", "at": cq.Location(...), "alpha": 0.6}` — the same part,
+    placed. `at` is a rigid motion the build applies to the catalogue's own
+    solid; `alpha` runs 0..1 and is 1.0 unless you say otherwise;
+  * `{"part": "strap", "shape": bent, "deformed": "clamped round the pipe"}` —
+    the one way geometry reaches a view, for a part that is genuinely a
+    different shape in place. The reason is required, it is printed into the
+    build log, and it is refused in `print`;
+  * `{"group": "housing", "parts": [...]}` — a group, and groups nest. It is
+    presentation and nothing else: **no gate sees a group**, every one of them
+    reads the flat list of leaves. Its name obeys the key rule and may not BE a
+    catalogue key. There is a ceiling on the nesting and it is a REFUSAL, not a
+    trim: 64 levels, which no assembly a reader could follow comes near — a
+    group is how a person is shown the assembly, not a place to hide depth in.
+
+  One part may be referenced as often as you like — five pins are five
+  references to `pin`.
+* **Two view ids carry the gates.** **`assembled` is required**: it is what the
+  product is judged by and the only view the build counts parts from, and
+  **every `printable` key has to be named in it**. A reference at alpha 0 does
+  not count — a part nobody can see is not shown. Nothing in it may occupy the
+  same space as anything else unless the view says why:
+  `"interference_ok": [("nozzle", "seat", "threaded joint")]`, triples, read
+  only here, the reason required and printed in the log. A `mock` is scenery and
+  is never asked about — the wall overlaps by construction — but **`hardware`
+  is**, and that is the case the mechanism is for: a screw's thread biting into
+  its printed hole is an overlap you declare, with a reason.
+
+  **`print` is optional and is the bed.** Only printable parts may stand on it —
+  `print.stl` is a file somebody opens in a slicer, and a bought part on it is
+  an offer to print the thing that was bought. `at` there may move a part and
+  turn it about Z, and that is all: a tilt re-orients the part, and a MIRROR of
+  a chiral part is a different part from the one published under that key. No
+  two parts may stand inside one another, unless the view says the pair really
+  is nested: `"nested_ok": [("shim", "ring")]`, pairs, read only here.
+
+  An exemption in either list names two CATALOGUE KEYS, so it covers every
+  instance of that pair at once. There is no way to exempt one reference and not
+  another, and that follows from the shape of the declaration rather than from
+  an omission: a reference has no name of its own to point at.
+* **`"note"`, an optional key on a catalogue record** — `{"shape": screw,
+  "kind": "hardware", "note": "M3x8 DIN912"}`.
+  It is the AUTHOR's note — written in the model, published with the build,
+  shown beside the part to whoever opens the model in the browser. Not the
+  reader's note (that one is theirs, lives in their browser and never comes back
+  here) and not a comment (written by a viewer, queued, addressed to you). Put
+  in it what the geometry cannot say: the catalogue name of the screw, a link to
+  the datasheet, the fit that was taken, why a number is the number it is. One
   line, not documentation. It is **plain text always** — a link in it is not
-  clickable, nothing in it is parsed, and a `<`, a `>` or a control character
-  REFUSES the push with a 422. At most 200 characters, and at most 200 parts of
-  one build may carry one; both are refused by the build with a message saying
-  so. An empty note is an error rather than "no note" — a part there is nothing
-  to say about leaves the key out. **The note belongs to the PART, not to the
-  view**: the same part in two views may repeat the same text, but two
-  DIFFERENT texts under one name refuse the build and name both views.
-  `model_template/model.py` carries a worked one on the lid.
-* **`printables()`** — `{name: <CadQuery object>}`, one entry per part somebody
-  prints, and **each entry is one fused body**. Each becomes `name.stl`,
-  `name.step` and `name.3mf`. **`assembled` and `print` are refused as
-  printable names**: the build writes an `assembled.stl` and a `print.stl` of
-  its own beside the parts. The gate reads `.val()`, the first body on the
-  stack and only that one: it alone is validated, measured, written to the STL
-  and rendered, and the log's `valid, volume … cm3, watertight, one body` is
-  about it. So a Workplane holding several unfused bodies — `plate.add(bosses)` —
-  publishes green with everything after the first missing from that part's own STL
-  and preview, while the 3MF and the STEP are written from the whole object.
-  `pushPoints(...).box(..., combine=False)` is worse: it REPLACES the stack, so the
-  base itself is the body that goes missing. `assembled` is glued from every body of
-  every object, so `assembled.stl: N parts` in the log, `N parts` in that picture's
+  clickable, nothing in it is parsed, and a `<`, a `>` or a control character is
+  refused by the build, and by the hub again on the way in. At most 200
+  characters, and a catalogue holds at most 200 records. An empty note is an
+  error rather than "no note" — a part there is nothing to say about leaves the
+  key out. **The note belongs to the part**, and since the part exists once, so
+  does its note: the same part shown in five views carries one text, and there
+  is nothing to keep in step.
+* **What a `printable` record owes.** Each becomes `<key>.stl`, `<key>.step`
+  and `<key>.3mf`, and **each is one fused body**. The gate reads `.val()`, the
+  first body on the stack and only that one: it alone is validated, measured,
+  written to the STL and rendered, and the log's `valid, volume … cm3,
+  watertight, one body` is about it. So a Workplane holding several unfused
+  bodies — `plate.add(bosses)` — publishes green with everything after the first
+  missing from that part's own STL and preview, while the 3MF and the STEP are
+  written from the whole object. `pushPoints(...).box(..., combine=False)` is
+  worse: it REPLACES the stack, so the base itself is the body that goes
+  missing. `assembled.stl` is glued from every body of every leaf of the
+  `assembled` view, so `assembled.stl: N parts` in the log, `N parts` in that
+  picture's
   footer, counts bodies: more than the view should hold is a printable not fused (a
   plate with three bosses added logs `volume 9.60 cm3` and `4 parts`; with them
   replacing it, `0.22 cm3` and `3 parts`). Only the other half is refused, one body
   in disconnected pieces: `N disconnected pieces, not one body`. Fuse the
-  part, or hand each piece back under a name of its own. **Each part is built
-  in the orientation it is printed in, and the views move copies of it into
-  place**: the orientation that counts is the one on the bed, not the one in
-  the assembly. No gate checks that; a part modelled upside down publishes
-  green, and the one thing that catches it is the render below, which you fetch
-  yourself. `MIN_PRINTER_MM` in the template is nobody's real bed but the size
-  below which FDM printers barely exist; a part that outgrows it is the moment
-  to ask which printer this is for and to put that machine's volume in.
+  part, or give each piece a catalogue entry of its own. **Each part is built
+  in the orientation it is printed in, and the `print` view moves copies of it
+  into place**: the orientation that counts is the one on the bed, not the one
+  in the assembly — which is why `at` on the plate may only turn about Z.
+  Nothing checks which way up you built it; a part modelled upside down
+  publishes green, and the one thing that catches it is the render below, which
+  you fetch yourself. Where a check measures a part against a bed, that bed is
+  nobody's real machine until somebody says which machine this is for — a part
+  that outgrows it is the moment to ask, and to put that printer's volume in.
 * **`checks()`** — optional, and the place for everything specific to this part:
   fits, clearances, hardware, bed size. It fails by `assert cond, "why"` or by
   returning a list of problem strings. A `checks()` that provably contains no
@@ -402,12 +476,12 @@ section: a working model with the rules written next to the geometry. In short:
 Those are all that `checklib` checks, and the gate is all of
 the hub. Nothing anywhere checks an overhang, a minimum wall, whether a tool
 reaches a screw, or where a number came from. Every rule in the next section is
-a check you write yourself or something you go and look at. Of the bed the gate
-reads one thing: `check_print_layout` compares bounding boxes in `print`, and
-parts standing inside one another — by more than 0.05 mm on all three axes —
-refuse the build. Orientation, the air between parts, how much of each sticks
-to the plate, whether any of it fits the machine: none of that is read by
-anything. A picture is what answers it, and there is one of the bed.
+a check you write yourself or something you go and look at. Of the BED the gate
+reads the layout and not the printing: parts standing inside one another — by
+more than 0.05 mm on all three axes — refuse the build, and so does a view that
+re-orients a part onto the plate, but the air between parts, how much of each
+sticks to it and whether any of it fits the machine are read by nothing. A
+picture is what answers that, and there is one of the bed.
 
 **The `print` picture is the cheapest check there is, and the only thing that
 shows the BED.** A build renders one isometric PNG per printable, one of the
@@ -418,8 +492,8 @@ after every build that moved a part or a view. (A project with no `print` view
 has no plate, so no `print.stl` and no picture of one; the build says so in a
 line of its own.) Each picture comes off that stem's own STL, so a part's
 preview shows exactly what will print, `assembled.stl` is glued from the
-`assembled` view — or from the printables themselves, where the project has no
-such view — and `print.stl` is the bed as it is laid out. Under each picture is
+`assembled` view, and `print.stl` is the bed as it is laid out. Under each
+picture is
 a footer: `Bounding box: 60.0 x 20.0 x 6.0 mm`, the triangle count, and
 `watertight` — which on a plate or an assembly reads `N parts`.
 
@@ -435,9 +509,12 @@ while a hand-written path stops. You can read a picture and the gate cannot.
 Shape is otherwise judged in the browser viewer, and **a size comes back three
 ways**: that footer, `metrics.json`, and whatever the model prints. The second
 sits in the same build directory and is served as plain JSON, so
-`curl <hub>/project/<pid>/dev/metrics.json` gives `bbox_mm` for every part
-straight after a `build`, with no commit. The log itself carries no size — per
-part it says `valid, volume … cm3, watertight, one body, N triangles` — so
+`curl <hub>/project/<pid>/dev/metrics.json` gives `bbox_mm` for every PRINTABLE
+straight after a `build`, with no commit. Printable and not part, and the
+difference is the catalogue's: measuring is done on the way out of the exporter,
+so a `hardware` or a `mock` record is measured nowhere and appears in that file
+not at all. The log itself carries no size — per printable it says
+`valid, volume … cm3, watertight, one body, N triangles` — so
 a `print()` in `model.py` or `checks()` is the third. Print every printable's
 bounding box from `checks()` all the same, for a different reason: the log is
 what `commit` keeps, while a picture and a `metrics.json` have to be fetched. That
@@ -478,9 +555,13 @@ thread interfered with its Ø8.43 seat, correctly. Rather than fix the fit, the
 nozzle in the assembly was swapped for a stand-in turned down to the thread's
 root diameter, which slid through — the check went green, and the model of
 record stopped being the thing that gets printed. `assembled.stl` is glued from
-the assembly view, so the downloadable assembly was made of the stand-in too;
-the hub said as much in a `warning:` line about a part matched by name only, and
-the line was read and argued past.)
+the assembled view, so the downloadable assembly was made of the stand-in too.)
+A view is a list of references now, so it cannot quietly hold a second solid: the
+one form that carries geometry has to say why, and the reason goes into the build
+log. That leaves the swap one place to happen — the catalogue record itself,
+where the stand-in becomes the part, and its own downloadable `.stl` with it. And
+the overlap the stand-in was made to silence is what the assembly gate reports:
+declare it with a reason, or fix the fit.
 
 **Four traps in the CadQuery API itself, and every one of them makes a check
 silently GREEN rather than red.** None raises, so the price is never a failed
@@ -529,12 +610,20 @@ returned a body without the boss; the check stayed green for 3 h 38 min.)
 
 **Every fit number has a provenance**: measured, with its line in the
 measurements log; derived, from a number you name; or an estimate — and an
-estimate never drives geometry. It is printed from `checks()` instead, which is
-what puts it in the build log; commit, and `hammerola log <revision>` still has
-it. Print it from a `build` and it lives at that build's job and nowhere else,
-addressed by an id rather than by the slot (below). (43 minutes of argument
-about sediment washout in which both sides were estimates: the velocity differed
-by 5.5×, the threshold had a 3× spread.)
+estimate is DECLARED as one rather than avoided. `checklib.estimated(v, "what
+would settle it")` builds, drives geometry like any other number, and is the
+right answer for most fits before anything has been printed — most of the
+starter template's own numbers are estimates, and they drive its geometry. What
+an estimate must never do is be quoted back as though it were a measurement.
+Each estimate prints an `estimate:` line of its
+own in the build log and travels into `metrics.json` with its note, so a
+`commit` keeps both and `hammerola log <revision>` still has the log. Estimate
+from a `build` and the note is in the dev slot's `metrics.json` like any other
+number's; it is the LOG that lives only at that build's job, addressed by an id
+rather than by the slot (below). (43 minutes of argument about sediment washout
+in which both sides were estimates: the velocity differed by 5.5×, the threshold
+had a 3× spread. Neither was labelled — that is the failure, not that they were
+estimates.)
 
 **A number is quoted against what reproduces it.** Below what the process holds,
 a difference stops being an argument about the part: an FDM machine lays layers
@@ -558,8 +647,8 @@ step works.
 **The gauge is a commit of its own, and never a part of the product.** A person
 prints it, so it is committed like anything else a person prints: the link they
 work from has to outlive the next push. It comes before the product does — the
-clearance is not chosen yet, so neither is the part that uses it — so
-`printables()` returns the one gauge, `assembled` shows that same gauge, `print`
+clearance is not chosen yet, so neither is the part that uses it — so the
+catalogue holds the one gauge, `assembled` shows that same gauge, `print`
 stands it on the bed. That passes the view gates whole; no view is deleted or
 bent around a part that is not the product. `latest` sits on the gauge until the
 part that uses its number is committed, and the project's card shows a ladder of
@@ -567,16 +656,19 @@ steps meanwhile: that is the price, and it is smaller than handing over a link
 that dies under the person holding it.
 
 The ladder is one fused body — the steps on a common base, the embossed digits
-unioned to it — for the reason under `printables()`; fetch `<gauge>_preview.png`
+unioned to it — for the reason under the catalogue; fetch `<gauge>_preview.png`
 and count the steps in it, where a ladder of separate boxes shows up as one
 step. `checks()` is rewritten for the gauge, a check per step measured on the
 solids, and the reason is that nothing will make you: `run_checks` looks up the
-function named `checks` and knows nothing of `printables()`, while the product's
-`checks()` builds its parts by calling the builders, which swapping
-`printables()` leaves alone. So it runs to the end and the log says `checks: N
-passed` about parts the build has not got. (Template, `printables()` cut to one
-gauge, `checks()` verbatim: `checks: 6 passed`, BUILD GREEN.) Only a `checks()`
-indexing `printables()` by name refuses by itself. The rest holds — a gutted one
+function named `checks` and knows nothing of `parts()`, while the product's
+`checks()` builds its parts by calling the builders, which cutting the catalogue
+down to the gauge leaves alone. So it runs to the end and the log says
+`checks: N passed` about parts the build has not got. (Measured on the starter
+model: the catalogue cut to the one gauge, `assembled` and `print` rewritten to
+reference it, `checks()` left verbatim — the build went green and the log said
+`checks: 10 passed`, every section of it but the last one measuring a box and a
+lid the catalogue no longer held.) Only a `checks()` that indexes the
+catalogue by key refuses by itself. The rest holds — a gutted one
 fails the empty-checks gate above, no flag skips checks, and deleting it passes
 and throws away every complaint ever turned into an assertion — so commit the
 product's `checks()` to git first: the revision the hub keeps is the GAUGE's
@@ -694,7 +786,7 @@ clearance reads tighter than it is and an inequality whose grown side is the
 weak one buys itself slack and passes without a word.
 
 The hub drops the triangulation after each export it performs, which is what
-keeps `printables()` and `checks()` measuring the same part. Two things it does
+keeps the catalogue and `checks()` measuring the same part. Two things it does
 not cover, both of them yours. A `@cache`d builder hands the SAME object to
 every caller, so a mesh or an export of your own moves what the next reader
 measures — in the run above, the first reader of the cached cylinder got
@@ -773,10 +865,10 @@ parameter reached the part; everything else was self-checks inside the script.)
 
 **The part is finished when its numbers stop moving.** A build that prints the
 same measurements as the one before it is the signal, and reading it costs
-nothing: the log carries a volume per part and the preview footer a bounding
-box. A second such build in a row means the rounds have left the part and moved
-onto the instrument that measures it and the prose around it. Say it can be
-printed, and stop. (Asked "so, can it be printed?", an agent said no and ran
+nothing: the log carries a volume per printable and the preview footer a
+bounding box. A second such build in a row means the rounds have left the part
+and moved onto the instrument that measures it and the prose around it. Say it
+can be printed, and stop. (Asked "so, can it be printed?", an agent said no and ran
 three more review rounds over 2 h 18 min. The first was paid for — it found a
 joint that would not have assembled. Through the other two the part's three
 measured numbers were identical from build to build, and the person ended it

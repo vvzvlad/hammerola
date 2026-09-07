@@ -73,16 +73,30 @@ beforeEach(() => {
 // nothing at all.
 afterEach(() => { vi.restoreAllMocks() })
 
-/** Both views the fixture build declares, in the order meta.json lists them. */
+/**
+ * Both views the fixture build declares, in the order meta.json lists them.
+ *
+ * `parts` NAMES the catalogue keys a view shows rather than counting them
+ * (issue #75), which is what lets the tab strip say what is in a tab without
+ * fetching the geometry.
+ */
 const VIEWS = [
-  { id: 'assembled', name: 'assembled', file: 'a.json', parts: 2, gzip: 1000 },
-  { id: 'printables', name: 'printables', file: 'p.json', parts: 2, gzip: 900 },
+  { id: 'assembled', name: 'assembled', file: 'a.json',
+    parts: ['plate', 'post'], gzip: 1000 },
+  { id: 'printables', name: 'printables', file: 'p.json',
+    parts: ['plate', 'post'], gzip: 900 },
 ]
 
+/** The parts both views draw on, as `meta.parts` publishes them. */
+const PARTS = {
+  plate: { kind: 'printable', files: { stl: 'plate.stl' } },
+  post: { kind: 'printable', files: { stl: 'post.stl' } },
+}
+
 /** A build of the target revision, with whichever views it is given. */
-const build = (variants = VIEWS) => ({
+const build = (views = VIEWS) => ({
   project: 'fixture', title: '', commit: B, built: '2026-08-28T09:00:00Z',
-  downloads: {}, variants,
+  parts: PARTS, views,
 })
 
 /**
@@ -97,18 +111,19 @@ const BUILDS = () => ({
            { commit: B, built: '2026-08-26T10:00:00Z' }],
 })
 
-/** The tree on screen: two parts. */
+/** The tree on screen: two parts, each naming its catalogue key. */
 const TREE = {
   id: '/model',
   name: 'model',
-  children: [{ id: '/model/plate', name: 'plate' }, { id: '/model/post', name: 'post' }],
+  children: [{ id: '/model/plate', name: 'plate', key: 'plate' },
+             { id: '/model/post', name: 'post', key: 'post' }],
 }
 
 /** The same model one revision later: `plate` renumbered, `post` gone. */
 const TREE_B = {
   id: '/model',
   name: 'model',
-  children: [{ id: '/model/0', name: 'plate' }],
+  children: [{ id: '/model/0', name: 'plate', key: 'plate' }],
 }
 
 /**
@@ -125,8 +140,8 @@ function component(over = {}) {
   c.host = { current: null }
   c.state = {
     meta: {
-      project: 'fixture', commit: A, built: '2026-08-27T18:20:00Z', downloads: {},
-      variants: VIEWS,
+      project: 'fixture', commit: A, built: '2026-08-27T18:20:00Z',
+      parts: PARTS, views: VIEWS,
     },
     builds: BUILDS(),
     tree: indexTree(TREE),
@@ -640,7 +655,7 @@ describe('a second revision picked while the first is fetching', () => {
     // window the flag exists to close, from the one place nobody looks.
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const C = 'c'.repeat(64)
-    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    const c = component({ pending: { commit: 'ccc', parts: PARTS, views: VIEWS } })
     c.el = () => null
     const answers = held()
 
@@ -893,7 +908,7 @@ describe('the camera', () => {
     // the frame this view opened in", so leaving `home` alone here would keep it
     // pointing at the build the page was loaded with, however many builds ago
     // that was.
-    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    const c = component({ pending: { commit: 'ccc', parts: PARTS, views: VIEWS } })
     c.captureHome = vi.fn()
     c.el = () => null
 
@@ -917,7 +932,7 @@ describe('the camera', () => {
     // busy branch returns having changed nothing, and a flag left standing there
     // would be spent by whichever rebuild happened to land next — re-homing the
     // camera on a build nobody switched to.
-    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    const c = component({ pending: { commit: 'ccc', parts: PARTS, views: VIEWS } })
     c.captureHome = vi.fn()
     c.el = () => ({ isBusy: () => true })
 
@@ -1220,7 +1235,7 @@ describe('what does not survive', () => {
   it('takes the poll\'s offer down with the slot it belonged to', async () => {
     // The banner names a build that arrived under the pointer this page is
     // leaving. On a pinned revision there is nothing for it to offer at all.
-    const c = component({ pending: { commit: 'ccc', variants: VIEWS }, bannerGone: false })
+    const c = component({ pending: { commit: 'ccc', parts: PARTS, views: VIEWS }, bannerGone: false })
     loadMeta.mockResolvedValue(build())
 
     await c.switchBuild('proj1', B)
@@ -1353,7 +1368,7 @@ describe('what does not survive', () => {
 describe('taking the banner\'s build', () => {
   /** The page with an offer standing, on a build with a section laid on it. */
   const offered = (over) => component({
-    pending: { commit: 'ccc', built: '2026-08-29T10:00:00Z', downloads: {}, variants: VIEWS },
+    pending: { commit: 'ccc', built: '2026-08-29T10:00:00Z', parts: PARTS, views: VIEWS },
     ...over,
   })
 
@@ -1438,8 +1453,10 @@ describe('taking the banner\'s build', () => {
     expect(c.state.noteDraft).toBe('')
     expect(c.state.measure).toBeNull()
     expect(c.state.moved).toBeNull()
-    // And the viewport is told, since a selection is its state too.
-    expect(seen[0].selected).toBeNull()
+    // And the viewport is told, since a selection is its state too. An EMPTY
+    // LIST and not a null: a selection is the paths of a row since issue #75,
+    // because a row may stand for several copies of one part.
+    expect(seen[0].selected).toEqual([])
   })
 
   it('puts the section plane away when the model may have moved under it', () => {
@@ -1545,7 +1562,7 @@ describe('a deferred take of the banner\'s build', () => {
     // not on the screen.
     vi.useFakeTimers()
     onTestFinished(() => vi.useRealTimers())
-    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    const c = component({ pending: { commit: 'ccc', parts: PARTS, views: VIEWS } })
     c.el = () => ({ isBusy: () => true })
 
     c.takePending()
@@ -1575,7 +1592,7 @@ describe('a deferred take of the banner\'s build', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.useFakeTimers()
     onTestFinished(() => vi.useRealTimers())
-    const offer = { commit: 'ccc', variants: VIEWS }
+    const offer = { commit: 'ccc', parts: PARTS, views: VIEWS }
     const c = component({ pending: offer })
     c.el = () => ({ isBusy: () => true })
     c.takePending()
@@ -1634,7 +1651,7 @@ describe('the banner\'s Switch while a picked revision is on the wire', () => {
     // the viewport to fetch its geometry and toasts "Now viewing ccc" — and then
     // the revision the reader picked lands on top of it. One wasted load of a
     // model nobody chose, and a toast naming a build that is not there.
-    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    const c = component({ pending: { commit: 'ccc', parts: PARTS, views: VIEWS } })
     // Not busy, so nothing defers: a press either runs now or is refused.
     c.el = () => null
     const swap = inFlight(c)
@@ -1655,7 +1672,7 @@ describe('the banner\'s Switch while a picked revision is on the wire', () => {
     // failure the refusal was added to prevent, wearing the refusal's clothes:
     // the reader presses it, nothing happens, and there is nothing on the screen
     // to read that off.
-    const c = component({ pending: { commit: 'ccc', variants: VIEWS } })
+    const c = component({ pending: { commit: 'ccc', parts: PARTS, views: VIEWS } })
     const live = c.computed().bannerSwitchStyle
 
     c.setState({ swapping: true })
@@ -1674,8 +1691,8 @@ describe('the banner\'s Switch while a picked revision is on the wire', () => {
     // Emptying `pending` would have been the cheap way to make the button inert
     // and would have thrown the offer away with it.
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const offer = { commit: 'ccc', built: '2026-08-29T10:00:00Z', downloads: {},
-                    variants: VIEWS }
+    const offer = { commit: 'ccc', built: '2026-08-29T10:00:00Z',
+                    parts: PARTS, views: VIEWS }
     const c = component({ pending: offer })
     c.el = () => null
     loadMeta.mockRejectedValue(new Error('meta.json -> HTTP 404'))
@@ -1700,9 +1717,9 @@ describe('a swap the viewport would not render', () => {
     // The page is half moved and nothing about it looks wrong: `meta`, the
     // title, the picker and `PAGE.base` are the new build's, while the panel on
     // the left lists the parts of the old one under real part names. What is
-    // actually broken is invisible — `authorNote` looks those names up in the
-    // NEW build's `meta.notes`, and every row's menu builds its download links
-    // on the NEW base.
+    // actually broken is invisible — `authorNote` looks their catalogue keys up
+    // in the NEW build's `meta.parts`, and every row's menu builds its download
+    // links on the NEW base.
     const c = component()
     loadMeta.mockResolvedValue(build())
     expect(c.state.tree).not.toBeNull()
@@ -1850,8 +1867,9 @@ describe('a download chain still handing over files', () => {
 // -- what the new revision brings with it -------------------------------------
 
 describe('the author\'s note on a part', () => {
-  // It rides in `meta.notes` — written in model.py, published with the build —
-  // so a swap that replaces `meta` replaces the notes with it. THAT IS ASSERTED
+  // It rides INSIDE the build's catalogue record for the part — `note` in
+  // `meta.parts[key]`, written in model.py and published with the build — so a
+  // swap that replaces `meta` replaces the notes with it. THAT IS ASSERTED
   // RATHER THAN ASSUMED: a stale note is the worst thing this box can show,
   // because it is a sentence about a part that is no longer the part on screen,
   // and nothing about it would look wrong. Everything else about the two notes
@@ -1862,13 +1880,16 @@ describe('the author\'s note on a part', () => {
   // part in the model that has just arrived.
   const on = (id, name) => ({ sel: id, selName: name })
 
+  /** The fixture's catalogue with one note written into it. */
+  const saying = (note) => ({ ...PARTS, plate: { ...PARTS.plate, note } })
+
   it('is the new revision\'s once the swap has landed', async () => {
     const c = component({ ...on('/model/plate', 'plate'),
-                          meta: { project: 'fixture', commit: A, built: '', downloads: {},
-                                  variants: VIEWS, notes: { plate: 'M3x8 DIN912' } } })
+                          meta: { project: 'fixture', commit: A, built: '',
+                                  parts: saying('M3x8 DIN912'), views: VIEWS } })
     expect(c.computed().authorNote).toBe('M3x8 DIN912')
 
-    loadMeta.mockResolvedValue({ ...build(), notes: { plate: 'M4x10, was M3' } })
+    loadMeta.mockResolvedValue({ ...build(), parts: saying('M4x10, was M3') })
     await c.switchBuild('proj1', B)
     c.onModel({ tree: TREE_B, view: 'assembled', live: true })
     c.setState(on('/model/0', 'plate'))
@@ -1877,19 +1898,19 @@ describe('the author\'s note on a part', () => {
   })
 
   it('is gone when the revision switched TO carries none', async () => {
-    // The direction that fails silently: `meta.notes` is absent on most builds,
-    // and a note left over from the previous one would be attributed to a model
-    // that never said it.
+    // The direction that fails silently: most parts carry no note, and one left
+    // over from the previous revision would be attributed to a model that never
+    // said it.
     const c = component({ ...on('/model/plate', 'plate'),
-                          meta: { project: 'fixture', commit: A, built: '', downloads: {},
-                                  variants: VIEWS, notes: { plate: 'M3x8 DIN912' } } })
+                          meta: { project: 'fixture', commit: A, built: '',
+                                  parts: saying('M3x8 DIN912'), views: VIEWS } })
 
     loadMeta.mockResolvedValue(build())
     await c.switchBuild('proj1', B)
     c.onModel({ tree: TREE_B, view: 'assembled', live: true })
     c.setState(on('/model/0', 'plate'))
 
-    expect(c.state.meta.notes).toBeUndefined()
+    expect(c.state.meta.parts.plate.note).toBeUndefined()
     expect(c.computed().authorNote).toBe('')
   })
 })

@@ -12,6 +12,7 @@ does not import, hangs on import or ends the interpreter is a model the build
 half never gets to, and those are the cases worth pinning cheaply.
 """
 
+import io
 import json
 import re
 import sys
@@ -67,15 +68,14 @@ def test_a_simple_model_builds_and_reports_what_it_wrote(project):
 
         os.chdir("/")
 
-        def printables():
-            return {"body": cq.Workplane("XY").box(20, 10, 5)}
+        def parts():
+            return {"body": {"shape": cq.Workplane("XY").box(20, 10, 5),
+                             "kind": "printable"}}
 
         def views():
-            body = printables()["body"]
-            part = [{"shape": body, "name": "body"}]
             return [
-                {"id": "print", "name": "print", "parts": part},
-                {"id": "assembled", "name": "assembled", "parts": part},
+                {"id": "print", "name": "print", "parts": ["body"]},
+                {"id": "assembled", "name": "assembled", "parts": ["body"]},
             ]
     """)
 
@@ -111,6 +111,46 @@ def test_a_model_that_does_not_import_is_a_failed_build(project):
     assert outcome.status == STATUS_FAILED
     assert outcome.exit_code == child.EXIT_BUILD_FAILED
     assert "the model is not ready" in outcome.log
+    assert outcome.files == ()
+
+
+def test_a_note_that_cannot_be_published_is_a_failed_build(project):
+    """END TO END on what the note ceiling is actually FOR: the exit code.
+
+    A note carrying a lone surrogate -- which arrives without malice, from
+    `bytes.decode(errors="surrogateescape")` -- used to be accepted by the
+    constructor and then raise UnicodeEncodeError from `print()` and from
+    `json.dumps(..., ensure_ascii=False)`. Neither is a BuildError, so the
+    branch above caught it as a BaseException and the build ended in
+    EXIT_CRASHED: the hub reporting its OWN fault for a string the model wrote.
+    Refused at the declaration, it is a ValueError raised while model.py is
+    being imported, `geometry.load_model` turns that into a BuildError, and this
+    is where that becomes a number.
+
+    IT IS HERE AND NOT IN `tests/cadbuild/` because the exit code exists only
+    here. Two tests over there used to carry this docstring between them and
+    assert on message substrings instead -- neither could see a code, so nothing
+    anywhere checked the one thing the story is about. What is left over there is
+    the unit half: the door turns it into a BuildError
+    (`test_model_doors.py::test_every_door_answers_for_the_model_in_build_error_terms[importing model.py at geometry.load_model]`)
+    and the message names the model's line
+    (`test_geometry.py::test_the_import_names_the_line_the_model_failed_on`).
+
+    No kernel is needed: the model fails on its third line, long before anything
+    reaches `import cadquery`.
+    """
+    outcome = project.build("""
+        import checklib
+
+        WALL = checklib.estimated(2.4, "\\ud800 decoded loosely")
+    """)
+
+    assert outcome.status == STATUS_FAILED, outcome.log
+    assert outcome.exit_code == child.EXIT_BUILD_FAILED, (
+        f"a note the model wrote ended the build with "
+        f"{outcome.exit_code}; EXIT_CRASHED here is the hub reporting its own "
+        f"fault for the pusher's string. Whole log:\n{outcome.log}")
+    assert "not a printable character" in outcome.log
     assert outcome.files == ()
 
 
@@ -275,6 +315,103 @@ def test_the_hang_budget_is_armed_again_where_the_model_starts(
     assert model_started - armed[1]["at"] < prep["finished"] - prep["started"]
 
 
+def test_a_model_that_closes_the_log_is_not_reported_as_a_hang(project):
+    """EXIT 1 IS SHARED, and this is the ordinary way a build lands on it.
+
+    `EXIT_HANG_DUMP` is 1 because that is what `faulthandler` exits with -- and
+    1 is also what the interpreter exits with on an exception nobody caught. So
+    any raise that escapes `child.main` is read by `runner` as STATUS_HANG, and
+    the author is told the build stopped responding and its stack is in the log.
+    That is the HUB reporting the wrong thing about its own crash, and it sends
+    a person looking for a thread that is not stuck.
+
+    THE MODEL HERE CLOSES ITS OWN LOG, which is one line somebody writes without
+    meaning anything by it (a `with` around `sys.stdout`, a redirect that got
+    away). From then on every `print` in the child raises: the build's first
+    `print` fails, the handler reporting it calls `traceback.print_exc()`, that
+    fails too, and the interpreter exits 1.
+
+    OF THE THREE GUARDS ON THAT PATH exactly ONE is load-bearing here, measured
+    in every combination rather than inferred. `_say`'s `try` and the blanket
+    handler in `child.main` can both be deleted, TOGETHER, and this still
+    passes; replace `_print_exc_quietly`'s body with a bare
+    `traceback.print_exc()` and this fails with `status 'hang', exit 1`. So this
+    test is the SOLE witness for that one guard and no witness at all for the
+    other two, which the two tests below supply one guard at a time, each of
+    them removable-and-red.
+
+    THE LOG IS EMPTY ON PURPOSE and nothing here asserts otherwise: the model
+    closed it. The exit code is the whole of what survives, which is exactly why
+    it has to be the right one.
+    """
+    outcome = project.build("""
+        import sys
+
+        sys.stdout.close()
+        sys.stderr.close()
+
+        def parts():
+            raise RuntimeError("the model's own fault")
+
+        def views():
+            return []
+    """)
+
+    assert outcome.status == STATUS_CRASHED, (
+        f"status {outcome.status!r}, exit {outcome.exit_code}; STATUS_HANG here "
+        f"sends the author after a build that is not stuck. Whole log:\n"
+        f"{outcome.log}")
+    assert outcome.exit_code == child.EXIT_CRASHED
+    assert outcome.files == ()
+
+
+class _NotAnException(BaseException):
+    """Off the `Exception` branch on purpose -- see the test below."""
+
+
+def test_the_blanket_handler_in_main_answers_for_anything_at_all(monkeypatch):
+    """`child.main` on its own, with the thing it wraps made to raise.
+
+    ISOLATING, WHICH IS THE POINT. The end-to-end test above goes through a real
+    build and three guards, so it stays green with this one deleted; nothing
+    then holds the property the exit-code comment claims -- that a bug ANYWHERE
+    under `main` is a crash and never a 1. Here `_run` is the only thing in the
+    way, and what it raises is the shape a `except Exception` would let past.
+
+    `BaseException` AND NOT `Exception` is the half worth isolating. The parent
+    reads 1 as the watchdog, and the interpreter exits 1 for a `MemoryError` or
+    a `RecursionError` -- both `Exception`s -- but also for anything off that
+    branch, and a narrower handler here would report the second kind as a stuck
+    build with no stack in the log.
+    """
+    def refuse(argv):
+        raise _NotAnException("a bug nobody foresaw")
+
+    monkeypatch.setattr(child, "_run", refuse)
+
+    assert child.main(["child", "--project", "/tmp"]) == child.EXIT_CRASHED
+
+
+def test_the_log_line_never_raises_even_with_nowhere_to_write(monkeypatch):
+    """`_say` on its own, with nowhere left to write.
+
+    ISOLATING for the same reason: the blanket handler above would turn a raise
+    from here into EXIT_CRASHED anyway, which is the right code for the wrong
+    reason -- the build would stop at whatever line was being logged, and the
+    lines after it would never be written. `_say` is on the failure path
+    precisely so that reporting a failure cannot become the failure.
+
+    `sys.stderr` closed rather than replaced by a raising object, because that
+    is what really happens -- `sys.stderr.close()` is one line of somebody's
+    model, and the child inherits the model's interpreter.
+    """
+    closed = io.StringIO()
+    closed.close()
+    monkeypatch.setattr(sys, "stderr", closed)
+
+    child._say("a line with nowhere to go")  # must not raise
+
+
 def test_a_model_that_exits_zero_without_building_is_not_a_success(project):
     """The exit code is not the answer; the result file is.
 
@@ -414,6 +551,24 @@ def test_no_usable_occt_is_not_a_refusal(monkeypatch, capsys):
     assert "libGL.so.1" in capsys.readouterr().err
 
 
+class _Answering:
+    """A thread pool that lets itself be capped, standing in for the real one.
+
+    It exists to be REACHED BY MISTAKE. Planted in `sys.modules["OCP.OSD"]`, it
+    is what a stale submodule left behind by an earlier test looks like from
+    inside `_cap_occt_threads` -- so a test that forgets to remove one gets a
+    number back instead of the refusal it asserts, and fails.
+    """
+
+    @staticmethod
+    def DefaultPool_s(count):
+        return _Answering()
+
+    @staticmethod
+    def NbThreads():
+        return 2
+
+
 def test_an_occt_that_loaded_but_hides_its_pool_is_not_read_as_no_occt(monkeypatch):
     """OCP LOADED and its thread pool out of reach is a REFUSAL, not a shrug.
 
@@ -430,6 +585,28 @@ def test_an_occt_that_loaded_but_hides_its_pool_is_not_read_as_no_occt(monkeypat
     whose symbol is gone (`ImportError(name="OCP.OSD")`, which is a version
     skew).
     """
+    # THE SUBMODULE HAS TO GO FIRST, and the two lines below are the whole of a
+    # failure that pre-dated the numbers work: `from OCP.OSD import
+    # OSD_ThreadPool` is answered out of `sys.modules["OCP.OSD"]` without the
+    # import system ever looking at the parent, so replacing `OCP` alone did
+    # nothing whenever some earlier test in the same process had imported the
+    # real kernel. This test then capped the REAL pool at two threads and
+    # reported DID NOT RAISE.
+    #
+    # THE STALE SUBMODULE IS PLANTED HERE RATHER THAN WAITED FOR, and that is
+    # what makes the `delitem` load-bearing on every run instead of on the
+    # unlucky ones. Without the plant this test passed in a CI container with no
+    # OCP whether the deletion was there or not -- the line was correct and
+    # nothing held it, so deleting it went green and the failure came back the
+    # next time a workstation ran the suite in a different order. `_Answering`
+    # stands in for the real pool: reached, it caps and returns, and the
+    # `pytest.raises` below fails.
+    stale = type(sys)("OCP.OSD")
+    stale.OSD_ThreadPool = _Answering
+    monkeypatch.setitem(sys.modules, "OCP.OSD", stale)
+    # `raising=False` because the ordinary case is a CI container with no OCP at
+    # all -- and, now, because the line above may be the only reason it is there.
+    monkeypatch.delitem(sys.modules, "OCP.OSD", raising=False)
     # An OCP that is there and is not a package: importing OCP.OSD off it fails
     # with `name == "OCP.OSD"`, which is the first shape.
     monkeypatch.setitem(sys.modules, "OCP", type(sys)("OCP"))
@@ -469,8 +646,14 @@ def test_the_exit_codes_do_not_collide():
 
     They are read by `runner._read_outcome` to decide what happened, and 1 is
     deliberately unassigned: `faulthandler.dump_traceback_later(exit=True)`
-    exits with it after printing the stack, and that is the only way a 1 can
-    come out of the child.
+    exits with it after printing the stack.
+
+    IT IS NOT THE ONLY WAY A 1 CAN COME OUT, which this used to say and which
+    `child.py`'s own comment on the codes contradicts: the interpreter exits 1
+    on an uncaught exception too, so 1 is SHARED and "the watchdog fired" is
+    what the child's guards make true rather than what the number means. The
+    two isolating tests above are where that is held; here the assertion is
+    only that nothing this component ASSIGNS collides with it.
     """
     from src.buildproc.limits import WRAPPER_EXIT_CODES
 

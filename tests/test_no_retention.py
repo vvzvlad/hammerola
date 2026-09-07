@@ -27,7 +27,8 @@ month later, on somebody's oldest revision or in the middle of a review.
 import json
 import os
 
-from harness import comment_payload, meta_bytes, tar_gz, view_bytes
+from harness import (DEFAULT_EXPORTS, comment_payload, meta_bytes, tar_gz,
+                     view_bytes)
 
 from src.jobs import STATE_DONE, JobStore
 
@@ -51,6 +52,7 @@ def _build(marker, built):
     return tar_gz({
         "meta.json": meta_bytes(built=built),
         "assembled.json": view_bytes(marker),
+        **DEFAULT_EXPORTS,
     })
 
 

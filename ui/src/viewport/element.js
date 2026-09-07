@@ -57,7 +57,9 @@ const INITIAL_STATE = {
 
   hidden: [],
   ghost: [],
-  selected: null,
+  // The PATHS of the selected row, not one path: a row may stand for several
+  // copies of one part (hub.indexTree), and all of them light up together.
+  selected: [],
   cut: false,
   cutOffset: 0,
   cutFlip: false,
@@ -531,7 +533,17 @@ export class HmrViewport extends HTMLElement {
       applyGhost(this.viewer, s.ghost);
       this.applied.ghost = s.ghost;
     }
-    if (s.selected !== this.applied.selected) {
+    // BY VALUE like the two lists above, and here it is UNCONDITIONAL rather
+    // than a precaution for some pushes: `selectedPaths` in HammerolaViewer
+    // MINTS A NEW ARRAY IN ALL THREE OF ITS BRANCHES — a copy of a leaf row's
+    // `leaves`, `[sel]` wherever `node()` cannot answer with such a row — a
+    // group, a tree that has not landed yet, a path no row claims — and `[]`
+    // for nothing selected. No push ever carries the array the last one did,
+    // so an identity check would clear and repaint the highlight on EVERY
+    // `hmr:state` rather than on a subset of them — and one of those goes out
+    // per step of the section-plane slider (`setSecOff` calls `set`, and `set`
+    // is what syncs).
+    if (!same(s.selected, this.applied.selected)) {
       applySelected(this.viewer, s.selected);
       this.applied.selected = s.selected;
     }

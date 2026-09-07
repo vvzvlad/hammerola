@@ -12,10 +12,13 @@ around it.
 """
 
 import hashlib
+import itertools
+import math
 
 import pytest
 
 from src.cadbuild.palette import (
+    HARDWARE_COLOR,
     MOCK_COLOR,
     PART_PALETTE,
     _palette_slot,
@@ -107,9 +110,51 @@ def test_empty_input_is_an_empty_map():
 
 
 def test_keys_that_are_not_strings_still_get_a_colour():
-    """`printables()` keys are validated elsewhere; this must not be the crash."""
+    """Catalogue keys are validated elsewhere; this must not be the crash."""
     colours = palette_colors([1, 2])
     assert set(colours) == {1, 2}
+
+
+# --------------------------------------------------------------------------
+# The three kinds, and the one thing the picture promises
+# --------------------------------------------------------------------------
+
+def _rgb(color):
+    return tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _apart(first, second):
+    """Plain RGB distance. Not a perceptual metric, and it does not need to be:
+    the question is whether two colours can be confused at a glance, and the
+    gap this checks is an order of magnitude wider than any disagreement
+    between distance measures."""
+    return math.dist(_rgb(first), _rgb(second))
+
+
+def test_every_colour_this_paints_with_is_a_different_one():
+    every = list(PART_PALETTE) + [MOCK_COLOR, HARDWARE_COLOR]
+    assert len(set(every)) == len(every)
+
+
+def test_hardware_is_as_distinct_as_the_palette_is_from_itself():
+    """The one colour that had to be INVENTED, checked rather than eyeballed.
+
+    `hardware` is bought and goes into the product; `mock` is only there so the
+    picture makes sense. Two greys a reader cannot tell apart would say
+    "context" about a part that is in the bill of materials -- and the whole
+    value of colouring by kind is that a glance answers the question.
+
+    The floor is computed from the palette rather than written down, so the
+    rule keeps meaning the same thing after a repaint: this colour has to sit
+    at least as far from every colour the build already uses as the two CLOSEST
+    of those sit from each other. Today that floor is about 37 and this colour
+    clears it at about 79, so there is room for an edit that reaches for
+    another grey to be caught without every repaint tripping the check.
+    """
+    others = list(PART_PALETTE) + [MOCK_COLOR]
+    floor = min(_apart(a, b) for a, b in itertools.combinations(others, 2))
+    nearest = min(_apart(HARDWARE_COLOR, other) for other in others)
+    assert nearest >= floor
 
 
 def _find_colliding_pair():

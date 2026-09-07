@@ -4,7 +4,7 @@
      BOOTSTRAP — удали эту секцию целиком, когда её пункты закрыты.
      ====================================================================== -->
 
-## ⚠️ Проект в середине переезда: хаб уже билдер, гейт на приёме ещё не стоит
+## ⚠️ Переезд почти закончен: хаб — билдер с гейтом, открыт только шаг 8
 
 Код сервиса из `cad_snapshot_hub` уже перенесён — `src/` раздаёт сайт, принимает пуш,
 рендерит вьювер и держит очередь комментариев, тесты и шаблоны с ассетами на месте.
@@ -13,9 +13,15 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
 Со сборкой хаб уже соединён: с шага 5 пуш принимается асинхронно и модель считается в
 отдельном процессе на пути запроса (`src/jobs.py` → `src/buildproc/`). Публиковаться
 тоже уже есть чем: клиент живёт здесь же (`src/client/`), ревизию именует хаб по хешу
-её исходников, и они хранятся (шаг 7). Чего ещё нет — гейта на приёмной стороне
-(шаг 6): сборка с негодной геометрией сегодня публикуется, а не отвергается.
+её исходников, и они хранятся (шаг 7). Гейт на приёме тоже стоит и меняет знак
+(шаг 6): `src/cadbuild/gate.py` зовётся из сборочного процесса, а
+`jobs._build_and_publish` на `outcome.ok == False` выбрасывает staging, оставляет
+`latest` и `dev` на месте и помечает задачу `failed` с кодом 422 и логом.
 Именно поэтому шаги плана начинаются с приёма ДЕРЕВА исходников (шаг 2), а не с нуля.
+
+**Открыт ровно один шаг — восьмой, сравнение ревизий.** Чеклист ниже ведётся
+по шагам плана и он же авторитет: прежде чем поверить любому абзацу этой секции,
+что чего-то «ещё нет», сверься с ним. Секция остаётся, пока шаг 8 не закрыт.
 
 **Что это за проект.** `hammerola` (от «пианола» — механизм, который играет сам)
 собирает CAD-модели из кода и раздаёт их браузерным вьювером. Он ПОГЛОЩАЕТ три
@@ -124,8 +130,11 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       одному компоненту через `mkdirat`/`openat` с `O_DIRECTORY|O_NOFOLLOW`, каталоги
       хаб создаёт сам. Обоснования — SPEC §7.1, тесты — `tests/test_archive_security.py`.
 - [x] **Шаг 3. Перенос `cad_publish` внутрь** — сделано. Сборочная половина живёт
-      в `src/cadbuild/` (19 модулей), её тесты — в `tests/cadbuild/` (9 файлов,
-      174 теста, свой `conftest.py`). Клиентская половина осталась в
+      в `src/cadbuild/`, её тесты — в `tests/cadbuild/`, со своим `conftest.py`.
+      Числа модулей и тестов здесь не называются по той же причине, по какой их
+      перестал называть SPEC (шаг 3): они устаревали молча — на момент проверки
+      документ обещал 9 файлов тестов и 174 теста против 17 и 384 в каталоге.
+      Клиентская половина осталась в
       `cad_publish` и НЕ переезжала: `cli`, `__main__`, `settings`, `hub`,
       `remote`, `gitinfo`, `init_project`, `preview` (локальный HTTP-сервер
       предпросмотра — у хаба свой), `archive` (клиент пакует, хаб распаковывает).
@@ -139,13 +148,16 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       собственным каталогом первым в `sys.path`, значит имя обязано
       разрешаться на пути ПОЗАДИ него, и этим путём в образе является `/app`.
       Механика обнаружения затенения (`geometry._warn_if_checklib_shadowed`)
-      работает как работала. Ничего из перенесённого не подключено к сервису —
-      это шаги 4 и 6.
+      работает как работала. К сервису сам шаг 3 ничего из перенесённого не
+      подключал — это сделали шаги 4 и 6, и оба закрыты.
 - [x] **Шаг 4. Исполнение** — отдельный процесс через `spawn`/exec (НЕ `fork`:
       тредпул OCCT после форка виснет), `rlimit` во внешней обёртке плюс таймер и
-      `SIGKILL` в родителе, ограниченный тредпул OCCT. СДЕЛАНО: `src/buildproc/`
-      (`limits`, `wrapper`, `child`, `runner`), тесты — `tests/buildproc/`, 36 штук.
-      Подробности и намеренные решения — SPEC 8A.2, шаг 4.
+      `SIGKILL` в родителе, ограниченный тредпул OCCT. СДЕЛАНО: `src/buildproc/`,
+      тесты — `tests/buildproc/`. Ни состав пакета, ни число тестов здесь больше
+      не перечисляются, и это не лень: оба списка успели устареть молча — из
+      модулей выпал `hardening`, а число тестов разошлось с каталогом вдвое.
+      Что делает каждый модуль — SPEC 8A.2, шаг 4; сколько там тестов, видно
+      в самом каталоге. Там же намеренные решения.
 - [x] **Шаг 5. Асинхронный приём** — 202, идентификатор задачи, эндпоинт статуса и
       отдача лога сборки тому, кто пушил. **Сделано.** Живёт в `src/jobs.py`
       (`JobStore`, `BuildTask`, `BuildQueue`), тесты — `tests/test_jobs.py`.
@@ -224,6 +236,25 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
 - **`keep_instances` не берём.** Он меняет формат экспорта целиком — буферы едут
   base64, лист несёт `{"ref": n}`, — из-за чего ломается пофайловое сравнение по
   байтам буфера. Разобрано не в 8A, а в issue #10 «Сравнение двух ревизий».
+- **`model.py` — код владельца, а не недоверенный ввод.** Противника в этой
+  системе нет: пушить можно только под `EDIT_TOKEN` — единственным секретом,
+  которым тот же человек стирает проект целиком, — модели лежат в его
+  собственных репозиториях, а публичного маршрута сборки не существует.
+  Отдельный сборочный процесс (`src/buildproc/`: spawn+exec, `rlimit`, сторож,
+  `SIGKILL`) — это граница против ОШИБКИ: зацикленной модели, булевой операции,
+  съедающей память, сегфолта в OCCT. Она настоящая и под вопрос не ставится.
+  Выдумана была ВТОРАЯ граница — из проверок типов ВНУТРИ того же процесса: 23
+  круга ревью и 18 дефектов ушли на защиту от актора, которого в этой схеме нет
+  (подкласс `str` с врущим `__eq__`, модульный `__getattr__`, отражённые
+  операторы, подделанная строка лога). Признак был виден с первого круга: 8A.4
+  уже отказывает любому внутрипроцессному барьеру, а на 14-м круге то же
+  рассуждение приняли по одной оси — про лог сборки — и не спросили, почему оно
+  применяется только к ней. **Критерий на будущее — не «работает ли эта
+  защита», а «не выдумал ли я противника»:** удалять по второму вопросу, потому
+  что спор об эффективности уже соглашается, что актор есть, и зовёт написать
+  барьер получше. Остаётся то, что помогает автору починить свою модель:
+  понятное сообщение, верный номер строки, читаемый лог, сборка, которая падает,
+  а не висит. Разбор — SPEC §7.9.
 - **VTK принимаем как есть.** Его жёстко требует сам `cadquery-ocp` (`vtk==9.6.2`);
   единственный способ избавиться — подменить дистрибутив на `cadquery-ocp-novtk` в
   обход объявленной зависимости. Экономия ~0.6 ГБ не стоит постоянной хрупкости.
@@ -247,7 +278,10 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   are deliberate: `src/buildproc/child.py` does it INSIDE the build process
   (step 4), and the root `checklib.py` shim re-exports one module of it under
   the name every model.py imports (see the next entry). Nothing on the serving
-  side imports it — the gate on the receiving side is step 6
+  side imports it, and step 6 did not change that: the gate now runs on the
+  receiving side, but it runs INSIDE the build process, so `src/render.py` still
+  transcribes `cadbuild.parts.KINDS` as `PART_KINDS` rather than importing it and
+  `tests/cadbuild/test_naming.py` is what holds the two equal
 - `src/jobs.py` — the asynchronous half of a push (SPEC 8A.2 step 5): `JobStore`
   is the registry (a directory per job under `data/jobs/`, `job.json` and
   `log.txt` beside it), `BuildTask` is what the request hands over, `BuildQueue`
@@ -368,8 +402,9 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   decides it. Three sides ask the question and they live in three different
   worlds: the file server, of every request for
   `/project/<pid>/<commit>/<name>` (`app._safe_name`); the declaration, of every
-  name a push names in `meta.json` (`render._check_declared_file`, on all four
-  maps — `views` included, which is the one that had kept a check of its own);
+  name a push names in `meta.json` (`render._check_declared_file`, from all five
+  of the places a pointer can sit — a view's `file`, its `overview` and its
+  `preview`, and a catalogue record's exported `files` and its own `preview`);
   and the client, of every name the hub hands back before it writes that name to
   the author's disk (`src/client/artifacts.py`). Before this module the rule was
   written out inline in all three, and no two copies agreed: the server refused a
@@ -508,8 +543,8 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   install`ing that onto a laptop would shadow every other project's `src`.
   Giving the tool a distribution name belongs with the self-update work
 - `checklib.py` — at the ROOT, and not a stray file: `import checklib` is part
-  of the contract with every model.py in the fleet, exactly like `views()` and
-  `printables()`. It re-exports `src/cadbuild/checklib.py` under that name, and
+  of the contract with every model.py in the fleet, exactly like `parts()` and
+  `views()`. It re-exports `src/cadbuild/checklib.py` under that name, and
   it has to sit at the root because a model is imported with its own directory
   FIRST on `sys.path` (so a project may deliberately shadow it) and the name
   then has to resolve on the path behind it — `/app` in the image. Smoke check
@@ -741,6 +776,19 @@ be shorter, and renaming it breaks links, so it is not covered by this rule.
   message it prints looks entirely normal. `python -m` resolves the module against the
   interpreter that was actually invoked — the one `make` just created, here.
 - Tests are required for new code; in CI `build` depends on `test`.
+- **An assertion about how the code behaves, which has to stay true, belongs in a TEST rather
+  than in a comment or a document.** A comment that says what the code does is a claim with no
+  enforcement: it goes false on an ordinary edit, nothing reports it, and the next reader spends
+  their time discovering that the file lied; a test making the same claim fails on the edit that
+  falsifies it. Much here already works that way — `tests/test_workflow_steps.py` compares the
+  `run:` bodies this file requires to be byte-identical across the two workflows (no count
+  here: the one below is pinned, a second copy would not be), `ci/smoke.py` counts its own
+  verdicts, `tests/test_metricsdiff.py` checks an identity where an equality would pass, and
+  `tests/test_template.py` refuses a template that still defines `printables` — the build
+  ignores that function outright, so a leftover one publishes fine and nothing else would
+  notice. The corollary is what makes the rule actionable: when you
+  catch yourself writing "keep X and Y in step" or "this must match Z", that sentence is the
+  specification for a test, and the comment is the version that cannot fail.
 - Runtime dependencies are pinned with `==`, and a dependency the code imports DIRECTLY is
   named in `requirements.txt` even when it already arrives through another package's extra.
   Inheriting it means an unrelated upgrade up the tree can take it away, and the import then

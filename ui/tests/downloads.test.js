@@ -1,87 +1,167 @@
 // Which files belong to which part, how the header's menu groups the same set by
 // FORMAT, and what the tree row's menu offers for one part.
 //
-// `meta.downloads` is `{label: filename}` and carries nothing that says which
-// part a file is for; the answer is in the filename. Two things make that worth
-// a test file of its own rather than a glance:
+// THE ANSWER IS DECLARED NOW RATHER THAN RECONSTRUCTED (issue #75).
+// `meta.parts` is a catalogue keyed by the part's own identity, and each record
+// names the files that were exported for it: `{key: {kind, files: {extension:
+// filename}}}`. What this file used to be about went with the code it tested —
+// the page read `meta.downloads`, a flat `{label: filename}` map saying nothing
+// about which part a file belonged to, and worked it out by cutting the
+// filename at its last dot and calling the stem a part. Every hazard those
+// tests were built around left with the parse: the label that degenerated to a
+// bare `stl` on a one-part build, the part whose own name contains dots, the
+// `assembled.stl` indistinguishable in shape from a part's `foo.stl`.
 //
-//   * with a SINGLE printable the label degenerates to a bare `step`/`stl`/`3mf`
-//     — the part name is gone from it — while the filename does not degenerate at
-//     all (`download_labels` in src/cadbuild/printables.py). A menu built by
-//     matching labels would work on every assembly except the one-part one;
-//   * a printable's name may contain dots, so the split is at the LAST one.
-//
-// What the build writes about ITSELF is not in that map at all, and that is the
-// decision these tests hold. `meta.overview` carries the two whole-build meshes
-// (`assembled.stl`, `print.stl`) and `meta.previews` every picture; NEITHER
-// REACHES EITHER MENU. They exist so a client can be told the files are there —
-// the hub lists no directory — and a picture is looked at rather than
-// downloaded. So both menus read `meta.downloads` and nothing else, and that is
-// what makes the per-part reading of it TRUE rather than patched: `assembled.stl`
-// is indistinguishable in shape from a part's `foo.stl`, so a whole-build entry
-// left in that map lands on whatever node happens to be called `assembled`.
+// WHAT THE BUILD PUBLISHES ABOUT ITSELF STILL REACHES NEITHER MENU, and that is
+// the decision these tests hold — it MOVED rather than went away, which is
+// exactly the kind of change that quietly stops being checked. The whole-view
+// mesh and picture (`assembled.stl`, `assembled_preview.png`) are now fields on
+// a VIEW, and a part's own render is `preview` INSIDE its catalogue record, one
+// key away from `files`. They exist so a client can be told the files are there
+// — the hub lists no directory — and a picture is looked at rather than
+// downloaded. `print.stl` is the one where a button would be actively wrong:
+// the plate is whatever the `print` view holds, nothing requires that to be
+// printable parts only, and a button on a public page invites somebody to slice
+// a plate with a mock of a purchased bearing on it.
 //
 // The menu itself is assembled through the real `computed()` rather than
 // re-derived here. What is under test is a decision — which rows a row menu gets
-// for a part, for a reference part, for a group and for a build with no files at
-// all — and each of those is a sentence about the menu, not about the helper.
+// for a part, for a part that is not printed, for a row naming no part at all,
+// for a group and for a build with no files — and each of those is a sentence
+// about the menu, not about the helper.
 
 import { describe, expect, it, vi } from 'vitest'
 
 import HammerolaViewer, {
-  DOWNLOAD_GAP_MS, filesByPart, groupDownloads, menuAt, sequentialDownload,
+  DOWNLOAD_GAP_MS, groupDownloads, menuAt, partRecord, sequentialDownload,
 } from '../src/HammerolaViewer.jsx'
 import { indexTree } from '../src/hub.js'
 
-/** Three printables' worth of `meta.downloads`, as the hub writes it. */
-const DOWNLOADS = {
-  'plate.step': 'plate.step', 'plate.stl': 'plate.stl', 'plate.3mf': 'plate.3mf',
-  'post.step': 'post.step', 'post.stl': 'post.stl', 'post.3mf': 'post.3mf',
+/**
+ * `meta.parts`: two printables and a bought screw, as the hub writes it.
+ *
+ * The screw is not decoration. A catalogue holds every part a model declares,
+ * and the ones that are never printed are the reason `kind` exists — so a
+ * fixture of printables only would agree with a page that offered a download
+ * for anything it found in the map.
+ */
+const PARTS = {
+  plate: {
+    kind: 'printable',
+    files: { step: 'plate.step', stl: 'plate.stl', '3mf': 'plate.3mf' },
+  },
+  post: {
+    kind: 'printable',
+    files: { step: 'post.step', stl: 'post.stl', '3mf': 'post.3mf' },
+  },
+  spacer: { kind: 'hardware', note: 'M3x8 DIN912' },
 }
 
 /**
- * Everything the same build publishes about ITSELF, in the two maps that carry
- * it — `overview_meshes` and `preview_files` in src/cadbuild/printables.py.
+ * Everything the same build publishes about ITSELF, at the two levels it now
+ * sits at: the view's own mesh and picture (`views[].overview`,
+ * `views[].preview` in src/render.py) and each part's render (`preview` inside
+ * its catalogue record).
  *
  * Handed to the component so the tests below can assert that it changes NOTHING
  * on either menu. A fixture that simply left these out would agree with a
- * browser that had started reading them.
+ * browser that had started reading them — and the part's picture in particular
+ * now sits in the SAME OBJECT as its files, which is a shorter reach than it
+ * was when the pictures were a map of their own.
  */
-const ABOUT_THE_BUILD = {
-  overview: { assembled: 'assembled.stl', print: 'print.stl' },
-  previews: {
-    assembled: 'assembled_preview.png',
-    print: 'print_preview.png',
-    plate: 'plate_preview.png',
-    post: 'post_preview.png',
-  },
+const VIEW_FILES = {
+  overview: 'assembled.stl',
+  preview: 'assembled_preview.png',
+}
+const PARTS_WITH_PICTURES = {
+  plate: { ...PARTS.plate, preview: 'plate_preview.png' },
+  post: { ...PARTS.post, preview: 'post_preview.png' },
+  spacer: { ...PARTS.spacer, preview: 'spacer_preview.png' },
 }
 
-/** The same build's tree: a part, a group with a part in it, and a reference. */
+/**
+ * The same build's tree: a part, a group with a part in it, and a part that is
+ * in the catalogue but never printed.
+ *
+ * EVERY LEAF CARRIES ITS CATALOGUE KEY, which is what the view file now stamps
+ * on it (`export_views` in src/cadbuild/views.py) and what the hub refuses a
+ * push without (`check_view_file`). The keys are deliberately not the row
+ * NAMES: `reference spacer` is keyed `spacer`, so a lookup that fell back to
+ * the label would find nothing here and be visible rather than accidentally
+ * right.
+ */
 const TREE = {
   id: '/model',
   name: 'model',
   children: [
-    { id: '/model/plate', name: 'plate' },
-    { id: '/model/inner', name: 'inner', children: [{ id: '/model/inner/post', name: 'post' }] },
-    // Not in printables(), so no file was ever published for it — and its name
-    // could not even become a download label, because of the space in it.
-    { id: '/model/spacer', name: 'reference spacer' },
+    { id: '/model/plate', name: 'plate', key: 'plate' },
+    {
+      id: '/model/inner',
+      name: 'inner',
+      children: [{ id: '/model/inner/post', name: 'post', key: 'post' }],
+    },
+    // In the catalogue as hardware, so no file was ever exported for it.
+    { id: '/model/spacer', name: 'reference spacer', key: 'spacer' },
   ],
 }
 
 /**
- * The same tree with a reference part called `assembled` on it.
+ * The same tree with a leaf that names NO key.
  *
- * Entirely legal: a view part needs a non-empty string for a name and nothing
- * more (`read_parts` in src/cadbuild/views.py), and a PRINTABLE of that name is
- * refused outright (`collect_printables`) — so a node like this is GUARANTEED to
- * have no files of its own, which is what makes it the sharpest case there is
- * for the exclusion below.
+ * No push the hub accepted produces one — `check_view_file` refuses a leaf
+ * without a key — so this is a document that did not come through the front
+ * door: a hand-made file, or a hub that answered something else.
+ *
+ * AN OLD BUILD IS NOT ON THAT LIST, and the omission is the decision rather
+ * than an oversight. Reaching a view file's tree at all means `meta.json` was
+ * read first, and a genuine document from before issue #75 named its list
+ * `variants` (`build_meta` in src/render.py, before 5683fea) where `load()`
+ * reads `meta.views` with no guard — so it takes the page down long before any
+ * tree is fetched. Old builds were dropped by decision; nothing here opens one.
+ *
+ * It is here because the answer to it is a DECISION rather than an accident:
+ * the row gets nothing, and its name is never used as a stand-in key.
+ */
+const TREE_WITH_AN_UNKEYED_LEAF = {
+  ...TREE,
+  children: [...TREE.children, { id: '/model/mystery', name: 'plate' }],
+}
+
+/**
+ * The same tree with a LEAF called `assembled` on it, keyed `post`.
+ *
+ * KEYED TO A PART THAT HAS FILES, WHICH IS THE WHOLE OF WHAT MAKES IT A TEST.
+ * It was keyed `spacer` — hardware, no files — and that made the two readings
+ * agree: by key, a record with no files; by name, no record at all; both
+ * answering "No files for this part". So the test below stayed green with the
+ * menu reverted to a full lookup by NAME — the very reconstruction this fixture
+ * exists to catch — and asked, byte for byte, the same question the bought
+ * screw already asks. Keyed `post` the two readings differ: three files by key,
+ * nothing by name, so the row can be asked which of the two it used.
+ *
+ * NO PUSH PRODUCES THIS ONE EITHER, and it takes two rules to say why. A view
+ * entry no longer carries a name at all — it is a REFERENCE into the catalogue
+ * (`read_parts` in src/cadbuild/views.py), and the tessellator names the leaf
+ * after the key it was given — so a leaf named `assembled` and keyed `post`
+ * is two strings that cannot come apart on a real build. And `assembled` is a
+ * key no part may have, whatever its kind: it is one of the stems a build keeps
+ * for itself (`RESERVED_STEMS` in src/cadbuild/parts.py, whose own note spells
+ * out that the reservation applies to every kind, not only to what is
+ * exported). What IS legal under that name is a GROUP — `_check_group_name`
+ * refuses only a name that is also a catalogue key — but a group is a different
+ * row with a different menu, so this fixture stays a leaf.
+ *
+ * IT IS HERE AS THE HAND-MADE DOCUMENT the old reconstruction died on, and the
+ * assertion is a decision rather than a description of a real build: this row's
+ * name collides with `views[].overview` on the very same document, which names
+ * `assembled.stl`. Matched the old way — a row's name against a filename's stem
+ * — those two put the whole assembly on this row's menu, with the link working
+ * and nothing anywhere saying whose file it was.
  */
 const TREE_WITH_A_RESERVED_NAME = {
   ...TREE,
-  children: [...TREE.children, { id: '/model/assembled', name: 'assembled' }],
+  children: [...TREE.children,
+             { id: '/model/assembled', name: 'assembled', key: 'post' }],
 }
 
 /**
@@ -91,16 +171,47 @@ const TREE_WITH_A_RESERVED_NAME = {
  * nearly all of it: what is being avoided is a field left undefined turning into
  * a `TypeError` halfway down and looking like a failure of the menu.
  */
-function component({ node, downloads = DOWNLOADS, token = null, expanded = {},
-                     tree = TREE, about = {} } = {}) {
+function component({ node, parts = PARTS, token = null, expanded = {},
+                     tree = TREE, viewFiles = {} } = {}) {
   const c = Object.create(HammerolaViewer.prototype)
   c.props = { commentsOpen: false }
   c.home = null
   c.setState = vi.fn((patch) => { Object.assign(c.state, patch) })
   c.state = {
     meta: {
-      project: 'fixture', commit: 'abc1234', built: '', downloads, ...about,
-      variants: [{ id: 'assembled', name: 'assembled', file: 'a.json', parts: 3, gzip: 1000 }],
+      project: 'fixture', commit: 'abc1234', built: '',
+      // `parts: null` MEANS THE FIELD IS NOT THERE, and it is spelled by
+      // omission rather than as an empty object because `{}` describes no
+      // document there has ever been: `_catalogue` in src/render.py refuses an
+      // empty `parts` in as many words, and refuses again a catalogue with no
+      // `printable` in it (and a printable with no `files`). So the reader of
+      // the two "no files" branches below is A HAND-MADE DOCUMENT, OR ONE THIS
+      // PAGE DID NOT GET FROM A PUSH.
+      //
+      // IT IS NOT AN OLD BUILD, and that is worth writing down because the
+      // reading is inviting and wrong. A genuine document from before issue #75
+      // carried `variants` where this one carries `views` (`build_meta` in
+      // src/render.py, before 5683fea), and exactly TWO readings of `meta.views`
+      // are unguarded: `load()` calls `.find` on it the moment meta.json
+      // arrives, and `subtitle()` does the same on every render that has a meta
+      // at all. Those two are also the ones that run FIRST, so such a document
+      // takes the page down long before any catalogue is looked at.
+      //
+      // Every other reading of that field does guard, and that is not an
+      // inconsistency to be tidied in either direction: what those guard is
+      // `meta` not being THERE yet — the page draws before the fetch answers,
+      // and a build swap has a window mid-flight — with the two that ingest a
+      // freshly fetched document (`switchBuild` and `poll`/`takePending`)
+      // checking the shape of `views` on top of that. Neither question is the
+      // one above, and answering it here would only hide the crash that keeps
+      // an old document out.
+      //
+      // Nothing here opens one and nothing here promises to: old builds were
+      // dropped by decision, while an untrusted document is a different thing
+      // and is what these branches are for.
+      ...(parts ? { parts } : {}),
+      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+                parts: Object.keys(parts || {}), gzip: 1000, ...viewFiles }],
     },
     builds: null,
     tree: indexTree(tree),
@@ -128,49 +239,45 @@ const labels = (items) => items.map((m) => m.label)
 /** The rows that actually carry a file. */
 const fileRows = (items) => items.filter((m) => m.href)
 
-describe('filesByPart', () => {
-  it('groups a many-printable build by the part in each filename', () => {
-    const grouped = filesByPart(DOWNLOADS)
-    expect([...grouped.keys()]).toEqual(['plate', 'post'])
-    expect(grouped.get('plate')).toEqual([
-      { ext: 'step', file: 'plate.step' },
-      { ext: 'stl', file: 'plate.stl' },
-      { ext: '3mf', file: 'plate.3mf' },
-    ])
+describe('partRecord', () => {
+  it('answers with the record the key names', () => {
+    expect(partRecord(PARTS, 'plate')).toBe(PARTS.plate)
   })
 
-  it('finds the part in a SINGLE-printable build, where the label has lost it', () => {
-    // The case that defeats prefix-matching on the label, and the reason this
-    // reads the value: one printable, and the hub's label is the bare extension.
-    const grouped = filesByPart({ step: 'post.step', stl: 'post.stl', '3mf': 'post.3mf' })
-    expect([...grouped.keys()]).toEqual(['post'])
-    expect(grouped.get('post').map((f) => f.ext)).toEqual(['step', 'stl', '3mf'])
+  it('answers nothing for a key the catalogue does not declare', () => {
+    // Which is what a row naming a part of another build looks like, and what
+    // the page has to survive rather than throw over.
+    expect(partRecord(PARTS, 'lid')).toBeNull()
   })
 
-  it('splits at the last dot, so a part name may contain dots', () => {
-    const grouped = filesByPart({ 'v1.2.plate.stl': 'v1.2.plate.stl' })
-    expect(grouped.get('v1.2.plate')).toEqual([{ ext: 'stl', file: 'v1.2.plate.stl' }])
-    expect(grouped.has('v1')).toBe(false)
+  it('does not hand back a function for a part called `constructor`', () => {
+    // The trap the guard is there for: `render._check_part_name` does not
+    // object to a key of `constructor` or `__proto__`, and the catalogue comes
+    // back from `JSON.parse`, so it inherits from `Object.prototype`. A bare
+    // `parts[key]` answers `constructor` with a FUNCTION, which the reads
+    // downstream then slice or hand to React.
+    for (const key of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      expect(partRecord(PARTS, key), key).toBeNull()
+    }
+    // And a build that really does declare one is found, since the guard asks
+    // about the map rather than about what it inherits.
+    const declared = { constructor: { kind: 'printable', files: { stl: 'c.stl' } } }
+    expect(partRecord(declared, 'constructor')).toBe(declared.constructor)
   })
 
-  it('answers an absent or empty download map with nothing at all', () => {
-    expect(filesByPart({}).size).toBe(0)
-    expect(filesByPart(undefined).size).toBe(0)
-    expect(filesByPart(null).size).toBe(0)
+  it('answers nothing for an absent catalogue or an empty key', () => {
+    expect(partRecord(undefined, 'plate')).toBeNull()
+    expect(partRecord(null, 'plate')).toBeNull()
+    expect(partRecord(PARTS, '')).toBeNull()
+    expect(partRecord(PARTS, null)).toBeNull()
   })
 
-  it('drops a filename that is not `<part>.<ext>` rather than inventing a part', () => {
-    // A row built out of one of these would download nothing, which is worse
-    // than not being offered.
-    const grouped = filesByPart({ a: 'README', b: '.hidden', c: 'trailing.' })
-    expect(grouped.size).toBe(0)
-  })
-
-  it('keeps a part called `__proto__` instead of silently storing nothing', () => {
-    // A legal printable name (MEMBER_RE allows it) and a poisoned key on an
-    // object literal — which is why the grouping is a Map.
-    const grouped = filesByPart({ x: '__proto__.stl' })
-    expect(grouped.get('__proto__')).toEqual([{ ext: 'stl', file: '__proto__.stl' }])
+  it('refuses a record that is not an object rather than reading fields off it', () => {
+    // The hub refuses one, but this side reads a fetched document rather than a
+    // promise about it, and `record.files` on a number is `undefined`.
+    expect(partRecord({ plate: 3 }, 'plate')).toBeNull()
+    expect(partRecord({ plate: 'plate.stl' }, 'plate')).toBeNull()
+    expect(partRecord({ plate: null }, 'plate')).toBeNull()
   })
 })
 
@@ -178,29 +285,45 @@ describe('groupDownloads', () => {
   it('puts the printer\'s formats first and the rows under each in part order', () => {
     // The whole complaint the grouping answers: flat, this is six rows in the
     // order the hub wrote them, and "every STL" means picking every third one.
-    const groups = groupDownloads(DOWNLOADS)
+    const groups = groupDownloads(PARTS)
     expect(groups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP'])
     expect(groups[0].files.map((f) => f.label)).toEqual(['plate', 'post'])
     expect(groups[0].files.map((f) => f.file)).toEqual(['plate.stl', 'post.stl'])
   })
 
-  it('names the row after the PART on a single-printable build, where the label cannot', () => {
-    // The degenerate case `filesByPart` above is also built around: with one
-    // printable the hub's label is the bare extension, so stripping the format
-    // off it leaves nothing and the filename's stem has to answer. A row reading
-    // `stl / stl` would be the visible failure.
-    const groups = groupDownloads({ step: 'post.step', stl: 'post.stl', '3mf': 'post.3mf' })
+  it('names every row after the KEY, on a one-part build as on a six-part one', () => {
+    // The case that used to need the whole reconstruction: the hub's download
+    // label degenerated to a bare `stl` when there was only one printable, so
+    // the part's name had to be dug out of the filename. A catalogue key does
+    // not degenerate — it is the part's identity whatever else the build holds.
+    const groups = groupDownloads({ post: PARTS.post })
     expect(groups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP'])
-    expect(groups.flatMap((g) => g.files.map((f) => f.label))).toEqual(['post', 'post', 'post'])
+    expect(groups.flatMap((g) => g.files.map((f) => f.label)))
+      .toEqual(['post', 'post', 'post'])
   })
 
-  it('groups by the extension off the FILENAME, not by the label', () => {
-    // Same reason as everything else in this file: the label is the half that
-    // degenerates. Here it is degenerate AND the group key would be wrong.
-    const groups = groupDownloads({ stl: 'v1.2.plate.stl' })
+  it('takes the row\'s name from the key and never from the filename', () => {
+    // THE PARSE IS GONE, and this is the assertion that says so: a build is
+    // free to export a part under a filename that looks nothing like its key,
+    // and the old code — which cut `v1.2.plate.stl` at its last dot and called
+    // the stem the part — would draw `v1.2.plate` here.
+    const groups = groupDownloads({
+      plate: { kind: 'printable', files: { stl: 'v1.2.plate.stl' } },
+    })
+    expect(groups[0].files).toEqual([{ label: 'plate', file: 'v1.2.plate.stl' }])
+  })
+
+  it('groups by the EXTENSION the record declares, not by the filename', () => {
+    // The other half of the same sentence. The extension is the map's key and
+    // the file is its value, and the two are free to disagree: `SAFE_LABEL` in
+    // src/render.py holds the extension to an alphabet and says nothing about
+    // what the file it points at is called.
+    const groups = groupDownloads({
+      plate: { kind: 'printable', files: { stl: 'plate.model' } },
+    })
     expect(groups).toHaveLength(1)
     expect(groups[0].ext).toBe('STL')
-    expect(groups[0].files).toEqual([{ label: 'v1.2.plate', file: 'v1.2.plate.stl' }])
+    expect(groups[0].files).toEqual([{ label: 'plate', file: 'plate.model' }])
   })
 
   it('lands a format nobody planned for after the three, alphabetically', () => {
@@ -208,35 +331,77 @@ describe('groupDownloads', () => {
     // added on the build side has to be ORDERED rather than turning up wherever
     // the object happened to be iterated.
     const groups = groupDownloads({
-      'plate.stl': 'plate.stl', 'plate.zip': 'plate.zip',
-      'plate.step': 'plate.step', 'plate.amf': 'plate.amf',
+      plate: {
+        kind: 'printable',
+        files: { stl: 'plate.stl', zip: 'plate.zip', step: 'plate.step', amf: 'plate.amf' },
+      },
     })
     expect(groups.map((g) => g.ext)).toEqual(['STL', 'STEP', 'AMF', 'ZIP'])
   })
 
-  it('answers an absent, empty or unusable download map with no groups at all', () => {
+  it('answers an absent, empty or unusable catalogue with no groups at all', () => {
     expect(groupDownloads({})).toEqual([])
     expect(groupDownloads(undefined)).toEqual([])
     expect(groupDownloads(null)).toEqual([])
-    // The same rule as `filesByPart`: a name that is not `<stem>.<ext>` makes a
-    // row that downloads nothing, which is worse than not being offered.
-    expect(groupDownloads({ a: 'README', b: '.hidden', c: 'trailing.' })).toEqual([])
+    // A record that is not an object, and one whose `files` is not one: both
+    // are documents the hub refuses, and neither may take the menu down.
+    expect(groupDownloads({ plate: 3, post: { kind: 'printable', files: 'plate.stl' } }))
+      .toEqual([])
+    // And a filename that is not a non-empty string, which would make a row
+    // that downloads nothing — worse than not being offered.
+    expect(groupDownloads({ plate: { kind: 'printable', files: { stl: '', step: null } } }))
+      .toEqual([])
   })
+
+  it('offers nothing for a part that is never printed', () => {
+    // A bought screw and a mock of one are parts — they are in the catalogue,
+    // they carry notes, the tree draws them — and no file was ever exported for
+    // either. The record says so by carrying no `files` at all, which is the
+    // shape `_catalogue` enforces rather than a convention.
+    expect(groupDownloads({
+      screw: { kind: 'hardware', note: 'M3x8 DIN912' },
+      board: { kind: 'mock' },
+    })).toEqual([])
+  })
+
+  it('never offers the `preview` sitting in the same record', () => {
+    // Now a shorter reach than it was: the part's picture used to be in a map
+    // of its own and is now one key away from its files. A picture is looked at
+    // rather than saved, and it is declared so `hammerola artifacts` can fetch
+    // it — a different reader.
+    const groups = groupDownloads(PARTS_WITH_PICTURES)
+    expect(groups.flatMap((g) => g.files.map((f) => f.file)))
+      .toEqual(['plate.stl', 'post.stl', 'plate.3mf', 'post.3mf',
+                'plate.step', 'post.step'])
+  })
+
+  // -- and `__proto__` is a legal name on both axes -------------------------
+  //
+  // WRITTEN AS A COMPUTED KEY, which is not style: `{__proto__: v}` in an object
+  // literal is the SETTER, so it stores no own property at all and the fixture
+  // would be an empty object testing nothing. `{['__proto__']: v}` is an
+  // ordinary own property — the shape `JSON.parse` produces from a pushed
+  // document, which is the shape under test.
 
   it('keeps a format called `__proto__` instead of silently storing nothing', () => {
-    // The keys come off model-supplied filenames, which is why the grouping is a
-    // Map — the same trap `filesByPart` documents.
-    const groups = groupDownloads({ 'plate.__proto__': 'plate.__proto__' })
+    // The group key comes out of that document, which is why the grouping is a
+    // Map: `groups.__proto__ = []` on an object literal stores nothing and
+    // reports no failure.
+    const groups = groupDownloads({
+      plate: { kind: 'printable', files: { ['__proto__']: 'plate.weird' } },
+    })
     expect(groups.map((g) => g.ext)).toEqual(['__PROTO__'])
-    expect(groups[0].files).toEqual([{ label: 'plate', file: 'plate.__proto__' }])
+    expect(groups[0].files).toEqual([{ label: 'plate', file: 'plate.weird' }])
   })
 
-  it('leaves a label alone when the format is not on the end of it', () => {
-    // The strip takes the format off the label and nothing else. A hub that one
-    // day writes a label of its own choosing gets that label drawn, rather than
-    // this side guessing at which part of it to cut.
-    const groups = groupDownloads({ 'the big plate': 'plate.stl' })
-    expect(groups[0].files).toEqual([{ label: 'the big plate', file: 'plate.stl' }])
+  it('keeps a part called `__proto__` on its row rather than losing the label', () => {
+    // The same alphabet on the other axis: `_check_part_name` allows it, so the
+    // key is read off `Object.entries` and travels to the row as a plain label.
+    const groups = groupDownloads({
+      ['__proto__']: { kind: 'printable', files: { stl: 'weird.stl' } },
+    })
+    expect(groups).toHaveLength(1)
+    expect(groups[0].files).toEqual([{ label: '__proto__', file: 'weird.stl' }])
   })
 })
 
@@ -497,21 +662,30 @@ describe('the header\'s downloads menu', () => {
     expect(c.downloadAll.mock.calls[0][0]).toHaveLength(2)
   })
 
-  it('says so on a build that ships no files, instead of drawing an empty menu', () => {
-    // The row menu has a sentence for this case too, and the two must not drift
-    // apart: a menu with nothing in it reads as a menu that failed to load.
-    const v = component({ node: '/model/plate', downloads: {} }).computed()
-    expect(v.downloadGroups).toEqual([])
+  it('says so on a document carrying no catalogue, instead of drawing an empty menu', () => {
+    // The branch is not dead and its reader is named: a hand-made document, or
+    // one this page did not get from a push, with no `meta.parts` on it at all.
+    // No push produces one — the hub refuses a catalogue that is empty or has
+    // nothing printable in it — and no build from before issue #75 gets here
+    // either, since those named the list `variants` and this page reads
+    // `meta.views` unguarded. The row menu has a sentence for the same
+    // document, and the two must not drift apart: a menu with nothing in it
+    // reads as a menu that failed to load.
+    const c = component({ node: '/model/plate', parts: null })
+    expect('parts' in c.state.meta, 'the fixture still carries a catalogue').toBe(false)
+    expect(c.computed().downloadGroups).toEqual([])
   })
 
-  it('reads `meta.downloads` and neither of the maps beside it', () => {
-    // The decision this file was reworked around. `meta.overview` and
-    // `meta.previews` are on the very document this menu is built from, and both
-    // are ignored: a mesh here would offer the plate for slicing — and the plate
-    // is whatever the `print` view holds, which may be a mock of a purchased
-    // bearing — while a picture here is a file saved instead of a picture looked
-    // at, one row per part.
-    const v = component({ node: '/model/plate', about: ABOUT_THE_BUILD }).computed()
+  it('reads the catalogue\'s `files` and nothing else on the document', () => {
+    // The decision this file was reworked around, now that the two things it
+    // excludes have moved to two different levels. The view's `overview` and
+    // `preview` name the whole-build mesh and its picture; each part's own
+    // render is `preview` INSIDE the record whose `files` this menu reads. A
+    // mesh here would offer the plate for slicing — and the plate is whatever
+    // the `print` view holds, which may be a mock of a purchased bearing —
+    // while a picture here is a file saved instead of a picture looked at.
+    const v = component({ node: '/model/plate', parts: PARTS_WITH_PICTURES,
+                          viewFiles: VIEW_FILES }).computed()
     expect(v.downloadGroups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP'])
     expect(v.downloadGroups.flatMap((g) => g.files.map((f) => f.file)))
       .toEqual(['plate.stl', 'post.stl', 'plate.3mf', 'post.3mf',
@@ -553,18 +727,40 @@ describe('the row menu', () => {
     expect(fileRows(items)).toHaveLength(3)
   })
 
-  it('SAYS a reference part has no files rather than dropping the row', () => {
-    // A tree node that is not in printables() has none and never will. An item
-    // that is quietly missing reads as a menu that forgot, and a dead link reads
-    // as a broken build.
+  it('SAYS a part that is not printed has no files rather than dropping the row', () => {
+    // A bought screw has none and never will. An item that is quietly missing
+    // reads as a menu that forgot, and a dead link reads as a broken build.
     const items = menuOn({ node: '/model/spacer' })
     expect(labels(items)).toContain('No files for this part')
     expect(fileRows(items)).toHaveLength(0)
   })
 
+  it('SAYS the same for a row that names no part at all', () => {
+    // A leaf with no catalogue key: no push the hub accepted carries one, and
+    // the answer is still the honest one rather than a guess. THE ROW IS NAMED
+    // `plate` ON PURPOSE — there is a real `plate` in the catalogue with three
+    // files under it — so a lookup that fell back to the row's name would offer
+    // another part's downloads here and look exactly like it worked.
+    const items = menuOn({ node: '/model/mystery', tree: TREE_WITH_AN_UNKEYED_LEAF })
+    expect(labels(items)).toContain('No files for this part')
+    expect(fileRows(items)).toHaveLength(0)
+  })
+
+  it('finds a part whose row is called something else entirely', () => {
+    // The other direction, and the reason the fixture's keys are not its names:
+    // the tessellator names a row, the catalogue names a part, and the files
+    // are looked up under the second. `reference spacer` is not a key and
+    // `spacer` is not a row name, so neither could stand in for the other.
+    const items = menuOn({
+      node: '/model/spacer',
+      parts: { ...PARTS, spacer: { kind: 'printable', files: { stl: 'spacer.stl' } } },
+    })
+    expect(fileRows(items).map((m) => m.hint)).toEqual(['spacer.stl'])
+  })
+
   it('offers a group nothing, the same way a note is not offered on one', () => {
-    // Files hang on a PART. A group is not a printable and has no files under
-    // its own name, so the union of its leaves' files is a set this menu would
+    // Files hang on a PART. A group is not a part and has no catalogue record
+    // of its own, so the union of its leaves' files is a set this menu would
     // be inventing. Bulk along the axis a reader actually asks for — one format,
     // every part — is in the header's menu, which has a "download all" per group
     // since issue #66.
@@ -578,31 +774,75 @@ describe('the row menu', () => {
     expect(labels(items)).toEqual(['Isolate', 'Hide', 'Translucent', 'Copy name'])
   })
 
-  it('says so on a build that ships no files at all', () => {
-    // The header's menu has a sentence for this; the row menu must not be worse.
-    const items = menuOn({ node: '/model/plate', downloads: {} })
+  it('heads itself with the ROW and copies the ROW, never the key', () => {
+    // THE OTHER DIRECTION OF THE SAME SPLIT, and the only two places in this
+    // menu that go that way: everything it LOOKS UP is by the key, while the
+    // heading and `Copy name` are about the row a reader right-clicked. The row
+    // is `reference spacer` and the part is `spacer`, so each of these is a
+    // claim about which of the two strings is being shown.
+    const c = component({ node: '/model/spacer' })
+    const written = []
+    c.toast = vi.fn()
+    // jsdom has no clipboard at all, so the handler would take its catch branch
+    // and toast a failure. Put one there for the length of this test and take
+    // it away again — a global left behind is a global the next file inherits.
+    Object.defineProperty(navigator, 'clipboard',
+                          { value: { writeText: (t) => written.push(t) },
+                            configurable: true })
+    try {
+      const v = c.computed()
+      expect(v.menuName).toBe('reference spacer')
+      v.menuItems.find((m) => m.label === 'Copy name').onClick({ stopPropagation() {} })
+    } finally {
+      delete navigator.clipboard
+    }
+
+    expect(written).toEqual(['reference spacer'])
+    expect(c.toast).toHaveBeenCalledWith('copied: reference spacer')
+  })
+
+  it('says so on a document carrying no catalogue, too', () => {
+    // The same document as the header's sentence above, and the same reader: a
+    // hand-made file, or one this page did not get from a push, with no
+    // `meta.parts` on it at all. The header's menu says so; the row menu must
+    // not be worse.
+    const items = menuOn({ node: '/model/plate', parts: null })
     expect(labels(items)).toContain('No files in this build')
     expect(fileRows(items)).toHaveLength(0)
   })
 
-  it('SAYS a part named `assembled` has no files, not "here is the assembly"', () => {
-    // The sharpest case there is, and the one the split was made for. A view
-    // part may be called `assembled` — a name only a PRINTABLE is refused — so
-    // this node is guaranteed to have no files, while `meta.overview.assembled`
-    // on the same document names the whole product. Read together they put the
-    // entire assembly on a reference body's row, with the link working and
-    // nothing anywhere saying whose file it was.
-    const items = menuOn({ node: '/model/assembled', about: ABOUT_THE_BUILD,
-                          tree: TREE_WITH_A_RESERVED_NAME })
-    expect(labels(items)).toContain('No files for this part')
-    expect(fileRows(items)).toHaveLength(0)
+  it('gives a row named `assembled` ITS OWN part\'s files, not the assembly', () => {
+    // The case the old reconstruction actually broke on, kept because what
+    // protects against it changed and the failure did not. The row is named
+    // `assembled` while `views[].overview` on the same document names
+    // `assembled.stl`, the whole product: matched by name those two put the
+    // entire assembly on this row, with the link working and nothing saying
+    // whose file it was. Matched by KEY the question does not arise — the key
+    // is `post`, a name is not looked at anywhere on the path, and what the row
+    // offers is what `post` exported.
+    //
+    // THE KEY POINTS AT A PART WITH FILES ON PURPOSE, which is what makes this
+    // a test of the lookup rather than of the sentence: reverted to a lookup by
+    // NAME the row finds no `assembled` in the catalogue and answers "No files
+    // for this part", so the assertion has to be the three files and not the
+    // absence of them. The reserved name is still the point — the collision is
+    // what the row is built out of — and the build side refuses it as well (see
+    // the fixture), so this is the second line rather than the only one.
+    const v = component({ node: '/model/assembled', viewFiles: VIEW_FILES,
+                          tree: TREE_WITH_A_RESERVED_NAME }).computed()
+    expect(fileRows(v.menuItems).map((m) => m.hint))
+      .toEqual(['post.step', 'post.stl', 'post.3mf'])
+    // And the assembly's own mesh is on neither menu, under any name.
+    expect(offered(v)).not.toContain('assembled.stl')
   })
 
   it('offers no picture on a part that HAS one', () => {
-    // `meta.previews.plate` is this part's own render, and the row still offers
-    // three files. A picture is looked at, not downloaded — and it is declared
-    // so `hammerola artifacts` can fetch it, which is a different reader.
-    const v = component({ node: '/model/plate', about: ABOUT_THE_BUILD }).computed()
+    // The part's own render sits in the same record as its files now, one key
+    // away rather than in a map of its own, and the row still offers three
+    // files. A picture is looked at, not downloaded — and it is declared so
+    // `hammerola artifacts` can fetch it, which is a different reader.
+    const v = component({ node: '/model/plate', parts: PARTS_WITH_PICTURES,
+                          viewFiles: VIEW_FILES }).computed()
     expect(fileRows(v.menuItems).map((m) => m.hint))
       .toEqual(['plate.step', 'plate.stl', 'plate.3mf'])
     expect(offered(v).filter((f) => f.endsWith('.png'))).toEqual([])
@@ -615,7 +855,7 @@ describe('the row menu', () => {
     // would not. With no handler it is inert, which is exactly what it claims,
     // and the menu still closes on the next click outside it.
     for (const items of [menuOn({ node: '/model/spacer' }),
-                         menuOn({ node: '/model/plate', downloads: {} })]) {
+                         menuOn({ node: '/model/plate', parts: null })]) {
       const said = items.filter((m) => m.style.includes('cursor:default'))
       expect(said).toHaveLength(1)
       expect(said[0].onClick).toBeUndefined()

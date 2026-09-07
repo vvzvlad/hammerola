@@ -17,8 +17,10 @@ publish; the other four are the ones that need nothing new from the hub.
                                   slot's own meta.json
     hammerola source <rev>     -> GET /api/v1/sources/<rev>, unpacked into a
                                   directory of its own
-    hammerola artifacts <rev>  -> GET /project/<pid>/<rev>/<file> for each entry
-                                  of the build's `downloads`
+    hammerola artifacts <rev>  -> GET /project/<pid>/<rev>/<file> for the
+                                  exports and the pictures the build's parts
+                                  and views name — NOT a view's `file`, which
+                                  is the browser's tessellation payload
     hammerola diff <a> <b>     -> both builds' metrics.json and both stored
                                   archives, compared
     hammerola log [dev|<rev>]  -> GET /api/v1/sources/<rev>/log

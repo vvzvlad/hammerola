@@ -70,8 +70,15 @@ const CARD = {
   built: '2026-08-26T18:20:00Z',
   first_built: '2026-01-22T09:00:00Z',
   dev: false,
-  parts: 14,
-  variants: 3,
+  // BOTH OF THESE WERE RENAMED, AND THE COUNT UNDER THE FIRST ONE CHANGED WITH
+  // IT (issue #75). `parts` used to be the part count of the biggest view;
+  // `printables` is how many records in the build's catalogue are actually
+  // printed, so the bought screws and the scenery are out of it. The card would
+  // have gone on rendering a number under the old name, which is exactly why
+  // the hub stopped writing that name — a reader breaks loudly here instead of
+  // quietly showing the wrong total.
+  printables: 14,
+  views: 3,
   mb: '1.2',
 }
 
@@ -92,7 +99,7 @@ describe('a card of /index.json', () => {
       pid: '0a1b2c3d4e5f',
       title: 'Ventilation controller case',
       slug: 'vent_ctrl_case',
-      meta: '14 parts · 3 views · 1.2 MB',
+      meta: '14 printables · 3 views · 1.2 MB',
       rev: 'c0ffee1',
       dev: false,
       built: '2026-08-26T18:20:00Z',

@@ -52,7 +52,8 @@ import {
  *   MENU     {id, name, x, y}    -- a part was right-clicked; x/y are the cursor
  *   FACE     {id, name, point, normal, offset, range}  -- the section plane moved
  *   MEASURE  a resolved measurement; see `measureLabel` for the fields that matter
- *   MOVED    {id, name, delta: [x, y, z]}   -- a part was dragged
+ *   MOVED    {id, name, count, delta: [x, y, z]}  -- a part was dragged; `count`
+ *            is how many copies of it went along, `id`/`name` the first of them
  *   PLACE    {id, name, p: [x, y, z]}       -- a point was picked for a comment
  *   PIN      {id}                           -- a comment pin was clicked
  *   MODEL    {view, buildKey, tree, live}   -- a view finished rendering

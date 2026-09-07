@@ -2,21 +2,37 @@
 """The local build: gate the model, export it, write _out/."""
 
 from datetime import datetime, timezone
+import functools
 import json
 import shutil
 import time
 
-from .artifacts import ASSEMBLED_STEM, PREVIEW_SUFFIX
+from .artifacts import ASSEMBLED_STEM, ASSEMBLED_VIEW_ID, PREVIEW_SUFFIX, PRINT_VIEW_ID
 from .assembly import export_assembled, export_print_plate, render_previews
-from .gate import check_print_layout, check_printables_shown
+from .gate import (check_assembled_coverage, check_interference,
+                   check_print_layout)
 from .geometry import load_model
+from .errors import BuildError
 from .metrics import METRICS_NAME, collect_metrics, write_metrics
-from .modelchecks import run_checks
-from .printables import (collect_printables, export_printables,
-                         overview_meshes, preview_files)
+from .modelchecks import (call_model, fail_site, raised_by_the_model,
+                          run_checks)
+from .modeltext import MAX_MESSAGE_CHARS, shown
+from .parts import printable_keys, read_catalogue
+from .paths import project_root
+from .printables import export_printables, overview_meshes, preview_files
 from .project import load_project
 from .project_title import title_problem
-from .views import PRINT_VIEW_ID, collect_notes, export_views, prepare_views
+# THE MODULE AND NOT ITS NAMES, which is the one import here written that way.
+# Everything it exports is a bare verb, and every one of them would need an
+# alias to read as anything at a call site in this file: `collect` and `report`
+# sit beside `collect_metrics` and `report_metrics`, which are about something
+# else entirely, and `check` on its own says nothing at all.
+# `provenance.check(...)` says which. HOW MANY OF THEM THIS FILE USES IS
+# DELIBERATELY NOT WRITTEN DOWN: the sentence that was said four and then named
+# three, leaving `unwrapped` to be found by whoever noticed the arithmetic, and
+# a fifth function would have made it false with nothing to fail on.
+from . import provenance
+from .views import export_views, prepare_views
 
 
 # WHERE THE TIME WENT, phase by phase, in the same shape every other timing in
@@ -42,6 +58,55 @@ def _phase(name, since):
     return time.monotonic()
 
 
+def _answers_for_the_model(run):
+    """The one handler that decides whose fault a failed build was.
+
+    SUFFICIENT AND NOT NECESSARY: a frame from the model's own tree on the
+    stack proves the fault is the author's, and its ABSENCE PROVES NOTHING.
+    What it buys is that a mistake in a model.py ends the build as
+    EXIT_BUILD_FAILED -- "the model said no" -- wherever the author's code left
+    a frame, INCLUDING the places nobody thought to wrap. That is most of them,
+    and the reason `modelchecks.MODEL_DOORS` still exists is the rest: at a
+    door the message names the entrance and the line (`parts() raised TypeError
+    (model.py:5)`), where this can only say that the model's own code raised
+    something, and at the two round `as_shape`/`as_shapes` the fault leaves NO
+    model frame at all, because the code that raises is the CAD kernel's.
+
+    A `BuildError` PASSES THROUGH UNTOUCHED for the reason `call_model` gives:
+    everything below already speaks in those terms, and wrapping a considered
+    refusal again would put a second sentence in front of it.
+
+    `Exception` AND NOT `BaseException`, also for `call_model`'s reason: a
+    `SystemExit` out of a model is terminal on every path already
+    (`buildproc.child` catches BaseException), so there is no green-and-published
+    outcome to guard against -- and the one place that DOES need to tell a
+    SystemExit apart, `run_checks`, has its own branch for it.
+
+    A DECORATOR AND NOT A `try:` AROUND THE BODY, for one measurable reason:
+    the site in `MODEL_DOORS` is read out of a real traceback by
+    `tests/cadbuild/test_model_doors.py`, and the `views()` entry there is
+    rooted at `build.build`. Splitting the body into an inner `_build` would
+    rename it to `build._build` -- a rewrite of the list to keep a refactor
+    invisible.
+    """
+    @functools.wraps(run)
+    def answering(*args, **kwargs):
+        try:
+            return run(*args, **kwargs)
+        except BuildError:
+            raise
+        except Exception as exc:
+            if not raised_by_the_model(exc):
+                raise
+            raise BuildError(
+                f"model.py's own code raised {type(exc).__name__}"
+                f"{fail_site(exc)}: "
+                f"{shown(exc, str, limit=MAX_MESSAGE_CHARS)}") from exc
+
+    return answering
+
+
+@_answers_for_the_model
 def build(out_dir, preview_mode="iso"):
     """Full local build. Returns (pid, meta, list of files to ship)."""
     started = time.monotonic()
@@ -77,42 +142,58 @@ def build(out_dir, preview_mode="iso"):
     if problem:
         print(f"warning: {problem}")
 
-    # Names, then the two view gates -- everything that can be wrong before a
+    # WHERE THE NUMBERS CAME FROM, first of all of these. It is a rule about
+    # the SOURCE -- the case of a name and the type of a value, read off the
+    # file the model was imported from -- so it costs a parse and no geometry
+    # at all, and it belongs at the head of the section below rather than
+    # anywhere further down. It is spoken here, after `load_model()` and after
+    # the line naming the project, so that the estimates it prints are attached
+    # to a project the reader has already been told the name of.
+    declared = provenance.collect(model)
+    bare = provenance.unwrapped(model)
+    provenance.check(declared, bare, project_root())
+    provenance_summary = provenance.report(declared)
+
+    # Names, then the view gates -- everything that can be wrong before a
     # single triangle exists, in the order it costs least to find out.
     #
-    # NAMES FIRST. Part names, the download labels they turn into, view ids and
-    # the shape of every view dict: all of it is rules about strings, none of
-    # it needs geometry. The label rule in particular used to be applied inside
-    # the export loop, so a name a couple of characters over the hub's 32 went
-    # red only after the parts ahead of it had been built, exported and meshed
-    # -- a whole build spent on an answer that was in the source all along.
+    # NAMES FIRST. Catalogue keys, kinds, notes, colours, view ids and the shape
+    # of every view dict: all of it is rules about strings and about the shape
+    # of a dict, none of it needs geometry. So a catalogue that cannot be read
+    # costs milliseconds rather than a build.
     #
-    # The shape of every view is settled in the same breath, and that includes
-    # refusing the retired parallel-list form: it is a rule about the source,
-    # so it goes red before a single part is exported and the output stays
-    # short enough to read the rewritten views printed in the message.
+    # THE CATALOGUE BEFORE THE VIEWS, because a view is a list of references
+    # INTO it: `prepare_views` refuses a reference to a part that does not
+    # exist, and it paints each leaf by what the catalogue says the part is.
     #
-    # THEN THE VIEW GATES. Both read bounding boxes and names, and an export
+    # THEN THE VIEW GATES. Two of the three read bounding boxes, and an export
     # meshes the shape in place: from then on the box OCCT hands back is the
     # MESH's, reading bigger than the shape and never smaller. A gate about
     # extents therefore belongs before any export, whatever the size of the
     # difference (drop_mesh has the measurements and how far they travel; gate
-    # has what this particular gate would and would not notice). They are also
-    # the cheapest checks in the run, so a model laid out wrong fails in
+    # has what these gates would and would not notice). They are also the
+    # cheapest checks in the run, so a model laid out wrong fails in
     # milliseconds instead of after the exports.
-    printables = collect_printables(model)
-    # printables goes in because a view is coloured by what is printed: a part
-    # the gate can match to one gets a palette colour, everything else grey.
-    prepared = prepare_views(model.views(), printables)
-    check_print_layout(prepared)
-    check_printables_shown(prepared, printables)
+    #
+    # `views()` IS A DOOR INTO THE MODEL (`modelchecks.MODEL_DOORS` is the
+    # list) and this is where it sits, because unlike `parts()` there is no
+    # single function of ours that both calls it and reads it. Its answer goes
+    # straight into `prepare_views`, which is called from elsewhere too and
+    # therefore cannot own the call.
+    catalogue = read_catalogue(model)
+    prepared = prepare_views(call_model("views()", model.views), catalogue)
+    check_print_layout(prepared, catalogue)
+    check_assembled_coverage(prepared, catalogue)
+    # The catalogue, because the gate reads each leaf's KIND out of it: a mock
+    # is scenery and is not asked whether it shares space with anything.
+    check_interference(prepared, catalogue)
     # Everything above is the model's own geometry being computed -- the @cache
     # builders run for the first time here, which on a heavy model is most of
     # this number rather than the gates it is measured at the end of.
     phase = _phase("geometry", started)
 
     print("exporting printables:")
-    downloads, part_metrics = export_printables(printables, out_dir)
+    part_files, part_metrics = export_printables(catalogue, out_dir)
     phase = _phase("printables", phase)
 
     # After the geometry gate (the STLs it checks are on disk now), before the
@@ -123,12 +204,12 @@ def build(out_dir, preview_mode="iso"):
     phase = _phase("checks", phase)
 
     print("rendering:")
-    assembled_parts = export_assembled(prepared, printables, out_dir)
+    assembled_parts = export_assembled(prepared, out_dir)
     # THE PLATE BEFORE THE PICTURES, and the order is the correctness here:
     # render_previews renders a stem from the STL already sitting next to it and
     # refuses one whose file is missing.
     plate = export_print_plate(prepared, out_dir)
-    stems = list(printables) + [ASSEMBLED_STEM]
+    stems = printable_keys(catalogue) + [ASSEMBLED_STEM]
     # `parts` is what stops a picture printing a false fact: touching parts weld
     # into one body when the mesh is loaded, so anything holding several bodies
     # has to arrive with its own count or its footer claims watertightness.
@@ -168,63 +249,99 @@ def build(out_dir, preview_mode="iso"):
     # is writing two small JSON documents, and the total below covers it.
     _phase("tessellation", phase)
 
-    # THREE MAPS AND NOT ONE, because "a client may fetch this" and "the page
-    # draws a button for this" used to be the same statement and they are not
-    # the same thing. `downloads` is per PART, cut up by part name in the
-    # browser, and it is the only one with buttons; `overview` is the two meshes
-    # about the whole build; `previews` is every picture there is, the per-part
-    # ones included. The last two are declared so they can be FETCHED -- an
-    # undeclared file is one nothing can find except by assembling its URL --
-    # and neither is drawn: see overview_meshes for why a `print.stl` button
-    # would be the wrong offer to put on a public page.
+    # EVERYTHING IS FILED UNDER WHAT OWNS IT, and that is the whole shape of
+    # this document. It used to be four flat maps side by side -- `downloads`
+    # keyed by a label of the form `<part>.<ext>`, `overview` and `previews`
+    # keyed by a stem that was sometimes a part and sometimes a view id, `notes`
+    # keyed by a part name -- so every reader had to work out from the KEY which
+    # kind of thing it was holding, by splitting strings. The viewer did exactly
+    # that and got it wrong on a part with a dot in its name.
+    #
+    # Now a file belongs to the part it is of, or to the view it is of, and the
+    # ownership is stated rather than parsed. `assembled.stl` and `print.stl`
+    # belong to views because that is what they are pictures of -- and they are
+    # still not buttons: see overview_meshes for why a `print.stl` button would
+    # be the wrong offer to put on a public page.
+    #
+    # WHAT FOLLOWS IS A SEAM BETWEEN TWO NAMESPACES and it is worth naming,
+    # because it breaks silently. `overview` and `previews` are keyed by a FILE
+    # STEM; a view entry is keyed by a VIEW ID. The two meet in exactly two
+    # places, and only because the strings are equal: `ASSEMBLED_STEM` and
+    # `ASSEMBLED_VIEW_ID` are both "assembled", and "print" is one word doing
+    # both jobs. cadbuild.artifacts keeps those names apart deliberately so a
+    # rename of one does not move the other -- which means a rename of either
+    # lands HERE, as a view that quietly declares no picture and no mesh rather
+    # than as a failure. Writing the translation out is what makes the rename
+    # visible: this dict stops compiling the day one of them changes. It also
+    # closes a collision the plain `vid in previews` had -- `previews` is keyed
+    # by catalogue keys too, so a view id that happened to equal a part's name
+    # hung that PART's picture on the view.
+    stem_of_view = {ASSEMBLED_VIEW_ID: ASSEMBLED_STEM,
+                    PRINT_VIEW_ID: PRINT_VIEW_ID}
+    for entry in views:
+        stem = stem_of_view.get(entry["id"])
+        if stem is None:
+            continue
+        if stem in overview:
+            entry["overview"] = overview[stem]
+        if stem in previews:
+            entry["preview"] = previews[stem]
+    # Optional keys are ABSENT rather than empty, throughout: an empty object is
+    # a build SAYING it has none of something, so a reader would have two ways
+    # of asking one question.
+    parts_meta = {}
+    for key, record in catalogue.items():
+        entry = {"kind": record["kind"]}
+        # Only a printable has files, which is the point of the kind: nothing
+        # is exported for a bought screw or for the wall a bracket bolts to.
+        if key in part_files:
+            entry["files"] = part_files[key]
+        if key in previews:
+            entry["preview"] = previews[key]
+        # The author's note. It has nowhere else to travel: the tessellated view
+        # file is the tessellator's own document, and the catalogue itself does
+        # not leave the build process.
+        if record["note"]:
+            entry["note"] = record["note"]
+        parts_meta[key] = entry
     meta = {
         "project": project,
         "title": title,
         "built": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "views": views,
-        "downloads": downloads,
-        # Unconditional, unlike the two optional keys below: `export_assembled`
-        # either writes assembled.stl or raises, so this map is never empty.
-        "overview": overview,
+        # THE CATALOGUE, as the build published it: every part, whatever its
+        # kind, whether or not anything was exported for it. A reader that
+        # wanted only the printed ones can see which those are; a reader given
+        # only the printed ones could never reconstruct the rest.
+        "parts": parts_meta,
     }
-    # Absent rather than empty when nothing was rendered, for the reason the
-    # notes below are: an empty object is a build SAYING it has no pictures, so
-    # a reader would have two ways of asking one question -- and a build made
-    # before this key existed answers only one of them.
-    if previews:
-        meta["previews"] = previews
-    # The author's notes, keyed by part NAME rather than by anything the
-    # tessellator produces: the per-part dicts of views() do not survive into
-    # meta.json (`views` is a list of files here) and the tessellated view file
-    # is the tessellator's own document, so this is the only way they travel.
-    # The key is ABSENT when nothing declared one -- a build with no notes and
-    # a build made before notes existed have to reach the hub as one document.
-    notes = collect_notes(prepared)
-    if notes:
-        meta["notes"] = notes
     (out_dir / "meta.json").write_text(
         json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     # Written after the checks, because it carries what they measured and how
     # many of them there were.
-    write_metrics(out_dir, collect_metrics(project, part_metrics, checks_passed))
+    write_metrics(out_dir, collect_metrics(project, part_metrics, checks_passed,
+                                           provenance_summary))
 
     # metrics.json is named HERE and not derived from meta.json like the rest.
     # meta.json lists what the viewer loads, and the viewer never loads this --
     # it is written for the next build of this project to read back off `dev`.
     shipped = ["meta.json", METRICS_NAME]
     shipped += [v["file"] for v in views]
-    shipped += sorted(set(downloads.values()))
-    # DELIBERATE REDUNDANCY, not the sole source: `overview` and `previews` name
-    # the same files again, so this list overlaps them by construction. HOW MUCH
+    shipped += sorted({name for files in part_files.values()
+                       for name in files.values()})
+    # DELIBERATE REDUNDANCY, not the sole source: meta.json names the same files
+    # again -- on the views and on the parts -- so this list overlaps it by
+    # construction. HOW MUCH
     # OF IT EXISTS DEPENDS ON THE BUILD, which is why this cannot be written as
     # "both meshes and every picture" -- there is no plate without a `print`
     # view, and no picture at all on a python with no rendering stack, and both
     # of those are degradations this build supports.
-    # The names below are therefore taken from the same evidence the maps are
-    # (`plate`, `written`) rather than FROM the maps, because the two answer
-    # different questions -- a map is what a reader is offered, this is what the
-    # build says it wrote -- and making the second a function of the first would
+    # The names below are therefore taken from the same evidence meta.json's are
+    # (`plate`, `written`) rather than FROM meta.json, because the two answer
+    # different questions -- that document is what a reader is offered, this is
+    # what the build says it wrote -- and making the second a function of the
+    # first would
     # let a later narrowing of an offer stop declaring a file that is still on
     # disk. That is the one thing nothing catches: what is not on this list is
     # hashed by nothing and checked by nobody. Repeating costs nothing, the
@@ -235,11 +352,12 @@ def build(out_dir, preview_mode="iso"):
     shipped += written
     # One entry per name, in the order they were added. NOTHING ABOVE CAN
     # PRODUCE A DUPLICATE TODAY, and writing that down is the point of this
-    # comment rather than an argument for deleting the line: the download values
-    # arrive as a set, a view file is `<vid>.json` under an id that is unique and
-    # cannot be `meta` or `metrics` (RESERVED_NAMES), both whole-build stems are
-    # refused to printables (RESERVED_STEMS), and the pictures are the only
-    # `.png`s here. So this collapse is defence against the NEXT writer of this
+    # comment rather than an argument for deleting the line: the part files
+    # arrive as a set and are named after keys that are unique by being dict
+    # keys, a view file is `<vid>.json` under an id that is unique and cannot be
+    # `meta` or `metrics` (RESERVED_NAMES), both whole-build stems are refused
+    # to the catalogue (RESERVED_STEMS), and the pictures are the only `.png`s
+    # here. So this collapse is defence against the NEXT writer of this
     # function, not the folding of an overlap that exists -- and being wrong
     # about that costs more than tidiness: a repeat costs the output hash nothing
     # (it builds a dict) but is counted one by one against the ceiling on how

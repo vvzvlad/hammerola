@@ -17,9 +17,12 @@ from src.cadbuild import checklib, modelchecks
 from src.cadbuild.errors import BuildError
 from src.cadbuild.modelchecks import (
     SECTION_FLOOR,
+    call_model,
     checks_call_args,
     count_checks,
     describe_returned,
+    fail_site,
+    model_site,
     print_check_sections,
     run_checks,
 )
@@ -44,6 +47,73 @@ class Model:
     def __init__(self, checks=None):
         if checks is not None:
             self.checks = checks
+
+
+# --------------------------------------------------------------------------
+# Which line a failure is blamed on
+# --------------------------------------------------------------------------
+# TWO BRANCHES OF `fail_site` HAD NOTHING ON THEM, and both were found by
+# mutation rather than by reading: `last = (outside or frames)[-1]` cut down to
+# `outside[-1]`, and `if not frames: return ""` deleted outright, each left the
+# whole suite green. Neither is decoration -- the regression they guard is an
+# IndexError raised INSIDE the `except` handler of `call_model`, which REPLACES
+# the BuildError being built and turns exit 3 (the model said no) into exit 4
+# (the hub fell over).
+
+def test_a_failure_with_no_frame_outside_the_package_still_names_a_file():
+    """The fallback, reached the way it is really reached.
+
+    `call_model` handed one of OUR functions is not a contrivance -- it is what
+    a hub bug looks like from here -- and the traceback it catches then holds
+    nothing but `modelchecks.py` and `checklib.py`. The test's own frame is not
+    on it: a traceback accumulates only up to the frame that CATCHES, and that
+    frame is inside `call_model`.
+
+    Without the fallback this is an IndexError leaving the except handler, so
+    `pytest.raises(BuildError)` is half of what is being asserted.
+    """
+    with pytest.raises(BuildError) as exc:
+        call_model("parts()", checklib.estimated, 1.0, "")
+    message = str(exc.value)
+    assert "parts() raised ValueError" in message
+    assert "checklib.py:" in message, (
+        f"every frame of that traceback is the hub's, and the message names no "
+        f"file at all: {message}")
+
+
+def test_a_failure_with_no_frame_outside_the_package_names_no_model_line():
+    """The other half: `model_site` says nothing rather than naming one of ours.
+
+    This is the difference between the two functions, and it is what the IMPORT
+    door needs -- a missing model.py leaves a traceback of nothing but hub
+    frames, and `importing model.py failed (geometry.py:<line>)` would send the
+    author of a missing file to a file of the hub's.
+    """
+    try:
+        checklib.estimated(1.0, "")
+    except ValueError as error:
+        # Drop this test's own frame, which is the only one outside the package.
+        error.__traceback__ = error.__traceback__.tb_next
+        assert model_site(error) == "", (
+            f"model_site named {model_site(error)!r} for a traceback holding "
+            f"nothing but hub frames")
+        assert fail_site(error).startswith(" (checklib.py:"), (
+            "and fail_site, which is the one that falls back, still names ours")
+    else:
+        pytest.fail("estimated() with an empty note is supposed to refuse")
+
+
+def test_an_exception_that_was_never_raised_names_no_site():
+    """No traceback at all is `[]`, and `[][-1]` is an IndexError.
+
+    An exception object that has never been raised carries no traceback, and
+    both of these functions are called from inside an `except` that is
+    assembling a refusal -- which is the one place a raise costs the most: it
+    REPLACES that refusal, turning exit 3 into exit 4. The guard is one line and
+    this is what says it is there.
+    """
+    assert fail_site(ValueError("never raised")) == ""
+    assert model_site(ValueError("never raised")) == ""
 
 
 # --------------------------------------------------------------------------

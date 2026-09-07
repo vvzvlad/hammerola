@@ -31,7 +31,8 @@ import { loadMeta } from '../src/hub.js'
 /** A build the banner is offering — meta.json as the poll would have read it. */
 const NEXT = {
   commit: 'abc1234def',
-  variants: [{ id: 'assembled', file: 'assembled.json', parts: 3, gzip: 1000 }],
+  views: [{ id: 'assembled', file: 'assembled.json',
+            parts: ['lid', 'post', 'pin'], gzip: 1000 }],
 }
 
 /** ...and the one after it, for the poll that arrives while NEXT is on offer. */
@@ -56,7 +57,7 @@ function component({ busy = false, answer = null } = {}) {
     },
   }
   c.state = {
-    meta: { commit: 'oldbuild', variants: NEXT.variants },
+    meta: { commit: 'oldbuild', views: NEXT.views },
     pending: null, view: 'assembled', bannerGone: false,
   }
   c.setState = vi.fn((patch, done) => {

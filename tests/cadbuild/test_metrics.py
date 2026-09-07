@@ -182,13 +182,58 @@ def test_only_the_project_root_is_fingerprinted(isolated_project):
 
 def test_metrics_json_is_written_with_readable_floats(out_dir):
     write_metrics(out_dir, collect_metrics("scratch-project",
-                                           {"body": measured(volume=1.23456789)}, 3))
+                                           {"body": measured(volume=1.23456789)},
+                                           3, {}))
     data = json.loads((out_dir / METRICS_NAME).read_text(encoding="utf-8"))
     assert data["version"] == METRICS_VERSION
     assert data["project"] == "scratch-project"
     assert data["checks_passed"] == 3
     assert data["parts"]["body"]["volume_mm3"] == 1.234568
     assert data["parts"]["body"]["watertight"] is True
+
+
+def test_a_declared_number_is_written_out_as_an_ordinary_number(out_dir):
+    """`checklib.Number` is a float SUBCLASS, and provenance now reaches here.
+
+    Two claims, and the order of the two branches in `trim` is what makes both
+    true at once. A subclass has to come out as JSON's own number, with nothing
+    of the wrapper left in the file. And the `bool` branch has to stay ABOVE the
+    `float` branch: `True` is an int rather than a float, so it does not enter
+    that branch today — but `round(True, 6)` is `1`, so the day something puts
+    a bool where the walk sees a float, the reversed order writes `1` in place
+    of `true` and `watertight` stops being a yes/no.
+    """
+    from src.cadbuild import checklib
+
+    write_metrics(out_dir, collect_metrics(
+        "scratch-project",
+        {"body": measured(volume=checklib.measured(1.23456789, "ref/m.md"))},
+        3, {"measured": 1, "derived": 0, "estimated": 0, "estimates": []}))
+    text = (out_dir / METRICS_NAME).read_text(encoding="utf-8")
+    data = json.loads(text)
+    assert data["parts"]["body"]["volume_mm3"] == 1.234568
+    assert data["parts"]["body"]["watertight"] is True
+    assert "1.234568" in text        # a number, not a quoted repr of one
+    assert data["provenance"]["measured"] == 1
+
+
+def test_the_provenance_argument_has_no_default():
+    """"A REQUIRED argument rather than one with a default" was a comment.
+
+    `collect_metrics`'s docstring argues the point -- a default would let a
+    caller drop the whole record by forgetting it, and metrics.json would still
+    look complete -- and giving the parameter `provenance={}` left every test in
+    this repository green, which is exactly the silence the argument describes.
+    One line of `inspect.signature` is what makes the claim fail on the edit
+    that falsifies it.
+    """
+    import inspect
+
+    parameter = inspect.signature(collect_metrics).parameters["provenance"]
+    assert parameter.default is inspect.Parameter.empty, (
+        f"collect_metrics(provenance=...) now defaults to "
+        f"{parameter.default!r}, so a caller that forgets it publishes a "
+        f"metrics.json with an empty provenance block and nothing goes red")
 
 
 def test_the_metrics_file_name_passes_the_hub_s_member_rule():

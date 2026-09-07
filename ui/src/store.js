@@ -77,10 +77,16 @@ export const clearToken = () => write(TOKEN_KEY, null);
 // A note is a PROPERTY OF A PART and belongs to the project, not to a build and
 // not to a browser (brief, block 5) — "3.2 mm wall, printer minimum, leave it"
 // is true before a rebuild and after one. There is no endpoint for it, so it is
-// kept here and the editor says so on the screen. Keyed by part NAME, exactly
-// as the brief settles it: a name survives a rebuild, an id does not, and the
-// same part is called something different in the print view than in the
-// assembled one.
+// kept here and the editor says so on the screen. Keyed by the CATALOGUE KEY —
+// the identity `meta.parts` is keyed by, which the build declares and the view
+// file repeats on every leaf (issue #75). It used to be keyed by the row's
+// NAME, on the argument that a name survives a rebuild while an id does not;
+// the key survives one too, and it is the same string in the print view as in
+// the assembled one, where a name is not: the tessellator tells two instances
+// of one part apart by calling them `pin` and `pin(2)`. Notes written under the
+// old naming are simply not found any more. That is accepted rather than
+// migrated, and it must not be papered over by looking the name up as well —
+// the name lookup is precisely the guessed identity this change removes.
 
 const notesKey = (pid) => `${NS}notes.${pid}`;
 

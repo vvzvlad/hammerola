@@ -1493,7 +1493,7 @@ class Store:
                 f"index was not refreshed")
         logger.info(
             f"publish {pid}/{commit}: {len(files)} files, "
-            f"{len(meta['variants'])} views")
+            f"{len(meta['views'])} views")
         return 201, _build_url(pid, commit)
 
     def publish_dev_built(self, pid: str, staging: Path, names,
@@ -1569,7 +1569,7 @@ class Store:
 
         logger.info(
             f"publish {pid}/{DEV_LINK}: {len(files)} files, "
-            f"{len(meta['variants'])} views")
+            f"{len(meta['views'])} views")
         return 201, url
 
     @staticmethod
@@ -2579,6 +2579,17 @@ def _usable_meta(meta, dir_name: str) -> bool:
     `latest` is pointed at, so a mismatch — a build copied under a new name, a
     meta restored into the wrong directory — would produce a dangling symlink,
     i.e. the one failure the atomic switch exists to prevent.
+
+    WHAT IT ASKS OF EACH FIELD IS WHAT THE SUBSCRIPT DOWNSTREAM NEEDS, and
+    issue #75 moved two of them without moving the question. `views` replaced
+    `variants` and `index_card` sums `v["gzip"]` over it, so that is asked of
+    every entry. `parts` used to be an int on each view — the biggest of which
+    was the card's part count — and is now the CATALOGUE, out of which the card
+    counts the printables; so the type asked about has to move from the view to
+    the record, and the field checked has to be the one actually read.
+    `isinstance(v.get("parts"), list)` would be the shape of the old line with
+    none of its content: nothing subscripts a view's key list here, while a
+    record whose `kind` is missing is exactly what makes that count raise.
     """
     if not isinstance(meta, dict):
         return False
@@ -2587,11 +2598,20 @@ def _usable_meta(meta, dir_name: str) -> bool:
             return False
     if meta["commit"] != dir_name:
         return False
-    variants = meta.get("variants")
-    if not isinstance(variants, list) or not variants:
+    views = meta.get("views")
+    if not isinstance(views, list) or not views:
         return False
-    return all(isinstance(v, dict) and isinstance(v.get("parts"), int)
-               and isinstance(v.get("gzip"), int) for v in variants)
+    if not all(isinstance(v, dict) and isinstance(v.get("gzip"), int)
+               for v in views):
+        return False
+    # Non-empty for the reason `render._catalogue` refuses an empty one on the
+    # way in: the two are one decision, and a build this side accepted and that
+    # side would not is a build published into a URL and left off every list.
+    parts = meta.get("parts")
+    if not isinstance(parts, dict) or not parts:
+        return False
+    return all(isinstance(record, dict) and isinstance(record.get("kind"), str)
+               for record in parts.values())
 
 
 def _payload_digest(files: dict) -> str:

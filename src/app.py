@@ -337,7 +337,9 @@ def _safe_name(name: str) -> bool:
     THE RULE IS NOT WRITTEN HERE, and that is the point of the indirection. It
     lives in `buildnames.unservable_reason`, because the other halves of it are
     the check every name a push DECLARES goes through
-    (`render._check_declared_file`, on all four of its maps) and the client's
+    (`render._check_declared_file`, from all five of the places a pointer can
+    sit — a view's `file`, its `overview` and its `preview`, and a catalogue
+    record's exported `files` and its own `preview`) and the client's
     own re-check of every name it is about to write to a disk
     (`src/client/artifacts.py`) — and two copies of one rule is how a build came
     to publish with a 201 into an immutable directory and then answer 404 for a

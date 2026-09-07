@@ -24,9 +24,9 @@ import tracemalloc
 import uuid
 
 import pytest
-from harness import (TOKEN, chardev_entry, dir_entry, fifo_entry, file_entry,
-                     hardlink_entry, meta_bytes, raw_tar_gz, symlink_entry,
-                     view_bytes)
+from harness import (DEFAULT_EXPORTS, TOKEN, chardev_entry, dir_entry,
+                     fifo_entry, file_entry, hardlink_entry, meta_bytes,
+                     raw_tar_gz, symlink_entry, view_bytes)
 from loguru import logger
 
 from src import store as store_module
@@ -41,6 +41,10 @@ def _payload():
     return [
         file_entry("meta.json", meta_bytes()),
         file_entry("assembled.json", view_bytes()),
+        # The exports the default catalogue names. Without them the document is
+        # a 422 in its own right (a printable that declares no `files`), and
+        # every test here would then be watching the wrong refusal.
+        *(file_entry(name, data) for name, data in DEFAULT_EXPORTS.items()),
     ]
 
 
@@ -1082,7 +1086,8 @@ def test_a_large_member_is_not_mistaken_for_a_chain_of_headers(hub_factory,
 
     files = roomy.store._unpack(body_path, dest)
 
-    assert sorted(files) == ["assembled.json", "big.bin", "meta.json"]
+    assert sorted(files) == sorted(
+        ["assembled.json", "big.bin", "meta.json", *DEFAULT_EXPORTS])
     assert (dest / "big.bin").stat().st_size == size
 
 
@@ -1663,7 +1668,10 @@ def test_the_length_refusal_says_which_entry_without_repeating_it(hub):
     r = hub.publish("proj1", "abc123", body)
     assert r.status_code == 422, r.text
     error = r.json()["error"]
-    assert "member number 2" in error       # after the two payload members
+    # After the payload's own members, whatever their number is: the index is
+    # what this asserts, and `_payload` is what decides where the hostile one
+    # lands.
+    assert f"member number {len(_payload())}" in error
     assert "zzz" not in error
 
 
@@ -1700,7 +1708,7 @@ def test_the_header_ceilings_cover_directory_entries_too(hub, make_entry):
     # "directory entry", not "member": the kind is the only thing distinguishing
     # this refusal from the one about a file, and it is one of the two facts the
     # message can carry without repeating a byte of the sender's.
-    assert "directory entry number 2" in r.json()["error"]
+    assert f"directory entry number {len(_payload())}" in r.json()["error"]
 
 
 def test_an_ordinary_directory_entry_is_still_skipped_without_complaint(hub):
@@ -1944,8 +1952,11 @@ def test_a_view_file_inside_a_subdirectory_is_refused(hub):
     body = raw_tar_gz([
         file_entry("meta.json", meta_bytes(views=[
             {"id": "assembled", "name": "assembled",
-             "file": "views/assembled.json", "parts": 2}])),
+             "file": "views/assembled.json", "parts": ["lid"]}])),
         file_entry("views/assembled.json", view_bytes()),
+        # The default catalogue's own exports, so the only thing wrong with
+        # this document is where the VIEW file sits.
+        *(file_entry(name, data) for name, data in DEFAULT_EXPORTS.items()),
     ])
     r = hub.publish("proj1", "abc123", body)
     assert r.status_code == 422, r.text
@@ -1955,9 +1966,16 @@ def test_a_view_file_inside_a_subdirectory_is_refused(hub):
 
 def test_a_download_inside_a_subdirectory_is_refused(hub):
     # The same rule for the other kind of reference in meta.json: a download is
-    # a button that links to a build URL, and those are flat too.
+    # a button that links to a build URL, and those are flat too. The reference
+    # hangs off the part it belongs to now (issue #75) rather than off a flat
+    # `downloads` map, which changes where it is written and nothing about the
+    # rule -- a name is checked the same wherever the document names one.
     body = raw_tar_gz([
-        file_entry("meta.json", meta_bytes(downloads={"step": "out/model.step"})),
+        file_entry("meta.json", meta_bytes(
+            parts={"lid": {"kind": "printable",
+                           "files": {"step": "out/model.step"}}},
+            views=[{"id": "assembled", "name": "assembled",
+                    "file": "assembled.json", "parts": ["lid"]}])),
         file_entry("assembled.json", view_bytes()),
         file_entry("out/model.step", b"ISO-10303-21;\n"),
     ])
@@ -2005,8 +2023,8 @@ def test_directory_members_are_skipped_not_refused(hub):
     assert hub.publish("proj1", "abc123", body).status_code == 201
     assert not (hub.project_dir("proj1") / "abc123" / "subdir").exists()
     assert sorted(p.name for p in (hub.project_dir("proj1") / "abc123").iterdir()
-                  if not p.name.startswith(".")) == [
-        "assembled.json", "meta.json"]
+                  if not p.name.startswith(".")) == sorted(
+        ["assembled.json", "meta.json", *DEFAULT_EXPORTS])
 
 
 def test_an_archive_made_by_plain_tar_of_a_directory_publishes(hub, tmp_path):
@@ -2020,6 +2038,8 @@ def test_an_archive_made_by_plain_tar_of_a_directory_publishes(hub, tmp_path):
     (src / "scripts").mkdir(parents=True)
     (src / "meta.json").write_bytes(meta_bytes())
     (src / "assembled.json").write_bytes(view_bytes())
+    for name, data in DEFAULT_EXPORTS.items():
+        (src / name).write_bytes(data)
     (src / "scripts" / "build.py").write_bytes(b"# build\n")
     archive = tmp_path / "build.tar.gz"
     subprocess.run(["tar", "-czf", str(archive), "."], cwd=src, check=True)
@@ -2702,6 +2722,8 @@ def test_a_leading_dot_slash_prefix_is_accepted(hub):
     body = raw_tar_gz([
         file_entry("./meta.json", meta_bytes()),
         file_entry("./assembled.json", view_bytes()),
+        *(file_entry(f"./{name}", data)
+          for name, data in DEFAULT_EXPORTS.items()),
         file_entry("./scripts/gen.py", b"# gen\n"),
     ])
     assert hub.publish("proj1", "abc123", body).status_code == 201
@@ -2723,5 +2745,5 @@ def test_a_valid_build_still_publishes(hub):
     assert hub.publish("proj1", "abc123", body).status_code == 201
     meta = json.loads(
         (hub.project_dir("proj1") / "abc123" / "meta.json").read_text())
-    assert meta["variants"][0]["file"] == "assembled.json"
+    assert meta["views"][0]["file"] == "assembled.json"
     assert os.readlink(hub.project_dir("proj1") / "latest") == "abc123"

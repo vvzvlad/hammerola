@@ -31,6 +31,13 @@ Axes are the model's own coordinates, and Z is up: `material_under_head`
 probes along Z, `mating_face_flat` takes the height of the joint as `plane_z`.
 A part modelled lying on its side has to be rotated before these two mean
 anything.
+
+ONE THING HERE IS NOT A CHECK: `Number` and the three constructors below it.
+They are the other half of the same argument -- a check measures the solid that
+came out, and a `Number` says where the figure that went in came from -- and
+they live here because `checklib` is the name a model already imports. The
+CHECKING of them is not here: it reads files and knows the project root, and
+nothing in this module touches a filesystem (`cadbuild.provenance`).
 """
 
 import contextlib
@@ -40,6 +47,7 @@ import time
 # imported here becomes a public name of this module, and the root shim then
 # owes it a re-export (test_everything_a_model_calls_is_re_exported).
 import types
+import unicodedata
 
 # CUBIC millimetres -- it is compared against volumes, and this line said
 # "Millimetres" while `is_empty` said "cubic millimetres" a screenful below.
@@ -74,6 +82,343 @@ PLANE_TOL = 1e-3
 # lofts, sweeps, imported STEP -- and no amount of filtering the artefacts made
 # the number trustworthy. Thin walls are looked at by eye, on the preview and
 # in the slicer.
+
+
+# --------------------------------------------------------------------------
+# 0. Where a number came from
+# --------------------------------------------------------------------------
+
+# The three kinds of provenance, spelled once. `cadbuild.provenance` reads them
+# off a Number rather than writing the words a second time, and the constructor
+# below validates against KINDS rather than against a list of its own.
+MEASURED = "measured"
+DERIVED = "derived"
+ESTIMATED = "estimated"
+KINDS = (MEASURED, DERIVED, ESTIMATED)
+
+# How long a `source` or a `note` may be. THE SAME 200 the hub holds every other
+# displayed field to, and it is written out here rather than imported because of
+# how this module is loaded: the root `checklib.py` shim loads this file BY PATH,
+# under a name that never goes through `src`, so a `from .hubspec import
+# MAX_NOTE_CHARS` here would fail on the one import path every model.py takes.
+# `tests/cadbuild/test_checklib.py` is what ties the value to the others, the way
+# `tests/client/test_limits.py` ties the client's copies -- the number is written
+# twice and checked once, rather than written twice and hoped about.
+#
+# IT IS A CEILING RATHER THAN A STYLE RULE. The note travels into metrics.json,
+# which is served at /project/<pid>/<commit>/metrics.json, is public, and is
+# never deleted -- there is no retention. Nothing else bounded it: a 200 000
+# character note made a 200 kB metrics.json, and the only ceiling underneath was
+# the build process's RLIMIT_FSIZE of 256 MiB.
+#
+# THE FOUR COPIES OF 200 ARE ONE RULE ON PURPOSE, and that is a DECISION rather
+# than a coincidence four files happen to agree on. They are this one,
+# `hubspec.MAX_NOTE_CHARS`, `render.MAX_TEXT` and `client.limits.MAX_TEXT_CHARS`,
+# and nothing MECHANICALLY holds a note under the third: metrics.json is served
+# as a file and never passes through `render._plain_text`, so a note is bounded
+# here and nowhere else. The number is kept equal anyway, because one ceiling on
+# author-visible text is something a person can hold in their head and four that
+# drift is not -- and because narrowing this one later would retroactively
+# refuse builds that used to pass, into immutable revisions nobody can rewrite.
+# What that costs is a note ceiling that moves when somebody re-reasons about a
+# heading: acceptable, and written down here so it is a choice the next reader
+# can overturn deliberately.
+#
+# THERE IS ROOM OVER THE TEMPLATE, AND HOW MUCH IS NOT WRITTEN HERE. It was --
+# "the longest note in `model_template/` is 130 characters of the 200" -- and
+# the round that wrote the sentence added a 182-character note in the same
+# breath, which left 130 the FOURTH longest note in that directory and the real
+# room 18 characters rather than 70. A figure about another file, kept in a
+# comment, has nothing to fail on. So the claim is a test instead:
+# `tests/test_template.py::test_every_note_in_the_template_fits_under_the_ceiling`
+# measures every string the template hands a constructor against this number,
+# and the next note that outgrows it reddens there rather than rotting here.
+# `tests/cadbuild/test_checklib.py` is what ties the four copies together.
+MAX_NOTE_CHARS = 200
+
+# The two characters Unicode calls line separators, which category C does NOT
+# hold: U+2028 is Zl and U+2029 is Zp. `str.splitlines()` splits on both, so
+# they do the one thing the category scan below exists to prevent: an
+# `estimate: WALL = 2.4 -- ...` line comes back from splitlines() as TWO, and
+# whatever follows the separator reads as a finding of its own. Every OTHER
+# character splitlines() breaks on -- \v, \f, \x1c to \x1e and U+0085 -- is in
+# category C and is caught by the scan itself, so these two are the whole of
+# the gap.
+#
+# WRITTEN AS ESCAPES AND NOT AS THE CHARACTERS THEMSELVES. They are invisible,
+# so a literal pair here is a line of source nobody can proofread -- and an
+# editor that normalises them leaves this constant holding two spaces, which
+# reads exactly the same and refuses nothing.
+#
+# Checked separately from the category scan rather than folded into it,
+# deliberately: that scan has to keep answering exactly what
+# `buildnames.first_nonprintable` answers (tests/cadbuild/test_checklib.py runs
+# both over one corpus) and this is a second rule laid on top of it. Private,
+# so the root shim owes it no re-export -- a model has no use for it.
+_LINE_SEPARATORS = "\u2028\u2029"
+
+# What to say about a string that is over the ceiling, and it differs by FIELD.
+# One sentence written about a note used to be printed for both, and both halves
+# of it are false of a `source`: `provenance.report()` publishes `notes` and
+# nothing else, so a source never reaches metrics.json at all, and "put the
+# working in the measurement journal" is not something anybody can do to a file
+# path. Only the first sentence -- the count and the ceiling -- is in common.
+#
+# BY FIELD AND NOT BY KIND, which is why the note's advice names no single place
+# to put the working. It used to end "put the working in the measurement
+# journal", which is advice for `measured()` alone: `derived()` is explicitly for
+# a figure that follows from other numbers -- a published standard among them --
+# and has no journal behind it, so a note over the ceiling on a derivation was
+# sent to a file that does not exist and need not.
+#
+# THE SENTENCE NAMES TWO OF THE THREE KINDS, and the third's absence is the
+# point rather than an omission to be tidied up. A measurement's working goes in
+# the journal it cites and a derivation's in the numbers it names, so each of
+# those has somewhere to be sent; an ESTIMATE has nowhere -- the note is the
+# whole of what is recorded about it -- so the advice tells its author to keep
+# the one thing that settles the number and says nothing further, which is the
+# only true thing there is to say. A sentence per kind is the obvious
+# alternative and is not worth what it costs: `_text_problem` guards both fields
+# and is given the field, so the kind would have to be threaded through it to
+# add a clause for the kind that needs none.
+_TOO_LONG_ADVICE = {
+    "note": ("It is published in metrics.json and read by a person -- say the "
+             "one thing that settles the number and leave the working out of "
+             "it: a measurement's belongs in the journal it cites, a "
+             "derivation's in the numbers it names"),
+    "source": ("It is a path in this project with an optional #heading, not a "
+               "sentence -- name the file the measurement is written down in "
+               "and say the rest in the note"),
+}
+
+
+def _text_problem(text, field):
+    """What is wrong with a `source` or a `note`, as a sentence, or None.
+
+    FOUR THINGS, and every one of them is about where the string ENDS UP rather
+    than about taste. It is written into metrics.json, printed into the build
+    log, and served publicly at /project/<pid>/<commit>/metrics.json for as long
+    as the revision exists:
+
+      * a CEILING, because there was none. metrics.json is public, permanent and
+        on a volume with no retention, and a note is author text of any length.
+        `field` picks what to say about it -- the ADVICE differs, the count and
+        the number do not;
+      * NO CATEGORY-C CHARACTER. A note is printed as ONE line of the build
+        log, so a `\\n` in it makes one estimate read as two -- and the
+        invisible half of the category (U+202E and friends) reorders a sentence
+        somebody is going to act on;
+      * NO U+2028 OR U+2029 EITHER. They are Zl and Zp, so the category scan
+        walks past both, and `str.splitlines()` splits on them -- one note, two
+        lines, exactly as a `\\n` does. See LINE_SEPARATORS above;
+      * IT HAS TO ENCODE. A surrogate arrives from
+        `bytes.decode(errors="surrogateescape")`, and it does not reach a
+        refusal: it reaches `print()` and `json.dumps(ensure_ascii=False)`,
+        each raising UnicodeEncodeError -- not a BuildError, so the build ended
+        in EXIT_CRASHED (4) rather than EXIT_BUILD_FAILED (3), i.e. reported as
+        the hub's fault rather than the model's.
+
+    WHY THE SCAN IS WRITTEN OUT HERE and not imported from `src/buildnames.py`,
+    which holds `first_nonprintable`: the root `checklib.py` shim loads this file
+    by path, under a name that never goes through the package `src`, so this
+    module makes no relative import and no `src.` import at all. Third copy of
+    the scan is the cost, and `tests/cadbuild/test_checklib.py` is what makes it
+    a shared rule rather than a second one -- it runs both over the same corpus.
+
+    THE ENCODING BRANCH IS UNREACHABLE TODAY, and it is kept anyway. Every one of
+    the 1114112 code points was enumerated: there is not one that fails to encode
+    as UTF-8 and is not in category C, so the scan above always answers first --
+    a lone surrogate comes back as a non-printable character and never as an
+    encoding failure. It stands as the guard for the day that stops being true,
+    which is the day somebody narrows the category scan to keep it equal to
+    something else; it is not a second rule catching a case the first misses,
+    and this paragraph used to claim it was.
+    """
+    if len(text) > MAX_NOTE_CHARS:
+        return (f"is {len(text)} characters, and the ceiling is "
+                f"{MAX_NOTE_CHARS}. {_TOO_LONG_ADVICE[field]}")
+    for index, char in enumerate(text):
+        if unicodedata.category(char).startswith("C"):
+            return (f"has {char!r} at index {index}, which is not a printable "
+                    f"character. It is printed as one line of the build log and "
+                    f"served in metrics.json, so a newline makes it read as two "
+                    f"and an invisible one reorders a sentence somebody acts on "
+                    f"-- write it as one line of plain text")
+        if char in _LINE_SEPARATORS:
+            return (f"has {char!r} at index {index}, which splits a line. "
+                    f"Unicode files it under Z and not C, so it looks printable "
+                    f"and is not: str.splitlines() breaks on it, so the note "
+                    f"reads as two lines exactly as a newline would -- write "
+                    f"it as one line of plain text")
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        return (f"cannot be encoded as UTF-8 ({error.reason} at index "
+                f"{error.start}). It reached here from bytes decoded with "
+                f"errors='surrogateescape' -- decode the source of it as UTF-8 "
+                f"and the note will say what it was meant to say")
+    return None
+
+
+class Number(float):
+    """A float that remembers where its value came from.
+
+    A subclass of float, so it goes into cadquery arithmetic, into f-strings and
+    into json exactly like the number it is -- a model that wraps a constant
+    changes nothing about how the geometry is built.
+
+    PROVENANCE DOES NOT PROPAGATE THROUGH ARITHMETIC, on purpose: `a * 2` is a
+    plain float. A number worked out from other numbers has to say so with
+    `derived()`, which is a sentence about WHICH numbers, and a rule that
+    inferred it would be inventing that sentence.
+
+    Built through `measured()`, `derived()` or `estimated()` -- those are what a
+    model.py writes, and they are what says which of the three fields mean
+    anything. This class is public because the check has to be able to
+    recognise one, not because a model has a reason to call it.
+
+    `__slots__` and no `__dict__`: this is a number, and a per-instance dict on
+    something a model may hold thousands of is weight for nothing. That is also
+    why `__reduce__` is spelled out below -- a float subclass with slots and no
+    reducer pickles as a bare float, losing all three fields in silence, and
+    the build runs the model in a process of its own.
+    """
+
+    __slots__ = ("kind", "source", "note")
+
+    def __new__(cls, value, kind, source="", note=""):
+        number = super().__new__(cls, value)
+        if not math.isfinite(number):
+            # A number that cannot be compared is not a measurement: every use
+            # of one of these ends in an inequality, and nan loses every one of
+            # them without failing any.
+            raise ValueError(
+                f"{kind}({value!r}) is not a finite number. A dimension that "
+                "cannot be compared is not a measurement -- find the "
+                "arithmetic that produced it rather than recording it")
+        if kind not in KINDS:
+            raise ValueError(
+                f"a Number is one of {', '.join(KINDS)}, not {kind!r}")
+        for field, text in (("source", source), ("note", note)):
+            if not isinstance(text, str):
+                raise TypeError(
+                    f"{kind}(): {field} is {type(text).__name__}, and it is a "
+                    "sentence for a person to read")
+            # The field goes IN, not just into the prefix below: what to do
+            # about a string over the ceiling is different advice for a path
+            # than for a sentence (see _TOO_LONG_ADVICE).
+            problem = _text_problem(text, field)
+            if problem is not None:
+                raise ValueError(f"{kind}(): {field} {problem}")
+        # Through `object`, because `__setattr__` below refuses every other
+        # write to these three for the life of the number.
+        object.__setattr__(number, "kind", kind)
+        object.__setattr__(number, "source", source)
+        object.__setattr__(number, "note", note)
+        return number
+
+    def __setattr__(self, name, value):
+        """A declared number does not change after it is declared.
+
+        WHAT THIS CLOSES IS A CRASH, not a way of lying: the fields were plain
+        slots, so `n.kind = "guessed"` took, and `provenance.report` then died
+        on `counts[entry.number.kind]` with a bare `KeyError` -- which is not a
+        `BuildError`, so the build ended in a traceback rather than in a
+        message. The value itself is already immutable (this is a float), and
+        making the three fields match it is what turns "a number's provenance
+        is fixed at the point it is written" from a comment into something that
+        holds.
+        """
+        raise AttributeError(
+            f"a checklib.Number is fixed at the point it is declared, so "
+            f"{name!r} cannot be set on one. Write a new number -- "
+            f"measured(), derived() or estimated() -- rather than editing "
+            f"where an existing one came from")
+
+    def __delattr__(self, name):
+        # Deleting a field is the same change as setting one, and it lands in
+        # the same place: `report()` would raise AttributeError inside the
+        # build instead of a BuildError.
+        raise AttributeError(
+            f"a checklib.Number is fixed at the point it is declared, so "
+            f"{name!r} cannot be removed from one")
+
+    def __reduce__(self):
+        """Rebuild the whole thing, fields and all, on the far side of a pickle.
+
+        Without this a float subclass carrying `__slots__` comes back as its
+        VALUE and nothing else -- no kind, no source, no note, no error. The
+        build already runs a model in a spawned process, and issue #76 pickles
+        model-side objects across it, so the loss would be silent and remote.
+        """
+        return (self.__class__,
+                (float(self), self.kind, self.source, self.note))
+
+
+def measured(value, source, note=""):
+    """A number somebody measured, and where the measurement is written down.
+
+        SCREW_DIA = checklib.measured(3.0, "ref/measurements.md#screw",
+                                      "caliper, 3 samples")
+
+    `source` is `"<file>[#<heading>]"`, relative to the project root: a file in
+    this project, and optionally the heading inside it. THE BUILD CHECKS THAT
+    BOTH EXIST -- a source pointing at nothing refuses the build, because a
+    measurement nobody can go and read is an estimate with better manners.
+    """
+    if not source:
+        raise ValueError(
+            "measured() needs the source of the measurement -- the file it is "
+            "written down in, as \"ref/measurements.md#the-heading\". Use "
+            "estimated(value, note) for a number nobody measured")
+    return Number(value, MEASURED, source=source, note=note)
+
+
+def derived(value, note):
+    """A number worked out from other numbers. `note` says from which.
+
+        TAP_DIA = checklib.derived(SCREW_DIA - 0.5, "the M3 tapping drill")
+
+    Nothing about the derivation is verified, and nothing could be: demanding a
+    formula would demand a second copy of the expression on the line above it.
+    The note travels into metrics.json, where the next reader finds it.
+
+    A FIGURE OFF A PUBLISHED STANDARD OR DATASHEET IS `derived`, AND THE NOTE
+    NAMES THE STANDARD -- unless this project keeps a journal entry for it, in
+    which case it is `measured` and points there. The rule is written down
+    because the two worked examples of the contract classify the same kind of
+    fact differently and both are right under it: README.md marks its ISO 4762
+    head diameter `derived("... ISO 4762")`, having no journal, while
+    `model_template/` marks its DIN 912 figures `measured` against
+    `ref/measurements.md#screw`, where three samples out of the bag are written
+    down. What decides is whether somebody here can go and READ the number's
+    provenance -- which is the same question `measured()` is refused for
+    failing.
+    """
+    if not note:
+        raise ValueError(
+            "derived() needs a note saying what the number follows from. "
+            "Without it the declaration says only that somebody thought about "
+            "it, which is what estimated() is for")
+    return Number(value, DERIVED, note=note)
+
+
+def estimated(value, note):
+    """A number nobody measured. `note` says what would settle it.
+
+        WALL = checklib.estimated(2.4, "four perimeters at a 0.6 mm nozzle; "
+                                       "settled by printing one")
+
+    IT BUILDS. This is the way out that always works, and it is not a defeat:
+    most numbers in a first model are choices, and the point is that the build
+    says so -- one `estimate:` line per number in the log, and a count in
+    metrics.json -- rather than letting a guess pass for a figure somebody took.
+    """
+    if not note:
+        raise ValueError(
+            "estimated() needs a note saying what would settle the number. An "
+            "estimate with no such sentence is the bare constant it replaced")
+    return Number(value, ESTIMATED, note=note)
 
 
 # Every pair pairwise_interference actually intersected, and the volume it
@@ -478,6 +823,17 @@ def name_pairs(pairs, argument, where=""):
         raise ValueError(
             f"{where}{argument} must be a list of name PAIRS, got the string "
             f"{pairs!r}. Write it as [('a', 'b')]."
+        )
+    if not hasattr(pairs, "__iter__"):
+        # The string above is the mistake somebody actually makes; this is
+        # every OTHER thing that cannot be walked. Without it a number or a
+        # None comes out of `for ... in pairs` as a bare TypeError from inside
+        # a library, with nothing naming the option it came from -- and every
+        # other refusal in this file names one.
+        raise ValueError(
+            f"{where}{argument} must be a list of name pairs, got "
+            f"{pairs!r}, which cannot be iterated at all. Write it as "
+            "[('a', 'b')]."
         )
     out = set()
     for index, pair in enumerate(pairs):

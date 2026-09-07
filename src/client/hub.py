@@ -52,8 +52,10 @@ and `comments` are spelled out of what the browser already fetches:
                                           `<name>` is `dev`, `latest` or a
                                           revision.
     GET  /project/<pid>/<name>/<file>     PUBLIC. Any file the build ships —
-                                          the STL and STEP the `downloads` of
-                                          meta.json name, and metrics.json.
+                                          the STL, STEP and 3MF a part's
+                                          `files` names in meta.json, the
+                                          pictures and the overview meshes, and
+                                          metrics.json.
     GET  /api/v1/comments?project=<pid>   Bearer -> `{"comments": [...]}`
     POST /api/v1/comments/<id>/resolve    Bearer, `{"note": ...}` -> the record
 

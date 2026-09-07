@@ -38,10 +38,15 @@ the working copy goes while a part is still moving.
 
 **Geometry that fails the gate is not published.** Every printable has to be a
 valid solid with positive volume, export a watertight mesh and come out as one
-body; the `print` view has to be a plate rather than a pile of parts modelled
-inside one another; every printable has to appear in a view. A build that fails
-any of it is thrown away whole — `latest` and `dev` do not move — and what comes
-back is a failure code and the build's own log.
+body. The `assembled` view is required, it has to show every printable, and no
+two parts in it may occupy the same space unless the view says why — with one
+standing exemption that is not a declaration: a `mock` is scenery, so a pair
+holding one is never measured at all, while `hardware` is asked like anything
+else. The `print` view is the bed: printables only, each of them the way up the
+catalogue holds it, and each on its own patch of it rather than modelled inside
+its neighbour. A build that fails any of it is thrown away whole — `latest` and
+`dev` do not move — and what comes back is a failure code and the build's own
+log.
 
 **The files are public and the code is not.** A build's page, its geometry and
 its STEP/STL/3MF are anonymous: being given the link is what gets you the part.
@@ -210,11 +215,26 @@ Start a project from the template — `hammerola create` brings it, and it build
 as it stands. What follows is the same contract at a size that can be read here
 without downloading anything.
 
-Three functions and one import are the whole contract. `printables()` says what
-gets exported and offered for download; `views()` says what the viewer shows,
-one tab per view; `checks()` is optional and holds this part to its own numbers.
-The geometry comes from `cadquery`, and the shared checks from `checklib` — the
-third bullet below says what that one carries.
+Three functions and one import are the whole contract. `parts()` is the
+catalogue — every part of the model under the name it is known by, and where
+its geometry lives; `views()` says what the viewer shows, one tab per
+view, each of them a list of references into that catalogue; `checks()` is
+optional and holds this part to its own numbers. The geometry comes from
+`cadquery`, and the shared checks from `checklib` — the third bullet below says
+what that one carries.
+
+**And every number in it says where it came from**, which is a ground a push is
+refused on and not a convention: a module-level `UPPER_SNAKE` name bound to a
+plain float stops the build. `checklib.measured`, `derived` and `estimated` are
+how it says which. `estimated` always builds, so this is a rule about SAYING
+rather than about measuring — most of a first model is honestly a set of
+choices, and the log lists them. `measured` is the one with a cost attached: its
+source has to name a file that exists in the project, and — if it names a
+heading after a `#` — a heading that is really in that file. How
+many of each kind a build declared reaches `metrics.json` exactly, and so do the
+notes and the names of the estimates — each list up to the first 256 of them,
+after which the file says how many it left out rather than growing without a
+ceiling.
 
 ```python
 """A flat mounting plate: one printed part, driven by the numbers at the top."""
@@ -223,12 +243,17 @@ import cadquery as cq
 
 import checklib
 
-LENGTH = 60.0     # along X
-WIDTH = 40.0      # along Y
-THICKNESS = 4.0   # of the plate
-HOLE = 5.5        # M5 clearance, ISO 273
-HEAD = 8.5        # M5 socket cap head, ISO 4762
-INSET = 8.0       # hole centres in from each edge
+# Every number says where it came from, and the build refuses one that does not:
+# `measured(v, "file.md#heading")` for a figure somebody took, `derived(v, why)`
+# for one that follows from others, `estimated(v, what_would_settle_it)` for one
+# nobody measured. The last always builds, and the log says which numbers it was.
+LENGTH = checklib.estimated(60.0, "along X; whatever this bolts to settles it")
+WIDTH = checklib.estimated(40.0, "along Y; the same")
+THICKNESS = checklib.estimated(4.0, "of the plate; settled by bending one")
+HOLE = checklib.derived(5.5, "M5 clearance, ISO 273 medium")
+HEAD = checklib.derived(8.5, "M5 socket cap head diameter, ISO 4762")
+INSET = checklib.estimated(8.0, "hole centres in from each edge; chosen to "
+                                "look right")
 
 
 def hole_centres():
@@ -242,24 +267,29 @@ def plate():
             .pushPoints(hole_centres()).hole(HOLE))
 
 
-def printables():
-    """What the download buttons hand out. The key is the filename stem."""
-    return {"plate": plate()}
+def parts():
+    """The catalogue, and the one place the geometry lives.
+
+    The key is the part's identity everywhere: the stem it is exported under
+    and the name a view points at. The label is DERIVED from it rather than
+    equal to it — the exported tree tells repeats of one key apart (`pin`,
+    `pin(2)`), and the tree a reader sees puts adjacent repeats back on a
+    single counted row (`pin ×4`).
+    """
+    return {"plate": {"shape": plate(), "kind": "printable"}}
 
 
 def views():
-    """One tab each. `assembled` is the product, `print` is the bed.
+    """One tab each, and every entry is a REFERENCE into the catalogue.
 
-    They hold the same list here only because there is one part: a single part
-    is already its own bed layout. With two, `print` is where you move them
-    apart, and the gate refuses a `print` view whose parts overlap.
+    `assembled` is the product, `print` is the bed. They hold the same list here
+    only because there is one part: a single part is already its own bed layout.
+    With two, `print` is where you move them apart with `at`, and the gate
+    refuses a `print` view whose parts overlap.
     """
-    part = plate()
     return [
-        {"id": "assembled", "name": "assembled",
-         "parts": [{"shape": part, "name": "plate"}]},
-        {"id": "print", "name": "as printed",
-         "parts": [{"shape": part, "name": "plate"}]},
+        {"id": "assembled", "name": "assembled", "parts": ["plate"]},
+        {"id": "print", "name": "as printed", "parts": ["plate"]},
     ]
 
 
@@ -286,13 +316,21 @@ def checks():
 Beside `project.json`, which `hammerola create` writes, that file is the whole
 project. Four things about it are worth knowing before writing the second one:
 
-* **A part in a view needs `shape` and `name`; `color` and `alpha` are
-  optional.** The colour is decided by SHAPE and never by the name: an object
-  in a view gets a palette colour when it is one of the solids `printables()`
-  returned — moved and turned as much as you like — and everything else comes
-  out grey. So the picture says by itself what is going on the bed and what is
-  a bought part shown for reference, and a stand-in stays grey however you
-  label it.
+* **A catalogue entry needs `shape` and `kind`; `color` and `note` are
+  optional.** `kind` is `printable`, `hardware` or `mock` — what you print, what
+  you buy, what is only there so the picture makes sense — and it has no
+  default, deliberately: defaulting to `printable` would export a mock of a
+  bought bearing and put download buttons under it. An entry that names no
+  colour is painted by its kind, so the picture says by itself what goes on the
+  bed and what was bought. A VIEW HOLDS NO GEOMETRY, AND HAS ONE DOOR:
+  `"plate"` is the part as the catalogue has it, `{"part": "plate", "at": <a
+  cq.Location>}` is the same part placed, and `alpha` goes there too — while
+  `{"part": "strap", "shape": bent, "deformed": "clamped round the pipe"}` is
+  the one way a shape reaches a view at all, for a part that really is a
+  different shape in place. The reason is required and is printed into the
+  build log, because an unexplained second shape under a part's name is the
+  look-alike this whole design refuses; and the plate will not take one, there
+  being no "in place" on a bed.
 * **`checks()` runs on the hub, and a demonstrably empty one is refused.** The
   build counts the checks in the function's own source, and refuses a body with
   no assert, no raise, nothing filling the list it returns and not so much as a
