@@ -160,7 +160,9 @@ recorded_interference = _impl.recorded_interference
 recorded_sections = _impl.recorded_sections
 section = _impl.section
 swept_clearance = _impl.swept_clearance
+thin_walls = _impl.thin_walls
 tool_access = _impl.tool_access
+unsupported_area = _impl.unsupported_area
 volume = _impl.volume
 
 # One import form to avoid elsewhere in this repository. When this shim has run
@@ -198,6 +200,8 @@ __all__ = [
     "recorded_sections",
     "section",
     "swept_clearance",
+    "thin_walls",
     "tool_access",
+    "unsupported_area",
     "volume",
 ]
