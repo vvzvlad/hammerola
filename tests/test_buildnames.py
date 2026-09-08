@@ -4,20 +4,20 @@ WHY THIS FILE EXISTS. "What may a build file be called" is asked by the file
 server, by the declaration side of a push and by the client that writes such a
 name to the author's disk — and the third of those cannot import either of the
 first two: `hammerola` is stdlib-only and takes nothing from `requirements.txt`
-or from the service (`src/client/__init__.py`). That is exactly the shape that
+or from the service (`hammerola/__init__.py`). That is exactly the shape that
 produced `cad_publish/hubspec.py`: somebody else's rules, copied into a place
 that could not see the original, with nothing comparing the two. Here the copy
 was real and had already gone wrong — the client's own re-check caught `/` and a
 leading dot while the rule it was standing in for had grown two more clauses,
 one of which names that very command as its beneficiary.
 
-So the rule MOVED, to `src/buildnames.py`, and every side imports it. What these
+So the rule MOVED, to `hammerola/buildnames.py`, and every side imports it. What these
 tests pin is that this stays true: that nothing re-inlines a copy, and that the
 shared module stays importable on a laptop's bare python3, which is the property
 that made the move possible at all.
 
 The CATEGORY SCAN inside that rule has a fourth reader, and it is pinned here
-for the same reason: `_clean_title` in `src/client/project.py` refuses a project
+for the same reason: `_clean_title` in `hammerola/project.py` refuses a project
 title before `hammerola create` writes it, and it used to spell the scan itself
 — narrower than the one the far side applies, so a title it accepted killed the
 build.
@@ -31,9 +31,9 @@ import ast
 import sys
 from pathlib import Path
 
-from src import app, buildnames, render
-from src.client import artifacts
-from src.client import project as client_project
+from src import app, render
+from hammerola import artifacts, buildnames
+from hammerola import project as client_project
 
 SHARED = Path(buildnames.__file__)
 

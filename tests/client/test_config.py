@@ -9,7 +9,7 @@ token is not a place to end up by accident.
 import pytest
 from modeldir import make_model
 
-from src.client.config import (
+from hammerola.config import (
     ConfigError,
     display_path,
     hub_url,

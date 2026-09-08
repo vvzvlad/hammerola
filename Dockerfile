@@ -113,6 +113,7 @@ RUN mkdir -p data && chown app:app data
 
 # Code and static assets
 COPY src/ src/
+COPY hammerola/ hammerola/
 COPY templates/ templates/
 COPY static/ static/
 # What the hub hands somebody who has just found it (src/onboarding.py serves

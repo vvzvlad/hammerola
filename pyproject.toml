@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hammerola"
+version = "0.1.0"
+# The floor the client itself checks at startup: keep this equal to
+# `onboarding.MIN_PYTHON`, which is what the zipapp's guard prints.
+requires-python = ">=3.9"
+# No dependencies on purpose: the tool is stdlib-only, so it installs and runs
+# under whatever python3 a laptop has (tests/client/test_stdlib_only.py).
+
+[project.scripts]
+hammerola = "hammerola.cli:main"
+
+[tool.setuptools]
+# Named explicitly rather than auto-discovered: this repository's `src/` is the
+# hub and must never be packaged, and `hammerola/setup.py` implements the
+# `login` verb rather than being packaging metadata.
+packages = ["hammerola"]

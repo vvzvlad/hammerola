@@ -257,10 +257,10 @@ def _text_problem(text, field):
         in EXIT_CRASHED (4) rather than EXIT_BUILD_FAILED (3), i.e. reported as
         the hub's fault rather than the model's.
 
-    WHY THE SCAN IS WRITTEN OUT HERE and not imported from `src/buildnames.py`,
+    WHY THE SCAN IS WRITTEN OUT HERE and not imported from `hammerola/buildnames.py`,
     which holds `first_nonprintable`: the root `checklib.py` shim loads this file
-    by path, under a name that never goes through the package `src`, so this
-    module makes no relative import and no `src.` import at all. Third copy of
+    by path, under a name that goes through no package at all, so this module
+    makes no relative import and no first-party import either. Third copy of
     the scan is the cost, and `tests/cadbuild/test_checklib.py` is what makes it
     a shared rule rather than a second one -- it runs both over the same corpus.
 

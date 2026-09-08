@@ -27,9 +27,9 @@ import pytest
 from harness import (chardev_entry, dir_entry, fifo_entry, file_entry,
                      hardlink_entry, raw_tar_gz, symlink_entry)
 
-from src.client import unpack
-from src.client.errors import ClientError
-from src.client.limits import MAX_MEMBERS, MAX_PATH_DEPTH
+from hammerola import unpack
+from hammerola.errors import ClientError
+from hammerola.limits import MAX_MEMBERS, MAX_PATH_DEPTH
 
 
 # EVERY HOSTILE ARCHIVE IS TRIED UNDER BOTH RULE SETS, and that parametrization

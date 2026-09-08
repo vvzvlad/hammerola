@@ -19,7 +19,7 @@ wanted — it keeps the developer's own environment out of the run.
 
 import tracemalloc
 
-from src.client import artifacts
+from hammerola import artifacts
 
 # RIGHT-TO-LEFT OVERRIDE, the same character `test_fetching.py` plants in a file
 # name: it reverses the run of text after it, so a terminal printing it raw

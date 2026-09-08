@@ -28,16 +28,16 @@ from pathlib import Path
 # the subject of issue #53. This module used to ask the question with checks
 # inlined in `build_meta` — membership in what the build wrote, `/`,
 # `GENERATED_FILES` — while `app._safe_name` asked it with a rule of its own
-# that ALSO refused a leading dot, and `src/client/artifacts.py` approximated it
+# that ALSO refused a leading dot, and `hammerola/artifacts.py` approximated it
 # a third time. Three copies, no two alike, and the disagreement published a
-# build that could never be opened. `src/buildnames.py` is the single place that
+# build that could never be opened. `hammerola/buildnames.py` is the single place that
 # answers it now, and `tests/test_buildnames.py` asserts the three sides hold
 # the same OBJECT rather than a copy of it — which is what fails on the day
 # somebody inlines one again.
 # `first_nonprintable` travels with it because `_plain_text` below asks the same
 # question of every displayed field, and the two must not drift apart on what
 # "printable" means.
-from src.buildnames import first_nonprintable, unservable_reason
+from hammerola.buildnames import first_nonprintable, unservable_reason
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 

@@ -28,13 +28,13 @@ loguru==0.7.2
 # runtime attack surface for no loss at all. Adding an outbound call to `src/` is what moves it
 # back up here, and nothing less than that.
 #
-# `src/client/` IS an outbound caller and does NOT move it, which is worth spelling out because
+# `hammerola/` IS an outbound caller and does NOT move it, which is worth spelling out because
 # the sentence above reads like it should. Two reasons, and both have to hold: it is not the
 # SERVICE — nothing the hub runs imports it, it is the `hammerola` command that pushes a model
 # FROM the author's machine — and it makes its calls with `urllib.request`, so no HTTP client
 # library is imported anywhere in the image regardless. The condition the paragraph above names
 # is a dependency, not a socket. The client is stdlib-only for its own reason on top of that
-# (src/client/__init__.py): it has to run under whatever python3 a laptop has, so it takes
+# (hammerola/__init__.py): it has to run under whatever python3 a laptop has, so it takes
 # nothing from this file at all — not even the three packages above it.
 
 # --- The CAD kernel ---------------------------------------------------------------------------

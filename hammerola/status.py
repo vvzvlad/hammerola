@@ -23,10 +23,10 @@ THE THREE THINGS IT ANSWERS, in the order somebody asks them:
     builds    the revisions that exist, newest first
 """
 
-from src.client import config, project
-from src.client.errors import ClientError
-from src.client.hub import QUERY_TIMEOUT, Hub
-from src.client.limits import DEV_SLOT
+from hammerola import config, project
+from hammerola.errors import ClientError
+from hammerola.hub import QUERY_TIMEOUT, Hub
+from hammerola.limits import DEV_SLOT
 
 # How many revisions are listed before the tail is summarised. A project with a
 # year of history is a list nobody reads; the newest few plus a count is what

@@ -25,9 +25,9 @@ from pathlib import Path
 import pytest
 from modeldir import make_model
 
-from src.client.limits import MAX_MEMBERS, MAX_PATH_DEPTH
-from src.client.pack import (MAX_REFUSAL_PATH_CHARS, MAX_REFUSALS_LISTED,
-                             PackError, collect, pack)
+from hammerola.limits import MAX_MEMBERS, MAX_PATH_DEPTH
+from hammerola.pack import (MAX_REFUSAL_PATH_CHARS, MAX_REFUSALS_LISTED,
+                            PackError, collect, pack)
 
 
 def members(root, **kw):
@@ -535,7 +535,7 @@ def test_every_kind_the_walk_can_produce_has_a_group(tmp_path):
     import ast
     import inspect
 
-    from src.client import pack as pack_module
+    from hammerola import pack as pack_module
 
     tree = ast.parse(inspect.getsource(pack_module))
     produced = {
@@ -553,7 +553,7 @@ def test_every_kind_the_walk_can_produce_has_a_group(tmp_path):
 
 def test_a_kind_with_no_group_is_still_printed(tmp_path, monkeypatch):
     """What the code does on the day the test above is not yet green."""
-    from src.client import pack as pack_module
+    from hammerola import pack as pack_module
 
     monkeypatch.setattr(
         pack_module, "REFUSAL_GROUPS",

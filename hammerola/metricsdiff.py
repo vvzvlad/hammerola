@@ -5,7 +5,7 @@ part of `src/cadbuild/metrics.py` where it was written. metrics.json has a
 writer (the build, `cadbuild.metrics.write_metrics`) and now two readers: the
 build itself, printing what moved since `dev`, and `hammerola diff`, printing
 what moved between two published revisions. The client is stdlib-only and takes
-nothing from `requirements.txt` or from the build half (`src/client/__init__.py`
+nothing from `requirements.txt` or from the build half (`hammerola/__init__.py`
 says why), so the choice was between a second copy and a move. It is a move.
 
 A COPY WAS THE WRONG ANSWER AND WE KNOW WHAT IT COSTS. `cad_publish/hubspec.py`

@@ -24,7 +24,7 @@ import pytest
 PACKAGE = pathlib.Path(__file__).resolve().parents[2] / "src" / "cadbuild"
 
 # The one re-export that IS the design, named here so it stays one. `metrics`
-# re-exports the pure half of the comparison, which lives in `src/metricsdiff.py`
+# re-exports the pure half of the comparison, which lives in `hammerola/metricsdiff.py`
 # so the stdlib-only client can have it too; the module says so in a comment and
 # lists the names in `__all__`. Anything else that turns up below is the
 # accident this file exists for.
@@ -122,7 +122,7 @@ def test_the_deliberate_re_exports_are_still_re_exports(package, sibling_imports
     IT TAKES BOTH HALVES TO SAY THAT, and the second is the one that was
     missing. "Still re-exported" only asks whether `metrics` still hands the
     name on; it says nothing about anybody taking it from there. The day
-    `build.py` writes `from src.metricsdiff import METRICS_NAME` instead, the
+    `build.py` writes `from hammerola.metricsdiff import METRICS_NAME` instead, the
     entry excuses no line of the sweep above -- and the sweep above is the only
     thing it can excuse -- while a check that asked the first half alone stays
     green. So the entry also has to name a line that really exists.

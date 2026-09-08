@@ -22,8 +22,8 @@ import pytest
 from modeldir import git, git_repo, make_model
 from harness import TOKEN, failing_builder
 
-from src.client import gitsuggest
-from src.client.cli import main
+from hammerola import gitsuggest
+from hammerola.cli import main
 
 
 @pytest.fixture(autouse=True)
@@ -324,7 +324,7 @@ def test_an_address_with_a_TYPO_is_caught_before_anything_is_packed(
     test if it is called at all. Asserting on the message would have passed with
     the old order too.
     """
-    from src.client import cli
+    from hammerola import cli
 
     def must_not_be_called(*args, **kwargs):
         raise AssertionError(
@@ -348,7 +348,7 @@ def test_a_token_that_cannot_be_sent_is_caught_before_anything_is_packed(
     somebody assembled — which is also the shape that would append a header of
     its own to every request this tool makes.
     """
-    from src.client import cli
+    from hammerola import cli
 
     def must_not_be_called(*args, **kwargs):
         raise AssertionError("the tree was packed before the token was checked")
@@ -570,7 +570,7 @@ def test_the_build_states_go_to_stdout_and_the_connection_goes_to_stderr(
     while a notice is about the connection and belongs with the other things
     that went wrong on the way.
     """
-    from src.client import hub as hub_module
+    from hammerola import hub as hub_module
 
     # Both cadences, so an outage costs a hundredth of a second rather than the
     # production second. The behaviour is what is under test, not the numbers.

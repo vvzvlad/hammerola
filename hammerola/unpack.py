@@ -16,7 +16,7 @@ today.
 
 NOT `tarfile.extractall(filter="data")`. The filter is the right idea and it is
 what a fresh interpreter would use, but this tool has to import and run under
-whatever python3 a laptop has (`src/client/__init__.py`), and `filter=` arrived in
+whatever python3 a laptop has (`hammerola/__init__.py`), and `filter=` arrived in
 3.11.4/3.12 — on an older one the keyword is a TypeError and the default is the
 unfiltered extraction. The rules below are stricter anyway, because they are the
 hub's own alphabet rather than a general-purpose safety net.
@@ -33,8 +33,8 @@ import tarfile
 from pathlib import Path
 from typing import NamedTuple
 
-from src.client.errors import ClientError
-from src.client.limits import (
+from hammerola.errors import ClientError
+from hammerola.limits import (
     MAX_BUILD_BYTES,
     MAX_MEMBERS,
     MAX_PATH_DEPTH,

@@ -19,7 +19,7 @@ nothing to run and they fail on the commit that breaks them.
 """
 
 from src.buildproc.limits import BUILDS_SHARING_THE_HOST, DEFAULT_LIMITS
-from src.client.hub import JOB_TIMEOUT
+from hammerola.hub import JOB_TIMEOUT
 from src.jobs import MAX_CONCURRENT_BUILDS, MAX_QUEUED_JOBS
 from src.buildproc.limits import _usable_cores
 from src.store import LEFTOVER_MAX_AGE_SECONDS
@@ -86,7 +86,7 @@ def test_the_leftover_sweep_cannot_reach_a_build_that_is_still_queued():
 def test_the_client_waits_at_least_as_long_as_the_hub_may_honestly_take():
     """The client's copy of this arithmetic cannot import its source.
 
-    `src/client/` is stdlib-only and may not reach into `src.buildproc`, so
+    `hammerola/` is stdlib-only and may not reach into `src.buildproc`, so
     JOB_TIMEOUT is a literal that goes stale in silence. Stale, it reports a
     timeout on a build that is still legitimately queued -- and that build then
     publishes with nobody watching, which reads as the hub having lost a push.

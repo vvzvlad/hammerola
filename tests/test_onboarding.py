@@ -62,7 +62,7 @@ import pytest
 from harness import TOKEN, good_build
 
 from src import onboarding
-from src.client import hub as hub_client
+from hammerola import hub as hub_client
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -319,47 +319,62 @@ def test_the_client_is_one_executable_file(hub):
     archive = zipfile.ZipFile(io.BytesIO(body))
     names = set(archive.namelist())
     assert "__main__.py" in names
-    assert "src/client/cli.py" in names
+    assert "hammerola/cli.py" in names
     assert archive.testzip() is None
 
 
 def test_the_client_archive_carries_every_module_it_imports(hub):
     """The failure this catches happens on somebody ELSE's machine.
 
-    `src/client/*.py` is globbed into the archive, so a new client module is
-    carried automatically. A module OUTSIDE that package — `src/buildnames.py`,
-    `src/metricsdiff.py` and `src/projectslug.py` today — is named by hand in
-    `CLIENT_EXTRA_MODULES`,
-    and a further one added without that line produces an archive that works
-    perfectly here,
+    WHAT IS LEFT FOR IT TO CATCH IS THE PACKAGE BEING FLAT, and that is worth
+    saying plainly, because the archive is now assembled by the very glob this
+    test walks: `hammerola/*.py`. A module that sits directly in the package is
+    therefore carried by construction and this can no longer fail on one. A
+    SUBPACKAGE can: `hammerola/sub/mod.py` is a file the glob does not see, so
+    `import hammerola.sub.mod` produces an archive that works perfectly here,
     where the whole checkout is on `sys.path`, and dies with an ImportError the
-    first time somebody runs the downloaded file.
+    first time somebody runs the downloaded file. BE PRECISE ABOUT WHICH
+    SPELLING, because only the dotted ones reach this check: `import
+    hammerola.sub.mod` and `from hammerola.sub.mod import X` name the file, while
+    `from hammerola.sub import mod` names the PACKAGE and is looked for as
+    `hammerola/sub.py`, which is not a file and is dropped below. That last form
+    is caught when the archive is built instead — `_refuse_unimportable` reports
+    it missing from the closure.
+
+    IT USED TO CATCH MORE, and stopped when the tool got a distribution name:
+    while the client was `src/client/`, the three shared modules lived in `src/`
+    and reached the archive only through a hand-kept list, so a fourth one added
+    beside them was carried by nothing. The list is gone and they live in the
+    package. The other half of what that guarded — an import of something
+    outside the package altogether — is held by
+    `tests/client/test_stdlib_only.py`, which allows `hammerola` and the
+    standard library and refuses everything else.
     """
     carried = {name for name, _path in onboarding.client_members()}
     wanted = set()
-    for path in sorted((ROOT / "src" / "client").glob("*.py")):
+    for path in sorted((ROOT / "hammerola").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         modules = []
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.level == 0:
                 modules.append(node.module or "")
             elif isinstance(node, ast.Import):
-                # EVERY name, not `names[0]`: `import os, src.foo` is one
+                # EVERY name, not `names[0]`: `import os, hammerola.foo` is one
                 # statement with two of them, and reading only the first is how
                 # the second gets carried by nothing.
                 modules += [alias.name for alias in node.names]
         for module in modules:
             parts = module.split(".")
-            if parts[0] != "src" or len(parts) < 2:
+            if parts[0] != "hammerola" or len(parts) < 2:
                 continue
-            # `from src.client import config, project` names the PACKAGE; the
+            # `from hammerola import config, project` names the PACKAGE; the
             # modules it pulls are files in the glob above and are carried.
             wanted.add("/".join(parts) + ".py")
     missing = {name for name in wanted
                if name not in carried and (ROOT / name).is_file()}
     assert missing == set(), (
         f"the client imports {sorted(missing)}, which the downloadable archive "
-        f"does not carry. Add them to onboarding.CLIENT_EXTRA_MODULES.")
+        f"does not carry.")
 
 
 def test_the_downloaded_client_runs_where_this_checkout_does_not_exist(
@@ -368,7 +383,7 @@ def test_the_downloaded_client_runs_where_this_checkout_does_not_exist(
 
     In a process that cannot see this repository: `-s` and `-E` keep the user
     site directory and PYTHONPATH out, the working directory is a scratch one,
-    and the environment is built from nothing — so an `import src.client.x` that
+    and the environment is built from nothing — so an `import hammerola.x` that
     the archive failed to carry cannot be answered by the checkout.
 
     `create --no-template` is the verb chosen for it because it exercises the
@@ -525,7 +540,7 @@ def test_the_skill_quotes_the_contract_numbers_that_are_actually_enforced(hub):
     a person matches a FILE NAME against, and `\\A`/`\\Z` are how a regex says
     "the whole string".
     """
-    from src.client.limits import MAX_MEMBERS, MAX_PATH_DEPTH, SAFE_COMPONENT
+    from hammerola.limits import MAX_MEMBERS, MAX_PATH_DEPTH, SAFE_COMPONENT
 
     text = hub.get("/start/skill.md").text
     alphabet = SAFE_COMPONENT.pattern[2:-2]
@@ -649,7 +664,7 @@ def test_the_hub_refuses_a_template_of_more_files_than_a_client_unpacks():
     this one existed, which is how `if total > MAX_BUILD_BYTES` came to survive
     being turned into `if False`.
     """
-    from src.client.limits import MAX_MEMBERS
+    from hammerola.limits import MAX_MEMBERS
 
     many = [(f"f{index}.py", Path(__file__)) for index in range(MAX_MEMBERS + 1)]
     with pytest.raises(ValueError) as raised:
@@ -667,7 +682,7 @@ def test_the_hub_refuses_a_template_that_unpacks_to_more_than_a_push_may_be(
     `truncate`, i.e. sparse: `st_size` is what `_refuse_unservable` measures and
     what this has to be big, and no 64 MB is ever written to the disk.
     """
-    from src.client.limits import MAX_BUILD_BYTES
+    from hammerola.limits import MAX_BUILD_BYTES
 
     huge = tmp_path / "huge.py"
     with open(huge, "wb") as handle:
@@ -703,7 +718,7 @@ def test_a_start_route_that_cannot_import_is_a_404_and_not_a_dropped_socket(
     """The THIRD way these routes break, and the one that used to reach nobody.
 
     `template_bytes` borrows the client's own unpacking rules at call time
-    (`_refuse_unservable` imports `src.client.limits`, `unpack` and `errors`),
+    (`_refuse_unservable` imports `hammerola.limits`, `unpack` and `errors`),
     so a client module `.dockerignore` kept out of the image takes this route
     down with a ModuleNotFoundError — not the OSError of a missing file and not
     the ValueError of a template the client would refuse. `_serve_start` caught
@@ -713,7 +728,7 @@ def test_a_start_route_that_cannot_import_is_a_404_and_not_a_dropped_socket(
     asserted "not 200" would pass on the dropped socket this exists to rule out.
     """
     def refuse():
-        raise ModuleNotFoundError("No module named 'src.client.limits'")
+        raise ModuleNotFoundError("No module named 'hammerola.limits'")
 
     monkeypatch.setattr(onboarding, "template_bytes", refuse)
     assert hub.get("/start/template.tar.gz").status_code == 404
@@ -722,33 +737,32 @@ def test_a_start_route_that_cannot_import_is_a_404_and_not_a_dropped_socket(
 # -- the client the hub refuses to assemble ----------------------------------
 # `_refuse_unimportable` is handed a member LIST rather than a stripped
 # directory, and the two are the same experiment: `client_members()` globs
-# `src/client/*.py`, so a module .dockerignore kept out of the image is
+# `hammerola/*.py`, so a module .dockerignore kept out of the image is
 # subtracted from that list and from nothing else. Dropping a row is what the
 # image does.
 @pytest.mark.parametrize("gone", [
-    "src/client/hub.py",       # reached from cli.py through a dotted import
-    "src/client/project.py",   # reached ONLY as `from src.client import project`
-    "src/client/errors.py",
-    # Both carried modules from outside the package, and both rows are the
-    # point: they arrive by a different road from the glob (`CLIENT_EXTRA_MODULES`
-    # names them), so a second one added there without a row here would be a
-    # module the refusal is never asked about.
-    "src/metricsdiff.py",
-    "src/buildnames.py",
-    "src/projectslug.py",
+    "hammerola/hub.py",       # reached from cli.py through a dotted import
+    "hammerola/project.py",   # reached ONLY as `from hammerola import project`
+    "hammerola/errors.py",
+    # The three the hub shares with the client, and the rows are the point:
+    # they are the modules a reader is likeliest to think of as somebody
+    # else's, so a refusal that stopped covering them would go unnoticed.
+    "hammerola/metricsdiff.py",
+    "hammerola/buildnames.py",
+    "hammerola/projectslug.py",
 ])
 def test_the_hub_refuses_a_client_that_is_missing_a_module_it_imports(gone):
     """THE FAILURE HAS NO OTHER WITNESS, which is why the refusal exists.
 
     A list would have caught this and was deliberately not used: a module added
-    to `src/client/` is part of the tool by definition, and a second place to
+    to `hammerola/` is part of the tool by definition, and a second place to
     name it is a place to forget. The price of the glob is that absence is
     invisible — the archive was built, served with a 200 and a plausible size,
     and died with an ImportError on the laptop that downloaded it. So the
     closure is computed from the modules themselves instead.
 
     `project.py` is in this list for a reason of its own: it is imported only as
-    `from src.client import project`, which names the PACKAGE, so a check that
+    `from hammerola import project`, which names the PACKAGE, so a check that
     looked at dotted module names alone would miss it — and it would miss most
     of the package, since that is how `cli.py` reaches ten of them.
     """
@@ -793,7 +807,7 @@ def test_a_broken_image_parses_the_client_once_and_not_once_per_request(
     calls = []
     real_refuse = onboarding._refuse_unimportable
     broken = [(name, path) for name, path in onboarding.client_members()
-              if name != "src/metricsdiff.py"]
+              if name != "hammerola/metricsdiff.py"]
 
     def counting(members):
         calls.append(1)
@@ -827,18 +841,17 @@ def test_a_module_no_import_reaches_is_not_required():
     there.
 
     WHAT THIS DOES NOT SAY is that `__main__.py` is the ONLY module outside the
-    closure — the docstring here claimed exactly that, and it was wrong by one
-    (`src/__init__.py`), which is a claim a passing test made look checked. The
-    test below is the one that counts them; this one is about a single module
-    being droppable, and it would go on passing with any number of others out
-    there too.
+    closure — the docstring here claimed exactly that, and it was wrong by one,
+    which is a claim a passing test made look checked. The test below is the one
+    that counts them; this one is about a single module being droppable, and it
+    would go on passing with any number of others out there too.
     """
     members = [(name, path) for name, path in onboarding.client_members()
-               if name != "src/client/__main__.py"]
+               if name != "hammerola/__main__.py"]
     onboarding._refuse_unimportable(members)
 
 
-def test_the_closure_reaches_every_module_but_the_two_nothing_imports():
+def test_the_closure_reaches_every_module_but_the_one_nothing_imports():
     """HOW MANY modules the refusal can speak for — the number nothing asserted.
 
     Every case above removes a module and asserts a refusal, and all of them go
@@ -850,23 +863,14 @@ def test_the_closure_reaches_every_module_but_the_two_nothing_imports():
     served with a 200), and an `__init__.py` that bound a name inside a
     `try/except ImportError` went the other way and refused a healthy image.
 
-    So the SET is asserted, not the count, because the two names outside it are
-    each outside for a reason that has to keep being true:
-
-      * `src/client/__main__.py` — deliberate, the zipapp's entry point is the
-        generated `CLIENT_MAIN` at the archive's root;
-      * `src/__init__.py` — an accident of resolution rather than a decision:
-        the imports leaving the package are `from src.buildnames import …` and
-        `from src.metricsdiff import …`, and each lands on the module file
-        directly, so `src` is never resolved as a
-        package. It is required all the same, and by another road —
-        `CLIENT_EXTRA_MODULES` names it, so it is read by name and a missing one
-        raises OSError out of `client_bytes`. That it is REQUIRED is not
-        asserted anywhere and deliberately so: built without it, the archive
-        dies with `No module named 'src'` under python 3.9 and 3.11 (the floor
-        and the image) and runs perfectly under 3.14, whose zipimport resolves
-        the namespace package — so this suite's own interpreter is the one that
-        cannot witness it.
+    So the SET is asserted, not the count, because the one name outside it is
+    outside for a reason that has to keep being true: `hammerola/__main__.py`
+    is deliberate — the zipapp's entry point is the generated `CLIENT_MAIN` at
+    the archive's root, because a zip's entry point has to sit there.
+    `hammerola/__init__.py` used to be outside it too, back when the package
+    lived under `src` and the imports leaving it landed on module files
+    directly; every import between siblings now names the package, so the walk
+    resolves it like any other member.
 
     A name appearing here means the refusal stopped covering a module. A name
     disappearing means the walk started following something new, which is fine
@@ -876,22 +880,21 @@ def test_the_closure_reaches_every_module_but_the_two_nothing_imports():
     reached, missing = onboarding._import_closure(members)
     assert missing == []
     assert set(dict(members)) - reached == {
-        "src/client/__main__.py",
-        "src/__init__.py",
+        "hammerola/__main__.py",
     }
 
 
 # -- the import forms the walk has to understand, and the one it refuses ------
-def _client_with(tmp_path, source, dropped="src/client/artifacts.py"):
-    """The member list of an image whose `src/client/__init__.py` is `source`.
+def _client_with(tmp_path, source, dropped="hammerola/artifacts.py"):
+    """The member list of an image whose `hammerola/__init__.py` is `source`.
 
-    `dropped` is a module `cli.py` reaches ONLY as `from src.client import
+    `dropped` is a module `cli.py` reaches ONLY as `from hammerola import
     artifacts`, so an image without it is healthy exactly when the package binds
     that name itself — which is the question `bound()` answers.
     """
     fake = tmp_path / "__init__.py"
     fake.write_text(source, encoding="utf-8")
-    return sorted((name, fake if name == "src/client/__init__.py" else path)
+    return sorted((name, fake if name == "hammerola/__init__.py" else path)
                   for name, path in onboarding.client_members()
                   if name != dropped)
 
@@ -899,7 +902,7 @@ def _client_with(tmp_path, source, dropped="src/client/artifacts.py"):
 @pytest.mark.parametrize("label, source", [
     # The commonest shape in any __init__.py, and the one that was refused.
     ("try/except ImportError",
-     "try:\n    from src.client.hub import artifacts\n"
+     "try:\n    from hammerola.hub import artifacts\n"
      "except ImportError:\n    artifacts = None\n"),
     ("if/else", "import os\nif os.environ.get('X'):\n    artifacts = 1\n"
                 "else:\n    artifacts = 2\n"),
@@ -909,7 +912,7 @@ def _client_with(tmp_path, source, dropped="src/client/artifacts.py"):
     # These two bind no name statically at all, so "not bound" is not an answer
     # and `bound()` abstains instead of refusing.
     ("PEP 562 lazy __getattr__", "def __getattr__(name):\n    return None\n"),
-    ("a star import", "from src.client.hub import *\n"),
+    ("a star import", "from hammerola.hub import *\n"),
     ("the top level (the control)", "artifacts = None\n"),
 ])
 def test_a_package_that_binds_a_name_is_not_called_incomplete(tmp_path, label,
@@ -937,7 +940,7 @@ def test_a_package_that_binds_nothing_still_refuses_the_missing_module(tmp_path)
             tmp_path,
             "try:\n    import os\nexcept ImportError:\n    os = None\n"
             "for unrelated in ():\n    pass\n"))
-    assert "src.client.artifacts" in str(raised.value)
+    assert "hammerola.artifacts" in str(raised.value)
 
 
 def test_a_relative_import_is_refused_rather_than_ignored(tmp_path):
@@ -954,20 +957,20 @@ def test_a_relative_import_is_refused_rather_than_ignored(tmp_path):
     so what is being observed is the walk arriving there and refusing — not a
     special case at the root.
     """
-    original = dict(onboarding.client_members())["src/client/revdiff.py"]
+    original = dict(onboarding.client_members())["hammerola/revdiff.py"]
     mutated = original.read_text(encoding="utf-8").replace(
-        "from src.metricsdiff import", "from ..metricsdiff import")
+        "from hammerola.metricsdiff import", "from ..metricsdiff import")
     assert mutated != original.read_text(encoding="utf-8"), (
-        "revdiff.py no longer imports src.metricsdiff, so this stages nothing")
+        "revdiff.py no longer imports hammerola.metricsdiff, so this stages nothing")
     fake = tmp_path / "revdiff.py"
     fake.write_text(mutated, encoding="utf-8")
-    members = [(name, fake if name == "src/client/revdiff.py" else path)
+    members = [(name, fake if name == "hammerola/revdiff.py" else path)
                for name, path in onboarding.client_members()]
 
     with pytest.raises(ValueError) as raised:
         onboarding._refuse_unimportable(members)
     message = str(raised.value)
-    assert "src/client/revdiff.py" in message, (
+    assert "hammerola/revdiff.py" in message, (
         "the refusal does not name the file to fix")
     assert "relative" in message
 
@@ -1035,7 +1038,7 @@ def test_the_manifest_key_the_client_follows_is_the_one_the_hub_writes():
     one the title claims: the same arrangement `hub.START_PATH` has with
     `onboarding.MANIFEST_URL`.
     """
-    from src.client import setup
+    from hammerola import setup
 
     assert setup.TEMPLATE_KEY == onboarding.TEMPLATE_KEY
     assert onboarding.TEMPLATE_KEY in onboarding.manifest(empty=True)
@@ -1048,7 +1051,7 @@ def test_the_two_keys_the_skill_command_follows_are_the_ones_the_hub_writes():
     and which version it is — and it spells both itself, because the client
     imports nothing from the serving half.
     """
-    from src.client import skill as client_skill
+    from hammerola import skill as client_skill
 
     document = onboarding.manifest(empty=True)
     assert client_skill.VERSION_KEY == onboarding.SKILL_VERSION_KEY
@@ -1069,7 +1072,7 @@ def test_the_client_reads_the_SAME_version_out_of_the_skill_as_the_hub():
     Run over the file that actually ships, rather than over an invented one:
     what has to agree is the reading of THIS document.
     """
-    from src.client import skill as client_skill
+    from hammerola import skill as client_skill
 
     text = onboarding.SKILL_FILE.read_text(encoding="utf-8")
     assert client_skill.version_of(text) == onboarding.skill_version()

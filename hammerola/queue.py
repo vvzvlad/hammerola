@@ -21,8 +21,8 @@ resolved items pile up forever — nothing deletes them (SPEC 5.3). `--all` is
 there for the times the question is "what did we already answer".
 """
 
-from src.client import config, project
-from src.client.hub import QUERY_TIMEOUT, Hub
+from hammerola import config, project
+from hammerola.hub import QUERY_TIMEOUT, Hub
 
 # The statuses the hub filters on (SPEC 7A.2). `None` asks for every one.
 STATUS_OPEN = "open"

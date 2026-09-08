@@ -41,9 +41,9 @@ the disk belongs to whoever is running it, and a tool that removed a directory
 because a server call succeeded would be a different and much worse tool.
 """
 
-from src.client import config, project
-from src.client.errors import ClientError
-from src.client.hub import QUERY_TIMEOUT, Hub
+from hammerola import config, project
+from hammerola.errors import ClientError
+from hammerola.hub import QUERY_TIMEOUT, Hub
 
 # What has to be typed to confirm a removal. The ID rather than the title: it is
 # unambiguous, it is what the hub is addressed by, and it is printed two lines

@@ -21,8 +21,8 @@ import pytest
 from harness import TOKEN, comment_payload, copying_builder
 from modeldir import make_model
 
-from src.client import limits
-from src.client.cli import main
+from hammerola import limits
+from hammerola.cli import main
 
 
 def titling_builder(project_dir, out_dir, *, pid, **kw):

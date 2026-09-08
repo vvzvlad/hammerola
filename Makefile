@@ -165,23 +165,28 @@ run: install ## Run the application (auto-creates .venv if missing)
 # command went on working, and nothing said a word. It surfaced as "git status
 # says the client is modified" (measured, not supposed). `bin/hammerola` went
 # with the target — it existed only to be linked, and the zipapp is built from
-# `src/client/` and never from it.
+# `hammerola/` and never from it.
 #
 # One name, one place it is installed from: the hub (README). Whoever is WORKING
 # on the client runs it out of the checkout instead, with no venv and nothing to
 # build, because this package imports the standard library and nothing else:
 #
-#     python3 -m src.client -C <model dir> status
+#     python3 -m hammerola -C <model dir> status
 #
 # STARTED HERE, IN THE CHECKOUT ROOT, which is why the model directory is an
-# argument rather than the shell's cwd: `-m` resolves `src` against the
+# argument rather than the shell's cwd: `-m` resolves `hammerola` against the
 # directory the command was started in, so the same line run inside a model
-# fails with `No module named 'src'`. From inside the model it is
-# `PYTHONPATH=$(CURDIR) python3 -m src.client status` instead. There is no target
+# fails with `No module named 'hammerola'`. From inside the model it is
+# `PYTHONPATH=$(CURDIR) python3 -m hammerola status` instead. There is no target
 # for either — a target would be a fourth place the same two lines are written,
 # and the failure it would head off is one message that says exactly what is
-# wrong. `src/client/__main__.py` has the whole argument, and `make test` is what
+# wrong. `hammerola/__main__.py` has the whole argument, and `make test` is what
 # holds it.
+#
+# THE PACKAGE HAS A DISTRIBUTION NAME NOW (`pyproject.toml`), so `pip install .`
+# would work — and there is deliberately no target for that either: installing
+# the tool from the checkout is the collision above wearing different clothes,
+# and the hub is still the one place it is installed from.
 
 # --- Frontend ----------------------------------------------------------------
 # The browser bundle is BUILT, never committed — see .gitignore for why — so it

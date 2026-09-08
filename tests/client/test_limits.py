@@ -8,14 +8,14 @@ and one that runs in the same CI job as everything else, so a change to either
 side fails at the commit that makes it rather than at the next attempt to
 publish a model.
 
-`src/client/limits.py` explains why it is a copy at all: the client has to
+`hammerola/limits.py` explains why it is a copy at all: the client has to
 import under a laptop's bare python3, and `src.store` brings loguru and the
 service with it. The copy is the price; this file is what makes the price
 bearable.
 """
 
 from src import store
-from src.client import limits
+from hammerola import limits
 from src.settings import Settings
 
 
