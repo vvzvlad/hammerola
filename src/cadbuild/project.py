@@ -36,8 +36,9 @@ def load_project():
     pid = str(data.get("id") or "").strip()
     if not pid:
         raise BuildError(
-            "project.json has no id. Run `make init` once to generate it, "
-            "then commit project.json."
+            "project.json has no id. `hammerola create` mints one, and it "
+            "refuses to write over a project.json that already exists -- so "
+            "delete this one first, then commit what it writes."
         )
     if not MEMBER_RE.match(pid):
         raise BuildError(f"project id {pid!r} is not a safe path component")
@@ -104,30 +105,34 @@ def load_project():
 
 
 def refuse_test_id():
-    """Stop before a run that would publish under the `make init-test` id.
+    """Stop before a run that would publish under the test id.
 
-    That id is written by a flag whose entire purpose is to let somebody run
-    the pipeline without a project -- on the template itself, on a throwaway
-    checkout, on a worktree opened to change `checklib.py`. The convenience is
-    real and so is the hazard it creates: the very next command in that session
-    is `make build`, which publishes, and on a machine where the hub and the
-    token do resolve it would put a project literally called
-    "local-test-do-not-publish" on the hub, or push a throwaway build over
-    whatever else answers to that name.
+    That id was written by `cad-publish init --test`, a flag whose entire
+    purpose was to let somebody run the pipeline without a project -- on the
+    template itself, on a throwaway checkout, on a worktree opened to change
+    `checklib.py`. NOTHING WRITES IT ANY MORE: the flag went away with the
+    local build path (issue #20), so what reaches this function is a
+    project.json somebody wrote by hand or carried over from before.
 
-    So the id is inert rather than merely odd-looking: nothing can be published
-    under it, and the message says which flag to use instead.
+    The refusal stays because the hazard never depended on the flag. The id is
+    a legal path component, so a push under it puts a project literally called
+    "local-test-do-not-publish" on the hub, or lands a throwaway build on
+    whatever else already answers to that name.
+
+    The message may name no local build, because there is none: checking a
+    model IS publishing it, into a slot the next push overwrites.
     """
     pid, _project, _title = load_project()
     if pid != TEST_ID:
         return
     raise BuildError(
-        f"project.json carries the test id {pid!r}, which `make init-test` "
-        "writes so the pipeline can be run on a checkout that is not a "
-        "project. Nothing is published under it.\n"
-        "  to run the whole build and gate locally:  make build LOCAL=1 NOPUBLISH=1\n"
-        "  to make this a real project:              clear \"id\" in "
-        "project.json, then `make init TITLE=\"...\"`"
+        f"project.json carries the test id {pid!r}, which marks a checkout "
+        "that is not a project. Nothing is published under it.\n"
+        "  there is no local build to run instead: `hammerola build` fills "
+        "the project's dev slot, which the next push overwrites and which "
+        "leaves the published revisions alone\n"
+        "  to make this a real project: delete project.json, then "
+        "`hammerola create --no-template --title \"...\"`"
     )
 
 

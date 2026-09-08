@@ -184,12 +184,16 @@ def test_an_explicit_project_field_wins_over_the_title(tmp_path):
     assert load_project()[1] == "override"
 
 
-def test_a_project_without_an_id_says_to_run_init(tmp_path):
+def test_a_project_without_an_id_names_the_command_that_mints_one(tmp_path):
+    """It named `make init`, a target of a Makefile that no longer exists
+    anywhere (issue #20). The id is minted by `hammerola create`."""
     root = write_project(tmp_path / "widget", id="", title="x (widget)")
     set_project_root(root)
     with pytest.raises(BuildError) as exc:
         load_project()
-    assert "make init" in str(exc.value)
+    message = str(exc.value)
+    assert "hammerola create" in message
+    assert "make init" not in message
 
 
 def test_an_id_that_is_not_a_safe_path_component_is_refused(tmp_path):
@@ -269,14 +273,24 @@ def test_the_test_id_refuses_to_publish(tmp_path):
 
 
 def test_the_refusal_says_how_to_run_the_pipeline_anyway(tmp_path):
-    """The message has to name the way out, or the flag is just a wall."""
+    """The message has to name the way out, or the flag is just a wall -- and
+    the way out has to be a command that exists.
+
+    It named `make build LOCAL=1 NOPUBLISH=1` and `make init TITLE=...` long
+    after both were dead (issue #20): the local build path was abolished, and
+    the Makefile those targets belonged to went with the model repository. So
+    both halves are asserted -- the surviving command is named, and the four
+    dead strings are gone, because it is those that were printed at people for
+    months with nothing failing.
+    """
     root = write_project(tmp_path / "widget", id=TEST_ID, title="Тест (widget)")
     set_project_root(root)
     with pytest.raises(BuildError) as exc:
         refuse_test_id()
     message = str(exc.value)
-    assert "NOPUBLISH=1" in message
-    assert "make init" in message
+    assert "hammerola create" in message
+    for dead in ("LOCAL=1", "NOPUBLISH", "make init", "make build"):
+        assert dead not in message
 
 
 # --------------------------------------------------------------------------

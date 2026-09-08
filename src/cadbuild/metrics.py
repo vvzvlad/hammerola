@@ -250,9 +250,8 @@ def report_metrics(out_dir, baseline, why):
             lines.append(
                 f"! the geometry changed but the code did not ({', '.join(shifted)}) "
                 f"-- the same model source built into a different solid than the "
-                f"one published as {DEV_LABEL}. Compare the environments: this "
-                "build against the other place it gets built (the node, or "
-                "LOCAL=1 here), and the CAD stack in each"
+                f"one published as {DEV_LABEL}. Both builds ran here, so what "
+                "moved between them is the CAD stack this image resolves"
             )
         if lines:
             print(f"metrics vs {DEV_LABEL}:")

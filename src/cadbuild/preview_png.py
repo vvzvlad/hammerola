@@ -27,9 +27,8 @@ That rules out both halves of the obvious answer:
 What the image does have is matplotlib, and mplot3d is a real 3-D renderer:
 it does the projection, the depth ordering and the drawing. This file feeds it
 triangles and a camera; it does not rasterise anything itself. matplotlib,
-trimesh, numpy and Pillow are all present both in the builder image and in the
-parametric-3d-printing venv, so `make build` and `make build LOCAL=1` produce
-the same picture.
+trimesh, numpy and Pillow are all present in the builder image, and that is the
+only place a model is built -- there is no local build path any more.
 
 THE LIMITATION THAT COMES WITH THAT: mplot3d sorts polygons by depth and paints
 them in order (painter's algorithm) -- there is no z-buffer. Back-face culling
