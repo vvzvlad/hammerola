@@ -198,7 +198,7 @@ def build(out_dir, preview_mode="iso"):
 
     # After the geometry gate (the STLs it checks are on disk now), before the
     # slow tessellation and before anything is packed.
-    checks_passed = run_checks(model, out_dir)
+    checks_passed, checks_static = run_checks(model, out_dir)
     # Two lines about checks, and they answer different questions: run_checks
     # prints how many there were, this prints what they cost.
     phase = _phase("checks", phase)
@@ -321,7 +321,7 @@ def build(out_dir, preview_mode="iso"):
     # Written after the checks, because it carries what they measured and how
     # many of them there were.
     write_metrics(out_dir, collect_metrics(project, part_metrics, checks_passed,
-                                           provenance_summary))
+                                           checks_static, provenance_summary))
 
     # metrics.json is named HERE and not derived from meta.json like the rest.
     # meta.json lists what the viewer loads, and the viewer never loads this --

@@ -60,6 +60,23 @@ def test_the_client_and_the_build_compare_with_the_same_function():
     assert revdiff.metrics_diff is metrics.metrics_diff
 
 
+def test_the_asserts_the_constants_settled_get_a_line_of_their_own():
+    """The one line here that is about the comparison, and it earns the place.
+
+    The build subtracts the asserts its own constants settle from the count it
+    reports, so the first build after that change prints a SMALLER `checks
+    passed` with nothing lost. Alone, `checks passed: 5 -> 3` is a project that
+    dropped two checks; with the second line it is a project whose two checks
+    turned out to prove nothing. A baseline from before the change has no
+    `checks_static` at all, and `None -> 2` is the truthful rendering of that --
+    the number did not exist then.
+    """
+    lines = metricsdiff.metrics_diff({"checks_passed": 5},
+                                     {"checks_passed": 3, "checks_static": 2})
+    assert lines == ["checks passed: 5 -> 3",
+                     "checks decided by constants: None -> 2"]
+
+
 def test_the_shared_module_imports_nothing_but_the_standard_library():
     """What makes it importable by the client at all.
 

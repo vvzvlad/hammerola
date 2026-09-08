@@ -16,6 +16,7 @@ from pathlib import Path
 import ast
 import collections
 import inspect
+import operator
 import os
 import textwrap
 
@@ -469,6 +470,335 @@ def count_checks(func):
     return 0
 
 
+# --------------------------------------------------------------------------
+# Asserts the constants settle on their own
+# --------------------------------------------------------------------------
+#
+# `count_checks` above counts check SITES, and an assert whose both sides are
+# module constants is a site that proves nothing: it holds however the geometry
+# came out, and it goes on holding after the model has drifted away from it.
+# What follows finds those, and the caller WARNS about each and takes them off
+# the number it prints.
+#
+# IT NEVER REFUSES A BUILD, and that is the whole shape of it. `assert FIT_MIN <
+# FIT_MAX` is a deliberate guard on the parameter table and is the identical
+# shape; this file is shared by every project in the organisation, and a false
+# red on somebody's working model costs far more than an unprinted number.
+# Every rule here ends at "nothing to say".
+
+# The sentinel `static_value` answers with. An object rather than None, because
+# None is a value an expression can honestly have -- `assert X is None` decided
+# by a constant is exactly the shape being looked for.
+NOT_STATIC = object()
+
+# Builtins an assert may call and still be decidable from the source. Pure,
+# total, and cheap: nothing here can have a side effect or refuse to return.
+STATIC_BUILTINS = {"abs": abs, "min": min, "max": max, "round": round, "len": len}
+
+# The biggest exponent a static `**` may carry. `2 ** 10 ** 10` is a legal
+# expression and evaluating it is how this analysis would hang a build.
+MAX_STATIC_POW = 64
+
+# What a name may hold and still settle an expression. A tuple of them too: a
+# model writes `SIZES = (10, 20)` and asks `len(SIZES) == 2`.
+_STATIC_TYPES = (bool, int, float, str, type(None))
+
+_UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg,
+              ast.Not: operator.not_}
+
+# `LShift` and `RShift` are deliberately absent. The exponent cap above is
+# named for `**` alone, and `1 << 10 ** 10` is the same bomb through a door
+# that cap does not watch. Leaving them out costs a warning nobody would have
+# written and buys the guarantee that nothing here can be slow.
+_BINARY_OPS = {ast.Add: operator.add, ast.Sub: operator.sub,
+               ast.Mult: operator.mul, ast.Div: operator.truediv,
+               ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod,
+               ast.Pow: operator.pow, ast.BitOr: operator.or_,
+               ast.BitXor: operator.xor, ast.BitAnd: operator.and_}
+
+# `Is` and `IsNot` are deliberately absent: identity between two literals is
+# decided by what the interpreter happened to intern, which is not a fact about
+# the source.
+_COMPARE_OPS = {ast.Eq: operator.eq, ast.NotEq: operator.ne,
+                ast.Lt: operator.lt, ast.LtE: operator.le,
+                ast.Gt: operator.gt, ast.GtE: operator.ge,
+                ast.In: lambda a, b: a in b,
+                ast.NotIn: lambda a, b: a not in b}
+
+
+def _bounded(value):
+    """`value`, or NOT_STATIC when carrying it any further is the hazard.
+
+    The ceiling is `MAX_STATIC_POW` used as an exponent of two, so that the one
+    number this file declares is the one number that decides how big anything
+    here may get. It is about the MAGNITUDE of a number and about nothing else.
+
+    A LARGE SEQUENCE IS DELIBERATELY NOT GUARDED HERE, and the ceiling above
+    never was one: `"x" * BIG` is already built by the time its length could be
+    measured, so a branch measuring it costs the allocation and prevents
+    nothing. The boundary against a model that allocates is the separate build
+    process -- `rlimit`, the watchdog, the SIGKILL (SPEC §7.9) -- and not a
+    check running inside it.
+    """
+    ceiling = 2 ** MAX_STATIC_POW
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            if abs(value) > ceiling:
+                return NOT_STATIC
+        except (OverflowError, ValueError):
+            return NOT_STATIC
+    return value
+
+
+def _applied(func, *args):
+    """`func(*args)`, or NOT_STATIC when it will not answer.
+
+    THE BLANKET CATCH IS THE POINT and is not this file's usual style. The
+    operands are values out of the model's own module, and every way arithmetic
+    can refuse -- a division by zero, a str beside an int, a comparison between
+    two types that do not order, a result too big to build -- is the same answer
+    here: not decidable from the source. Enumerating them would be a list that
+    goes stale into a raise, and a raise from here travels out of a function
+    whose whole promise is that it never refuses a build.
+    """
+    try:
+        return _bounded(func(*args))
+    except Exception:
+        return NOT_STATIC
+
+
+def _from_the_module(value):
+    """Is this something a name may hold and still settle an expression?"""
+    if isinstance(value, _STATIC_TYPES):
+        return True
+    return (isinstance(value, tuple)
+            and all(isinstance(item, _STATIC_TYPES) for item in value))
+
+
+def local_names(tree):
+    """Every name the function binds itself.
+
+    A name bound in here is NOT a constant, whatever the module has under the
+    same spelling -- `gap` in `for axis, gap in (...)` shadows a `gap` at the
+    top of model.py, and reading the module's one is how this analysis would
+    call a real check a tautology. THAT IS THE MAIN SOURCE OF FALSE POSITIVES,
+    so this covers more forms than are obvious: assignment in all three
+    spellings and through tuple unpacking, loop targets, `with ... as`,
+    comprehension targets, the walrus, `except ... as`, parameters, the three
+    binders a `match` pattern can carry (`case WALL:`, `case [*REST]:`,
+    `case {**REST}:`) -- and nested `def`/`class` names, imports, and
+    `global`/`nonlocal` declarations, each of which puts a name in this body
+    that the module dict may also hold.
+
+    Subscripts and attributes on the left of an `=` contribute their names too
+    (`table[i] = x` yields `table` and `i`). They are not bindings, and
+    counting them is deliberate: the cost is a warning not printed, and the
+    alternative cost is a warning printed about a working model.
+    """
+    names = set()
+
+    def bound(target):
+        for node in ast.walk(target):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+
+    def parameters(args):
+        names.update(node.arg for node in ast.walk(args)
+                     if isinstance(node, ast.arg))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                bound(target)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
+            bound(node.target)
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            bound(node.target)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    bound(item.optional_vars)
+        elif isinstance(node, ast.ExceptHandler):
+            if node.name:
+                names.add(node.name)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            # A capture pattern binds as surely as an `=` does, and `_` is a
+            # MatchAs with no name at all -- hence the guard.
+            names.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            names.add(node.rest)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+            parameters(node.args)
+        elif isinstance(node, ast.Lambda):
+            parameters(node.args)
+        elif isinstance(node, ast.ClassDef):
+            names.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names.update(node.names)
+    return names
+
+
+def static_value(node, constants):
+    """The value of an expression decidable from `constants`, or NOT_STATIC.
+
+    NOT_STATIC is a sentinel object rather than None, because None is a value an
+    expression can honestly have.
+
+    What is accepted is deliberately small: a literal, a name the module holds a
+    scalar or a tuple of scalars under, the unary operators, arithmetic, a
+    comparison (chained included, short-circuited the way Python does it), `and`
+    / `or`, a tuple or list of static elements, and a call to one of
+    STATIC_BUILTINS with arguments that are themselves static. EVERYTHING ELSE
+    IS NOT_STATIC -- an attribute, a subscript, an f-string, a call to anything
+    of the model's own. A name that resolves to NOT_STATIC in `constants` is one
+    the function binds itself (see `static_asserts`), and is refused for the
+    builtins too: a model that defines its own `min` is not calling this one.
+    """
+    if isinstance(node, ast.Constant):
+        return _bounded(node.value)
+
+    if isinstance(node, ast.Name):
+        value = constants.get(node.id, NOT_STATIC)
+        return value if _from_the_module(value) else NOT_STATIC
+
+    if isinstance(node, ast.UnaryOp):
+        func = _UNARY_OPS.get(type(node.op))
+        if func is None:
+            return NOT_STATIC
+        operand = static_value(node.operand, constants)
+        if operand is NOT_STATIC:
+            return NOT_STATIC
+        return _applied(func, operand)
+
+    if isinstance(node, ast.BinOp):
+        func = _BINARY_OPS.get(type(node.op))
+        if func is None:
+            return NOT_STATIC
+        left = static_value(node.left, constants)
+        right = static_value(node.right, constants)
+        if left is NOT_STATIC or right is NOT_STATIC:
+            return NOT_STATIC
+        if isinstance(node.op, ast.Pow) and not _small_exponent(right):
+            return NOT_STATIC
+        return _applied(func, left, right)
+
+    if isinstance(node, ast.Compare):
+        left = static_value(node.left, constants)
+        if left is NOT_STATIC:
+            return NOT_STATIC
+        for op, side in zip(node.ops, node.comparators):
+            func = _COMPARE_OPS.get(type(op))
+            right = static_value(side, constants)
+            if func is None or right is NOT_STATIC:
+                return NOT_STATIC
+            outcome = _applied(func, left, right)
+            if outcome is NOT_STATIC or not outcome:
+                return outcome
+            left = right
+        return True
+
+    if isinstance(node, ast.BoolOp):
+        wants_all = isinstance(node.op, ast.And)
+        value = NOT_STATIC
+        for side in node.values:
+            value = static_value(side, constants)
+            if value is NOT_STATIC:
+                return NOT_STATIC
+            if bool(value) is not wants_all:
+                # `and` stops at the first falsy operand and `or` at the first
+                # truthy one, and both hand back that operand rather than a
+                # bool. Anything after it is never evaluated, so it need not be
+                # decidable.
+                return value
+        return value
+
+    if isinstance(node, (ast.Tuple, ast.List)):
+        elements = []
+        for element in node.elts:
+            value = static_value(element, constants)
+            if value is NOT_STATIC:
+                return NOT_STATIC
+            elements.append(value)
+        return _bounded(tuple(elements) if isinstance(node, ast.Tuple)
+                        else elements)
+
+    if isinstance(node, ast.Call):
+        if node.keywords or not isinstance(node.func, ast.Name):
+            return NOT_STATIC
+        name = node.func.id
+        if name not in STATIC_BUILTINS or name in constants:
+            return NOT_STATIC
+        arguments = []
+        for argument in node.args:
+            value = static_value(argument, constants)
+            if value is NOT_STATIC:
+                return NOT_STATIC
+            arguments.append(value)
+        return _applied(STATIC_BUILTINS[name], *arguments)
+
+    return NOT_STATIC
+
+
+def _small_exponent(value):
+    """Is this an exponent `**` may be worked out with? See MAX_STATIC_POW."""
+    return isinstance(value, (int, float)) and abs(value) <= MAX_STATIC_POW
+
+
+def static_asserts(func, namespace):
+    """`[(lineno, source)]` for the asserts whose truth the constants settle.
+
+    `namespace` is the model module's own `vars()`. Line numbers are the ones
+    in model.py, so an author can open the line; the source is the assert as
+    they wrote it, with its whitespace collapsed -- a `warning:` line at the
+    start of a log line is read as a verdict by tooling, and an assert written
+    across four lines would turn one note into four.
+
+    `[]` when the source cannot be read -- a `checks` that is not a python
+    function, one built by `exec`, a file that has moved since it was imported.
+    NEVER AN EXCEPTION: this runs on a build whose checks have already passed,
+    and nothing about a printed note is worth failing that build over.
+
+    THE CATCH IS BLANKET AND COVERS THE ANALYSIS ITSELF, not just the reading,
+    which is what makes the promise above true rather than intended. `_applied`
+    above is the precedent and the argument is the same one: enumerating the
+    ways an analysis of somebody else's source can refuse is a list that goes
+    stale into a raise. It went stale here -- `static_value` recurses by
+    expression DEPTH, so about twelve hundred nested terms in one assert raise
+    RecursionError, which is neither OSError, TypeError nor SyntaxError. That
+    escaped into `run_checks` AFTER every check of the model had passed and
+    turned a green build into a crash, for a printed note. "Could not work it
+    out" means "found nothing", on every path.
+    """
+    try:
+        lines, first = inspect.getsourcelines(func)
+        source = textwrap.dedent("".join(lines))
+        tree = ast.parse(source)
+
+        # The locals go in as the sentinel rather than being kept in a second
+        # set: one lookup then answers both questions a name raises -- "what
+        # does the module hold" and "did this body bind it first" -- and the
+        # builtins branch of `static_value` gets the same answer for free.
+        constants = dict(namespace)
+        for name in local_names(tree):
+            constants[name] = NOT_STATIC
+
+        found = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assert):
+                continue
+            if static_value(node.test, constants) is NOT_STATIC:
+                continue
+            text = ast.get_source_segment(source, node) or ""
+            found.append((first + node.lineno - 1, " ".join(text.split())))
+        return found
+    except Exception:   # advisory analysis: it may find nothing, never fail a build
+        return []
+
+
 # Seconds. A section shorter than this gets one shared line at the bottom
 # instead of a line of its own. THE NUMBER IS THE PRECISION OF THE COLUMN BESIDE
 # IT: the rows print as `%.1f`s, like every other timing this build prints
@@ -602,13 +932,31 @@ def describe_returned(result):
     return kind
 
 
+# What run_checks answers with: how many checks passed, and how many of the
+# counted sites the constants settled on their own. `passed` is None for TWO
+# reasons -- the body could not be counted, and every site that was counted
+# turned out to be settled by the constants (see run_checks) -- so a caller has
+# to tell "none" from "unknown" either way and a bare number was never enough.
+CheckReport = collections.namedtuple("CheckReport", "passed static")
+
+
 def run_checks(model, out_dir):
     """Run the model's own checks(), the project-specific half of the gate.
 
-    Returns how many checks passed -- None when the body could not be counted
-    (see count_checks), and 0 for a model that defines no checks() at all.
-    metrics.json carries the number so the next build can say that a project
+    Returns a CheckReport: how many checks passed -- None when the body could
+    not be counted (see count_checks), and `CheckReport(0, 0)` for a model that
+    defines no checks() at all -- beside how many of the counted sites were
+    decided by the constants alone (see static_asserts).
+    metrics.json carries both numbers so the next build can say that a project
     lost a check, which is a thing that happens quietly during a refactor.
+
+    THE STATIC ONES ARE SUBTRACTED FROM THE NUMBER AND NEVER REFUSE THE BUILD.
+    `assert FIT_MIN < FIT_MAX` is a deliberate guard on the parameter table and
+    has the identical shape, so each one is a printed note and nothing more.
+    When every counted site turns out static the count goes to None -- "count
+    unknown" -- rather than to 0, because 0 is the refusal above and this is
+    deliberately not one. It mirrors how `_reraises` is subtracted in
+    count_checks without being allowed to reach zero.
 
     Optional: a model.py without checks() builds exactly as it did before.
     Called after the geometry gate and before anything is packed, so a check
@@ -633,7 +981,7 @@ def run_checks(model, out_dir):
     """
     checks = getattr(model, "checks", None)
     if checks is None:
-        return 0
+        return CheckReport(0, 0)
     if not callable(checks):
         raise BuildError(
             f"model.py defines checks, but it is a {type(checks).__name__}, "
@@ -750,8 +1098,42 @@ def run_checks(model, out_dir):
                      if any(changed for _, changed in shown_problems) else "")
         raise BuildError(f"{len(problems)} check(s) failed:\n{listed}{rewritten}")
 
+    # `vars(model)` is the module's own namespace: the constants at the top of
+    # model.py, which is exactly what "decided by the constants alone" means.
+    static = static_asserts(checks, vars(model))
+    passed = count
+    if passed is not None:
+        # `or None` is the "never 0" above: an all-static checks() reports an
+        # unknown count, not a refusal.
+        passed = (passed - len(static)) or None
+
     # Say the number when it is known, and say that it is not when it is not.
-    # A bare `passed` reads like "many" and can mean "none".
-    print(f"checks: {count} passed" if count is not None
-          else "checks: passed (count unknown)")
-    return count
+    # A bare `passed` reads like "many" and can mean "none". The bracket appears
+    # only when there is something in it, so a build with nothing to say prints
+    # the line it has always printed.
+    if passed is not None:
+        # "MORE" AND NOT "OF THEM": the static ones have already been taken off
+        # `passed`, so they are not among the number the bracket sits beside.
+        # "2 of them" next to a 5 that is the REMAINDER says three real checks
+        # are left where there are five, and with more static asserts than real
+        # ones it prints a bracket whose number is the larger of the two.
+        aside = (f" ({len(static)} more decided by the constants alone)"
+                 if static else "")
+        print(f"checks: {passed} passed{aside}")
+    else:
+        aside = (f", {len(static)} decided by the constants alone"
+                 if static else "")
+        print(f"checks: passed (count unknown{aside})")
+
+    # After the count, because they are a note about it. One line each, and each
+    # one is a NOTE rather than a verdict -- the build is already green here.
+    for lineno, source in static:
+        print(f"warning: checks() line {lineno}: `{source}` is decided by the "
+              "constants at the top of model.py alone -- it holds no matter "
+              "what the geometry came out as, and it will go on holding after "
+              "the model has drifted away from it. A check about the shape has "
+              "to READ the shape: measure the two faces and compare what came "
+              "out. (A deliberate guard on the parameter table -- `assert "
+              "FIT_MIN < FIT_MAX` -- is this same shape and is fine; this line "
+              "is a note, not a refusal.)")
+    return CheckReport(passed, len(static))

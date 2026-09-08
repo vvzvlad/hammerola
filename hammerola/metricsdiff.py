@@ -135,6 +135,24 @@ def metrics_diff(old, new):
     if old.get("checks_passed") != new.get("checks_passed"):
         lines.append(f"checks passed: {old.get('checks_passed')} -> "
                      f"{new.get('checks_passed')}")
+    # WITHOUT THIS THE LINE ABOVE LIES AT THE ROLLOUT BOUNDARY. The build
+    # subtracts the asserts the constants settle on their own from the number it
+    # reports, so a project whose real check degenerated into a tautology prints
+    # a SMALLER `checks passed` with nothing lost -- read alone, that is a check
+    # gone missing. A baseline written before the build measured this has no
+    # `checks_static` at all and renders `None -> 2`, which is the truth: the
+    # number did not exist then.
+    #
+    # COMPARED NORMALIZED, PRINTED RAW. A baseline from before the rollout has
+    # no `checks_static`, so a plain `!=` makes "absent" differ from 0 and every
+    # such project prints `None -> 0` once -- a line saying that nothing moved,
+    # in a document whose whole rule is "only the difference, and only when
+    # there is one". Between two immutable revisions astride the rollout it
+    # prints for ever. `None -> 2` still prints, because that one IS a
+    # difference.
+    if (old.get("checks_static") or 0) != (new.get("checks_static") or 0):
+        lines.append(f"checks decided by constants: {old.get('checks_static')} "
+                     f"-> {new.get('checks_static')}")
     return lines
 
 

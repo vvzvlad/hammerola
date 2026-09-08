@@ -87,7 +87,7 @@ def driven(monkeypatch):
         ("export_printables", lambda cat, out_dir: (
             {"base": {"step": "base.step", "stl": "base.stl",
                       "3mf": "base.3mf"}}, {})),
-        ("run_checks", lambda model, out_dir: 0),
+        ("run_checks", lambda model, out_dir: (0, 0)),
         ("export_assembled", lambda prepared, out_dir: 1),
         ("export_views", lambda prepared, out_dir: [
             {"id": view["id"], "name": view["id"], "file": f"{view['id']}.json",
@@ -101,7 +101,7 @@ def driven(monkeypatch):
                                        check=lambda entries, bare, root: None,
                                        report=lambda entries: {})),
         ("collect_metrics",
-         lambda project, parts, passed, provenance: {}),
+         lambda project, parts, passed, static, provenance: {}),
         ("write_metrics", lambda out_dir, metrics: None),
         ("render_previews", render_previews),
     ):
@@ -129,7 +129,7 @@ def with_the_real_rule(driven, monkeypatch, isolated_project):
     monkeypatch.setattr(build_module, "provenance", real_provenance)
     written = SimpleNamespace(passed=None)
 
-    def collect_metrics(project, parts, checks_passed, provenance):
+    def collect_metrics(project, parts, checks_passed, checks_static, provenance):
         # What `report()` handed back, captured where `build` puts it. It is the
         # third of the three calls, and the only one whose result leaves the
         # function -- so it is what says the three ran in the right order.

@@ -161,8 +161,15 @@ def source_fingerprints(root=None):
             "code": code.hexdigest() if readable else ""}
 
 
-def collect_metrics(project, parts, checks_passed, provenance):
+def collect_metrics(project, parts, checks_passed, checks_static, provenance):
     """The build's numbers, in the shape metrics.json is written in.
+
+    `checks_static` is how many of the checks the constants at the top of
+    model.py settled on their own (see `modelchecks.static_asserts`). It rides
+    beside `checks_passed` rather than inside it because it is a fact about the
+    same set of checks: a project whose count fell while this rose lost nothing
+    -- the checks were counted differently -- and one where this rose on its own
+    is drifting towards a checks() that proves nothing.
 
     `provenance` is what `cadbuild.provenance.report` handed back at the top of
     the build: how many of this model's numbers were measured, derived or
@@ -185,6 +192,7 @@ def collect_metrics(project, parts, checks_passed, provenance):
         # -- these are volumes it measured, never volumes computed for this file.
         "assembly": {"interference_mm3": checklib.recorded_interference()},
         "checks_passed": checks_passed,
+        "checks_static": checks_static,
     }
 
 

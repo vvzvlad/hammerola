@@ -96,6 +96,32 @@ def test_a_changed_check_count_is_reported():
     assert lines == ["checks passed: 4 -> 6"]
 
 
+def test_a_baseline_from_before_the_measurement_reports_no_static_asserts():
+    """A missing `checks_static` and a zero are the same answer: none.
+
+    Every project's baseline predates this number, so a comparison that tells
+    the two apart prints `checks decided by constants: None -> 0` on the first
+    build after the rollout -- a line saying nothing moved, in a document whose
+    whole rule is to print only what did. Between two immutable revisions
+    astride the rollout it would print for ever.
+    """
+    assert metrics_diff(build(), {**build(), "checks_static": 0}) == []
+
+
+def test_a_static_assert_that_appeared_or_went_away_is_reported():
+    """...and the normalization above must not swallow a real difference.
+
+    Both directions across zero are movement and both are the whole point of
+    the number: an assert degenerating into a tautology, and one being repaired.
+    """
+    assert metrics_diff({**build(), "checks_static": 0},
+                        {**build(), "checks_static": 2}) == [
+        "checks decided by constants: 0 -> 2"]
+    assert metrics_diff({**build(), "checks_static": 2},
+                        {**build(), "checks_static": 0}) == [
+        "checks decided by constants: 2 -> 0"]
+
+
 def test_interference_that_appeared_is_reported():
     old = build({"body": measured()})
     new = build({"body": measured()}, shared={"body|lid": 4.1})
@@ -183,7 +209,7 @@ def test_only_the_project_root_is_fingerprinted(isolated_project):
 def test_metrics_json_is_written_with_readable_floats(out_dir):
     write_metrics(out_dir, collect_metrics("scratch-project",
                                            {"body": measured(volume=1.23456789)},
-                                           3, {}))
+                                           3, 0, {}))
     data = json.loads((out_dir / METRICS_NAME).read_text(encoding="utf-8"))
     assert data["version"] == METRICS_VERSION
     assert data["project"] == "scratch-project"
@@ -208,7 +234,7 @@ def test_a_declared_number_is_written_out_as_an_ordinary_number(out_dir):
     write_metrics(out_dir, collect_metrics(
         "scratch-project",
         {"body": measured(volume=checklib.measured(1.23456789, "ref/m.md"))},
-        3, {"measured": 1, "derived": 0, "estimated": 0, "estimates": []}))
+        3, 0, {"measured": 1, "derived": 0, "estimated": 0, "estimates": []}))
     text = (out_dir / METRICS_NAME).read_text(encoding="utf-8")
     data = json.loads(text)
     assert data["parts"]["body"]["volume_mm3"] == 1.234568
@@ -217,7 +243,7 @@ def test_a_declared_number_is_written_out_as_an_ordinary_number(out_dir):
     assert data["provenance"]["measured"] == 1
 
 
-def test_the_provenance_argument_has_no_default():
+def test_the_recorded_arguments_have_no_default():
     """"A REQUIRED argument rather than one with a default" was a comment.
 
     `collect_metrics`'s docstring argues the point -- a default would let a
@@ -225,15 +251,18 @@ def test_the_provenance_argument_has_no_default():
     look complete -- and giving the parameter `provenance={}` left every test in
     this repository green, which is exactly the silence the argument describes.
     One line of `inspect.signature` is what makes the claim fail on the edit
-    that falsifies it.
+    that falsifies it. `checks_static` is held to it for the same reason: a
+    default of 0 is the file saying the constants settled none of the checks,
+    which is a claim, not an absence.
     """
     import inspect
 
-    parameter = inspect.signature(collect_metrics).parameters["provenance"]
-    assert parameter.default is inspect.Parameter.empty, (
-        f"collect_metrics(provenance=...) now defaults to "
-        f"{parameter.default!r}, so a caller that forgets it publishes a "
-        f"metrics.json with an empty provenance block and nothing goes red")
+    for name in ("checks_static", "provenance"):
+        parameter = inspect.signature(collect_metrics).parameters[name]
+        assert parameter.default is inspect.Parameter.empty, (
+            f"collect_metrics({name}=...) now defaults to "
+            f"{parameter.default!r}, so a caller that forgets it publishes a "
+            f"metrics.json with an empty {name} record and nothing goes red")
 
 
 def test_the_metrics_file_name_passes_the_hub_s_member_rule():
