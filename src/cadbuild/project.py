@@ -72,7 +72,7 @@ def load_project():
     # WHAT SHOULD NAME THE PROJECT is the `project` key, which is why it is
     # first: the slug is a fact about the AUTHOR's directory, so it is worked out
     # where that directory exists and travels in project.json (`hammerola
-    # create`, `src/projectslug.py`). The title's own brackets are the second
+    # create`, `hammerola/projectslug.py`). The title's own brackets are the second
     # chance -- the same string, in a field written by hand -- and `pid` is what
     # is left when a project.json names it nowhere. It is the honest last
     # resort: already validated (MEMBER_RE, above) and always non-empty. `build`

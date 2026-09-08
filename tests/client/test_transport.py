@@ -28,7 +28,7 @@ import tracemalloc
 
 import pytest
 
-from src.client.hub import Hub, HubError
+from hammerola.hub import Hub, HubError
 
 
 class _Recorder(http.server.BaseHTTPRequestHandler):
@@ -655,7 +655,7 @@ def test_the_quoting_helper_escapes_then_trims_and_says_the_true_length():
     exist to stop exactly that. Both hold at once: cut with a margin, escape,
     trim the result, and report the length of the SOURCE.
     """
-    from src.client.hub import QUOTE_LIMIT, quoted
+    from hammerola.hub import QUOTE_LIMIT, quoted
 
     shown = quoted(HOSTILE)
     assert "\x1b" not in shown, "an escape sequence survived"
@@ -693,7 +693,7 @@ def test_the_source_is_cut_before_it_is_escaped(payload):
     invisible to a test written about the other one, which is the same "revert
     it and the suite is green" this test exists to answer.
     """
-    from src.client.hub import quoted
+    from hammerola.hub import quoted
 
     big = "\x1b" * (4 * 1024 * 1024)
     if payload == "bytes":
@@ -889,7 +889,7 @@ def test_the_ceiling_message_does_not_let_the_hub_choose_its_length(
     The caller one level up already quotes that path; this one did not, so the
     same string was safe in one sentence and 60 kB in the next.
     """
-    from src.client import hub as hub_module
+    from hammerola import hub as hub_module
 
     monkeypatch.setattr(hub_module, "MAX_REPLY_BYTES", 1024)
 
@@ -1022,7 +1022,7 @@ def test_a_ceiling_is_printed_as_the_number_that_was_configured(count, expected)
     Neither number appears in `limits.py`, in the settings or in anything the
     hub answers, so somebody grepping for the one in the message found nothing.
     """
-    from src.client import hub as hub_module
+    from hammerola import hub as hub_module
 
     assert hub_module._bytes_text(count) == expected
 
@@ -1183,7 +1183,7 @@ def test_a_reply_bigger_than_this_tool_will_hold_is_refused_as_it_is_read(
     Run against BOTH statuses, because they take different paths out of urllib
     and each does its own read — the 500 is the one that was uncovered.
     """
-    from src.client import hub as hub_module
+    from hammerola import hub as hub_module
 
     monkeypatch.setattr(hub_module, "MAX_REPLY_BYTES", 1024)
 
@@ -1206,7 +1206,7 @@ def test_an_artefact_is_held_to_the_BUILD_ceiling_and_not_to_the_push_one(
     there are two numbers — one ceiling for both meant the hub serving an STL the
     client would not accept, with a message saying no reply may be that big.
     """
-    from src.client import hub as hub_module
+    from hammerola import hub as hub_module
 
     monkeypatch.setattr(hub_module, "MAX_REPLY_BYTES", 1024)
     monkeypatch.setattr(hub_module, "MAX_ARTIFACT_REPLY_BYTES", 1024 * 1024)
@@ -1229,7 +1229,7 @@ def test_the_artefact_ceiling_is_a_BIGGER_number_and_not_the_absence_of_one(
     number below the body, the same fetch that succeeds above is refused —
     which is what says the second ceiling is applied at all.
     """
-    from src.client import hub as hub_module
+    from hammerola import hub as hub_module
 
     monkeypatch.setattr(hub_module, "MAX_REPLY_BYTES", 1024)
     monkeypatch.setattr(hub_module, "MAX_ARTIFACT_REPLY_BYTES", 4096)

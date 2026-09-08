@@ -4,12 +4,12 @@ WHY THIS FILE EXISTS. "What is this project called, in latin" is asked on the
 author's laptop, by `hammerola create` deciding what to write into project.json,
 and inside the hub, by the build deciding what name to publish under — and the
 first of those cannot import the second: the client is stdlib-only and takes
-nothing from `requirements.txt` or from `src/cadbuild/` (`src/client/__init__.py`).
+nothing from `requirements.txt` or from `src/cadbuild/` (`hammerola/__init__.py`).
 That is exactly the shape that produced `cad_publish/hubspec.py`: somebody else's
 rule, copied into a place that could not see the original, with nothing comparing
 the two.
 
-So the rule MOVED, to `src/projectslug.py`, and both sides import it. What these
+So the rule MOVED, to `hammerola/projectslug.py`, and both sides import it. What these
 tests pin is that this stays true — that `src.cadbuild.project_title` re-exports
 the very same objects instead of growing a copy again, and that the shared module
 stays importable on a laptop's bare python3, which is the property that made the
@@ -26,7 +26,7 @@ import ast
 import sys
 from pathlib import Path
 
-from src import projectslug
+from hammerola import projectslug
 from src.cadbuild import project_title
 
 SHARED = Path(projectslug.__file__)
@@ -48,13 +48,13 @@ def test_the_build_half_re_exports_the_shared_objects_and_not_copies():
 def test_the_client_and_the_build_read_a_title_with_the_same_function():
     """The whole point of the move, asserted from the CLIENT's side.
 
-    `src/client/project.py` derives the slug when a project is created;
+    `hammerola/project.py` derives the slug when a project is created;
     `src/cadbuild/project.py` reads a title's brackets when project.json names
     nothing else. One object, so the two can never disagree about what a slug is
     — which is the disagreement that would publish under one name and check
     against another.
     """
-    from src.client import project as client_project
+    from hammerola import project as client_project
 
     assert client_project.slug_from_title is projectslug.slug_from_title
     assert project_title.slug_from_title is projectslug.slug_from_title
@@ -110,7 +110,8 @@ def test_the_shared_module_imports_nothing_but_the_standard_library():
     would break `hammerola create` on every machine that has no CAD stack, from
     an edit that looks local to the hub. The zipapp does not catch it: the
     closure `onboarding._refuse_unimportable` walks skips every import that is
-    not `src`, so such a module is served with a 200 and dies on the laptop.
+    not `hammerola`, so such a module is served with a 200 and dies on the
+    laptop.
     """
     imported = _imported_modules(SHARED)
     outside = sorted(name for name in imported

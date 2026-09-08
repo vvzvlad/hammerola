@@ -187,7 +187,7 @@ MAX_MEMBERS = 1024
 #     the tree that prompted this; it is not enough to make a 422 into a
 #     broadcast channel. The side that names every single one is the CLIENT,
 #     before anything is sent, on the author's own machine — where the strings
-#     are the author's own and not untrusted at all (`src/client/pack.py`).
+#     are the author's own and not untrusted at all (`hammerola/pack.py`).
 #     THE CEILING IS ALSO WHERE COLLECTING STOPS, not only where printing does.
 #     Be precise about what that buys, because the obvious claim is false: our
 #     list holds REFERENCES, and `tarfile` retains a TarInfo — name included —

@@ -1,6 +1,6 @@
 """The client imports the standard library and this repository, and nothing else.
 
-THE RULE IS WRITTEN IN `src/client/__init__.py` AND WAS NOT CHECKED ANYWHERE.
+THE RULE IS WRITTEN IN `hammerola/__init__.py` AND WAS NOT CHECKED ANYWHERE.
 `hammerola` is installed on the author's machine and installs nothing: it runs
 under whatever python3 is there, so one `import httpx` in a client module makes
 the tool fail at startup on every machine that is not a checkout of this
@@ -9,12 +9,17 @@ verb with it, not the one that grew the dependency. Nothing in the suite would
 notice: the test environment has every runtime dependency installed, so the
 import succeeds here and only here.
 
-WHY IT MATTERS MORE NOW. `revdiff.py` imports `src.metricsdiff`, which is the
-first time a client module has reached outside its own package. That is safe
-because that module is stdlib-only (`tests/test_metricsdiff.py` pins it) — but
-the door is open, and the two modules it must not walk through are
-`src/cadbuild/` (the build half, which exists to load a CAD kernel) and
-`src/store.py` (which brings loguru and the service). Both are named below.
+WHAT THE SECOND CHECK IS FOR, AND WHAT IT NO LONGER IS. The package carries the
+pure modules the hub and the client share — `buildnames`, `metricsdiff`,
+`projectslug` — so nothing in it reaches into `src` any more, and the first
+check is what holds that: `FIRST_PARTY` is `{"hammerola"}`, so ANY import of
+`src` fails it, not merely the dangerous halves. THE SECOND CHECK CANNOT FAIL
+WHILE THE FIRST PASSES, and it is kept anyway rather than deleted, because it is
+where the two halves are NAMED with their reasons: `src/cadbuild/` is the build
+half and exists to load a CAD kernel, `src/store.py` brings loguru and the
+service. Do not read it as a safety net under the first one — it is a subset of
+it, so anybody loosening `FIRST_PARTY` back to `{"src"}` reopens
+`src.onboarding` and everything else along with it.
 
 Read out of the syntax tree rather than by importing: an import inside a
 function is invisible to `sys.modules` until it runs, and the run where it first
@@ -26,11 +31,11 @@ import sys
 
 from src import onboarding
 
-# First-party names a client module may reach for. `src` is this repository —
-# the package the tool is run out of (`python3 -m src.client`, or the zipapp
-# built from it) — and what it may take from there is narrowed below rather than
-# left open.
-FIRST_PARTY = {"src"}
+# First-party names a client module may reach for. `hammerola` is the tool's own
+# distribution — the package the command is run out of (the installed script,
+# `python3 -m hammerola`, or the zipapp built from it) — and it is the only one,
+# because every module the tool imports travels inside it.
+FIRST_PARTY = {"hammerola"}
 
 # The halves of `src/` a client module may NOT import, and why each would hurt:
 # `cadbuild` is the build half and loads a CAD kernel; `store`, `app`, `jobs`,
@@ -55,21 +60,17 @@ def _modules(tree) -> set:
 def _client_modules() -> list:
     """(archive name, path) for every module the downloaded tool is made of.
 
-    `onboarding.client_members()` RATHER THAN A GLOB OF `src/client/`, and the
-    difference is the whole reach of this file. The zipapp carries a second
-    group — `CLIENT_EXTRA_MODULES`, the modules OUTSIDE the package that the
-    client is allowed to import — and a glob of the package cannot see any of
-    them. `src/__init__.py` is in that group and is imported before anything
-    else in the archive, so one `import httpx` there fails every verb of the
-    tool on a laptop, and the comment above that constant invites the list to
-    grow. Asking the builder what it puts in the archive is what makes this
-    guard cover whatever the archive actually carries, including a module
-    reached for lazily from inside a function — which is the form this code
-    already uses elsewhere and which no import-time check would ever notice.
+    `onboarding.client_members()` RATHER THAN A GLOB OF `hammerola/`, and the
+    difference is the whole reach of this file: the builder decides what goes
+    into the archive, so asking it is what makes this guard cover whatever the
+    archive actually carries — including a module reached for lazily from
+    inside a function, which is the form this code already uses elsewhere and
+    which no import-time check would ever notice. The two happen to be the same
+    set today, because the distribution is one package; the day the builder
+    puts something else in, this sweeps that too instead of missing it.
 
-    The archive name is what a failure is reported under, because the file NAME
-    is not unique across the two groups: `src/__init__.py` and
-    `src/client/__init__.py` are two different modules called `__init__.py`.
+    The archive name is what a failure is reported under, because that is the
+    name the module has inside the zipapp.
     """
     return onboarding.client_members()
 
@@ -106,18 +107,16 @@ def test_the_client_never_reaches_into_the_service_or_the_build_half():
         f"{offenders}. Both bring dependencies the client does not have — "
         f"copy the constant into `limits.py` with a test that pins it, or move "
         f"the pure part out to where both halves can import it "
-        f"(`src/metricsdiff.py` is the worked example).")
+        f"(`hammerola/metricsdiff.py` is the worked example).")
 
 
 def test_the_command_itself_is_covered_by_this():
     """What the two checks above are actually looking at.
 
     The entry point is a client module like any other, and it is the one an
-    import error would be noticed at. `src/__init__.py` is named beside it for a
-    different reason: it is the sentinel for the SECOND group, the one a glob of
-    `src/client/` used to miss entirely, and it is the module every other one in
-    the archive is imported through.
+    import error would be noticed at; the other two are named beside it because
+    a sweep that found nothing at all would pass every check above in silence.
     """
     names = {name for name, _path in _client_modules()}
-    assert {"src/client/cli.py", "src/client/hub.py", "src/client/revdiff.py",
-            "src/__init__.py"} <= names
+    assert {"hammerola/cli.py", "hammerola/hub.py",
+            "hammerola/revdiff.py"} <= names

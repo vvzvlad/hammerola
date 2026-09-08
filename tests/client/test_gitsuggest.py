@@ -15,7 +15,7 @@ import shlex
 import pytest
 from modeldir import git, git_repo, make_model
 
-from src.client import gitsuggest
+from hammerola import gitsuggest
 
 REVISION = "f" * 64
 

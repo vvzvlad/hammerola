@@ -16,7 +16,7 @@ other projects; the slug is what ties that line to a directory and a repository.
 The slug half is the one with teeth, and it is not decoration: it must equal the
 name the project PUBLISHES under -- which, for a project.json written by
 `hammerola create`, is the author's directory name only WHEN THAT NAME IS A SLUG
-THE HUB WOULD PUBLISH: `_project_slug` in src/client/project.py asks `is_slug`
+THE HUB WOULD PUBLISH: `_project_slug` in hammerola/project.py asks `is_slug`
 AND the ceiling on a displayed field, and either can turn it away. Otherwise the
 name comes out of these very brackets -- `Корпус/` titled `Потолочный корпус
 (t13-ceiling-mount)` publishes as `t13-ceiling-mount`, and so does a directory
@@ -40,7 +40,7 @@ error edits until it goes away, so a title check that could go red would be
 "fixed" by rewriting the title, leaving whatever is really wrong in place behind
 a green build.
 
-THE RULE ITSELF LIVES IN `src/projectslug.py` and is imported back here, so the
+THE RULE ITSELF LIVES IN `hammerola/projectslug.py` and is imported back here, so the
 four names this module used to define -- `SLUG_RE`, `BRACKET_RE`, `is_slug`,
 `slug_from_title` -- go on resolving here. Two others were DELETED rather than
 moved: `CYRILLIC_RE`, along with the clause of `title_problem` that was its only
@@ -59,7 +59,7 @@ the same reason -- see there.
 # This code runs only inside the hub's build process, rooted at the directory a
 # push was unpacked into, so that question has an answer here and the answer is
 # `.src-<uuid>` -- the incident this whole module now warns about.
-from src.projectslug import (
+from hammerola.projectslug import (
     BRACKET_RE,
     SLUG_RE,
     is_slug,

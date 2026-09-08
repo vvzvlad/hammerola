@@ -113,7 +113,7 @@ TEMPLATE_KEY = "template"
 
 # ...and the key carrying the version of the skill THIS image ships, which the
 # client compares against the copy installed on a laptop (`hammerola skill`).
-# Same arrangement, same reason: `src/client/skill.py` names it too and a test
+# Same arrangement, same reason: `hammerola/skill.py` names it too and a test
 # holds the two strings together.
 SKILL_VERSION_KEY = "skill_version"
 
@@ -121,7 +121,7 @@ SKILL_VERSION_KEY = "skill_version"
 # tight patterns rather than a YAML parser: there is no YAML in the standard
 # library, the frontmatter is written in this repository, and the value is one
 # integer. The client carries a second copy of exactly these two patterns
-# (`src/client/skill.py`) because it may import nothing from here — and a test
+# (`hammerola/skill.py`) because it may import nothing from here — and a test
 # runs both over the shipped file and compares the answers, which is what keeps
 # the copies from drifting into disagreeing about a version number.
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
@@ -145,25 +145,23 @@ TEMPLATE_DIR = ROOT / "model_template"
 # file lands under is the name of the command.
 #
 # It works because the tool imports nothing outside the standard library
-# (`src/client/__init__.py`, and `tests/client/test_stdlib_only.py` enforces
+# (`hammerola/__init__.py`, and `tests/client/test_stdlib_only.py` enforces
 # it): a zipapp cannot carry a compiled dependency, so a client that grew one
 # would break here rather than on somebody's laptop.
 #
-# WHAT GOES IN is every module under `src/client/`, plus the parts of `src/` the
-# client is allowed to reach — `buildnames`, `metricsdiff` and `projectslug`
-# today, the pure modules the hub and the client share rather than each keeping
-# a copy of. That list is closed under imports and a test proves it
-# (`tests/test_onboarding.py`), because a module added outside `src/client/` and
-# imported from inside it would produce an archive that runs on this machine,
-# where the checkout is on `sys.path`, and dies with an ImportError on the
-# laptop this is built for.
-CLIENT_EXTRA_MODULES = ("src/__init__.py", "src/buildnames.py",
-                        "src/metricsdiff.py", "src/projectslug.py")
+# WHAT GOES IN is every module under `hammerola/`, and nothing else: the
+# distribution is one package, so the pure modules the hub and the client share
+# — `buildnames`, `metricsdiff`, `projectslug` — live inside it and arrive by
+# the same glob as the rest. That set is closed under imports and a test proves
+# it (`tests/test_onboarding.py`), because a module imported from inside the
+# package and living outside it would produce an archive that runs on this
+# machine, where the checkout is on `sys.path`, and dies with an ImportError on
+# the laptop this is built for.
 
 # The module the generated `__main__.py` imports, and therefore the root of the
 # closure `_refuse_unimportable` walks. Anything the tool needs is reachable from
 # here by imports; anything that is not reachable is not part of the tool.
-CLIENT_ENTRY = "src/client/cli.py"
+CLIENT_ENTRY = "hammerola/cli.py"
 
 CLIENT_SHEBANG = b"#!/usr/bin/env python3\n"
 
@@ -187,7 +185,7 @@ MIN_PYTHON = (3, 9)
 MIN_PYTHON_TEXT = ".".join(str(part) for part in MIN_PYTHON)
 
 CLIENT_MAIN = '''\
-"""hammerola, as one file. Built by the hub from src/client/ (src/onboarding.py).
+"""hammerola, as one file. Built by the hub from hammerola/ (src/onboarding.py).
 
 Run it, or put it on PATH: the shebang is `/usr/bin/env python3`, and this tool
 imports nothing outside the standard library, so a machine's own python3 is
@@ -208,7 +206,7 @@ if sys.version_info < {floor!r}:
         "    python3.11 %s ..." % (sys.version_info[0], sys.version_info[1],
                                    sys.executable, sys.argv[0]))
 
-from src.client.cli import main  # noqa: E402  (the guard above must run first)
+from hammerola.cli import main  # noqa: E402  (the guard above must run first)
 
 sys.exit(main())
 '''.format(version=MIN_PYTHON_TEXT, floor=MIN_PYTHON)
@@ -352,11 +350,11 @@ def _import_verdict() -> str | None:
     for every later one. That is the same property that lets the caches around
     this one go unguarded by a fixture.
 
-    ONLY ValueError BECOMES A VERDICT. An OSError — one of the modules named in
-    `CLIENT_EXTRA_MODULES` missing from the image outright — is left to
-    propagate as itself: `_serve_start` tells the two apart in its log line, and
-    it costs one failed `open` rather than twenty parses, so there is nothing
-    here for a cache to buy.
+    ONLY ValueError BECOMES A VERDICT. An OSError — a member that vanished
+    between the glob and the read — is left to propagate as itself:
+    `_serve_start` tells the two apart in its log line, and it costs one failed
+    `open` rather than twenty parses, so there is nothing here for a cache to
+    buy.
     """
     try:
         _refuse_unimportable(client_members())
@@ -368,30 +366,24 @@ def _import_verdict() -> str | None:
 def client_members() -> list:
     """(archive name, path on disk) for every module the tool is made of.
 
-    `src/client/*.py` is globbed rather than listed: a module added to the
+    `hammerola/*.py` is globbed rather than listed: a module added to the
     package is part of the tool by definition, and a list would be one more
-    place to forget. What CANNOT be globbed is the second group — the modules
-    outside the package that the client imports — so those are named above and
-    checked by a test.
+    place to forget. Nothing outside the package is carried, because the tool is
+    one distribution and reaches into nothing else.
 
     A GLOB IS ALSO WHY THIS LIST CANNOT BE TRUSTED ON ITS OWN, and the reason
     `client_bytes` runs `_refuse_unimportable` over what comes back: a file that
     is not there does not appear in a glob, so a client module `.dockerignore`
     kept out of the image subtracts itself from this list in complete silence.
-    The two named above are different — they are read by name, so a missing one
-    raises OSError out of `client_bytes` — and that asymmetry is exactly what
-    made the glob the dangerous half.
     """
-    members = [(name, ROOT / name) for name in CLIENT_EXTRA_MODULES]
-    members += [(f"src/client/{path.name}", path)
-                for path in sorted((ROOT / "src" / "client").glob("*.py"))]
-    return sorted(members)
+    return sorted((f"hammerola/{path.name}", path)
+                  for path in sorted((ROOT / "hammerola").glob("*.py")))
 
 
 def _refuse_unimportable(members) -> None:
     """Refuse to serve a client that would die on `import` where it is run.
 
-    THE FAILURE THIS EXISTS FOR HAS NO OTHER WITNESS. `src/client/*.py` is
+    THE FAILURE THIS EXISTS FOR HAS NO OTHER WITNESS. `hammerola/*.py` is
     globbed, so a module `.dockerignore` (or a mistyped COPY) kept out of the
     image is not an error here — it is simply not in the glob, and the archive
     is built, served with a 200 and a plausible size, and dies with an
@@ -407,32 +399,18 @@ def _refuse_unimportable(members) -> None:
     reaches is not required, and that is honest rather than lax: nothing imports
     it, so its absence breaks nothing.
 
-    TWO ARCHIVE MEMBERS ARE OUTSIDE THE CLOSURE and they are outside it for
-    different reasons — this said "one" until 2026-08-28 and named only the
-    first, which is the kind of miscount a test now makes impossible
-    (`tests/test_onboarding.py`). How many members there are ALTOGETHER is
-    deliberately not written beside it: the two are pinned by that test, the
-    total is decoration, and it had already gone stale twice by 2026-08-31.
-    `src/client/__main__.py` is unreachable ON
+    ONE ARCHIVE MEMBER IS OUTSIDE THE CLOSURE, and it is pinned by a test
+    (`tests/test_onboarding.py`) rather than counted here — this said "two"
+    while the package's `__init__.py` was reached by accident from the outside,
+    and a miscount in this paragraph is exactly what that test now makes
+    impossible. How many members there are ALTOGETHER is deliberately not
+    written beside it: the one is pinned by that test, the total is decoration,
+    and it had already gone stale twice by 2026-08-31.
+    `hammerola/__main__.py` is unreachable ON
     PURPOSE: the zipapp's entry point is the generated `CLIENT_MAIN` at the
-    archive's root, because a zip's entry point has to sit there. `src/__init__.py`
-    is unreachable by ACCIDENT of how the imports out of the package resolve —
-    `from src.buildnames import …` and `from src.metricsdiff import …` each land
-    on the module file directly, so `src` as a package is never looked up — and
-    unlike `__main__.py` it really
-    is required. What requires it is not this walk but `CLIENT_EXTRA_MODULES`,
-    where it is named and therefore read BY NAME; an image without it raises
-    OSError out of `client_bytes` and reaches the same 404.
-
-    AND IT IS REQUIRED ON THE INTERPRETERS THAT MATTER, WHICH ARE NOT THE ONE
-    THE SUITE RUNS. Measured by building the archive without `src/__init__.py`
-    and running it: `No module named 'src'` under python 3.9 (`MIN_PYTHON`, the
-    floor a laptop's stock python3 sits at) and under 3.11 (the image's own),
-    because zipimport resolves no namespace package there — and a clean `ok`
-    under 3.14, which resolves one happily. So the newest interpreter is
-    precisely the one that cannot witness this, and a test asserting it would
-    say the opposite thing on a new enough venv. Do not turn this paragraph
-    into an assertion without pinning the interpreter it is true of.
+    archive's root, because a zip's entry point has to sit there.
+    `hammerola/__init__.py` is reached like any other module, because every
+    import out of a sibling names the package (`from hammerola import project`).
 
     IT RAISES ValueError, LIKE `_refuse_unservable`, and that type is part of
     the contract with `src/app.py`: `_serve_start` catches it and answers 404
@@ -530,11 +508,11 @@ def _import_closure(members):
         return None, False
 
     def wanted(name):
-        """(module, imported name or None) for every `src` import in one module.
+        """(module, imported name or None) for every `hammerola` import in one module.
 
         `import a.b` and `from a.b import c` are collected the same way, and the
-        second yields the imported names as well, because `from src.client
-        import project` names a MODULE while `from src.client.hub import Hub`
+        second yields the imported names as well, because `from hammerola
+        import project` names a MODULE while `from hammerola.hub import Hub`
         names an object in one. Which of the two it is cannot be told from the
         statement, so the caller asks the package instead.
 
@@ -556,7 +534,7 @@ def _import_closure(members):
 
         TWO EDGES ARE NOT FOLLOWED AND NOT REFUSED EITHER, because neither is a
         FORM this could recognise and both are absent from the client today.
-        `importlib.import_module("src.client.x")` is a call with a string in it,
+        `importlib.import_module("hammerola.x")` is a call with a string in it,
         so a module reached only that way is not required here and would fail on
         the laptop. And `if TYPE_CHECKING:` runs the other way round — the
         import is collected and the module required, though at runtime it is
@@ -575,16 +553,16 @@ def _import_closure(members):
                         f"this check does not follow relative imports: the "
                         f"client is written with absolute ones so the closure "
                         f"can be computed from the names alone. Write it as "
-                        f"`from src.…`, or teach this to resolve `level` "
+                        f"`from hammerola.…`, or teach this to resolve `level` "
                         f"against the archive layout")
                 if not node.module:
                     continue
                 yield node.module, None
                 for alias in node.names:
-                    # `from src.client import *` names no submodule: it binds
+                    # `from hammerola import *` names no submodule: it binds
                     # whatever `__init__` bound, and the package itself is
                     # already required by the line above. Treating `*` as a
-                    # name asked for `src.client.*` and reported a module by
+                    # name asked for `hammerola.*` and reported a module by
                     # that invented spelling.
                     if alias.name != "*":
                         yield node.module, alias.name
@@ -592,9 +570,9 @@ def _import_closure(members):
     def bound(name):
         """The names a package's `__init__.py` binds — or None for "unknowable".
 
-        What tells `from src.client import project` (a submodule, which has to
-        be carried) from `from src.client import SOMETHING` (a name defined in
-        the package itself, which does not). Today `src/client/__init__.py` is
+        What tells `from hammerola import project` (a submodule, which has to
+        be carried) from `from hammerola import SOMETHING` (a name defined in
+        the package itself, which does not). Today `hammerola/__init__.py` is
         one docstring and binds nothing at all, so this answers the empty set;
         it is here so that the day the package DOES bind something, a healthy
         image is not refused for shipping without a module that no longer has
@@ -639,7 +617,7 @@ def _import_closure(members):
             continue
         seen.add(name)
         for module, imported in wanted(name):
-            if module != "src" and not module.startswith("src."):
+            if module != "hammerola" and not module.startswith("hammerola."):
                 continue
             found, package = resolve(module)
             if found is None:
@@ -732,9 +710,9 @@ def _refuse_unservable(members) -> None:
     the SET rather than of one name are checked here, because `unpack` applies
     those to a tar and this side has files.
     """
-    from src.client.limits import MAX_BUILD_BYTES, MAX_MEMBERS
-    from src.client.unpack import TEMPLATE_RULES, check_name
-    from src.client.errors import ClientError
+    from hammerola.limits import MAX_BUILD_BYTES, MAX_MEMBERS
+    from hammerola.unpack import TEMPLATE_RULES, check_name
+    from hammerola.errors import ClientError
 
     if len(members) > MAX_MEMBERS:
         raise ValueError(

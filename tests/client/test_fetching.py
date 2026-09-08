@@ -28,8 +28,8 @@ import pytest
 from harness import TOKEN, meta_bytes, view_bytes
 from modeldir import git, git_repo, make_model
 
-from src.client import artifacts, sources
-from src.client.cli import main
+from hammerola import artifacts, sources
+from hammerola.cli import main
 
 
 @pytest.fixture(autouse=True)
@@ -786,7 +786,7 @@ def test_a_metrics_body_that_blows_the_JSON_parser_is_not_a_traceback():
     exception classes and not that one. Fixing two of three would have left the
     rule reading as local to one file.
     """
-    from src.client import revdiff
+    from hammerola import revdiff
 
     class Stub:
         def build_file(self, pid, revision, name):

@@ -38,7 +38,7 @@ image has a realistic chance of shipping broken while the suite stays green:
       starts, `/health` answers with a literal string that reads no file, and every check above
       stays green while every page the hub serves is a 404 or a viewer with no viewer in it.
 * (h) the three `/start` files a stranger is handed really are served BY THIS IMAGE. Two of
-      them do not exist as files at all — the client is zipped out of `src/client/` and the
+      them do not exist as files at all — the client is zipped out of `hammerola/` and the
       template is tarred out of `model_template/` when the request arrives — so they are the
       one part of this artefact that (g) structurally cannot cover by naming a path, and the
       route answers 404 rather than 500 when the assembly fails.
@@ -159,15 +159,19 @@ REQUIRED_VARIABLES = ["EDIT_TOKEN"]
 # — so this check is defence in depth for the day somebody widens that copy list, which is a
 # one-line change that looks harmless in review.
 #
-# `/app/src/__pycache__` is the one entry here that is NOT covered by the "widened COPY list"
-# sentence above: `COPY src/ src/` already carries it today, and it stays out only because
-# .dockerignore says `**/__pycache__/`. The `**/` is load-bearing and does not look it — a
-# pattern here is matched with Go's filepath.Match rules, where `*` does not cross a `/`, so
+# The two `__pycache__` entries are the ones here that are NOT covered by the "widened COPY
+# list" sentence above: `COPY src/ src/` and `COPY hammerola/ hammerola/` already carry them
+# today, and they stay out only because .dockerignore says `**/__pycache__/`. There is an
+# entry per COPIED PYTHON TREE and that is the rule to follow — the second one arrived with
+# the client package, and a third tree needs a third line here. The `**/` is load-bearing and
+# does not look it — a pattern there is matched with Go's filepath.Match rules, where `*` does
+# not cross a `/`, so
 # the bare `__pycache__/` this file used to carry matched the context root and nothing below
 # it. Anyone "simplifying" that pattern back reintroduces the leak, and nothing else in the
 # pipeline can see it: the image builds, starts and serves with the laptop's bytecode inside,
 # including .pyc files whose .py no longer exists.
-EXCLUDED_PATHS = ["/app/tests", "/app/.env", "/app/.venv", "/app/src/__pycache__"]
+EXCLUDED_PATHS = ["/app/tests", "/app/.env", "/app/.venv", "/app/src/__pycache__",
+                  "/app/hammerola/__pycache__"]
 
 # Paths that MUST be inside the image — the mirror of the list above, and it exists because the
 # two failures are not symmetrical in how loudly they announce themselves. A file that should
@@ -425,7 +429,7 @@ print(json.dumps(verdicts))
 # of this artefact that check (g) structurally cannot reach.
 #
 # (g) names paths, and two of these three are not paths: `/start/hammerola` is a zipapp built out
-# of every module under `src/client/` when the request arrives, and `/start/template.tar.gz` is a
+# of every module under `hammerola/` when the request arrives, and `/start/template.tar.gz` is a
 # tar built out of `model_template/` the same way (`src/onboarding.py`). A client module that
 # .dockerignore kept out of the image, or a template file whose name no client would unpack,
 # breaks the ROUTE and not any single named file — and `src/app.py` answers that with a logged
@@ -434,13 +438,14 @@ print(json.dumps(verdicts))
 # exactly the person who came here because they did not know what to do next.
 #
 # THAT SENTENCE IS TRUE BECAUSE THE HUB WAS MADE TO MAKE IT TRUE, and it is worth knowing which
-# half is which. A missing client module used to produce a 200: `src/client/*.py` is GLOBBED, so
+# half is which. A missing client module used to produce a 200: `hammerola/*.py` is GLOBBED, so
 # a file that is not there is not an error — it is simply not in the glob, and the archive was
 # built, served with a plausible size, and died with an ImportError on the laptop that
 # downloaded it. `onboarding._refuse_unimportable` is what closed that: the archive now has to
-# carry everything reachable by imports from `src/client/cli.py`, and refuses with the ValueError
+# carry everything reachable by imports from `hammerola/cli.py`, and refuses with the ValueError
 # `_serve_start` turns into the logged 404 this check reads. So the route is now a real witness
-# for the whole client, not only for the modules named in `CLIENT_EXTRA_MODULES`.
+# for the whole client — every module of it, since a glob over `hammerola/*.py` is the whole
+# list and nothing else would notice a file missing from it.
 #
 # The suite cannot see it either, and this is the sharp half: `tests/test_onboarding.py` builds
 # those archives out of the CHECKOUT, where every file is present by construction, so it goes
@@ -1199,7 +1204,7 @@ def check_excluded_paths(name, blocked=None):
     blanket `COPY . .` is a one-line change that looks tidier in review, and .dockerignore is
     then the only thing standing between the working tree and the registry.
 
-    One `docker exec` answers all three, so the paths stay in one list and a failure to run it
+    One `docker exec` answers every path here, so they stay in one list and a failure to run it
     fails every row rather than silently covering fewer of them than it claims.
     """
     targets = ["{} is not in the image".format(path) for path in EXCLUDED_PATHS]
@@ -1596,7 +1601,7 @@ def check_start_routes(name):
     what is inside it and whether it starts; this one asks the running hub for the three things
     it hands somebody who has just found it, and it is the only way two of them can be checked
     at all — the client and the template do not exist as files in the image, they are assembled
-    from `src/client/` and `model_template/` when the request arrives.
+    from `hammerola/` and `model_template/` when the request arrives.
 
     NO `blocked` PARAMETER, unlike (c), (d), (f) and (g). Those exec into a container this file
     started for them, so "it could not be started" is known before they run and is passed in.
@@ -1661,7 +1666,7 @@ def check_start_routes(name):
                 "whether the image's own command came up.\n"
                 "  If it DID answer and the answer was wrong, the route is the finding. These "
                 "two are assembled when they are asked — the client out of the modules "
-                "reachable from src/client/cli.py, the template out of model_template/ — and "
+                "reachable from hammerola/cli.py, the template out of model_template/ — and "
                 "src/app.py answers 404 when that assembly refuses, so a module .dockerignore "
                 "kept out of the image or a template path no client would unpack shows up HERE "
                 "and nowhere else: check (g) names three onboarding paths and cannot see the "
@@ -1750,11 +1755,14 @@ def main():
 
     # SAME ORDER AS EXPECTED_TARGETS, and that is a requirement rather than a convention: the
     # pairing below is positional, so a group moved here without moving its declaration is
-    # compared against somebody else's count. THREE of these groups return 4 verdicts each —
-    # (a), (c) and (d) — and (b) and (h) return 3 each, so swapping either pair would still
-    # satisfy every check below and go green while each probe's failures were being reported
-    # under another one's name. Nothing in this file can detect that; keeping the two tuples in
-    # step by eye is what prevents it, which is why the letters are on the labels.
+    # compared against somebody else's count. TWO PAIRS of these groups have equal arity today
+    # — (a) and (c) return 4 verdicts each, (b) and (h) return 3 each — so swapping either pair
+    # would still satisfy every check below and go green while each probe's failures were being
+    # reported under another one's name. WHICH groups pair up is not stable and this sentence
+    # is not the authority on it: (d) was in the first pair until the client package brought it
+    # a fifth excluded path, so count the arities off the declarations above rather than off
+    # here. Nothing in this file can detect a swap; keeping the two tuples in step by eye is
+    # what prevents it, which is why the letters are on the labels.
     produced = (contract_rows, guard_rows, privileges_rows, excluded_rows, startup_rows,
                 cad_rows, required_rows, start_rows)
 

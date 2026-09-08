@@ -340,7 +340,7 @@ const DESCRIPTION = '3D models built from code. Every link is pinned to a revisi
  * file names a host.
  *
  * `Client:` AND NOT `Helper:`, which is what the second line said first. This
- * repository has one word for that file and uses it everywhere — `src/client/`,
+ * repository has one word for that file and uses it everywhere — `hammerola/`,
  * "the client" in AGENTS.md and the SPEC, `hammerola` once it is on a PATH — and
  * a third name invented on this one page leaves the agent that reads the block
  * and then the skill working out that the two are the same thing.

@@ -1179,7 +1179,7 @@ def test_whether_a_node_is_a_leaf_is_the_presence_of_parts(hub, node, refusal):
     while a hub asking `node.get("parts") is None` called the same node a leaf
     and published it — 201, into an immutable directory under a year of cache,
     opening for nobody. That is the shape of refusal issue #53 named and
-    `src/buildnames.py` exists to end: accepted and impossible to open, from a
+    `hammerola/buildnames.py` exists to end: accepted and impossible to open, from a
     push that can never be taken back. `"parts": "x"` was never the danger — it
     is refused by the list check either way; `null` was the one value the two
     sides read differently, so the fix is to ask the question the way the

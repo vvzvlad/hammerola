@@ -33,7 +33,7 @@ from src import store as store_module
 # The client's copy of `_cut_middle` is driven by the tests here rather than from
 # `tests/client/`, because that suite's conftest strips EDIT_TOKEN out of the
 # environment for `src.settings` — and comparing the two copies needs both.
-from src.client import pack as client_pack
+from hammerola import pack as client_pack
 
 
 def _payload():

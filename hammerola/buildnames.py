@@ -10,13 +10,13 @@ module of its own rather than a function beside any one of them:
     pointer can sit — a view's `file`, its `overview` and its `preview`, and a
     catalogue record's exported `files` and its own `preview`);
   * the client asks it of every name the hub's answer hands back, before
-    writing that name to the author's disk (`src/client/artifacts.py`).
+    writing that name to the author's disk (`hammerola/artifacts.py`).
 
 THOSE THREE ARE THE CALLERS OF THE NAME RULE, and they are not everyone who
 imports this file. One PIECE of it travels further: `first_nonprintable`, the
 category-C scan, has three readers of its own — `unservable_reason` below,
 `render._plain_text` of every displayed field, and `_clean_title` in
-src/client/project.py of a project TITLE, which asks what a file may be called
+hammerola/project.py of a project TITLE, which asks what a file may be called
 at no point. That is why the scan is public and carries a docstring of its own,
 and it is also what widens the stdlib rule further down from one verb to every
 command the tool has.
@@ -34,13 +34,13 @@ Two copies of one rule disagreeing in silence is the entire subject of issue
 #53: a name the declaration accepts and the server refuses publishes with a 201
 into an immutable directory under a year of cache and then 404s on every GET — a
 build accepted and impossible to open, from a push that can never be taken back.
-So the rule is one module all three import. `src/metricsdiff.py` is the worked
+So the rule is one module all three import. `hammerola/metricsdiff.py` is the worked
 example of the same move, and `tests/test_buildnames.py` pins that all three
 sides hold the same object rather than a copy of it.
 
 A MODULE OF ITS OWN because none of the three could host it. `render.py` is out
 because the client cannot import the service at all — the tool is stdlib-only
-and takes nothing from `requirements.txt` (`src/client/__init__.py`) — and
+and takes nothing from `requirements.txt` (`hammerola/__init__.py`) — and
 because the file server would then be depending on the publishing half for a
 rule about its own URLs. `store.py`, the obvious address next door to
 `SAFE_COMPONENT`, is out for a different reason: the import edge runs `app ->
@@ -49,7 +49,7 @@ store -> render`, so `render` may import neither of those two.
 STDLIB ONLY, and that is a rule rather than a coincidence: the client imports
 this module and installs nothing, so one dependency here breaks it on every
 laptop that is not a checkout of this repository. THE RADIUS IS THE WHOLE TOOL
-and not the one verb that reads a build's file names — `src/client/project.py`
+and not the one verb that reads a build's file names — `hammerola/project.py`
 imports this for the scan above, and `admin`, `artifacts`, `cli`, `queue`,
 `revdiff`, `setup`, `sources` and `status` all import THAT, so an import added
 here fails every `hammerola` command before it parses its arguments. `create
@@ -87,7 +87,7 @@ def first_nonprintable(value: str):
     loop: a ValueError naming a field (`_plain_text` in src/render.py), a reason
     a FILE NAME cannot be served (`unservable_reason`, below), and a refusal of
     a project title on the author's own machine (`_clean_title` in
-    src/client/project.py). Written out three times, the three would be free to
+    hammerola/project.py). Written out three times, the three would be free to
     disagree about what "printable" means — and they did: the client spelled it
     `ord(char) < 0x20 or ord(char) == 0x7F`, which is a SUBSET of category Cc —
     the C0 controls and DEL, 33 of the 65, but not C1 (U+0080-U+009F) — while
@@ -95,9 +95,12 @@ def first_nonprintable(value: str):
     passed `hammerola create` and was refused inside the build, and U+0085 NEL
     would have gone through without even leaving Cc.
 
-    PUBLIC because that third caller lives in another package: `src/client/`
-    importing an underscore name out of `src/` would be borrowing a private,
-    where what it needs is the rule itself.
+    PUBLIC because one of those callers lives in another package, and it is the
+    FIRST one: `src/render.py` imports this name across the package boundary,
+    and an underscore would make that a borrowed private where what it needs is
+    the rule itself. The direction is worth being exact about — the hub imports
+    the client's module, not the other way round, because the client may import
+    nothing from `src` at all.
     """
     for char in value:
         # Cc control, Cf format, Cs surrogate, Co private use, Cn unassigned.
@@ -114,7 +117,7 @@ def unservable_reason(name) -> Optional[str]:
     request (`_safe_name` in src/app.py); the publishing half asks it of every
     name a push DECLARES (`_check_declared_file` in src/render.py); and the
     client asks it of every name it is about to write to a disk
-    (`src/client/artifacts.py`). Two copies of it disagreed for as long as they
+    (`hammerola/artifacts.py`). Two copies of it disagreed for as long as they
     existed, and the failure that costs is silent: a name the declaration
     accepts and the server refuses publishes with a 201 into an immutable
     directory under a year of cache, and then 404s on every GET — a build that

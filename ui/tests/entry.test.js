@@ -547,7 +547,7 @@ describe('the block for an agent', () => {
   })
 
   it('calls the client what the rest of this repository calls it', () => {
-    // `src/client/`, "the client" in AGENTS.md and the SPEC, `hammerola` on a
+    // `hammerola/`, "the client" in AGENTS.md and the SPEC, `hammerola` on a
     // PATH. A third name for it here — `Helper:`, which is what this said first
     // — leaves whoever reads the block and then the skill working out that the
     // two are one file.

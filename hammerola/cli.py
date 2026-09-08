@@ -79,13 +79,13 @@ one it was — and, when the build ran at all, with its log.
 import argparse
 import sys
 
-from src.client import (admin, artifacts, config, gitsuggest, project, queue,
-                        revdiff, setup, skill, sources, status)
-from src.client.errors import ClientError
-from src.client.hub import (JOB_TIMEOUT, UNAUTHORIZED, Hub, HubError,
-                            quoted)
-from src.client.limits import DEV_SLOT
-from src.client.pack import PackError, pack
+from hammerola import (admin, artifacts, config, gitsuggest, project, queue,
+                       revdiff, setup, skill, sources, status)
+from hammerola.errors import ClientError
+from hammerola.hub import (JOB_TIMEOUT, UNAUTHORIZED, Hub, HubError,
+                           quoted)
+from hammerola.limits import DEV_SLOT
+from hammerola.pack import PackError, pack
 
 EXIT_OK = 0
 EXIT_FAILED = 1

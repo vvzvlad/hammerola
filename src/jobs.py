@@ -143,7 +143,7 @@ STATE_FAILED = "failed"
 
 # The two a poller may stop on. Nothing inside this module reads it any more —
 # no rule here selects jobs by whether they have finished — but it is the wire
-# contract `src/client/hub.py` mirrors, so it is stated once, here, on the side
+# contract `hammerola/hub.py` mirrors, so it is stated once, here, on the side
 # that issues the states.
 TERMINAL_STATES = (STATE_DONE, STATE_FAILED)
 # The four, as a set to check a record against. A state outside it is not a

@@ -20,8 +20,8 @@ import pytest
 from harness import TOKEN
 from modeldir import make_model
 
-from src.client import config, limits, pack, project, setup
-from src.client.cli import main
+from hammerola import config, limits, pack, project, setup
+from hammerola.cli import main
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def answers(monkeypatch):
     interface this tool deliberately does not have.
     """
     given = {"address": "", "password": TOKEN}
-    monkeypatch.setattr("src.client.setup.getpass.getpass",
+    monkeypatch.setattr("hammerola.setup.getpass.getpass",
                         lambda *_a, **_kw: given["password"])
     monkeypatch.setattr("builtins.input", lambda *_a, **_kw: given["address"])
     return given
@@ -627,7 +627,7 @@ def test_a_template_the_client_cannot_read_says_what_to_do_as_well(
     appends the sentence. So the ONE reader who most needs "you can start
     without a hub" was the one who did not get it.
     """
-    from src.client import setup as setup_module
+    from hammerola import setup as setup_module
 
     monkeypatch.setenv("HUB_URL", hub.url)
     monkeypatch.setattr(setup_module.Hub, "fetch_path",
@@ -692,7 +692,7 @@ def test_nothing_login_would_STORE_is_something_the_hub_would_refuse(value):
     rejects things the header check does not), so this compares outcomes rather
     than one function with itself.
     """
-    from src.client import hub as hub_module
+    from hammerola import hub as hub_module
 
     try:
         config.check_storable(config.EDIT_TOKEN_VAR, value)

@@ -45,7 +45,7 @@ import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.client.limits import (
+from hammerola.limits import (
     MAX_BUILD_BYTES,
     MAX_MEMBERS,
     MAX_PATH_DEPTH,

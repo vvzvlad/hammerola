@@ -241,7 +241,7 @@ class Limits:
     # workers) went from sixteen minutes to two hours. Two numbers elsewhere are
     # derived from this one and were moved WITH it -- `LEFTOVER_MAX_AGE_SECONDS`
     # in src/store.py, which would otherwise sweep the sources of a build still
-    # queued, and `JOB_TIMEOUT` in src/client/hub.py, which would otherwise give
+    # queued, and `JOB_TIMEOUT` in hammerola/hub.py, which would otherwise give
     # up on a build that is still legitimately waiting. Neither is cosmetic and
     # neither is checked by anything: move this number again and go read both.
     #

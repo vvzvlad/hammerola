@@ -20,7 +20,7 @@
 // three files were about to carry a seven-line recursion apiece, and three
 // copies of a recursion drift — one handling arrays, one not; one descending
 // into `children`, one stopping at the first hit. The lesson is the project's
-// own (`src/metricsdiff.py`): a comparison worth making twice is worth moving
+// own (`hammerola/metricsdiff.py`): a comparison worth making twice is worth moving
 // to where both sides import it.
 
 /**

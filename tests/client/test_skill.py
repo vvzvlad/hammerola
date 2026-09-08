@@ -32,8 +32,8 @@ import pytest
 from harness import TOKEN
 
 from src import onboarding
-from src.client import config, skill
-from src.client.cli import main
+from hammerola import config, skill
+from hammerola.cli import main
 
 
 @pytest.fixture

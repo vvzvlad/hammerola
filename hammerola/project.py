@@ -32,9 +32,9 @@ import os
 import secrets
 from pathlib import Path
 
-from src.buildnames import first_nonprintable
-from src.client.limits import MAX_TEXT_CHARS, SAFE_ID
-from src.projectslug import slug_from_directory, slug_from_title
+from hammerola.buildnames import first_nonprintable
+from hammerola.limits import MAX_TEXT_CHARS, SAFE_ID
+from hammerola.projectslug import slug_from_directory, slug_from_title
 
 PROJECT_FILE = "project.json"
 

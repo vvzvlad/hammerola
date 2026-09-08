@@ -33,10 +33,10 @@ serves it.
 
 from pathlib import Path
 
-from src.client import config, gitsuggest, pack, project, unpack
-from src.client.errors import ClientError
-from src.client.hub import QUERY_TIMEOUT, Hub
-from src.client.limits import DEV_SLOT, SAFE_ID
+from hammerola import config, gitsuggest, pack, project, unpack
+from hammerola.errors import ClientError
+from hammerola.hub import QUERY_TIMEOUT, Hub
+from hammerola.limits import DEV_SLOT, SAFE_ID
 
 # The moving name a revision argument may be spelled with. `dev` is deliberately
 # not one of these: it is a slot, not a revision, and the two commands here are

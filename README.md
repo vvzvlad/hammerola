@@ -76,7 +76,7 @@ curl -fsSL <hub>/start/skill.md -o ~/.claude/skills/hammerola/SKILL.md   # for a
 hammerola login <hub>   # once per machine; the password is prompted for
 ```
 
-**That is the only install, checkout or no checkout.** There used to be a second
+**That is how it is installed, checkout or no checkout.** There used to be a second
 one — `make client`, which symlinked a `bin/hammerola` script into
 `~/.local/bin` — and the two collided under the one name they share: `curl -o`
 writes THROUGH a symlink, into its target, so the line above quietly landed the
@@ -84,34 +84,43 @@ downloaded zipapp on top of the repository's own file. The link stayed a link,
 the command went on working, and the only sign was `git status` calling the
 client modified. Both the target and the script are gone. Whoever is *working
 on* the client runs it out of the checkout instead — and the whole trick is that
-`python3` has to be able to import `src`, which is a statement about where the
-command is STARTED, not about where the model is:
+`python3` has to be able to import `hammerola`, which is a statement about where
+the command is STARTED, not about where the model is:
 
 ```bash
 cd <this checkout>
-python3 -m src.client --help                          # the same tool, off the working copy
-python3 -m src.client -C <model dir> status           # the model directory is an argument
+python3 -m hammerola --help                          # the same tool, off the working copy
+python3 -m hammerola -C <model dir> status           # the model directory is an argument
 ```
 
-`-C` exists because there is no installed script to run from inside a model
-directory: `python3 -m src.client` started there fails with
-`No module named 'src'`, and so does `python3 -m src.client status` started in
-the checkout — the tool resolves, and then finds no `project.json`. The other
+`-C` exists because nothing here is installed by default to run from inside a
+model directory: `python3 -m hammerola` started there fails with
+`No module named 'hammerola'`, and so does `python3 -m hammerola status` started
+in the checkout — the tool resolves, and then finds no `project.json`. The other
 way round works too, if the shell is already in the model:
 
 ```bash
-PYTHONPATH=<this checkout> python3 -m src.client status
+PYTHONPATH=<this checkout> python3 -m hammerola status
 ```
 
 No venv and nothing to build either way: the package imports the standard
 library and nothing else, which is the same property that lets the hub ship it
 as one file.
 
-The downloaded client is a zipapp built out of `src/client/` — one file, nothing
+The downloaded client is a zipapp built out of `hammerola/` — one file, nothing
 installed, python 3.9 and up (`src/onboarding.MIN_PYTHON`, which is also what
 the skill tells the reader and what a test holds the syntax to: a stock
 `/usr/bin/python3` is 3.9 on macOS and on Debian 11, so "newer than that" is a
 first onboarding step that fails on the ordinary machine).
+
+The package also has a DISTRIBUTION NAME — `hammerola`, declared in
+`pyproject.toml` — so `pip install <this checkout>` puts a `hammerola` console
+script on the PATH and the tool becomes importable from anywhere. That name is
+the point of it: the only importable top-level name here used to be `src`, so
+installing this on a laptop would have shadowed every other project's `src`, and
+a tool that cannot be installed cannot update itself either. It is a name, not a
+new recommended install — the hub still serves the zipapp, and if both land in
+`~/.local/bin` the bootstrap `curl -o` above overwrites the console script.
 
 `GET /start` is the manifest that names both of those, plus the starter template
 `create` fetches below — and one boolean, `empty`, which is the only thing on

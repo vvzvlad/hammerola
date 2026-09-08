@@ -55,12 +55,12 @@ which is exactly what somebody who just ran `hammerola build` wants.
 import reprlib
 from pathlib import Path
 
-from src.buildnames import unservable_reason
-from src.client import project
-from src.client.errors import ClientError
-from src.client.hub import Hub
-from src.client.limits import DEV_SLOT, SAFE_ID
-from src.client.sources import LATEST, SHORT_ID_CHARS, hub_for, scratch_dir
+from hammerola.buildnames import unservable_reason
+from hammerola import project
+from hammerola.errors import ClientError
+from hammerola.hub import Hub
+from hammerola.limits import DEV_SLOT, SAFE_ID
+from hammerola.sources import LATEST, SHORT_ID_CHARS, hub_for, scratch_dir
 
 # The build names that are not revision ids and are still perfectly good targets:
 # the two pointers. `latest` is passed through to the hub rather than resolved
@@ -136,7 +136,7 @@ def run(args) -> int:
     print(f"{pid}/{name} -> {dest}")
     total = 0
     for where, field, filename in declared:
-        # THE HUB'S OWN RULE, IMPORTED RATHER THAN RESTATED (`src/buildnames.py`).
+        # THE HUB'S OWN RULE, IMPORTED RATHER THAN RESTATED (`hammerola/buildnames.py`).
         # The hub asked it of every one of these pointers at publish time
         # (`render._check_declared_file`), so this cannot happen from a build it
         # published — which is why it is a refusal rather than a
@@ -235,7 +235,7 @@ def _not_from_the_hub(what: str, value) -> ClientError:
 # `repr`, cut short — and cut short BEFORE it is built, which is the whole
 # reason this is `reprlib` and not a slice of `repr(value)`. The value is
 # somebody else's document: a refused `parts` can be the whole of it, and the
-# ceiling on a reply is `MAX_REPLY_BYTES` (`src/client/hub.py`), i.e. tens of
+# ceiling on a reply is `MAX_REPLY_BYTES` (`hammerola/hub.py`), i.e. tens of
 # megabytes. Slicing at 120 characters materialized every one of those bytes as
 # a Python string first and threw all but 117 away — the docstring said "can be
 # the whole megabyte of it" while the code built exactly that. `reprlib` builds

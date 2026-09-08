@@ -16,7 +16,7 @@ project.json pointing at a stranger's id -- a question the hub answers from its
 own store, not from a build's own numbers. Everything that is pure -- the
 fingerprints, the diff, the summary and the printing -- came across unchanged.
 
-THE COMPARISON ITSELF NOW LIVES IN `src/metricsdiff.py` and is imported back
+THE COMPARISON ITSELF NOW LIVES IN `hammerola/metricsdiff.py` and is imported back
 here, so this module still exposes every name it always did. It moved because
 metrics.json gained a SECOND reader that cannot import this one: `hammerola
 diff` prints what moved between two published revisions, and the client is
@@ -25,13 +25,16 @@ why a shared module beat a second copy -- the short version is that a copy is
 what broke publication once already.
 
 WHY THE IMPORT IS ABSOLUTE where every other import in this package is
-relative. `src.metricsdiff` is outside the package, so there is no relative
-spelling; naming `src` is safe HERE because of when this module is imported. A
-model is loaded with its own directory first on `sys.path` (`geometry.load_model`),
-so a project with a `src/` directory of its own can shadow the name -- but that
-happens inside `build()`, and `src.cadbuild.build` imports this module at its
-own import time, which is before the child process reaches any model. Same
-spelling `src/buildproc/` already uses throughout.
+relative. `hammerola.metricsdiff` is outside the package, so there is no relative
+spelling; naming `hammerola` is safe HERE because of when this module is
+imported. A model is loaded with its own directory first on `sys.path`
+(`geometry.load_model`), so a project with a `hammerola/` directory of its own
+can shadow the name -- but that happens inside `build()`, and
+`src.cadbuild.build` imports this module at its own import time, which is before
+the child process reaches any model. THE NAME TO CHECK IS `hammerola` AND NOT
+`src`: the shared modules moved into the client package when the tool got a
+distribution name, so the directory a model could shadow this with is no longer
+the one this sentence used to name.
 """
 
 from datetime import datetime, timezone
@@ -41,7 +44,7 @@ import io
 import json
 import tokenize
 
-from src.metricsdiff import (
+from hammerola.metricsdiff import (
     METRIC_FIELDS,
     METRICS_NAME,
     METRICS_REL_TOL,

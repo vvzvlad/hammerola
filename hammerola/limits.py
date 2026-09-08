@@ -1,7 +1,7 @@
 """What the hub will accept, as the client knows it.
 
 A COPY of seven numbers and two patterns — and the copy is deliberate, because
-this file has to import on a laptop's bare python3 (see `src/client/__init__.py`
+this file has to import on a laptop's bare python3 (see `hammerola/__init__.py`
 for why the client takes nothing from requirements.txt) and `src.store` pulls in
 loguru and half the service.
 

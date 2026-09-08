@@ -66,11 +66,11 @@ from src.cadbuild.modelchecks import count_checks
 from src.cadbuild.parts import KIND_PRINTABLE, KINDS, RESERVED_STEMS
 from src.buildproc.limits import DEFAULT_LIMITS, memory_limit_supported
 from src.buildproc.runner import STATUS_OK
-from src.client import pack
-from src.client.limits import MAX_BUILD_BYTES, MAX_MEMBERS, SAFE_COMPONENT
-from src.client.errors import ClientError
-from src.client.project import PROJECT_FILE
-from src.client.unpack import TEMPLATE_RULES, check_name
+from hammerola import pack
+from hammerola.limits import MAX_BUILD_BYTES, MAX_MEMBERS, SAFE_COMPONENT
+from hammerola.errors import ClientError
+from hammerola.project import PROJECT_FILE
+from hammerola.unpack import TEMPLATE_RULES, check_name
 
 TEMPLATE_DIR = onboarding.TEMPLATE_DIR
 

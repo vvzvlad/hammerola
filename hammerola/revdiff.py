@@ -9,7 +9,7 @@ the source diff under it as the explanation.
 
 NEITHER HALF IS COMPUTED HERE. The measurements come out of `metrics.json`, which
 the build wrote and the hub serves from the build directory, and the comparison
-is `src/metricsdiff.metrics_diff` — the same function the build itself prints
+is `hammerola/metricsdiff.metrics_diff` — the same function the build itself prints
 after every run. It is imported rather than reimplemented, and that is the whole
 point of it having been moved out of `src/cadbuild/metrics.py`: two readers of one
 file, one implementation, nothing to drift. (`cad_publish/hubspec.py` is what a
@@ -28,10 +28,10 @@ the same split `artifacts` and `source` are two verbs over.
 import difflib
 import json
 
-from src.client import project, unpack
-from src.client.errors import ClientError
-from src.client.sources import SHORT_ID_CHARS, hub_for, resolve_revision
-from src.metricsdiff import METRICS_NAME, metrics_diff, unchanged_code_moved_geometry
+from hammerola import project, unpack
+from hammerola.errors import ClientError
+from hammerola.sources import SHORT_ID_CHARS, hub_for, resolve_revision
+from hammerola.metricsdiff import METRICS_NAME, metrics_diff, unchanged_code_moved_geometry
 
 
 def run(args) -> int:

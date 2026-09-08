@@ -104,8 +104,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from src.client.config import header_value_problem
-from src.client.limits import MAX_ARTIFACT_BYTES, MAX_BUILD_BYTES
+from hammerola.config import header_value_problem
+from hammerola.limits import MAX_ARTIFACT_BYTES, MAX_BUILD_BYTES
 
 # One request. Generous because the request that matters carries the whole
 # archive up a domestic uplink; the WAIT for a build is a separate budget
@@ -253,7 +253,7 @@ UNAUTHORIZED = (
 # The manifest of what a first run needs, and the ONE route this tool asks for
 # without a token. Spelled here rather than imported from `src.onboarding`,
 # which is the hub's: the client takes nothing from the service half (see
-# `src/client/__init__.py`), and `tests/test_onboarding.py` compares this string
+# `hammerola/__init__.py`), and `tests/test_onboarding.py` compares this string
 # against the route the hub serves — the same arrangement `limits.py` has with
 # the hub's ceilings. Every other path this tool fetches is READ OUT of the
 # manifest rather than spelled again.

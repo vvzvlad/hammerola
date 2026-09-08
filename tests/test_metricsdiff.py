@@ -4,13 +4,13 @@ WHY THIS FILE EXISTS AT ALL. The build prints what moved since `dev`, and
 `hammerola diff` prints what moved between two revisions. Both read the same
 document and want the same sentences out of it, and the client cannot import the
 build half — it is stdlib-only and takes nothing from `requirements.txt` or from
-`src/cadbuild/` (`src/client/__init__.py`). That is precisely the shape that
+`src/cadbuild/` (`hammerola/__init__.py`). That is precisely the shape that
 produced `cad_publish/hubspec.py`: a second copy of somebody else's rules, in a
 place that could not see the original, with nothing comparing the two — and
 publication broke when they drifted.
 
 The answer here was to MOVE the comparison rather than copy it, into
-`src/metricsdiff.py`, which both sides import. So there is nothing to keep in
+`hammerola/metricsdiff.py`, which both sides import. So there is nothing to keep in
 step and no conformance test to write; what these tests pin is that this stays
 true — that `src.cadbuild.metrics` re-exports the very same objects instead of
 growing a copy again, and that the shared module stays importable on a laptop's
@@ -24,7 +24,7 @@ import ast
 import sys
 from pathlib import Path
 
-from src import metricsdiff
+from hammerola import metricsdiff
 from src.cadbuild import metrics
 
 SHARED = Path(metricsdiff.__file__)
@@ -49,12 +49,12 @@ def test_the_build_half_re_exports_the_shared_objects_and_not_copies():
 def test_the_client_and_the_build_compare_with_the_same_function():
     """The whole point of the move, asserted from the CLIENT's side.
 
-    `src/client/revdiff.py` imports `metrics_diff` to print what moved between
+    `hammerola/revdiff.py` imports `metrics_diff` to print what moved between
     two revisions; `src/cadbuild/metrics.report_metrics` calls it to print what
     moved since `dev`. One object, so the two can never disagree about what a
     change is.
     """
-    from src.client import revdiff
+    from hammerola import revdiff
 
     assert revdiff.metrics_diff is metricsdiff.metrics_diff
     assert revdiff.metrics_diff is metrics.metrics_diff

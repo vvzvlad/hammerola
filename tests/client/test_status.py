@@ -9,14 +9,14 @@ and `status` is asked afterwards.
 
 The one thing NOT asserted anywhere below is the last build job, and its absence
 is deliberate: the hub cannot be asked for it (see the docstring of
-`src/client/status.py`).
+`hammerola/status.py`).
 """
 
 import pytest
 from harness import TOKEN
 from modeldir import make_model
 
-from src.client.cli import main
+from hammerola.cli import main
 
 
 @pytest.fixture(autouse=True)

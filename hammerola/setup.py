@@ -30,10 +30,10 @@ import getpass
 import os
 from pathlib import Path
 
-from src.client import config, project, unpack
-from src.client.errors import ClientError
-from src.client.hub import QUERY_TIMEOUT, Hub, HubError
-from src.projectslug import slug_from_title
+from hammerola import config, project, unpack
+from hammerola.errors import ClientError
+from hammerola.hub import QUERY_TIMEOUT, Hub, HubError
+from hammerola.projectslug import slug_from_title
 
 # Prompts. Written out here rather than inline so the two questions read as one
 # form, and so a test can drive them by name.

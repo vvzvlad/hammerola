@@ -122,7 +122,7 @@ def test_the_note_ceiling_is_the_one_the_rest_of_the_system_holds_text_to():
     """
     from src import render
     from src.cadbuild import hubspec
-    from src.client.limits import MAX_TEXT_CHARS
+    from hammerola.limits import MAX_TEXT_CHARS
 
     assert checklib.MAX_NOTE_CHARS == hubspec.MAX_NOTE_CHARS
     assert checklib.MAX_NOTE_CHARS == render.MAX_TEXT
@@ -153,7 +153,7 @@ def test_the_note_rule_agrees_with_what_the_hub_would_accept():
         `buildnames` should learn the same is a separate question with a wider
         blast radius (a file name, a project title) and is not answered here.
     """
-    from src.buildnames import first_nonprintable
+    from hammerola.buildnames import first_nonprintable
 
     corpus = [
         "an ordinary note",

@@ -12,7 +12,7 @@
 Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`, проверка (f)).
 Со сборкой хаб уже соединён: с шага 5 пуш принимается асинхронно и модель считается в
 отдельном процессе на пути запроса (`src/jobs.py` → `src/buildproc/`). Публиковаться
-тоже уже есть чем: клиент живёт здесь же (`src/client/`), ревизию именует хаб по хешу
+тоже уже есть чем: клиент живёт здесь же (`hammerola/`), ревизию именует хаб по хешу
 её исходников, и они хранятся (шаг 7). Гейт на приёме тоже стоит и меняет знак
 (шаг 6): `src/cadbuild/gate.py` зовётся из сборочного процесса, а
 `jobs._build_and_publish` на `outcome.ok == False` выбрасывает staging, оставляет
@@ -197,7 +197,7 @@ Dockerfile, `import cadquery` проверяется гейтом (`ci/smoke.py`
       принимал дерево исходников и отвечал 202, а клиент паковал плоскую сборку
       и ждал 201, — и связку не проверял ни один тест, потому что половины жили
       в разных репозиториях. Так что шаг оказался не уборкой, а стройкой.
-      **Сделано:** `src/client/` — команда `hammerola`, только stdlib, в ЭТОМ
+      **Сделано:** `hammerola/` — команда `hammerola`, только stdlib, в ЭТОМ
       репозитории намеренно (контракт у клиента и хаба один, а расходится он
       молча, если обе половины не видит ни один тест); идентификатор ревизии —
       хеш её исходников, git ни при чём (§7.7); исходники и лог хранятся по
@@ -304,7 +304,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   pass then leaves a state the hub was never in. Creation order used to be
   stored that way; it is now stored nowhere at all, because retention was its
   only reader
-- `src/client/` — the OTHER side of the wire: the `hammerola` command an author
+- `hammerola/` — the OTHER side of the wire: the `hammerola` command an author
   runs in a model's directory (issue #26). `build` publishes the `dev`
   slot, `commit` publishes an immutable revision; both pack the
   source tree, POST it, poll the job from step 5 and print the build log. THE
@@ -319,7 +319,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   publication broke precisely because the two halves used to live in two
   repositories where no test could see both. `tests/client/` now drives the real
   hub over a real socket, and `tests/client/test_limits.py` compares the client's
-  copy of the ceilings (`src/client/limits.py`) against `src/store.py` and
+  copy of the ceilings (`hammerola/limits.py`) against `src/store.py` and
   `src/settings.py`. STDLIB ONLY, every module of it: the tool runs under
   whatever python3 a laptop has, so it imports nothing from `requirements.txt` —
   not loguru, not pydantic, not `src.store`, not `src.cadbuild` — and talks HTTP
@@ -387,8 +387,9 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   public precisely because the reader of the instructions may not have one yet.
   Nothing checks that version automatically, and that is a decision rather than
   an unfinished half: no ordinary command says a word about the skill, because
-  this tool cannot know which copy an agent is actually reading. Self-update
-  waits on the tool having a distribution name. Three gaps are of a different
+  this tool cannot know which copy an agent is actually reading. Self-update no
+  longer waits on the tool having a distribution name — it has one now
+  (`pyproject.toml`) — and is issue #77. Three gaps are of a different
   kind and are worth knowing before reaching for them: "the last build
   job" cannot be shown at all, because a job is addressable only by its id and
   job order is stored nowhere (see `src/jobs.py`); `hammerola log dev` cannot be
@@ -398,7 +399,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   same `EDIT_TOKEN` as everything else — the hub's second variable went away in
   step 0, along with the client's sentence explaining a 401 that meant "this
   deployment set its other variable differently"
-- `src/buildnames.py` — what a build file may be CALLED, and the one place that
+- `hammerola/buildnames.py` — what a build file may be CALLED, and the one place that
   decides it. Three sides ask the question and they live in three different
   worlds: the file server, of every request for
   `/project/<pid>/<commit>/<name>` (`app._safe_name`); the declaration, of every
@@ -406,7 +407,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   of the places a pointer can sit — a view's `file`, its `overview` and its
   `preview`, and a catalogue record's exported `files` and its own `preview`);
   and the client, of every name the hub hands back before it writes that name to
-  the author's disk (`src/client/artifacts.py`). Before this module the rule was
+  the author's disk (`hammerola/artifacts.py`). Before this module the rule was
   written out inline in all three, and no two copies agreed: the server refused a
   leading dot, the declaration accepted one, the client had a third and weaker
   approximation. That is the failure it exists to end, and it is silent — a name
@@ -415,13 +416,13 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   build is accepted and impossible to open, from a push that can never be taken
   back (issue #53). ONE PIECE OF IT IS SHARED WIDER THAN THAT RULE:
   `first_nonprintable`, the category-C scan, is also what `render._plain_text`
-  holds every displayed field to and what `client/project.py::_clean_title`
+  holds every displayed field to and what `hammerola/project.py::_clean_title`
   refuses a project title with. It is public for that last caller, which arrived
   after spelling the scan itself as `ord(char) < 0x20 or ord(char) == 0x7F` — a
   SUBSET of category Cc (the C0 controls and DEL, not the C1 block
   U+0080–U+009F), so U+202E passed `hammerola create` and killed the build.
   THAT IMPORT ALSO SETS THE BLAST RADIUS of the stdlib rule below:
-  `src/client/project.py` is imported by `admin`, `artifacts`, `cli`, `queue`,
+  `hammerola/project.py` is imported by `admin`, `artifacts`, `cli`, `queue`,
   `revdiff`, `setup`, `sources` and `status`, so a dependency added to
   `buildnames` fails EVERY `hammerola` command at import time — not just the one
   verb that reads a build's file names.
@@ -429,31 +430,41 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   host it: the import edge runs `app → store → render`, so `render` may import
   neither `app` nor `store` — which also closes `store.py`, the obvious address
   next door to `SAFE_COMPONENT` — and the client is stdlib-only and may not
-  import the service at all. STDLIB ONLY for that last reason, and it travels in
-  `onboarding.CLIENT_EXTRA_MODULES` beside `src/metricsdiff.py` and
-  `src/projectslug.py` — three modules now, all shared for the same reason and
-  all held to the same rule. WHAT ENFORCES
+  import the service at all. STDLIB ONLY for that last reason, and it LIVES IN
+  the client package beside `hammerola/metricsdiff.py` and
+  `hammerola/projectslug.py` — three modules, all shared for the same reason and
+  all held to the same rule. They used to sit in `src/` and travel into the
+  zipapp through a list named `onboarding.CLIENT_EXTRA_MODULES`; that list is
+  gone, and they moved here when the tool got a distribution name, because an
+  installed `hammerola` that imported `src.buildnames` would have to ship `src`
+  — which is the very name that may not be installed onto a laptop. WHAT ENFORCES
   the stdlib rule is TWO tests, and they are not the same rule:
   `tests/test_buildnames.py::test_the_shared_module_imports_nothing_but_the_standard_library`
   names this file and allows the standard library and nothing else, while
   `tests/client/test_stdlib_only.py::test_every_client_module_imports_only_the_standard_library`
-  reaches it by walking `onboarding.client_members()` — which is where
-  `CLIENT_EXTRA_MODULES` puts it — and allows `src` on top of the standard
-  library, since the modules it sweeps are the ones that import each other; what
-  they may take from `src` is then narrowed by
-  `test_the_client_never_reaches_into_the_service_or_the_build_half` beside it.
+  reaches it by walking `onboarding.client_members()` — which is now simply
+  every module of `hammerola/` — and allows `hammerola` on top of the standard
+  library, since the modules it sweeps are the ones that import each other.
+  `test_every_client_module_imports_only_the_standard_library` IS WHAT CLOSES
+  `src` ACROSS THE WHOLE PACKAGE, and it has to be named rather than numbered,
+  because the other test closes it by a rule that is stricter still — it allows
+  no first-party name at all — over the ONE file it names.
+  `test_the_client_never_reaches_into_the_service_or_the_build_half` beside it
+  looks at two halves of `src` only, so it cannot fail while the sweep above
+  passes — it is kept for the NAMES of those halves and their reasons, and is
+  not a safety net under it.
   Both read the syntax tree rather than importing, so an import buried inside a
   function is caught too. THE ZIPAPP DOES NOT CATCH IT:
   `onboarding._refuse_unimportable` refuses on what
   `_import_closure` reports MISSING, and that walk skips every import whose
-  module is not `src` or `src.*` outright. A `numpy` added here therefore enters
+  module is not `hammerola` or `hammerola.*` outright. A `numpy` added here therefore enters
   no closure, refuses nothing and is served with a 200 — and the laptop that
   downloaded it is exactly what breaks. `store.SAFE_COMPONENT` deliberately did
   NOT move in beside it: that is a different rule about a different door — the
   alphabet each COMPONENT of an archive member's path is held to on the way IN,
   capped at 128 characters — where this one is about the name of a file a build
   already wrote, on the way out
-- `src/metricsdiff.py` — reading `metrics.json`: what a build measured, and what
+- `hammerola/metricsdiff.py` — reading `metrics.json`: what a build measured, and what
   moved between two of them. It is NOT a copy of anything and that is the point:
   the document has one writer (the build) and two readers — `cadbuild.metrics`,
   printing what moved since `dev`, and `hammerola diff`, printing what moved
@@ -464,7 +475,7 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   name it used to define. `tests/test_metricsdiff.py` asserts the two sides hold
   the same objects (`is`, not `==`) and that this module imports only the
   standard library, which is what lets the client have it at all
-- `src/projectslug.py` — what a project is CALLED, as against what it is
+- `hammerola/projectslug.py` — what a project is CALLED, as against what it is
   identified by: the slug alphabet, the brackets at the end of a title, and the
   two ways of arriving at one. TWO READERS ON TWO MACHINES, which is the whole
   reason it is here rather than in either of them. `hammerola create` asks on the
@@ -477,18 +488,18 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   `.src-89fb7abdeb1d48b5985bcb519850b284`). It is NOT a copy: the shape of a copy
   is `cad_publish/hubspec.py`, which held the same rule in a repository that
   could not see the original and broke publication, so the rule was MOVED here
-  and both sides import it, exactly as `src/metricsdiff.py` did. STDLIB ONLY,
-  and enforced the same two ways as `src/buildnames.py` above:
+  and both sides import it, exactly as `hammerola/metricsdiff.py` did. STDLIB ONLY,
+  and enforced the same two ways as `hammerola/buildnames.py` above:
   `tests/test_projectslug.py` names this file and allows nothing but the standard
   library, and `tests/client/test_stdlib_only.py` reaches it through
-  `onboarding.CLIENT_EXTRA_MODULES`. THE ZIPAPP DOES NOT CATCH IT either — same
-  reason, `_import_closure` walks only `src` imports — so a dependency added here
+  `onboarding.client_members()`. THE ZIPAPP DOES NOT CATCH IT either — same
+  reason, `_import_closure` walks only `hammerola` imports — so a dependency added here
   is served with a 200 and breaks the laptop that downloaded it. The same suite
   asserts the two sides hold the same objects (`is`, not `==`), which is what
   makes the re-export a shared rule rather than a second one that agrees today
 - `src/onboarding.py` — what the hub hands somebody who has just found it, and
   the only place the `/start` routes are named: the agent skill, the client as
-  ONE executable file (a zipapp built at request time out of `src/client/` —
+  ONE executable file (a zipapp built at request time out of `hammerola/` —
   which works only because the tool is stdlib-only, so a client that grew a
   compiled dependency breaks here rather than on a laptop), the starter
   template, and a manifest naming all three. ALL FOUR ARE PUBLIC on purpose:
@@ -523,14 +534,15 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   reader who already has a token goes to the list and never touches this route —
   and every failure of that fetch is silence: a hint must not be able to take a
   sign-in form down (`loadStart` in `ui/src/hub.js`)
-- **The client has two doors and no installed script.** Out of a checkout it is
-  `python3 -m src.client`, STARTED IN THE CHECKOUT ROOT because that is where
-  `src` is importable — so the model directory is an argument and not the shell's
-  cwd: `python3 -m src.client -C <model dir> status`, or
-  `PYTHONPATH=<checkout> python3 -m src.client status` from inside the model.
-  Plain `python3 -m src.client` run in a model directory fails with
-  `No module named 'src'`, which is the mistake this bullet exists to head off.
-  No venv, nothing to build, because the package
+- **The client has THREE doors now, and only two of them are used here.** Out of
+  a checkout it
+  is `python3 -m hammerola`, STARTED IN THE CHECKOUT ROOT because that is where
+  `hammerola` is importable — so the model directory is an argument and not the
+  shell's cwd: `python3 -m hammerola -C <model dir> status`, or
+  `PYTHONPATH=<checkout> python3 -m hammerola status` from inside the model.
+  Plain `python3 -m hammerola` run in a model directory fails with
+  `No module named 'hammerola'`, which is the mistake this bullet exists to head
+  off. No venv, nothing to build, because the package
   imports the standard library and nothing else; everywhere else it is the
   one-file zipapp the hub serves at `/start/hammerola`. There is no
   `bin/hammerola` and no `make client` any more, and that is a correction rather
@@ -538,10 +550,23 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   the very name the hub's bootstrap writes with `curl -o`, and a write through a
   symlink lands in the link's TARGET — so the download quietly overwrote the
   repository's own copy while the command went on working, with `git status` as
-  the only symptom. A packaging entry point is not the fix and is deliberately
-  still absent: this repo's one importable top-level name is `src`, and `pip
-  install`ing that onto a laptop would shadow every other project's `src`.
-  Giving the tool a distribution name belongs with the self-update work
+  the only symptom. THE PACKAGING ENTRY POINT NOW EXISTS, and this paragraph used
+  to say the opposite: while the client was `src/client/`, the repo's one
+  importable top-level name was `src`, and `pip install`ing that onto a laptop
+  would have shadowed every other project's `src`. So the client moved OUT of
+  `src/` and became the top-level package `hammerola/`, taking the three shared
+  stdlib-only modules with it — an installed distribution that imported
+  `src.buildnames` would have to ship `src` as well, which is the shadowing all
+  over again. `pyproject.toml` declares the name, the `>=3.9` floor (equal to
+  `onboarding.MIN_PYTHON`), no dependencies at all and the console script, so
+  `pip install <this checkout>` puts a `hammerola` on the PATH — the THIRD door,
+  counted the same way `hammerola/__init__.py` and `hammerola/__main__.py` count
+  it. IT IS NOT A NEW RECOMMENDED INSTALL, and nothing here uses it: no target
+  runs it, the hub is still where the tool comes from, and if a `pip install`
+  and the bootstrap `curl -o` both land in `~/.local/bin` the download wins.
+  The name exists because
+  `hammerola update` had nowhere to install to — that update mechanism is issue
+  #77 and NONE of it is built
 - `checklib.py` — at the ROOT, and not a stray file: `import checklib` is part
   of the contract with every model.py in the fleet, exactly like `parts()` and
   `views()`. It re-exports `src/cadbuild/checklib.py` under that name, and
@@ -680,12 +705,18 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   container for the three `/start` files, two of which are assembled when the
   request arrives and so cannot be checked by naming a path at all. It is a
   witness for the whole client only because the assembly REFUSES when a module
-  reachable from `src/client/cli.py` did not reach the image
+  reachable from `hammerola/cli.py` did not reach the image
   (`onboarding._refuse_unimportable`); the glob that collects those modules
   cannot see a file that is not there, so without that refusal a stripped image
   served a 200 and an archive that died on the laptop that downloaded it
 - `docs/SPEC.md` — requirements, verified facts and the work plan (section 8A)
 - `main.py` — thin entry point over `src/`
+- `pyproject.toml` — packaging metadata for the CLIENT and for nothing else: the
+  distribution name `hammerola`, the `>=3.9` floor, no dependencies at all and
+  the `hammerola` console script. `packages` names the one package explicitly
+  rather than letting setuptools discover them, because `src/` is the SERVICE and
+  must never be packaged. The hub is not installable and is not meant to be — it
+  ships as the image — so nothing here describes it
 
 ## Setup
 All routine actions go through the `Makefile` — run `make help` to list targets.

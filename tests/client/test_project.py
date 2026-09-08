@@ -12,7 +12,7 @@ import json
 import pytest
 from modeldir import make_model
 
-from src.client.project import (
+from hammerola.project import (
     ProjectError,
     find_project_root,
     read_project_id,

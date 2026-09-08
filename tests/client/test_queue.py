@@ -13,7 +13,7 @@ the push now check the same `EDIT_TOKEN`. Two things went away with the second
 variable and are named here so they are not restored: `hub_factory` no longer
 needs `comment_read_token=TOKEN` to make these tests representative, and the
 last test in this file — `test_a_hub_still_running_two_secrets_names_the_second_one`
-— was DELETED along with the sentence in `src/client/hub.py` that it checked.
+— was DELETED along with the sentence in `hammerola/hub.py` that it checked.
 That sentence existed for a 401 that did not mean "wrong token" but "this
 deployment set its second variable to something else", and there is no second
 variable to set.
@@ -23,7 +23,7 @@ import pytest
 from harness import PNG_BYTES, TOKEN, comment_payload
 from modeldir import make_model
 
-from src.client.cli import main
+from hammerola.cli import main
 
 
 @pytest.fixture

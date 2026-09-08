@@ -51,8 +51,8 @@ commit that makes it.
 
 The second reason is issue #26's own: the finished tool updates itself
 from the hub, over the same authenticated channel it already pushes on. The hub
-can only serve what is inside its image, and `COPY src/ src/` already puts this
-there.
+can only serve what is inside its image, and `COPY hammerola/ hammerola/` already
+puts this there.
 
 ONE SECRET FOR THE WHOLE SYSTEM (decided 2026-08-27, issue #26), which
 is what `login` stores and what every command here presents. It is worth saying
@@ -88,20 +88,21 @@ WHAT IS STILL NOT HERE, and for two different reasons worth telling apart.
     build exists only at the job that produced it. Both are said out loud by the
     code that would otherwise have to guess — see `status.py` and
     `sources._dev_log`.
-  * Self-update waits on the tool having a distribution name, and THAT waits on
-    this repository not being an application. Its one importable top-level name
-    is `src`, so a `[project.scripts]` entry point would mean `pip install`ing a
-    package called `src` onto a laptop, where it would shadow every other
-    project's. Giving the tool a real distribution name and layout is part of
-    the self-update work (issue #26), and doing half of it now would mean
-    doing it twice. Until then there are two doors and no installed script:
-    `python3 -m src.client`, STARTED IN THE CHECKOUT ROOT and pointed at the
-    model with `-C` (`__main__.py` has both working forms and why the obvious
-    one is not among them), and the zipapp the hub builds out of these modules
-    and serves at `/start/hammerola` for everybody else — that one carries its
-    own modules, so it runs from anywhere and needs no `-C`. This
-    paragraph used to live in `bin/hammerola`, a third door that existed only to
-    be symlinked onto PATH — and that symlink is exactly what the hub's own
+  * Self-update. What used to block it is gone: the tool now has a distribution
+    name of its own. This directory is a top-level package rather than
+    `src/client/`, it carries the three shared modules with it so it reaches
+    into nothing, and `pyproject.toml` at the repository root installs it under
+    the name `hammerola` with an entry point of the same name — `src` is not
+    packaged and never was installable. What is left is the update itself
+    (issue #77): a version this can state, and the comparison against what the
+    hub serves. Until then there are three doors — the installed `hammerola`
+    script; `python3 -m hammerola` out of a checkout, pointed at the model with
+    `-C` (`__main__.py` has the working forms and why the obvious one is not
+    among them); and the zipapp the hub builds out of these modules and serves
+    at `/start/hammerola` for a machine with neither. The first and the last
+    carry their own modules, so they run from anywhere and need no `-C`. This
+    paragraph used to live in `bin/hammerola`, a door that existed only to be
+    symlinked onto PATH — and that symlink is exactly what the hub's own
     `curl -o ~/.local/bin/hammerola` wrote through, silently replacing the
     repository's copy with the download.
 
@@ -112,7 +113,7 @@ loguru, not pydantic, and not the hub's own `src.store` or `src.cadbuild`.
 environment has every dependency installed and would never notice on its own.
 What the rule costs is one copy of the hub's ceilings (`limits.py`), paid for by
 a test that compares it against the modules that enforce them; where a copy
-could be avoided entirely it was — `src/metricsdiff.py` is the comparison
+could be avoided entirely it was — `hammerola/metricsdiff.py` is the comparison
 `hammerola diff` and the build both import, moved out of `src/cadbuild/` rather
 than duplicated.
 """

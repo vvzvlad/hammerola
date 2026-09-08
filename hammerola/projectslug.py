@@ -2,15 +2,15 @@
 
 TWO READERS, AND THEY RUN ON DIFFERENT MACHINES. `hammerola create` works the
 slug out on the AUTHOR's laptop, out of the directory the project lives in, and
-writes it into project.json (`src/client/project.py`); the build reads that key
+writes it into project.json (`hammerola/project.py`); the build reads that key
 back inside the hub and publishes under it (`src/cadbuild/project.py`). The
 client is stdlib-only and may not import the build half at all
-(`src/client/__init__.py`), so the choice was between a second copy of these two
+(`hammerola/__init__.py`), so the choice was between a second copy of these two
 regexes and a module both sides import. It is the module, and
 `src/cadbuild/project_title.py` re-exports what the build half is allowed to ask
 — everything below except `slug_from_directory`, which is not a question that
 package may ask at all (its own docstring says why, and a test holds it out).
-`src/metricsdiff.py` is the worked
+`hammerola/metricsdiff.py` is the worked
 example of the same move; `cad_publish/hubspec.py` is what the copy costs —
 somebody else's rule, in a place that could not see the original, with nothing
 comparing the two, and publication broke when they drifted.
@@ -32,9 +32,11 @@ this and installs nothing, so one dependency here breaks `hammerola create` on
 every laptop that is not a checkout of this repository. TWO TESTS ARE WHAT
 ENFORCE IT (`tests/test_projectslug.py` and, through
 `onboarding.client_members()`, `tests/client/test_stdlib_only.py`), because the
-zipapp's own refusal cannot: `onboarding._refuse_unimportable` walks only
-imports of `src`, so a `numpy` added here enters no closure, refuses nothing and
-is served with a 200 — and the laptop that downloaded it is what breaks.
+zipapp's own refusal cannot: `onboarding._refuse_unimportable` refuses on what
+`_import_closure` reports MISSING, and that walk skips every import whose module
+is not `hammerola` or `hammerola.*` outright. So a `numpy` added here enters no
+closure, refuses nothing and is served with a 200 — and the laptop that
+downloaded it is what breaks.
 """
 
 import re

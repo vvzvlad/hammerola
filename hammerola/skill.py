@@ -37,9 +37,9 @@ import re
 import sys
 from pathlib import Path
 
-from src.client import config
-from src.client.errors import ClientError
-from src.client.hub import QUERY_TIMEOUT, Hub, HubError
+from hammerola import config
+from hammerola.errors import ClientError
+from hammerola.hub import QUERY_TIMEOUT, Hub, HubError
 
 # WHERE A CLAUDE CODE SKILL LIVES, and the same path the skill's own setup block
 # writes with `curl -o`. Written here as one string rather than assembled, so

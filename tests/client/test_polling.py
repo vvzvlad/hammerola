@@ -29,7 +29,7 @@ stands on.
 Everything here runs against a real socket with a scripted server, in the style
 of `test_transport.py`: what is under test is what the client does with a reply,
 and a faked opener would be a test of the fake. The client is stdlib-only, so
-nothing here imports anything into `src/client/`.
+nothing here imports anything into `hammerola/`.
 """
 
 import http.server
@@ -39,8 +39,8 @@ import time
 
 import pytest
 
-from src.client import hub as hub_module
-from src.client.hub import Hub, HubError
+from hammerola import hub as hub_module
+from hammerola.hub import Hub, HubError
 
 # What Traefik answers when no router matches the host: Go's `http.NotFound`,
 # byte for byte as it was measured on the deployment.
