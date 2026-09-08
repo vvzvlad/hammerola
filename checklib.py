@@ -137,10 +137,12 @@ _impl = _implementation()
 DEFAULT_VOLUME_TOL = _impl.DEFAULT_VOLUME_TOL
 DERIVED = _impl.DERIVED
 ESTIMATED = _impl.ESTIMATED
+EXTRUSION_LINES = _impl.EXTRUSION_LINES
 KINDS = _impl.KINDS
 MAX_NOTE_CHARS = _impl.MAX_NOTE_CHARS
 MEASURED = _impl.MEASURED
 NORMAL_TOL = _impl.NORMAL_TOL
+NOZZLE_MM = _impl.NOZZLE_MM
 Number = _impl.Number
 PLANE_TOL = _impl.PLANE_TOL
 derived = _impl.derived
@@ -150,11 +152,17 @@ measured = _impl.measured
 material_at = _impl.material_at
 mating_face_flat = _impl.mating_face_flat
 material_under_head = _impl.material_under_head
+minimum_feature = _impl.minimum_feature
 name_pairs = _impl.name_pairs
 pairwise_interference = _impl.pairwise_interference
+recorded_clearance = _impl.recorded_clearance
 recorded_interference = _impl.recorded_interference
 recorded_sections = _impl.recorded_sections
 section = _impl.section
+swept_clearance = _impl.swept_clearance
+thin_walls = _impl.thin_walls
+tool_access = _impl.tool_access
+unsupported_area = _impl.unsupported_area
 volume = _impl.volume
 
 # One import form to avoid elsewhere in this repository. When this shim has run
@@ -169,10 +177,12 @@ __all__ = [
     "DEFAULT_VOLUME_TOL",
     "DERIVED",
     "ESTIMATED",
+    "EXTRUSION_LINES",
     "KINDS",
     "MAX_NOTE_CHARS",
     "MEASURED",
     "NORMAL_TOL",
+    "NOZZLE_MM",
     "Number",
     "PLANE_TOL",
     "derived",
@@ -182,10 +192,16 @@ __all__ = [
     "measured",
     "mating_face_flat",
     "material_under_head",
+    "minimum_feature",
     "name_pairs",
     "pairwise_interference",
+    "recorded_clearance",
     "recorded_interference",
     "recorded_sections",
     "section",
+    "swept_clearance",
+    "thin_walls",
+    "tool_access",
+    "unsupported_area",
     "volume",
 ]

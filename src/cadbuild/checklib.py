@@ -36,12 +36,21 @@ ONE THING HERE IS NOT A CHECK: `Number` and the three constructors below it.
 They are the other half of the same argument -- a check measures the solid that
 came out, and a `Number` says where the figure that went in came from -- and
 they live here because `checklib` is the name a model already imports. The
-CHECKING of them is not here: it reads files and knows the project root, and
-nothing in this module touches a filesystem (`cadbuild.provenance`).
+CHECKING of them is not here: it reads the project's files and has to know where
+its root is, which is a different job from measuring a solid
+(`cadbuild.provenance`). ONE function here does open a file -- `unsupported_area`,
+which measures the mesh the gate already exported, because the orientation a part
+is printed in is a property of that file and not of the solid -- and that is the
+whole of this module's contact with a filesystem: it is handed the path and never
+goes looking for one.
 """
 
 import contextlib
 import math
+# For one existence check. `unsupported_area` measures the MESH the gate
+# already wrote, so it is handed a path and has to be able to say that nothing
+# is at it -- see the message there.
+import os
 import time
 # `import types`, not `from types import SimpleNamespace`: a bare name
 # imported here becomes a public name of this module, and the root shim then
@@ -77,11 +86,41 @@ NORMAL_TOL = 1e-3
 # what counts as a flat face.
 PLANE_TOL = 1e-3
 
-# There is no wall-thickness check here on purpose. Measuring a wall by firing
-# rays along surface normals gave a false red on ordinary spline geometry --
-# lofts, sweeps, imported STEP -- and no amount of filtering the artefacts made
-# the number trustworthy. Thin walls are looked at by eye, on the preview and
-# in the slicer.
+# There is no wall-thickness check that SWEEPS THE WHOLE PART here, and that is
+# still on purpose. Measuring a wall by firing rays along surface normals gave a
+# false red on ordinary spline geometry -- lofts, sweeps, imported STEP -- and no
+# amount of filtering the artefacts made the number trustworthy. `thin_walls` is
+# not that check and does not lift the ban: it measures only where the AUTHOR
+# named a plane, and its error runs one way -- a wall oblique to a scan axis
+# measures THICKER than it is, so it is missed rather than falsely accused.
+# That last half is behaviour and therefore a test rather than this sentence
+# (the 45-degree rib in tests/cadbuild/test_checklib_printability.py). What no
+# plane names is still looked at by eye, on the preview and in the slicer.
+
+# The nozzle a part is assumed to be printed through, in millimetres. A DEFAULT
+# AND NOT A FACT, and the distinction is the whole reason it is written down
+# once: it is one machine's number, and every caller that needed it would
+# otherwise invent its own. A project printing through a different nozzle passes
+# its own value and declares it with `measured()` (issue #56 "Provenance of
+# numbers"); this constant is what stands in for a project that has not said,
+# never a statement about the machine that will actually print the part.
+NOZZLE_MM = 0.4
+# Two extrusion widths. A wall thinner than that is printed as a single line,
+# and a single line comes out at whatever width the slicer felt like: the
+# nominal thickness stops being a dimension. This is the number a 0.5 mm thread
+# crest on a 0.4 mm nozzle was under, and the 100 g of scrap that followed.
+EXTRUSION_LINES = 2
+
+
+def minimum_feature(nozzle_mm=NOZZLE_MM, lines=EXTRUSION_LINES):
+    """The thinnest wall this machine prints as a dimension rather than a line.
+
+    Millimetres. Under it the slicer stops laying the wall the model asked for
+    and lays whatever single bead it can, so the dimension in the model and the
+    dimension on the part stop being the same number. That is why this is a
+    floor under a FEATURE and not a tolerance on one.
+    """
+    return nozzle_mm * lines
 
 
 # --------------------------------------------------------------------------
@@ -1196,3 +1235,727 @@ def material_under_head(part, centre, head_diameter, depth, name="part", angles=
             "move the screw inwards, or grow the boss."
         ]
     return []
+
+
+# --------------------------------------------------------------------------
+# 4. Room for the tool that drives a fastener
+# --------------------------------------------------------------------------
+
+def tool_access(obstacles, names, *, origin, direction, diameter, length,
+                name="fastener", rings=4, around=16, ignore=()):
+    """A straight cylinder from a fastener head must be empty.
+
+    Catches: a screw that is modelled, seated and unreachable -- a boss in the
+    driver's way, a wall 3 mm from the head, a lid that has to go on before the
+    screw can. Every view of the assembly looks right and the thing cannot be
+    put together.
+
+    `origin` is (x, y, z) of the head's seat and `direction` a vector pointing
+    the way the tool comes FROM. It is normalised here and is NOT required to
+    be Z, which is what separates this from `material_under_head`: a screw
+    going in sideways is checked where it is, not on a rotated copy of the
+    part. `diameter` is what has to be clear -- the driver, the socket, the
+    ratchet head, whichever of them is fattest -- and `length` how far it has
+    to stay clear for.
+
+    `obstacles` are the parts that might be in the way, positioned as
+    assembled, and `names` their labels, one per object. Parts that are allowed
+    to sit in the path -- the one the screw goes through, a part fitted after
+    the fastener is already in -- go into `ignore` by name. A name there that
+    is not among `names` is refused rather than passed over, on the same
+    reasoning as `pairwise_interference`'s `allowed_touching`: an exemption for
+    a part that is not there exempts nothing.
+
+    THE CYLINDER IS PROBED, NOT INTERSECTED: `around` points on each of `rings`
+    radii, at a level every 0.5 mm along the axis, each point asked of every
+    obstacle's classifier (`material_at`). The cost is `rings x around x levels`
+    classifier calls per obstacle -- 2624 of them over a 20 mm reach at the
+    default `rings` and `around`, measured at about 25 ms per obstacle on one
+    workstation. The count follows from the REACH alone now and no longer from
+    the diameter, so a thinner tool is not a cheaper one. That is NOT the
+    cheaper of the two ways of asking, and the
+    reason for it is therefore not the one at `material_at`: intersecting one
+    cylinder with the same obstacle measured about 7 ms. What the sampling buys
+    is the ANSWER -- how much of the path is blocked and how far along it the
+    first blocked point sits, which is what the problem string below is written
+    out of and what one intersection volume does not say.
+
+    KNOWN GAP, and it follows from the sampling rather than from an oversight:
+    something thinner than the spacing between two probe points slips between
+    them unseen. THE THREE AXES ARE SPACED DIFFERENTLY, so which dial helps
+    depends on how the thin thing lies. ACROSS the path -- the lid again -- the
+    spacing is the 0.5 mm axial step above, which `rings` and `around` do not
+    touch at all and which nothing here exposes. Anything one step thick or
+    more meets a level wherever it sits; anything THINNER fits between two of
+    them, and then whether it is seen depends on WHERE along the reach it
+    happens to sit -- a 0.4 mm blade is found at some heights and missed at
+    others, so there is no miss rate to quote, only that boundary. ALONG the
+    path -- a fin standing edge-on inside the cylinder -- the spacing is
+    `radius / rings` outwards (1 mm at the defaults for an 8 mm tool) and
+    `2 pi radius / around` around (about 1.6 mm on the outermost ring), and
+    THOSE are the two to raise. The axis itself carries no ring, so a rod
+    thinner than `2 x radius / rings` standing on it is the same gap.
+
+    Returns a list of problem strings, one per part found in the path.
+    """
+    # Plain Python first, over EVERY obstacle, before `material_at` below
+    # reaches for the kernel. Same order and same reason as material_at's own
+    # type check: leaving each object to be checked by its own material_at call
+    # would answer about the argument for the first obstacle and about
+    # libGL.so.1 for the second, on a machine with no OpenCASCADE. Nothing is
+    # kept -- the probes are built from the objects themselves further down.
+    obstacles = list(obstacles)
+    for index, obstacle in enumerate(obstacles):
+        _shapes(obstacle, f"obstacle #{index}")
+    names = list(names)
+    if len(names) != len(obstacles):
+        raise ValueError(
+            f"tool_access({name}) got {len(obstacles)} obstacles but "
+            f"{len(names)} names")
+
+    if diameter <= 0 or length <= 0:
+        raise ValueError(
+            f"tool_access({name}): diameter is {diameter!r} and length is "
+            f"{length!r}, and both are sizes of the space the tool needs. With "
+            "either at zero or below there is no cylinder to probe and the "
+            "check passes for every assembly ever handed to it.")
+
+    if rings <= 0 or around <= 0:
+        raise ValueError(
+            f"tool_access({name}): rings is {rings!r} and around is "
+            f"{around!r}, and they are how densely that cylinder is sampled. "
+            "With either at zero or below not one point is probed, so the "
+            "check passes for every assembly ever handed to it -- the same "
+            "silence a diameter of zero buys. Pass positive counts: the "
+            "defaults are rings=4 and around=16.")
+
+    unknown = sorted(set(ignore) - set(names))
+    if unknown:
+        raise ValueError(
+            f"tool_access({name}): ignore names "
+            f"{', '.join(repr(x) for x in unknown)}, which is not among the "
+            f"obstacles handed in ({', '.join(repr(n) for n in names)}). "
+            "A part that is not there is not in the way of anything.")
+
+    ox, oy, oz = origin
+    dx, dy, dz = direction
+    span = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if span == 0:
+        raise ValueError(
+            f"tool_access({name}): direction is {tuple(direction)!r}, which "
+            "names no axis -- a tool goes in ALONG something. Unguarded this "
+            "divides by zero deep inside checklib and reports a line number "
+            "that has nothing to do with the model.")
+    ux, uy, uz = dx / span, dy / span, dz / span
+
+    # Two unit vectors across the axis, to spread the ring points on. The
+    # helper is picked away from the axis itself, so the cross product is never
+    # the zero vector and the frame never collapses.
+    hx, hy, hz = (0.0, 0.0, 1.0) if abs(uz) < 0.9 else (1.0, 0.0, 0.0)
+    ax, ay, az = uy * hz - uz * hy, uz * hx - ux * hz, ux * hy - uy * hx
+    scale = math.sqrt(ax * ax + ay * ay + az * az)
+    ax, ay, az = ax / scale, ay / scale, az / scale
+    bx, by, bz = uy * az - uz * ay, uz * ax - ux * az, ux * ay - uy * ax
+
+    radius = diameter / 2.0
+    # THE AXIAL STEP IS A LENGTH, not a share of the tool's radius, and that is
+    # a correction rather than a preference. A step of one radius is 2.86 mm for
+    # an 8 mm tool over a 20 mm reach, and an obstruction ACROSS the path -- the
+    # lid at the top of the Catches list -- is thin along the axis and wide
+    # across it: a 2 mm lid was walked straight over at 8 of the 30 heights it
+    # was tried at, and raising `rings` and `around` did nothing about it,
+    # because neither touches this axis. WHY HALF A MILLIMETRE: it is under
+    # `minimum_feature()`, so a wall thick enough for this nozzle to print is
+    # thicker than one step and cannot fall between two levels. Both halves of
+    # that are behaviour rather than taste, so both are tests instead of this
+    # sentence -- see the two named `..._axial_step_...` in
+    # tests/cadbuild/test_checklib_printability.py.
+    levels = max(3, int(length / 0.5) + 1)
+    total = levels * rings * around
+    problems = []
+
+    for index, label in enumerate(names):
+        if label in ignore:
+            continue
+        inside = material_at(obstacles[index], label)
+        hits = 0
+        first = None
+        for k in range(levels):
+            # Mid-cell sampling, for the reason material_under_head gives: the
+            # seat is a boundary and a point sitting on it answers about the
+            # part the screw goes into, not about the way to it.
+            travel = length * (k + 0.5) / levels
+            cx, cy, cz = ox + ux * travel, oy + uy * travel, oz + uz * travel
+            for ring in range(rings):
+                offset = radius * (ring + 1) / rings
+                for step in range(around):
+                    theta = 2.0 * math.pi * step / around
+                    across, along = math.cos(theta), math.sin(theta)
+                    px = cx + offset * (ax * across + bx * along)
+                    py = cy + offset * (ay * across + by * along)
+                    pz = cz + offset * (az * across + bz * along)
+                    if inside(px, py, pz):
+                        hits += 1
+                        if first is None:
+                            first = (px, py, pz, travel)
+        if first is not None:
+            px, py, pz, travel = first
+            problems.append(
+                f"{name}: {label!r} is in the way of the tool -- {hits} of "
+                f"{total} points in the {diameter:g} mm cylinder running "
+                f"{length:g} mm from ({ox:g}, {oy:g}, {oz:g}) sit inside it, "
+                f"the first {travel:.1f} mm out at "
+                f"({px:.1f}, {py:.1f}, {pz:.1f}). Nothing can reach the head "
+                "past it: move the fastener, cut the obstruction back, or name "
+                "the part in ignore if the tool goes in before that part does."
+            )
+    return problems
+
+
+# --------------------------------------------------------------------------
+# 5. A mating pair along its degree of freedom
+# --------------------------------------------------------------------------
+
+# Every pair swept_clearance has run and what the run measured: how many stops,
+# the tightest gap seen and the stop it was at.
+#
+# The same kind of record as _INTERFERENCE above, and kept for the same reason
+# -- the numbers are taken as the check goes, so cadbuild.metrics can put them
+# in metrics.json without a single extra boolean, and a gap that reads 0.40 mm
+# today and 0.05 mm tomorrow is a pair that grew together. Accumulates over the
+# run: a model may sweep several pairs, and each call adds its own. Keyed by
+# `label`, and a SECOND sweep under the same label writes over the first rather
+# than keeping the tighter of the two -- a pair run along two degrees of freedom
+# (a lid that drops and then slides) wants a `label=` of its own for each.
+# Nothing is lost by that but the number: the problem strings come back per
+# call either way. A pair whose every stop the kernel refused is absent rather
+# than zero -- absence means "not measured", never "touching".
+_CLEARANCE = {}
+
+
+def recorded_clearance():
+    """`{label: {...}}` for every pair swept_clearance has measured so far."""
+    # Copied one level deeper than recorded_interference, which hands back
+    # floats: the values here are dicts, and a shallow copy would hand the
+    # caller the very record the build reports.
+    return {label: dict(record) for label, record in _CLEARANCE.items()}
+
+
+def swept_clearance(moving_positions, fixed, *, names=("moving", "fixed"),
+                    min_gap=None, tol=DEFAULT_VOLUME_TOL, label=None):
+    """One mating pair, run along its degree of freedom, measured at every stop.
+
+    Catches: a lid that fits where it ends up and fouls the rim halfway down; a
+    hinge that clears at both ends of its travel and not in the middle.
+    `pairwise_interference` looks at the assembly AS ASSEMBLED, which is
+    exactly the one position such a pair is clean in.
+
+    `moving_positions` is the moving part ALREADY PLACED at each stop -- a list
+    the model builds, because only the model knows the kinematics. Ten to
+    twenty stops is the useful range; fewer than two is not a sweep at all and
+    is refused.
+
+    Both numbers are taken at every stop: the volume the two share -- an
+    interference is a hard problem string, the same rule pairwise_interference
+    applies, and `tol` is the same boolean-noise tolerance -- and the minimum
+    distance between the two solids. `min_gap` is optional: given, a stop
+    closer than that is a problem; omitted, the gap is only measured and
+    recorded, and nothing is judged by it.
+
+    WHAT IS RECORDED, under `label`: `{"positions": n, "min_gap_mm": x,
+    "at": i}` -- how many stops were run, the tightest gap seen and the stop it
+    was at. `recorded_clearance()` reads it back, and that is where it stops
+    TODAY: nothing outside checklib calls it. Putting it into metrics.json as
+    `assembly.clearance` -- beside the volumes pairwise_interference records,
+    which cadbuild.metrics already publishes -- is issue #58's work, and until
+    it lands a model that sweeps a pair sees the problem strings and no number.
+    `label` defaults to `"moving|fixed"` from `names`, in the order
+    they were given: unlike a pair of neighbours those two names are not
+    interchangeable -- one of them is the part that moves -- so they are not
+    sorted into the key the way pairwise_interference sorts its pair.
+
+    Cost: a bounding-box reject, then one boolean and one distance per body
+    pair per stop. A boolean on a real part is tens of milliseconds and a
+    distance about the same, so eighteen stops is well under a second against a
+    build ceiling of 900 seconds (buildproc.limits.DEFAULT_WALL_SECONDS).
+
+    Returns a list of problem strings.
+    """
+    moving_name, fixed_name = names
+    # The count is answered before any geometry is touched. It is a statement
+    # about the LIST that was handed in rather than about a solid, and it has
+    # to answer on a machine with no kernel for the same reason the type check
+    # below runs before the OCP import.
+    positions = list(moving_positions)
+    if len(positions) < 2:
+        raise ValueError(
+            f"swept_clearance({moving_name}|{fixed_name}) got "
+            f"{len(positions)} position(s). A sweep is the moving part at "
+            "several stops along its travel; one position is the assembly as "
+            "assembled, which is what pairwise_interference already checks. "
+            "Ten to twenty stops is the useful range.")
+
+    moving = [_shapes(obj, f"{moving_name} at position #{index}")
+              for index, obj in enumerate(positions)]
+    still = _shapes(fixed, fixed_name)
+
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+
+    if label is None:
+        label = f"{moving_name}|{fixed_name}"
+    fixed_boxes = [body.BoundingBox() for body in still]
+    problems = []
+    closest = None  # (gap, stop) -- the tightest approach measured so far
+
+    for index, bodies in enumerate(moving):
+        shared = 0.0
+        gap = None
+        failure = None
+        for left in bodies:
+            left_box = left.BoundingBox()
+            for right, right_box in zip(still, fixed_boxes):
+                # The reject skips the BOOLEAN and nothing else: boxes that
+                # cannot touch cannot share volume, but the distance between
+                # them is the very number this check exists to take.
+                if not _boxes_apart(left_box, right_box, 0.0):
+                    try:
+                        common = left.intersect(right)
+                    except Exception as exc:  # OCCT gives up on some pairs
+                        failure = f"{type(exc).__name__}: {exc}"
+                        break
+                    shared += sum(solid.Volume() for solid in common.Solids())
+                try:
+                    measure = BRepExtrema_DistShapeShape(left.wrapped,
+                                                         right.wrapped)
+                except Exception as exc:
+                    failure = f"{type(exc).__name__}: {exc}"
+                    break
+                if not measure.IsDone():
+                    failure = "BRepExtrema_DistShapeShape came back not done"
+                    break
+                distance = measure.Value()
+                if gap is None or distance < gap:
+                    gap = distance
+            if failure is not None:
+                break
+
+        if failure is not None:
+            # One stop the kernel could not do is reported and the sweep goes
+            # on: the stops around it are still worth measuring, and raising
+            # here would take a whole build down over one degenerate pair.
+            problems.append(
+                f"cannot measure {moving_name!r} against {fixed_name!r} at "
+                f"position {index} of {len(moving)}: the measurement failed "
+                f"({failure}). Check this pair by eye.")
+            continue
+
+        if shared > tol:
+            problems.append(
+                f"{moving_name!r} runs into {fixed_name!r} at position "
+                f"{index} of {len(moving)}, where they share {shared:.2f} mm3. "
+                "Two parts cannot occupy the same volume anywhere along the "
+                "travel, not only where they end up.")
+        if gap is not None and (closest is None or gap < closest[0]):
+            closest = (gap, index)
+
+    if closest is not None:
+        # Recorded whether it is a problem or not -- see _CLEARANCE.
+        _CLEARANCE[label] = {"positions": len(moving),
+                             "min_gap_mm": closest[0], "at": closest[1]}
+        if min_gap is not None and closest[0] < min_gap:
+            problems.append(
+                f"{moving_name!r} comes within {closest[0]:.2f} mm of "
+                f"{fixed_name!r} at position {closest[1]} of {len(moving)}, "
+                f"closer than the {min_gap:g} mm this pair asked for.")
+    return problems
+
+
+# --------------------------------------------------------------------------
+# 6. Downward surface with nothing under it
+# --------------------------------------------------------------------------
+
+def unsupported_area(stl_path, max_area_mm2, *, name="part",
+                     max_angle_deg=45.0, bed_tol=0.2, max_rays=512):
+    """Downward-facing surface with nothing under it, in square millimetres.
+
+    Catches the overhang the author would otherwise have to find by eye on a
+    preview. A triangle counts when its normal points below -cos(max_angle_deg)
+    AND a ray dropped from its centroid hits nothing else in the mesh AND it is
+    not sitting on the bed (within `bed_tol` of the mesh's lowest point, which
+    is the first layer and is supported by the plate).
+
+    THE MESH, NOT THE SOLID, and that is what makes this a check of the part AS
+    IT WILL BE PRINTED: `stl_path` is the file the gate exported, so the
+    orientation measured here is the orientation the slicer gets. The same
+    shape lying the other way up is a different answer, which is the point.
+    `checks(out_dir)` is handed the directory those files were written into and
+    each of them is named after its part in `parts()`.
+
+    `max_area_mm2` HAS NO DEFAULT on purpose. Some unsupported area is normal --
+    a chamfer under a rim, a short bridge -- and a number picked here would be a
+    number picked for somebody else's part. Saying how much this design tolerates
+    is the author's decision, and writing it down is the point.
+
+    THE NUMBER IS A FLOOR. Only the `max_rays` largest downward triangles are
+    cast from, so a mesh with more overhang than that reports the part of it
+    that was measured and never more. Raise `max_rays` and pay for it.
+
+    THE RAY DROP IS WRITTEN HERE, IN NUMPY, and does not come from trimesh --
+    which is a fact about this image rather than a preference. Every entry
+    point of `trimesh.ray` walks a bounding-volume tree built by
+    `trimesh.util.bounds_tree`, which imports `rtree`; `rtree` is not in
+    requirements.txt and neither is `pyembree`, so `mesh.ray.intersects_any`
+    raises ModuleNotFoundError in this interpreter. Measured 2026-09-08 on
+    trimesh 4.12.2. What is here instead is the same test done directly: a
+    point-in-triangle test in XY, plus the plane's height at that point, over
+    every triangle whose XY box contains the centroid.
+
+    Cost: the mesh is already on disk (the gate wrote it); loading is
+    milliseconds. The drop is vectorised over triangles per ray, so it is
+    `rays x triangles`, with an XY bounding-box reject in front of the
+    arithmetic. Only downward triangles are cast from and only the `max_rays`
+    largest of them, so the worst case is bounded: measured 2026-09-08, 512 rays
+    against a 586k-triangle mesh took 1.1 s.
+
+    Returns a list of problem strings.
+    """
+    # The path is answered BEFORE anything is imported, for the reason
+    # `material_at` gives at its own type check: this is plain Python, and a
+    # path with no mesh at it has to say so on a machine that has neither the
+    # kernel nor trimesh -- which is where the test of this refusal runs.
+    path = str(stl_path)
+    if not os.path.exists(path):
+        raise ValueError(
+            f"unsupported_area({name}): there is no mesh at {path!r}. "
+            "`checks(out_dir)` is handed the directory the build wrote its "
+            "artefacts into, and the mesh of a part is named after the part "
+            "in `parts()`: out_dir / (part + '.stl'). A name that is not a "
+            "printable, or a path assembled from somewhere else, lands here.")
+
+    # A NEGATIVE BUDGET IS REFUSED HERE rather than survived further down: it is
+    # a number no part can meet, and the arithmetic below quietly stops making
+    # sense at it -- a part with no overhang at all measures 0.0, which is not
+    # `<= -1`, so the check would report a problem it has no patch to name.
+    # Zero is a different matter and is allowed: "this part tolerates none" is
+    # a decision an author can mean.
+    if max_area_mm2 < 0:
+        raise ValueError(
+            f"unsupported_area({name}): max_area_mm2 is {max_area_mm2!r}. Area "
+            "is never negative, so this budget cannot be met by any part, not "
+            "even one with no overhang at all. Pass 0 to tolerate none.")
+
+    import numpy
+    import trimesh
+
+    mesh = trimesh.load(path)
+    # The same reading printables.first_layer_area makes, with `bed_tol` where
+    # it has STL_TOLERANCE: the bed is the part's OWN lowest point, and a
+    # triangle is on it when its HIGHEST vertex is still in the band. The plate
+    # holds that triangle up, so it is not an overhang however it points.
+    lowest = float(mesh.bounds[0][2])
+    on_bed = mesh.triangles[:, :, 2].max(axis=1) - lowest <= bed_tol
+    down = mesh.face_normals[:, 2] < -math.cos(math.radians(max_angle_deg))
+    candidates = numpy.flatnonzero(down & ~on_bed)
+    if candidates.size == 0:
+        # A measured zero, not a refusal: a part with no steep downward face
+        # off the bed is a part with nothing to support.
+        return []
+
+    areas = mesh.area_faces
+    # Largest first, and only so many of them -- see THE NUMBER IS A FLOOR.
+    cast = candidates[numpy.argsort(-areas[candidates])][:max_rays]
+
+    triangles = mesh.triangles
+    corner = triangles[:, 0]
+    edge1 = triangles[:, 1] - corner
+    edge2 = triangles[:, 2] - corner
+    # The XY determinant of the two edges. A triangle standing on edge projects
+    # to a line, has a determinant of zero and can never be under a point; it
+    # is dropped here so the division below never sees one.
+    det = edge1[:, 0] * edge2[:, 1] - edge2[:, 0] * edge1[:, 1]
+    projects = numpy.abs(det) > 1e-12
+    xmin = triangles[:, :, 0].min(axis=1)
+    xmax = triangles[:, :, 0].max(axis=1)
+    ymin = triangles[:, :, 1].min(axis=1)
+    ymax = triangles[:, :, 1].max(axis=1)
+    centres = mesh.triangles_center
+
+    total = 0.0
+    largest = None  # (area, centroid) of the biggest patch with nothing under it
+    for index in cast:
+        px, py, pz = (float(v) for v in centres[index])
+        near = projects & (xmin <= px) & (xmax >= px) & (ymin <= py) & (ymax >= py)
+        # The triangle the ray starts from is not something it can land on.
+        near[index] = False
+        under = numpy.flatnonzero(near)
+        if under.size:
+            dx = px - corner[under, 0]
+            dy = py - corner[under, 1]
+            # Barycentric coordinates of the centroid in each triangle's own XY
+            # projection: P = A + u*E1 + v*E2, solved for u and v.
+            u = (dx * edge2[under, 1] - dy * edge2[under, 0]) / det[under]
+            v = (edge1[under, 0] * dy - edge1[under, 1] * dx) / det[under]
+            hit = (u >= -1e-9) & (v >= -1e-9) & (u + v <= 1.0 + 1e-9)
+            # The height of each triangle's plane at that XY point. Strictly
+            # below, so a triangle sharing the plane the ray starts in is not a
+            # thing standing under it.
+            height = corner[under, 2] + u * edge1[under, 2] + v * edge2[under, 2]
+            if numpy.any(hit & (height < pz - 1e-6)):
+                continue
+        area = float(areas[index])
+        total += area
+        if largest is None or area > largest[0]:
+            largest = (area, (px, py, pz))
+
+    if total <= max_area_mm2:
+        return []
+
+    if max_area_mm2 > 0:
+        share = (f"{total / max_area_mm2:.1f}x the {max_area_mm2:g} mm2 this "
+                 "part allows")
+    else:
+        # A budget of nothing has no ratio to be a multiple of.
+        share = "against a budget of nothing"
+    patch, (px, py, pz) = largest
+    return [
+        f"{name}: {total:.1f} mm2 of downward surface has nothing under it, "
+        f"{share}. The largest such patch is {patch:.1f} mm2 at "
+        f"({px:.1f}, {py:.1f}, {pz:.1f}) -- that is where to look. Turn the "
+        "part over, add support, or raise the area this design tolerates and "
+        "say why."
+    ]
+
+
+# --------------------------------------------------------------------------
+# 7. Walls thinner than the part says they are
+# --------------------------------------------------------------------------
+
+def thin_walls(part, planes, min_thickness, *, name="part", pitch=None,
+               step=None, axes=("x", "y", "xy", "yx")):
+    """Walls thinner than `min_thickness`, measured on named sections.
+
+    `planes` are heights in the part's own coordinates -- Z is the section
+    normal, so a part modelled on its side is sectioned on its side. NAMED, not
+    swept: the author says where the load-bearing and mating walls are, which is
+    the difference between a check that can be trusted and the one this file
+    refuses to have (see the note at the top of this module).
+
+    On each plane the part is scanned with lines `pitch` apart, sampled `step`
+    apart along each line, along four directions -- X, Y and the two diagonals.
+    A continuous run of points inside the material is a crossing of a wall, and
+    its length is how thick the wall is where that line crossed it. `pitch`
+    defaults to `min_thickness` (a wall cannot hide between two scan lines that
+    close), `step` to `min_thickness / 4`. A `step` PASSED BY HAND HAS TO DIVIDE
+    `min_thickness` a whole number of times, AT LEAST TWICE, and is refused
+    otherwise: a run is counted in whole steps, so an indivisible step moves the
+    threshold off the number named -- a wall of exactly the minimum reported as
+    thin where the ratio rounds up, a threshold quietly under the minimum where
+    it rounds down -- while a single division leaves no run that can be short at
+    all and passes every part there will ever be.
+
+    ONE-SIDED ERROR BY CONSTRUCTION: a wall oblique to a scan axis measures
+    thicker than it is, so this misses and never falsely accuses. Four axes cut
+    the worst case to about 1.08x. `axes` names them, and NARROWING IT IS WHAT
+    VOIDS THAT FIGURE: on `("x", "y")` alone a wall at 45 degrees measures
+    sqrt(2) times its thickness, so the number to compare against is 1.41x and
+    a wall a third over the minimum passes. Widening it costs a full scan per
+    axis. The four keys above are the ones there are; anything else raises
+    KeyError on the name that was passed.
+
+    A SHORT RUN IS ONLY A WALL IF IT IS A WALL SIDEWAYS TOO, and that second
+    probe is what keeps the sentence above true. Every convex corner tapers to
+    nothing, so a scan line clipping one measures a fraction of a millimetre on
+    a part with no thin wall anywhere -- measured on a 20 x 1.6 mm rib, where
+    the diagonal axes cut the far corner into runs of 0.2 mm. So the midpoint of
+    a short run is probed `min_thickness / 2` to either side ALONG the wall, and
+    the run counts only if there is material at both: a wall is thin in one
+    direction and long in the other, while an ordinary corner is short in both
+    and is dropped. A FEATURE THAT TAPERS TO A SHARP POINT IS NOT DROPPED, and
+    the sentence used to claim every corner was: measured 2026-09-08 on a 20 mm
+    gusset at a 0.8 mm minimum, a 45-degree point still comes back clean, a
+    31-degree one is named at 0.60 mm and an 8.5-degree one at 0.20 mm, because
+    the material really is thinner than the minimum there and the probe to
+    either side still lands in it. That is the truthful direction and it is
+    left alone -- the check names
+    what it measured, and whether the spike of a gusset is a wall is the
+    author's call. A feature thinner than the minimum in EVERY direction is
+    still missed rather than named, which is the direction this file errs in
+    everywhere else.
+
+    ONE PROBLEM STRING PER PLANE, naming the thinnest run found there, where it
+    is, and how many runs came out under the threshold. A wall crossed by forty
+    scan lines is one wall, and forty lines about it would bury the next one.
+
+    `min_thickness` may not be zero or less: every run is longer than that, so
+    the check would pass for every part ever handed to it.
+
+    Cost: `(span / pitch) x (span / step)` classifier calls per axis per plane.
+    For a 60 mm part at a 0.8 mm minimum that is ~76 lines x ~301 samples on the
+    two straight axes and ~107 x ~425 on the two diagonals, which scan the
+    bounding box corner to corner -- 137k probes, measured at 1.1 s on this
+    machine (2026-09-08). It is linear in the number of planes, so a model
+    naming twenty heights pays twenty times -- name the heights that matter.
+
+    Returns a list of problem strings.
+    """
+    # Before the geometry and before the kernel: this is a statement about the
+    # ARGUMENT, and it has to answer on a machine with no OpenCASCADE for the
+    # same reason `material_at` checks its type before importing OCP.
+    if min_thickness <= 0:
+        raise ValueError(
+            f"thin_walls({name}): min_thickness is {min_thickness!r}. Every "
+            "run this can measure is longer than that, so the check would "
+            "pass for every part ever handed to it -- which is worse than "
+            "having no check, because it reads like one (issue #55). Pass the "
+            "thinnest wall this part is allowed to have; "
+            "checklib.minimum_feature() is the floor the nozzle sets, and a "
+            "wall that carries anything is well above it.")
+
+    # WHOLE STEPS ARE WHAT A RUN IS COUNTED IN, so `step` has to divide
+    # `min_thickness` -- this is the condition the one-sided error above rests
+    # on, and it is an argument check rather than a taste. A wall of exactly the
+    # minimum is crossed by floor(min / step) samples or one more, and the scan
+    # compares that count against `divisions`, the same ratio ROUNDED. An
+    # indivisible step therefore moves the threshold off the number the author
+    # named, and WHICH WAY IT MOVES depends on which way the ratio rounds.
+    # Rounded up, a wall of exactly the minimum comes out one step short and is
+    # named thin: measured, min 0.8 with step 0.3 reports a wall of exactly
+    # 0.8 mm as 0.60 mm, which is the false red this check promises never to
+    # give. Rounded down, nothing is falsely accused and the threshold quietly
+    # becomes divisions * step instead -- 0.15 at the same minimum measures
+    # against 0.75 mm. Neither is the number the author asked for.
+    #
+    # `divisions` IS ALSO WHAT THE SCAN COMPARES AGAINST, and that is the second
+    # half of the same argument: `run * step < min_thickness` is arithmetic in
+    # double, so 3 * 0.3 is 0.8999999999999999 and a wall of 1.1 mm at a 0.9 mm
+    # minimum was named thin -- by a step this very check accepts, since the
+    # division IS whole to 1e-9. Counting samples instead compares two integers
+    # and loses nothing.
+    if step is None:
+        # ONE NUMBER, and the step derived from it: written twice, an edit to
+        # either alone moves the detection threshold and nothing says so.
+        divisions = 4
+        step = min_thickness / divisions
+    else:
+        divisions = round(min_thickness / step) if step > 0 else 0
+        if divisions < 1 or abs(divisions * step - min_thickness) > 1e-9:
+            raise ValueError(
+                f"thin_walls({name}): step is {step!r}, which does not divide "
+                f"min_thickness {min_thickness!r} a whole number of times. A "
+                "run is measured in whole steps, so an indivisible step moves "
+                "the threshold off the number you named, one way or the other: "
+                "0.3 at a 0.8 minimum measures a wall of exactly 0.8 mm as "
+                "0.60 mm and calls it thin -- the false red this check promises "
+                "never to give -- while 0.15 lowers the threshold to 0.75 mm "
+                f"and misses everything between. Pass a divisor of "
+                f"{min_thickness!r} (the default, min_thickness / 4, is one), "
+                "or leave it out.")
+        # A SINGLE DIVISION DIVIDES CLEANLY AND MEASURES NOTHING, so it needs
+        # its own refusal: the message above would be a lie about it. With one
+        # division no run can be shorter than one step, `run < divisions` is
+        # never true, and the check returns nothing for every part there will
+        # ever be -- including a rib eight times under the minimum, measured.
+        # That is the failure the min_thickness refusal above is named after.
+        if divisions == 1:
+            raise ValueError(
+                f"thin_walls({name}): step is {step!r}, the whole of "
+                f"min_thickness {min_thickness!r}. A run is counted in whole "
+                "steps, so nothing can come out under one step and this check "
+                "would pass every part ever handed to it -- which is worse "
+                "than having no check, because it reads like one. Pass a step "
+                "that divides the minimum at least twice: min_thickness / 4 is "
+                "the default, or leave step out.")
+
+    # A STRING ITERATES BY CHARACTER, and both characters of "xy" are keys of
+    # `directions` -- so the one axis the author named silently becomes the two
+    # straight ones, no KeyError anywhere, and the worst case the docstring
+    # promises goes from 1.08x to 1.41x. An unknown key does raise and names
+    # itself, which is why there is no check for one; this input raises nothing
+    # at all. Same shape as the `allowed_touching=("body", "lid")` mistake
+    # `name_pairs` refuses.
+    if isinstance(axes, str):
+        raise ValueError(
+            f"thin_walls({name}): axes is the string {axes!r}, which iterates "
+            f"by character -- it asks for the axes {tuple(axes)!r}. Pass a "
+            f"tuple of axis names: axes=({axes!r},).")
+
+    shapes = _shapes(part, name)
+    if pitch is None:
+        pitch = min_thickness
+
+    # ONE classifier for the whole call, however many planes and axes are
+    # scanned: it is bound to the part as it was when it was asked for, and
+    # building a second one per plane would pay for the same solids again.
+    inside = material_at(part, name)
+    # The extent to scan. Every body of the part, for the reason `_hull` gives:
+    # a part is often several bodies and the wall does not have to be on the
+    # first one.
+    box = _hull([shape.BoundingBox() for shape in shapes])
+    diagonal = math.sqrt(0.5)
+    directions = {"x": (1.0, 0.0), "y": (0.0, 1.0),
+                  "xy": (diagonal, diagonal), "yx": (diagonal, -diagonal)}
+    corners = [(box.xmin, box.ymin), (box.xmin, box.ymax),
+               (box.xmax, box.ymin), (box.xmax, box.ymax)]
+    reach = min_thickness / 2.0
+
+    problems = []
+    for plane_z in planes:
+        thin = []  # (length, x, y) for every run that is a wall and too thin
+        seen_material = False
+
+        for axis in axes:
+            dx, dy = directions[axis]
+            # The line runs along (dx, dy) and the lines are laid out along the
+            # perpendicular, which is also the direction "sideways along the
+            # wall" is measured in below.
+            sx, sy = -dy, dx
+            along = [x * dx + y * dy for x, y in corners]
+            across = [x * sx + y * sy for x, y in corners]
+            tmin, tmax = min(along), max(along)
+            smin, smax = min(across), max(across)
+            samples = int((tmax - tmin) / step) + 1
+
+            for line in range(int((smax - smin) / pitch) + 1):
+                s = smin + line * pitch
+                run = 0
+                # One pass past the end: the sentinel closes a run that reaches
+                # the far side of the extent, which is the same code path as a
+                # run that ends on material.
+                for sample in range(samples + 1):
+                    if sample < samples:
+                        t = tmin + sample * step
+                        x = t * dx + s * sx
+                        y = t * dy + s * sy
+                        if inside(x, y, plane_z):
+                            run += 1
+                            seen_material = True
+                            continue
+                    if run and run < divisions:
+                        # The middle of the run, which is where the wall is.
+                        middle = tmin + (sample - 1 - (run - 1) / 2.0) * step
+                        mx = middle * dx + s * sx
+                        my = middle * dy + s * sy
+                        if (inside(mx + sx * reach, my + sy * reach, plane_z)
+                                and inside(mx - sx * reach, my - sy * reach,
+                                           plane_z)):
+                            thin.append((run * step, mx, my))
+                    run = 0
+
+        if not seen_material:
+            problems.append(
+                f"{name}: nothing lies in the plane z={plane_z:g} -- the scan "
+                "found no material anywhere in it, so there is no wall there "
+                "to measure. Wrong height, or the part is modelled somewhere "
+                "else.")
+            continue
+
+        if thin:
+            length, mx, my = min(thin)
+            problems.append(
+                f"{name}: the thinnest wall in the plane z={plane_z:g} "
+                f"measures {length:.2f} mm, at ({mx:.1f}, {my:.1f}, "
+                f"{plane_z:g}) -- under the {min_thickness:g} mm this part "
+                f"asked for, and {len(thin)} of the scan runs there came out "
+                "under it. Thicken the wall, or say the smaller number here "
+                "if the part is meant to be that thin.")
+    return problems

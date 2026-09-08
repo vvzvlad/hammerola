@@ -10,6 +10,7 @@ entry of one was which entry of the other. There is one catalogue now
 
 from .artifacts import (ASSEMBLED_STEM, PREVIEW_SUFFIX, PRINT_VIEW_ID,
                         STL_ANGULAR_TOLERANCE, STL_TOLERANCE)
+from .checklib import minimum_feature
 from .errors import BuildError
 from .geometry import as_shape, drop_mesh
 from .parts import check_stem, printable_keys
@@ -94,6 +95,42 @@ def preview_files(written):
     return previews
 
 
+def first_layer_area(mesh):
+    """Contact area with the bed, in square millimetres.
+
+    The bed is wherever the part's own lowest point is: `mesh.bounds[0][2]`.
+    THAT IS THE WHOLE INTERPRETATION, and it is deliberate -- "no first layer"
+    means a part with no flat bottom OF ITS OWN (a part standing on an edge, a
+    pyramid on its apex), NOT a part whose zmin is something other than zero.
+    Reading it the second way would refuse every centred box in the README and
+    in the fixtures, which is the false red this repository already decided
+    costs more than a miss.
+
+    A triangle is on the bed when all three of its vertices sit within
+    STL_TOLERANCE of that lowest point AND its normal points down. The normal
+    is what keeps a thin wall's TOP face out of the sum when it happens to land
+    in the same band.
+
+    WHAT THE TOLERANCE BAND ACTUALLY ADMITS is worth stating, because the
+    obvious reading of it is wrong: a genuinely flat face has no drift at all
+    (OCC meshes a plane exactly), so the band is not there for it. What lands
+    inside the band is the bottom ROW OF FACETS of a CURVED surface, and how
+    much of one depends on the radius and on the tessellation. Measured, with
+    this mesh's own STL_TOLERANCE: a cylinder 40 mm LONG lying on its side comes
+    to 11.97 mm2 at r=2, 9.97 at r=5, 19.94 at r=10 and 35.65 at r=20 -- the
+    strip is a strip, so those scale with the length -- and a sphere to
+    0.1371 mm2 at r=3 and to exactly 0 at r=10. So this does NOT catch a part
+    resting on a line, and mostly does not catch one resting on a point. THE
+    GAP IS DELIBERATE and is not to be closed with a tighter band: that strip
+    is roughly what a slicer really lays down under a curved bottom, and the
+    part does print. What the check is for is the part that touches at nothing
+    whatsoever.
+    """
+    lowest = float(mesh.bounds[0][2])
+    on_bed = mesh.triangles[:, :, 2].max(axis=1) - lowest <= STL_TOLERANCE
+    return float(mesh.area_faces[on_bed & (mesh.face_normals[:, 2] < 0)].sum())
+
+
 def export_printables(catalogue, out_dir):
     """Export STEP/STL/3MF for every printable, gating each one on geometry.
 
@@ -150,6 +187,25 @@ def export_printables(catalogue, out_dir):
             "solids": len(shape.Solids()),
         }
 
+        # Gate part 1b -- and the whole part has to be thicker than the thread
+        # it is drawn with. THIS ONE IS IN THE GATE rather than in checklib
+        # because there is no number for the author to choose: a part whose
+        # smallest overall dimension is under one extrusion width does not come
+        # out thin, it comes out as a line or as nothing at all. What
+        # `minimum_feature()` supplies is the NOZZLE DEFAULT -- what this
+        # repository assumes when nobody said otherwise -- and not a fact about
+        # whichever machine ends up printing the file; a model that knows its
+        # own machine says so in checks(), where the number is an argument.
+        thinnest = min(measured["bbox_mm"])
+        if thinnest < minimum_feature():
+            raise BuildError(
+                f"printable {name!r} measures {measured['bbox_mm']} mm, so its "
+                f"smallest dimension is {thinnest:.3f} mm -- under the "
+                f"{minimum_feature():.3f} mm this nozzle can lay down. The "
+                "whole part is thinner than the thread it would be printed "
+                "with; refusing to publish."
+            )
+
         assembly = cq.Assembly(obj, name=name)
         step_path = out_dir / f"{name}.step"
         stl_path = out_dir / f"{name}.stl"
@@ -190,6 +246,20 @@ def export_printables(catalogue, out_dir):
                 f"printable {name!r} is {pieces} disconnected pieces, not one "
                 "body. Fuse them into one solid, or give each piece a "
                 "catalogue entry of its own."
+            )
+
+        # Gate part 4 -- and it has to stand on something. A part whose lowest
+        # face is a point or a line has nothing for the first layer to stick
+        # to: it is printed on supports or it is not printed at all, and
+        # neither is a decision this build gets to make silently.
+        bed_area = first_layer_area(mesh)
+        if bed_area <= 0:
+            lowest = mesh.vertices[mesh.vertices[:, 2].argmin()]
+            raise BuildError(
+                f"printable {name!r} touches the bed at nothing: its lowest "
+                f"point is ({float(lowest[0]):.3f}, {float(lowest[1]):.3f}, "
+                f"{float(lowest[2]):.3f}) and no face lies flat there. Rest "
+                "it on a face, or split it so each piece has one."
             )
 
         print(f"  {name}: valid, volume {volume / 1000.0:.2f} cm3, watertight, "
