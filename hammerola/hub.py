@@ -523,17 +523,28 @@ class Hub:
         return payload
 
     # -- the two routes ----------------------------------------------------
-    def publish(self, pid: str, body: bytes, *, slot: str = None):
+    def publish(self, pid: str, body: bytes, *, slot: str = None,
+                force: bool = False):
         """POST one archive. -> (status, payload dict).
 
         `slot` is the last path segment, and the only thing that differs between
         the two commands: `dev` for the local slot, and NOTHING for a revision.
         The absence is what asks the hub to name it — there is no id to send,
         because the client has none and never invents one.
+
+        `force` asks the build to skip the model's own checks(), and it travels
+        as a QUERY PARAMETER. Not a header, and not a path segment: the segment
+        after the slot is the commit id, and taking one for a flag would make
+        the URL say two things. The rule this endpoint has always had holds
+        either way — where a build lands is decided by the URL and never by the
+        body — because a query parameter IS the URL, and this one changes how
+        the build runs rather than where it lands.
         """
         path = f"/api/v1/publish/{urllib.parse.quote(pid)}"
         if slot is not None:
             path = f"{path}/{urllib.parse.quote(slot)}"
+        if force:
+            path = f"{path}?force=1"
         status, raw = self._call(path, method="POST", body=body,
                                  content_type="application/gzip")
         return status, self._payload(status, raw)

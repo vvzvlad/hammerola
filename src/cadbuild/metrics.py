@@ -183,6 +183,12 @@ def collect_metrics(project, parts, checks_passed, checks_static, provenance,
     -- the checks were counted differently -- and one where this rose on its own
     is drifting towards a checks() that proves nothing.
 
+    EITHER NUMBER MAY BE None, WHICH IS "COUNT UNKNOWN" AND NOT ZERO.
+    `checks_passed` has always been able to be (`modelchecks.run_checks` answers
+    it for a body nobody could count), and both of them are None on a build that
+    skipped the model's own checks at the push's request. Nothing else in the
+    file says so, deliberately: a forced build is not marked (issue #52).
+
     `provenance` is what `cadbuild.provenance.report` handed back at the top of
     the build: how many of this model's numbers were measured, derived or
     merely chosen, which ones nobody measured, and the note each declaration

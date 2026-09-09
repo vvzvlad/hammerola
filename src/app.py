@@ -1007,7 +1007,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 return None
 
         def _handle_post(self):
-            path = self.path.split("?", 1)[0]
+            path, _, query = self.path.partition("?")
             segments = self._split(path)
 
             if segments[:3] == ["api", "v1", "comments"] and len(segments) == 5:
@@ -1071,6 +1071,14 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             # always had: where a build lands is decided by the URL, never by the
             # body.
             commit = segments[4] if len(segments) == 5 else None
+            # HOW to build, next to WHERE it lands. This is the only parameter
+            # this route reads out of the query, and it is read by NAME and
+            # compared against the one spelling the client sends (`?force=1`,
+            # `Hub.publish`) — so a query nobody here anticipated, `?debug=yes`
+            # or a repeated `force` with something else in it, cannot become a
+            # boolean by being present. Everything else in the query is ignored,
+            # exactly as it is on the comment listing.
+            forced = (parse_qs(query).get("force") or [None])[0] == "1"
             # For the log lines BEFORE the sources are hashed, where there is no
             # name yet on the minting route.
             target = f"{pid}/{commit}" if commit is not None else f"{pid} (new)"
@@ -1155,11 +1163,13 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 if refusal is not None:
                     status, message, extra = refusal
                     return self._error(status, message, extra)
-                return self._queue_build(pid, accepted, minted=commit is None)
+                return self._queue_build(pid, accepted, minted=commit is None,
+                                         force=forced)
             finally:
                 publish_slots.release()
 
-        def _queue_build(self, pid: str, accepted, *, minted: bool):
+        def _queue_build(self, pid: str, accepted, *, minted: bool,
+                         force: bool):
             """Hand an accepted source tree to the build pool. 200, 202 or 503.
 
             200 rather than 202 when this exact push is already published: the
@@ -1190,6 +1200,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             the build will PUBLISH (permanent, immutable, the thing that gets
             pasted into a chat). A second push of the same sources gets a
             different job and the same revision, which is the whole point.
+
+            `force` rides PAST `accepted` rather than inside it, like `minted`
+            above and for the same reason: `AcceptedPush` records what was
+            accepted, and this is a request about how to build it.
             """
             commit = accepted.commit
             # Only on the minting route: on the named one the caller already
@@ -1200,6 +1214,14 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             job_id = None
             reply = None            # (status, payload, extra headers)
             try:
+                # THE DIGEST IS OF THE SOURCES AND `force` IS NOT IN IT, and
+                # this is the line somebody would be tempted to change. A push
+                # the hub has already published answers 200 "unchanged" and
+                # builds nothing, forced or not: the tree that would be
+                # published is identical either way, so there is nothing to
+                # rebuild — and a flag mixed into the digest would make the same
+                # sources two different revisions, which is the one thing a
+                # minted name may never be.
                 settled = store.settled(pid, commit, accepted.digest)
                 if settled is not None:
                     status, payload = settled
@@ -1210,7 +1232,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     outcome = builds.submit(BuildTask(
                         job_id=job_id, pid=pid, commit=commit,
                         sources=accepted.sources, archive=accepted.archive,
-                        digest=accepted.digest))
+                        digest=accepted.digest, force=force))
                     if outcome == SUBMIT_ACCEPTED:
                         handed_over = True
                         status_url = f"/api/v1/jobs/{job_id}"

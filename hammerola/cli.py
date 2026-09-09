@@ -279,6 +279,17 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--timeout", type=float, default=JOB_TIMEOUT, metavar="SECONDS",
         help=f"how long to wait for the build (default: {JOB_TIMEOUT:.0f})")
+    # ONE THING IS CANCELLED AND IT IS THE MODEL'S OWN `checks()`: the build
+    # does not call them at all, which is the point — on a real model they are
+    # most of the time a build takes, and this is how something unfinished gets
+    # published quickly. The hub's own gate is not the author's to waive and
+    # goes on running: the provenance rule, the catalogue, the view gates and
+    # the per-part gates in `export_printables` all refuse a forced push
+    # exactly as they refuse any other.
+    parser.add_argument(
+        "--force", action="store_true",
+        help="publish without running the model's own checks(). The hub's own "
+             "gates still run and still refuse")
 
 
 def main(argv=None) -> int:
@@ -338,7 +349,7 @@ def _publish(args) -> int:
     sys.stdout.flush()
 
     # `code` and not `status`, because `status` is a module of this package.
-    code, payload = hub.publish(pid, archive.body, slot=slot)
+    code, payload = hub.publish(pid, archive.body, slot=slot, force=args.force)
 
     if code == 200:
         # `Store.settled`: this exact source tree is already published under

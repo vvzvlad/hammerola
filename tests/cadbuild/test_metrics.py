@@ -390,6 +390,26 @@ def test_metrics_json_is_written_with_readable_floats(out_dir):
     assert data["parts"]["body"]["watertight"] is True
 
 
+def test_a_build_that_never_ran_the_checks_writes_no_key_of_its_own(out_dir):
+    """A forced build is NOT MARKED, and this is where a mark would appear.
+
+    `build(force=True)` skips the model's own checks() and hands both counts in
+    as None -- "count unknown", which this file has always been able to say
+    about `checks_passed`. What must not happen is a `forced: true` beside them:
+    metrics.json is read back by the next build and rendered in the diff, so a
+    key here would be the badge the flag deliberately does not have.
+    """
+    counted = collect_metrics("scratch-project", {"body": measured()}, 3, 0, {},
+                              PRODUCT, PLATE)
+    write_metrics(out_dir, collect_metrics(
+        "scratch-project", {"body": measured()}, None, None, {}, PRODUCT, PLATE))
+    data = json.loads((out_dir / METRICS_NAME).read_text(encoding="utf-8"))
+
+    assert set(data) == set(counted)
+    assert data["checks_passed"] is None
+    assert data["checks_static"] is None
+
+
 def test_the_assembly_block_is_written_out_of_what_the_exports_measured(out_dir):
     """The three numbers about the whole build, and where each comes from.
 

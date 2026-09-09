@@ -19,8 +19,8 @@ import os
 import shlex
 
 import pytest
-from modeldir import git, git_repo, make_model
-from harness import TOKEN, failing_builder
+from modeldir import MODEL_SOURCE, git, git_repo, make_model
+from harness import TOKEN, copying_builder, failing_builder
 
 from hammerola import gitsuggest
 from hammerola.cli import main
@@ -267,6 +267,40 @@ def test_an_unchanged_revision_still_offers_the_commit(hub, model, capsys):
     out = capsys.readouterr().out
     assert "unchanged" in out
     assert gitsuggest.HEADLINE in out
+
+
+# -- --force -----------------------------------------------------------------
+def test_force_travels_from_the_command_line_into_the_build(hub_factory, model,
+                                                            monkeypatch):
+    """The whole channel at once, and it is new all the way along.
+
+    No option has ever reached the build process from the command line before:
+    `--force` goes into a query parameter on the publish URL, out of it in the
+    request handler, through the task and the worker, and arrives as an argument
+    of the call the builder is made with. Every hop is somewhere else, so what
+    is worth holding is the END of it — the value the builder was really handed
+    — under both verbs and with the flag left off.
+
+    THE MODEL IS CHANGED BEFORE THE LAST PUSH on purpose: without an edit those
+    are sources the hub already has, and `Store.settled` answers 200 with no
+    build at all, so the run would prove nothing about the flag.
+    """
+    seen = []
+
+    def recording_builder(project_dir, out_dir, *, pid, force, **kw):
+        seen.append(force)
+        return copying_builder(project_dir, out_dir, pid=pid, **kw)
+
+    watched = hub_factory(build_runner=recording_builder)
+    monkeypatch.setenv("HUB_URL", watched.url)
+
+    assert run(model, "build", "--force") == 0
+    assert run(model, "commit", "--force") == 0
+    (model / "model.py").write_text(MODEL_SOURCE + "\n# edited\n",
+                                    encoding="utf-8")
+    assert run(model, "build") == 0
+
+    assert seen == [True, True, False]
 
 
 # -- failures ----------------------------------------------------------------

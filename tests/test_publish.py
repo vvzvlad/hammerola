@@ -8,8 +8,8 @@ import time
 
 import pytest
 
-from harness import (DEFAULT_EXPORTS, TOKEN, good_build, meta_bytes, tar_gz,
-                     view_bytes)
+from harness import (DEFAULT_EXPORTS, TOKEN, copying_builder, good_build,
+                     meta_bytes, tar_gz, view_bytes)
 
 from src import app, render
 from src.store import DEV_LINK, PublishError, Store
@@ -757,6 +757,39 @@ def test_the_local_slot_is_still_a_named_route(hub):
     assert hub.await_job(reply.json()["job"]).status_code == 201
     assert (hub.project_dir("proj1") / "dev" / "meta.json").is_file()
     assert not (hub.project_dir("proj1") / "latest").exists()
+
+
+def test_only_the_publish_route_s_own_query_parameter_turns_force_on(
+        hub_factory):
+    """The query used to be thrown away here, and now one name is read out of it.
+
+    `?force=1` is the client's own spelling (`Hub.publish`) and it asks the
+    build to skip the model's own checks(). Everything else in the query stays
+    ignored: a parameter nobody here anticipated must not become a boolean by
+    being present, which is what the second push is for — and the first is the
+    control that makes the second mean something at all.
+
+    Two NAMED routes rather than one pushed twice: the same sources under the
+    same name are already published by the second push and `Store.settled`
+    answers 200 without building anything, so there would be no call to look at.
+    """
+    seen = []
+
+    def recording_builder(project_dir, out_dir, *, pid, force, **kw):
+        seen.append(force)
+        return copying_builder(project_dir, out_dir, pid=pid, **kw)
+
+    hub = hub_factory(build_runner=recording_builder)
+    headers = {"Authorization": f"Bearer {TOKEN}",
+               "Content-Type": "application/gzip"}
+
+    for path in ("/api/v1/publish/proj1/c1?force=1",
+                 "/api/v1/publish/proj1/c2?nonsense=1"):
+        reply = hub.request("POST", path, content=good_build(), headers=headers)
+        assert reply.status_code == 202
+        assert hub.await_job(reply.json()["job"]).status_code == 201
+
+    assert seen == [True, False]
 
 
 def test_reserved_commit_name_is_refused(hub):

@@ -166,7 +166,7 @@ class BuildOutcome:
 
 
 def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
-              preview_mode="iso"):
+              preview_mode="iso", force=False):
     """Build the model in `project_dir` into `out_dir`, in a process of its own.
 
     `project_dir` is an UNTRUSTED tree -- someone pushed it and the hub
@@ -183,6 +183,10 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
     project.json is read by the build (it is what `meta.json` ends up saying)
     and disagreement between the two is the gate's business, in step 6 -- this
     function's business is that the disagreement cannot be silent.
+
+    `force` is the push asking for the MODEL's own checks() not to be run
+    (issue #52). Those are the author's, so they are the author's to waive; the
+    hub's own gates are not, and every one of them runs on a forced build.
     """
     project_dir = Path(project_dir).resolve()
     out_dir = Path(out_dir).resolve()
@@ -207,6 +211,11 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
             "--result", str(result_path),
             "--preview-mode", str(preview_mode),
             "--occt-threads", str(limits.occt_threads),
+            # Spelled out on every invocation rather than appended only when it
+            # is true: the child takes `--key value` pairs and no bare flags, so
+            # the value is where the boolean lives either way, and a build that
+            # ran the checks says so in its own command line.
+            "--force", "true" if force else "false",
         ]
         if limits.hang_dump_seconds is not None:
             target += ["--hang-dump-seconds", str(limits.hang_dump_seconds)]
