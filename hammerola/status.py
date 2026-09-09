@@ -8,12 +8,20 @@ read it — and the hub gained no endpoint that exists only for a CLI.
 
 WHAT IT DELIBERATELY DOES NOT SHOW IS THE LAST BUILD JOB, which issue #26
 lists beside the rest. It is not an omission and it is not waiting on anybody's
-next commit — the hub cannot be asked the question at all. A job is
-addressable by its id and by nothing else (`GET /api/v1/jobs/<id>`), and the
-order jobs were created in is stored NOWHERE — deliberately, because the only
-thing that ever read it was retention, and there is no retention (SPEC §5.3, and
-the docstring of `src/jobs.py`). "The last job" is therefore not a fact the hub
-can be asked for today; showing the newest build is the honest neighbouring
+next commit: a job is addressable by its id and by nothing else
+(`GET /api/v1/jobs/<id>`), and the order jobs were created in is stored
+NOWHERE — deliberately, because the only thing that ever read it was retention,
+and there is no retention (SPEC §5.3, and the docstring of `src/jobs.py`). "The
+last job of this project" is therefore not a fact the hub can be asked for.
+
+WHAT NARROWED SINCE, and the sentence above used to overstate it: the dev
+slot's `meta.json` names the job that FILLED it (`render.build_meta`, issue
+#79), which is how `hammerola log dev` reads that build's log back without
+rebuilding. That is a smaller fact than "the last job", and the difference is
+exactly the two states somebody would want from it — the field is written on
+the successful path alone, so a build that failed and a build still in flight
+are both absent from it (`test_a_failed_build_moves_neither_latest_nor_the_slot`
+is what holds that). Showing the newest build stays the honest neighbouring
 answer, and the id of a job in flight is printed by the push that started it.
 
 THE THREE THINGS IT ANSWERS, in the order somebody asks them:
