@@ -62,6 +62,7 @@ import pytest
 from harness import TOKEN, good_build
 
 from src import onboarding
+from src.cadbuild import checklib
 from hammerola import hub as hub_client
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -591,6 +592,47 @@ def test_the_skill_and_the_template_describe_the_SAME_image(hub):
     }
     assert missing == {"the skill": [], "the template": []}, (
         f"one of the two documents understates what the image has: {missing}")
+
+
+# The bullet of the skill that inventories `checklib`, found by its own opening
+# words rather than by the names inside it -- the names are what is being
+# checked, so a pattern spelling them out would be checking itself. Every
+# backticked identifier in that bullet is read as a claim that `checklib` has a
+# helper by that name.
+SKILL_CHECKLIB_BULLET = re.compile(
+    r"^\* \*\*`import checklib`\*\*(.*?)(?=^\* |^\n\S|\Z)",
+    re.MULTILINE | re.DOTALL)
+BACKTICKED_NAME = re.compile(r"`([a-z_][a-z0-9_]*)`")
+
+
+def test_the_skill_names_no_checklib_helper_that_does_not_exist(hub):
+    """The inventory the skill hands an author, against the module itself.
+
+    This sentence went stale once already and stayed stale for two releases: it
+    told its reader that "nothing anywhere checks an overhang, a minimum wall or
+    whether a tool reaches a screw" while `unsupported_area`, `thin_walls`,
+    `minimum_feature` and `tool_access` were all sitting in the module. The cost
+    of that direction of error is the whole point -- an author who believes it
+    writes the check by hand out of primitives, or does not write it at all, and
+    the document is served to every agent that installs the skill.
+
+    The other direction is caught here too, and it is the louder one: a helper
+    renamed in `checklib` leaves the skill telling authors to call something
+    that raises AttributeError.
+    """
+    skill = hub.get("/start/skill.md").text
+    bullet = SKILL_CHECKLIB_BULLET.search(skill)
+    assert bullet, (
+        "the skill no longer has a bullet inventorying `checklib`, so either "
+        "the section was reworded past this pin or the inventory is gone. "
+        "Re-aim the pattern, or say here why the inventory no longer needs one")
+
+    named = set(BACKTICKED_NAME.findall(bullet.group(1)))
+    assert named, "the checklib bullet names no helper at all"
+    missing = sorted(n for n in named if not hasattr(checklib, n))
+    assert not missing, (
+        f"skill/SKILL.md tells a model author to call {missing}, and "
+        f"src/cadbuild/checklib.py has no such name")
 
 
 def test_the_downloaded_client_refuses_an_interpreter_that_is_too_old():
