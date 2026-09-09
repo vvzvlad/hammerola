@@ -23,6 +23,16 @@ THE TWO HALVES COME FROM DIFFERENT SIDES OF THE TOKEN, and that shows up here as
 two kinds of request: `metrics.json` is fetched from the public build directory,
 the archives from `/api/v1/sources/<revision>` under the publishing secret. It is
 the same split `artifacts` and `source` are two verbs over.
+
+`--json` ANSWERS A THIRD QUESTION and prints nothing else: which of each PART's
+physical numbers moved, as one document a script can read. It is not the two
+halves above in another format — there is no source diff in it at all — and it is
+a flag rather than a verb of its own because it asks about the very pair of
+revisions this command already takes. Read the question narrowly: the walk is per
+part, so the `assembly` block the printed output carries — the product's size,
+the plate it needs, its total volume — is NOT in the document, and an empty
+`moved` says "no part came out another shape" rather than "the build is the
+same".
 """
 
 import difflib
@@ -31,7 +41,8 @@ import json
 from hammerola import project, unpack
 from hammerola.errors import ClientError
 from hammerola.sources import SHORT_ID_CHARS, hub_for, resolve_revision
-from hammerola.metricsdiff import METRICS_NAME, metrics_diff, unchanged_code_moved_geometry
+from hammerola.metricsdiff import (METRICS_NAME, PHYSICAL_FIELDS, metrics_diff,
+                                   moved_fields, unchanged_code_moved_geometry)
 
 
 def run(args) -> int:
@@ -45,6 +56,12 @@ def run(args) -> int:
 
     old = resolve_revision(hub, root, args.old)
     new = resolve_revision(hub, root, args.new)
+    # BEFORE the two branches below and before every other line this prints:
+    # `--json` means the whole of the output is one document, so a header, a
+    # source diff or the "same revision" sentence would each make it
+    # unparseable. Everything the two revisions resolved to is already known.
+    if args.json:
+        return _print_json(hub, pid, old, new)
     if old == new:
         # Not an error: `hammerola diff <rev> latest` is exactly how somebody
         # asks "is latest still that one", and the answer "yes" is useful.
@@ -84,6 +101,31 @@ def _metrics(hub, pid: str, revision: str):
     return payload if isinstance(payload, dict) else None
 
 
+def _print_json(hub, pid: str, old: str, new: str) -> int:
+    """`{"moved": [...], "compared": n}` -- a part's physical numbers, for a script.
+
+    THE PHYSICAL FIELDS AND NOT EVERY FIELD, because the question a script asks
+    here is "did a part come out another shape": a face count that moved because
+    a fillet is drawn out of two surfaces instead of one is not that, and a
+    triangle count moves on a tolerance nobody touched.
+
+    PER PART, AND THE ASSEMBLY BLOCK IS NOT IN IT. `moved_fields` walks `parts`
+    and only `parts`, so the three numbers about the whole build -- its bounding
+    box, the plate it needs, its total volume -- never appear here however far
+    they moved. A reader of this document has been told that no PART changed
+    shape, and nothing wider than that.
+
+    A revision that published no metrics.json compares as an EMPTY document
+    rather than stopping the command -- `compared: 0` is the honest answer to
+    "how many numbers were the same", and it is the reason that number is in
+    here beside the list.
+    """
+    before = _metrics(hub, pid, old) or {}
+    after = _metrics(hub, pid, new) or {}
+    print(json.dumps(moved_fields(before, after, PHYSICAL_FIELDS)))
+    return 0
+
+
 def _print_geometry(before, after) -> None:
     print("geometry:")
     missing = [name for name, value in (("the older", before), ("the newer", after))
@@ -94,7 +136,20 @@ def _print_geometry(before, after) -> None:
         return
     lines = metrics_diff(before, after)
     if not lines:
-        print("  every measured number is the same.")
+        # HOW MANY, because "the same" alone is the same sentence two documents
+        # with no field in common produce -- a revision published before a field
+        # existed against one published after compares nothing and reports
+        # nothing moved. The count is what tells those two apart.
+        #
+        # `part numbers`, not `numbers`: `moved_fields` walks `parts` only,
+        # while the lines above it also compare the assembly's own fields, the
+        # interference and clearance records and the check counts. Naming what
+        # the number counts is cheaper than a second walk to make it total, and
+        # the question it settles -- was there anything to compare at all -- is
+        # answered either way.
+        compared = moved_fields(before, after)["compared"]
+        print(f"  every measured number is the same "
+              f"({compared} part numbers compared).")
     for line in lines:
         print(f"  {line}")
 

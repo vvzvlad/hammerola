@@ -87,8 +87,14 @@ def driven(monkeypatch):
         ("export_printables", lambda cat, out_dir: (
             {"base": {"step": "base.step", "stl": "base.stl",
                       "3mf": "base.3mf"}}, {})),
-        ("run_checks", lambda model, out_dir: 0),
-        ("export_assembled", lambda prepared, out_dir: 1),
+        ("run_checks", lambda model, out_dir: (0, 0)),
+        # `(parts, bbox)`, in the shape the real one hands back: the count the
+        # preview needs, and the box that becomes `assembly.bbox_mm`. The box
+        # is None here for the reason the plate's stubs pass None -- what
+        # `collect_metrics` makes of it is that function's own test. It takes
+        # the CATALOGUE too, because the box is the product's own envelope and
+        # a leaf's kind is what keeps the scenery out of it.
+        ("export_assembled", lambda prepared, out_dir, cat: (1, None)),
         ("export_views", lambda prepared, out_dir: [
             {"id": view["id"], "name": view["id"], "file": f"{view['id']}.json",
              "parts": ["base"]} for view in prepared]),
@@ -101,7 +107,7 @@ def driven(monkeypatch):
                                        check=lambda entries, bare, root: None,
                                        report=lambda entries: {})),
         ("collect_metrics",
-         lambda project, parts, passed, provenance: {}),
+         lambda project, parts, passed, static, provenance, bbox, plate: {}),
         ("write_metrics", lambda out_dir, metrics: None),
         ("render_previews", render_previews),
     ):
@@ -129,7 +135,8 @@ def with_the_real_rule(driven, monkeypatch, isolated_project):
     monkeypatch.setattr(build_module, "provenance", real_provenance)
     written = SimpleNamespace(passed=None)
 
-    def collect_metrics(project, parts, checks_passed, provenance):
+    def collect_metrics(project, parts, checks_passed, checks_static, provenance,
+                        bbox, print_bbox):
         # What `report()` handed back, captured where `build` puts it. It is the
         # third of the three calls, and the only one whose result leaves the
         # function -- so it is what says the three ran in the right order.

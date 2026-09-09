@@ -17,6 +17,7 @@ from src.cadbuild import checklib, modelchecks
 from src.cadbuild.errors import BuildError
 from src.cadbuild.modelchecks import (
     SECTION_FLOOR,
+    CheckReport,
     call_model,
     checks_call_args,
     count_checks,
@@ -25,6 +26,7 @@ from src.cadbuild.modelchecks import (
     model_site,
     print_check_sections,
     run_checks,
+    static_asserts,
 )
 
 
@@ -269,9 +271,9 @@ def test_the_real_section_manager_counts_the_same(out_dir):
     """
     def checks():
         with checklib.section("the joint"):
-            assert 1 == 1, "one"
+            assert _helper() == [], "one"
 
-    assert run_checks(Model(checks), out_dir) == 1
+    assert run_checks(Model(checks), out_dir) == CheckReport(1, 0)
     assert list(checklib.recorded_sections()) == ["the joint"]
 
 
@@ -285,7 +287,7 @@ def test_a_function_with_no_readable_source_is_uncountable():
 # --------------------------------------------------------------------------
 
 def test_a_model_without_checks_is_fine(out_dir):
-    assert run_checks(Model(), out_dir) == 0
+    assert run_checks(Model(), out_dir) == CheckReport(0, 0)
 
 
 def test_checks_that_is_not_callable_is_refused(out_dir):
@@ -306,10 +308,10 @@ def test_an_empty_checks_fails_the_build(out_dir):
 
 def test_passing_checks_report_their_count(out_dir):
     def checks():
-        assert True, "one"
-        assert True, "two"
+        assert _helper() == [], "one"
+        assert not _helper(), "two"
 
-    assert run_checks(Model(checks), out_dir) == 2
+    assert run_checks(Model(checks), out_dir) == CheckReport(2, 0)
 
 
 def test_a_failed_assert_becomes_a_build_error_naming_the_line(out_dir):
@@ -340,14 +342,14 @@ def test_an_empty_returned_list_passes(out_dir):
             problems.append("never")
         return problems
 
-    assert run_checks(Model(checks), out_dir) == 1
+    assert run_checks(Model(checks), out_dir) == CheckReport(1, 0)
 
 
 def test_a_verdict_nobody_can_count_passes_with_an_unknown_count(out_dir):
     def checks():
         return [problem for problem in [] if problem]
 
-    assert run_checks(Model(checks), out_dir) is None
+    assert run_checks(Model(checks), out_dir) == CheckReport(None, 0)
 
 
 def test_sys_exit_inside_checks_is_turned_into_a_failure(out_dir):
@@ -609,6 +611,332 @@ def test_describe_returned_names_the_element_that_spoils_a_list():
     assert describe_returned(["a", 1]) == "a list containing int"
     assert describe_returned("text") == "str"
     assert describe_returned(["a"]) == "list"
+
+
+# --------------------------------------------------------------------------
+# Asserts the constants settle on their own
+# --------------------------------------------------------------------------
+# What the analysis finds is a printed NOTE and never a refusal, so the failure
+# that costs here is the false positive: `assert FIT_MIN < FIT_MAX` is a
+# deliberate guard on the parameter table and has the identical shape to the
+# tautology, and this file is shared by every project in the organisation. That
+# is why the first test below is the working check that must NOT be flagged.
+#
+# The constants are module-level because a checks() written here is an ordinary
+# nested function whose globals are this test module. In a real build the two
+# are one thing -- checks() is defined in model.py and `vars(model)` is exactly
+# what run_checks hands the analysis -- so the tests that RUN a checks() put
+# the same names in both places.
+
+FIT_MIN = 0.1
+FIT_MAX = 0.4
+GAP = 0.2
+LIP_CLEARANCE = 0.2
+WALL = 1.2
+SIZES = (10.0, 20.0)
+
+_CONSTANTS = {"FIT_MIN": FIT_MIN, "FIT_MAX": FIT_MAX, "GAP": GAP,
+              "LIP_CLEARANCE": LIP_CLEARANCE, "WALL": WALL, "SIZES": SIZES}
+
+
+def test_a_check_that_measures_is_not_static_for_naming_two_constants():
+    """FIRST, because a false red on a working model is what this costs.
+
+    `gap` is what the loop measured, so the constants on either side of it
+    settle nothing -- and the namespace here deliberately holds a `gap` of its
+    own, which is the module constant this would read if it did not know the
+    body binds the name first.
+    """
+    def checks():
+        for face, gap in _helper():
+            assert FIT_MIN <= gap <= FIT_MAX, f"{face}: {gap}"
+
+    assert static_asserts(checks, dict(_CONSTANTS, gap=0.25)) == []
+
+
+def test_both_asserts_the_constants_settle_are_found_with_their_own_lines():
+    """The line numbers are the ones in the file, so an author can open them."""
+    import inspect
+
+    def checks():
+        assert FIT_MIN < FIT_MAX
+        assert abs((LIP_CLEARANCE - GAP) - 0.0) < 1e-9
+
+    found = static_asserts(checks, _CONSTANTS)
+    start = inspect.getsourcelines(checks)[1]
+    assert found == [
+        (start + 1, "assert FIT_MIN < FIT_MAX"),
+        (start + 2, "assert abs((LIP_CLEARANCE - GAP) - 0.0) < 1e-9"),
+    ]
+
+
+def test_a_name_the_body_assigns_is_not_a_constant():
+    def checks():
+        WALL = len(_helper())
+        assert WALL < 1.2
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_a_name_the_body_adds_to_is_not_a_constant():
+    """`+=` binds the name as surely as `=` does.
+
+    These bodies are parsed and never run, which is what lets the augmented
+    assignment be the ONLY binding of the name here -- the form under test.
+    """
+    def checks():
+        WALL += len(_helper())
+        assert WALL < 1.2
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_a_loop_target_is_not_a_constant():
+    def checks():
+        for GAP in _helper():
+            assert GAP > 0.0
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_a_with_target_is_not_a_constant():
+    def checks():
+        with _timer("the joint") as WALL:
+            assert WALL == 1.2
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_a_walrus_target_is_not_a_constant():
+    def checks():
+        if (GAP := len(_helper())) >= 0:
+            assert GAP < 0.4
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_a_nested_function_name_is_not_a_constant():
+    """A bare `assert WALL` on a name the module holds 1.2 under is decided.
+
+    On a name the body defines a function under it is not, and the two are the
+    same three characters of source.
+    """
+    def checks():
+        def WALL():
+            return _helper()
+
+        assert WALL
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+# ONE CASE PER BINDING FORM `local_names` CLAIMS, and they are all the same
+# test: a name the body binds is not the module constant of the same spelling.
+# They pin the ONE direction that must never be wrong -- missing a tautology
+# costs an unprinted note, calling a working check a tautology prints a false
+# accusation and quietly lowers the number beside it. Every body below is parsed
+# and never run, which is what lets each hold exactly the one form under test.
+
+def test_a_match_capture_is_not_a_constant():
+    """All three binders a pattern can carry, because all three had to be added.
+
+    `case (WALL,)` is a MatchAs, `*GAP` a MatchStar, `**SIZES` a MatchMapping
+    rest -- three node types, none of them an Assign, and every one of them a
+    name this module holds a number under. Before they were listed, `case (WALL,
+    other):` bound nothing as far as the analysis could see and the assert below
+    was read against the module's 1.2.
+    """
+    def checks():
+        match _helper():
+            case (WALL,):
+                assert WALL > 1.0
+            case [_, *GAP]:
+                assert GAP > 0.1
+            case {"face": _, **SIZES}:
+                assert len(SIZES) == 2
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_a_comprehension_target_is_not_a_constant():
+    def checks():
+        measured = [face for WALL, face in _helper()]
+        assert WALL < 2.0, measured
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_a_parameter_of_checks_itself_is_not_a_constant():
+    """The build directory arrives this way, and so does any name beside it."""
+    def checks(WALL):
+        assert WALL > 1.0
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_a_name_declared_global_is_not_a_constant():
+    """`global` alone, with no assignment under it -- the form on its own.
+
+    What the module holds under the name at import time says nothing about what
+    a body that declares it global put there.
+    """
+    def checks():
+        global WALL
+        assert WALL > 1.0
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_an_except_alias_is_not_a_constant():
+    def checks():
+        try:
+            _helper()
+        except ValueError as WALL:
+            assert WALL
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_an_import_alias_is_not_a_constant():
+    def checks():
+        import contextlib as WALL
+        from math import pi as GAP
+
+        assert WALL
+        assert GAP > 0.1
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_a_nested_class_name_is_not_a_constant():
+    """The same three characters of source as `assert WALL` on the constant."""
+    def checks():
+        class WALL:
+            pass
+
+        assert WALL
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_a_name_holding_something_other_than_a_number_settles_nothing():
+    """A module's namespace holds its functions and its solids too.
+
+    Neither has a value this can reason about, and treating one as a constant
+    would be the analysis inventing a fact rather than finding one.
+    """
+    def checks():
+        assert measure
+        assert TABLE == {}
+
+    assert static_asserts(checks, {"measure": _helper, "TABLE": {}}) == []
+
+
+def test_the_permitted_builtins_are_worked_out_and_nothing_else_is():
+    """abs/min/max are pure, total and cheap; a call to anything else is not."""
+    def checks():
+        assert abs(GAP - LIP_CLEARANCE) < 1e-9
+        assert min(FIT_MIN, FIT_MAX) == FIT_MIN
+        assert max(SIZES) == 20.0
+        assert open("model.py")
+
+    found = [text for _, text in static_asserts(checks, _CONSTANTS)]
+    assert len(found) == 3
+    assert not any("open(" in text for text in found)
+
+
+def test_a_huge_exponent_is_neither_worked_out_nor_called_static():
+    """`2 ** 10 ** 10` is a legal expression and a build hung on an analysis.
+
+    The number is never built: the exponent is over MAX_STATIC_POW, so the
+    expression is undecidable and the assert is left alone. That this test
+    finishes at all -- rather than in an hour, or in the OOM killer -- is half
+    of what it asserts.
+    """
+    def checks():
+        assert 2 ** 10 ** 10 > 0
+
+    assert static_asserts(checks, _CONSTANTS) == []
+
+
+def test_a_checks_with_no_readable_source_yields_nothing_and_does_not_raise():
+    """This runs on a build whose checks have all passed already.
+
+    Nothing about a printed note is worth failing that build over, so a source
+    that cannot be read is silence rather than an exception.
+    """
+    compiled = eval(compile("lambda: None", "<string>", "eval"))
+    assert static_asserts(compiled, _CONSTANTS) == []
+    assert static_asserts(len, _CONSTANTS) == []
+
+
+def test_an_assert_too_deep_to_analyse_does_not_take_the_build_down_with_it(
+        tmp_path):
+    """The same promise, on the path that used to break it.
+
+    `static_value` recurses by expression DEPTH, so a long enough chain of terms
+    raises RecursionError -- which is not one of the three the reading used to
+    catch, and which escaped into `run_checks` AFTER every check of the model
+    had already passed. A green build then crashed over a printed note.
+
+    IT NEEDS A REAL FILE ON DISK: `inspect.getsourcelines` is the first thing
+    `static_asserts` does, and a function compiled from a string fails there
+    instead -- which is the test above, and would pass here whatever the
+    analysis did afterwards. What is asserted is that the call RETURNS rather
+    than what it returns, because whether this particular body reaches the limit
+    is a property of the interpreter's recursion limit and not of this file: a
+    python that works it out reports one static assert, entirely correctly.
+    """
+    import inspect
+
+    module = tmp_path / "deep_model.py"
+    source = "def checks():\n    assert 1 " + "+ 1 " * 2000 + "> 0\n"
+    module.write_text(source, encoding="utf-8")
+    namespace = {}
+    exec(compile(source, str(module), "exec"), namespace)
+    # The source really is readable, so the answer below comes from the
+    # analysis and not from the reading giving up before it starts.
+    assert inspect.getsourcelines(namespace["checks"])[0][0].startswith("def ")
+
+    assert isinstance(static_asserts(namespace["checks"], namespace), list)
+
+
+def test_run_checks_warns_about_a_constant_assert_and_takes_it_off_the_count(
+        out_dir, capsys):
+    def checks():
+        assert FIT_MIN < FIT_MAX
+        assert _helper() == [], "the one that reads the shape"
+
+    model = Model(checks)
+    vars(model).update(_CONSTANTS)
+    assert run_checks(model, out_dir) == CheckReport(1, 1)
+    out = capsys.readouterr().out
+    # "1 more", not "1 of them": the static assert is NOT one of the 1 that
+    # passed -- it was subtracted out of that number a line earlier.
+    assert "checks: 1 passed (1 more decided by the constants alone)" in out
+    assert "`assert FIT_MIN < FIT_MAX` is decided by the constants" in out
+
+
+def test_a_checks_made_only_of_constant_asserts_still_builds(out_dir, capsys):
+    """`passed` goes to None -- "count unknown" -- and NEVER to 0.
+
+    DO NOT "FIX" THIS INTO A REFUSAL. 0 is what the refusal above is written
+    against ("checks() is defined but contains no check"), and this is
+    deliberately not one: `assert FIT_MIN < FIT_MAX` is a guard on the
+    parameter table with the identical shape, this file is shared by every
+    project in the organisation, and a false red on somebody's working model
+    costs far more than an unprinted number. The build goes through and the log
+    says what it noticed.
+    """
+    def checks():
+        assert FIT_MIN < FIT_MAX
+        assert FIT_MAX < WALL
+
+    model = Model(checks)
+    vars(model).update(_CONSTANTS)
+    assert run_checks(model, out_dir) == CheckReport(None, 2)
+    assert ("checks: passed (count unknown, 2 decided by the constants alone)"
+            in capsys.readouterr().out)
 
 
 def _helper():

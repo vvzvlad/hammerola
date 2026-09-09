@@ -60,6 +60,72 @@ def test_the_client_and_the_build_compare_with_the_same_function():
     assert revdiff.metrics_diff is metrics.metrics_diff
 
 
+def test_the_asserts_the_constants_settled_get_a_line_of_their_own():
+    """The one line here that is about the comparison, and it earns the place.
+
+    The build subtracts the asserts its own constants settle from the count it
+    reports, so the first build after that change prints a SMALLER `checks
+    passed` with nothing lost. Alone, `checks passed: 5 -> 3` is a project that
+    dropped two checks; with the second line it is a project whose two checks
+    turned out to prove nothing. A baseline from before the change has no
+    `checks_static` at all, and `None -> 2` is the truthful rendering of that --
+    the number did not exist then.
+    """
+    lines = metricsdiff.metrics_diff({"checks_passed": 5},
+                                     {"checks_passed": 3, "checks_static": 2})
+    assert lines == ["checks passed: 5 -> 3",
+                     "checks decided by constants: None -> 2"]
+
+
+def _part(**fields):
+    """One part's measurements, in the shape the build writes them."""
+    return dict({"volume_mm3": 1000.0, "bbox_mm": [10.0, 10.0, 10.0],
+                 "first_layer_mm2": 100.0, "overhang_mm2": 0.0,
+                 "faces": 6, "triangles": 12, "watertight": True}, **fields)
+
+
+def test_nothing_physical_moved_is_an_empty_answer_and_a_count():
+    """The half a script acts on, and the half that makes it readable.
+
+    An empty `moved` says nothing changed only if something was looked at, so
+    `compared` rides beside it: two documents with no field in common — a
+    revision published before a field existed against one published after —
+    compare nothing and move nothing.
+    """
+    before = {"parts": {"body": _part(faces=6)}}
+    after = {"parts": {"body": _part(faces=9)}}
+    answer = metricsdiff.moved_fields(before, after,
+                                      metricsdiff.PHYSICAL_FIELDS)
+    # The face count moved and it is not a PHYSICAL field: a fillet drawn out
+    # of two surfaces instead of one is the same object.
+    assert answer == {"moved": [], "compared": 4}
+
+
+def test_a_moved_number_is_named_by_part_and_by_field():
+    before = {"parts": {"body": _part(), "lid": _part()}}
+    after = {"parts": {"body": _part(first_layer_mm2=40.0), "lid": _part()}}
+    answer = metricsdiff.moved_fields(before, after,
+                                      metricsdiff.PHYSICAL_FIELDS)
+    assert answer["moved"] == [{"part": "body", "field": "first_layer_mm2",
+                                "old": 100.0, "new": 40.0}]
+    assert answer["compared"] == 8
+
+
+def test_two_documents_with_no_field_in_common_compare_nothing():
+    """The case `compared` exists for, and the only one where it reads zero.
+
+    The test above has the same empty `moved` with four numbers behind it. Here
+    a revision published before these fields existed meets one published after,
+    so the walk finds no pair to compare at all — same list, different answer,
+    and `compared` is what tells a script which of the two it is holding.
+    """
+    before = {"parts": {"body": {"faces": 6}}}
+    after = {"parts": {"body": {"volume_mm3": 1000.0}}}
+    answer = metricsdiff.moved_fields(before, after,
+                                      metricsdiff.PHYSICAL_FIELDS)
+    assert answer == {"moved": [], "compared": 0}
+
+
 def test_the_shared_module_imports_nothing_but_the_standard_library():
     """What makes it importable by the client at all.
 

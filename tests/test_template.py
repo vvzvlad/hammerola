@@ -1333,12 +1333,19 @@ def test_the_skill_quotes_the_number_of_checks_this_template_reports():
     and the document is what the hub serves to every agent that installs the
     skill, so a stale one teaches a run that never happens.
 
-    Counted with `modelchecks.count_checks`, which is the function the build
-    prints that line with rather than a second implementation of it, applied to
-    the template's real `checks`. model.py is never IMPORTED because importing
-    it needs the CAD kernel, which the test container has not got: the pin would
-    then carry an `importorskip` and skip in exactly the place it has to run --
-    every push, in the containers the build test below already skips in.
+    Counted with `modelchecks.count_checks`, applied to the template's real
+    `checks`. That is the counter the build STARTS from and no longer the whole
+    of what it prints: the build reports `count_checks(...) -
+    len(static_asserts(...))`, taking off every assert the module's own
+    constants settle on their own. The two numbers agree here because the
+    template carries no such assert, and what holds THAT is
+    `test_the_template_builds_the_way_the_hub_builds_it` below -- it fails the
+    template's build on any `warning:` line, and each static assert prints one.
+    `static_asserts` cannot be called from this test at all: it needs the
+    imported module's `vars()`, and model.py is never IMPORTED because importing
+    it needs the CAD kernel, which the test container has not got -- the pin
+    would then carry an `importorskip` and skip in exactly the place it has to
+    run, every push, in the containers the build test below already skips in.
     """
     source = (TEMPLATE_DIR / "model.py").read_text(encoding="utf-8")
     tree = ast.parse(source)

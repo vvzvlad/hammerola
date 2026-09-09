@@ -28,7 +28,8 @@ import trimesh
 from fakes import catalogue
 from src.cadbuild.checklib import minimum_feature
 from src.cadbuild.errors import BuildError
-from src.cadbuild.printables import export_printables, first_layer_area
+from src.cadbuild.printables import (export_printables, first_layer_area,
+                                     overhang_area)
 
 
 # The eight corners of the unit cube and the twelve triangles over them, wound
@@ -108,6 +109,121 @@ def test_a_slab_tilted_by_one_degree_is_refused_and_that_is_correct():
     edge, and a slicer will either bridge it or drop supports under it.
     """
     assert first_layer_area(_tilted(_box(20.0, 10.0, 2.0), 1.0)) == 0.0
+
+
+def test_a_box_on_the_bed_has_no_overhang_at_all():
+    """Its only downward face IS the first layer, and the plate holds that up.
+
+    This is the whole reason the band is subtracted: without it every part ever
+    published would report its own contact patch as overhang, and the number
+    would say nothing about anything.
+    """
+    assert overhang_area(_box(20.0, 10.0, 4.0)) == 0.0
+
+
+def test_a_lonely_box_brings_its_own_bed_and_a_ledge_is_what_counts():
+    """Lifting a box off z=0 changes NOTHING, and that is the point of the pair.
+
+    The bed is the part's own lowest point, so a box floating at z=50 has its
+    underside in the first-layer band exactly as it did on the plate: it reports
+    zero, and a metric that answered otherwise would be measuring where the
+    author happened to place the part. What a ledge has and a lonely box does
+    not is something ELSE below it -- so the second half stacks two boxes, and
+    the upper one's overhanging underside is off the band and counts.
+
+    A METRIC AND NOT A CHECK: nothing here refuses this part, and nothing here
+    asks whether there IS support under it. `checklib.unsupported_area` is the
+    check, and the author chooses its budget.
+    """
+    lifted = _box(20.0, 10.0, 4.0)
+    lifted.apply_translation((0.0, 0.0, 50.0))
+    # Two triangles of 100 mm2 each: the whole underside, since `first_layer_area`
+    # reads the bed as the part's OWN lowest point and this face is it.
+    assert first_layer_area(lifted) == pytest.approx(200.0)
+    assert overhang_area(lifted) == 0.0
+
+    # And with a floor under it -- one box on top of another, as a part with a
+    # ledge is -- the ledge's underside is off the bed and counts.
+    stacked = trimesh.util.concatenate(_box(40.0, 10.0, 2.0),
+                                       _box(20.0, 10.0, 4.0, z0=2.0))
+    assert overhang_area(stacked) == pytest.approx(200.0)
+
+
+def test_a_wall_is_not_an_overhang():
+    """45 degrees is the line, and a vertical face is nowhere near it: a box's
+    four sides point sideways, so a part made of nothing but walls and a bed
+    face measures zero."""
+    assert overhang_area(_box(20.0, 10.0, 40.0)) == 0.0
+
+
+def test_the_angle_a_slicer_stops_bridging_at_is_where_this_starts_counting():
+    """45 degrees is a decision, so it is asserted rather than described.
+
+    A box turned about X presents two candidate faces and the tilt picks which
+    of them is an overhang: the underside leans `degrees` off horizontal, and
+    the flank that turned downwards leans `90 - degrees`. Either line on its own
+    would hold across a wide range of thresholds; the two together pin it
+    between 44 and 46 degrees, which is as close as whole-degree tilts come.
+    """
+    underside, flank = 200.0, 80.0
+    box = _box(20.0, 10.0, 4.0)
+    assert overhang_area(_tilted(box, 44.0)) == pytest.approx(underside)
+    assert overhang_area(_tilted(box, 46.0)) == pytest.approx(flank)
+
+
+def test_a_degenerate_triangle_from_the_tessellator_changes_nothing():
+    """A triangle with no area at all is what OCC emits at the poles of a
+    spherical face, so a real mesh arrives carrying them.
+
+    IT WOULD PASS WITH THE AREA FILTER REMOVED, and that is worth saying rather
+    than leaving for somebody to discover: a mesh ASSEMBLED IN MEMORY gets its
+    normals computed, and a degenerate triangle's comes out zero, which fails
+    the steepness test on its own. That is not the shape the gate sees -- a mesh
+    LOADED FROM AN STL carries the normals OCC wrote, degenerate facets
+    included, so there the same triangle arrives pointing steeply down. Both
+    routes end at the same number, which is what this pins; the class below is
+    what plants the loaded shape, since trimesh will not build it.
+    """
+    stacked = trimesh.util.concatenate(_box(40.0, 10.0, 2.0),
+                                       _box(20.0, 10.0, 4.0, z0=2.0))
+    pole = trimesh.Trimesh(
+        vertices=np.array([(0.0, 0.0, 6.0)] * 3, dtype=float),
+        faces=np.array([[0, 1, 2]], dtype=np.int64), process=False)
+    planted = trimesh.util.concatenate(stacked, pole)
+    assert overhang_area(planted) == pytest.approx(overhang_area(stacked))
+
+
+class _Mesh:
+    """The four things `overhang_area` reads off a mesh, and nothing else.
+
+    Written by hand because trimesh's own constructor will not produce the
+    pairing: it COMPUTES the normals it is not given, so a face with no area
+    gets a zero normal and drops out of the steepness test. The gate's mesh
+    comes off an STL instead, where the normals are read from the file and are
+    whatever OCC wrote — a face can therefore point steeply down and carry an
+    area that is not a number, which is the one shape that reaches the sum,
+    since a `nan` fails every comparison and no test on the NORMAL excludes it.
+    """
+
+    def __init__(self, mesh, normal, area):
+        self.bounds = mesh.bounds
+        # OFF THE BED, deliberately: a planted face inside the first-layer band
+        # is excluded by the band and this would pass with the filter gone.
+        planted = mesh.triangles[0] + (0.0, 0.0, 5.0)
+        self.triangles = np.vstack([mesh.triangles, [planted]])
+        self.face_normals = np.vstack([mesh.face_normals, [normal]])
+        self.area_faces = np.append(mesh.area_faces, area)
+
+
+def test_a_face_with_no_area_cannot_poison_the_sum():
+    """A `nan` in this number reaches metrics.json as a bare `NaN`, which is not
+    JSON: every reader of the file then fails to parse it — the next build's
+    diff, `hammerola diff`, and the client that fetched it."""
+    stacked = trimesh.util.concatenate(_box(40.0, 10.0, 2.0),
+                                       _box(20.0, 10.0, 4.0, z0=2.0))
+    planted = _Mesh(stacked, normal=(0.0, 0.0, -1.0), area=math.nan)
+    assert not math.isnan(overhang_area(planted))
+    assert overhang_area(planted) == pytest.approx(overhang_area(stacked))
 
 
 def test_the_thinnest_dimension_this_nozzle_can_print():
