@@ -518,14 +518,14 @@ jobs:
       # which is where the artefact most needs looking at.
       #
       # 14 minutes is set against ci/smoke.py's OWN worst case, which the script documents and
-      # sums from its individual per-call bounds: 735 s — a little over 12 minutes — if every
+      # sums from its individual per-call bounds: 795 s — a little over 13 minutes — if every
       # docker call it makes runs out its budget. In practice the whole gate is a few seconds.
       # Being killed BY this timeout is what the margin is for: the script's own container
       # cleanup would not run, and the `if: always()` step below is what catches that. It was
       # 12 minutes against a 615 s sum until the CAD-kernel probe was added, which brought its
       # own 90 s bound — `import cadquery` maps ~222 MB of OpenCASCADE off a cold overlay the
-      # first time; check (g)'s required-path sweep then added another 30 s exec. That leaves
-      # 105 s of margin. Raise this number whenever that sum grows past it, in BOTH workflows.
+      # first time; checks (g), (h) and (i) then added a 30 s exec each. That leaves 45 s of
+      # margin. Raise this number whenever that sum grows past it, in BOTH workflows.
       #
       # SMOKE_IMAGE and SMOKE_NAME both come from the job-level `env:` above, so this step
       # needs no `env:` block of its own.

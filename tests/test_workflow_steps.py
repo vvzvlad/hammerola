@@ -147,3 +147,63 @@ def test_the_whitelist_here_matches_the_one_in_agents_md():
     assert "Exactly six `run:` bodies are BYTE-IDENTICAL" in agents, (
         "AGENTS.md no longer states the whitelist's size, or states a different "
         f"one — this file checks {len(IDENTICAL)} bodies")
+
+
+# The gate's worst case, written down in THREE places: `ci/smoke.py` sums it from
+# its own per-call budgets, and each workflow repeats the total in the comment
+# that justifies the step's `timeout-minutes`.
+SMOKE = WORKFLOWS.parents[1] / "ci" / "smoke.py"
+SMOKE_SUM = re.compile(r"^#\s*=\s*(\d+) s,", re.M)
+WORKFLOW_SUM = re.compile(r"sums from its individual per-call bounds: (\d+) s")
+STEP_TIMEOUT = re.compile(r"timeout-minutes:\s*(\d+)")
+
+
+def test_the_gates_worst_case_is_the_same_number_in_all_three_places():
+    """One number, three files, and it has already drifted once in silence.
+
+    Before check (i) was added, `ci/smoke.py` declared 765 s while both workflows
+    declared 735 — each file consistent with ITSELF (840 − 75, 840 − 105) and
+    with neither the other nor the truth. Nothing said so, because the rule was
+    a sentence: "Raise this number whenever that sum grows past it, in BOTH
+    workflows". AGENTS.md is explicit that a sentence like that is the
+    specification for a test, and this is it.
+
+    WHAT THE DRIFT COSTS is not a wrong comment. The step's `timeout-minutes` is
+    sized off this sum, and a gate killed by its own timeout never reaches the
+    `finally` that removes the containers it started — so the next run on that
+    runner meets a name that is already taken. The margin is 45 s now, the
+    narrowest it has been, which is exactly when the number stops tolerating a
+    silent copy.
+
+    The sum cannot be DERIVED from the constants: it is a sequence of calls, not
+    a set of them, and only the script knows which ones it makes. Agreement
+    between the three writings is all that is available, and it is enough to
+    catch what actually went wrong.
+    """
+    declared = SMOKE_SUM.search(SMOKE.read_text(encoding="utf-8"))
+    assert declared, (
+        "ci/smoke.py no longer sums its worst case as a `#  = N s,` line — the "
+        "arithmetic above IDLE_COMMAND is what this reads")
+    worst = int(declared.group(1))
+
+    for path in (PR, PUBLISH):
+        text = path.read_text(encoding="utf-8")
+        stated = WORKFLOW_SUM.search(text)
+        assert stated, (
+            f"{path.name} no longer repeats the gate's worst case in the "
+            f"comment above its `timeout-minutes`")
+        assert int(stated.group(1)) == worst, (
+            f"{path.name} says the gate's worst case is {stated.group(1)} s and "
+            f"ci/smoke.py sums it to {worst} s. One of the two was edited "
+            f"alone; the sum in ci/smoke.py is the one derived from real "
+            f"budgets, so fix the workflow to match it")
+
+        # The step's own ceiling is the next `timeout-minutes` after that
+        # comment, which is the one the comment is about.
+        budget = STEP_TIMEOUT.search(text, stated.end())
+        assert budget, f"{path.name} has no `timeout-minutes` after that comment"
+        allowed = int(budget.group(1)) * 60
+        assert worst < allowed, (
+            f"{path.name} allows the gate {allowed} s and its own worst case is "
+            f"{worst} s: a slow but healthy run is killed mid-gate, and the "
+            f"`finally` that removes its containers never runs")
