@@ -35,9 +35,18 @@ export function createOverlay(vp) {
   const pins = new Map();
   let frame = 0;
 
-  /** Place one absolutely-positioned child at a world point, or hide it. */
-  const place = (el, point) => {
-    const g = internals(vp.viewer);
+  /** Place one absolutely-positioned child at a world point, or hide it.
+   *
+   * THE TWO RECTS ARE PASSED IN rather than measured here, and that is the
+   * whole difference between this and a synchronous reflow per pin: `draw()`
+   * calls this in a loop and every iteration WRITES styles, so a
+   * `getBoundingClientRect()` at the top of the next one forces the browser to
+   * flush the layout the previous one invalidated — inside a rAF loop that runs
+   * right through a pinch. Neither rect can change between two iterations of
+   * one frame anyway: they are the canvas and the container, and this writes to
+   * neither.
+   */
+  const place = (el, point, g, rect, box) => {
     if (!g || !finite3(point)) {
       el.style.display = "none";
       return;
@@ -50,8 +59,6 @@ export function createOverlay(vp) {
       el.style.display = "none";
       return;
     }
-    const rect = g.canvas.getBoundingClientRect();
-    const box = vp.box.getBoundingClientRect();
     el.style.display = "";
     el.style.left = `${(ndc[0] * 0.5 + 0.5) * rect.width + (rect.left - box.left)}px`;
     el.style.top = `${(-ndc[1] * 0.5 + 0.5) * rect.height + (rect.top - box.top)}px`;
@@ -59,10 +66,16 @@ export function createOverlay(vp) {
 
   const draw = () => {
     frame = 0;
-    for (const [, entry] of pins) place(entry.el, entry.point);
+    // READ EVERYTHING FIRST, THEN WRITE — one measurement per frame instead of
+    // one per pin. Nothing is read when the library is not there: `place` hides
+    // its element without looking at a rect, so the rects are not taken either.
+    const g = internals(vp.viewer);
+    const rect = g ? g.canvas.getBoundingClientRect() : null;
+    const box = g ? vp.box.getBoundingClientRect() : null;
+    for (const [, entry] of pins) place(entry.el, entry.point, g, rect, box);
     if (vp.measureLabel) {
       label.textContent = vp.measureLabel.text;
-      place(label, vp.measureLabel.point);
+      place(label, vp.measureLabel.point, g, rect, box);
     } else {
       label.style.display = "none";
     }

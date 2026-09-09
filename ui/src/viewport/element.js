@@ -27,6 +27,7 @@ import { installHoldKey } from "./holdkey.js";
 import { installIdleClock, captureLive, restoreLive, cameraState, isBusy, snapshot }
   from "./live.js";
 import { installOrbit } from "./orbit.js";
+import { installPinchGuard } from "./pinch.js";
 import { installTools } from "./tools.js";
 import { installWheel, initialPointingDevice, setPointingDevice } from "./wheel.js";
 import { createOverlay } from "./overlay.js";
@@ -163,6 +164,16 @@ export class HmrViewport extends HTMLElement {
     this.teardown = [
       installWheel(this),
       installOrbit(this),
+      // ITS RELEASE HAS TO RUN BEFORE THE TOOL'S, and what secures that is WHEN
+      // the listener is added rather than where this line sits in the array.
+      // The guard puts its capture-phase `pointerup` on the window HERE, at
+      // install; `tools.js` (`watch`) and `orbit.js` add theirs inside their own
+      // `pointerdown`, i.e. never earlier than the first press. Listeners on one
+      // node in one phase run in the order they were added, so the guard's is
+      // always the older registration — and its release is what flushes a
+      // deferred `update`, which re-marks the id-picker before the tool's
+      // release pick reads that buffer.
+      installPinchGuard(this),
       installIdleClock(this),
       installTools(this),
     ];
