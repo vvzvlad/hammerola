@@ -34,6 +34,11 @@ the file with the hub's copy. Nothing checks it for you: a stale skill is the
 one thing here that fails silently — it goes on confidently teaching commands
 that no longer exist — so ask when you start on a project.
 
+**`hammerola update` does the same for the tool itself**, fetching the hub's
+copy over the running file and printing what changed between the two versions.
+That one you will be told about rather than having to ask: `build` and `commit`
+check, and a client older than the hub is refused before it packs anything.
+
 `login` asks for the hub's password at the terminal and stores it 0600 in
 `~/.config/hammerola/env`. **Ask the owner of the instance for that password.**
 It is one shared secret for the whole system, not a per-person key: whoever has
