@@ -189,6 +189,15 @@ def build_parser() -> argparse.ArgumentParser:
                          help="the older revision, or `latest`")
     changes.add_argument("new", metavar="REVISION",
                          help="the newer revision, or `latest`")
+    # The whole output, or none of it: a document a script reads cannot have a
+    # source diff printed around it. The exit code is the same either way —
+    # `diff` returns 0 whether or not anything moved, and something reading the
+    # JSON is reading it to find that out.
+    changes.add_argument(
+        "--json", action="store_true",
+        help="print only what moved in each PART's physical numbers — volume, "
+             "bounding box, first layer, overhang — as one JSON document. The "
+             "assembly's own numbers are not in it")
 
     logs = commands.add_parser(
         "log", help="print a build log again")

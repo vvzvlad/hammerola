@@ -24,13 +24,13 @@ import pytest
 from src.cadbuild import assembly, printables
 from src.cadbuild.artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID,
                                     PREVIEW_SUFFIX, PRINT_VIEW_ID)
-from src.cadbuild.assembly import (assembled_shape, export_print_plate,
-                                   print_plate_shape)
+from src.cadbuild.assembly import (assembled_shape, export_assembled,
+                                   export_print_plate, print_plate_shape)
 from src.cadbuild.errors import BuildError
 from src.cadbuild.parts import RESERVED_STEMS
 from src.cadbuild.printables import overview_meshes, preview_files
 
-from fakes import Box, Shape, Workplane, node, part, view
+from fakes import Box, Shape, Workplane, catalogue, node, part, view
 
 
 class Recording(Shape):
@@ -207,9 +207,11 @@ def test_the_plate_is_measured_before_it_is_meshed(exported, out_dir):
     filleted, which is the same trap `drop_mesh` exists for. Move the
     measurement below the export and every other fact here still holds: the
     file is written, the count is right, the meshes are dropped, and the only
-    thing that changed is a number nothing reads YET (issue #58). So the order
-    is what this asserts, and it is asserted here because the only other caller
-    of this function skips wherever the kernel is missing.
+    thing that changed is a number — the one metrics.json publishes as
+    `assembly.print_bbox_mm` and `hammerola diff` prints as the plate's size
+    (issue #58). So the order is what this asserts, and it is asserted here
+    because the only other caller of this function skips wherever the kernel is
+    missing.
     """
     calls, _ = exported
     shape = Recording(calls, box=Box(0, 0, 0, 3, 4, 5))
@@ -254,6 +256,85 @@ def test_every_object_on_the_plate_has_its_mesh_dropped(exported, out_dir):
     # Bodies, not objects: the picture's footer would otherwise claim a
     # two-solid plate is watertight.
     assert bodies == 3
+
+
+def test_the_assembly_is_measured_before_it_is_meshed(exported, out_dir):
+    """The same order as the plate's, on the other export, and for the same
+    reason it is worth a test of its own.
+
+    `assembly.bbox_mm` is how big the product is, and exportStl meshes the
+    shape in place — so a `BoundingBox()` moved below the export answers the box
+    of the MESH, bigger by tenths of a millimetre on anything filleted. Nothing
+    else here would notice: the file is still written, the count is still right,
+    and the number is still plausible. It would read as the product having
+    changed size on the very first build after the line moved.
+    """
+    calls, _ = exported
+    shape = Recording(calls, box=Box(0, 0, 0, 30, 40, 50))
+    prepared = [view(ASSEMBLED_VIEW_ID, [node("body", Workplane(shape))])]
+
+    parts, bbox = export_assembled(prepared, out_dir,
+                                   catalogue(body="printable"))
+
+    assert calls == ["bbox", "stl"]
+    # Measured off the assembly itself, not off some other shape in the view.
+    assert (bbox.xlen, bbox.ylen, bbox.zlen) == (30, 40, 50)
+    assert parts == 1
+    assert [path.name for path in out_dir.iterdir()] == [f"{ASSEMBLED_STEM}.stl"]
+
+
+def test_the_scenery_is_in_the_file_and_out_of_the_measurement(exported, out_dir):
+    """A mock is drawn and not measured, and the two halves are the whole fix.
+
+    `assembly.bbox_mm` exists to catch a part MOVED inside the assembly -- the
+    one physical change no per-part number registers -- and a mock overlaps the
+    product by construction, so a box that took the wall in would report the
+    WALL: widening it prints "the product changed size" while the bracket
+    sliding across it prints nothing at all. The mesh is the other half: the
+    wall still goes into `assembled.stl`, which is a picture and wants its
+    scenery.
+    """
+    calls, _ = exported
+    product = Recording(calls, box=Box(0, 0, 0, 30, 40, 50))
+    wall = Recording(calls, box=Box(-100, -100, -100, 200, 200, 200))
+    prepared = [view(ASSEMBLED_VIEW_ID, [node("body", Workplane(product)),
+                                         node("wall", Workplane(wall))])]
+
+    parts, bbox = export_assembled(prepared, out_dir,
+                                   catalogue(body="printable", wall="mock"))
+
+    assert (bbox.xlen, bbox.ylen, bbox.zlen) == (30, 40, 50)
+    # Both bodies went into the file, and the count is what the picture's footer
+    # is told.
+    assert parts == 2
+    assert [path.name for path in out_dir.iterdir()] == [f"{ASSEMBLED_STEM}.stl"]
+
+
+def test_a_view_of_nothing_but_scenery_has_no_product_to_measure(exported,
+                                                                 out_dir):
+    """`None`, and not a box: there is no product in this view to be the size of.
+
+    Zeroes would be this build saying it made something of no size, and the
+    scenery's own box would be the very number the mocks are kept out of. The
+    file is still written -- the picture is the scenery -- so this is an absent
+    measurement rather than a failed export.
+
+    NO PUBLISHED BUILD LOOKS LIKE THIS, and the test says so on purpose: this
+    view is assembled by hand, past `read_catalogue` (which refuses a catalogue
+    of nothing but hardware and scenery) and past `check_assembled_coverage`
+    (which refuses a model whose assembled view does not show every printable).
+    What is pinned is the defensive half of those two, so that the answer stays
+    an absence and never becomes three zeroes.
+    """
+    calls, _ = exported
+    wall = Recording(calls, box=Box(0, 0, 0, 200, 200, 200))
+    prepared = [view(ASSEMBLED_VIEW_ID, [node("wall", Workplane(wall))])]
+
+    parts, bbox = export_assembled(prepared, out_dir, catalogue(wall="mock"))
+
+    assert bbox is None
+    assert parts == 1
+    assert [path.name for path in out_dir.iterdir()] == [f"{ASSEMBLED_STEM}.stl"]
 
 
 def test_a_plate_whose_export_wrote_no_file_is_a_build_error(exported, out_dir):

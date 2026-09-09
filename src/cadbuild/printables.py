@@ -8,6 +8,8 @@ entry of one was which entry of the other. There is one catalogue now
 (parts.py) and this reads the entries of it whose kind says they go on a bed.
 """
 
+import math
+
 from .artifacts import (ASSEMBLED_STEM, PREVIEW_SUFFIX, PRINT_VIEW_ID,
                         STL_ANGULAR_TOLERANCE, STL_TOLERANCE)
 from .checklib import minimum_feature
@@ -129,6 +131,42 @@ def first_layer_area(mesh):
     lowest = float(mesh.bounds[0][2])
     on_bed = mesh.triangles[:, :, 2].max(axis=1) - lowest <= STL_TOLERANCE
     return float(mesh.area_faces[on_bed & (mesh.face_normals[:, 2] < 0)].sum())
+
+
+def overhang_area(mesh):
+    """Steeply downward surface off the bed, in square millimetres.
+
+    A METRIC AND NOT A CHECK, which is the whole difference between this and
+    `checklib.unsupported_area`: that one asks whether anything is under each
+    triangle, against a budget the author chose; this one asks nothing and
+    refuses nothing. It is the number that says "the last edit turned 12 mm2 of
+    overhang into 90", measured off the mesh the gate already loaded.
+
+    A triangle counts when it points more than 45 degrees below horizontal --
+    the angle a slicer stops bridging at -- and is not in the first-layer band,
+    which is the same `on_bed` reading `first_layer_area` makes: the plate holds
+    those triangles up, so they are contact rather than overhang.
+
+    ZERO-AREA TRIANGLES ARE DROPPED FIRST, and being exact about what that buys
+    matters, because the obvious reading is wrong in both directions. The
+    tessellator does emit degenerate triangles at the poles of a spherical face,
+    and they DO arrive here looking like overhang: normals come out of the STL
+    FILE rather than off the geometry -- trimesh's binary loader passes the
+    written array straight through, spot-checking only the first twenty facets --
+    so a collapsed facet keeps whatever normal OCC wrote beside it, which is
+    routinely a steep one. Measured on the pinned version; a mesh assembled in
+    memory answers with a ZERO normal instead, which is why the test that plants
+    this pair has to build it by hand. What they do NOT do is move the number: a
+    triangle with no area contributes none of it either way. The filter is here
+    for the value that would not be a number at all -- a `nan` area reaching
+    metrics.json as a bare `NaN`, which is not JSON and which every reader of the
+    file then fails to parse.
+    """
+    real = mesh.area_faces > 0
+    lowest = float(mesh.bounds[0][2])
+    on_bed = mesh.triangles[:, :, 2].max(axis=1) - lowest <= STL_TOLERANCE
+    steep = mesh.face_normals[:, 2] < -math.cos(math.radians(45.0))
+    return float(mesh.area_faces[real & steep & ~on_bed].sum())
 
 
 def export_printables(catalogue, out_dir):
@@ -267,6 +305,14 @@ def export_printables(catalogue, out_dir):
 
         measured["watertight"] = bool(watertight)
         measured["triangles"] = int(mesh.faces.shape[0])
+        # The two numbers about how this part meets a printer, and both come off
+        # the mesh the gate loaded above -- the first one is literally the value
+        # the refusal was made from. A published part always has a positive
+        # first layer (the gate above refuses anything else), so the number is
+        # here to be COMPARED: adhesion that halves between two revisions is a
+        # part that will start coming off the bed.
+        measured["first_layer_mm2"] = bed_area
+        measured["overhang_mm2"] = overhang_area(mesh)
         metrics[name] = measured
         files[name] = {ext: f"{name}.{ext}" for ext in EXPORT_FORMATS}
 

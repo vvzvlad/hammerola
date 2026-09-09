@@ -1464,11 +1464,11 @@ def swept_clearance(moving_positions, fixed, *, names=("moving", "fixed"),
 
     WHAT IS RECORDED, under `label`: `{"positions": n, "min_gap_mm": x,
     "at": i}` -- how many stops were run, the tightest gap seen and the stop it
-    was at. `recorded_clearance()` reads it back, and that is where it stops
-    TODAY: nothing outside checklib calls it. Putting it into metrics.json as
-    `assembly.clearance` -- beside the volumes pairwise_interference records,
-    which cadbuild.metrics already publishes -- is issue #58's work, and until
-    it lands a model that sweeps a pair sees the problem strings and no number.
+    was at. `recorded_clearance()` reads it back and `cadbuild.metrics` puts it
+    into metrics.json as `assembly.clearance`, beside the volumes
+    pairwise_interference records -- so the gap is COMPARED between two builds,
+    and a pair that reads 0.40 mm today and 0.05 mm tomorrow says so on the
+    build where it happened.
     `label` defaults to `"moving|fixed"` from `names`, in the order
     they were given: unlike a pair of neighbours those two names are not
     interchangeable -- one of them is the part that moves -- so they are not

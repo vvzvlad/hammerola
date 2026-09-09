@@ -84,6 +84,17 @@ __all__ = [
 # fields that have quietly changed meaning. It stays HERE, with the writer: the
 # readers do not enforce it (`metrics_diff` compares fields it recognises and
 # ignores the rest), so a shared constant would only look as though they did.
+#
+# STILL 1 AFTER ISSUE #58, DELIBERATELY, and this is written down because the
+# next reader's instinct is to bump it "just in case". That issue only ADDED
+# fields -- two per part, and four on the assembly: the two boxes, the volume
+# and the swept clearance -- and changed the meaning of none, so an older file
+# is read exactly as correctly as it was before: the
+# comparison walks the fields present in BOTH documents and passes over the
+# rest. A bump would say the opposite -- that this file cannot be compared with
+# what came before it -- and every revision already published would drop out of
+# comparison the day it landed, which is the one thing an immutable revision is
+# kept for.
 METRICS_VERSION = 1
 
 
@@ -161,7 +172,8 @@ def source_fingerprints(root=None):
             "code": code.hexdigest() if readable else ""}
 
 
-def collect_metrics(project, parts, checks_passed, checks_static, provenance):
+def collect_metrics(project, parts, checks_passed, checks_static, provenance,
+                    bbox, print_bbox):
     """The build's numbers, in the shape metrics.json is written in.
 
     `checks_static` is how many of the checks the constants at the top of
@@ -178,7 +190,51 @@ def collect_metrics(project, parts, checks_passed, checks_static, provenance):
     is a REQUIRED argument rather than one with a default, because a default
     would let a caller drop the whole record by forgetting it, and the file
     would still look complete.
+
+    `bbox` and `print_bbox` are the boxes `export_assembled` and
+    `export_print_plate` measured BEFORE they meshed anything -- the product's
+    own envelope, scenery excluded, and how much bed it takes to print. They are
+    REQUIRED for the reason above, and they are taken rather than measured
+    because measuring again here would measure the mesh (see either export's
+    docstring).
+
+    EITHER MAY BE None, AND THEN ITS KEY IS ABSENT rather than empty.
+    `print_bbox` is None on a model with no `print` view, and an empty one would
+    be this build saying it occupies no bed; `bbox` is None on a view holding
+    nothing but mocks, where there is no product to measure at all and three
+    zeroes would be this build saying it made something of no size.
     """
+    # ONE ASSEMBLY, four kinds of number: how big the product is -- its own
+    # envelope, with the scenery left out, because a mock overlaps the product
+    # by construction and a box round it would report the wall rather than the
+    # part standing against it -- how much bed it takes, how much material is
+    # in it, and the two records the model's own checks() left behind. The
+    # volume is SUMMED from what the gate already measured per part rather than
+    # measured off the compound, because an assembly is glued and not fused and
+    # a boolean union of it is minutes of work.
+    #
+    # SO IT IS A SUM OVER THE CATALOGUE AND NOT OVER THE SCENE, which is what
+    # the issue asked for and is worth stating because the two differ: a part
+    # placed several times in the `assembled` view -- five pins are five
+    # references to one `pin`, and that is the ordinary case -- is counted ONCE
+    # here. The number answers "how much material do the distinct printables
+    # come to", not "how much filament does one product take".
+    assembly = {
+        "volume_mm3": sum(part["volume_mm3"] for part in parts.values()),
+        # Empty unless the model's checks() called checklib.pairwise_interference
+        # -- these are volumes it measured, never volumes computed for this file.
+        "interference_mm3": checklib.recorded_interference(),
+        # Empty unless it called checklib.swept_clearance, and empty the same
+        # way: the tightest gap along a pair's travel, measured as the check
+        # went. EMPTY RATHER THAN ABSENT, exactly as interference is: "this
+        # model swept no pair" is an answer, and a reader has one way of asking.
+        "clearance": checklib.recorded_clearance(),
+    }
+    if bbox is not None:
+        assembly["bbox_mm"] = [bbox.xlen, bbox.ylen, bbox.zlen]
+    if print_bbox is not None:
+        assembly["print_bbox_mm"] = [print_bbox.xlen, print_bbox.ylen,
+                                     print_bbox.zlen]
     return {
         "version": METRICS_VERSION,
         "project": project,
@@ -188,9 +244,7 @@ def collect_metrics(project, parts, checks_passed, checks_static, provenance):
         # above are: the model as it was written, not the solid that came out.
         "provenance": provenance,
         "parts": parts,
-        # Empty unless the model's checks() called checklib.pairwise_interference
-        # -- these are volumes it measured, never volumes computed for this file.
-        "assembly": {"interference_mm3": checklib.recorded_interference()},
+        "assembly": assembly,
         "checks_passed": checks_passed,
         "checks_static": checks_static,
     }

@@ -745,6 +745,69 @@ def test_diff_raises_the_alarm_when_the_code_did_not_move_but_the_solid_did(
     assert "body" in out
 
 
+def test_diff_json_prints_one_document_and_nothing_else(hub, tmp_path, capsys):
+    """`--json` is read by a script, so the whole output has to parse.
+
+    Which means the header, the source diff and the "same revision" sentence
+    are all absent — none of them is JSON, and any one of them turns the answer
+    into text somebody has to strip before parsing it.
+    """
+    model = make_model(tmp_path / "demo")
+    (model / "metrics.json").write_bytes(metrics_bytes(volume=1000.0))
+    first = publish(model, capsys)
+
+    (model / "model.py").write_text("import cadquery as cq\n\nBOX = 12\n")
+    (model / "metrics.json").write_bytes(metrics_bytes(volume=900.0, code="dd"))
+    second = publish(model, capsys)
+
+    assert run(model, "diff", "--json", first, second) == 0
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["moved"] == [{"part": "body", "field": "volume_mm3",
+                                "old": 1000.0, "new": 900.0}]
+    # volume and bbox, the two PHYSICAL fields this fixture's metrics carry.
+    assert answer["compared"] == 2
+
+
+def test_diff_json_returns_zero_when_nothing_physical_moved(hub, tmp_path,
+                                                            capsys):
+    """THE RETURN CODE IS NOT THE ANSWER, and that is the decision: `diff`
+    returns 0 whether or not anything moved, and other people's scripts already
+    depend on it. What moved is in the document."""
+    model = make_model(tmp_path / "demo")
+    (model / "metrics.json").write_bytes(metrics_bytes(volume=1000.0))
+    first = publish(model, capsys)
+
+    # A new revision — the tree changed — whose geometry is identical.
+    (model / "notes.txt").write_text("nothing to do with the solid\n")
+    second = publish(model, capsys)
+
+    assert run(model, "diff", "--json", first, second) == 0
+    assert json.loads(capsys.readouterr().out) == {"moved": [], "compared": 2}
+
+
+def test_diff_says_how_many_numbers_it_compared_when_none_of_them_moved(
+        hub, tmp_path, capsys):
+    """"The same" is also what two documents with nothing in common produce.
+
+    A revision published before a field existed against one published after
+    compares nothing and reports nothing moved — so the sentence carries the
+    count, and a zero in it is the reader's clue that the two files have no
+    number in common rather than the same ones.
+    """
+    model = make_model(tmp_path / "demo")
+    (model / "metrics.json").write_bytes(metrics_bytes(volume=1000.0))
+    first = publish(model, capsys)
+    (model / "notes.txt").write_text("nothing to do with the solid\n")
+    second = publish(model, capsys)
+
+    assert run(model, "diff", first, second) == 0
+    # Five: the fields of METRIC_FIELDS this fixture's metrics.json carries —
+    # volume, bbox, faces, solids and watertight. It carries neither of the two
+    # areas, which is exactly the rollout case the count exists to make visible.
+    assert "every measured number is the same (5 part numbers compared)." in \
+        capsys.readouterr().out
+
+
 def test_diff_needs_a_project_because_metrics_live_in_a_build_directory(
         hub, model, capsys, tmp_path):
     revision = publish(model, capsys)

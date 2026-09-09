@@ -11,6 +11,7 @@ from .artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID, PREVIEW_SUFFIX,
                         PRINT_VIEW_ID, STL_ANGULAR_TOLERANCE, STL_TOLERANCE)
 from .errors import BuildError
 from .geometry import as_shapes, drop_mesh
+from .parts import KIND_MOCK
 
 
 # --------------------------------------------------------------------------
@@ -23,6 +24,19 @@ from .geometry import as_shapes, drop_mesh
 # this side afterwards would mean shipping the STLs back and re-reading them,
 # and rendering in CI would mean the pictures existed only for pushes to main.
 
+def _view_nodes(prepared, vid):
+    """The leaves a prepared view draws, in order, or None if there is no such view.
+
+    The LEAVES rather than their shapes, because a leaf carries its catalogue
+    key as well -- and the key is the only thing that says whether what stands
+    here is the product or the scenery around it (see `_product_bbox`).
+    """
+    for view in prepared:
+        if view["id"] == vid:
+            return view["nodes"]
+    return None
+
+
 def _view_objects(prepared, vid):
     """The shapes a prepared view draws, in order, or None if there is no such view.
 
@@ -30,10 +44,42 @@ def _view_objects(prepared, vid):
     of a reference was applied when the view was prepared, so nothing here
     moves anything.
     """
-    for view in prepared:
-        if view["id"] == vid:
-            return [node["shape"] for node in view["nodes"]]
-    return None
+    nodes = _view_nodes(prepared, vid)
+    return None if nodes is None else [node["shape"] for node in nodes]
+
+
+def _product_bbox(prepared, catalogue):
+    """The box round the PRODUCT: every leaf of the assembled view but the mocks.
+
+    A mock is scenery -- the wall a bracket bolts to, the barrel a frame stands
+    in -- and it OVERLAPS THE PRODUCT BY CONSTRUCTION (see `parts.KIND_MOCK`),
+    so a box drawn round it is a measurement of the scenery: widening the wall
+    would print "the product changed size", and the one physical change no
+    per-part number registers -- a part moved inside the assembly -- would be
+    masked by whatever is drawn around it.
+
+    `None` when the view holds nothing but mocks: there is no product there to
+    measure, and three numbers off the scenery would be worse than no answer.
+    THAT IS THE DEFENSIVE HALF OF TWO RULES ALREADY ENFORCED rather than a shape
+    a published build takes: `read_catalogue` refuses a catalogue whose every
+    entry is hardware or scenery, and `check_assembled_coverage` refuses a model
+    whose assembled view does not show every printable -- both before this runs.
+    So nothing downstream has to be designed for an assembly with no size in it.
+    """
+    shapes = [shape
+              for node in _view_nodes(prepared, ASSEMBLED_VIEW_ID)
+              if catalogue[node["key"]]["kind"] != KIND_MOCK
+              for shape in as_shapes(node["shape"], ASSEMBLED_VIEW_ID)]
+    if not shapes:
+        return None
+    if len(shapes) == 1:
+        return shapes[0].BoundingBox()
+    # Glued to be measured and nothing else: the compound is never exported and
+    # never meshed, so this asks OCC for one box round the lot rather than
+    # merging boxes by hand. Imported at the point of use, as everywhere else in
+    # this file, so the single-body path needs no kernel.
+    from cadquery.occ_impl.shapes import Compound
+    return Compound.makeCompound(shapes).BoundingBox()
 
 
 # TWIN of print_plate_shape below, near enough line for line: same walk, same
@@ -112,27 +158,62 @@ def assembled_shape(prepared):
 # of four defeats the checking it exists for more quietly than no list at all:
 #
 #   1. which shape function is called: assembled_shape here, print_plate_shape
-#      there. The SIGNATURES are the same now -- both take `prepared` and the
-#      output directory -- because the fallback that needed a second dict of
-#      geometry is gone with `printables()` itself;
+#      there;
 #   2. the view id `as_shapes` is told to blame, and the stem the file is
 #      written under, which split the same way: ASSEMBLED_VIEW_ID and
 #      ASSEMBLED_STEM here, PRINT_VIEW_ID for both there;
 #   3. this one always writes; that one returns None when no view carries the
 #      id it looks for;
-#   4. that one measures a bounding box before the export and hands it back
-#      beside the count. This one has no reason to take one, so it returns the
-#      count alone.
-def export_assembled(prepared, out_dir):
+#   4. WHAT IS MEASURED, and with it the signature: the plate measures the very
+#      shape it exports, this one measures `_product_bbox` -- the leaves that
+#      are not mocks -- and therefore takes the catalogue as well, which is
+#      where a leaf's kind is written down.
+#
+# ITEM 4 CHANGED ITS MEANING AT ISSUE #58 and the old reading is worth naming so
+# it is not restored as a fix: it used to say that only the plate measures a
+# bounding box, this one having no reason to take one. metrics.json now carries
+# the size of the product as well as the size of the bed it is printed on, so
+# both measure -- in the same place and for the same reason, which is written
+# out in full in export_print_plate's docstring. What the item says now is what
+# each of them measures, the plate its own exported shape and this one the
+# product inside the scene. The list is still four long, and item 1 lost the
+# sentence claiming the two signatures agree, which this change made false.
+def export_assembled(prepared, out_dir, catalogue):
     """Write `assembled.stl` -- the whole thing in one mesh.
 
-    Returns how many bodies went into it. The preview needs that number and
-    cannot get it from the file: parts that touch are welded into one body
-    when the mesh is loaded, so a two-part assembly reads back as a single
-    body that is not watertight.
+    Returns `(parts, bbox)`. `parts` is how many bodies went into it: the
+    preview needs that number and cannot get it from the file, because parts
+    that touch are welded into one body when the mesh is loaded, so a two-part
+    assembly reads back as a single body that is not watertight. `bbox` is the
+    PRODUCT'S OWN ENVELOPE -- the leaves of the view that are not mocks -- and
+    it is published as `assembly.bbox_mm`; it comes back as the `BoundingBox`
+    object OCC measured, exactly as the plate's does, and as None when the view
+    holds nothing but scenery.
+
+    THE FILE IS THE WHOLE SCENE AND THE NUMBER IS NOT, which is the one
+    asymmetry here: `assembled.stl` is a picture and the wall a bracket bolts to
+    belongs in it, while a mock overlaps the product by construction, so a box
+    that took the mocks in would report the size of the SCENERY -- widening the
+    wall would print "the product changed size" -- and would hide the one
+    physical change no per-part number registers, a part moved inside the
+    assembly.
+
+    IT IS MEASURED BEFORE THE EXPORT, AND THAT ORDER IS THE MEASUREMENT, for
+    the reason export_print_plate's docstring gives at length: exportStl meshes
+    the shape in place, so a box taken afterwards is the box of the MESH --
+    bigger by tenths of a millimetre on anything filleted, which would publish
+    as "the product changed size" on the very first build after this landed.
+    `test_the_assembly_is_measured_before_it_is_meshed` is HOW that order is
+    kept, not why.
     """
     shape, objects = assembled_shape(prepared)
     path = out_dir / f"{ASSEMBLED_STEM}.stl"
+    # Measured HERE, before the export, and that is not tidiness: exportStl
+    # meshes the shape in place, and from then on BoundingBox() is the box of
+    # the MESH, out by tenths of a millimetre on anything filleted (the same
+    # trap drop_mesh exists for). Measured off the product and not off `shape`:
+    # the mocks in it are scenery that overlaps the product by construction.
+    bbox = _product_bbox(prepared, catalogue)
     # relative=False for the same reason as the printables above: OCC's
     # default scales the deflection per face and cracks the mesh where faces
     # of very different size meet.
@@ -157,7 +238,7 @@ def export_assembled(prepared, out_dir):
     # Bodies, not view objects: one object built with .add() is several parts.
     parts = sum(len(as_shapes(obj, ASSEMBLED_VIEW_ID)) for obj in objects)
     print(f"  {path.name}: {parts} parts, {path.stat().st_size / 1e6:.2f} MB")
-    return parts
+    return parts, bbox
 
 
 # TWIN of assembled_shape above, near enough line for line: same walk, same
@@ -214,7 +295,7 @@ def print_plate_shape(prepared):
 # and deliberately not restated here, because two lists of the same four are two
 # things to keep true: this is the end that calls print_plate_shape, where
 # PRINT_VIEW_ID is both the view id and the stem, where None is a legal answer,
-# and where the bounding box below is measured.
+# and where the box is measured off the very shape that is exported.
 def export_print_plate(prepared, out_dir):
     """Write `print.stl` -- the bed as it is laid out. `None` without a plate.
 
@@ -223,18 +304,17 @@ def export_print_plate(prepared, out_dir):
     back: parts that touch weld into one body when the mesh is loaded, so a
     picture told nothing would print "watertight" about a plate.
 
-    `bbox` HAS NO READER TODAY, and that is deliberate rather than an oversight
-    -- its reader is issue #58, the one that puts physical numbers into
-    metrics.json and needs `assembly.print_bbox_mm`: how much of the bed this
+    `bbox` is published as `assembly.print_bbox_mm`: how much of the bed this
     build occupies. It comes back as the `BoundingBox` object OCC measured,
-    with no tuple invented around it, because #58 is what decides the shape it
-    is written in.
+    with no tuple invented around it -- `cadbuild.metrics.collect_metrics` is
+    what turns it into the three numbers metrics.json carries.
 
     IT IS MEASURED BEFORE THE EXPORT, AND THAT ORDER IS THE MEASUREMENT.
     exportStl meshes the shape in place, so a BoundingBox() taken after it
     answers the box of the MESH: not an error and not a failure, but a plausible
-    number out by tenths of a millimetre on anything filleted -- which is what
-    #58 would then publish as a fact about how much bed this build occupies.
+    number out by tenths of a millimetre on anything filleted -- which then
+    publishes as a fact about how much bed this build occupies, and reads as
+    the layout having changed on the first build after the line moved.
     That is why the line sits where it sits, and it would sit there for the same
     reason with no test in the repository at all.
     `test_the_plate_is_measured_before_it_is_meshed` is HOW the order is kept,
@@ -247,11 +327,9 @@ def export_print_plate(prepared, out_dir):
     but expensive (`cadquery/occ_impl/geom.py`, `BoundBox._fromTopoDS`; the
     remark is cadquery's own, not OCCT's, which is worth being exact about
     because the two are different projects to go looking in), and it runs over
-    the WHOLE plate compound on every single build
-    for a number nothing reads yet. The price is accepted deliberately -- the
-    measure-before-mesh ordering is the thing that gets broken silently later,
-    and having the test already standing when #58 arrives is worth one bounding
-    box per build -- but #58 inherits the fact rather than measuring it again.
+    the WHOLE plate compound on every single build. The price is accepted
+    deliberately: it is one bounding box per build for the one number that says
+    whether this still fits on a bed.
     """
     plate = print_plate_shape(prepared)
     if plate is None:

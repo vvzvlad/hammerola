@@ -64,11 +64,10 @@ def guard_module_state():
         travel: the stops, the tightest gap and where it was. Accumulates like
         the two above (a model sweeps one pair per degree of freedom) and is
         read back by `recorded_clearance()`, so a gap left behind is a pair a
-        later test never swept. Its distant reader is not built yet --
-        `collect_metrics` will publish it as `assembly.clearance` under issue
-        #58 -- and the guard is here from the start rather than with that
-        reader, because by then the test that dirtied the record would be
-        somewhere else entirely.
+        later test never swept. Its distant reader is `collect_metrics`, which
+        publishes it as `assembly.clearance` -- exactly the same distance
+        `_INTERFERENCE` is read from, and the same failure: a gap left behind
+        turns up inside an unrelated test's metrics.
 
     `isolated_project` REQUESTS this fixture by name rather than merely being
     declared after it, and that is the only thing that gets the ordering right:

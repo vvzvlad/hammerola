@@ -204,7 +204,10 @@ def build(out_dir, preview_mode="iso"):
     phase = _phase("checks", phase)
 
     print("rendering:")
-    assembled_parts = export_assembled(prepared, out_dir)
+    # The catalogue, because the box is measured off the PRODUCT: a leaf's kind
+    # is what says whether it is the product or the scenery around it.
+    assembled_parts, assembled_bbox = export_assembled(prepared, out_dir,
+                                                       catalogue)
     # THE PLATE BEFORE THE PICTURES, and the order is the correctness here:
     # render_previews renders a stem from the STL already sitting next to it and
     # refuses one whose file is missing.
@@ -214,6 +217,10 @@ def build(out_dir, preview_mode="iso"):
     # into one body when the mesh is loaded, so anything holding several bodies
     # has to arrive with its own count or its footer claims watertightness.
     parts = {ASSEMBLED_STEM: assembled_parts}
+    # None when there is no plate, and `collect_metrics` writes no
+    # `print_bbox_mm` for it -- see the branch below for why a build can have
+    # no `print` view at all.
+    plate_bbox = None
     if plate is None:
         # Said plainly and WITHOUT the `warning:` prefix: a model whose single
         # part is already in print orientation has no `print` view to draw, and
@@ -227,7 +234,7 @@ def build(out_dir, preview_mode="iso"):
         print(f"  {PRINT_VIEW_ID} view: none, so no {PRINT_VIEW_ID}.stl and no "
               f"{PRINT_VIEW_ID}{PREVIEW_SUFFIX}")
     else:
-        plate_bodies, _plate_bbox = plate
+        plate_bodies, plate_bbox = plate
         stems.append(PRINT_VIEW_ID)
         parts[PRINT_VIEW_ID] = plate_bodies
     # KEPT, not discarded: this is the list of pictures that were really
@@ -321,7 +328,8 @@ def build(out_dir, preview_mode="iso"):
     # Written after the checks, because it carries what they measured and how
     # many of them there were.
     write_metrics(out_dir, collect_metrics(project, part_metrics, checks_passed,
-                                           checks_static, provenance_summary))
+                                           checks_static, provenance_summary,
+                                           assembled_bbox, plate_bbox))
 
     # metrics.json is named HERE and not derived from meta.json like the rest.
     # meta.json lists what the viewer loads, and the viewer never loads this --
