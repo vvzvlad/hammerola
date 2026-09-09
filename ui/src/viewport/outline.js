@@ -275,7 +275,8 @@ export function sectionOutline(vp, g, normal, value) {
       // here.
       // Both answers come off that ONE material and never off `group.opacity`,
       // which `applyGhost` writes when it ghosts and never writes back — so a
-      // part ghosted and un-ghosted again still reads 0.25 there. The face's
+      // part ghosted and un-ghosted again still reads the ghost's own
+      // multiplier there rather than the part's own opacity. The face's
       // own opacity is what `setTransparent` maintains in both directions, and
       // it carries the model's own alpha too, which is the owner's decision of
       // 2026-08-31: the cut face inherits the body's transparency.
