@@ -24,7 +24,7 @@ slot has no revision at all:
     hammerola log              the newest revision this project has published
     hammerola log <revision>   that one
     hammerola log dev          what is in the local slot — see `_dev_log`, which
-                               is the one of the three the hub cannot answer
+                               reaches the log through the JOB the slot names
 
 The job id stays the emergency entrance for a build IN FLIGHT, where no revision
 exists yet: `hammerola build` prints the id, and `GET /api/v1/jobs/<id>/log`
@@ -35,7 +35,7 @@ from pathlib import Path
 
 from hammerola import config, gitsuggest, pack, project, unpack
 from hammerola.errors import ClientError
-from hammerola.hub import QUERY_TIMEOUT, Hub
+from hammerola.hub import QUERY_TIMEOUT, Hub, HubError
 from hammerola.limits import DEV_SLOT, SAFE_ID
 
 # The moving name a revision argument may be spelled with. `dev` is deliberately
@@ -48,23 +48,6 @@ LATEST = "latest"
 # commit at — long enough to be unambiguous among a project's revisions, short
 # enough to type and to read in a `ls`.
 SHORT_ID_CHARS = 12
-
-# What `hammerola log dev` has to say instead of a log. Spelled out here rather
-# than inline because it is the one answer in this module that is about a
-# LIMITATION, and it has to say what the limitation is rather than sounding like
-# a failure of the command.
-NO_DEV_LOG = (
-    "the hub keeps no build log for the local slot.\n"
-    "  `dev` is a slot and not a revision (SPEC 7.6): the next push overwrites "
-    "it, there is\n"
-    "  no history behind it, and the store is addressed by revision — so a "
-    "`dev` build's log\n"
-    "  exists only at the JOB that produced it.\n"
-    "  `hammerola build` prints that log as it runs, and the job it names "
-    "keeps serving it at\n"
-    "  <hub>/api/v1/jobs/<id>/log. For a log that outlives the terminal, "
-    "publish a revision:\n"
-    "  `hammerola commit` stores the code and the log together.")
 
 
 # Where anything this tool FETCHES lands by default, under the directory the
@@ -273,13 +256,16 @@ def _into_working_copy(root, revision: str, body: bytes) -> int:
 
 # -- log ---------------------------------------------------------------------
 def run_log(args) -> int:
-    """Print the build log of a revision, of `latest`, or explain `dev`."""
+    """Print the build log of a revision, of `latest`, or of the local slot."""
     root = project.optional_project_root(args.directory)
     target = getattr(args, "revision", None) or LATEST
-    if target == DEV_SLOT:
-        return _dev_log()
-
     hub = hub_for(root)
+    if target == DEV_SLOT:
+        # The slot belongs to a PROJECT, so this address needs one — unlike a
+        # revision, which is named by the hub out of its sources and is unique
+        # across the whole service.
+        return _dev_log(hub, project.find_project_root(args.directory))
+
     revision = resolve_revision(hub, root, target)
     text = hub.revision_log(revision)
 
@@ -294,20 +280,81 @@ def run_log(args) -> int:
     return 0
 
 
-def _dev_log() -> int:
-    """The one address of the three that the hub cannot answer, said plainly.
+def _dev_log(hub: Hub, root) -> int:
+    """The log of the build that last filled the local slot (issue #79).
 
-    Not a bug and not an oversight: no source and no log are stored for the
-    local slot, on purpose (SPEC 7.8 — an entry in the store that no published
-    revision points at is one the store cannot answer for). Answering with
-    `latest`'s log instead would be worse than refusing, and the reason is that
-    same absence rather than the two being different builds — sometimes they are
-    the same one, because a commit fills the slot with itself. What the hub does
-    record about the slot answers a different question: its payload digest says
-    whether the slot's SOURCES are the ones the newest commit published, and
-    that digest is what the front page's `dev` chip is computed from. A LOG is
-    kept per revision, and the slot is not addressed by a revision, so there is
-    none stored under its name and one handed over as the slot's would be a
-    guess presented as a record.
+    THE SLOT NAMES ITS JOB, and that one field in its meta.json is the whole
+    mechanism. No log is stored under the slot's name and none can be: a log is
+    kept per revision and the slot is not addressed by one (SPEC 7.8). But the
+    JOB that filled the slot goes on serving what that build printed, so
+    remembering which job it was turns an unanswerable address into a lookup —
+    and what comes back is the log of the very build whose geometry is on
+    screen, not `latest`'s log handed over under another name.
+
+    THE HEADER SAYS WHICH KIND OF PUSH FILLED THE SLOT, because two kinds do. A
+    `build` leaves `dev` as its job's commit; a `commit` mirrors itself into the
+    slot (issue #78) and leaves the revision it published. A reader not told
+    which one this is would work it out from the contents, after having already
+    read the log as something it is not.
     """
-    raise ClientError(NO_DEV_LOG)
+    pid = project.read_project_id(root)
+    meta = hub.build_meta(pid, DEV_SLOT)
+    if meta is None:
+        raise ClientError(
+            f"project {pid} has no `{DEV_SLOT}` slot on {hub.url}: nothing has "
+            f"filled it yet.\n"
+            f"  `hammerola build` fills it with the working copy as it stands, "
+            f"and `hammerola commit`\n"
+            f"  fills it with the revision it publishes.")
+    job = meta.get("job")
+    if not job:
+        raise ClientError(
+            f"the `{DEV_SLOT}` slot of project {pid} does not say which job "
+            f"filled it, so there is\n"
+            f"  nothing to read the log of: it was written before the hub "
+            f"recorded that. `hammerola build`\n"
+            f"  fills the slot again and records the job with it.")
+
+    # THE RECORD IS DECORATION AND THE LOG IS THE ANSWER, so a hub that will not
+    # hand the record over must not take the log away with it — the header just
+    # says less.
+    record = None
+    try:
+        record = hub.job(job)
+    except HubError:
+        pass
+
+    try:
+        text = hub.job_log(job)
+    except HubError as error:
+        raise ClientError(
+            f"the `{DEV_SLOT}` slot of project {pid} names job {job}, and "
+            f"{hub.url} does not have it:\n"
+            f"  {error}\n"
+            f"  A job id means nothing on another hub, and jobs are kept with "
+            f"no retention at all — so\n"
+            f"  the usual causes are a configured hub that is not the one that "
+            f"built this, and a volume\n"
+            f"  that has been wiped. `hammerola build` fills the slot "
+            f"again.") from error
+
+    print(f"--- build log of job {job}{_filled_the_slot(record)} ---")
+    if text.strip():
+        print(text if text.endswith("\n") else text + "\n", end="")
+    else:
+        # A REVISION'S EMPTY LOG AND A JOB'S MEAN DIFFERENT THINGS, so they are
+        # not worded the same. A published revision printed nothing and never
+        # will; a job serves "" while it is still queued or still building, and
+        # the same command a minute later answers with the whole log.
+        print("(nothing in this job's log yet)")
+    print("--- end of build log ---")
+    return 0
+
+
+def _filled_the_slot(record) -> str:
+    """The parenthesis of the header: which push this was, and how it ended."""
+    if record is None:
+        return ""
+    commit = record.get("commit")
+    push = "build" if commit == DEV_SLOT else f"commit {commit}"
+    return f" ({push}, state {record.get('state')})"

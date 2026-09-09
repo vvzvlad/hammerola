@@ -81,13 +81,13 @@ decision rather than a limitation of what was written:
 
 WHAT IS STILL NOT HERE, and for two different reasons worth telling apart.
 
-  * `status` shows no "last job", and `log dev` cannot be answered at all.
-    Neither is waiting on anybody's next commit: a job is addressable by its id
-    alone and job order is stored nowhere (`src/jobs.py`), and the hub stores
-    nothing for the local slot on purpose (SPEC §7.8), so the log of a `dev`
-    build exists only at the job that produced it. Both are said out loud by the
-    code that would otherwise have to guess — see `status.py` and
-    `sources._dev_log`.
+  * `status` shows no "last job". It is not waiting on anybody's next commit: a
+    job is addressable by its id alone and job order is stored nowhere
+    (`src/jobs.py`), so there is no such thing to look up, and `status.py` says
+    that out loud rather than guessing. `log dev` used to be the second half of
+    this paragraph and no longer is: the slot's meta.json names the job that
+    filled it (issue #79), so the log of the build on screen is one lookup away
+    — see `sources._dev_log`.
   * Self-update. What used to block it is gone: the tool now has a distribution
     name of its own. This directory is a top-level package rather than
     `src/client/`, it carries the three shared modules with it so it reaches

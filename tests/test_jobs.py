@@ -1602,21 +1602,26 @@ def test_a_commit_puts_itself_into_the_dev_slot(tmp_path):
 
     Through the store rather than a push, because the claim is about the two
     documents field for field: the slot's meta.json is the revision's with
-    `commit` and `dev` rewritten and NOTHING else moved, which is what makes
-    copying the published tree instead of building it a second time correct.
+    `commit`, `dev` and `job` rewritten and NOTHING else moved, which is what
+    makes copying the published tree instead of building it a second time
+    correct. `job` is the third key since issue #79 — the slot names the build
+    that filled it, and a commit fills it as much as a `build` does — and it is
+    the slot's alone: a revision's log is in the store and needs no pointer.
     """
     store = _bare_store(tmp_path / "data")
     staging, names = _staged(store, "proj1", "abc123", "a")
-    assert store.publish_built("proj1", "abc123", staging, names,
-                               "digest-a")[0] == 201
+    assert store.publish_built("proj1", "abc123", staging, names, "digest-a",
+                               job="job-abc")[0] == 201
 
     pdir = store.projects_dir / "proj1"
     revision = json.loads((pdir / "abc123" / "meta.json").read_text())
     slot = json.loads((pdir / DEV_LINK / "meta.json").read_text())
     assert slot["commit"] == DEV_LINK
     assert slot["dev"] is True
+    assert slot["job"] == "job-abc"
+    assert "job" not in revision
     assert ({key: value for key, value in slot.items()
-             if key not in ("commit", "dev")}
+             if key not in ("commit", "dev", "job")}
             == {key: value for key, value in revision.items()
                 if key not in ("commit", "dev")})
     # The digest too, or the next `build` of these sources would rebuild them

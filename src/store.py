@@ -1397,7 +1397,7 @@ class Store:
 
     # -- publishing what a build produced (in a worker thread) --------------
     def publish_built(self, pid: str, commit: str, staging: Path, names,
-                      digest: str) -> tuple[int, dict]:
+                      digest: str, job=None) -> tuple[int, dict]:
         """Put one built tree at `<pid>/<commit>`. Returns (status, response).
 
         201 published, 200 identical retry, 409 same commit / different content.
@@ -1408,6 +1408,9 @@ class Store:
         checked by the parent to be a regular file under `staging`). The caller
         owns `staging`: on the success path it is renamed away and there is
         nothing left, and on every other path the caller removes it.
+
+        `job` reaches only the COPY this makes into the slot: the revision's own
+        document does not carry one (issue #79, `render.build_meta`).
         """
         files = _hash_output(staging, names)
         pdir = self.projects_dir / pid
@@ -1486,7 +1489,7 @@ class Store:
             # revision is already published at its own permanent URL — `latest`
             # is a pointer to it, not the publication.
             try:
-                self._mirror_into_dev_slot(pid, pdir, final, meta, digest)
+                self._mirror_into_dev_slot(pid, pdir, final, meta, digest, job)
                 # A rename is superseded by the push that follows it: the build
                 # carries the project's own title, and that is the newer
                 # statement of what the project is called. Before the picker is
@@ -1512,7 +1515,7 @@ class Store:
         return 201, _build_url(pid, commit)
 
     def publish_dev_built(self, pid: str, staging: Path, names,
-                          digest: str) -> tuple[int, dict]:
+                          digest: str, job=None) -> tuple[int, dict]:
         """Overwrite the project's ONE local slot, `<pid>/dev/` (SPEC 7.6).
 
         The author is editing model.py on a laptop and wants to see the result
@@ -1531,6 +1534,10 @@ class Store:
         already in it — the second answer normally comes from `settled` before a
         build is even queued, and is repeated here for the push that arrived
         while an identical one was building.
+
+        `job` goes into the slot's meta.json (issue #79). The slot is the one
+        build no revision addresses, so the job that filled it is the only place
+        its log exists, and this field is what remembers which job that was.
         """
         files = _hash_output(staging, names)
         pdir = self.projects_dir / pid
@@ -1543,7 +1550,8 @@ class Store:
                 # author has open through a needless re-render.
                 logger.info(f"publish {pid}/{DEV_LINK}: identical, kept")
                 return 200, url
-            meta = self._finish_staging(pid, DEV_LINK, staging, files, digest)
+            meta = self._finish_staging(pid, DEV_LINK, staging, files, digest,
+                                        job=job)
             self._swap_dev_slot(pdir, staging)
 
             # `latest` is not touched: a local build is not a commit, so it
@@ -1629,7 +1637,7 @@ class Store:
             shutil.rmtree(parked, ignore_errors=True)
 
     def _mirror_into_dev_slot(self, pid: str, pdir: Path, final: Path,
-                              meta: dict, digest: str) -> None:
+                              meta: dict, digest: str, job=None) -> None:
         """Put a revision that has just been published into `<pid>/dev/` too.
 
         The slot is the freshest state the hub knows about the project, not the
@@ -1639,8 +1647,11 @@ class Store:
         A COPY of the published tree, because the rename that publishes it is
         what emptied the staging directory. Nothing is validated a second time
         and `_finish_staging` is not called again: a revision's meta.json and
-        the slot's differ in exactly two keys, `commit` and `dev`
-        (`render.build_meta`), and every other field is the same build's.
+        the slot's differ in exactly three keys, `commit`, `dev` and `job`
+        (`render.build_meta`), and every other field is the same build's. The
+        third one is why this takes a `job` at all — the slot names the build
+        that filled it, and a commit fills it as much as a `build` does, so the
+        id has to be carried across with the tree (issue #79).
 
         THE SWAP IS UNCONDITIONAL, including where the slot already holds these
         very sources — the case `publish_dev_built` short-circuits on, to spare
@@ -1660,7 +1671,8 @@ class Store:
         try:
             shutil.copytree(final, tmp)
             (tmp / "meta.json").write_text(
-                json.dumps(dict(meta, commit=DEV_LINK, dev=True), indent=1),
+                json.dumps(dict(meta, commit=DEV_LINK, dev=True, job=job),
+                           indent=1),
                 encoding="utf-8")
             # Redundant against the `copytree` above, which already brought
             # this exact digest across, and written anyway: the slot's digest is
@@ -2205,7 +2217,8 @@ class Store:
             raise _refused_names_error(refused, refused_count)
 
     # -- staging -> publishable directory ----------------------------------
-    def _finish_staging(self, pid, commit, staging: Path, files, digest) -> dict:
+    def _finish_staging(self, pid, commit, staging: Path, files, digest,
+                        job=None) -> dict:
         """Validate meta.json and write everything the build page needs.
 
         `staging` is what the BUILD wrote (SPEC 8A.2 step 5), so the meta.json
@@ -2213,12 +2226,16 @@ class Store:
         carry, produced one step closer to the model. Nothing else about this
         changed, which is the point of pointing the build at the directory that
         gets renamed into place.
+
+        `job` is the id of the job that produced this tree. It is handed on and
+        not read here: `build_meta` records it in the SLOT's document only
+        (issue #79), so it is ignored on the revision path.
         """
         raw = self._read_meta(staging)
         try:
             meta = render.build_meta(
                 pid=pid, commit=commit, raw=raw, staging=staging, files=files,
-                published=published_stamp(), dev=(commit == DEV_LINK))
+                published=published_stamp(), dev=(commit == DEV_LINK), job=job)
         except ValueError as error:
             # render.py validates without knowing about HTTP; every way it can
             # refuse is "the push described something that is not there", i.e. 422.
