@@ -22,7 +22,8 @@ flow (`build` and `commit`, which are one operation with one thing varying);
 every other verb is a module, because none of them shares anything with
 publishing but the configuration: `setup.py` (login, create), `status.py`,
 `queue.py` (the comment queue), `sources.py` (source, log), `artifacts.py`,
-`revdiff.py` (diff), `admin.py` (rename, rm), `skill.py` (skill, skill update).
+`revdiff.py` (diff), `admin.py` (rename, rm), `skill.py` (skill, skill update),
+`update.py` (update).
 Every one of them RAISES on refusal rather than printing and exiting, so there
 is exactly one place in the tool that decides what a failure looks like — `main`
 below.
@@ -50,11 +51,10 @@ other half is a refusal — `build` and `commit` ask the hub which client it
 serves and will not publish from an older one, the only place in this tool that
 spends a round trip on a question about ITSELF.
 
-WHAT IS STILL NOT HERE. `status` shows no "last job", for a reason
-that is not going to lift
-on its own — job order is stored nowhere, see `status.py`. `log dev` was in that
-sentence until the slot started naming the job that filled it (issue #79), and
-now answers with that build's log — see `sources._dev_log`.
+WHAT IS STILL NOT HERE. `status` shows no "last job", for a reason that is not
+going to lift on its own — job order is stored nowhere, see `status.py`. `log
+dev` was in that sentence until the slot started naming the job that filled it
+(issue #79), and now answers with that build's log — see `sources._dev_log`.
 
 THE PUBLISHING FLOW, which is what the rest of this file is about. Pack the
 working directory, POST it, poll the job, print what the build printed, and

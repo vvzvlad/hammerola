@@ -1,7 +1,8 @@
-"""`pyproject.toml` says four things about the tool, and all four can go stale.
+"""`pyproject.toml` says five things about the tool, and all five can go stale.
 
 The file is metadata for the CLIENT and for nothing else: the distribution name
-`hammerola`, the python floor, the packages and the console script. Nothing
+`hammerola`, the version, the python floor, the packages and the console
+script. Nothing
 reads it in this repository — no target builds a wheel, no workflow installs one
 — so every claim in it is a claim nothing would notice going false. The comments
 inside it already say "keep this equal to", which is this project's own

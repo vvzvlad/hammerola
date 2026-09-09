@@ -127,9 +127,19 @@ def refuse_if_behind(hub) -> None:
     routinely newer than the hub it pushes to — that is what publishing a new
     image looks like from this side — and the answer to that direction is
     updating the hub, which is not something this can do or should mention.
+
+    ASKED ON A QUESTION'S BUDGET AND NOT THE PUSH'S. The Hub handed in here
+    belongs to the push and carries `HTTP_TIMEOUT`, which is five minutes
+    because the request that matters is uploading an archive. Spending that on
+    an 80-byte GET is what `QUERY_TIMEOUT` exists to prevent (`hub.py`): an
+    address that black-holes packets instead of refusing them would hang the
+    terminal for five silent minutes BEFORE the first line of output, and then
+    hang it again on the push. Every other verb that only asks builds its Hub
+    the same short way. NO TOKEN either, for the reason `run` gives: `/start` is
+    public, and a client too old to publish may be one that never logged in.
     """
     try:
-        manifest = hub.start()
+        manifest = Hub(hub.url, "", timeout=QUERY_TIMEOUT).start()
     except HubError:
         return
     served = manifest.get(VERSION_KEY)

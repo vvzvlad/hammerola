@@ -26,6 +26,7 @@ target instead. Zipimport is the thing under test there, and it cannot be
 simulated by a monkeypatch.
 """
 
+import errno
 import io
 import os
 import re
@@ -227,6 +228,32 @@ def test_a_target_that_cannot_be_written_is_a_sentence_and_not_a_traceback(
     assert str(installed) in message
     assert "Nothing was written" in message
     assert installed.read_bytes().endswith(b"the old client\n")
+
+
+def test_a_write_that_fails_halfway_leaves_no_temporary_beside_the_client(
+        installed, monkeypatch):
+    """The rollback branch, which the test above never reaches.
+
+    An unwritable DIRECTORY fails in `mkstemp`, before there is anything to
+    clean up. The branch that matters is the other one — the temporary file
+    exists, and then the disk fills or the rename is refused. What must not
+    happen is `hammerola.ab12cd.new` left sitting next to the tool: the account
+    that finds it cannot tell whether it is a broken client or a spare one, and
+    the sentence the failure printed said nothing about a file it did not
+    name.
+    """
+    def full_disk(*_args):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(os, "replace", full_disk)
+
+    with pytest.raises(ClientError) as raised:
+        update._write_over(installed, b"#!/usr/bin/env python3\nthe new one\n")
+
+    assert "Nothing was written" in str(raised.value)
+    assert [entry.name for entry in installed.parent.iterdir()] == ["hammerola"]
+    assert installed.read_bytes().endswith(b"the old client\n")
+    assert stat.S_IMODE(installed.stat().st_mode) == 0o755
 
 
 # -- `hammerola update` against a real hub -----------------------------------

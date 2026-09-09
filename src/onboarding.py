@@ -610,11 +610,13 @@ def _import_closure(members):
 
         What tells `from hammerola import project` (a submodule, which has to
         be carried) from `from hammerola import SOMETHING` (a name defined in
-        the package itself, which does not). Today `hammerola/__init__.py` is
-        one docstring and binds nothing at all, so this answers the empty set;
-        it is here so that the day the package DOES bind something, a healthy
-        image is not refused for shipping without a module that no longer has
-        to exist.
+        the package itself, which does not). This was written against a
+        `hammerola/__init__.py` that bound nothing at all, for the day the
+        package WOULD bind something. That day is issue #77: the answer is now
+        `{"VERSION"}` — the constant the manifest repeats as `client_version`
+        and `update.py` reaches for as `from hammerola import VERSION`. Without
+        this the check would go looking for a module of that name and refuse a
+        healthy image.
 
         None means the namespace cannot be enumerated at all, and the caller
         then abstains rather than refusing. Two forms do that, and both would

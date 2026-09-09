@@ -1125,11 +1125,19 @@ class Hub:
         """
         code, raw = self._call(START_PATH)
         if code != 200:
+            # NAME THE ROUTE AND NOT ONE OF ITS READERS. This used to explain
+            # the failure as "it did not say where the starter template is",
+            # which was true while `create` was the only caller; `skill`,
+            # `skill update` and `update` all read this manifest now, and each
+            # of them was being told about a template it had not asked for and
+            # offered a `create` flag that could not help it.
             raise HubError(
-                f"the hub answered HTTP {code} for {START_PATH}, so it did not "
-                f"say where the starter template is.\n"
-                f"  A hub older than this tool has no such route; "
-                f"`hammerola create --no-template` needs neither.")
+                f"the hub answered HTTP {code} for {START_PATH}, which is the "
+                f"manifest naming the skill,\n"
+                f"  the client and the starter template. A hub older than this "
+                f"tool has no such route at all;\n"
+                f"  `hammerola create --no-template` is the one command that "
+                f"works without it.")
         return self._payload(code, raw)
 
     def fetch_path(self, path: str) -> bytes:

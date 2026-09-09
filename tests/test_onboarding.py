@@ -984,9 +984,10 @@ def test_a_package_that_binds_a_name_is_not_called_incomplete(tmp_path, label,
 def test_a_package_that_binds_nothing_still_refuses_the_missing_module(tmp_path):
     """...and the other direction, or the test above would pass on a no-op.
 
-    An `__init__.py` that binds nothing — which is what the real one is — cannot
-    excuse a module that is not in the image, whatever else it contains. The
-    compound statements are here so the walk has something to walk.
+    An `__init__.py` that binds nothing OF THE NAME BEING ASKED ABOUT cannot
+    excuse a module that is not in the image, whatever else it contains — and
+    this one does contain other bindings, which is the whole shape being tested.
+    The compound statements are here so the walk has something to walk.
     """
     with pytest.raises(ValueError) as raised:
         onboarding._refuse_unimportable(_client_with(
