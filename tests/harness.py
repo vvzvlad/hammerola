@@ -151,14 +151,20 @@ class Hub:
             return reply
         return self.await_job(reply.json()["job"], token=token)
 
-    def publish_async(self, pid, commit, body, token=TOKEN):
-        """POST the push and return whatever the endpoint said, 202 included."""
+    def publish_async(self, pid, commit, body, token=TOKEN, query=""):
+        """POST the push and return whatever the endpoint said, 202 included.
+
+        `query` is appended verbatim, `?` and all, for the tests that are about
+        what the route reads out of one — `?force=1` is the only such parameter
+        today.
+        """
         headers = {"Content-Type": "application/gzip"}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
         path = f"/api/v1/publish/{pid}"
         if commit is not None:
             path = f"{path}/{commit}"
+        path = f"{path}{query}"
         return httpx.post(f"{self.url}{path}",
                           content=body, headers=headers, timeout=30,
                           trust_env=self.TRUST_ENV)

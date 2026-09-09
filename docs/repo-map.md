@@ -121,9 +121,23 @@
   public precisely because the reader of the instructions may not have one yet.
   Nothing checks that version automatically, and that is a decision rather than
   an unfinished half: no ordinary command says a word about the skill, because
-  this tool cannot know which copy an agent is actually reading. Self-update no
-  longer waits on the tool having a distribution name — it has one now
-  (`pyproject.toml`) — and is issue #77. Three things are of a different
+  this tool cannot know which copy an agent is actually reading. `update`
+  (`update.py`, issue #77) is the same shape one level down and differs in what
+  it writes: the RUNNING PROGRAM rather than a document, so what comes back is
+  checked before it lands (a zipapp is a shebang and a zip, and it has to state
+  a version) and lands through a temporary file beside the target wearing the
+  target's own mode — the execute bit included — and an `os.replace`. There is
+  no `--path`: the file it writes is the one it is running from, which is the
+  archive `hammerola/update.py` was imported out of, and a copy running from a
+  checkout or from site-packages is told to use git or pip instead. What it
+  PRINTS is the point of the verb — `changelog.py` rides inside the archive with
+  the code it describes, so the old client reads the entries out of what it just
+  downloaded and prints those strictly between its own version and the new one;
+  reading its own copy would print nothing, always. The version both halves
+  compare is `hammerola.VERSION`, which the hub repeats in its manifest as
+  `client_version` and which `build` and `commit` — and no other verb, because
+  the check costs a round trip and only a WRITE can go wrong — refuse to publish
+  from when the hub's is higher. Three things are of a different
   kind and are worth knowing before reaching for them: "the last build
   job" cannot be shown at all, because a job is addressable only by its id and
   job order is stored nowhere (see `src/jobs.py`); `hammerola log dev` IS
@@ -133,11 +147,11 @@
   it, and the command reads that build's log through `/api/v1/jobs/<id>/log`.
   Both kinds of push fill the slot, so the header says which one this was: a
   `build`, or the commit that copied itself in (issue #78). The slot still has
-  no SOURCE — `hammerola source dev` refuses as it always did; and the comment
-  routes check
-  the same `EDIT_TOKEN` as everything else — the hub's second variable went away
-  in step 0, along with the client's sentence explaining a 401 that meant "this
-  deployment set its other variable differently"
+  no SOURCE — `hammerola source dev` refuses as it always did, and its refusal
+  names the log as the half that no longer needs a commit; and the comment
+  routes check the same `EDIT_TOKEN` as everything else — the hub's second
+  variable went away in step 0, along with the client's sentence explaining a
+  401 that meant "this deployment set its other variable differently"
 - `hammerola/buildnames.py` — what a build file may be CALLED, and the one place that
   decides it. Three sides ask the question and they live in three different
   worlds: the file server, of every request for
@@ -304,8 +318,13 @@
   runs it, the hub is still where the tool comes from, and if a `pip install`
   and the bootstrap `curl -o` both land in `~/.local/bin` the download wins.
   The name exists because
-  `hammerola update` had nowhere to install to — that update mechanism is issue
-  #77 and NONE of it is built
+  `hammerola update` had nowhere to install to; that mechanism (issue #77) IS
+  built now and lives in `hammerola/update.py`, and this door is the one it
+  cannot serve — a `pip install`ed copy is a package directory rather than a
+  single file, so `update` names pip instead of writing into site-packages.
+  `pyproject.toml`'s `version` is the fourth thing in it nothing would notice
+  going stale, and it is held equal to `hammerola.VERSION` by
+  `tests/test_packaging.py`
 - `checklib.py` — at the ROOT, and not a stray file: `import checklib` is part
   of the contract with every model.py in the fleet, exactly like `parts()` and
   `views()`. It re-exports `src/cadbuild/checklib.py` under that name, and
@@ -387,9 +406,15 @@
   kept — rather than dropped as dead weight — because its geometry is held to
   the same check meanwhile
 - `model_template/` — the starter project `hammerola create` unpacks, served at
-  `/start/template.tar.gz`: a `model.py` that BUILDS AS IT STANDS, plus a
-  `.gitignore`. It is files rather than a section of documentation for one
-  reason, and that reason is the only thing keeping it honest:
+  `/start/template.tar.gz`: a `model.py` that BUILDS AS IT STANDS, a
+  `.gitignore`, a `ref/measurements.md` for the numbers the model claims to
+  have measured, and an `AGENTS.md` with a `CLAUDE.md` pointing at it — the
+  template lands in a repository an agent opens cold, and those two say what
+  the file is for before it is edited into something it is not. Everything
+  under the directory ships: the tarball is an `rglob`, so a file added here
+  reaches every project ever made from it. It is files rather than a section of
+  documentation for one reason, and that reason is the only thing keeping it
+  honest:
   `tests/test_template.py` runs it through `run_build` — the same entry point a
   push takes — so a template that stopped satisfying the gate fails here instead
   of being handed to somebody who cannot tell whose fault it is. That test skips

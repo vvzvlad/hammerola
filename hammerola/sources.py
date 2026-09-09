@@ -98,10 +98,16 @@ def resolve_revision(hub: Hub, root, name: str) -> str:
     if name == LATEST:
         return _latest_of(hub, root)
     if name == DEV_SLOT:
+        # THE LOG HALF OF THIS SENTENCE STOPPED BEING TRUE IN #79: the slot now
+        # names the job that filled it, so `hammerola log dev` answers without a
+        # commit. Only the SOURCE is still missing, and only that is refused.
         raise ClientError(
             f"`{DEV_SLOT}` is the local slot, not a revision, and the hub "
-            f"stores neither its code nor its log.\n"
-            f"  Publish a revision with `hammerola commit` to get either.")
+            f"stores no code for it.\n"
+            f"  Publish a revision with `hammerola commit` to read the "
+            f"sources. The slot's build log\n"
+            f"  needs no commit: `hammerola log {DEV_SLOT}` reads it through "
+            f"the job the slot names.")
     if not SAFE_ID.match(name or ""):
         raise ClientError(
             f"{name!r} is not a revision id.\n"
@@ -327,10 +333,23 @@ def _dev_log(hub: Hub, root) -> int:
     try:
         text = hub.job_log(job)
     except HubError as error:
+        # ONLY A 404 IS EVIDENCE THAT THE JOB IS GONE, and only for that does
+        # this say why and what to do. The same call also fails on a stale token
+        # and on a hub that is not answering, and both of those used to be
+        # reported as a wiped volume with the advice to run `hammerola build` —
+        # a push that would fail for the very same reason a moment later. Those
+        # arrive already carrying the sentence that fits them (`login`, `cannot
+        # reach`), so they are passed through with the context this command has
+        # and nothing else added.
+        if error.status != 404:
+            raise ClientError(
+                f"the `{DEV_SLOT}` slot of project {pid} names job {job}, and "
+                f"reading its log from\n"
+                f"  {hub.url} failed:\n"
+                f"  {error}") from error
         raise ClientError(
             f"the `{DEV_SLOT}` slot of project {pid} names job {job}, and "
-            f"{hub.url} does not have it:\n"
-            f"  {error}\n"
+            f"{hub.url} does not have it.\n"
             f"  A job id means nothing on another hub, and jobs are kept with "
             f"no retention at all — so\n"
             f"  the usual causes are a configured hub that is not the one that "

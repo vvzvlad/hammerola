@@ -402,6 +402,13 @@ class BuildTask:
     of carrying it at all: a build that PUBLISHES gives it to the store instead,
     and it becomes the code of that revision (issue #17). Everything else
     deletes it, so the sources of a build that failed are never kept.
+
+    `force` is the one field about HOW to build rather than about what was
+    pushed: the push asked for the model's own checks() to be skipped (issue
+    #52). It defaults to False because the absence of the request is the
+    ordinary build, and because that is the direction a forgotten argument has
+    to fail in — a build that runs the checks nobody asked it to skip is slow,
+    and one that skips checks nobody waived is wrong.
     """
 
     job_id: str
@@ -410,9 +417,10 @@ class BuildTask:
     sources: Path
     archive: Path
     digest: str
+    force: bool = False
 
 
-def build_arguments(sources: Path, staging: Path, pid: str):
+def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool):
     """The call the worker makes into `run_build`, written down ONCE.
 
     A seam nothing else in the test suite crosses: every test substitutes the
@@ -425,7 +433,7 @@ def build_arguments(sources: Path, staging: Path, pid: str):
     as `(args, keywords)` so both sides use this one expression: the worker to
     make the call, the test to bind it.
     """
-    return (sources, staging), {"pid": pid}
+    return (sources, staging), {"pid": pid, "force": force}
 
 
 class JobStore:
@@ -1274,7 +1282,8 @@ class BuildQueue:
         try:
             self._jobs.start(task.job_id)
             staging = self._store.build_staging(task.pid, task.commit)
-            args, keywords = build_arguments(task.sources, staging, task.pid)
+            args, keywords = build_arguments(task.sources, staging, task.pid,
+                                             force=task.force)
             outcome = self._run_build(*args, **keywords)
             if outcome.ok:
                 # THE JOB ID GOES WITH THE TREE, and this is the only place that

@@ -2,8 +2,10 @@
 
 WHY THIS VERB EXISTS AT ALL. Four things in this system are versioned: the
 client, the template, the model contract and the skill. The first three break
-LOUDLY — a stale contract fails the build, a stale client is refused and told
-why. The skill is the one that fails in silence: it goes on confidently teaching
+LOUDLY — a stale contract fails the build, and a stale client refuses to publish
+and names the command that replaces it (`update.py`, issue #77, which is what
+made that half of this sentence true rather than merely written down). The skill
+is the one that fails in silence: it goes on confidently teaching
 a command that was renamed, a flag that went away, a ceiling that was raised,
 and the agent reading it then gets a refusal whose cause is a file on its own
 disk. Nothing goes red. That cost has already been paid in real prints

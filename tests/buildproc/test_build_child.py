@@ -31,6 +31,7 @@ from src.buildproc import child
 
 from probes import (
     BUILD_LIMITS,
+    TEST_LIMITS,
     block_import,
     needs_cadquery,
     needs_occt,
@@ -639,6 +640,50 @@ def test_the_child_refuses_an_invocation_it_does_not_understand(capsys):
 
     assert child.main(["child", "--nonsense", "x"]) == child.EXIT_INVOCATION
     assert "unknown option" in capsys.readouterr().err
+
+
+def test_the_force_flag_arrives_as_a_value_and_leaves_as_a_boolean(tmp_path,
+                                                                   monkeypatch):
+    """The one option that comes from a person, all the way to the child's argv.
+
+    `--force` starts as a flag on the command line the author typed and has to
+    end up in the command line the hub composes for this process — and this
+    parser takes `--key value` pairs and understands no bare flags, so the
+    boolean lives in a VALUE. Both halves are held here: what `run_build` puts
+    in the argv, and what `_parse` makes of it.
+
+    The process is never started: `run_isolated` is replaced by something that
+    records the command and reports a failed build, because what is under test
+    is the composition and not the build.
+    """
+    from src.buildproc import runner
+
+    composed = []
+
+    def recording_run_isolated(target_argv, **kw):
+        composed.append(list(target_argv))
+        return runner.ProcessResult(
+            exit_code=child.EXIT_BUILD_FAILED, signal=None, timed_out=False,
+            log="", log_truncated=False, dropped_bytes=0,
+            duration_seconds=0.0, stragglers=False)
+
+    monkeypatch.setattr(runner, "run_isolated", recording_run_isolated)
+    for force in (True, False):
+        runner.run_build(tmp_path, tmp_path / "out", pid="abc123def456",
+                         limits=TEST_LIMITS, force=force)
+
+    forced, ordinary = composed
+    assert forced[forced.index("--force") + 1] == "true"
+    assert ordinary[ordinary.index("--force") + 1] == "false"
+
+    # ...and the other end of that pair of strings.
+    required = ["--project", "/tmp", "--out", "/tmp/out", "--result", "/tmp/r"]
+    assert child._parse(required + ["--force", "true"])["force"] is True
+    assert child._parse(required + ["--force", "false"])["force"] is False
+    # Absent, because the value carries the boolean and nothing else does.
+    assert child._parse(required)["force"] is False
+    with pytest.raises(ValueError, match="--force takes true or false"):
+        child._parse(required + ["--force", "1"])
 
 
 def test_the_exit_codes_do_not_collide():

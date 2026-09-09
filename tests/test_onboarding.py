@@ -62,6 +62,7 @@ import pytest
 from harness import TOKEN, good_build
 
 from src import onboarding
+from src.cadbuild import checklib
 from hammerola import hub as hub_client
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,26 +95,31 @@ def test_the_manifest_says_nothing_about_this_hub_but_whether_it_is_empty(
     would leak the size of the fleet and its growth rate to whoever polled; a
     project name or an id is the prefix of every permanent URL that project will
     ever have, which is precisely what `/index.json` is behind the token to
-    withhold. So the shape is fixed: four constants of the IMAGE, and one
+    withhold. So the shape is fixed: five constants of the IMAGE, and one
     boolean about this deployment.
 
-    `skill_version` WAS ADDED DELIBERATELY AND IS ON THE SAFE SIDE OF THAT LINE,
-    which is why this list moved rather than the rule (issue #51). It is
-    a constant of the image exactly as the three paths are — two hubs running
-    the same image answer with the same number, and the number changes when the
-    software does, never when somebody pushes. It names what is RUNNING here,
+    THE TWO VERSIONS WERE ADDED DELIBERATELY AND ARE ON THE SAFE SIDE OF THAT
+    LINE, which is why this list has moved twice while the rule has not
+    (`skill_version` for issue #51, `client_version` for #77). Each is a
+    constant of the image exactly as the three paths are — two hubs running the
+    same image answer with the same numbers, and a number changes when the
+    software does, never when somebody pushes. They name what is RUNNING here,
     which is public anyway, and nothing about what is published here or who runs
-    it. `empty` is still the only field on the other side of the line, and the
-    next candidate has to make that same argument before it is added.
+    it. `client_version` has a second argument of its own: it is a number
+    already inside the file `client` hands to anybody who asks for it, so
+    stating it discloses nothing and only saves a download. `empty` is still the
+    only field on the other side of the line, and the next candidate has to make
+    that same argument before it is added.
     """
     assert set(manifest) == {"empty", "skill", "client", "template",
-                             "skill_version"}
+                             "skill_version", "client_version"}
     assert manifest["empty"] is True
     assert isinstance(manifest["empty"], bool)
     assert manifest["skill"] == onboarding.SKILL_URL
     assert manifest["client"] == onboarding.CLIENT_URL
     assert manifest["template"] == onboarding.TEMPLATE_URL
     assert manifest[onboarding.SKILL_VERSION_KEY] == onboarding.skill_version()
+    assert manifest[onboarding.CLIENT_VERSION_KEY] == onboarding.CLIENT_VERSION
 
 
 def test_the_paths_it_names_are_relative(manifest):
@@ -593,6 +599,47 @@ def test_the_skill_and_the_template_describe_the_SAME_image(hub):
         f"one of the two documents understates what the image has: {missing}")
 
 
+# The bullet of the skill that inventories `checklib`, found by its own opening
+# words rather than by the names inside it -- the names are what is being
+# checked, so a pattern spelling them out would be checking itself. Every
+# backticked identifier in that bullet is read as a claim that `checklib` has a
+# helper by that name.
+SKILL_CHECKLIB_BULLET = re.compile(
+    r"^\* \*\*`import checklib`\*\*(.*?)(?=^\* |^\n\S|\Z)",
+    re.MULTILINE | re.DOTALL)
+BACKTICKED_NAME = re.compile(r"`([a-z_][a-z0-9_]*)`")
+
+
+def test_the_skill_names_no_checklib_helper_that_does_not_exist(hub):
+    """The inventory the skill hands an author, against the module itself.
+
+    This sentence went stale once already and stayed stale for two releases: it
+    told its reader that "nothing anywhere checks an overhang, a minimum wall or
+    whether a tool reaches a screw" while `unsupported_area`, `thin_walls`,
+    `minimum_feature` and `tool_access` were all sitting in the module. The cost
+    of that direction of error is the whole point -- an author who believes it
+    writes the check by hand out of primitives, or does not write it at all, and
+    the document is served to every agent that installs the skill.
+
+    The other direction is caught here too, and it is the louder one: a helper
+    renamed in `checklib` leaves the skill telling authors to call something
+    that raises AttributeError.
+    """
+    skill = hub.get("/start/skill.md").text
+    bullet = SKILL_CHECKLIB_BULLET.search(skill)
+    assert bullet, (
+        "the skill no longer has a bullet inventorying `checklib`, so either "
+        "the section was reworded past this pin or the inventory is gone. "
+        "Re-aim the pattern, or say here why the inventory no longer needs one")
+
+    named = set(BACKTICKED_NAME.findall(bullet.group(1)))
+    assert named, "the checklib bullet names no helper at all"
+    missing = sorted(n for n in named if not hasattr(checklib, n))
+    assert not missing, (
+        f"skill/SKILL.md tells a model author to call {missing}, and "
+        f"src/cadbuild/checklib.py has no such name")
+
+
 def test_the_downloaded_client_refuses_an_interpreter_that_is_too_old():
     """The generated entry point is RUN, against a `sys` that says 3.8.
 
@@ -891,9 +938,15 @@ def _client_with(tmp_path, source, dropped="hammerola/artifacts.py"):
     `dropped` is a module `cli.py` reaches ONLY as `from hammerola import
     artifacts`, so an image without it is healthy exactly when the package binds
     that name itself — which is the question `bound()` answers.
+
+    `VERSION` IS PREPENDED TO EVERY CASE and is not part of the experiment:
+    `update.py` imports that name out of the package, so a fabricated
+    `__init__.py` without it is refused correctly and for a reason none of these
+    cases is about. The value is nonsense on purpose — nothing here runs it, and
+    what is under test is the name being BOUND.
     """
     fake = tmp_path / "__init__.py"
-    fake.write_text(source, encoding="utf-8")
+    fake.write_text('VERSION = "0.0.0"\n' + source, encoding="utf-8")
     return sorted((name, fake if name == "hammerola/__init__.py" else path)
                   for name, path in onboarding.client_members()
                   if name != dropped)
@@ -931,9 +984,10 @@ def test_a_package_that_binds_a_name_is_not_called_incomplete(tmp_path, label,
 def test_a_package_that_binds_nothing_still_refuses_the_missing_module(tmp_path):
     """...and the other direction, or the test above would pass on a no-op.
 
-    An `__init__.py` that binds nothing — which is what the real one is — cannot
-    excuse a module that is not in the image, whatever else it contains. The
-    compound statements are here so the walk has something to walk.
+    An `__init__.py` that binds nothing OF THE NAME BEING ASKED ABOUT cannot
+    excuse a module that is not in the image, whatever else it contains — and
+    this one does contain other bindings, which is the whole shape being tested.
+    The compound statements are here so the walk has something to walk.
     """
     with pytest.raises(ValueError) as raised:
         onboarding._refuse_unimportable(_client_with(
@@ -1058,6 +1112,51 @@ def test_the_two_keys_the_skill_command_follows_are_the_ones_the_hub_writes():
     assert client_skill.VERSION_KEY in document
     assert client_skill.SKILL_KEY in document
     assert document[client_skill.SKILL_KEY] == onboarding.SKILL_URL
+
+
+def test_the_keys_and_the_bytes_the_update_command_follows_are_the_hubs_own():
+    """The same arrangement again for the verb added by issue #77.
+
+    `hammerola update` reads two fields out of the manifest — where the client
+    is and which version the hub serves — and checks that what comes back begins
+    with the shebang a zipapp begins with. It spells all three itself, because
+    the client imports nothing from the serving half, and a copy that drifted
+    would not fail anything by itself: a key that stopped matching turns the
+    refusal to publish into silence, and a shebang that stopped matching turns
+    every update into "that is not the tool".
+    """
+    from hammerola import update as client_update
+
+    document = onboarding.manifest(empty=True)
+    assert client_update.VERSION_KEY == onboarding.CLIENT_VERSION_KEY
+    assert client_update.VERSION_KEY in document
+    assert client_update.CLIENT_KEY in document
+    assert document[client_update.CLIENT_KEY] == onboarding.CLIENT_URL
+    assert client_update.SHEBANG == onboarding.CLIENT_SHEBANG
+
+
+def test_the_version_the_manifest_states_is_the_one_inside_the_client_it_serves():
+    """TWO STATEMENTS ABOUT ONE NUMBER, and this is what keeps them the same.
+
+    The hub STATES a version in the manifest, and it SERVES an archive with a
+    version inside it. A client asks the first before a push and reads the
+    second while replacing itself, so a disagreement between them is a machine
+    told it is out of date, updating, and being told the same thing again — a
+    loop with nothing anywhere going red.
+
+    Read out of the archive with the client's own reader, over the bytes that
+    really ship, exactly as the skill's two parsers are compared over the file
+    that really ships.
+    """
+    from hammerola import update as client_update
+
+    archive = zipfile.ZipFile(io.BytesIO(
+        onboarding.client_bytes()[len(onboarding.CLIENT_SHEBANG):]))
+    inside = client_update._member_value(archive,
+                                         client_update.VERSION_MEMBER,
+                                         client_update.VERSION_NAME)
+    assert inside == onboarding.manifest(empty=True)[
+        onboarding.CLIENT_VERSION_KEY]
 
 
 def test_the_client_reads_the_SAME_version_out_of_the_skill_as_the_hub():

@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part", "CadQuery", "STL".
-version: 9
+version: 10
 ---
 
 # hammerola
@@ -33,6 +33,11 @@ installed here and which the hub serves, and `hammerola skill update` replaces
 the file with the hub's copy. Nothing checks it for you: a stale skill is the
 one thing here that fails silently — it goes on confidently teaching commands
 that no longer exist — so ask when you start on a project.
+
+**`hammerola update` does the same for the tool itself**, fetching the hub's
+copy over the running file and printing what changed between the two versions.
+That one you will be told about rather than having to ask: `build` and `commit`
+check, and a client older than the hub is refused before it packs anything.
 
 `login` asks for the hub's password at the terminal and stores it 0600 in
 `~/.config/hammerola/env`. **Ask the owner of the instance for that password.**
@@ -612,20 +617,27 @@ section: a working model with the rules written next to the geometry. In short,
   returning a list of problem strings. A `checks()` that provably contains no
   check fails the build, because a log saying "checks passed" for a function
   that looks at nothing is worse than no function at all.
-* **`import checklib`** — reusable geometry checks (`pairwise_interference`,
-  `mating_face_flat`, `material_under_head`), the fast "is there material at
-  this point" probe (`material_at`), the two that say whether a boolean left
-  anything at all (`volume`, `is_empty` — `assert wp.vals()` cannot answer that,
-  it is true of an emptied body), and `section`, which marks a stretch of
-  `checks()` so the build log prints what it cost. Every one of them reads
-  EVERY body of the part it is handed — including a part assembled with
-  `.add()`, whose bodies may touch or sit inside one another — rather than
-  whichever body happens to be first. The module lives inside the hub's image;
-  there is nothing to install and nothing to vendor.
+* **`import checklib`** — reusable geometry checks, none of which runs unless
+  you call it. Assembly: `pairwise_interference`, `mating_face_flat`,
+  `material_under_head`, `swept_clearance` (does a moving part sweep through a
+  fixed one), `tool_access` (does a driver reach that screw and turn there).
+  Manufacture: `unsupported_area` (how much of a part hangs over nothing at the
+  orientation it prints in), `thin_walls`, `minimum_feature` (the smallest thing
+  this nozzle can put down). The fast "is there material at this point" probe is
+  `material_at`; `volume` and `is_empty` say whether a boolean left anything at
+  all (`assert wp.vals()` cannot answer that — it is true of an emptied body);
+  and `section` marks a stretch of `checks()` so the build log prints what it
+  cost. Every one of them reads EVERY body of the part it is handed — including
+  a part assembled with `.add()`, whose bodies may touch or sit inside one
+  another — rather than whichever body happens to be first. The module lives
+  inside the hub's image; there is nothing to install and nothing to vendor.
 
-Those are all that `checklib` checks, and the gate is all of
-the hub. Nothing anywhere checks an overhang, a minimum wall or whether a tool
-reaches a screw. Where a number CAME FROM is the one exception, and it is
+Those are all that `checklib` offers, and the gate is all of
+the hub. Read the two sentences above together: an overhang, a thin wall and a
+driver that cannot reach a screw all have a helper now, and NOTHING calls any of
+them for you — a model that never mentions `unsupported_area` publishes green
+with a face hanging in the air. Where a number CAME FROM is the one exception,
+and it is
 checked strictly — a module-level float with no `measured`, `derived` or
 `estimated` around it stops the build (above). Every rule in the next section is
 a check you write yourself or something you go and look at. Of the BED the gate
@@ -855,6 +867,18 @@ in the hub's image, so a model that imports `cadquery` does not necessarily run
 anywhere else at all. Do not calibrate against whatever machine you are on —
 write the checks so the question of speed does not arise.
 
+**Four clocks run over one push, and the one that stops you first is your own.**
+The hub kills a build at 900 seconds of wall clock. It runs two builds at a
+time, so a queue in front of yours is time before your build starts, and the
+client waits out both — its own ceiling is 8100 seconds and you will never see
+it. What you WILL see is the timeout on the tool you launched `hammerola build`
+with: a shell call that defaults to two minutes cuts the command off around the
+time a heavy model is getting started. The build does not die with it — it goes
+on in the hub, finishes, and publishes — but the log was on that command's
+standard output, and it is gone. So run a push you expect to be slow with the
+timeout raised well past the hub's own ceiling, or in the background. Twice, in
+transcripts, the output of a finished build was lost exactly this way.
+
 **When it does arise anyway, mark `checks()` up with `checklib.section("...")`
 and let the hub say where the time went.** It is a context manager around a
 piece of the function; the hub prints the table itself, on a FAILED build as
@@ -898,6 +922,26 @@ sit right against a face will flip answers when ported. Put each point where
 material is *required* — half a millimetre inside the wall, not on it — and the
 question becomes the one you meant either way. A probe is bound to the shape you
 took it from: take a fresh one after a transform or a rebuild.
+
+**A scan step is a price, and you set it.** Halving the step doubles the run,
+and a scan nested inside a sweep of angles multiplies instead of adding: nine
+checks in one model, stepping 0.02–0.1 mm across 18 angles, put 156 seconds on
+a build on their own — the same model went from 15 seconds at 58 checks to 171
+at 67. Pick the step from what the check has to resolve, not from what looks
+careful: a scan that would catch a 0.3 mm ledge does not need 0.02 mm, and if
+you cannot say what the smallest thing you are hunting is, the scan is not yet
+a check.
+
+**A `while` walking a coordinate must be able to reach its end, and you have to
+be able to say why.** The loop that steps until it leaves a face, or until the
+material stops, ends only if every branch moves the coordinate — and one that
+does not does not fail: it holds the whole build until the hub kills it, and
+what comes back is a timeout naming nothing. Four builds were lost that way to a
+single `while` in one edge-walking helper, 891 seconds each. Prefer a `for` over
+a range you computed up front, which cannot do this at all. When it really must
+be a `while`, bound it by a count as well as by the condition, and make the
+check fail loudly when the bound is what stopped it — a silent bail-out turns a
+runaway loop into a check that passes.
 
 **Build each part once per `checks()`.** Builders are pure functions of the
 constants at the top of the file, and `checks()` typically calls four or five of
@@ -1035,15 +1079,23 @@ order, so the first complaint is the real one and nothing after it ever ran.
 ```sh
 hammerola log            # the newest published revision's log, again
 hammerola log <revision> # that one
+hammerola log dev        # the last build's log, whether or not it was committed
 hammerola status         # what the hub has: latest, whether dev is occupied, the revisions
 ```
 
-`hammerola log dev` cannot be answered: of a `dev` build the hub keeps neither
-the source nor the log, on purpose — the slot itself is served like any other
-build, its pictures included. That log exists only at the job that produced it:
-`build` prints that job's id as it runs, `<hub>/api/v1/jobs/<id>/log` goes on
-serving it behind the same secret, and no job or its log is ever deleted by age
-or by count. That id is the only way back to it.
+**Never rebuild to read a log you have already produced.** `hammerola log dev`
+answers with the log of whichever push last filled the slot, and it says in its
+header which push that was — a `build`, or the commit that copied itself in. The
+slot records the id of the job that built it, and jobs are kept forever: no
+retention by age and none by count, so the log of a build is readable for as
+long as the slot points at it. A rebuild costs the whole build again and can
+only produce the same text; in one set of transcripts 41% of pushes carried no
+edit at all, 27 minutes spent re-earning output that was already on the hub.
+
+Two things it does not reach. The SOURCE of a `dev` build is still not kept —
+only a revision has one, and `hammerola source dev` refuses. And a slot filled
+before the hub started recording the job says so plainly; one `hammerola build`
+fills it again with the field.
 
 What each kind of failure means:
 
@@ -1053,6 +1105,17 @@ What each kind of failure means:
   boolean operation on geometry that got out of hand.
 * `413` / `422` on the push — the tree breaks rule 1 above, by its size or by
   one of its paths. Neither reaches a build.
+
+**When the thing that is wrong is your own `checks()`, `--force` publishes
+anyway.** `hammerola build --force` and `hammerola commit --force` skip the call
+to `checks()` and nothing else: the hub's own gates — provenance, the catalogue,
+the print layout, interference, the per-part export checks — all still run, and
+a build that breaks one of those is still refused. The log says `checks: not
+run` where the verdict would be, and the metrics record the check count as
+unknown rather than as zero, so a forced build never looks like a passing one
+later. Use it when your check is wrong, slow or asserting something you already
+know to be false — not to get past a check that is right. The next ordinary push
+runs them all again.
 
 ## Fetching things back
 

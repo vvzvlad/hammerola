@@ -3,7 +3,7 @@
 
     python -m src.buildproc.child --project DIR --out DIR --result FILE \
                                   [--preview-mode iso] [--occt-threads N] \
-                                  [--hang-dump-seconds N]
+                                  [--hang-dump-seconds N] [--force true|false]
 
 This is the first code in the process that knows anything about CAD, and it is
 already behind the fence: the wrapper set the rlimits and exec'd this, the
@@ -104,7 +104,14 @@ _OPTIONS = {
     "--preview-mode": "preview_mode",
     "--occt-threads": "occt_threads",
     "--hang-dump-seconds": "hang_dump_seconds",
+    "--force": "force",
 }
+
+# `--force` takes a VALUE because this parser understands `--key value` pairs
+# and nothing else. Written out as a table rather than compared against "true",
+# so that a word neither side meant is an invocation error like any other
+# instead of quietly reading as False.
+_BOOLEAN_VALUES = {"true": True, "false": False}
 
 
 def _say(text):
@@ -260,7 +267,9 @@ def _run(argv):
         faulthandler.dump_traceback_later(opts["hang_dump_seconds"], exit=True)
 
     try:
-        pid, _meta, files = build(Path(opts["out"]), preview_mode=opts["preview_mode"])
+        pid, _meta, files = build(Path(opts["out"]),
+                                  preview_mode=opts["preview_mode"],
+                                  force=opts["force"])
     except BuildError as exc:
         # The expected failure: the model does not build, or a gate refused it.
         # Distinguished from a crash by its own exit code because the hub
@@ -301,6 +310,7 @@ def _parse(args):
     opts = {name: None for name in _OPTIONS.values()}
     opts["preview_mode"] = "iso"
     opts["occt_threads"] = 1
+    opts["force"] = "false"
     rest = list(args)
     while rest:
         key = rest.pop(0)
@@ -315,6 +325,9 @@ def _parse(args):
     opts["occt_threads"] = int(opts["occt_threads"])
     if opts["occt_threads"] < 1:
         raise ValueError("--occt-threads must be at least 1")
+    if opts["force"] not in _BOOLEAN_VALUES:
+        raise ValueError(f"--force takes true or false, not {opts['force']!r}")
+    opts["force"] = _BOOLEAN_VALUES[opts["force"]]
     if opts["hang_dump_seconds"] is not None:
         opts["hang_dump_seconds"] = float(opts["hang_dump_seconds"])
         if opts["hang_dump_seconds"] <= 0:

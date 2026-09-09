@@ -135,9 +135,11 @@ the token. The addresses in it are built from the browser's own origin and the
 manifest's paths, so nothing here names a deployment; the request is made only
 when the form is what is on the screen, and every failure of it is silence.
 `hammerola create` is the other reader, and it follows `template`. The manifest
-also states the VERSION of the skill this image ships, which is what
-`hammerola skill` compares a laptop's copy against; like the three paths it is a
-constant of the image and says nothing about the deployment.
+also states two VERSIONS — of the skill this image ships, which is what
+`hammerola skill` compares a laptop's copy against, and of the client it serves,
+which is what `build` and `commit` compare themselves against before they
+publish; like the three paths both are constants of the image and say nothing
+about the deployment.
 `src/onboarding.py` carries the argument for the boolean and for why it is
 never a count.
 
@@ -183,14 +185,25 @@ hammerola comments               # notes left on this project's builds
 hammerola rename "New title"     # the title, never the id
 hammerola skill                  # is the installed agent skill current?
 hammerola skill update           # write the hub's copy over it
+hammerola update                 # replace THIS TOOL with the hub's copy
 ```
 
-`skill` is the odd one out: it asks about this MACHINE rather than about a
-project, and it exists because the skill is the only versioned thing here that
-goes stale in silence — a client that is behind is refused and says so, while a
-stale skill goes on confidently teaching a command that no longer exists. It
-compares the version in the installed file's frontmatter against the one the hub
-states in `/start`, and only ever writes when `update` was typed.
+`skill` and `update` are the odd ones out: they ask about this MACHINE rather
+than about a project. `skill` exists because the skill is the only versioned
+thing here that goes stale in silence — a client that is behind is refused by
+its own `build` and told what to run, while a stale skill goes on confidently
+teaching a command that no longer exists. It compares the version in the
+installed file's frontmatter against the one the hub states in `/start`, and
+only ever writes when `update` was typed.
+
+`hammerola update` is the same move one level down: it fetches the client the
+hub serves and writes it over the file it is running from — checked first, since
+what lands there is what the machine will run next, and written through a rename
+so an interrupted update cannot leave a laptop with no tool and no way to fetch
+one. It then prints what changed between the two versions, which is what makes
+the refusal above worth acting on rather than merely obeying. There is no flag
+for where to write: a copy running out of a checkout or a `pip install` is told
+to use git or pip.
 
 `hammerola --help` has the flags, and `hammerola rm` — the one command that
 unmakes anything. It removes a project whole, never a single build, and it asks

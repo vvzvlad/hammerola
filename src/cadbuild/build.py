@@ -107,8 +107,15 @@ def _answers_for_the_model(run):
 
 
 @_answers_for_the_model
-def build(out_dir, preview_mode="iso"):
-    """Full local build. Returns (pid, meta, list of files to ship)."""
+def build(out_dir, preview_mode="iso", force=False):
+    """Full local build. Returns (pid, meta, list of files to ship).
+
+    `force` skips the model's own checks() and NOTHING else (issue #52): the
+    call below is not made at all, because on a real model those checks are
+    most of what a build costs and the point of the flag is to get something
+    unfinished published quickly. Every gate this file runs is the hub's rule
+    for every model rather than this author's, so none of them is waived.
+    """
     started = time.monotonic()
     pid, project, title = load_project()
     model = load_model()
@@ -198,9 +205,26 @@ def build(out_dir, preview_mode="iso"):
 
     # After the geometry gate (the STLs it checks are on disk now), before the
     # slow tessellation and before anything is packed.
-    checks_passed, checks_static = run_checks(model, out_dir)
+    if force:
+        # BOTH COUNTS ARE None, WHICH ALREADY MEANS "UNKNOWN" HERE: `run_checks`
+        # answers `passed=None` for a checks() nobody could count, and
+        # metrics.json has always carried that. A number would be this build
+        # claiming something was counted.
+        #
+        # ONE LINE, ADDRESSED TO WHOEVER PUSHED, and it is not a badge: nothing
+        # about a forced build is recorded in metrics.json, in the build page or
+        # in the project card. It sits where the checks' own verdict would be,
+        # so the log reads in the same order either way.
+        checks_passed = checks_static = None
+        print("checks: not run -- this push asked for the model's own checks "
+              "to be skipped")
+    else:
+        checks_passed, checks_static = run_checks(model, out_dir)
     # Two lines about checks, and they answer different questions: run_checks
-    # prints how many there were, this prints what they cost.
+    # prints how many there were, this prints what they cost. It is printed for
+    # a forced build too, and deliberately: a phase with NO line is how this log
+    # says the build stopped there (see `_phase`), so a skipped phase that
+    # printed nothing would read as a build that died in the checks.
     phase = _phase("checks", phase)
 
     print("rendering:")

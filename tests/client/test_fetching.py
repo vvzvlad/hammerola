@@ -299,8 +299,9 @@ def test_source_with_the_wrong_secret_says_which_command_fixes_it(hub, model,
 
 
 def test_source_will_not_fetch_the_dev_slot(hub, model, capsys):
-    """`dev` is a slot, not a revision: the hub stores neither its code nor its
-    log, on purpose (SPEC 7.8)."""
+    """`dev` is a slot, not a revision: the hub stores no CODE for it, on
+    purpose (SPEC 7.8). Its log is a different matter since #79 — the slot names
+    the job that filled it, and `hammerola log dev` reads that."""
     assert run(model, "build") == 0
     capsys.readouterr()
     assert run(model, "source", "dev") == 1
@@ -711,6 +712,23 @@ def test_log_dev_when_the_hub_does_not_have_that_job(hub, model, capsys):
     err = capsys.readouterr().err
     assert "does not have it" in err
     assert hub.url in err
+
+
+def test_log_dev_with_a_stale_token_blames_the_token(hub, model, capsys,
+                                                     monkeypatch):
+    """The slot's meta.json is PUBLIC, so a wrong token gets through the first
+    request of this command and is refused only by the second. That must not be
+    reported as a job the hub has lost: the advice attached to that reading is
+    `hammerola build`, and a push fails on the same 401 a moment later."""
+    assert run(model, "build") == 0
+    capsys.readouterr()
+    monkeypatch.setenv("EDIT_TOKEN", "not-the-token")
+
+    assert run(model, "log", "dev") == 1
+    err = capsys.readouterr().err
+    assert "401" in err and "hammerola login" in err
+    assert "does not have it" not in err
+    assert "wiped" not in err
 
 
 def test_log_of_a_revision_the_hub_never_published(hub, model, capsys):

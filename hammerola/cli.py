@@ -13,6 +13,7 @@
     comments resolve <id>     close one, with an optional note
     skill                     the agent instructions: this machine's, and the hub's
     skill update              write the hub's copy over the installed one
+    update                    write the hub's copy of THIS TOOL over itself
     rename "New title"        change the project's TITLE — never its id
     rm                        remove the project from the hub, whole
 
@@ -21,7 +22,8 @@ flow (`build` and `commit`, which are one operation with one thing varying);
 every other verb is a module, because none of them shares anything with
 publishing but the configuration: `setup.py` (login, create), `status.py`,
 `queue.py` (the comment queue), `sources.py` (source, log), `artifacts.py`,
-`revdiff.py` (diff), `admin.py` (rename, rm), `skill.py` (skill, skill update).
+`revdiff.py` (diff), `admin.py` (rename, rm), `skill.py` (skill, skill update),
+`update.py` (update).
 Every one of them RAISES on refusal rather than printing and exiting, so there
 is exactly one place in the tool that decides what a failure looks like — `main`
 below.
@@ -40,11 +42,20 @@ each is the wrong one:
   * `rm` removes the whole project and asks first. There is no way to remove one
     build: that would break a permanent URL and leave the project standing.
 
-WHAT IS STILL NOT HERE. Self-update waits on the tool having a distribution name
-of its own. `status` shows no "last job", for a reason that is not going to lift
-on its own — job order is stored nowhere, see `status.py`. `log dev` was in that
-sentence until the slot started naming the job that filled it (issue #79), and
-now answers with that build's log — see `sources._dev_log`.
+SELF-UPDATE IS HERE (issue #77) AND IT IS ONE VERB. `update` fetches the zipapp
+the hub serves and writes it over the file this process is running from, which
+is where it stops resembling `skill update`: that one writes a document, this
+one writes the running program, so what comes back is checked before it lands
+and lands through a rename rather than a truncating write (`update.py`). Its
+other half is a refusal — `build` and `commit` ask the hub which client it
+serves and will not publish from an older one, the only place in this tool that
+spends a round trip on a question about ITSELF.
+
+WHAT IS STILL NOT HERE. `status` shows no "last job", for a reason that is not
+going to lift on its own — job order is stored nowhere, see `status.py`.
+`log dev` was in that sentence until the slot started naming the job that
+filled it (issue #79), and now answers with that build's log — see
+`sources._dev_log`.
 
 THE PUBLISHING FLOW, which is what the rest of this file is about. Pack the
 working directory, POST it, poll the job, print what the build printed, and
@@ -81,7 +92,7 @@ import argparse
 import sys
 
 from hammerola import (admin, artifacts, config, gitsuggest, project, queue,
-                       revdiff, setup, skill, sources, status)
+                       revdiff, setup, skill, sources, status, update)
 from hammerola.errors import ClientError
 from hammerola.hub import (JOB_TIMEOUT, UNAUTHORIZED, Hub, HubError,
                            quoted)
@@ -257,6 +268,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--path", default=argparse.SUPPRESS, metavar="FILE",
         help=f"the file to write (default: {skill.DEFAULT_PATH})")
 
+    # NO ARGUMENTS AND NO `--path`, which is what tells this apart from the verb
+    # above it: `skill update` writes a document into a directory this tool can
+    # only guess at, so it takes the guess as a flag, while `update` writes the
+    # file it is itself running from — the one path in this tool that is not a
+    # choice at all (`update._target`).
+    commands.add_parser(
+        "update",
+        help="write the hub's copy of this tool over the file it is running "
+             "from, and print what changed between the two versions")
+
     # THE TITLE IS THE ONLY THING THIS TAKES, and there is deliberately no
     # `--id` beside it: an id that could be renamed would break every permanent
     # URL of the project on the day it was used (SPEC §3.1).
@@ -279,6 +300,17 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--timeout", type=float, default=JOB_TIMEOUT, metavar="SECONDS",
         help=f"how long to wait for the build (default: {JOB_TIMEOUT:.0f})")
+    # ONE THING IS CANCELLED AND IT IS THE MODEL'S OWN `checks()`: the build
+    # does not call them at all, which is the point — on a real model they are
+    # most of the time a build takes, and this is how something unfinished gets
+    # published quickly. The hub's own gate is not the author's to waive and
+    # goes on running: the provenance rule, the catalogue, the view gates and
+    # the per-part gates in `export_printables` all refuse a forced push
+    # exactly as they refuse any other.
+    parser.add_argument(
+        "--force", action="store_true",
+        help="publish without running the model's own checks(). The hub's own "
+             "gates still run and still refuse")
 
 
 def main(argv=None) -> int:
@@ -324,6 +356,16 @@ def _publish(args) -> int:
     # rather than after the packing.
     hub = Hub(hub_url, token)
 
+    # AND ONE QUESTION ABOUT THIS TOOL, asked here for the same reason the two
+    # settings are read above: before the tree is walked, so a client the hub
+    # has outgrown says so in a second rather than after packing a push it is
+    # not going to be allowed to make. It is the ONLY verb pair that asks — see
+    # `update.refuse_if_behind` for why reading verbs do not pay for it, and why
+    # a hub that cannot answer does not block the push. THE ADDRESS AND NOT THE
+    # HUB ABOVE: that one is built with the push's five-minute budget, and this
+    # question is 80 bytes.
+    update.refuse_if_behind(hub_url)
+
     archive = pack(root)
 
     title = project.read_project_title(root)
@@ -338,7 +380,7 @@ def _publish(args) -> int:
     sys.stdout.flush()
 
     # `code` and not `status`, because `status` is a module of this package.
-    code, payload = hub.publish(pid, archive.body, slot=slot)
+    code, payload = hub.publish(pid, archive.body, slot=slot, force=args.force)
 
     if code == 200:
         # `Store.settled`: this exact source tree is already published under
@@ -499,6 +541,7 @@ HANDLERS = {
     "log": sources.run_log,
     "comments": queue.run,
     "skill": skill.run,
+    "update": update.run,
     "rename": admin.rename,
     "rm": admin.remove,
 }

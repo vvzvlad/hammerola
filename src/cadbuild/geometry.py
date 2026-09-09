@@ -66,11 +66,37 @@ def load_model():
             f"{_shadowed_src_hint(root_path, exc)}") from exc
     for name in ("parts", "views"):
         if not callable(getattr(model, name, None)):
-            raise BuildError(f"model.py does not define {name}()")
+            raise BuildError(
+                f"model.py does not define {name}(){_contract_moved(model)}")
     _warn_if_checklib_shadowed()
     # checks() is the optional third of the contract -- run_checks() below
     # deals with a model that has none.
     return model
+
+
+def _contract_moved(model):
+    """Say the contract CHANGED, when the model was written against the old one.
+
+    A model from before the catalogue opened with `printables()` beside
+    `views()`, and its author, told only "model.py does not define parts()",
+    goes looking for a typo in a file that has no typo in it — the name is not
+    missing, it was renamed out from under them, and nothing they can read from
+    here says so.
+
+    THIS IS A DIAGNOSIS AND NOT A COMPATIBILITY LAYER. The translator for the
+    old shape was written, then deleted deliberately (`legacy.py`, commit
+    d84056e): fixing an old model is the author's work, and a hub that quietly
+    accepted both shapes would keep every model in the older one forever. So
+    this adds a sentence to a refusal and changes nothing about what is
+    refused.
+    """
+    if not callable(getattr(model, "printables", None)):
+        return ""
+    return (" -- this model was written against the older contract, where "
+            "printables() sat beside views() as a second dict of geometry. It "
+            "is gone: parts() is now the whole catalogue, each entry keyed by "
+            "what identifies the piece, and views() selects from it. Nothing "
+            "translates the old form; rewrite parts() and drop printables()")
 
 
 def _shadowed_src_hint(root, exc):

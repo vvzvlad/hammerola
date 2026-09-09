@@ -1,9 +1,10 @@
-"""`pyproject.toml` says three things about the tool, and all three can go stale.
+"""`pyproject.toml` says five things about the tool, and all five can go stale.
 
 The file is metadata for the CLIENT and for nothing else: the distribution name
-`hammerola`, the python floor, the packages and the console script. Nothing
-reads it in this repository — no target builds a wheel, no workflow installs one
-— so every claim in it is a claim nothing would notice going false. The comments
+`hammerola`, the version, the python floor, the packages and the console script.
+Nothing reads it in this repository — no target builds a wheel, no workflow
+installs one — so every claim in it is a claim nothing would notice going
+false. The comments
 inside it already say "keep this equal to", which is this project's own
 signal that the sentence belongs in a test rather than in a comment.
 
@@ -20,12 +21,18 @@ WHAT EACH CHECK IS AGAINST, since none of them is about `pip` working:
     own was for.
   * The console script names a module and an attribute as a string, so nothing
     checks it until somebody installs the distribution and runs the command.
+  * The VERSION is stated twice — here, where an installed copy reports it from,
+    and in `hammerola.VERSION`, which is what the tool says about itself and
+    what the hub repeats in its manifest for `build` to compare against. The
+    zipapp, which is how the tool is usually installed, carries no metadata at
+    all, so the two can only be kept together by being asserted equal.
 """
 
 import importlib
 import tomllib
 from pathlib import Path
 
+import hammerola
 from src import onboarding
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +51,22 @@ def test_the_distribution_packages_the_tool_and_never_the_hub():
         "the distribution must contain the client package and nothing else — "
         "auto-discovery over this flat layout would add `src`, which is the hub "
         "and would shadow every other project's `src` once installed.")
+
+
+def test_the_declared_version_is_the_one_the_tool_states_about_itself():
+    """Two copies of one number, and the drift between them is silent.
+
+    Nothing in this repository reads `pyproject.toml`, so a version raised in
+    one place and not the other produces an installed `hammerola` that reports
+    one number while the hub — which imports the constant — states another. What
+    that costs is the refusal in `update.refuse_if_behind`: a client that says
+    it is older than the hub is stopped from publishing and told to update,
+    which is a loop when the update it fetches carries the same disagreement.
+    """
+    assert METADATA["project"]["version"] == hammerola.VERSION, (
+        "pyproject.toml and hammerola.VERSION name different versions of the "
+        "same tool, so an installed copy reports one number and the hub's "
+        "manifest states another.")
 
 
 def test_the_console_script_points_at_something_that_can_be_run():

@@ -1030,13 +1030,15 @@ def test_the_one_shot_read_is_left_alone_and_still_raises(scripted):
     """`Hub.job()` is the honest reading of ONE request and must keep raising on
     the first non-200 — the tolerance is a property of waiting, not of asking.
 
-    BE ACCURATE ABOUT WHO CALLS IT, because the first version of this said
-    `check_token` did and that is false: `check_token` uses the same ROUTE but
-    goes to `_call` directly. Since `await_job` moved to `_poll_job`, nothing in
-    `src/` calls this method at all and its only callers are tests — including
-    this one. It is kept for what it is rather than for a caller it does not
-    have, and saying so is the point: a false reason is worse than none in a
-    repository where the comments carry the load.
+    BE ACCURATE ABOUT WHO CALLS IT, because this paragraph has been wrong twice.
+    It said `check_token` did, which is false — that uses the same ROUTE but
+    goes to `_call` directly. It then said the method had no caller outside the
+    tests, which was true only between `await_job` moving to `_poll_job` and
+    issue #79: `sources._dev_log` calls it now, once, to put "(build, state
+    done)" in the header of `hammerola log dev`. That call is why `job()` grew a
+    401 branch of its own. What this test holds is the one-shot semantics it is
+    kept FOR — the first non-200 raises, with none of the polling tolerance —
+    and not the emptiness of a caller list that has stopped being empty.
     """
     hub, seen = scripted([EDGE_404])
 

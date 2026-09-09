@@ -9,8 +9,8 @@ said where to get them: the front page asks for a token, and the token is not
 what is missing. So the hub serves the three things a first run needs, and one
 document that names them.
 
-    GET /start                    the manifest: the three paths, the skill's
-                                  version, and `empty`
+    GET /start                    the manifest: the three paths, the versions
+                                  of the skill and of the client, and `empty`
     GET /start/skill.md           the agent instructions, one Markdown file
     GET /start/hammerola          the client, one executable file
     GET /start/template.tar.gz    a model directory that builds as it stands
@@ -46,20 +46,24 @@ argument above buys, and until it was written the argument was a debt: the
 route answered a question about the deployment anonymously and no reader had
 collected on it.
 
-ALL FIVE FIELDS HAVE A READER NOW, `empty` included — it is the one the
+ALL SIX FIELDS HAVE A READER, `empty` included — it is the one the
 paragraph above is about, and it is the gate on the two the door draws: the door
 renders nothing unless it says `true`. `hammerola create` follows `template`;
 `skill` and `client` are what the door renders; `skill_version` is what
-`hammerola skill` compares against the copy installed on a laptop. The page asks
-LAZILY, only when it is showing the form, so a hub with projects on it is not
-polled by every reader who already has a token.
+`hammerola skill` compares against the copy installed on a laptop; and
+`client_version` is what `hammerola build` and `hammerola commit` compare
+against themselves, refusing to publish from a client the hub has outgrown
+(issue #77). The page asks LAZILY, only when it is showing the form, so a hub
+with projects on it is not polled by every reader who already has a token.
 
-`skill_version` IS NOT A SECOND STATEMENT ABOUT THE DEPLOYMENT, and the test
-guarding this route is written to say why: like the three paths it is a constant
-of the IMAGE — two hubs running the same image answer with the same number — so
-it tells a reader what software is running and nothing about what is published
-here. That is the line, and `empty` is still the only thing on the far side of
-it.
+NEITHER VERSION IS A SECOND STATEMENT ABOUT THE DEPLOYMENT, and the test
+guarding this route is written to say why: like the three paths they are
+constants of the IMAGE — two hubs running the same image answer with the same
+numbers — so they tell a reader what software is running and nothing about what
+is published here. `client_version` says even less than that: it is a number
+anybody can already read out of the client this route hands them unasked, so it
+saves a download rather than disclosing anything. That is the line, and `empty`
+is still the only thing on the far side of it.
 
 WHAT COUNTS AS EMPTY is "no project directory on the volume WITH ANYTHING IN IT"
 (`Store.empty`), which differs from the obvious reading in two places. It is not
@@ -89,6 +93,8 @@ import zipfile
 from functools import lru_cache
 from pathlib import Path
 
+from hammerola import VERSION as CLIENT_VERSION
+
 ROOT = Path(__file__).resolve().parent.parent
 
 # --- the routes, named once ------------------------------------------------
@@ -116,6 +122,15 @@ TEMPLATE_KEY = "template"
 # Same arrangement, same reason: `hammerola/skill.py` names it too and a test
 # holds the two strings together.
 SKILL_VERSION_KEY = "skill_version"
+
+# ...and the same for the CLIENT this image serves at `/start/hammerola`. The
+# number is imported rather than parsed out of a file, unlike the skill's:
+# `hammerola/__init__.py` is a module of this repository and the hub already
+# imports four others from that package, so the value the manifest states and
+# the value inside the archive it serves are the same object. `hammerola/
+# update.py` names this key too, and reads it to decide whether a `build` or a
+# `commit` may go ahead at all.
+CLIENT_VERSION_KEY = "client_version"
 
 # THE VERSION LIVES IN THE FILE, and this is the whole of what reads it. Two
 # tight patterns rather than a YAML parser: there is no YAML in the standard
@@ -222,21 +237,33 @@ ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 def manifest(*, empty: bool) -> dict:
     """The document a first run is made of, and the door's block is drawn from.
 
-    Five keys and no more, checked by a test: three relative paths and a version
-    number, all four constants of the IMAGE, and the ONE boolean about this
-    deployment. Adding a field here is adding a statement the hub makes without
-    authentication — read the module docstring before doing it, and note which
-    side of that line a candidate falls on. `skill_version` is on the safe side
-    for the same reason the paths are: it is byte-identical on every deployment
-    running this image, so it says what the software IS and nothing about what
-    has been published here or who runs it.
+    Six keys and no more, checked by a test: three relative paths and two
+    version numbers, all five constants of the IMAGE, and the ONE boolean about
+    this deployment. Adding a field here is adding a statement the hub makes
+    without authentication — read the module docstring before doing it, and note
+    which side of that line a candidate falls on. Both versions are on the safe
+    side for the same reason the paths are: they are byte-identical on every
+    deployment running this image, so they say what the software IS and nothing
+    about what has been published here or who runs it.
 
-    ALL FIVE HAVE A READER. `hammerola create` follows `template`; the sign-in
+    `client_version` WAS THE SIXTH AND IT WAS ADDED DELIBERATELY (issue #77),
+    with the same argument `skill_version` made before it and one addition of
+    its own: it is not merely SAFE to publish, it is a fact about the FILE THIS
+    ROUTE ALREADY SERVES ANONYMOUSLY. Anybody who can read this key can download
+    the client at `client` and read the same number out of it, so the field
+    hands over nothing that was not already public — it saves a client the
+    download, which is the entire point of asking before a push instead of
+    after.
+
+    ALL SIX HAVE A READER. `hammerola create` follows `template`; the sign-in
     page reads `empty` — that is the whole of the gate on its block — and
     follows `skill` and `client` when it says there is nothing here yet;
     `hammerola skill` reads `skill_version` to tell a stale copy of the
     instructions from a current one, which is the one thing in this system that
-    used to go wrong in total silence (issue #51).
+    used to go wrong in total silence (issue #51); `hammerola build` and
+    `hammerola commit` read `client_version` and refuse to publish from a client
+    older than it, which is the sentence that used to be written down as true
+    and was not (`skill_version` below).
     `template` is the one the BROWSER deliberately ignores — a page cannot
     unpack a starter project into anybody's directory, and the block that would
     name it says "install the skill and follow it" instead — but it is read all
@@ -246,7 +273,8 @@ def manifest(*, empty: bool) -> dict:
     shipped `SKILL.md`. So this can fail the way the three artefact routes can —
     an image whose skill is missing or whose frontmatter lost its version — and
     `src/app.py` answers that with the same logged 404 rather than dropping the
-    socket.
+    socket. `client_version` adds no such failure: it is imported at startup, so
+    an image missing it never serves a request at all.
     """
     return {
         "empty": bool(empty),
@@ -254,6 +282,7 @@ def manifest(*, empty: bool) -> dict:
         "client": CLIENT_URL,
         TEMPLATE_KEY: TEMPLATE_URL,
         SKILL_VERSION_KEY: skill_version(),
+        CLIENT_VERSION_KEY: CLIENT_VERSION,
     }
 
 
@@ -271,14 +300,23 @@ def skill_bytes() -> bytes:
 def skill_version() -> int:
     """The version of the instructions this image ships. Off the file itself.
 
-    WHY THE SKILL IS VERSIONED AT ALL, when the client, the template and the
-    model contract are not versioned by hand: those three break LOUDLY. A stale
-    contract fails the build, a stale client is refused by the hub and says so.
-    A stale skill keeps confidently teaching yesterday — a command that was
-    renamed, a ceiling that was raised — and the agent following it gets a
-    refusal whose cause is a file on its own disk, with nothing anywhere going
-    red. So the file states which one it is, the manifest repeats it, and
+    WHY THE SKILL IS VERSIONED AT ALL, when the template and the model contract
+    are not versioned by hand: those two break LOUDLY — a stale contract fails
+    the build. A stale skill keeps confidently teaching yesterday — a command
+    that was renamed, a ceiling that was raised — and the agent following it
+    gets a refusal whose cause is a file on its own disk, with nothing anywhere
+    going red. So the file states which one it is, the manifest repeats it, and
     `hammerola skill` compares the two (issue #51).
+
+    THE CLIENT USED TO BE IN THAT FIRST LIST and it did not belong there. This
+    paragraph said a stale client "is refused by the hub and says so", and
+    nothing anywhere compared a client version — there was none to compare, and
+    an old client simply went on quietly doing what it could. The sentence is
+    now true and is machinery rather than a claim: `hammerola/__init__.py`
+    states `VERSION`, `manifest` above repeats it as `client_version`, and
+    `build` and `commit` refuse to publish from a client older than the hub's
+    (issue #77). Both numbers are here for the same reason and neither is a
+    statement about the deployment.
 
     IN THE FRONTMATTER and not in a comment in the body, because that is the
     part of the document a Claude Code skill already has a parser for: extra
@@ -572,11 +610,13 @@ def _import_closure(members):
 
         What tells `from hammerola import project` (a submodule, which has to
         be carried) from `from hammerola import SOMETHING` (a name defined in
-        the package itself, which does not). Today `hammerola/__init__.py` is
-        one docstring and binds nothing at all, so this answers the empty set;
-        it is here so that the day the package DOES bind something, a healthy
-        image is not refused for shipping without a module that no longer has
-        to exist.
+        the package itself, which does not). This was written against a
+        `hammerola/__init__.py` that bound nothing at all, for the day the
+        package WOULD bind something. That day is issue #77: the answer is now
+        `{"VERSION"}` — the constant the manifest repeats as `client_version`
+        and `update.py` reaches for as `from hammerola import VERSION`. Without
+        this the check would go looking for a module of that name and refuse a
+        healthy image.
 
         None means the namespace cannot be enumerated at all, and the caller
         then abstains rather than refusing. Two forms do that, and both would

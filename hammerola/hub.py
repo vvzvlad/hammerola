@@ -268,7 +268,23 @@ IMPOSSIBLE_JOB_ID = "0" * 22
 
 
 class HubError(Exception):
-    """The hub could not be reached, or answered something unusable."""
+    """The hub could not be reached, or answered something unusable.
+
+    `status` IS NOT FILLED IN EVERYWHERE, and do not write a comparison against
+    it without checking that the raise you mean sets it. The two job reads below
+    set it, because one caller has to tell "this hub has no such job" apart from
+    every other way that same call can fail and says a different sentence about
+    each (`sources._dev_log`). Every other raise in this file leaves it None:
+    those messages are written to stand alone, nobody branches on them, and a
+    field carried everywhere for one reader is a field that goes stale
+    everywhere. None therefore means "not recorded here", never "the hub did not
+    answer" — an unreachable hub raises from a place that records nothing, and
+    so does a body that would not parse.
+    """
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 # "NO POLL HAS EVER SUCCEEDED", which is not the same fact as "the hub answered
@@ -523,35 +539,62 @@ class Hub:
         return payload
 
     # -- the two routes ----------------------------------------------------
-    def publish(self, pid: str, body: bytes, *, slot: str = None):
+    def publish(self, pid: str, body: bytes, *, slot: str = None,
+                force: bool = False):
         """POST one archive. -> (status, payload dict).
 
         `slot` is the last path segment, and the only thing that differs between
         the two commands: `dev` for the local slot, and NOTHING for a revision.
         The absence is what asks the hub to name it — there is no id to send,
         because the client has none and never invents one.
+
+        `force` asks the build to skip the model's own checks(), and it travels
+        as a QUERY PARAMETER. Not a header, and not a path segment: the segment
+        after the slot is the commit id, and taking one for a flag would make
+        the URL say two things. The rule this endpoint has always had holds
+        either way — where a build lands is decided by the URL and never by the
+        body — because a query parameter IS the URL, and this one changes how
+        the build runs rather than where it lands.
         """
         path = f"/api/v1/publish/{urllib.parse.quote(pid)}"
         if slot is not None:
             path = f"{path}/{urllib.parse.quote(slot)}"
+        if force:
+            path = f"{path}?force=1"
         status, raw = self._call(path, method="POST", body=body,
                                  content_type="application/gzip")
         return status, self._payload(status, raw)
 
+    # BOTH OF THESE NAME A 401 THE WAY EVERY OTHER PRIVATE READ IN THIS FILE
+    # DOES. They were the exception while their only caller was `build`, which
+    # reaches them a moment after a push the same token was accepted for — a 401
+    # there was not a case anyone would meet. `hammerola log dev` (issue #79)
+    # calls them cold, after a PUBLIC read of the slot's meta.json that answers
+    # 200 with any token at all, so a stale token first shows up right here; and
+    # its caller wraps whatever comes out in "the hub does not have that job",
+    # which would be a wrong diagnosis and a suggestion that cannot work.
+    # BOTH SET `status` ON EVERY RAISE THAT HAD AN ANSWER, the 401 included, so
+    # the field means the same thing at each of them. Only one reader looks at
+    # it today and only for 404, but a rule with an exception in it is what the
+    # next reader gets wrong.
     def job(self, job_id: str) -> dict:
         status, raw = self._call(f"/api/v1/jobs/{urllib.parse.quote(job_id)}")
+        if status == 401:
+            raise HubError(UNAUTHORIZED, status)
         if status != 200:
             raise HubError(
                 f"the hub answered HTTP {status} for job {job_id}: "
-                f"{quoted(raw)}")
+                f"{quoted(raw)}", status)
         return self._payload(status, raw)
 
     def job_log(self, job_id: str) -> str:
         status, raw = self._call(
             f"/api/v1/jobs/{urllib.parse.quote(job_id)}/log")
+        if status == 401:
+            raise HubError(UNAUTHORIZED, status)
         if status != 200:
             raise HubError(f"the hub answered HTTP {status} for the log of "
-                           f"job {job_id}")
+                           f"job {job_id}", status)
         return raw.decode("utf-8", "replace")
 
     def _poll_job(self, job_id: str):
@@ -1072,21 +1115,28 @@ class Hub:
         """`GET /start` — the manifest of what a first run needs. NO TOKEN.
 
         Public on the hub, and asked for without a credential here: neither
-        `create` nor `skill` reads the secret, so a project can be started — and
-        the instructions fetched — against a hub the machine is not logged in
-        to. The reply is `{"empty", "skill", "client", "template",
-        "skill_version"}`: three relative paths and a version number, all four
-        constants of the image, plus one boolean about the hub
-        (`src/onboarding.py` has the whole argument for why that boolean is
-        public and why nothing wider is).
+        `create`, `skill` nor `update` reads the secret, so a project can be
+        started — and the instructions, or the tool itself, fetched — against a
+        hub the machine is not logged in to. The reply is `{"empty", "skill",
+        "client", "template", "skill_version", "client_version"}`: three
+        relative paths and two version numbers, all five constants of the image,
+        plus one boolean about the hub (`src/onboarding.py` has the whole
+        argument for why that boolean is public and why nothing wider is).
         """
         code, raw = self._call(START_PATH)
         if code != 200:
+            # NAME THE ROUTE AND NOT ONE OF ITS READERS. This used to explain
+            # the failure as "it did not say where the starter template is",
+            # which was true while `create` was the only caller; `skill`,
+            # `skill update` and `update` all read this manifest now, and each
+            # of them was being told about a template it had not asked for and
+            # offered a `create` flag that could not help it.
             raise HubError(
-                f"the hub answered HTTP {code} for {START_PATH}, so it did not "
-                f"say where the starter template is.\n"
-                f"  A hub older than this tool has no such route; "
-                f"`hammerola create --no-template` needs neither.")
+                f"the hub answered HTTP {code} for {START_PATH}, the manifest "
+                f"naming the skill, the client and the template.\n"
+                f"  A hub older than this tool has no such route. `create`, "
+                f"`skill`, `skill update` and `update` read it; of those only "
+                f"`hammerola create --no-template` works without it.")
         return self._payload(code, raw)
 
     def fetch_path(self, path: str) -> bytes:

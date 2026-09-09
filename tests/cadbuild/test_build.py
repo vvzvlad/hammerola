@@ -30,6 +30,7 @@ from src.cadbuild.artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID,
                                     PREVIEW_SUFFIX, PRINT_VIEW_ID)
 from src.cadbuild.build import build
 from src.cadbuild.errors import BuildError
+from src.cadbuild.modelchecks import run_checks as real_run_checks
 
 from fakes import catalogue
 
@@ -593,3 +594,111 @@ def test_a_build_publishing_under_the_slug_its_title_carries_says_nothing(
 
     assert [line for line in capsys.readouterr().out.splitlines()
             if line.startswith("warning:")] == []
+
+
+# -- force: the model's own checks(), and nothing else -----------------------
+@pytest.fixture
+def with_real_checks(driven, monkeypatch):
+    """`driven`, but with the REAL `run_checks` over a model that has checks().
+
+    The fixture above stands `run_checks` in with a constant, which is right for
+    every test written about something else — and useless for the two below,
+    where what is under test is whether that function is CALLED. So the real one
+    goes back, and the model gets a checks() of the caller's choosing.
+
+    Returns a function that installs one and hands back what it wrote.
+    """
+    monkeypatch.setattr(build_module, "run_checks", real_run_checks)
+    counted = SimpleNamespace(checks=None)
+
+    def collect_metrics(project, parts, checks_passed, checks_static,
+                        provenance, bbox, print_bbox):
+        counted.checks = (checks_passed, checks_static)
+        return {}
+
+    monkeypatch.setattr(build_module, "collect_metrics", collect_metrics)
+
+    def install(checks):
+        monkeypatch.setattr(
+            build_module, "load_model",
+            lambda: SimpleNamespace(parts=lambda: {}, views=lambda: [],
+                                    checks=checks))
+        return counted
+
+    return install
+
+
+def test_a_failing_check_stops_an_ordinary_build_and_not_a_forced_one(
+        with_real_checks, out_dir, capsys):
+    """The whole point of the flag: an unfinished model publishes anyway.
+
+    Both directions in one test, because either on its own says nothing —
+    a check that never fails would pass the forced arm, and a build that never
+    completes would pass the other.
+    """
+    def checks():
+        assert False, "the boss is 0.2 mm into the wall"
+
+    counted = with_real_checks(checks)
+
+    with pytest.raises(BuildError) as exc:
+        build(out_dir)
+    assert "the boss is 0.2 mm into the wall" in str(exc.value)
+    capsys.readouterr()
+
+    build(out_dir, force=True)
+
+    out = capsys.readouterr().out
+    # One line, where the checks' own verdict would have been, and it is not a
+    # warning: `tests/test_template.py` fails a build log that carries one.
+    assert ("checks: not run -- this push asked for the model's own checks "
+            "to be skipped") in out.splitlines()
+    assert [line for line in out.splitlines()
+            if line.startswith("warning:")] == []
+    # The phase line is still printed, so the table does not read as a build
+    # that stopped in the checks.
+    assert any(line.startswith("  checks: ") for line in out.splitlines())
+    # And nothing was counted, which is what None says here.
+    assert counted.checks == (None, None)
+
+
+def test_a_checks_that_holds_no_check_publishes_under_force(with_real_checks,
+                                                            out_dir):
+    """The other refusal `run_checks` makes, and it is not a failed check.
+
+    An empty checks() is refused for saying the model was checked when nothing
+    looked at it. That verdict is reached before any check runs, so a flag that
+    only ignored FAILURES would leave this build red — and a model being cut
+    down to a stub is exactly the state somebody pushes unfinished work from.
+    """
+    def checks():
+        x = 1
+        return None
+
+    with_real_checks(checks)
+
+    with pytest.raises(BuildError) as exc:
+        build(out_dir)
+    assert "contains no check" in str(exc.value)
+
+    build(out_dir, force=True)
+
+
+def test_the_hubs_own_gate_still_refuses_a_forced_build(driven, monkeypatch,
+                                                        out_dir):
+    """`--force` waives the AUTHOR's checks; the hub's rules are not the
+    author's to waive.
+
+    `check_interference` stands here for all of them — it is the cheapest one to
+    trip — and it is on the same side of the build as the checks that were
+    skipped, so a flag that had been read as "publish whatever happens" would
+    show up right here.
+    """
+    def refuse(prepared, catalogue):
+        raise BuildError("two parts share space")
+
+    monkeypatch.setattr(build_module, "check_interference", refuse)
+
+    with pytest.raises(BuildError) as exc:
+        build(out_dir, force=True)
+    assert "two parts share space" in str(exc.value)

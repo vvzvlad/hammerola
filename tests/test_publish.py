@@ -8,8 +8,8 @@ import time
 
 import pytest
 
-from harness import (DEFAULT_EXPORTS, TOKEN, good_build, meta_bytes, tar_gz,
-                     view_bytes)
+from harness import (DEFAULT_EXPORTS, TOKEN, copying_builder, good_build,
+                     meta_bytes, tar_gz, view_bytes)
 
 from src import app, render
 from src.store import DEV_LINK, PublishError, Store
@@ -708,6 +708,29 @@ def test_the_same_sources_mint_the_same_revision(hub):
     assert builds == [first.json()["revision"]]
 
 
+def test_force_is_not_part_of_the_name_the_sources_are_given(hub):
+    """`?force=1` changes how a build RUNS, never what it is called.
+
+    `src/app.py` carries this as a comment calling itself "the line somebody
+    would be tempted to change", which is the project's own definition of a
+    sentence that belongs in a test. A flag folded into the digest would give
+    one tree two permanent addresses — the one thing a minted name may never be
+    — and the same tree pushed again would rebuild instead of answering
+    "unchanged", forced or not.
+
+    Structurally true today: `accept_sources` is not passed `force` at all. This
+    pins it so, rather than repairing anything.
+    """
+    first = hub.publish_async("proj1", None, good_build())
+    assert hub.await_job(first.json()["job"]).status_code == 201
+
+    forced = hub.publish_async("proj1", None, good_build(), query="?force=1")
+    assert forced.status_code == 200, (
+        "a forced push of sources already published started a second build; "
+        "the digest has grown a dependency on the flag")
+    assert forced.json()["revision"] == first.json()["revision"]
+
+
 def test_different_sources_mint_a_different_revision(hub):
     one = hub.publish_async("proj1", None, good_build("a"))
     two = hub.publish_async("proj1", None, good_build("DIFFERENT"))
@@ -757,6 +780,39 @@ def test_the_local_slot_is_still_a_named_route(hub):
     assert hub.await_job(reply.json()["job"]).status_code == 201
     assert (hub.project_dir("proj1") / "dev" / "meta.json").is_file()
     assert not (hub.project_dir("proj1") / "latest").exists()
+
+
+def test_only_the_publish_route_s_own_query_parameter_turns_force_on(
+        hub_factory):
+    """The query used to be thrown away here, and now one name is read out of it.
+
+    `?force=1` is the client's own spelling (`Hub.publish`) and it asks the
+    build to skip the model's own checks(). Everything else in the query stays
+    ignored: a parameter nobody here anticipated must not become a boolean by
+    being present, which is what the second push is for — and the first is the
+    control that makes the second mean something at all.
+
+    Two NAMED routes rather than one pushed twice: the same sources under the
+    same name are already published by the second push and `Store.settled`
+    answers 200 without building anything, so there would be no call to look at.
+    """
+    seen = []
+
+    def recording_builder(project_dir, out_dir, *, pid, force, **kw):
+        seen.append(force)
+        return copying_builder(project_dir, out_dir, pid=pid, **kw)
+
+    hub = hub_factory(build_runner=recording_builder)
+    headers = {"Authorization": f"Bearer {TOKEN}",
+               "Content-Type": "application/gzip"}
+
+    for path in ("/api/v1/publish/proj1/c1?force=1",
+                 "/api/v1/publish/proj1/c2?nonsense=1"):
+        reply = hub.request("POST", path, content=good_build(), headers=headers)
+        assert reply.status_code == 202
+        assert hub.await_job(reply.json()["job"]).status_code == 201
+
+    assert seen == [True, False]
 
 
 def test_reserved_commit_name_is_refused(hub):

@@ -2247,7 +2247,8 @@ def test_the_worker_calls_the_real_run_build_the_way_it_is_declared(hub_factory,
         "nothing keeps the call it makes and the call this test binds together")
     # Belt and braces on the helper itself: it is the expression, not a wrapper
     # that could quietly start returning something else.
-    assert build_arguments(args[0], args[1], keywords["pid"]) == (args, keywords)
+    assert build_arguments(args[0], args[1], keywords["pid"],
+                           force=keywords["force"]) == (args, keywords)
 
 
 def test_a_publish_reply_is_reconstructed_from_the_job(hub):
