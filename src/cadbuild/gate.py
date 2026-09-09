@@ -499,8 +499,9 @@ def check_interference(prepared, catalogue):
     # WITH THE TIME IT TOOK, in the shape every other timing in this build is
     # printed in (`1.2s`, one decimal). This is O(n^2) booleans hiding inside
     # the `geometry` phase, and on a real model measured 2026-08-29 the phase
-    # next door was 495 seconds against a 900-second process ceiling
-    # (buildproc.limits.DEFAULT_WALL_SECONDS) -- so a slow build needs some way
+    # next door was 495 seconds against what was then a 900-second process
+    # ceiling (buildproc.limits.DEFAULT_WALL_SECONDS, 300 since issue #81 -- that
+    # same model would not fit today) -- so a slow build needs some way
     # to see whether this is where the minutes went. Measured with
     # time.monotonic() rather than with `checklib.section`, which measures the
     # same way but files its total into the table run_checks prints for the

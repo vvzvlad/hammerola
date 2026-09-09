@@ -16,6 +16,14 @@ them at once, and both were caught by reading, not by running:
 
 A comment cannot catch either. These are one multiplication each, so they cost
 nothing to run and they fail on the commit that breaks them.
+
+THE 2026-09-10 DROP (900 s -> 300 s, issue #81, made possible by the heavy models
+moving to check units) went the other way, and that direction is the one to be
+careful about: every assertion here loosens as the wall falls, so nothing in this
+file can fail on the way down. What goes stale on a drop is the PROSE -- a
+comment still promising "room to spare" over a wait four times what it now is --
+and prose is what this file exists instead of. So a drop is checked by reading
+`limits.py`, `store.py` and `hub.py`, not by running this.
 """
 
 from src.buildproc.limits import BUILDS_SHARING_THE_HOST, DEFAULT_LIMITS
