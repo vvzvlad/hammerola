@@ -1115,13 +1115,13 @@ class Hub:
         """`GET /start` — the manifest of what a first run needs. NO TOKEN.
 
         Public on the hub, and asked for without a credential here: neither
-        `create` nor `skill` reads the secret, so a project can be started — and
-        the instructions fetched — against a hub the machine is not logged in
-        to. The reply is `{"empty", "skill", "client", "template",
-        "skill_version"}`: three relative paths and a version number, all four
-        constants of the image, plus one boolean about the hub
-        (`src/onboarding.py` has the whole argument for why that boolean is
-        public and why nothing wider is).
+        `create`, `skill` nor `update` reads the secret, so a project can be
+        started — and the instructions, or the tool itself, fetched — against a
+        hub the machine is not logged in to. The reply is `{"empty", "skill",
+        "client", "template", "skill_version", "client_version"}`: three
+        relative paths and two version numbers, all five constants of the image,
+        plus one boolean about the hub (`src/onboarding.py` has the whole
+        argument for why that boolean is public and why nothing wider is).
         """
         code, raw = self._call(START_PATH)
         if code != 200:

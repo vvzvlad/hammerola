@@ -559,6 +559,17 @@ def flaky_hub():
                                          "revision": "r" * 64}).encode())
 
         def do_GET(self):
+            if self.path == "/start":
+                # The version question `build` asks before it packs anything
+                # (`update.refuse_if_behind`), answered the way everything this
+                # double stands in for answers — the EDGE, not the hub. The
+                # client can read no version out of it and goes ahead, which is
+                # what keeps a hub nobody can reach from looking like a laptop
+                # that is out of date. It is deliberately kept OUT of `polls`:
+                # counted there it would eat the one 404 this fixture exists to
+                # deliver to the first job poll.
+                return self._send(404, b"404 page not found\n",
+                                  "text/plain; charset=utf-8")
             if self.path.endswith("/log"):
                 # Deliberately says neither "building" nor "still waiting": the
                 # log is the other thing on stdout, and a word of it landing in

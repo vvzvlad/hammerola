@@ -13,6 +13,7 @@
     comments resolve <id>     close one, with an optional note
     skill                     the agent instructions: this machine's, and the hub's
     skill update              write the hub's copy over the installed one
+    update                    write the hub's copy of THIS TOOL over itself
     rename "New title"        change the project's TITLE — never its id
     rm                        remove the project from the hub, whole
 
@@ -40,10 +41,16 @@ each is the wrong one:
   * `rm` removes the whole project and asks first. There is no way to remove one
     build: that would break a permanent URL and leave the project standing.
 
-WHAT IS STILL NOT HERE. Self-update is issue #77; the tool has a distribution
-name of its own (`pyproject.toml`), so nothing blocks it. `skill update` is the
-shape it copies, and the shape is all — that one writes a document, this one
-would write the running program. `status` shows no "last job", for a reason
+SELF-UPDATE IS HERE (issue #77) AND IT IS ONE VERB. `update` fetches the zipapp
+the hub serves and writes it over the file this process is running from, which
+is where it stops resembling `skill update`: that one writes a document, this
+one writes the running program, so what comes back is checked before it lands
+and lands through a rename rather than a truncating write (`update.py`). Its
+other half is a refusal — `build` and `commit` ask the hub which client it
+serves and will not publish from an older one, the only place in this tool that
+spends a round trip on a question about ITSELF.
+
+WHAT IS STILL NOT HERE. `status` shows no "last job", for a reason
 that is not going to lift
 on its own — job order is stored nowhere, see `status.py`. `log dev` was in that
 sentence until the slot started naming the job that filled it (issue #79), and
@@ -84,7 +91,7 @@ import argparse
 import sys
 
 from hammerola import (admin, artifacts, config, gitsuggest, project, queue,
-                       revdiff, setup, skill, sources, status)
+                       revdiff, setup, skill, sources, status, update)
 from hammerola.errors import ClientError
 from hammerola.hub import (JOB_TIMEOUT, UNAUTHORIZED, Hub, HubError,
                            quoted)
@@ -260,6 +267,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--path", default=argparse.SUPPRESS, metavar="FILE",
         help=f"the file to write (default: {skill.DEFAULT_PATH})")
 
+    # NO ARGUMENTS AND NO `--path`, which is what tells this apart from the verb
+    # above it: `skill update` writes a document into a directory this tool can
+    # only guess at, so it takes the guess as a flag, while `update` writes the
+    # file it is itself running from — the one path in this tool that is not a
+    # choice at all (`update._target`).
+    commands.add_parser(
+        "update",
+        help="write the hub's copy of this tool over the file it is running "
+             "from, and print what changed between the two versions")
+
     # THE TITLE IS THE ONLY THING THIS TAKES, and there is deliberately no
     # `--id` beside it: an id that could be renamed would break every permanent
     # URL of the project on the day it was used (SPEC §3.1).
@@ -337,6 +354,14 @@ def _publish(args) -> int:
     # goes for the token: a stored secret with a newline in it is refused here
     # rather than after the packing.
     hub = Hub(hub_url, token)
+
+    # AND ONE QUESTION ABOUT THIS TOOL, asked here for the same reason the two
+    # settings are read above: before the tree is walked, so a client the hub
+    # has outgrown says so in a second rather than after packing a push it is
+    # not going to be allowed to make. It is the ONLY verb pair that asks — see
+    # `update.refuse_if_behind` for why reading verbs do not pay for it, and why
+    # a hub that cannot answer does not block the push.
+    update.refuse_if_behind(hub)
 
     archive = pack(root)
 
@@ -513,6 +538,7 @@ HANDLERS = {
     "log": sources.run_log,
     "comments": queue.run,
     "skill": skill.run,
+    "update": update.run,
     "rename": admin.rename,
     "rm": admin.remove,
 }

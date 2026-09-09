@@ -4,6 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hammerola"
+# The version an INSTALLED copy reports; keep this equal to `hammerola.VERSION`,
+# which is what the tool states about itself wherever it runs from and what the
+# hub repeats in its manifest. A zipapp carries no metadata, so the constant is
+# the authority and this line is the copy that goes stale.
 version = "0.1.0"
 # The floor the client itself checks at startup: keep this equal to
 # `onboarding.MIN_PYTHON`, which is what the zipapp's guard prints.

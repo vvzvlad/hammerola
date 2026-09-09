@@ -79,32 +79,31 @@ decision rather than a limitation of what was written:
     remove one build: that breaks a permanent URL while leaving the project
     standing.
 
-WHAT IS STILL NOT HERE, and for two different reasons worth telling apart.
+WHAT IS STILL NOT HERE. `status` shows no "last job". It is not waiting on
+anybody's next commit: a job is addressable by its id alone and job order is
+stored nowhere (`src/jobs.py`), so there is no such thing to look up, and
+`status.py` says that out loud rather than guessing. `log dev` used to be the
+second half of this paragraph and no longer is: the slot's meta.json names the
+job that filled it (issue #79), so the log of the build on screen is one lookup
+away — see `sources._dev_log`.
 
-  * `status` shows no "last job". It is not waiting on anybody's next commit: a
-    job is addressable by its id alone and job order is stored nowhere
-    (`src/jobs.py`), so there is no such thing to look up, and `status.py` says
-    that out loud rather than guessing. `log dev` used to be the second half of
-    this paragraph and no longer is: the slot's meta.json names the job that
-    filled it (issue #79), so the log of the build on screen is one lookup away
-    — see `sources._dev_log`.
-  * Self-update. What used to block it is gone: the tool now has a distribution
-    name of its own. This directory is a top-level package rather than
-    `src/client/`, it carries the three shared modules with it so it reaches
-    into nothing, and `pyproject.toml` at the repository root installs it under
-    the name `hammerola` with an entry point of the same name — `src` is not
-    packaged and never was installable. What is left is the update itself
-    (issue #77): a version this can state, and the comparison against what the
-    hub serves. Until then there are three doors — the installed `hammerola`
-    script; `python3 -m hammerola` out of a checkout, pointed at the model with
-    `-C` (`__main__.py` has the working forms and why the obvious one is not
-    among them); and the zipapp the hub builds out of these modules and serves
-    at `/start/hammerola` for a machine with neither. The first and the last
-    carry their own modules, so they run from anywhere and need no `-C`. This
-    paragraph used to live in `bin/hammerola`, a door that existed only to be
-    symlinked onto PATH — and that symlink is exactly what the hub's own
-    `curl -o ~/.local/bin/hammerola` wrote through, silently replacing the
-    repository's copy with the download.
+SELF-UPDATE IS HERE (issue #77) AND IT IS ONE VERB. `hammerola update` fetches
+the zipapp the hub serves at `/start/hammerola` and writes it over the file this
+process is running from, printing what changed between the two versions
+(`update.py`, `changelog.py`). The number both sides compare is `VERSION` below:
+the hub repeats it in its manifest as `client_version`, and `build` and `commit`
+refuse to publish from a client older than that. It applies to ONE of the three
+doors, which is why the doors are worth listing: the installed `hammerola`
+script; `python3 -m hammerola` out of a checkout, pointed at the model with `-C`
+(`__main__.py` has the working forms and why the obvious one is not among them);
+and the zipapp, for a machine with neither. Only the last is a single file this
+tool can replace — a checkout is updated with git and an installed distribution
+with pip, and `update` says so rather than writing into either. The first and
+the last carry their own modules, so they run from anywhere and need no `-C`.
+This paragraph used to live in `bin/hammerola`, a door that existed only to be
+symlinked onto PATH — and that symlink is exactly what the hub's own
+`curl -o ~/.local/bin/hammerola` wrote through, silently replacing the
+repository's copy with the download.
 
 STDLIB ONLY, EVERY MODULE BELOW. This runs on the author's machine, under
 whatever python3 is there, so it takes nothing from `requirements.txt` — not
@@ -117,3 +116,18 @@ could be avoided entirely it was — `hammerola/metricsdiff.py` is the compariso
 `hammerola diff` and the build both import, moved out of `src/cadbuild/` rather
 than duplicated.
 """
+
+# WHICH VERSION OF THE TOOL THIS IS, and a constant rather than metadata because
+# of how the tool is usually installed: the zipapp carries no `pyproject.toml`
+# and was never `pip install`ed, so `importlib.metadata` has nothing to answer
+# with on the machine that matters most. A module-level literal is readable
+# three ways that all have to work — imported by the running program, read out
+# of the served archive by an older client before it replaces itself
+# (`update._member_value`), and imported by the hub to state `client_version` in
+# its manifest (`src/onboarding.py`).
+#
+# IT IS THE SAME NUMBER AS `pyproject.toml`'s, held there by
+# `tests/test_packaging.py`: the two would otherwise disagree the first time
+# somebody installed the distribution, and the version an installed copy reports
+# is exactly the one `build` refuses to publish from.
+VERSION = "0.1.0"
