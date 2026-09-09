@@ -41,9 +41,10 @@ each is the wrong one:
     build: that would break a permanent URL and leave the project standing.
 
 WHAT IS STILL NOT HERE. Self-update waits on the tool having a distribution name
-of its own. `status` shows no "last job", and `log dev` cannot be answered at
-all — both for reasons that are not going to lift on their own, see `status.py`
-and `sources._dev_log`.
+of its own. `status` shows no "last job", for a reason that is not going to lift
+on its own — job order is stored nowhere, see `status.py`. `log dev` was in that
+sentence until the slot started naming the job that filled it (issue #79), and
+now answers with that build's log — see `sources._dev_log`.
 
 THE PUBLISHING FLOW, which is what the rest of this file is about. Pack the
 working directory, POST it, poll the job, print what the build printed, and

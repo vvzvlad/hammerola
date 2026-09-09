@@ -1277,13 +1277,19 @@ class BuildQueue:
             args, keywords = build_arguments(task.sources, staging, task.pid)
             outcome = self._run_build(*args, **keywords)
             if outcome.ok:
+                # THE JOB ID GOES WITH THE TREE, and this is the only place that
+                # has it: the slot's meta.json records which job filled it, so
+                # `hammerola log dev` can read that build's log back without
+                # rebuilding (issue #79). Both routes fill the slot — a commit
+                # mirrors itself into it (issue #78) — so both carry the id.
                 if task.commit == DEV_LINK:
                     status, payload = self._store.publish_dev_built(
-                        task.pid, staging, outcome.files, task.digest)
+                        task.pid, staging, outcome.files, task.digest,
+                        job=task.job_id)
                 else:
                     status, payload = self._store.publish_built(
                         task.pid, task.commit, staging, outcome.files,
-                        task.digest)
+                        task.digest, job=task.job_id)
                 logger.info(
                     f"job {task.job_id}: published {task.pid}/{task.commit} "
                     f"-> {payload['url']}")

@@ -980,7 +980,8 @@ def _match_selection(declared: list, shown: set, view_id: str) -> None:
 
 
 def build_meta(pid: str, commit: str, raw: dict, staging: Path,
-               files: dict, published: str, dev: bool = False) -> dict:
+               files: dict, published: str, dev: bool = False,
+               job: str = None) -> dict:
     """Validate the uploaded meta.json and normalize it for the viewer.
 
     NOTHING IS RENAMED ANY MORE. `views` used to be handed to the browser as
@@ -1121,6 +1122,15 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
         "views": rendered,
         "parts": catalogue,
     }
+    # THE THIRD KEY THE SLOT HAS AND A REVISION DOES NOT (issue #79). The slot
+    # is not addressed by a revision, so no log is stored under its name and the
+    # only copy of one is at the JOB that produced the build — which nothing
+    # remembered, so `hammerola log dev` could only refuse. One field is that
+    # memory. Added after the document rather than inside it so a revision's
+    # meta.json does not change by a byte, and left None-able because a slot
+    # written without one still has to be a published slot.
+    if dev:
+        meta["job"] = job
     return meta
 
 

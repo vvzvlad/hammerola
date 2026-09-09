@@ -14,8 +14,9 @@ WHAT IS BEING PINNED, beyond "it works":
     push would publish;
   * `artifacts` reaches for the PUBLIC build files while `source` reaches for
     the code behind the secret. The split is the reason there are two verbs;
-  * `log dev` is the address the hub cannot answer, and it says so rather than
-    quietly answering with `latest`'s log, which would be a different build;
+  * `log dev` is answered through the JOB the slot names (issue #79), and the
+    header says which kind of push filled the slot — a `build`, or the commit
+    that copied itself into it;
   * `diff` answers both halves of the question — what the geometry did, and what
     the source did — and the geometry half runs through the very function the
     build itself prints with.
@@ -123,11 +124,30 @@ def with_artifacts(root, **kw):
 def publish(model, capsys, *args):
     """`hammerola commit` and the revision it printed."""
     assert run(model, "commit", *args) == 0
-    out = capsys.readouterr().out
+    return revision_of(capsys.readouterr().out)
+
+
+def revision_of(out):
     for line in out.splitlines():
         if line.startswith("revision "):
             return line.split()[1].rstrip(":")
     raise AssertionError(f"no revision in the output:\n{out}")
+
+
+def job_of(out):
+    """The job id `build` and `commit` print, out of what they printed."""
+    for line in out.splitlines():
+        if line.startswith("queued as job "):
+            return line.split()[3].rstrip(":")
+    raise AssertionError(f"no job in the output:\n{out}")
+
+
+def slot_meta_path(hub, pid="demo0001"):
+    return hub.project_dir(pid) / "dev" / "meta.json"
+
+
+def slot_meta(hub, pid="demo0001"):
+    return json.loads(slot_meta_path(hub, pid).read_text(encoding="utf-8"))
 
 
 # -- source ------------------------------------------------------------------
@@ -606,20 +626,91 @@ def test_log_of_a_named_revision(hub, model, capsys):
     assert first in out
 
 
-def test_log_dev_says_the_hub_keeps_none_rather_than_answering_with_another(
-        hub, model, capsys):
-    """The one of the three addresses the hub cannot answer. Answering with
-    `latest`'s log instead would be a different build's log under this one's
-    name, which is worse than refusing."""
-    publish(model, capsys)
+def test_the_slot_names_its_job_and_a_revision_names_none(hub, model, capsys):
+    """The one field the whole of issue #79 rests on, and its other half.
+
+    The slot's meta.json and a revision's differ in exactly three keys now, and
+    `job` is the third: the slot is not addressed by a revision, so no log is
+    stored under its name and the JOB that filled it is the only way back to
+    one. A revision needs no such field — its log is in the store — and must
+    not grow one, because that document is what a build page and every
+    comparison read.
+    """
+    revision = publish(model, capsys)
+    # The commit filled the slot with itself (issue #78), so the sources have
+    # to move before a `build` is anything but "unchanged, nothing rebuilt".
+    (model / "model.py").write_text("# moved on since\n")
+    assert run(model, "build") == 0
+    job = job_of(capsys.readouterr().out)
+
+    assert slot_meta(hub)["job"] == job
+    published = json.loads(
+        (hub.project_dir("demo0001") / revision / "meta.json").read_text(
+            encoding="utf-8"))
+    assert "job" not in published
+
+
+def test_log_dev_prints_the_log_of_the_job_that_filled_the_slot(hub, model,
+                                                                capsys):
+    """The command that used to refuse. What comes back is the log of the very
+    build whose geometry is in the slot, not `latest`'s under another name."""
+    assert run(model, "build") == 0
+    job = job_of(capsys.readouterr().out)
+
+    assert run(model, "log", "dev") == 0
+    out = capsys.readouterr().out
+    assert f"--- build log of job {job} (build, state done) ---" in out
+    assert "copying builder" in out
+    assert "--- end of build log ---" in out
+
+
+def test_log_dev_says_when_a_commit_is_what_filled_the_slot(hub, model,
+                                                            capsys):
+    """A commit copies itself into the slot (issue #78), so `log dev` is often
+    a revision's log — and the header has to say so rather than leave the
+    reader to work it out from the contents afterwards."""
+    assert run(model, "commit") == 0
+    out = capsys.readouterr().out
+    job, revision = job_of(out), revision_of(out)
+    assert slot_meta(hub)["job"] == job
+
+    assert run(model, "log", "dev") == 0
+    printed = capsys.readouterr().out
+    assert f"--- build log of job {job} (commit {revision}, state done) ---" \
+        in printed
+    assert "copying builder" in printed
+
+
+def test_log_dev_of_a_slot_that_does_not_name_a_job(hub, model, capsys):
+    """A slot filled before the hub recorded the field. It is not an error on
+    the hub's side — the slot is published and serves its geometry — so the
+    refusal says what to run rather than sounding like a broken build."""
     assert run(model, "build") == 0
     capsys.readouterr()
+    meta = slot_meta(hub)
+    del meta["job"]
+    slot_meta_path(hub).write_text(json.dumps(meta), encoding="utf-8")
 
     assert run(model, "log", "dev") == 1
     err = capsys.readouterr().err
-    assert "keeps no build log for the local slot" in err
-    # It says where the log CAN be read, which is the point of refusing well.
-    assert "hammerola build" in err and "jobs/<id>/log" in err
+    assert "does not say which job filled it" in err
+    assert "hammerola build" in err
+
+
+def test_log_dev_when_the_hub_does_not_have_that_job(hub, model, capsys):
+    """A job id means nothing on another hub, and jobs have no retention. The
+    refusal names the hub, because the usual cause is that the configured one
+    is not the hub that built this."""
+    assert run(model, "build") == 0
+    capsys.readouterr()
+    meta = slot_meta(hub)
+    meta["job"] = "0" * 22
+    slot_meta_path(hub).write_text(json.dumps(meta), encoding="utf-8")
+
+    assert run(model, "log", "dev") == 1
+    err = capsys.readouterr().err
+    assert "does not have it" in err
+    assert hub.url in err
 
 
 def test_log_of_a_revision_the_hub_never_published(hub, model, capsys):
