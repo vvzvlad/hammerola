@@ -91,9 +91,11 @@ pusher's builds to destroy, and this module does not make one.
 
 BUILD PARALLELISM IS ITS OWN NUMBER, deliberately not `MAX_CONCURRENT_PUBLISHES`.
 The four accept slots in app.py are sized by what RECEIVING costs — a body on
-disk, a tar reader, a staging tree — and a build is sized by cores and memory
-instead. Sharing one number would mean the day either ceiling is retuned, the
-other moves with it for no reason anybody could reconstruct.
+disk, a tar reader, a staging tree — and a build is sized by memory and by how
+long one hung build may hold a worker. Since 2026-09-09 both numbers happen to
+read four, and that is a COINCIDENCE of two separate measurements rather than a
+link: sharing one number would mean the day either ceiling is retuned, the other
+moves with it for no reason anybody could reconstruct.
 
 NOTHING IN THIS MODULE IS MODULE-LEVEL STATE. `JobStore` and `BuildQueue` are
 built per server, like `Store` and `CommentStore`, so two hubs in one test
@@ -215,15 +217,20 @@ LOG_TRUNCATED_NOTE = "\n[truncated by the hub: this log is larger than it should
 
 # How many builds may run at once.
 #
-# PROVISIONAL, and the number is honest about that: nothing has ever been
-# measured, because the hub has never been deployed and has never built a model.
-# Two is a starting point that cannot be obviously wrong — a build is CPU-bound
-# and holds an OCCT thread pool, so more of them than cores is pure contention —
-# and it is meant to be replaced by a measurement the first time this service is
-# rolled out, exactly like the container's resource limits in step 0 of the plan.
-# Do not talk yourself into a bigger number here from first principles; take it
-# from a real build.
-MAX_CONCURRENT_BUILDS = 2
+# MEASURED on the deployed hub, 2026-09-09, and raised from two: 145 real jobs on
+# a 20-core host sitting at a load average of 0.6. What the measurement says is
+# that this number buys no SPEED — a build is effectively single-threaded, the
+# cores idle through it, and widening the OCCT pool from 2 to 8 bought about 7%.
+# What it buys is ISOLATION. Every serious queue wait in those jobs — up to 513 s
+# — came from TWO HUNG BUILDS holding both workers for 891 s each, so the queue
+# was starved by two bad builds rather than by a hub that could not keep up. More
+# workers do not make one build finish sooner; they stop one bad project from
+# starving everybody else.
+#
+# MEMORY is what bounds it, not cores: a build peaks around 450 MB resident, so
+# four of them together stay inside the ~12 GB the host has free. The next move
+# comes from another measurement, not from first principles.
+MAX_CONCURRENT_BUILDS = 4
 
 # How many pushes may be WAITING for a worker. Bounded on purpose: an unbounded
 # queue turns a hub that cannot keep up into a hub that accepts everything,
@@ -304,12 +311,13 @@ WORKER_THREAD_PREFIX = "hammerola-build"
 # A BUDGET FOR THE POOL and not a timeout per worker, which is the version of
 # this that looks identical and is not. `shutdown` joins the workers one after
 # another, so a per-worker timeout is multiplied by however many are busy: at
-# MAX_CONCURRENT_BUILDS = 2 a busy pool would spend 2 x 5 s = the ENTIRE grace
-# period on the joins alone, before the queue drain and before `serve_forever`
-# has even noticed the stop (it polls). The number meant to keep an ordinary stop
-# away from SIGKILL would then be what guarantees one — and worse every time the
-# pool grows, which it is expected to once there is a measurement to grow it by.
-# So the joins share one deadline.
+# MAX_CONCURRENT_BUILDS = 4 a busy pool would spend 4 x 5 s = 20 s on the joins
+# alone, TWICE the whole grace period, before the queue drain and before
+# `serve_forever` has even noticed the stop (it polls). The number meant to keep
+# an ordinary stop away from SIGKILL would then be what guarantees one — and it
+# gets worse every time the pool grows, as it did on 2026-09-09 when this number
+# went from two to four without the stop moving at all. So the joins share one
+# deadline.
 #
 # A build still computing is abandoned. Its job is marked failed by `_load` at the
 # next start, and it leaves TWO directories behind, not one: the unpacked sources

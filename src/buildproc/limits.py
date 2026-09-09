@@ -45,7 +45,7 @@ MiB = 1024 * 1024
 # and cannot import it: jobs imports this package, so the arrow only points one
 # way. `tests/test_build_ceilings.py` compares the two, which is the only reason
 # a second spelling of one number is acceptable here.
-BUILDS_SHARING_THE_HOST = 2
+BUILDS_SHARING_THE_HOST = 4
 
 # Ceiling on the pool whatever the machine has. OCCT's parallel sections scale
 # sublinearly, and `cpu_seconds` is a multiple of this number -- on a 64-core
@@ -106,7 +106,10 @@ def _default_occt_threads():
 
     A SHARE, because `BUILDS_SHARING_THE_HOST` of these run at once and a pool
     per build sized to the whole machine is not parallelism, it is contention
-    for the cores the cap exists to protect.
+    for the cores the cap exists to protect. Four builds share the host since
+    2026-09-09, so the share is a QUARTER of the cores rather than the half it
+    was: on the 20-core hub that is 20 // 4 = 5 threads per build, and
+    `cpu_seconds` follows it by formula.
 
     Floor of two rather than one: this was a hard 2 until 2026-08-30 and a
     machine that reports fewer cores than it has (a container with a fractional
@@ -235,15 +238,17 @@ class Limits:
     # 900 is that with room, and it is deliberately not the smallest number that
     # would have passed: the next model is not going to be smaller.
     #
-    # THE COST, so it is a decision and not a slide: MAX_CONCURRENT_BUILDS is 2,
-    # so two heavy models can now hold the whole pool for a quarter of an hour,
-    # and the worst honest queue wait (MAX_QUEUED_JOBS at this number over those
-    # workers) went from sixteen minutes to two hours. Two numbers elsewhere are
-    # derived from this one and were moved WITH it -- `LEFTOVER_MAX_AGE_SECONDS`
-    # in src/store.py, which would otherwise sweep the sources of a build still
-    # queued, and `JOB_TIMEOUT` in hammerola/hub.py, which would otherwise give
-    # up on a build that is still legitimately waiting. Neither is cosmetic and
-    # neither is checked by anything: move this number again and go read both.
+    # THE COST, so it is a decision and not a slide: MAX_CONCURRENT_BUILDS is 4,
+    # so four heavy models can hold the whole pool for a quarter of an hour, and
+    # the worst honest queue wait (MAX_QUEUED_JOBS at this number over those
+    # workers) is 16 x 900 / 4 = an HOUR -- down from the two hours it was while
+    # two workers shared the queue, up from the sixteen minutes it was before
+    # this raise. Two numbers elsewhere are derived from this one and were moved
+    # WITH it -- `LEFTOVER_MAX_AGE_SECONDS` in src/store.py, which would
+    # otherwise sweep the sources of a build still queued, and `JOB_TIMEOUT` in
+    # hammerola/hub.py, which would otherwise give up on a build that is still
+    # legitimately waiting. Neither is cosmetic and neither is checked by
+    # anything: move this number again and go read both.
     #
     # It is NOT settable per deployment, and that is worth knowing before
     # somebody goes looking for the variable: nothing reads the environment
