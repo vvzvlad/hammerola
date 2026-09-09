@@ -104,8 +104,39 @@ RUN apt-get update \
 RUN useradd -m -u 1000 app
 
 # Dependencies as a separate layer: change less often than code → cached better
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+#
+# THE LOCK IS WHAT IS INSTALLED, and requirements.txt is not. The two files are different
+# kinds of statement: requirements.txt is written by hand and says which packages this
+# project chose and why, while requirements.lock is COMPILED from it by `make lock` and
+# names every distribution the resolver ended up with — the ones nobody asked for
+# included — each pinned with `==` and carrying the hashes of its files. Installing the
+# hand-written file instead is what this repository did until the lock existed, and it left
+# most of the environment floating: numpy, which builds the very buffers a revision
+# comparison hashes, arrived at whatever version PyPI had on the day the build ran.
+# requirements.txt's CAD-kernel block has the arithmetic, and tests/test_requirements_lock.py
+# is what keeps those counts true.
+#
+# `--require-hashes` is wanted for its own sake, not as a by-product of the hashes being in
+# the file. It makes pip refuse any file whose bytes are not the bytes that were resolved —
+# a release re-uploaded under the same version, a mirror serving something else, an index
+# swapped out from under the build by a mistyped PIP_INDEX_URL — and it refuses the whole
+# install rather than the one file, so the image fails to build instead of shipping a
+# package nobody can account for. It also makes the lock's completeness a build-time
+# assertion: pip errors out if any dependency of anything here is missing from the file.
+#
+# ONLY THE LOCK IS IN THIS LAYER. requirements.txt used to be copied here beside it, for the
+# sake of an image inspectable back to the intent — it is the only place the reasoning behind
+# each pin is written, and the lock's own header names it as the file it was compiled from.
+# That is still wanted, and it is still in the image; what it is not is a reason to sit in
+# THIS layer. Nothing here reads it: pip installs the lock, and the whole ~2 GB of wheels was
+# reinstalled whenever its PROSE was edited — which, in a file that is mostly prose, is most
+# of its edits. Nothing else in the image opens this path either: the word appears in `src/`
+# and `hammerola/` only inside comments, and in main.py, checklib.py and entrypoint.sh it does
+# not appear at all. Nor does the gate read it — ci/smoke.py compares its own `PINS` literal
+# against what is installed. It is copied down beside the code instead, where the same
+# inspectability costs nothing.
+COPY requirements.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # Runtime state directory. When a named volume is first initialised from this
 # image, docker copies the ownership of this dir — so the volume starts owned by app.
@@ -175,6 +206,12 @@ COPY main.py .
 # with its own directory FIRST on sys.path — so the name has to resolve on the
 # path behind it, which /app is. See checklib.py's own docstring.
 COPY checklib.py .
+# PROVENANCE ONLY — nothing in the image reads this file. It is here so that an
+# image can be read back to the INTENT and not only to the result: requirements.lock
+# says which 56 distributions were installed, and this says which of them anybody
+# chose, and why. Down here rather than in the dependency layer above, so that
+# editing its prose costs a few kilobytes of copy instead of a ~2 GB reinstall.
+COPY requirements.txt .
 # --chmod pins the executable bit: exec-form ENTRYPOINT fails with "permission
 # denied" if the bit is lost in the build context (Windows checkout, tar copy).
 COPY --chmod=0755 entrypoint.sh /entrypoint.sh

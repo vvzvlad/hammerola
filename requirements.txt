@@ -1,10 +1,18 @@
-# Runtime dependencies — what the image needs to RUN. The Dockerfile installs this file and
-# only this file; anything test-only belongs in requirements-dev.txt.
+# Runtime dependencies — what the image needs to RUN, and the file every other version in the
+# image is resolved FROM. The Dockerfile does not install this file: it installs
+# `requirements.lock`, which `make lock` compiles from this one and from nothing else, and
+# which pins the whole resolved environment with hashes. Anything test-only belongs in
+# requirements-dev.txt.
 #
-# Pinned with `==`, never `>=` and never bare: unpinned, the image built from a given commit
-# is a different image every week, so a breaking upstream release reaches production through
-# a rebuild that changed no line of this repository — and gets blamed on whichever commit
-# happened to trigger the rebuild.
+# Pinned with `==`, never `>=` and never bare — and since the lock exists, that rule protects
+# something different from what it used to. It used to be the only thing between this
+# repository and an image that is a different image every week, where a breaking upstream
+# release reaches production through a rebuild that changed no line here and gets blamed on
+# whichever commit happened to trigger it. The lock now holds that line for the whole
+# environment, so a range here does not move today's image at all. What it moves is the NEXT
+# `make lock`: the pins in this file are the INPUT the resolver is free to choose within, so a
+# range hands the kernel to whatever is newest at the moment somebody regenerates the lock for
+# an unrelated reason — and it lands in that person's commit, under their name.
 #
 # Name every package the code imports DIRECTLY, even one that already arrives through another
 # package's dependency or extra. Inherited, it disappears the day that other package stops
@@ -44,31 +52,59 @@ loguru==0.7.2
 # what makes this image large — roughly two gigabytes rather than the couple of hundred megabytes
 # everything above it costs.
 #
-# The four move together, and they are pinned for a reason the pins above do not have: a range
-# here would let an upstream release change a fillet or a tessellation between two builds of an
-# unchanged model, and nothing downstream would report it — the STL simply comes out different,
+# The four move together, and they are pinned for a reason the pins above do not have: what a
+# range here would buy an upstream release is a changed fillet or a changed tessellation on an
+# unchanged model, with nothing downstream reporting it — the STL simply comes out different,
 # and the per-part buffer hash that the revision comparison is built on (issue #10 «Сравнение
-# двух ревизий») stops matching for reasons that have nothing to do with the model.
+# двух ревизий») stops matching for reasons that have nothing to do with the model. The lock
+# decides WHEN such a release can arrive — at the next `make lock` and at no other moment — and
+# never that it would be harmless when it does.
 #
-# BE PRECISE ABOUT WHAT THESE FOUR LINES BUY, because the obvious sentence — "a model rebuilt
-# from the same source a year from now produces the same geometry" — is NOT what is written here
-# and is not true today. Pinned are the geometry kernel (cadquery + the OpenCASCADE binding
-# underneath it), the tessellation exporter and the mesh library. Not pinned is the rest of the
-# environment: installing this file brings in 60 distributions, of which these are 4. Three more
-# are pinned for us further up the tree (`cadquery-ocp` declares `vtk==9.6.2` and
-# `cadquery-ocp-proxy==7.9.3.1.1`, `pydantic` declares `pydantic-core==2.46.4`); the remaining
-# 53 arrive transitively and float, and they are not all inert — numpy builds the very buffers
-# the revision comparison hashes, and nlopt and casadi are the solver behind part placement in
-# assemblies, so numba, llvmlite, scipy, ezdxf and matplotlib are floating alongside things that
-# can move geometry. Whether that gets a lock file is an open decision, recorded in the
-# AGENTS.md checklist; until it is made, treat reproducibility as covering the kernel, not the
-# build.
+# BE PRECISE ABOUT WHAT THESE FOUR LINES BUY, and about what they never could. They are the
+# geometry kernel (cadquery + the OpenCASCADE binding underneath it), the tessellation exporter
+# and the mesh library — four names out of the 56 distributions this file resolves to. Ten of
+# those 56 are named here; three more are pinned for us further up the tree (`cadquery-ocp`
+# declares `vtk==9.6.2` and `cadquery-ocp-proxy==7.9.3.1.1`, `pydantic` declares
+# `pydantic-core==2.46.4`); the other 43 arrive transitively, and they are not inert — numpy
+# builds the very buffers the revision comparison hashes (issue #10 «Сравнение двух ревизий»),
+# nlopt and casadi are the solver behind part placement in assemblies, and numba, llvmlite,
+# scipy, ezdxf and matplotlib sit alongside them.
 #
-# ci/smoke.py states these same four versions independently (its `PINS`) and reads them back out
-# of the BUILT IMAGE before anything is published, so an image whose resolver picked something
-# else for one of THESE FOUR never reaches the registry — the gate says nothing about the other
-# 56, and cannot, since nothing declares what they should be. A bump is therefore two edits in
-# one commit, and the gate is what enforces that it is two and not one.
+# THOSE 43 ARE PINNED TOO, IN requirements.lock, which is what these four lines no longer have
+# to carry alone. Until the lock existed they floated, so "a model rebuilt from the same source
+# a year from now produces the same geometry" was NOT what this file bought: a rebuild of an
+# unchanged commit could move numpy under the buffers and nothing anywhere would report it, and
+# reproducibility honestly covered the kernel rather than the build. The lock states all 56 with
+# `==` and with the hashes of their files, `make lock` is the only thing that writes it, and the
+# Dockerfile installs it with `--require-hashes` — so the image's environment moves when
+# somebody regenerates the lock and commits the diff, and on no other occasion. The price is
+# accepted deliberately: nothing updates by itself any more, and every update is a manual bump
+# and a rebuild.
+#
+# IT IS THE IMAGE THAT IS LOCKED, NOT THIS FILE. `make install` and both CI test containers
+# install requirements-dev.txt, which pulls THIS file in and not the lock, so in a workstation's
+# .venv and in the test container everything not named here still floats. That is the right way
+# round rather than an omission: the geometry claim is about the artefact the hub runs, and a
+# test environment that drifts fails a test somebody reads.
+#
+# ci/smoke.py states SEVEN of this file's versions independently (its `PINS`) and reads them back
+# out of the BUILT IMAGE before anything is published, so an image whose resolver picked
+# something else for one of THOSE SEVEN never reaches the registry. Seven and not four, which is
+# worth knowing here because only four of them are in this block: the other three are the preview
+# stack at the bottom of the file (matplotlib, numpy, Pillow). The gate says nothing about the
+# remaining 49 — what declares those is the lock, and nothing reads them back.
+#
+# A BUMP OF ONE OF THE SEVEN IS THREE EDITS in one commit: this file, the lock regenerated from
+# it, and the gate's own PINS. The other three names here — pydantic, pydantic-settings, loguru —
+# are two edits, because the gate does not read them back and so there is nothing to tell.
+#
+# THE GATE CATCHES TWO OF THE THREE WAYS OF DOING FEWER. PINS ahead of the image means the lock
+# was never regenerated; the image ahead of PINS means it was and the gate was not told — both
+# come back red, because what it compares is its own literals against what the image really
+# carries. The third it cannot see: this file bumped ALONE changes nothing in the image, so the
+# gate reads back exactly what it read before and passes, on a commit whose diff says the kernel
+# moved. tests/test_requirements_lock.py is what stands there instead, by asking whether every
+# pin here is the version the lock resolved.
 cadquery==2.8.0
 
 # The OpenCASCADE binding — ~271 MB unpacked, the largest single thing in this image. It is a

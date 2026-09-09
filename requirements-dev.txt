@@ -1,7 +1,14 @@
 # Dev/test dependencies — not needed at runtime, and never installed into the image: the
-# Dockerfile installs requirements.txt only and names each file it copies, so nothing listed
+# Dockerfile installs requirements.lock only and names each file it copies, so nothing listed
 # here reaches the artefact, and .dockerignore keeps `tests/` — what these packages exist to
-# run — out of the build context (ci/smoke.py check (d) is what enforces that).
+# run — out of the build context (ci/smoke.py check (d) is what enforces that). That lock is
+# compiled from requirements.txt and from nothing in this file, so a package added here cannot
+# reach the image even by accident: `--require-hashes` refuses whatever is not in the lock.
+#
+# NOT LOCKED ITSELF, deliberately. The lock exists so that the IMAGE is the same environment
+# every time it is built, and nothing here is in the image; what runs the suite is a
+# workstation's .venv and a throwaway CI container, where a floating transitive dependency is
+# a red test somebody reads rather than a shipped artefact nobody can account for.
 # Install with:  pip install -r requirements-dev.txt
 #
 # Annotate a requirement with WHAT BREAKS WITHOUT IT, not with what the package is. The line
@@ -16,3 +23,4 @@ pytest-asyncio==1.4.0  # no async test here yet, but pytest.ini already sets asy
 pytest-cov==7.1.0      # not wired into addopts today; without it an ad-hoc `pytest --cov=src` fails on "unrecognized arguments: --cov"
 httpx==0.28.1          # tests/harness.py and tests/test_comments.py drive a real socket with it; without it every test module dies at collection on "No module named httpx". Test-only on purpose: src/ is stdlib above pydantic/loguru and makes no outbound request, so this stays out of the image
 respx==0.23.1          # unused today; kept for the day something in src/ does make an outbound call and its transport needs mocking rather than the network hit in CI
+pip-tools==7.6.1       # the resolver behind `make lock`: without it there is no way to regenerate requirements.lock, and the lock is the file the image installs — a bumped pin in requirements.txt then reaches no build at all. The target does NOT run the copy this line puts in .venv (it resolves for the image's platform, inside python:3.11-slim) — it READS the version off this line and installs it there, so this is the one place it is written
