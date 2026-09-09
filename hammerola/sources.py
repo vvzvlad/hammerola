@@ -98,10 +98,16 @@ def resolve_revision(hub: Hub, root, name: str) -> str:
     if name == LATEST:
         return _latest_of(hub, root)
     if name == DEV_SLOT:
+        # THE LOG HALF OF THIS SENTENCE STOPPED BEING TRUE IN #79: the slot now
+        # names the job that filled it, so `hammerola log dev` answers without a
+        # commit. Only the SOURCE is still missing, and only that is refused.
         raise ClientError(
             f"`{DEV_SLOT}` is the local slot, not a revision, and the hub "
-            f"stores neither its code nor its log.\n"
-            f"  Publish a revision with `hammerola commit` to get either.")
+            f"stores no code for it.\n"
+            f"  Publish a revision with `hammerola commit` to read the sources. "
+            f"Its build log needs no\n"
+            f"  commit: `hammerola log {DEV_SLOT}` reads it through the job the "
+            f"slot names.")
     if not SAFE_ID.match(name or ""):
         raise ClientError(
             f"{name!r} is not a revision id.\n"

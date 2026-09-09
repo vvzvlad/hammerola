@@ -133,9 +133,10 @@
   it, and the command reads that build's log through `/api/v1/jobs/<id>/log`.
   Both kinds of push fill the slot, so the header says which one this was: a
   `build`, or the commit that copied itself in (issue #78). The slot still has
-  no SOURCE — `hammerola source dev` refuses as it always did; and the comment
-  routes check
-  the same `EDIT_TOKEN` as everything else — the hub's second variable went away
+  no SOURCE — `hammerola source dev` refuses as it always did, and its refusal
+  names the log as the half that no longer needs a commit; and the comment
+  routes check the same `EDIT_TOKEN` as everything else — the hub's second
+  variable went away
   in step 0, along with the client's sentence explaining a 401 that meant "this
   deployment set its other variable differently"
 - `hammerola/buildnames.py` — what a build file may be CALLED, and the one place that
@@ -387,8 +388,13 @@
   kept — rather than dropped as dead weight — because its geometry is held to
   the same check meanwhile
 - `model_template/` — the starter project `hammerola create` unpacks, served at
-  `/start/template.tar.gz`: a `model.py` that BUILDS AS IT STANDS, plus a
-  `.gitignore`. It is files rather than a section of documentation for one
+  `/start/template.tar.gz`: a `model.py` that BUILDS AS IT STANDS, a
+  `.gitignore`, and an `AGENTS.md` with a `CLAUDE.md` pointing at it — the
+  template lands in a repository an agent opens cold, and those two say what
+  the file is for before it is edited into something it is not. Everything
+  under the directory ships: the tarball is an `rglob`, so a file added here
+  reaches every project ever made from it. It is files rather than a section
+  of documentation for one
   reason, and that reason is the only thing keeping it honest:
   `tests/test_template.py` runs it through `run_build` — the same entry point a
   push takes — so a template that stopped satisfying the gate fails here instead

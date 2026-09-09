@@ -299,8 +299,9 @@ def test_source_with_the_wrong_secret_says_which_command_fixes_it(hub, model,
 
 
 def test_source_will_not_fetch_the_dev_slot(hub, model, capsys):
-    """`dev` is a slot, not a revision: the hub stores neither its code nor its
-    log, on purpose (SPEC 7.8)."""
+    """`dev` is a slot, not a revision: the hub stores no CODE for it, on
+    purpose (SPEC 7.8). Its log is a different matter since #79 — the slot names
+    the job that filled it, and `hammerola log dev` reads that."""
     assert run(model, "build") == 0
     capsys.readouterr()
     assert run(model, "source", "dev") == 1
