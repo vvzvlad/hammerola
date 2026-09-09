@@ -651,13 +651,16 @@ def test_the_skill_names_no_checklib_helper_that_does_not_exist(hub):
 SKILL_WORKERS = re.compile(r"drains\s+the\s+queue\s+across\s+(\w+)\s+worker\s+processes")
 SKILL_BUDGET = re.compile(r"its\s+own\s+budget:\s+(\d+)\s+seconds")
 
-# The same three numbers for the BUILD as a whole. The wall is stated twice on
-# purpose -- once in minutes as the heading an author reads first, once in
-# seconds where the four clocks are laid out -- so both spellings are pinned:
-# it was the minutes that went stale for a whole release (issue #81 dropped the
-# wall to 300 and the skill went on teaching "fifteen minutes").
+# The BUILD ceilings, and ALL FOUR sentences that carry them rather than the
+# memorable ones. The wall is stated three times on purpose -- in minutes as the
+# heading an author reads first, in seconds where the four clocks are laid out,
+# and in minutes again where a hung check is costed -- and issue #81 left all
+# three saying 900's worth for a release. Pinning two of the three would have
+# left the survivor to go stale alone, which is the same defect with a smaller
+# blast radius rather than a different one.
 SKILL_WALL_MINUTES = re.compile(r"A\s+build\s+has\s+(\w+)\s+minutes\s+of\s+wall\s+clock")
 SKILL_WALL = re.compile(r"kills\s+a\s+build\s+at\s+(\d+)\s+seconds")
+SKILL_WALL_WHOLE = re.compile(r"whole\s+(\w+)-minute\s+wall\s+clock")
 SKILL_CLIENT_CEILING = re.compile(r"its\s+own\s+ceiling\s+is\s+(\d+)\s+seconds")
 
 # Read for the worker count and for the wall in minutes alike.
@@ -721,6 +724,14 @@ def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
     The client's ceiling is pinned for the reason `test_build_ceilings.py` gives
     about it: `hammerola/` is stdlib-only and cannot import the wall, so the
     skill's copy of that literal is a copy of a copy.
+
+    WHAT THIS DOES NOT COVER, said here because a half-pinned document reads as
+    a pinned one. The skill also quotes the hub's concurrency ("four builds at a
+    time", `MAX_CONCURRENT_BUILDS`) and the slow-build threshold ("past three
+    minutes", `SLOW_BUILD_SECONDS`), and neither is held anywhere. Both survived
+    issue #81 untouched, which is why they are not here: this function covers
+    the sentences that drop broke, and the honest place for the rest is a commit
+    that has a reason to move them.
     """
     skill = hub.get("/start/skill.md").text
 
@@ -743,6 +754,22 @@ def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
     assert int(wall.group(1)) == DEFAULT_LIMITS.wall_seconds, (
         f"skill/SKILL.md tells an author the hub kills a build at "
         f"{wall.group(1)}s and wall_seconds is {DEFAULT_LIMITS.wall_seconds}")
+
+    # The third spelling, where the unit budget is argued for against what a
+    # hung check used to cost. It is the sentence the other two hide behind: it
+    # reads as background rather than as a ceiling, and it was the last of the
+    # four still saying "fifteen" when the first three had been corrected.
+    whole = SKILL_WALL_WHOLE.search(skill)
+    assert whole, (
+        "the skill no longer costs a hung check against the whole wall in the "
+        "words this reads it by — reword the pattern with the sentence")
+    whole_minutes = SPELLED.get(whole.group(1).lower())
+    assert whole_minutes is not None, (
+        f"the skill spells that wall as {whole.group(1)!r} minutes and SPELLED "
+        f"cannot read that word — add it rather than loosening the pattern")
+    assert whole_minutes * 60 == DEFAULT_LIMITS.wall_seconds, (
+        f"skill/SKILL.md costs a hung check at {whole.group(1)} minutes and "
+        f"wall_seconds is {DEFAULT_LIMITS.wall_seconds}")
 
     ceiling = SKILL_CLIENT_CEILING.search(skill)
     assert ceiling, (

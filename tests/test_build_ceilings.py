@@ -35,15 +35,28 @@ green build can reach it. That assertion is not decoration on a drop -- it is
 the one thing here a drop can break.
 
 What ALSO goes stale on a drop is the PROSE: a comment still promising "room to
-spare" over a wait four times what it now is. The four places that name the wall
-in words are `limits.py`, `store.py`, `hub.py` and
-`tests/client/test_buildtime.py`, whose whole subject is the zone between the
-slow-build warning and the wall. `skill/SKILL.md` named it too and is no longer
-on this list, because what it tells an author is now pinned executably -- see
-`tests/test_onboarding.py`, which reads the ceilings back out of the skill the
-hub actually serves and compares them with the constants. Every one of these was
-stale after this very drop, and every one was caught by review rather than by a
-run, which is the argument for moving them here one at a time.
+spare" over a wait four times what it now is. THERE IS NO LIST OF THOSE PLACES
+HERE, and the omission is deliberate. This one drop had to rewrite the wall out
+of fifteen files, across the service, the client, the docs and the tests' own
+docstrings, some naming the number and some only a duration in words -- and a
+roll-call of them written down here would be one more paragraph going stale on
+the next drop, which is the very failure being described. Worse, it would read
+as complete: the first attempt at this paragraph named four of the fifteen and
+was believed. Find them with a grep for the number and for `wall`, not from
+memory and not from a list.
+
+WHAT IS EXECUTABLE INSTEAD, so far, is the skill: `tests/test_onboarding.py`
+reads the four sentences `skill/SKILL.md` states the build ceilings in back out
+of the document the hub actually serves and compares them with the constants
+here. That file earned it -- it is the one document served to a model author
+over HTTP, the one a `checks()` is sized against, and the one this drop left
+teaching fifteen minutes for a whole release. It is NOT wholly pinned even so:
+the concurrency it quotes ("four builds at a time") and the slow-build threshold
+("past three minutes") are still only prose, so a change to
+`MAX_CONCURRENT_BUILDS` or `SLOW_BUILD_SECONDS` still has to go and read it.
+Every one of these was caught by review rather than by a run, which is the
+argument for moving them into tests one at a time rather than for cataloguing
+them.
 """
 
 from src.buildproc.limits import BUILDS_SHARING_THE_HOST, DEFAULT_LIMITS
