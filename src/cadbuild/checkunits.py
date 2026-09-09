@@ -7,7 +7,9 @@ them -- and 27% of all the machine time the hub burned went to seven builds
 that HUNG, at 891 seconds each. `checks()` is one function in one process, so
 neither number has anywhere to go: the whole budget before a kill is the
 build's own wall clock, and one endless `while` inside a model's checks holds a
-worker for a quarter of an hour with twenty cores idle beside it.
+worker for that entire wall clock with twenty cores idle beside it. Measured
+against the wall of the day that was a quarter of an hour; it follows the
+constant rather than the sentence, which is why it is written this way round.
 
 A unit fixes both at once, and the second half is the one that pays first. K
 persistent workers pull units off ONE shared queue and report back each on a

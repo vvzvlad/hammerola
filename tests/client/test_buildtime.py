@@ -6,9 +6,17 @@ and the hub serves it on `GET /api/v1/jobs/<id>` — and nothing in the client r
 it, so the agent that pushed learned only that the build was green. It cannot
 measure this for itself either: the CAD kernel lives in the hub's image, so a
 model that imports `cadquery` does not necessarily run on the machine it was
-written on. Between three minutes and the hub's fifteen-minute wall is the whole
+written on. Between three minutes and the hub's five-minute wall is the whole
 zone where everything is green and everything is slow, and nothing was reporting
 it.
+
+THAT ZONE IS NARROWER THAN IT WAS AND IS WHY THIS FILE IS ON A LIST NOW. The
+wall was 900 s when this was written, so the zone ran from 180 s to 900; issue
+#81 took it to 300 and the zone with it, from twelve minutes wide to two. The
+threshold did not move, deliberately -- it is a judgement about when a build
+starts costing its author, not a fraction of the ceiling -- but it is now close
+enough to the ceiling that a drop below 180 would leave no zone at all, and
+`tests/test_build_ceilings.py` is where that is caught.
 
 TWO NUMBERS AND THEY ARE NEVER SWAPPED. The BUILD comes from the parent's
 monotonic clock and is read out of the record; the QUEUE WAIT is the gap between

@@ -18,12 +18,32 @@ A comment cannot catch either. These are one multiplication each, so they cost
 nothing to run and they fail on the commit that breaks them.
 
 THE 2026-09-10 DROP (900 s -> 300 s, issue #81, made possible by the heavy models
-moving to check units) went the other way, and that direction is the one to be
-careful about: every assertion here loosens as the wall falls, so nothing in this
-file can fail on the way down. What goes stale on a drop is the PROSE -- a
-comment still promising "room to spare" over a wait four times what it now is --
-and prose is what this file exists instead of. So a drop is checked by reading
-`limits.py`, `store.py` and `hub.py`, not by running this.
+moving to check units) went the other way, and a drop is NOT the harmless
+direction it reads as. Four of the assertions below are between the wall and a
+number that follows it -- `cpu_seconds`, `hang_dump_seconds`,
+`LEFTOVER_MAX_AGE_SECONDS`, `JOB_TIMEOUT` -- and none of those can break on a
+drop: each number either falls with the wall by formula, or clears a wait that
+got shorter. The hang-dump gap is the flattest of them, pinned at ten seconds
+at 900 and at 300 alike.
+
+`SLOW_BUILD_SECONDS` IS THE ONE THAT TIGHTENS, and it is the reason to run this
+file on the way down rather than only to read the sources. It is a judgement and
+a copy of nothing, so it does not move when the wall does: the room between it
+and the ceiling was 720 s at a wall of 900 and is 120 s at 300, and a wall taken
+to 180 would put the client's slow-build warning at or past the point where no
+green build can reach it. That assertion is not decoration on a drop -- it is
+the one thing here a drop can break.
+
+What ALSO goes stale on a drop is the PROSE: a comment still promising "room to
+spare" over a wait four times what it now is. The four places that name the wall
+in words are `limits.py`, `store.py`, `hub.py` and
+`tests/client/test_buildtime.py`, whose whole subject is the zone between the
+slow-build warning and the wall. `skill/SKILL.md` named it too and is no longer
+on this list, because what it tells an author is now pinned executably -- see
+`tests/test_onboarding.py`, which reads the ceilings back out of the skill the
+hub actually serves and compares them with the constants. Every one of these was
+stale after this very drop, and every one was caught by review rather than by a
+run, which is the argument for moving them here one at a time.
 """
 
 from src.buildproc.limits import BUILDS_SHARING_THE_HOST, DEFAULT_LIMITS

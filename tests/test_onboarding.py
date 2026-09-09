@@ -62,6 +62,7 @@ import pytest
 from harness import TOKEN, good_build
 
 from src import onboarding
+from src.buildproc.limits import DEFAULT_LIMITS
 from src.cadbuild import checklib, checkunits
 from hammerola import hub as hub_client
 
@@ -649,7 +650,19 @@ def test_the_skill_names_no_checklib_helper_that_does_not_exist(hub):
 # either sentence may cross a line break at any word.
 SKILL_WORKERS = re.compile(r"drains\s+the\s+queue\s+across\s+(\w+)\s+worker\s+processes")
 SKILL_BUDGET = re.compile(r"its\s+own\s+budget:\s+(\d+)\s+seconds")
-SPELLED = {"two": 2, "three": 3, "four": 4}
+
+# The same three numbers for the BUILD as a whole. The wall is stated twice on
+# purpose -- once in minutes as the heading an author reads first, once in
+# seconds where the four clocks are laid out -- so both spellings are pinned:
+# it was the minutes that went stale for a whole release (issue #81 dropped the
+# wall to 300 and the skill went on teaching "fifteen minutes").
+SKILL_WALL_MINUTES = re.compile(r"A\s+build\s+has\s+(\w+)\s+minutes\s+of\s+wall\s+clock")
+SKILL_WALL = re.compile(r"kills\s+a\s+build\s+at\s+(\d+)\s+seconds")
+SKILL_CLIENT_CEILING = re.compile(r"its\s+own\s+ceiling\s+is\s+(\d+)\s+seconds")
+
+# Read for the worker count and for the wall in minutes alike.
+SPELLED = {"two": 2, "three": 3, "four": 4, "five": 5, "ten": 10,
+           "twelve": 12, "fifteen": 15}
 
 
 def test_the_skill_quotes_the_unit_ceilings_the_hub_actually_runs(hub):
@@ -685,6 +698,59 @@ def test_the_skill_quotes_the_unit_ceilings_the_hub_actually_runs(hub):
     assert int(budget.group(1)) == checkunits.UNIT_BUDGET_SECONDS, (
         f"skill/SKILL.md tells an author a unit gets {budget.group(1)}s and "
         f"UNIT_BUDGET_SECONDS is {checkunits.UNIT_BUDGET_SECONDS}")
+
+
+def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
+    """The wall an author sizes `checks()` against, and the client's own wait.
+
+    THIS IS THE PIN THAT WAS MISSING WHEN IT WAS NEEDED. Issue #81 took the wall
+    from 900 s to 300 and `JOB_TIMEOUT` from 8100 to 2700, and every executable
+    ceiling assertion in the suite stayed green while this document went on
+    telling authors they had fifteen minutes -- four sentences of it, caught by
+    a reviewer reading rather than by anything running. The two numbers beside
+    them, the worker count and the unit budget, were pinned by the test above
+    and could not have gone stale the same way; that asymmetry is the whole
+    argument for this function.
+
+    WHAT A STALE WALL COSTS is not a document error an author can catch. They
+    calibrate `checks()` against the ceiling they were handed, push, and the
+    build is killed on a number two thirds lower with a timeout naming nothing
+    -- and the instructions that sized it are served from a directory nobody
+    edits while editing `limits.py`.
+
+    The client's ceiling is pinned for the reason `test_build_ceilings.py` gives
+    about it: `hammerola/` is stdlib-only and cannot import the wall, so the
+    skill's copy of that literal is a copy of a copy.
+    """
+    skill = hub.get("/start/skill.md").text
+
+    spelled = SKILL_WALL_MINUTES.search(skill)
+    assert spelled, (
+        "the skill no longer opens the section with the wall in minutes in the "
+        "words this reads it by — reword the pattern with the sentence")
+    minutes = SPELLED.get(spelled.group(1).lower())
+    assert minutes is not None, (
+        f"the skill spells the wall as {spelled.group(1)!r} minutes and SPELLED "
+        f"cannot read that word — add it rather than loosening the pattern")
+    assert minutes * 60 == DEFAULT_LIMITS.wall_seconds, (
+        f"skill/SKILL.md tells an author a build has {spelled.group(1)} minutes "
+        f"and wall_seconds is {DEFAULT_LIMITS.wall_seconds}")
+
+    wall = SKILL_WALL.search(skill)
+    assert wall, (
+        "the skill no longer states the wall in seconds in the words this reads "
+        "it by — reword the pattern with the sentence")
+    assert int(wall.group(1)) == DEFAULT_LIMITS.wall_seconds, (
+        f"skill/SKILL.md tells an author the hub kills a build at "
+        f"{wall.group(1)}s and wall_seconds is {DEFAULT_LIMITS.wall_seconds}")
+
+    ceiling = SKILL_CLIENT_CEILING.search(skill)
+    assert ceiling, (
+        "the skill no longer states the client's own ceiling in the words this "
+        "reads it by — reword the pattern with the sentence")
+    assert int(ceiling.group(1)) == hub_client.JOB_TIMEOUT, (
+        f"skill/SKILL.md tells an author the client waits {ceiling.group(1)}s "
+        f"and JOB_TIMEOUT is {hub_client.JOB_TIMEOUT}")
 
 
 def test_the_downloaded_client_refuses_an_interpreter_that_is_too_old():
