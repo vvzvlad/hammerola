@@ -148,6 +148,29 @@ def test_a_model_missing_half_the_contract_is_refused(isolated_project):
     with pytest.raises(BuildError) as exc:
         load_model()
     assert "does not define views()" in str(exc.value)
+    # An ordinary half-written model gets no lecture about a contract it was
+    # never written against.
+    assert "older contract" not in str(exc.value)
+
+
+def test_a_model_from_before_the_catalogue_is_told_the_contract_changed(
+        isolated_project):
+    """The refusal an author of a pre-catalogue model actually meets.
+
+    "model.py does not define parts()" is true and useless to them: the name is
+    not missing by accident, it replaced the `printables()` their file has, and
+    a message that does not say so sends them hunting for a typo. This is the
+    sentence and nothing more -- the translator for the old shape was written
+    and then deleted on purpose, so the build is still refused.
+    """
+    (isolated_project / "model.py").write_text(
+        "def printables():\n    return {}\n\n\ndef views():\n    return []\n",
+        encoding="utf-8")
+    with pytest.raises(BuildError) as exc:
+        load_model()
+    message = str(exc.value)
+    assert "does not define parts()" in message
+    assert "printables()" in message and "older contract" in message
 
 
 def test_the_project_root_goes_on_sys_path_first(isolated_project):
