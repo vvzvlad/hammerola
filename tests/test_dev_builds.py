@@ -15,8 +15,8 @@ overwrites it. Four claims carry it and all four are tested here:
   * `latest` does not move, and the site index gains no CARD for the project.
     Those are the shared surfaces and they go on meaning "the project as of some
     commit". The index file is rewritten by a local push — a card carries a
-    `dev` chip saying the slot is occupied — but a project with no commit build
-    still has no card at all;
+    `dev` chip saying the project holds work no commit has published — but a
+    project with no commit build still has no card at all;
   * a push is still atomic: the tree is unpacked out of sight and swapped in.
 """
 
@@ -173,13 +173,110 @@ def test_local_builds_stay_out_of_the_public_index(hub):
     hub.publish("proj1", "abc123", _build("c1", "2026-08-01T00:00:00Z"))
     cards = hub.index().json()
     assert [c["commit"] for c in cards] == ["abc123"]
-    # ...and now that there is a card, it says the slot is occupied without
-    # letting the slot describe the project: the commit on the card is the
-    # commit, never `dev`.
-    assert cards[0]["dev"] is True
-    # And a later local push does not slip into the card that is now there.
+    # ...and the card that appears describes the commit and only the commit: the
+    # `d1` in the slot moves neither the id on it nor the chip. The chip is gone
+    # BECAUSE of the commit — it published the slot's successor and filled the
+    # slot with it (issue #78), so there is no longer work here that no commit
+    # accounts for.
+    assert cards[0]["dev"] is False
+    # And a later local push does not slip into the card that is now there —
+    # it brings the chip back and changes nothing else.
     hub.publish_dev("proj1", _build("d2", "2026-08-10T00:00:00Z"))
-    assert [c["commit"] for c in hub.index().json()] == ["abc123"]
+    cards = hub.index().json()
+    assert [c["commit"] for c in cards] == ["abc123"]
+    assert cards[0]["dev"] is True
+
+
+def test_the_chip_is_about_the_sources_in_the_slot_not_about_the_slot(hub):
+    """The card's `dev` asks a question a directory listing cannot answer.
+
+    It used to be "is the slot occupied", and a commit filling the slot with
+    itself (issue #78) made that true of every project that has ever committed —
+    a chip on every card, and a tooltip about uncommitted work that is false on
+    all of them. What is asked instead is whether the slot's SOURCES are the ones
+    the newest commit published, which is what their digests say.
+    """
+    hub.publish("proj1", "abc123", _build("c1"))
+    # The slot is there — the commit just filled it — and there is no chip all
+    # the same, because nothing in it is unpublished.
+    assert (hub.project_dir("proj1") / "dev" / "meta.json").is_file()
+    assert hub.index().json()[0]["dev"] is False
+
+    # A local push of DIFFERENT sources is the whole of what the chip is for.
+    hub.publish_dev("proj1", _build("d1"))
+    assert hub.index().json()[0]["dev"] is True
+
+    # ...and a local push of the sources the COMMIT published is not: the slot
+    # holds what `latest` holds again, so there is again nothing uncommitted to
+    # say. This is the half a comparison of build TIMES would get wrong — the
+    # slot is the newer directory either way.
+    hub.publish_dev("proj1", _build("c1"))
+    assert hub.index().json()[0]["dev"] is False
+
+
+def _card(hub, pid):
+    return next(c for c in hub.index().json() if c["pid"] == pid)
+
+
+def _refresh_the_index(hub, nth=[0]):
+    """Rebuild index.json without touching the project under test.
+
+    The chip is computed while the index is being rebuilt, and the fixture drives
+    a real hub over a socket, so `_refresh_index` cannot be called here. Any
+    publish of ANY project rebuilds the whole file, so a push to a project of its
+    own is what asks the question again about the one being examined.
+    """
+    nth[0] += 1
+    hub.publish(f"other{nth[0]}", "abcdef", _build(f"o{nth[0]}"))
+
+
+def test_a_slot_digest_that_will_not_read_keeps_the_chip(hub):
+    """The two failures of the comparison are not worth the same.
+
+    An extra chip is noise on a card; a missing one is the front page quietly not
+    mentioning work on somebody's laptop. So a digest that cannot be read answers
+    "uncommitted" rather than "same as the commit", and this is the branch that
+    says so — take the file away and the chip has to come back.
+    """
+    hub.publish("proj1", "abc123", _build("c1"))
+    assert _card(hub, "proj1")["dev"] is False
+
+    (hub.project_dir("proj1") / "dev" / ".payload.sha256").unlink()
+    _refresh_the_index(hub)
+    assert _card(hub, "proj1")["dev"] is True
+
+
+def test_a_revision_digest_that_will_not_read_keeps_the_chip(hub):
+    """The comparison has two sides and the same answer covers both.
+
+    Here the SLOT's digest reads and the COMMIT's does not, so there is again
+    nothing accounting for what is in the slot: erring towards "uncommitted" is
+    about the comparison failing, not about which half of it failed. Pinned
+    apart from the test above because these are two separate reads, and a change
+    that stopped making one of them would leave the other's test green.
+    """
+    hub.publish("proj1", "abc123", _build("c1"))
+    assert _card(hub, "proj1")["dev"] is False
+
+    (hub.project_dir("proj1") / "abc123" / ".payload.sha256").unlink()
+    _refresh_the_index(hub)
+    assert _card(hub, "proj1")["dev"] is True
+
+
+def test_a_slot_with_no_latest_to_compare_against_keeps_the_chip(hub):
+    """`latest` gone is the other way the comparison has nothing to compare.
+
+    The slot is still full and its digest still reads; what is missing is the
+    revision to hold it against, and the answer is the same one for the same
+    reason. The state is reachable — a publish that failed after the mirror and
+    before the symlink leaves exactly this.
+    """
+    hub.publish("proj1", "abc123", _build("c1"))
+    assert _card(hub, "proj1")["dev"] is False
+
+    (hub.project_dir("proj1") / "latest").unlink()
+    _refresh_the_index(hub)
+    assert _card(hub, "proj1")["dev"] is True
 
 
 def test_a_project_with_only_a_local_build_has_no_latest(hub):
@@ -257,12 +354,15 @@ def test_dev_is_still_a_reserved_build_name(hub):
     from src.store import Store
     assert Store.valid_build_id("dev") is False
     assert Store.valid_build_id("latest") is False
+
+    # With nothing published at all the slot does not exist, and the URL 404s
+    # rather than falling back to something. Asked BEFORE the push: a commit
+    # fills the slot with itself now (issue #78), so every later state has one.
+    assert hub.get("/project/proj1/dev/").status_code == 404
+
     # Not a ban on the letters: only the two exact names are taken.
     assert hub.publish("proj1", "devbuild", good_build()).status_code == 201
-
-    # With nothing pushed from a laptop the slot does not exist, and the URL
-    # 404s rather than falling back to something.
-    assert hub.get("/project/proj1/dev/").status_code == 404
+    assert hub.get("/project/proj1/devbuild/").status_code == 200
 
 
 def test_a_commit_may_now_be_called_dev_1234(hub):
@@ -350,11 +450,15 @@ def test_builds_json_offers_the_two_names_only_when_they_resolve(hub):
     assert set(info["builds"][0]) == {"commit", "built"}
 
 
-def test_a_project_with_no_local_build_offers_no_slot(hub):
+def test_a_project_whose_only_build_is_a_commit_still_offers_the_slot(hub):
+    """It used to offer none, and issue #78 is what changed that: a commit fills
+    the slot with itself, so the picker written by that same publish offers a
+    `dev` that resolves to the revision just published."""
     hub.publish("proj1", "abc123", _build("c1"))
     info = _builds_json(hub, "proj1")
-    assert info["has_dev"] is False
+    assert info["has_dev"] is True
     assert info["latest"] == "abc123"
+    assert hub.get("/project/proj1/dev/assembled.json").content == view_bytes("c1")
 
 
 # -- the ordinary publish path still applies ---------------------------------

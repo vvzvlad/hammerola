@@ -2518,7 +2518,7 @@ export default class HammerolaViewer extends React.Component {
     const history = Array.isArray(info.builds) ? info.builds : [];
     const revs = [];
     if (info.has_dev) {
-      revs.push({ id: 'dev', head: 'POINTERS', badge: '→ local build',
+      revs.push({ id: 'dev', head: 'POINTERS', badge: '→ dev slot',
                   date: '', pointer: true });
     }
     if (info.latest) {

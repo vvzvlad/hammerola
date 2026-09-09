@@ -393,11 +393,15 @@ docker-in-docker и `privileged`, `exec()` модели в процессе ха
   kind and are worth knowing before reaching for them: "the last build
   job" cannot be shown at all, because a job is addressable only by its id and
   job order is stored nowhere (see `src/jobs.py`); `hammerola log dev` cannot be
-  answered either, because nothing is stored for the local slot on purpose
-  (SPEC §7.8) — the command says so rather than answering with `latest`'s log,
-  which would be a different build; and the comment routes check the
-  same `EDIT_TOKEN` as everything else — the hub's second variable went away in
-  step 0, along with the client's sentence explaining a 401 that meant "this
+  answered either, because no source and no log are stored for the local slot,
+  on purpose (SPEC §7.8) — the command says so rather than answering with
+  `latest`'s log, which is a different question rather than an unanswerable one:
+  since issue #78 a commit copies itself into the slot, so it OFTEN is the same
+  build, but a log is kept per revision and the slot is not addressed by one, so
+  nothing is stored under its name (the payload digest the slot does carry
+  answers the front page's `dev` chip, not this); and the comment routes check
+  the same `EDIT_TOKEN` as everything else — the hub's second variable went away
+  in step 0, along with the client's sentence explaining a 401 that meant "this
   deployment set its other variable differently"
 - `hammerola/buildnames.py` — what a build file may be CALLED, and the one place that
   decides it. Three sides ask the question and they live in three different

@@ -43,11 +43,14 @@ def test_the_picker_carries_the_slot_the_pointer_and_the_history(hub):
 def test_a_name_that_resolves_to_nothing_is_not_offered(hub):
     """An entry leading to a 404 is worse than a missing entry.
 
-    Both halves of this are reachable: a project CI has pushed to and nobody has
-    built locally, and a project that only exists on somebody's laptop.
+    It is `latest` that carries this now: a commit fills the slot with itself
+    (issue #78), so a project with a commit and no local push has both names
+    resolving, while a project that only exists on somebody's laptop has a slot
+    and no commit for `latest` to point at.
     """
     hub.publish("proj1", "aaa111", _build("c1"))
-    assert _picker(hub)["has_dev"] is False
+    assert _picker(hub)["has_dev"] is True
+    assert hub.get("/project/proj1/dev/").status_code == 200
 
     hub.publish_dev("proj2", _build("local"))
     info = _picker(hub, "proj2")
@@ -70,11 +73,19 @@ def test_the_picker_exists_for_a_project_that_has_only_a_local_build(hub):
     assert info["has_dev"] is True
 
 
-def test_the_slot_appearing_updates_the_picker_of_a_project_that_had_none(hub):
+def test_the_picker_follows_what_is_in_the_slot(hub):
+    """The first publish is what makes the slot appear, whichever verb it was:
+    a commit fills it with itself (issue #78) and the picker written by that
+    same publish already says so, and a local push after it replaces the
+    content under the same flag."""
     hub.publish("proj1", "aaa111", _build("c1"))
-    assert _picker(hub)["has_dev"] is False
+    assert _picker(hub)["has_dev"] is True
+    assert hub.get("/project/proj1/dev/assembled.json").content == view_bytes("c1")
+
     hub.publish_dev("proj1", _build("local"))
     assert _picker(hub)["has_dev"] is True
+    assert hub.get("/project/proj1/dev/assembled.json").content == \
+        view_bytes("local")
 
 
 def test_the_picker_is_never_cached(hub):

@@ -611,8 +611,10 @@ const Preview = ({ radius }) => (
  * One identifier and not the mock's two. A revision is named by the digest of
  * its sources, so the hash IS the revision and there is no number beside it; it
  * is cut to the same seven characters the rest of the site reads a commit at.
- * The `dev` chip says only that the local slot is occupied — never what is in
- * it, which is the whole of SPEC 7.6 as it applies to this page.
+ * The `dev` chip says that the project's local slot holds work no commit has
+ * published — never what that work is, which is the whole of SPEC 7.6 as it
+ * applies to this page. It is deliberately not "the slot is occupied": a commit
+ * fills the slot with itself (issue #78), so that would be every card.
  */
 const RevLine = ({ p }) => (
   <React.Fragment>

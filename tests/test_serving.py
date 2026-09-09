@@ -604,18 +604,23 @@ def test_a_card_counts_the_printed_parts_and_not_the_bought_ones(hub):
     assert card["views"] == 2
 
 
-def test_a_card_says_whether_the_project_has_a_dev_slot(hub):
-    """`dev` on the card — that the slot is occupied, and nothing about it.
+def test_a_card_says_whether_the_project_has_uncommitted_work(hub):
+    """`dev` on the card — that work is in the slot which no commit published.
 
     The front page shows a chip from this, and the chip is the whole of what the
     front page is allowed to say about the local slot: the card still describes
     the newest COMMIT (SPEC 7.6), because that is what the link promises.
+
+    Not "the slot exists", which is what `builds.json` asks and what this asked
+    until a commit began filling the slot with itself (issue #78): proj1 below
+    HAS a slot, holding its own revision, and carries no chip.
     """
     hub.publish("proj1", "abc123", good_build())
     hub.publish("proj2", "def456", good_build())
     hub.publish_dev("proj2", good_build(marker="b"))
 
     cards = {c["pid"]: c for c in hub.index().json()}
+    assert (hub.project_dir("proj1") / "dev" / "meta.json").is_file()
     assert cards["proj1"]["dev"] is False
     assert cards["proj2"]["dev"] is True
     # The slot is not a build: it moves neither the commit on the card nor the

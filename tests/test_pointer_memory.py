@@ -30,10 +30,14 @@ So the key is spelled twice on purpose and compared from here.
     somebody is merely reading on the local build of the one they are editing.
 """
 
+import json
 import re
+import shutil
 from pathlib import Path
 
-from harness import good_build
+from harness import TOKEN, good_build
+
+from src.store import DEV_LINK
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "static" / "_v"
@@ -177,9 +181,21 @@ def test_builds_json_answers_has_dev_for_real(hub):
     404 with nothing in a log to say why.
     """
     hub.publish("proj1", "abc123", good_build())
-    assert hub.get("/project/proj1/builds.json").json()["has_dev"] is False
+    # True from the first publish: a commit fills the slot with itself (#78).
+    assert hub.get("/project/proj1/builds.json").json()["has_dev"] is True
     hub.publish_dev("proj1", good_build())
     assert hub.get("/project/proj1/builds.json").json()["has_dev"] is True
+
+    # And it is read off the disk rather than assumed: with the slot taken away
+    # the next rewrite of the file says so. A rename is what rewrites it without
+    # publishing anything, since a publish would fill the slot again.
+    shutil.rmtree(hub.project_dir("proj1") / DEV_LINK)
+    assert hub.request("POST", "/api/v1/projects/proj1/title",
+                       content=json.dumps({"title": "Renamed"}).encode(),
+                       headers={"Content-Type": "application/json",
+                                "Authorization": f"Bearer {TOKEN}"},
+                       ).status_code == 200
+    assert hub.get("/project/proj1/builds.json").json()["has_dev"] is False
 
 
 # -- what records the choice --------------------------------------------------

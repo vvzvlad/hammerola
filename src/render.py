@@ -1137,8 +1137,11 @@ def builds_json(pid: str, metas: list[dict], dev: bool = False,
     the destinations they are without inventing entries: `has_dev` says the local
     slot is occupied, `latest` names the commit it currently resolves to. Either
     can be absent — a project whose only build is local has no `latest`, and one
-    that has never been pushed from a laptop has no slot — and the picker must
-    offer neither in that case, or it offers a link to a 404. They are answers
+    that has never published anything at all has no slot — and the picker must
+    offer neither in that case, or it offers a link to a 404. The slot's absence
+    ends at the FIRST publication of either kind: since issue #78 a commit fills
+    the slot with itself, so `has_dev` is true of every project that has ever
+    committed, laptop push or no. They are answers
     about NAMES, which is why one is a flag and the other is a commit id: `dev`
     resolves to itself and there is nothing more to say about it.
 
@@ -1163,11 +1166,24 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
     rather than to any single build and are therefore passed in by the caller
     (`Store._refresh_index`, which is already holding both).
 
-    `dev` is whether the local slot is occupied. The card still describes the
-    newest COMMIT and never the slot — that is SPEC 7.6 and the front page is
-    exactly where it matters — but "there is uncommitted work in this project"
-    is a different statement from "this is what the project looks like", and only
-    the second one is a promise about the link.
+    `dev` is whether the local slot holds sources NO COMMIT HAS PUBLISHED, which
+    is not the same as the slot being occupied: a commit fills the slot with
+    itself (issue #78), so "occupied" is true of every project that has ever
+    committed and a card built on it would carry the chip always.
+    `Store._uncommitted_in_slot` is what answers it, by digest.
+
+    THAT MAKES THIS FLAG AND `has_dev` IN `builds_json` TWO DIFFERENT QUESTIONS,
+    on purpose. `has_dev` asks whether the slot exists, because the picker uses
+    it to decide whether to OFFER a `/dev/` link at all — narrowing it to "the
+    slot differs from `latest`" would hide a link that resolves, and would make
+    `hammerola status` call an occupied slot empty. This flag asks whether there
+    is anything to say about the project on the front page, where a chip on
+    every card says nothing.
+
+    The card still describes the newest COMMIT and never the slot — that is SPEC
+    7.6 and the front page is exactly where it matters — but "there is
+    uncommitted work in this project" is a different statement from "this is what
+    the project looks like", and only the second one is a promise about the link.
 
     `first_built` is the honest answer to a question the hub cannot answer. It
     does not know when a project was CREATED: `hammerola create` mints an id in

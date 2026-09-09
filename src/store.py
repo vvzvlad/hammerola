@@ -1467,11 +1467,26 @@ class Store:
             # for as long as nobody pushes to it again, which for an abandoned
             # project is for ever.
             #
-            # Order still matters on the success path: the symlink moves first,
+            # ORDER STILL MATTERS on the success path, and there are three steps
+            # in it: the slot is filled with this revision, then `latest` moves
+            # onto it, then the picker is written — last, from what is on disk
+            # once both have settled. The symlink still moves before the picker,
             # so a reader following `latest` is on the new build before the
-            # picker starts offering it, and the picker is written last, from
-            # what is on disk once the pointer has settled.
+            # picker starts offering it.
+            #
+            # What the MIRROR has to come before is `_write_builds_json` and
+            # `_refresh_index`, because both are written from what is on disk:
+            # `has_dev` in `builds.json` and the card on the front page are
+            # answers about the slot, and a slot filled after they were written
+            # would not appear in either until the next publish of this project.
+            # Against `_switch_latest` there is no such argument either way, and
+            # it sits after the mirror only because the three steps are stated
+            # in the order above. The price of that is that `latest` moves later
+            # by however long a full `copytree` takes, and it is acceptable: the
+            # revision is already published at its own permanent URL — `latest`
+            # is a pointer to it, not the publication.
             try:
+                self._mirror_into_dev_slot(pid, pdir, final, meta, digest)
                 # A rename is superseded by the push that follows it: the build
                 # carries the project's own title, and that is the newer
                 # statement of what the project is called. Before the picker is
@@ -1550,10 +1565,13 @@ class Store:
         # The site index too, and this is the one thing a local push changes
         # about the front page. The card still describes the newest COMMIT and
         # never the slot (SPEC 7.6) — what it gains is the `dev` chip, i.e. that
-        # a slot exists. Without this line that chip appears only when the
-        # project is next committed, which is the same class of staleness the
-        # picker is rewritten to avoid; with it, a local push costs one index
-        # rebuild, which is nothing beside the build that produced the push.
+        # the project holds work no commit has published
+        # (`_uncommitted_in_slot`). Without this line the chip would wait for
+        # the next `_refresh_index` from anywhere at all, and this project's own
+        # next commit is not it: that one fills the slot with the revision, so
+        # the chip this push earned would be cleared without ever having been
+        # drawn. With it, a local push costs one index rebuild, which is nothing
+        # beside the build that produced the push.
         #
         # OUTSIDE the project lock and after it, and guarded, exactly like
         # `publish_built`: `_refresh_index` takes the index lock and walks every
@@ -1573,8 +1591,14 @@ class Store:
         return 201, url
 
     @staticmethod
-    def _swap_dev_slot(pdir: Path, staging: Path) -> None:
-        """Put a freshly unpacked tree into `<pid>/dev/`, replacing what is there.
+    def _swap_dev_slot(pdir: Path, source: Path) -> None:
+        """Put a prepared tree into `<pid>/dev/`, replacing what is there.
+
+        `source` is a directory beside the slot that is ready to BE the slot, and
+        it comes from two places now: the tree a `build` push unpacked
+        (`publish_dev_built`), and a copy of a revision that has just been
+        published (`_mirror_into_dev_slot`). It is consumed either way — the
+        rename below is what empties it.
 
         POSIX has no way to atomically replace a non-empty DIRECTORY under a fixed
         name — `rename` onto a directory only succeeds if the target is empty —
@@ -1596,13 +1620,62 @@ class Store:
         if occupied:
             os.rename(slot, parked)
         try:
-            os.rename(staging, slot)
+            os.rename(source, slot)
         except OSError:
             if occupied:
                 os.rename(parked, slot)
             raise
         if occupied:
             shutil.rmtree(parked, ignore_errors=True)
+
+    def _mirror_into_dev_slot(self, pid: str, pdir: Path, final: Path,
+                              meta: dict, digest: str) -> None:
+        """Put a revision that has just been published into `<pid>/dev/` too.
+
+        The slot is the freshest state the hub knows about the project, not the
+        last call to `build` (issue #78): without this a commit leaves the slot
+        showing geometry OLDER than `latest`.
+
+        A COPY of the published tree, because the rename that publishes it is
+        what emptied the staging directory. Nothing is validated a second time
+        and `_finish_staging` is not called again: a revision's meta.json and
+        the slot's differ in exactly two keys, `commit` and `dev`
+        (`render.build_meta`), and every other field is the same build's.
+
+        THE SWAP IS UNCONDITIONAL, including where the slot already holds these
+        very sources — the case `publish_dev_built` short-circuits on, to spare
+        an open page a needless re-render. It is not an oversight to optimise
+        away: what has to end up in the slot is THIS REVISION's meta.json, and a
+        slot filled by an earlier `build` of the same sources holds a different
+        document — a build's `built` and `published` stamps rather than the
+        revision's. Skipping the copy would leave the two disagreeing about when
+        the thing on screen was made.
+
+        NEVER RAISES. It runs past the point of no return, so a slot that could
+        not be written must not unpublish the revision or fail the job that
+        pushed it — and the slot has no history to lose, because the next writer
+        overwrites it.
+        """
+        tmp = pdir / f"{STAGING_PREFIX}{DEV_LINK}-{uuid.uuid4().hex}"
+        try:
+            shutil.copytree(final, tmp)
+            (tmp / "meta.json").write_text(
+                json.dumps(dict(meta, commit=DEV_LINK, dev=True), indent=1),
+                encoding="utf-8")
+            # Redundant against the `copytree` above, which already brought
+            # this exact digest across, and written anyway: the slot's digest is
+            # what makes a later `build` of these same sources answer 200 out of
+            # the slot instead of rebuilding, and what tells the front page the
+            # slot holds nothing the commit does not (`_uncommitted_in_slot`).
+            # A link that load-bearing belongs in the method that establishes
+            # it, not inherited from a tree copy where nothing names it.
+            (tmp / PAYLOAD_DIGEST_FILE).write_text(digest, encoding="utf-8")
+            self._swap_dev_slot(pdir, tmp)
+        except Exception:
+            shutil.rmtree(tmp, ignore_errors=True)
+            logger.exception(
+                f"publish {pid}/{final.name}: the revision is published, but "
+                f"the {DEV_LINK} slot was not updated to match it")
 
     # -- the code of a revision --------------------------------------------
     def source_archive(self, revision: str) -> Path:
@@ -2359,6 +2432,46 @@ class Store:
             return None
         return meta if _usable_meta(meta, DEV_LINK) else None
 
+    def _uncommitted_in_slot(self, pid: str) -> bool:
+        """Whether the local slot holds sources that no commit has published.
+
+        The question behind the `dev` chip on the front page, and deliberately
+        NOT the `has_dev` that `_write_builds_json` writes: that one asks whether
+        the slot EXISTS, because the picker uses it to decide whether to offer a
+        `/dev/` link at all. The two were the same question until a commit began
+        filling the slot with itself (issue #78); since then "occupied" is true
+        of every project that has ever committed, so a chip built on it would sit
+        on every card and say nothing.
+
+        THE DIGEST IS WHAT SEPARATES THEM. It is the digest of the SOURCES a
+        push carried, and the mirror writes the revision's own digest into the
+        slot — so a slot whose digest equals the newest commit's publishes
+        nothing that commit does not, while a `build` push of edited sources
+        lands a different one. Comparing the trees would answer a weaker
+        question anyway: two builds of the same sources can differ byte for byte
+        in their timestamps alone.
+
+        ERRING TOWARDS TRUE on a digest that will not read is deliberate: the
+        slot is there, nothing accounts for what is in it, and True is the answer
+        this gave for the whole time before the slot could hold a commit. The
+        failure it chooses is a chip on a card that did not need one, rather than
+        work on somebody's laptop that the front page quietly stops mentioning.
+        """
+        if self._dev_meta(pid) is None:
+            return False
+        commit = self.latest_commit(pid)
+        if commit is None:
+            # `latest` does not read: the symlink is gone, or a previous
+            # publish did not get as far as setting it. There is nothing to
+            # compare the slot against, so the chip stays -- see ERRING TOWARDS
+            # TRUE above. Not "no commits at all": the only caller reaches this
+            # with the project's commit builds already in hand.
+            return True
+        pdir = self.projects_dir / pid
+        in_slot = _read_digest(pdir / DEV_LINK)
+        published = _read_digest(pdir / commit)
+        return not (in_slot is not None and in_slot == published)
+
     def _refresh_index(self) -> None:
         """Rebuild the root index.json from every project's newest COMMIT build.
 
@@ -2372,10 +2485,16 @@ class Store:
 
         Two of the card's fields are properties of the PROJECT rather than of the
         build the rest of it comes from, so they are read here and handed over:
-        whether the slot is occupied (the same `_dev_meta` call `_write_builds_json`
-        makes, and the front page says only that it exists — never what is in it),
-        and the oldest build still on disk, which is as close to "since when" as
-        anything here gets. `render.index_card` says what each is for.
+        whether the slot holds sources no commit has published
+        (`_uncommitted_in_slot` — the front page says only THAT there is such
+        work, never what it is), and the oldest build still on disk, which is as
+        close to "since when" as anything here gets. `render.index_card` says
+        what each is for.
+
+        The first of those is NOT the `has_dev` that `_write_builds_json` writes
+        from `_dev_meta`, and the two must not be collapsed back into one call:
+        that one asks whether the slot exists, which a commit filling the slot
+        with itself (issue #78) made true of every committed project.
         """
         with self._index_lock:
             cards = []
@@ -2389,7 +2508,7 @@ class Store:
                     # returns, which is what makes the subscript safe.
                     card = render.index_card(
                         metas[0],
-                        dev=self._dev_meta(pdir.name) is not None,
+                        dev=self._uncommitted_in_slot(pdir.name),
                         first_built=metas[-1]["built"],
                     )
                     renamed = self.project_title(pdir.name)
@@ -2545,11 +2664,13 @@ class Store:
     def _digests_of(self, pid: str) -> set:
         """Every payload digest recorded in one project's build directories.
 
-        The `dev` slot is included. Its sources are never stored, so its digest
-        normally matches nothing in `sources/` — but if the same tree was also
-        published as a revision, that revision's directory carries the digest
-        too, so including it changes no answer and leaving it out would be a
-        special case to explain.
+        The `dev` slot is included, and since issue #78 the ORDINARY case is
+        that its digest is a published revision's: a commit fills the slot with
+        itself, and that revision's own directory carries the same digest, so
+        including the slot changes no answer. The other case is a slot filled by
+        a `build` push, whose sources are never stored — that digest matches
+        nothing in `sources/`. Leaving the slot out would answer the same and be
+        a special case to explain.
         """
         digests = set()
         try:
