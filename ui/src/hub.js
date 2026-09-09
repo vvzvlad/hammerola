@@ -4,11 +4,16 @@
 // hub's contract. The URL scheme is the whole of the addressing (src/app.py):
 //
 //     /index.json                       what is on this hub -- EDIT_TOKEN, the
-//                                       one route on this site that is guarded
+//                                       only one of the routes LISTED HERE that
+//                                       is guarded (the comment, job and source
+//                                       APIs are guarded too and are not here)
 //     /start                            where to get the skill and the client,
 //                                       and whether anything is published here
-//                                       yet -- PUBLIC, and the only route this
-//                                       bundle asks for without a token
+//                                       yet -- PUBLIC. `meta.json` and
+//                                       `builds.json` below are asked for
+//                                       without a token as well; what is
+//                                       special here is that the ANSWER is for
+//                                       a reader who has no token at all
 //     /project/<pid>/                   the project, on whichever pointer the
 //                                       reader was last on (SPEC 9)
 //     /project/<pid>/<slot>/            the page, where <slot> is a commit id
@@ -32,14 +37,19 @@ export const POINTER_NAMES = ['latest', 'dev'];
 /**
  * The id of the view a model is assembled in.
  *
- * A convention rather than a field: `src/cadbuild/views.py` names its default
- * view `assembled`, and every model in the fleet inherits it. It matters because
- * a distance measured BETWEEN two parts only means anything where the parts
- * stand as assembled — on a print bed they have been moved apart on purpose, and
- * a number taken there would reach the agent as a gap that is not a gap (brief,
- * block 7). A model that names its views something else loses the qualifier's
- * precision in the safe direction: every measurement is then labelled as
- * belonging to the current layout.
+ * A constant shared with the build half, where it is spelled in
+ * `src/cadbuild/artifacts.py` as `ASSEMBLED_VIEW_ID`. No model INHERITS it:
+ * `views.prepare_views` refuses a model that declares no view under this id, so
+ * every build that reaches this hub has one. It matters because a distance
+ * measured BETWEEN two parts only means anything where the parts stand as
+ * assembled — on a print bed they have been moved apart on purpose, and a
+ * number taken there would reach the agent as a gap that is not a gap (brief,
+ * block 7). A rename on the build side would leave every CROSS-PART measurement
+ * here labelled as belonging to the current layout instead — the safe
+ * direction, and silent; a single-part measurement carries `crossPart: false`
+ * and is never labelled either way. The two spellings are checked against each
+ * other by `tests/test_ui_source.py`, which is the only place that can: neither
+ * runtime can import the other's constant.
  */
 export const ASSEMBLED_VIEW_ID = 'assembled';
 
@@ -165,20 +175,31 @@ export const projectUrl = (pid) => `/project/${encodeURIComponent(pid)}/`;
  * there reads as `undefined`, which renders as an empty string and formats as
  * `NaN` — never as an error.
  *
- * Three of the designer's fields have no line here, and each absence is a fact
+ * Two of the designer's fields have no line here, and each absence is a fact
  * about the hub rather than an omission:
  *
  *   * a PREVIEW image is block 12 of the brief and is not built yet, so every
  *     card draws the neutral plate. No field is invented to hold one.
- *   * a STATUS (`idle`/`building`/`failed`) cannot be answered at all. A build
- *     job is addressable only by its own id, there is no route that lists jobs,
- *     and job order is stored nowhere — it existed for a retention that no
- *     longer exists (SPEC 5.3, and the docstring of src/jobs.py). So the card
- *     carries no status and the page shows none, rather than showing `idle` for
- *     a project that is rebuilding as you look at it.
  *   * a REVISION NUMBER does not exist. A revision is named by the digest of its
  *     sources (SPEC 7.7), so there is no `v241` to show and there is not going
  *     to be one; the hash is shown at the length the rest of this site reads it.
+ *
+ * `status` IS ANSWERED, AND ABOUT THE DRAFT ONLY (issue #32). It is one of
+ * `idle`/`building`/`failed`, and what it describes is the last build pushed AS
+ * A DRAFT — not "the last build in the `dev` slot", which a commit answers too
+ * since it mirrors itself in there (issue #78). The hub records that job's id
+ * when the build STARTS, and `/index.json` maps its live state onto the word per
+ * request (`_serve_index_json` in src/app.py, `render.card_status`). So a draft
+ * that is building says so while it builds, and one that failed keeps saying so
+ * until the next draft push or until a commit replaces what is in the slot — a
+ * restart included, because a job left in flight by a crash is failed at the
+ * next start rather than left building for ever.
+ *
+ * WHAT IT DOES NOT ANSWER is a COMMIT build in flight, and that is deliberate
+ * rather than pending: the card describes what has been published from a commit
+ * (SPEC 7.6), and a chip saying a commit build is running would be the front
+ * page reporting on work that has published nothing. A project whose only build
+ * is local has no card at all, so it shows no status either.
  *
  * `first` is the one field whose NAME differs from what the mock asked for, and
  * deliberately: the mock wanted a creation date, the hub has the oldest build it
@@ -202,16 +223,20 @@ export function projectCard(card) {
     meta: `${card.printables} printables · ${card.views} views · ${card.mb} MB`,
     rev: shortId(card.commit),
     dev: !!card.dev,
+    status: card.status,
     built: card.built,
     first: card.first_built,
   };
 }
 
 // -- getting started --------------------------------------------------------
-// The one route here that is asked WITHOUT a token, because whoever needs the
-// answer does not have one yet (src/onboarding.py). It carries three relative
-// paths and one boolean about this deployment, and the door renders a block out
-// of them when the boolean says the hub is empty.
+// The route whose ANSWER is meant for somebody who has no token at all, because
+// whoever needs it has not got one yet (src/onboarding.py). It carries six keys
+// — three relative paths, two version numbers and one boolean about this
+// deployment; `onboarding.manifest` is where they are written and
+// tests/test_onboarding.py is what pins the set, so this list is a summary and
+// not the source. This file reads the boolean and two of the paths, and the
+// door renders a block out of them when the boolean says the hub is empty.
 
 const START_URL = '/start';
 

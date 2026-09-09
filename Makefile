@@ -112,6 +112,88 @@ install: $(VENV)/.deps-installed ## Create .venv (if missing) and install dev/te
 env: ## Create .env from the template if it does not exist
 	@test -f .env || cp .env.example .env
 
+# --- The lock ----------------------------------------------------------------
+# requirements.lock is the WHOLE resolved runtime environment — every distribution
+# `==` pinned and hashed — compiled from requirements.txt, and it is the file the
+# Dockerfile installs. This target is the only thing that writes it.
+#
+# MANUAL AND DELIBERATE. It is wired into nothing: not the image build, not either
+# CI workflow, not `install`, not `test`. That is the whole purchase — with the lock
+# in place a dependency moves only when somebody runs this and commits the diff, on a
+# commit that can be read and reverted, instead of moving on whichever rebuild
+# happened to run after PyPI did. A target that ran on its own, or a build step that
+# recompiled the lock, would hand back exactly the drift the lock was bought to stop.
+#
+# IT RESOLVES FOR THE IMAGE'S PLATFORM, NEVER FOR THIS LAPTOP, and that is why there
+# is a container here at all. pip-compile resolves against the interpreter and the
+# platform it is running on: environment markers (`python_version`, `sys_platform`,
+# `platform_machine`), which wheels exist, and therefore the versions themselves. Run
+# on an arm64 mac against python 3.13 it would write a lock naming files that do not
+# exist for linux/amd64 python 3.11 — and `--require-hashes` turns that into a failed
+# image build rather than a silently different install, which is the good half of an
+# otherwise wasted round trip. So it runs inside the same base image the Dockerfile
+# uses, with --platform pinned to what the runner builds for, exactly as both CI
+# workflows run the test suite inside that image.
+#
+# The tar over stdin is the same arrangement as those steps, for the same reasons: it
+# is correct whatever the daemon is and wherever the checkout lives, and nothing in
+# the container can write into the working tree. One file goes in — pip-compile reads
+# requirements.txt and nothing else. The compiled lock comes back on stdout, which is
+# why every other thing the container says (pip's install log, pip-compile's
+# progress) is sent to stderr: a stray line on stdout would land in the file.
+#
+# THE PIP-TOOLS VERSION IS READ OUT OF requirements-dev.txt rather than written here.
+# It is pinned there like every other dev dependency, and a second copy of a version
+# that has to agree with the first is the drift this project keeps out everywhere
+# else. Written nowhere twice, it cannot go stale. Only the VERSION is taken from
+# there: the pip-tools `make install` puts into .venv is never run by anything — this
+# target installs its own copy inside the container, because that is where the resolve
+# has to happen. Removing it from requirements-dev.txt leaves the variable empty — `awk` with
+# no match prints nothing and still exits 0 — and the target then dies one line later, on a
+# `pip install` with no operand, with the old lock untouched. So it stays there as the single
+# place the version is declared.
+#
+# EVERY RUN IS A FRESH RESOLVE, not an update of what the lock already says. The
+# existing requirements.lock is not an input — it is not even in the tar — so the
+# resolver starts from requirements.txt alone and is free to pick a newer release of
+# anything this file does not pin, whatever the reason for running it was. A run
+# meant to bump one package will move the others that have moved on PyPI since the
+# last run, and that is the intended shape: the diff shows all of it and gets read
+# before it is committed. What it is not is a way to bump one package in isolation.
+#
+# The output lands in a temporary and is renamed over the lock only after the whole
+# pipeline succeeded, so a resolution that fails — an unsatisfiable pin, a network
+# that dropped, an index that answered 500 — leaves the previous lock exactly where it
+# was instead of truncating it to nothing. The `trap` takes the temporary with it,
+# Ctrl-C included; its name carries the lock's own prefix so a leftover is obvious in
+# `git status` rather than hidden behind a dot.
+#
+# EXPECT IT TO BE SLOW AND HEAVY, and do not read that as something being stuck:
+# `--generate-hashes` hashes the FILES, so pip-compile fetches every distribution it
+# pins — every wheel of every platform for each one, and the OpenCASCADE binding alone
+# is ~271 MB apiece. Measured once, on an arm64 laptop running the amd64 image under
+# emulation: about half an hour and some 13 GB pulled, with nothing printed until the
+# lock appears at the end. This runs when a dependency is deliberately bumped, which is
+# the whole reason that cost is affordable.
+LOCK_IMAGE    := python:3.11-slim
+LOCK_PLATFORM := linux/amd64
+
+.PHONY: lock
+lock: ## Regenerate requirements.lock from requirements.txt (resolved inside the image's base)
+	piptools=$$(awk '/^pip-tools==/ {print $$1}' requirements-dev.txt); \
+	tmp=requirements.lock.tmp.$$$$; \
+	trap 'rm -f "$$tmp"' EXIT; \
+	tar -cf - requirements.txt \
+	  | docker run --rm -i --pull always --platform $(LOCK_PLATFORM) \
+	      -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
+	      $(LOCK_IMAGE) \
+	      sh -c "set -e; mkdir -p /src; tar -xf - -C /src; cd /src; \
+	             pip install --no-cache-dir $$piptools 1>&2; \
+	             pip-compile --quiet --generate-hashes \
+	               --output-file requirements.lock requirements.txt 1>&2; \
+	             cat requirements.lock" > "$$tmp" \
+	  && mv -f "$$tmp" requirements.lock
+
 # --- Develop -----------------------------------------------------------------
 # BOTH suites, and the JS half is conditional on npm being installed — a machine
 # without node must still be able to test and run the service (the `ui` target

@@ -42,6 +42,15 @@ image has a realistic chance of shipping broken while the suite stays green:
       template is tarred out of `model_template/` when the request arrives — so they are the
       one part of this artefact that (g) structurally cannot cover by naming a path, and the
       route answers 404 rather than 500 when the assembly fails.
+* (i) the build wrapper runs INSIDE this image, as the `app` account, and the ceilings it puts
+      on really go on. The hub BUILDS models on the request path, and it does that by spawning
+      `python -s -m src.buildproc.wrapper` from /app — so an image in which that module does
+      not resolve, or in which the kernel refuses one of the RLIMIT_* the wrapper sets for
+      `app`, passes every check above and then fails EVERY push. The suite cannot see either
+      half: it runs on a checkout where `src/` is importable by construction, and it runs the
+      wrapper against a spec it has already STRIPPED of the ceiling the workstation refuses
+      (`tests/buildproc/probes.py` — on darwin RLIMIT_AS cannot be set at all), so the one
+      question this check exists for is the one the suite has taken out of its own way.
 
 Constraints of this runner, which shaped every choice below
 ------------------------------------------------------------
@@ -92,9 +101,10 @@ IMAGE_ENV = "SMOKE_IMAGE"
 NAME_ENV = "SMOKE_NAME"
 
 # The three containers this gate starts, by suffix on $SMOKE_NAME:
-#   ""      the long-lived one checks (c), (d), (f) and (g) `docker exec` into. Started with a
-#           sleeping command rather than the image's own so that it is a stable place to exec
-#           into. Its `sleep` has to outlast the LAST of those four execs — see IDLE_COMMAND.
+#   ""      the long-lived one checks (c), (d), (f), (g) and (i) `docker exec` into. Started
+#           with a sleeping command rather than the image's own so that it is a stable place to
+#           exec into. Its `sleep` has to outlast the LAST of those five execs — see
+#           IDLE_COMMAND.
 #   -guard  the short-lived one started with NO environment for check (b).
 #   -cmd    the one started with the image's REAL command for check (e), and the one check (h)
 #           execs into afterwards — the hub it asks has to be the program production runs, which
@@ -551,6 +561,233 @@ for path in request["routes"]:
         break
 """
 
+# --- check (i): the build wrapper, and the ceilings it puts on ------------------------------
+# The hub does not import a build, it SPAWNS one:
+# `python -s -m src.buildproc.wrapper '<rlimit-spec-json>' -- <target argv>`, with the working
+# directory at the repository root (`runner.run_isolated`, `runner.HUB_ROOT` — which is /app in
+# this image). That wrapper puts the rlimits on ITSELF and then `execv`s the interpreter that
+# will import the model, so by the time any model code exists the ceilings are the kernel's
+# business. Two things about the IMAGE have to hold for a single build to happen, and neither
+# is visible anywhere else in this pipeline:
+#
+#   * `-m src.buildproc.wrapper` has to RESOLVE from /app. That is `COPY src/ src/` plus a
+#     working directory, and the suite cannot observe either: it runs against a checkout where
+#     `src/` is importable by construction and where the working directory is the developer's.
+#   * the ceilings have to GO ON for the `app` account inside this container. `setrlimit` can be
+#     refused — a seccomp profile, a platform that does not implement RLIMIT_AS at any value
+#     (`limits.memory_limit_supported()` measures darwin as exactly that) — and
+#     `apply_process_limits` fails CLOSED when it is: the wrapper prints its refusal and exits
+#     without starting the build. An image like that serves every page, answers every route,
+#     passes every check above, and turns every push into a build that never runs.
+#
+# THE PROBE ASKS THE IMAGE FOR ITS OWN SPEC instead of carrying a copy of it, which is the one
+# place this check departs from the PINS rows above, and the reason is that a copy here could
+# not be right: `Limits.cpu_seconds` is COMPUTED at import time from the cores the container can
+# see (`limits._default_occt_threads`), so a number written in this file would be a statement
+# about the runner rather than about the image. What is asked instead has an answer that does
+# not depend on the machine — whatever the image's own `DEFAULT_LIMITS.rlimit_spec()` asks for,
+# the fenced process really runs under. tests/process_limits.py makes the same choice one level
+# up, and says at length why a hand-copied list of ceilings is the worse of the two.
+#
+# It also runs THE REAL WRAPPER rather than a re-implementation of what it does. Everything this
+# check is about lives in the few lines between `apply_process_limits` and `os.execv`, and a
+# probe that called `setrlimit` itself would prove those lines are reachable in this image
+# without ever executing them.
+BUILD_MARK = "build-ceiling"
+# The three questions, in the order the probe answers them, as (key, target prose). Written as
+# data for the same reason CAD_IMPORTS is: the declared count below is DERIVED from it and
+# cannot go stale when a question is added or removed.
+#
+# They are three rather than one because they fail at three different places and send whoever
+# reads the run to three different files: a packaging fault (`src/` did not arrive, or the
+# working directory is not where the hub thinks), a refusal by the kernel for this account, and
+# a ceiling that was reported applied and is not actually on the process.
+BUILD_TARGETS = (
+    ("resolve",
+     "`python -s -m src.buildproc.wrapper` runs from {} as the `{}` account".format(
+         APP_DIR, APP_USER)),
+    ("apply",
+     "...and it puts every ceiling the image's own spec asks for on, rather than refusing"),
+    ("force",
+     "...and the process it execs into really runs under them"),
+)
+# What the probe gives the wrapper before it gives up on it. It has to fit INSIDE EXEC_TIMEOUT
+# with room to spare for the probe's own interpreter start and for printing its verdicts: a
+# probe killed by the outer bound reports NOTHING, and all three rows would then go red over an
+# image that was merely slow — the expensive direction, since it blocks publication. The work
+# itself is three stdlib interpreter starts (importing `src.buildproc` must not import cadquery,
+# and that package's own docstring says so), so 20 s is orders of magnitude over the cost.
+BUILD_RUN_SECONDS = 20
+
+# Run by the image's own interpreter, as `app`, with the working directory at /app — i.e. as
+# close to the process the hub spawns as a gate can get without pushing a model. Stdlib only,
+# like every probe here.
+#
+# It reads its verdicts off marked lines, the same wire format check (h) uses (see START_MARK):
+# `docker()` folds stderr into stdout, so the answer has to be pickable out of a stream that may
+# also carry warnings. Every reason is collapsed to ONE LINE before printing, because the parser
+# reads a verdict per line and a traceback pasted into the middle of one would be read as
+# several verdicts about nothing.
+#
+# Note what it does NOT do: it never lets the wrapper's own output share a stream with the
+# fenced process's answer. The wrapper writes to stderr and the process it execs into writes its
+# JSON to stdout, and this probe keeps the two pipes apart — which is what removes any need for
+# a sentinel here.
+BUILD_PROBE_SOURCE = r"""
+import json
+import os
+import resource
+import subprocess
+import sys
+import traceback
+
+request = json.loads(sys.argv[1])
+mark = request["mark"]
+
+# The wrapper's target, and the whole of it: print the effective (soft, hard) pair of every
+# ceiling the IMAGE names. This is the only thing that can answer "the ceilings really went on",
+# because it runs on the far side of the execv, which is where the build itself runs.
+READBACK = (
+    "import json, resource, sys\n"
+    "names = json.loads(sys.argv[1])\n"
+    "print(json.dumps({name: list(resource.getrlimit(getattr(resource, name)))\n"
+    "                  for name in names}))\n"
+)
+
+# Every message wrapper.py writes carries this prefix EXCEPT the bare `usage:` line it prints
+# for a malformed invocation (wrapper.py's first branch) -- which this probe cannot reach,
+# because the argv composed below always has the whole spec in argv[1] (one `json.dumps`, one
+# element) and `--` in argv[2]. On every path the probe CAN take -- the ceilings it applied, or
+# the refusal that stopped it -- the prefix is there. So its presence is the witness that the
+# module resolved and ran at all, which is a different question from whether it then succeeded:
+# `python -m` failing to find the module prints its own error and none of these.
+#
+# READ THIS BEFORE WIDENING THE PROBE'S ARGV: reaching the usage branch would cost this check
+# its `resolve` verdict, and it would fail CLOSED (the row goes red), which is the right way
+# round but not an obvious one.
+VOICE = "buildproc:"
+
+
+def one_line(text):
+    return " | ".join(part.strip() for part in str(text).splitlines() if part.strip())
+
+
+def report(key, reason):
+    if reason is None:
+        print("{} ok {}".format(mark, key))
+    else:
+        print("{} bad {} {}".format(mark, key, one_line(reason) or "(no detail)"))
+
+
+def refuse(reason):
+    # Every key still gets a verdict. A probe that answered fewer questions than it was asked
+    # is what the verdict count in the gate exists to catch, and reporting nothing here would
+    # hand it that case for no reason.
+    for key in request["keys"]:
+        report(key, reason)
+    raise SystemExit(0)
+
+
+try:
+    from src.buildproc.limits import (
+        DEFAULT_LIMITS,
+        RLIMIT_FIELDS,
+        RLIMIT_NAMES,
+        WRAPPER_EXIT_CODES,
+    )
+except Exception:
+    refuse("`import src.buildproc.limits` fails with the working directory at {}: {}".format(
+        os.getcwd(), traceback.format_exc()))
+
+# RLIMIT_FIELDS and RLIMIT_NAMES are built from the same table in the same order (limits.py),
+# so this pairs each field of the spec with the resource the wrapper applies it to.
+pairs = list(zip(RLIMIT_FIELDS, RLIMIT_NAMES))
+spec = DEFAULT_LIMITS.rlimit_spec()
+argv = [
+    sys.executable, "-s", "-m", "src.buildproc.wrapper", json.dumps(spec), "--",
+    sys.executable, "-s", "-c", READBACK, json.dumps([name for _field, name in pairs]),
+]
+
+try:
+    run = subprocess.run(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=request["timeout"])
+except Exception:
+    refuse("the wrapper could not be run at all from {}: {}".format(
+        os.getcwd(), traceback.format_exc()))
+
+out = run.stdout or ""
+err = run.stderr or ""
+detail = "exit {}; stderr: {}; stdout: {}".format(
+    run.returncode, one_line(err) or "(nothing)", one_line(out) or "(nothing)")
+
+if not any(line.startswith(VOICE) for line in err.splitlines()):
+    report("resolve", (
+        "the interpreter never got as far as the wrapper's own first message, with the "
+        "working directory at {} -- {}".format(os.getcwd(), detail)))
+    blocked = "the wrapper never ran; the row above says what happened instead"
+    report("apply", blocked)
+    report("force", blocked)
+    raise SystemExit(0)
+report("resolve", None)
+
+if run.returncode in WRAPPER_EXIT_CODES:
+    report("apply", (
+        "the wrapper refused, with one of its own exit codes -- {}".format(detail)))
+    report("force", (
+        "the wrapper never reached the process it fences; the row above says why"))
+    raise SystemExit(0)
+report("apply", None)
+
+try:
+    seen = json.loads(out)
+except ValueError:
+    seen = None
+if not isinstance(seen, dict):
+    report("force", (
+        "the fenced process did not report the ceilings it runs under -- {}".format(detail)))
+    raise SystemExit(0)
+
+problems = []
+verified = 0
+for field, name in pairs:
+    requested = spec[field]
+    if requested is None:
+        # Present in the spec and deliberately switched off -- `processes` is the standing
+        # example, RLIMIT_NPROC being counted per uid. There is nothing to verify: whatever
+        # this process inherited for it is legitimate.
+        continue
+    reading = seen.get(name)
+    if not isinstance(reading, list) or len(reading) != 2:
+        problems.append("{}: the fenced process reported {}".format(name, repr(reading)))
+        continue
+    soft, hard = reading
+    if soft == resource.RLIM_INFINITY or hard == resource.RLIM_INFINITY:
+        problems.append("{}: unlimited in the fenced process, though the spec asks for "
+                        "{}={}".format(name, field, requested))
+    elif soft != hard:
+        # The wrapper sets (value, value) on purpose: at the SOFT limit RLIMIT_CPU raises
+        # SIGXCPU, which a process may catch and ignore, while the HARD one is a SIGKILL it
+        # may not. A gap between them is a ceiling with a documented way around it.
+        problems.append("{}: soft {} and hard {} in the fenced process, so the ceiling can be "
+                        "raised back from inside it".format(name, soft, hard))
+    elif soft > requested:
+        problems.append("{}: the fenced process has {}, looser than the {} the spec asks "
+                        "for".format(name, soft, requested))
+    else:
+        # `soft < requested` is a PASS: apply_process_limits clamps down to an inherited hard
+        # limit without complaining, and a container that already caps something lower than the
+        # hub asks for is stricter rather than broken.
+        verified += 1
+if not verified:
+    problems.append("the image's own spec asks for no ceiling at all, so this row would report "
+                    "a build that runs entirely unfenced as a pass")
+report("force", "; ".join(problems) if problems else None)
+"""
+
 # How many verdicts each probe below is REQUIRED to return, compared against what it actually
 # returned before anything is reported. Every probe builds a local `targets` tuple first and
 # returns exactly one row per target on every path it can take — including the paths where the
@@ -587,12 +824,12 @@ for path in request["routes"]:
 # The counts are derived from the source wherever a derivation exists — the excluded-path and
 # required-path sweeps emit one row per path, so they are written as `len(EXCLUDED_PATHS)` and
 # `len(REQUIRED_PATHS)` and cannot go stale when either list grows; (b) is its two fixed rows
-# plus one per required variable, (f) is one row per declared import plus one per pin, and (h)
-# one row per onboarding route, for the same reason. The rest are literals because the `targets`
-# tuples they count are literal, and a literal that has to be kept in step is the entire point
-# here.
+# plus one per required variable, (f) is one row per declared import plus one per pin, (h) one
+# row per onboarding route, and (i) one per question in BUILD_TARGETS, for the same reason. The
+# rest are literals because the `targets` tuples they count are literal, and a literal that has
+# to be kept in step is the entire point here.
 #
-# Each label carries the probe's LETTER — the same (a)…(h) the list at the top of the module
+# Each label carries the probe's LETTER — the same (a)…(i) the list at the top of the module
 # docstring uses and each probe's own docstring opens with. That prefix is not decoration: this
 # label is the only thing a self-check failure gives whoever reads the run, and a label phrased
 # in words of its own would make them grep for prose that appears nowhere else in this file.
@@ -608,6 +845,7 @@ EXPECTED_TARGETS = (
     ("(f) CAD kernel", len(CAD_IMPORTS) + len(PINS)),
     ("(g) required paths", len(REQUIRED_PATHS)),
     ("(h) onboarding routes", len(START_ROUTES)),
+    ("(i) build ceilings", len(BUILD_TARGETS)),
 )
 
 # The environment the probe and real-command containers run with. The value is invented here
@@ -628,13 +866,13 @@ SMOKE_ENV = [
 # container, which is where that question belongs.
 # 900 s is measured from the moment THIS container starts, so it is not a bound on the gate as
 # a whole and the two must not be confused. What it has to outlast is the last `docker exec`
-# into it — check (g), the required-path sweep — and the arithmetic below puts the start of this
-# container at 240 s and the end of that exec at 675 s in the worst case, i.e. 435 s of its own
+# into it — check (i), the build-wrapper probe — and the arithmetic below puts the start of this
+# container at 240 s and the end of that exec at 735 s in the worst case, i.e. 495 s of its own
 # life used out of 900. Adding another exec into this container eats into that margin; adding a
-# call BEFORE it starts does not. Check (h) is neither: it runs after (g) but execs into the
-# `-cmd` container, which is running the image's own server and has no `sleep` to outlast, so it
-# costs this margin nothing. The container is removed in a `finally` regardless, and the
-# workflow removes it again under `if: always()`.
+# call BEFORE it starts does not. Check (h) is neither: it runs between (g) and (i) but execs
+# into the `-cmd` container, which is running the image's own server and has no `sleep` to
+# outlast, so it costs this margin nothing. The container is removed in a `finally` regardless,
+# and the workflow removes it again under `if: always()`.
 IDLE_COMMAND = ["sleep", "900"]
 
 # The first line `main.py` logs. Its presence proves the settings parsed — i.e. every required
@@ -674,11 +912,12 @@ STARTUP_MARKERS = (STARTUP_MARKER,)
 #  + 90 (exec: CAD kernel probe)
 #  + 30 (exec: required-path sweep)
 #  + 30 (exec: /start routes, into the -cmd container)
+#  + 30 (exec: build wrapper and its ceilings)
 #  + 30 (rm probe, finally) + 30 (rm cmd, finally)
-#  = 765 s, a little under 13 minutes. Both workflows allow 14 (840 s), and that headroom was
+#  = 795 s, a little over 13 minutes. Both workflows allow 14 (840 s), and that headroom was
 # raised together with the CAD probe below — a step timeout that does not exceed this sum turns
 # a slow-but-healthy run into a killed step whose own container cleanup never executes. The
-# remaining 75 s of margin is what a further exec would spend, so adding one means revisiting
+# remaining 45 s of margin is what a further exec would spend, so adding one means revisiting
 # `timeout-minutes` in both workflows rather than only this sum.
 # Three of these `rm`s are PRE-run cleanups: every container is removed by name before it is
 # started, so a re-run from the Gitea UI — which keeps the same run id, hence the same
@@ -1568,30 +1807,41 @@ def check_cad_kernel(name, blocked=None):
     return rows
 
 
-def parse_start_routes(output):
-    """Pull check (h)'s verdicts out of the probe's stdout.
+def parse_marked_verdicts(output, mark):
+    """Pull a probe's line-marked verdicts out of a container's stdout.
 
-    Returns {path: None or reason} for every route the probe reported on, and reports on
-    nothing else. A route MISSING from that mapping is a third answer — "the probe said nothing
-    about this one" — and the caller treats it as its own failure rather than as either verdict,
-    for the same reason sweep_paths()'s callers do: read as a pass, it would silently un-check
-    the route it is about.
+    The wire format is `<mark> ok <key>` and `<mark> bad <key> <one-line reason>`, and it is
+    shared by checks (h) and (i). Returns {key: None or reason} for every key the probe reported
+    on, and reports on nothing else. A key MISSING from that mapping is a third answer — "the
+    probe said nothing about this one" — and every caller treats it as its own failure rather
+    than as either verdict, for the same reason sweep_paths()'s callers do: read as a pass, it
+    would silently un-check the thing it is about.
 
     Unmarked lines are dropped rather than refused. `docker()` folds stderr into stdout, so a
     python warning or a line from the container's own machinery can land on either side of the
     verdicts, and a parser that treated any of it as a malformed verdict would fail an image
     with nothing wrong with it.
+
+    ONE FUNCTION FOR BOTH PROBES, for the reason sweep_paths() is one function for checks (d)
+    and (g): a second copy of this loop would drift, and the way it drifts is silent — the
+    "third answer" above is one `dict.get` default away from being read as a pass by whichever
+    copy was edited.
     """
     seen = {}
     for line in output.splitlines():
         fields = line.split(None, 3)
-        if len(fields) < 3 or fields[0] != START_MARK:
+        if len(fields) < 3 or fields[0] != mark:
             continue
         if fields[1] == "ok":
             seen[fields[2]] = None
         elif fields[1] == "bad" and len(fields) == 4:
             seen[fields[2]] = fields[3]
     return seen
+
+
+def parse_start_routes(output):
+    """Pull check (h)'s verdicts out of the probe's stdout, keyed by route."""
+    return parse_marked_verdicts(output, START_MARK)
 
 
 def check_start_routes(name):
@@ -1603,7 +1853,7 @@ def check_start_routes(name):
     at all — the client and the template do not exist as files in the image, they are assembled
     from `hammerola/` and `model_template/` when the request arrives.
 
-    NO `blocked` PARAMETER, unlike (c), (d), (f) and (g). Those exec into a container this file
+    NO `blocked` PARAMETER, unlike (c), (d), (f), (g) and (i). Those exec into a container this file
     started for them, so "it could not be started" is known before they run and is passed in.
     This one execs into the container check (e) started, and the honest report for a container
     that is not there is the one `docker exec` gives on its own: every row fails with the
@@ -1675,6 +1925,91 @@ def check_start_routes(name):
     return rows
 
 
+def check_build_ceilings(name, blocked=None):
+    """(i) The build wrapper runs inside the image, as `app`, and its ceilings really go on.
+
+    THE HUB BUILDS ON THE REQUEST PATH, so `src/buildproc/` is production code: every push ends
+    in `runner.run_isolated` spawning `python -s -m src.buildproc.wrapper` from the repository
+    root, which sets the rlimits on itself and `execv`s the interpreter that imports the model.
+    This check runs that exact command inside the built image, under the account the hub runs
+    as, and then asks the process on the far side of that `execv` what ceilings it is actually
+    under. The constants above say why each half is asked and why the spec is taken from the
+    image rather than written down here.
+
+    `-u app` IS THE CHECK, not a detail of it. `docker exec` does not go through the entrypoint,
+    so without it this would run as root — and root is exactly the account for which the
+    interesting failures do not happen: it may raise a hard limit, and several ways of refusing
+    a `setrlimit` do not apply to it. Check (f) deliberately runs as root for the opposite
+    reason and says so; the two are not inconsistent, they are asking different questions.
+
+    `-w /app` for the same kind of reason: `runner.HUB_ROOT` is where the hub starts the
+    wrapper, and `-m` resolves against the working directory. Check (a) asks separately whether
+    the image DECLARES that directory; this one asks whether the module resolves when standing
+    in it, which is the question a build actually depends on.
+
+    WHAT THIS CANNOT SEE, so that nobody reads it as covering the build: it never runs a model.
+    `src.buildproc.child`, cadquery and the whole geometry half are not exercised here — the
+    child module is merely imported, as a side effect of importing the package (`src/buildproc/
+    __init__.py` pulls in runner, which imports it), and check (f) is what proves the CAD
+    imports work. A build that is refused by a gate, crashes in OCCT or runs out of its wall
+    clock is invisible to this row and belongs to the suite.
+
+    Runs by `docker exec` into the long-lived probe container the earlier checks already
+    started, rather than starting a fourth container: the image is around two gigabytes, and one
+    more `docker run` would be the slowest thing this gate does for no extra coverage.
+    """
+    targets = [target for _key, target in BUILD_TARGETS]
+
+    if blocked is not None:
+        return [(target, blocked) for target in targets]
+
+    request = json.dumps({
+        "mark": BUILD_MARK,
+        "keys": [key for key, _target in BUILD_TARGETS],
+        "timeout": BUILD_RUN_SECONDS,
+    })
+
+    status, output = docker(
+        ["exec", "-u", APP_USER, "-w", APP_DIR, name, "python", "-c", BUILD_PROBE_SOURCE,
+         request],
+        EXEC_TIMEOUT)
+    if status is None:
+        return [(target, "not attempted: " + output) for target in targets]
+    if status != 0:
+        # A non-zero exit is not itself a verdict: the probe reports its own failures through
+        # the marked lines and exits 0 having done so, exactly like the CAD probe. So this
+        # means the probe's interpreter could not finish at all.
+        reason = (
+            "the build probe could not be run (docker exec exited {}). It answers its own "
+            "questions and exits 0 whatever they answer, so this is the probe dying rather "
+            "than a ceiling being wrong:\n{}".format(status, excerpt(output)))
+        return [(target, reason) for target in targets]
+
+    seen = parse_marked_verdicts(output, BUILD_MARK)
+
+    rows = []
+    for key, target in BUILD_TARGETS:
+        if key not in seen:
+            # Same reasoning as everywhere else here: "the probe said nothing about this" is a
+            # third answer, and reading it as a pass would un-check the very thing the row is
+            # for.
+            rows.append((target, (
+                "the probe returned no verdict for this one. Full container output:\n"
+                "{}".format(excerpt(output)))))
+        elif seen[key] is None:
+            rows.append((target, None))
+        else:
+            rows.append((target, (
+                "{}.\n"
+                "  The hub spawns this command for every push (src/buildproc/runner.py), so an "
+                "image this row is red about builds NOTHING — the wrapper refuses before a "
+                "line of the model has been read, or it runs it with a ceiling that is not "
+                "there. Every check above stays green either way: the image starts, drops "
+                "privileges, serves every page and imports the CAD kernel, and the first "
+                "person to push is the one who finds out.".format(seen[key]))))
+    return rows
+
+
 def main():
     image = os.environ.get(IMAGE_ENV)
     name = os.environ.get(NAME_ENV)
@@ -1725,27 +2060,32 @@ def main():
 
         startup_rows = check_startup(image, cmd_name)
 
-        # Last, and inside the `try` because it execs into the probe container started above —
-        # so it has to be covered by the same `finally`. Running it here rather than beside the
-        # other two execs keeps this list in the same order as EXPECTED_TARGETS, which is what
-        # the positional pairing below depends on; the cost is that it is the call furthest
-        # from the probe container's own `sleep`, and the arithmetic at IDLE_COMMAND is where
-        # that margin is checked.
+        # Inside the `try` because it execs into the probe container started above — so it has
+        # to be covered by the same `finally`. Running it here rather than beside the other
+        # execs keeps this list in the same order as EXPECTED_TARGETS, which is what the
+        # positional pairing below depends on. It is NOT the last call into that container any
+        # more — (g), (h) and (i) follow it, and (i) is now the one furthest from the probe's
+        # own `sleep`; the arithmetic at IDLE_COMMAND is where that margin is checked.
         cad_rows = check_cad_kernel(probe_name, blocked=blocked)
 
         # Also an exec into the probe container, and therefore also inside this `try`. Placed
         # after the CAD probe so that this list keeps the same order as EXPECTED_TARGETS, which
-        # the positional pairing below depends on. Being the LAST exec makes it the call the
-        # probe container's `sleep` has to outlast — the arithmetic at IDLE_COMMAND accounts for
-        # it, and moving another call after this one means redoing that arithmetic.
+        # the positional pairing below depends on.
         required_rows = check_required_paths(probe_name, blocked=blocked)
 
         # Into the `-cmd` container, not the probe one: the hub this asks has to be the program
         # production runs. It is therefore inside this `finally` for the OTHER container's sake
-        # — `cmd_name` is removed there too — and it is last because it is the only check that
-        # makes a request, so everything cheaper has already reported by the time it runs. The
-        # probe container's `sleep` budget is untouched by it; see IDLE_COMMAND.
+        # — `cmd_name` is removed there too — and it runs this late because it is the only check
+        # that makes a request, so everything cheaper has already reported by the time it does.
+        # The probe container's `sleep` budget is untouched by it; see IDLE_COMMAND.
         start_rows = check_start_routes(cmd_name)
+
+        # Back into the probe container, and LAST — which is what makes this the exec that
+        # container's `sleep` has to outlast, so the arithmetic at IDLE_COMMAND is about this
+        # call and moving another one after it means redoing that arithmetic. It is here rather
+        # than beside the other execs because this list has to keep the same order as
+        # EXPECTED_TARGETS, and (i) is the last letter.
+        build_rows = check_build_ceilings(probe_name, blocked=blocked)
     finally:
         # Both long-lived containers, removed whatever happened above. The workflow removes
         # them again under `if: always()` for the case where this process itself was killed by
@@ -1755,16 +2095,16 @@ def main():
 
     # SAME ORDER AS EXPECTED_TARGETS, and that is a requirement rather than a convention: the
     # pairing below is positional, so a group moved here without moving its declaration is
-    # compared against somebody else's count. TWO PAIRS of these groups have equal arity today
-    # — (a) and (c) return 4 verdicts each, (b) and (h) return 3 each — so swapping either pair
-    # would still satisfy every check below and go green while each probe's failures were being
-    # reported under another one's name. WHICH groups pair up is not stable and this sentence
-    # is not the authority on it: (d) was in the first pair until the client package brought it
-    # a fifth excluded path, so count the arities off the declarations above rather than off
-    # here. Nothing in this file can detect a swap; keeping the two tuples in step by eye is
-    # what prevents it, which is why the letters are on the labels.
+    # compared against somebody else's count. SEVERAL of these groups have equal arity today
+    # — (a) and (c) return 4 verdicts each, (b), (h) and (i) return 3 each — so swapping any two
+    # of a set would still satisfy every check below and go green while each probe's failures
+    # were being reported under another one's name. WHICH groups match up is not stable and this
+    # sentence is not the authority on it: (d) was in the first set until the client package
+    # brought it a fifth excluded path, so count the arities off the declarations above rather
+    # than off here. Nothing in this file can detect a swap; keeping the two tuples in step by
+    # eye is what prevents it, which is why the letters are on the labels.
     produced = (contract_rows, guard_rows, privileges_rows, excluded_rows, startup_rows,
-                cad_rows, required_rows, start_rows)
+                cad_rows, required_rows, start_rows, build_rows)
 
     # Three self-checks, and they are three because each one catches a break the others cannot
     # see. They are collected in two lists rather than one because they are REPORTED

@@ -13,11 +13,14 @@
  *   preview    -> nothing. A snapshot of the last build's frame is block 12 and
  *                 is not built, so every card draws the mock's own neutral
  *                 plate. No field was invented to hold one.
- *   status     -> nothing, and this one is structural rather than pending. See
- *                 `projectCard` in hub.js: a job is addressable only by its id,
- *                 no route lists jobs, and job order is stored nowhere. So the
- *                 status chip is not drawn at all — an `idle` pill on a project
- *                 that is rebuilding as you look at it is worse than no pill.
+ *   status     -> the DRAFT's, and only that (issue #32). `/index.json` answers
+ *                 `idle`/`building`/`failed` for the last build pushed AS A
+ *                 DRAFT — not for the last build in the project's `dev` slot,
+ *                 which a commit build fills too (issue #78) while deliberately
+ *                 moving no pointer; the chip is drawn for the middle two and
+ *                 for nothing else, because a pill on every card is a pill
+ *                 nobody reads. A COMMIT build in flight stays invisible here on
+ *                 purpose — see `projectCard` in hub.js.
  *   rev / hash -> one thing, not two: a revision is named by the digest of its
  *                 sources (SPEC 7.7), so there is no `v241` beside the hash.
  *   createdAt  -> the OLDEST build the hub still holds, labelled "first built"
@@ -615,20 +618,53 @@ const Preview = ({ radius }) => (
  * published — never what that work is, which is the whole of SPEC 7.6 as it
  * applies to this page. It is deliberately not "the slot is occupied": a commit
  * fills the slot with itself (issue #78), so that would be every card.
+ *
+ * The STATUS chip beside it says what the draft's last build is DOING, and only
+ * while there is something to say: a build in flight and a build that failed
+ * (issue #32). `idle` gets no chip at all — a pill on every card is a pill
+ * nobody reads — and neither does a card from a hub that answers no status,
+ * which is what the table lookup buys over two comparisons.
+ *
+ * EXPORTED for the same reason the four tables below are: a chip lives inside a
+ * component element, and `texts()` over a view body stops at that element rather
+ * than descending into it — so a test reading the body's tree would pass whether
+ * or not either chip was ever drawn. `entry.test.js` calls this directly.
  */
-const RevLine = ({ p }) => (
-  <React.Fragment>
-    <span style={css(`font:600 12px ${MONO};color:#1f6fd0`)}>{p.rev}</span>
-    {p.dev && (
-      <span
-        title="this project also has uncommitted work in its dev slot"
-        style={css(`font:500 10px ${MONO};color:#7c3aad;background:#f3ebfa;padding:2px 6px;border-radius:4px`)}
-      >
-        dev
-      </span>
-    )}
-  </React.Fragment>
-);
+const STATUS_CHIPS = Object.freeze({
+  building: {
+    title: 'a build of this project\'s draft is running now',
+    style: 'color:#8a5a00;background:#fdf1d8',
+  },
+  failed: {
+    title: 'the last build of this project\'s draft failed',
+    style: 'color:#a32020;background:#fbe6e6',
+  },
+});
+
+export const RevLine = ({ p }) => {
+  const status = STATUS_CHIPS[p.status];
+  return (
+    <React.Fragment>
+      <span style={css(`font:600 12px ${MONO};color:#1f6fd0`)}>{p.rev}</span>
+      {p.dev && (
+        <span
+          title="this project also has uncommitted work in its dev slot"
+          style={css(`font:500 10px ${MONO};color:#7c3aad;background:#f3ebfa;padding:2px 6px;border-radius:4px`)}
+        >
+          dev
+        </span>
+      )}
+      {status && (
+        <span
+          title={status.title}
+          style={css(`font:500 10px ${MONO};${status.style};padding:2px 6px;border-radius:4px`)}
+        >
+          {p.status}
+        </span>
+      )}
+    </React.Fragment>
+  );
+};
 
 /**
  * EVERYTHING AN ARRANGEMENT'S ID REACHES, IN TABLES KEYED BY THAT ID.

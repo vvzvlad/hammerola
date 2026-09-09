@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The whole product as one file, and the pictures that go next to it.
 
-Made in the same process that computed the geometry: on a `make build` that is
-a container on the build node, and `_out/` is the only thing that comes back.
+Made in the same process that computed the geometry -- the fenced build process
+the hub spawns -- and what comes back from it is the staging directory it wrote.
 """
 
 import time
@@ -19,10 +19,11 @@ from .parts import KIND_MOCK
 # --------------------------------------------------------------------------
 #
 # These are made here, in the same process that computed the geometry, and for
-# one reason: on a `make build` that geometry is computed inside a container on
-# the build node, and `_out/` is the only thing that comes back. Rendering on
-# this side afterwards would mean shipping the STLs back and re-reading them,
-# and rendering in CI would mean the pictures existed only for pushes to main.
+# one reason: that geometry lives inside a fenced build process which the hub
+# spawns and which hands back a staging directory and nothing else. Rendering
+# afterwards, in the hub's own process, would mean re-reading the STLs that
+# process just wrote and putting the CAD stack back on the request path; and
+# rendering in CI would mean the pictures existed only for pushes to main.
 
 def _view_nodes(prepared, vid):
     """The leaves a prepared view draws, in order, or None if there is no such view.
@@ -372,9 +373,11 @@ def export_print_plate(prepared, out_dir):
 def render_previews(out_dir, stems, mode, parts=None):
     """One PNG per stem, rendered from the STL already written next to it.
 
-    `mode` is "iso" (one isometric) or "multi" (the six-view sheet). The gate
-    runs after every edit, so the default is the cheap one and the sheet is
-    asked for: `make build VIEWS=multi`.
+    `mode` is "iso" (one isometric) or "multi" (the six-view sheet). A build
+    runs on every push, so the default is the cheap one and the sheet has to be
+    asked for -- `--preview-mode multi`, carried down to the build process by
+    `buildproc/runner.py`. Nothing on the push path asks for it today; the one
+    caller that does is `python -m src.cadbuild.preview_png --views multi`.
 
     `parts` maps a stem to how many parts its file holds; anything not in it
     is one part. The footer of a single-part picture says whether the mesh is

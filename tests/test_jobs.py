@@ -867,13 +867,14 @@ def test_the_default_ceilings_are_the_documented_ones(tmp_path):
     """Numbers other parts of the system are reasoned about with.
 
     `MAX_CONCURRENT_BUILDS` is deliberately NOT `app.MAX_CONCURRENT_PUBLISHES`:
-    one is sized by a body on disk and a tar reader, the other by cores, and the
-    day either is retuned the other must not move with it.
+    one is sized by a body on disk and a tar reader, the other by memory and by
+    how long one hung build may hold a worker, and the day either is retuned the
+    other must not move with it. Since 2026-09-09 both read four, and nothing
+    here asserts a relation between them in either direction — the equality is a
+    coincidence of two independent decisions, only one of which is a measurement,
+    and an assertion would turn it into a rule.
     """
-    from src.app import MAX_CONCURRENT_PUBLISHES
-
-    assert jobs_module.MAX_CONCURRENT_BUILDS == 2
-    assert jobs_module.MAX_CONCURRENT_BUILDS != MAX_CONCURRENT_PUBLISHES
+    assert jobs_module.MAX_CONCURRENT_BUILDS == 4
     assert jobs_module.MAX_QUEUED_JOBS >= jobs_module.MAX_CONCURRENT_BUILDS
     assert jobs_module.MAX_STRANGERS_SWEPT == 1024
     assert jobs_module.STRANGER_MAX_AGE_SECONDS == 14 * 24 * 3600
@@ -901,7 +902,7 @@ def test_the_default_ceilings_are_the_documented_ones(tmp_path):
     # What is NOT in this sum is the pool size, and that is the point of writing
     # it out: the joins share one deadline (`BuildQueue.shutdown`), so growing
     # MAX_CONCURRENT_BUILDS cannot grow the stop. Multiplied per worker, today's
-    # two would already spend the entire grace period on the joins alone.
+    # four would spend twice the entire grace period on the joins alone.
     #
     # The one thing the sum cannot promise is a drain that OVERRUNS the budget
     # on its own — it is up to MAX_QUEUED_JOBS `rmtree`s and record writes, and
@@ -1742,7 +1743,8 @@ def test_the_stop_budget_is_spent_by_the_pool_not_by_each_worker(tmp_path,
     The join exists to keep an ordinary stop away from SIGKILL: docker sends one
     10 s after its SIGTERM and the compose file asks for no longer. Multiplied
     per worker, the budget reaches that grace period all by itself — at the
-    pool's own default of two it IS the grace period — so the number meant to
+    pool's own default of four it is TWICE the grace period, and it was already
+    the whole of it back when the default was two — so the number meant to
     avoid a SIGKILL would be what guaranteed one, and worse with every worker
     added. Four workers here, all of them stuck, so the difference between the
     two readings is four times the budget rather than two.

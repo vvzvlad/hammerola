@@ -12,11 +12,12 @@ Exactly one STL per call, as there.
 
 WHY THIS FILE EXISTS INSTEAD OF THE SKILL'S preview.py
 ------------------------------------------------------
-The pictures have to be made where the geometry is made -- on the build node,
-inside `BUILD_IMAGE` -- so they can travel back in `_out/` (see remote.py).
-That rules out both halves of the obvious answer:
+The pictures have to be made where the geometry is made -- inside the hub's own
+build process (`src/buildproc/`), which is the only place the CAD kernel and the
+meshes exist -- so they land in the staging directory beside the geometry and
+get published with it. That rules out both halves of the obvious answer:
 
-  * the skill is not on the build node, and shipping preview.py in the source
+  * the skill is not in the image, and shipping preview.py in the source
     tar does not help: it renders with pyrender on top of PyOpenGL, and the
     builder image has neither, nor the OSMesa/EGL context they need. Installing
     them per build costs ~20 s of apt+pip on every gate run and still does not

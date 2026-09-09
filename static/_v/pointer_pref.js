@@ -7,9 +7,11 @@
 //
 // THE TWO HALVES CANNOT SHARE A MODULE, which is why the key is spelled twice.
 // This file is served straight to the resolver page, and that page must not
-// pull the interface bundle — 3.6 MB downloaded to read one key and leave, on
-// the way to a page that will download it again (tests/test_pointer_memory.py
-// pins that too). So the spellings are compared from Python instead, which is
+// pull the interface bundle — a quarter of a megabyte downloaded to read one
+// key and leave, with the 3.6 MB vendored viewer behind it the moment a page
+// actually renders geometry, and every byte of it on the way to a page that
+// will download it again (tests/test_pointer_memory.py pins that too). So the
+// spellings are compared from Python instead, which is
 // the same arrangement POINTER_NAMES has lived under since live reload
 // (tests/test_live_reload.py). A copy nothing compares is a pair that agrees
 // until the day one of them is edited, and the failure is silent — a reader
@@ -22,9 +24,11 @@
 /** The two moving names. A commit id is neither, and is never remembered. */
 export const POINTER_NAMES = ["latest", "dev"];
 
-// Namespaced like the other keys this site stores (`.pointing_device`, and the
-// interface's `.token.<pid>` and `.notes.<pid>`), and suffixed with the project
-// id, which is why it is a PREFIX.
+// Namespaced like the other keys this site stores (`.pointing_device`, the
+// interface's per-project `.notes.<pid>`, and its site-wide `.token` — which is
+// NOT per project, deliberately, because `/` names no project and a front page
+// with a sign-in would otherwise be unwritable: see ui/src/store.js), and
+// suffixed with the project id, which is why it is a PREFIX.
 const KEY_PREFIX = "hammerola.pointer.";
 
 const key = (pid) => KEY_PREFIX + pid;

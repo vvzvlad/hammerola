@@ -383,7 +383,9 @@ class CommentStore:
                                allow_nan=False).encode("utf-8"))
             except Exception:
                 # The record never landed, so these bytes are unreachable. Left
-                # behind they would be a slow leak on a PUBLIC endpoint.
+                # behind they would be a slow leak on a write path that runs
+                # once per accepted comment, and once more per retry of a
+                # rejected one.
                 for path in written:
                     try:
                         path.unlink()

@@ -307,8 +307,10 @@ function worldCorners(solid) {
  * of measuring a box, and it is written here rather than discovered, because
  * the number in the docstring above is otherwise read as a promise. Measuring
  * the face itself means intersecting the plane with the part's triangles —
- * which is the section outline, a separate piece of work; when that exists its
- * own bounds are the better number to divide by.
+ * which is exactly what the section outline already does (`outline.js`,
+ * `planeThroughTriangles`). Its bounds are the better number to divide by;
+ * nothing here reads them yet, so that is a wiring job outstanding rather than
+ * a piece of work not done.
  *
  * ANGLE AND PHASE come from the part's key alone, through one mixed hash, so
  * they are stable across revisions and independent of where the part sits. The

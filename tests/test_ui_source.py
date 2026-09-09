@@ -481,6 +481,41 @@ def test_every_index_card_field_the_ui_reads_is_one_render_writes():
         f"{sorted(read_by_ui - written)}")
 
 
+def test_the_assembled_view_is_spelled_the_same_on_both_sides_of_the_wire():
+    """`assembled` is written in JavaScript and in Python, and nothing compared them.
+
+    The build half refuses a model that declares no view under this id
+    (`views.prepare_views`), so on that side the string is enforced. The
+    interface uses it for a different job -- deciding whether a distance
+    measured between two parts is a real gap or an artefact of the print layout
+    -- and gets its answer by comparing the CURRENT view's id against its own
+    copy. A rename on the build side therefore does not break the interface, it
+    makes it quietly wrong in the safe direction: every CROSS-PART measurement
+    comes out labelled as belonging to the current layout, which reads like a
+    cautious viewer rather than like a broken one. A single-part measurement --
+    a diameter, a length, an area, a volume -- carries `crossPart: false` and is
+    never labelled either way, so it is unaffected.
+
+    This is also the second-order defect the copy already caused. The comment
+    over the constant named `views.py` as the module the string lives in, and it
+    lives in `artifacts.py`; nothing could catch that, because nothing on this
+    side had ever been made to look the string up (issue #88).
+    """
+    from src.cadbuild.artifacts import ASSEMBLED_VIEW_ID
+
+    declared = re.search(r"export\s+const\s+ASSEMBLED_VIEW_ID\s*=\s*['\"`]([^'\"`]+)['\"`]",
+                         strip_comments(read(UI / "hub.js")))
+    assert declared, (
+        "ui/src/hub.js no longer declares ASSEMBLED_VIEW_ID as a plain literal. "
+        "It has to stay one: this check reads it as text, because the Python "
+        "side of the pair cannot be imported into the JS suite")
+    assert declared.group(1) == ASSEMBLED_VIEW_ID, (
+        f"ui/src/hub.js calls the assembled view {declared.group(1)!r} and "
+        f"src/cadbuild/artifacts.py calls it {ASSEMBLED_VIEW_ID!r}: every "
+        f"cross-part measurement on a build page would be labelled as taken in "
+        f"the current layout, on a page that is showing the assembly")
+
+
 def test_the_build_picker_reads_the_fields_builds_json_carries():
     """The picker's fallback object names exactly what builds.json has.
 

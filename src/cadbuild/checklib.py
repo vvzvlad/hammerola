@@ -45,7 +45,12 @@ whole of this module's contact with a filesystem: it is handed the path and neve
 goes looking for one.
 """
 
+import collections
 import contextlib
+# `@check` reads the decorated function's parameter names, so that a `needs`
+# naming something the check does not take is refused where it is written
+# rather than as a TypeError in a worker process twenty minutes later.
+import inspect
 import math
 # For one existence check. `unsupported_area` measures the MESH the gate
 # already wrote, so it is handed a path and has to be able to say that nothing
@@ -152,7 +157,7 @@ KINDS = (MEASURED, DERIVED, ESTIMATED)
 #
 # THE FOUR COPIES OF 200 ARE ONE RULE ON PURPOSE, and that is a DECISION rather
 # than a coincidence four files happen to agree on. They are this one,
-# `hubspec.MAX_NOTE_CHARS`, `render.MAX_TEXT` and `client.limits.MAX_TEXT_CHARS`,
+# `hubspec.MAX_NOTE_CHARS`, `render.MAX_TEXT` and `hammerola.limits.MAX_TEXT_CHARS`,
 # and nothing MECHANICALLY holds a note under the third: metrics.json is served
 # as a file and never passes through `render._plain_text`, so a note is bounded
 # here and nowhere else. The number is kept equal anyway, because one ceiling on
@@ -1428,8 +1433,11 @@ def tool_access(obstacles, names, *, origin, direction, diameter, length,
 # than keeping the tighter of the two -- a pair run along two degrees of freedom
 # (a lid that drops and then slides) wants a `label=` of its own for each.
 # Nothing is lost by that but the number: the problem strings come back per
-# call either way. A pair whose every stop the kernel refused is absent rather
-# than zero -- absence means "not measured", never "touching".
+# call either way. WHICH sweep is "second" stops being a fact about the file the
+# moment the two sweeps sit in different check units: they run in parallel
+# workers and the winner is whichever reported last, which is nothing anybody
+# chose (`_merge_records`). A pair whose every stop the kernel refused is absent
+# rather than zero -- absence means "not measured", never "touching".
 _CLEARANCE = {}
 
 
@@ -1959,3 +1967,187 @@ def thin_walls(part, planes, min_thickness, *, name="part", pitch=None,
                 "under it. Thicken the wall, or say the smaller number here "
                 "if the part is meant to be that thin.")
     return problems
+
+
+# --------------------------------------------------------------------------
+# Check units: one check, named, with the builders it needs
+# --------------------------------------------------------------------------
+#
+# `checks()` is ONE function, so it is one process's worth of work however many
+# cores are idle beside it -- and on the hub that is most of the build:
+# measured on prod, checks() is 47-95% of a build's wall clock (ford-cup-4: 160
+# of 169 seconds). A UNIT is one check pulled out of that function under a name
+# of its own, together with the builders it needs, so the build can run several
+# at once in processes of their own and put a budget on each. What runs them is
+# `cadbuild.checkunits`; what is here is the registration and the record
+# keeping, because both are state of THIS module and a second copy of either
+# would be the bug the shim at the repository root exists to prevent.
+#
+# `needs` MAPS THE CHECK'S OWN PARAMETER NAMES TO TOP-LEVEL BUILDERS, never to
+# keys of parts(). The catalogue is computed whole, so "take one part out of
+# parts()" means "build all of them" -- which is exactly the cost a unit is
+# meant to avoid paying more than once. The builders are the `@cache`-decorated
+# functions a model already writes (`model_template/model.py`: `build_base`,
+# `build_lid`), and a worker's own cache is what makes them cheap across every
+# unit it draws.
+
+
+# One registered unit. A namedtuple and not a dict so a typo in a field name is
+# an AttributeError rather than a silent None; PRIVATE, because it is the shape
+# `registered_units()` hands back and not something a model constructs.
+_Unit = collections.namedtuple("_Unit", "name func needs")
+
+# Every unit `check` has registered, keyed by the name it was registered under,
+# in registration order. Module-level mutable state, like the three records
+# below it, and cleaned by the same autouse fixture
+# (tests/cadbuild/conftest.py): a unit left behind by one test is a unit the
+# next test's build tries to run, in a worker process, against a model that
+# never defined it.
+_UNITS = {}
+
+
+def check(name, needs=None):
+    """Register one check as a UNIT the build may run in a process of its own.
+
+        @checklib.check("lip joint", needs={"body": build_body, "lid": build_lid})
+        def check_lip_joint(body, lid):
+            assert lip_overlap(body, lid) > MIN_LIP, "lip joint too shallow"
+
+    `name` is what the build log calls it -- in the timings table, and in the
+    refusal when it fails. `needs` maps this check's OWN PARAMETER NAMES to the
+    top-level builders that produce those arguments; the two lines a `checks()`
+    opens with --
+
+        base = build_base()
+        lid = build_lid()
+
+    -- are literally what becomes one `needs`. It is not a selection out of
+    parts(): the catalogue is computed whole, so naming a part of it would
+    build every part of the model.
+
+    The function is returned UNCHANGED, so a model can still call it directly.
+
+    A unit reports by RAISING -- an `assert` with a message is the intended way.
+    Its budget is per unit and is enforced by killing the worker running it
+    (`cadbuild.checkunits`), so a check that never returns costs minutes and one
+    worker instead of the build's whole wall clock.
+
+    EVERYTHING IS CHECKED HERE, at the `@` and not at the call, because the call
+    happens in another process: a `needs` key that names no parameter of this
+    function would otherwise surface as a bare TypeError out of a worker, on a
+    build that has already spent its geometry phase.
+    """
+    if not isinstance(name, str) or not name.strip():
+        got = "a blank string" if isinstance(name, str) else type(name).__name__
+        raise TypeError(
+            f"checklib.check() takes the name the build log will call this "
+            f"check by, got {got}. It is a heading in the timings table and "
+            f"the subject of the refusal when the check fails. Write it as "
+            f"`@checklib.check('lip joint', needs={{...}})`.")
+    mapping = {} if needs is None else needs
+    if not isinstance(mapping, dict):
+        raise TypeError(
+            f"checklib.check({name!r}) takes `needs` as a dict mapping this "
+            f"check's own parameter names to the builders that produce them, "
+            f"got {type(needs).__name__}.")
+
+    def register(func):
+        if name in _UNITS:
+            raise ValueError(
+                f"checklib.check({name!r}) is registered twice. The name is "
+                f"what the timings table and the refusal call this check, so "
+                f"two of them would report as one -- give each its own name.")
+        try:
+            parameters = list(inspect.signature(func).parameters)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                f"checklib.check({name!r}) cannot read the parameters of "
+                f"{getattr(func, '__name__', func)!r}, so it cannot say "
+                f"whether `needs` fills them: {exc}") from exc
+        expected, given = set(parameters), set(mapping)
+        if expected != given:
+            missing = sorted(expected - given)
+            extra = sorted(given - expected)
+            raise ValueError(
+                f"checklib.check({name!r}): `needs` and the parameters of "
+                f"{getattr(func, '__name__', func)!r} do not match. "
+                + (f"No builder is given for {missing}. " if missing else "")
+                + (f"{extra} is in `needs` and is not a parameter of the "
+                   f"check -- `needs` names the check's OWN arguments, not "
+                   f"keys of parts(). " if extra else "")
+                + f"The check takes {parameters or 'nothing'} and `needs` "
+                  f"names {sorted(given) or 'nothing'}.")
+        not_callable = sorted(key for key, value in mapping.items()
+                              if not callable(value))
+        if not_callable:
+            raise TypeError(
+                f"checklib.check({name!r}): {not_callable} in `needs` "
+                f"is not callable. A value there is the BUILDER -- the "
+                f"function itself, `build_lid` and not `build_lid()` -- "
+                f"because the build calls it in the worker that runs this "
+                f"check, once per worker rather than once per model.")
+        _UNITS[name] = _Unit(name, func, dict(mapping))
+        return func
+
+    return register
+
+
+def registered_units():
+    """`{name: unit}` for every unit `check` has registered so far.
+
+    A copy, for `recorded_sections()`'s reason: the caller must not be handed
+    the registry the build is about to run out of.
+    """
+    return dict(_UNITS)
+
+
+def _take_records():
+    """The three records as they stand, EMPTIED -- the worker's half of a merge.
+
+    PRIVATE, and that is a decision rather than a naming habit: the root shim
+    re-exports every public name here, so a public spelling of this would hand
+    a model a one-line way to wipe the interference and clearance numbers out
+    of its own metrics.json. Reading them (`recorded_*`) is a model's business;
+    emptying them is the build's.
+
+    Called once per unit in a worker, so what comes back is that unit's OWN
+    contribution rather than everything the worker has done since it started.
+    Sending the whole accumulated record after each unit would make the parent
+    add every section's seconds again for every later unit on the same worker.
+    """
+    taken = (dict(_INTERFERENCE), dict(_SECTIONS),
+             {label: dict(record) for label, record in _CLEARANCE.items()})
+    _INTERFERENCE.clear()
+    _SECTIONS.clear()
+    _CLEARANCE.clear()
+    return taken
+
+
+def _merge_records(interference, sections, clearance):
+    """Fold one worker's records into this process's, each by its OWN rule.
+
+    THE THREE RULES ARE NOT THE SAME and are each written where the record is
+    declared: interference is keyed by pair and a pair measured twice measures
+    the same, clearance is keyed by label and the record that arrives LAST
+    replaces the ones before it, and sections SUM -- a label used in two units is
+    one row whose seconds are the total, which is the same answer a
+    single-process run gives for a label used twice in `checks()`.
+
+    "LAST" IS NOT AN ORDER THE MODEL CHOOSES ANY MORE, and this sentence used to
+    say it was: inside one `checks()` a second sweep under one label replaced the
+    first, which is a rule an author can read off their own file top to bottom.
+    Under K workers it is whichever worker REPORTED second, and nothing decides
+    that -- the same two units can leave either number behind on two runs of the
+    same build. Two sweeps under one label are therefore a coin toss rather than
+    a replacement: give each sweep a label of its own and there is nothing for
+    the race to pick between.
+
+    Without this the records stay in the worker that filled them: metrics.json
+    comes out with empty `interference_mm3` and `clearance` on a build that
+    measured both, with nothing going red -- the exact failure the shim's
+    docstring is about, one process further out.
+    """
+    _INTERFERENCE.update(interference)
+    for label, seconds in sections.items():
+        _SECTIONS[label] = _SECTIONS.get(label, 0.0) + seconds
+    _CLEARANCE.update(clearance)

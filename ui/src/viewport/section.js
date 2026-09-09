@@ -557,9 +557,12 @@ export function restoreSection(vp, keep) {
     // THE OTHER ARRANGEMENT IS THE BUG: seeding with the captured point and
     // applying at a temporary offset of zero restores the plane perfectly and
     // leaves `applySection` NOT IDEMPOTENT with the state it will next be called
-    // with. `reconcile` calls it on every `hmr:state` — a click in the tree, a
-    // view tab, a pin — and the first of those would walk the plane the reader's
-    // millimetres a second time, silently, on a scene nobody had touched.
+    // with. `reconcile` calls it on every `hmr:state` THAT STARTS NO LOAD — a
+    // click in the tree, a pin, a step of the offset slider. A view tab is not
+    // one of those: it goes to `load()` and returns before `reconcile` runs at
+    // all (element.js), which is why the quantifier matters here. The first
+    // event that DOES reach reconcile after a restore would walk the plane the
+    // reader's millimetres a second time, silently, on a scene nobody touched.
     //
     // Along the captured normal, which is the seed's own direction and is the
     // one `applySection` walks the offset with whether the cut is flipped or

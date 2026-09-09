@@ -8,8 +8,9 @@ so it holds this too, and the client side of that package -- the CLI, the
 settings, the HTTP push, the local preview server -- stayed behind. The
 build-node machinery stayed behind too, and it is not a half of anything any
 more: with the hub building, there is no build node left for it to drive, and
-step 7 removes it outright. Nothing here talks to a network or reads a
-credential.
+step 7 -- closed -- retired it outright, replacing the whole client with
+`hammerola/`, which has no local build path at all. Nothing here talks to a
+network or reads a credential.
 
 What a model.py must define:
 
@@ -33,8 +34,8 @@ checklib.py at the repository root.
 WIRED INTO THE SERVICE SINCE STEP 4, and only from one side. What imports this
 package is `src/buildproc/child.py`, INSIDE the build process -- spawned, with
 rlimits and a deadline -- and step 5 put that process on the push path. Nothing
-on the SERVING side imports it, and that is still deliberate: the gate firing
-on the receiving side is step 6.
+on the SERVING side imports it, and that is still deliberate: the gate fires on
+the receiving side -- step 6, closed.
 
 Kept short on purpose: importing this must not import cadquery, matplotlib or
 anything else heavy. Every CAD import inside the modules is made inside the

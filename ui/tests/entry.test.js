@@ -52,7 +52,7 @@ vi.mock('../src/store.js', async (importOriginal) => ({
 }))
 
 import HammerolaEntry, {
-  agentBrief, HammerolaLogin, HammerolaProjects, relTime,
+  agentBrief, HammerolaLogin, HammerolaProjects, relTime, RevLine,
 } from '../src/HammerolaEntry.jsx'
 import { loadIndex, loadStart, projectCard, projectUrl, Unauthorized } from '../src/hub.js'
 import {
@@ -61,7 +61,13 @@ import {
 } from '../src/store.js'
 import { collect, texts } from './eltree.js'
 
-/** One card exactly as src/render.py's `index_card` writes it. */
+/**
+ * One card exactly as /index.json answers it.
+ *
+ * `render.index_card` writes every field here but one: `status` is a live fact
+ * about the project's draft, so the file declares it as null and the route
+ * fills it in per request (`_serve_index_json` in src/app.py, issue #32).
+ */
 const CARD = {
   pid: '0a1b2c3d4e5f',
   project: 'vent_ctrl_case',
@@ -70,6 +76,7 @@ const CARD = {
   built: '2026-08-26T18:20:00Z',
   first_built: '2026-01-22T09:00:00Z',
   dev: false,
+  status: 'idle',
   // BOTH OF THESE WERE RENAMED, AND THE COUNT UNDER THE FIRST ONE CHANGED WITH
   // IT (issue #75). `parts` used to be the part count of the biggest view;
   // `printables` is how many records in the build's catalogue are actually
@@ -102,6 +109,7 @@ describe('a card of /index.json', () => {
       meta: '14 printables · 3 views · 1.2 MB',
       rev: 'c0ffee1',
       dev: false,
+      status: 'idle',
       built: '2026-08-26T18:20:00Z',
       first: '2026-01-22T09:00:00Z',
     })
@@ -127,6 +135,55 @@ describe('a card of /index.json', () => {
     // as `undefined`, which React renders as nothing and reads as a chip that
     // never appears.
     expect(projectCard({ ...CARD, dev: undefined }).dev).toBe(false)
+  })
+
+  it('carries the draft status through as the hub worded it', () => {
+    // NOT normalised, and not defaulted: the hub answers one of three words and
+    // the mapping onto a chip lives in one place (`STATUS_CHIPS`). A card that
+    // arrived without the field reads as `undefined`, which that table has no
+    // entry for — i.e. no chip, which is also what `idle` draws.
+    expect(projectCard({ ...CARD, status: 'building' }).status).toBe('building')
+    expect(projectCard({ ...CARD, status: 'failed' }).status).toBe('failed')
+    expect(projectCard({ ...CARD, status: undefined }).status).toBeUndefined()
+  })
+})
+
+// -- the chip the status becomes ---------------------------------------------
+//
+// The word is drawn or it is not, which is a decision rather than layout: a pill
+// on every card is a pill nobody reads, so `idle` gets none.
+//
+// `RevLine` is called DIRECTLY, the same move `drawnDoor` makes further down and
+// for the same reason: a component element is where `texts()` stops — it walks
+// `props.children`, and `<RevLine p={p} />` has none — so a reading taken off a
+// view body's tree would pass whether or not either chip was ever drawn.
+
+describe('what a card says about its draft', () => {
+  const drawn = (card) => texts(RevLine({ p: projectCard({ ...CARD, ...card }) }))
+
+  it('is a chip while the draft is building, and one when it failed', () => {
+    expect(drawn({ status: 'building' })).toContain('building')
+    expect(drawn({ status: 'failed' })).toContain('failed')
+  })
+
+  it('is nothing at all otherwise', () => {
+    // `idle` is the answer for a project whose draft is not building, for one
+    // nobody has ever pushed a draft to, and for a pointer at a job the hub no
+    // longer has — three facts the front page has no reason to distinguish.
+    expect(drawn({ status: 'idle' })).not.toContain('idle')
+    // And a hub that answers no status at all — an older one, or a card the
+    // route could not fill in — draws no chip rather than `undefined`.
+    expect(drawn({ status: undefined })).not.toContain('undefined')
+    // Only the revision is left in both cases, so the assertions above are not
+    // passing on a line that drew nothing at all.
+    expect(drawn({ status: 'idle' })).toEqual(['c0ffee1'])
+  })
+
+  it('leaves the dev chip alone', () => {
+    // The two say different things and both can be true at once: uncommitted
+    // work in the slot, and a build of it running right now.
+    expect(drawn({ dev: true, status: 'building' }))
+      .toEqual(['c0ffee1', 'dev', 'building'])
   })
 })
 

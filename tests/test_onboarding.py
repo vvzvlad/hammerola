@@ -62,7 +62,7 @@ import pytest
 from harness import TOKEN, good_build
 
 from src import onboarding
-from src.cadbuild import checklib
+from src.cadbuild import checklib, checkunits
 from hammerola import hub as hub_client
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -638,6 +638,53 @@ def test_the_skill_names_no_checklib_helper_that_does_not_exist(hub):
     assert not missing, (
         f"skill/SKILL.md tells a model author to call {missing}, and "
         f"src/cadbuild/checklib.py has no such name")
+
+
+# The two numbers the skill quotes about check units, each as the sentence that
+# carries it. They are in the skill because an author sizing a check needs them,
+# and they are pinned here because nothing about editing `checkunits.py` would
+# send anybody to a document served over HTTP from another directory.
+#
+# `\s+` and not a space: the skill is hard-wrapped markdown served verbatim, so
+# either sentence may cross a line break at any word.
+SKILL_WORKERS = re.compile(r"drains\s+the\s+queue\s+across\s+(\w+)\s+worker\s+processes")
+SKILL_BUDGET = re.compile(r"its\s+own\s+budget:\s+(\d+)\s+seconds")
+SPELLED = {"two": 2, "three": 3, "four": 4}
+
+
+def test_the_skill_quotes_the_unit_ceilings_the_hub_actually_runs(hub):
+    """Two numbers an author sizes their checks against, held to the code.
+
+    A check written to fit "120 seconds" against a budget that has since moved
+    is not a document error an author can catch: their check is killed on a
+    ceiling the instructions they were given said was somewhere else, and the
+    build reports the unit failed. The worker count is the same kind of claim --
+    it is what "two run at once" is worth, and the whole reason to split a
+    `checks()` into units at all.
+
+    AGENTS.md is explicit that an assertion which has to stay true belongs in a
+    test. Neither number is derivable from the skill, and nothing about editing
+    `src/cadbuild/checkunits.py` would send anybody to a markdown file served
+    over HTTP out of `skill/`.
+    """
+    skill = hub.get("/start/skill.md").text
+
+    workers = SKILL_WORKERS.search(skill)
+    assert workers, (
+        "the skill no longer says how many workers drain the unit queue in the "
+        "words this reads it by — reword the pattern with the sentence")
+    said = SPELLED.get(workers.group(1).lower())
+    assert said == checkunits.CHECK_WORKERS, (
+        f"skill/SKILL.md tells an author {workers.group(1)} workers run the "
+        f"units and CHECK_WORKERS is {checkunits.CHECK_WORKERS}")
+
+    budget = SKILL_BUDGET.search(skill)
+    assert budget, (
+        "the skill no longer states a unit's budget in the words this reads it "
+        "by — reword the pattern with the sentence")
+    assert int(budget.group(1)) == checkunits.UNIT_BUDGET_SECONDS, (
+        f"skill/SKILL.md tells an author a unit gets {budget.group(1)}s and "
+        f"UNIT_BUDGET_SECONDS is {checkunits.UNIT_BUDGET_SECONDS}")
 
 
 def test_the_downloaded_client_refuses_an_interpreter_that_is_too_old():

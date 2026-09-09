@@ -42,7 +42,7 @@ from src.cadbuild import checklib, paths
 def guard_module_state():
     """Fail the test that dirties shared state, not the one that trips over it.
 
-    Four pieces of module-level mutable state live in this package, and every
+    Five pieces of module-level mutable state live in this package, and every
     one of them is read by something far away from where it is written:
 
       * `paths._root` -- the project this run is about. Set by the fixture
@@ -60,6 +60,12 @@ def guard_module_state():
         `finally`, so a section left behind by one test comes out in the log of
         every later test that runs checks, attached to a run that never
         measured it.
+      * `checklib._UNITS` -- the checks `@checklib.check` registered. Read in
+        two places far from any test that fills it: `run_checks` consults it
+        before refusing an empty `checks()`, and `checkunits.run_units` STARTS
+        PROCESSES for whatever is in it. A unit left behind is therefore a unit
+        some later test's build spawns a worker to run, against a model that
+        never defined it.
       * `checklib._CLEARANCE` -- what swept_clearance measured along each pair's
         travel: the stops, the tightest gap and where it was. Accumulates like
         the two above (a model sweeps one pair per degree of freedom) and is
@@ -84,17 +90,19 @@ def guard_module_state():
     reliably never when that test is run on its own.
     """
     assert (paths._root is None and checklib._INTERFERENCE == {}
-            and checklib._SECTIONS == {} and checklib._CLEARANCE == {}), (
+            and checklib._SECTIONS == {} and checklib._CLEARANCE == {}
+            and checklib._UNITS == {}), (
         "src.cadbuild module state was already dirty when this test started, so "
         "an EARLIER test left it behind; this test is where it surfaced, not "
         "where it was caused")
     yield
     assert (paths._root is None and checklib._INTERFERENCE == {}
-            and checklib._SECTIONS == {} and checklib._CLEARANCE == {}), (
+            and checklib._SECTIONS == {} and checklib._CLEARANCE == {}
+            and checklib._UNITS == {}), (
         "this test left src.cadbuild module state behind (paths._root, "
-        "checklib._INTERFERENCE, checklib._SECTIONS or checklib._CLEARANCE). "
-        "Without this assertion the failure would have landed on some unrelated "
-        "test later, under one particular collection order")
+        "checklib._INTERFERENCE, checklib._SECTIONS, checklib._CLEARANCE or "
+        "checklib._UNITS). Without this assertion the failure would have landed "
+        "on some unrelated test later, under one particular collection order")
 
 
 @pytest.fixture(autouse=True)

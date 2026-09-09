@@ -150,7 +150,7 @@ function panWheel(vp, event) {
  * unchanged: anchor on the camera the reader is still looking at, zoom where the
  * controls' zoom used to be, slide the point under the cursor back. Called by
  * hand rather than left to the listeners because this event never reaches the
- * bubble phase — `wheelCapture` stops it, or the controls would zoom twice.
+ * bubble phase — `onCapture` below stops it, or the controls would zoom twice.
  *
  * NO CLAMP, deliberately. `TrackballControls` clamps to `minZoom`/`maxZoom`,
  * which the library leaves at the three.js defaults of 0 and Infinity and never

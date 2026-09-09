@@ -563,10 +563,12 @@ export function createViewCube(vp) {
 
   // Belt and braces, and NOT the thing that keeps a press off the canvas —
   // read it as no more than it is. The cube's root is a SIBLING of `vp.box`,
-  // and every press listener in the viewport is attached to `vp.box` or to
-  // `window` (tools.js, orbit.js, live.js, wheel.js), so a press on a cell
-  // never traverses any of them: they are not on its event path at all. The
-  // one that does listen in the CAPTURE phase, tools.js, additionally bails
+  // and every press listener a cell's press could bubble INTO is attached to
+  // `vp.box` or to `window` (tools.js, orbit.js, live.js, wheel.js), so a press
+  // on a cell never traverses any of them: they are not on its event path at
+  // all. overlay.js listens for a press too, but on the pin buttons
+  // themselves, which are no ancestor of the cube either. The one that does
+  // listen in the CAPTURE phase, tools.js, additionally bails
   // on `event.target !== g.canvas` — that check, not this call, is what makes
   // it safe. This stays for the day the cube is reparented under `vp.box`.
   svg.addEventListener("pointerdown", (event) => {

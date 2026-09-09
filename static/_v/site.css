@@ -35,7 +35,7 @@
    is worse than no list: it turns silence into a promise. Six colours are shared
    with the bundle. Four are the constants above. The other two are copied with
    nothing holding them: `#787f87` on #bar .meta, and `#1f6fd0` on #bar a --
-   the site's accent blue, which has five more copies inside the bundle. See the
+   the site's accent blue, which has further copies inside the bundle. See the
    docstring over those constants in ui/src/style.jsx for what promoting one
    costs. (#1e1e1e appears above only as history; nothing here paints it.)
    The mark is the one that matters most, and the reason is not fussiness: a

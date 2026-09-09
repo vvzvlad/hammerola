@@ -145,6 +145,7 @@ NORMAL_TOL = _impl.NORMAL_TOL
 NOZZLE_MM = _impl.NOZZLE_MM
 Number = _impl.Number
 PLANE_TOL = _impl.PLANE_TOL
+check = _impl.check
 derived = _impl.derived
 estimated = _impl.estimated
 is_empty = _impl.is_empty
@@ -158,6 +159,7 @@ pairwise_interference = _impl.pairwise_interference
 recorded_clearance = _impl.recorded_clearance
 recorded_interference = _impl.recorded_interference
 recorded_sections = _impl.recorded_sections
+registered_units = _impl.registered_units
 section = _impl.section
 swept_clearance = _impl.swept_clearance
 thin_walls = _impl.thin_walls
@@ -185,6 +187,7 @@ __all__ = [
     "NOZZLE_MM",
     "Number",
     "PLANE_TOL",
+    "check",
     "derived",
     "estimated",
     "is_empty",
@@ -198,6 +201,7 @@ __all__ = [
     "recorded_clearance",
     "recorded_interference",
     "recorded_sections",
+    "registered_units",
     "section",
     "swept_clearance",
     "thin_walls",

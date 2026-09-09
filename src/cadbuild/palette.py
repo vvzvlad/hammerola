@@ -69,7 +69,8 @@ DEFAULT_ALPHA = 1.0
 # drawn blended; only exactly 1.0 is opaque.
 NEARLY_OPAQUE_MIN = 0.85
 # A part at alpha 0 is not drawn at all. Legal, warned about, and not counted
-# as showing anything -- see prepare_views and _match_solids.
+# as showing anything -- the warning is in `views.prepare_views`, and what
+# refuses to count it is `gate.check_assembled_coverage`.
 INVISIBLE_ALPHA = 0.0
 
 

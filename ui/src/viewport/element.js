@@ -574,11 +574,12 @@ export class HmrViewport extends HTMLElement {
     if (s.cut && this.sectionSeed) applySection(this);
     else if (!s.cut) suspendSectionCut(this);
     // The hatch over the cut face. A `cutHatch` change arrives HERE — it
-    // triggers no reload — and reconcile runs on EVERY state event, one per
-    // section-slider step, so the change is memo'd against `applied` like the
-    // three fields above and the toggle it triggers is a UNIFORM WRITE, not a
-    // recompile (hatch.js `setCutHatch`). After a render this re-asserts the
-    // value the fresh materials were patched with, exactly like the lists do.
+    // triggers no reload — and reconcile runs on every state event that starts
+    // no load, one per section-slider step, so the change is memo'd against
+    // `applied` like the three fields above and the toggle it triggers is a
+    // UNIFORM WRITE, not a recompile (hatch.js `setCutHatch`). After a render
+    // this re-asserts the value the fresh materials were patched with, exactly
+    // like the lists do.
     if (!same(s.cutHatch, this.applied.cutHatch)) {
       setCutHatch(internals(this.viewer), s.cutHatch);
       this.applied.cutHatch = s.cutHatch;

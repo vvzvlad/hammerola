@@ -19,8 +19,8 @@ nothing to run and they fail on the commit that breaks them.
 """
 
 from src.buildproc.limits import BUILDS_SHARING_THE_HOST, DEFAULT_LIMITS
-from hammerola.hub import JOB_TIMEOUT
-from src.jobs import MAX_CONCURRENT_BUILDS, MAX_QUEUED_JOBS
+from hammerola.hub import JOB_TIMEOUT, SLOW_BUILD_SECONDS
+from src.jobs import MAX_CONCURRENT_BUILDS, MAX_QUEUED_JOBS, WIP_MAX_AGE_SECONDS
 from src.buildproc.limits import _usable_cores
 from src.store import LEFTOVER_MAX_AGE_SECONDS
 
@@ -98,6 +98,24 @@ def test_the_client_waits_at_least_as_long_as_the_hub_may_honestly_take():
         f"waiting its turn.")
 
 
+def test_the_slow_build_warning_fires_well_inside_the_hubs_own_wall():
+    """The client's threshold is only worth having BELOW the ceiling.
+
+    Every other number in this file is a copy that goes stale; this one is a
+    judgement and a copy of nothing, so what has to hold is not equality but the
+    ORDER. `SLOW_BUILD_SECONDS` exists for the zone where a build is green and
+    slow -- between it and `wall_seconds` -- and at or above the wall there is
+    no such zone: the only builds that could reach it are the ones the hub has
+    already killed, which carry their own diagnosis and are the two the client
+    deliberately says nothing to (`cli.SELF_DIAGNOSING`). The warning would then
+    be advice nobody sees, on runs that were answered already.
+    """
+    assert SLOW_BUILD_SECONDS < DEFAULT_LIMITS.wall_seconds, (
+        f"SLOW_BUILD_SECONDS={SLOW_BUILD_SECONDS} is not under the hub's own "
+        f"wall of {DEFAULT_LIMITS.wall_seconds} s: no green build can reach it, "
+        f"so the client's slow-build warning is unreachable.")
+
+
 def test_the_thread_share_knows_how_many_builds_share_the_machine():
     """`limits` spells MAX_CONCURRENT_BUILDS a second time, and must not drift.
 
@@ -123,7 +141,40 @@ def test_one_build_never_claims_the_whole_machine():
     """
     limits = DEFAULT_LIMITS
     total = limits.occt_threads * MAX_CONCURRENT_BUILDS
-    assert total <= _usable_cores() or limits.occt_threads == 2, (
+    # THE EXCUSE IS "THE SHARE ROUNDED BELOW THE FLOOR", not "the pool happens
+    # to be two". Written as the first thing because the second one silently
+    # widens with the divisor: at two builds it excused machines under four
+    # cores, at four builds it would excuse everything under eight -- so a
+    # 4-core machine running 4 x 2 = 8 threads would have passed while reading
+    # like it could not. This spelling means the same thing at any divisor.
+    on_the_floor = _usable_cores() // MAX_CONCURRENT_BUILDS < 2
+    assert total <= _usable_cores() or on_the_floor, (
         f"{MAX_CONCURRENT_BUILDS} builds x {limits.occt_threads} threads = "
         f"{total} on {_usable_cores()} usable cores, and the floor of 2 does "
         f"not explain it.")
+
+
+def test_the_two_sweep_cutoffs_are_not_one_number_again():
+    """`.wip-` files and `.src-`/`.body-` trees are swept on different clocks.
+
+    They read the same constant until 2026-08-29, both spelled "an hour" for
+    the same-sounding reason, and that hid the fact that they are not alike.
+    The store's cutoff covers entries that live from the request until the
+    build ENDS, so it is a function of the queue wait and rose to four hours
+    with `wall_seconds`; a `.wip-` file is the hub's own half-finished write,
+    abandoned in milliseconds and belonging to nothing by the time the sweep
+    runs at all. Collapsing them again would quadruple the second wait as a
+    side effect of a change about the first, leaving megabytes of `.wip-log`
+    on the volume for no reason.
+
+    IT IS ALSO WHAT KEPT THE PROSE WRONG. Four comments across `jobs.py` and
+    `store.py` still said "an hour" about the store's sweep long after it
+    became four (issue #88), because the split was written down once, in one
+    paragraph, and nowhere executable.
+    """
+    assert WIP_MAX_AGE_SECONDS < LEFTOVER_MAX_AGE_SECONDS, (
+        f"jobs.WIP_MAX_AGE_SECONDS={WIP_MAX_AGE_SECONDS} and "
+        f"store.LEFTOVER_MAX_AGE_SECONDS={LEFTOVER_MAX_AGE_SECONDS}: the first "
+        f"sweeps writes abandoned in milliseconds and the second sweeps trees "
+        f"that live for the length of a build, so the first is the smaller of "
+        f"the two or one of them is being read for the other's reason")

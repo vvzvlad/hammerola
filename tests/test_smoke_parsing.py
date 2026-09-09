@@ -1,4 +1,4 @@
-"""The gate's two output parsers, tested without docker.
+"""The gate's output parsers, tested without docker.
 
 `ci/smoke.py` is the publish gate and normally runs only on the runner, against a built image —
 which is why nothing in it was covered here before. `parse_cad_verdicts()` is the exception worth
@@ -10,11 +10,13 @@ kind failed the whole check on an image that was perfectly fine. Written without
 purpose: the number of targets is derived from CAD_IMPORTS and PINS and moves whenever either
 list does, and a number spelled out here would be stale by the next import that gets added.
 
-`parse_start_routes()` is here for the same reasons and one of its own: check (h) is the only
-probe that makes a REQUEST, so its verdicts are the ones a person reads when the onboarding
-routes go dark — and the thing it must never do is read a route the probe said nothing about as
-a route that answered. That case has no observable symptom on the runner: the gate would simply
-print `ok` about a question it never asked.
+`parse_marked_verdicts()` is here for the same reasons and one of its own: it is what checks (h)
+and (i) both read their answers with, so its verdicts are the ones a person reads when the
+onboarding routes go dark or a build ceiling stops going on — and the thing it must never do is
+read a key the probe said nothing about as a key that answered. That case has no observable
+symptom on the runner: the gate would simply print `ok` about a question it never asked. It is
+exercised through `parse_start_routes()`, which is that function with check (h)'s mark bound to
+it, and separately with check (i)'s mark.
 
 TWO OF THE GATE'S CONSTANTS ARE HELD HERE TOO, at the bottom: the routes check (h) asks for
 and the port it asks on. They are literals in `ci/smoke.py` because that file imports nothing
@@ -33,8 +35,9 @@ import ast
 import json
 from urllib.parse import urlsplit
 
-from ci.smoke import (CAD_SENTINEL, START_MARK, START_ORIGIN, START_PROBE_SOURCE,
-                      START_ROUTES, parse_cad_verdicts, parse_start_routes)
+from ci.smoke import (BUILD_MARK, BUILD_PROBE_SOURCE, BUILD_TARGETS, CAD_SENTINEL, START_MARK,
+                      START_ORIGIN, START_PROBE_SOURCE, START_ROUTES, parse_cad_verdicts,
+                      parse_marked_verdicts, parse_start_routes)
 from src import onboarding
 from src.settings import Settings
 
@@ -233,3 +236,74 @@ def test_the_gate_asks_at_the_port_the_image_listens_on():
     assert port == Settings.model_fields["port"].default, (
         f"check (h) asks on port {port} and the image listens on "
         f"{Settings.model_fields['port'].default}")
+
+
+# -- check (i): the build wrapper and the ceilings it puts on ---------------------------------
+def probe_constant(source, name):
+    """One top-level string constant out of a probe's source, as the container would see it.
+
+    The probe is a string in `ci/smoke.py` and a program in the container, and the one below is
+    a string INSIDE that string — so reading it back out of the parse tree is the only way to
+    get at the text the innermost interpreter is really handed.
+    """
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"the probe has no top-level {name} to read")
+
+
+def test_the_build_probe_the_image_runs_is_valid_python():
+    """Same reason as check (h)'s: a syntax error here is a red gate about a healthy image."""
+    ast.parse(BUILD_PROBE_SOURCE)
+
+
+def test_the_program_the_build_probe_fences_is_valid_python():
+    """The innermost program — a string inside the probe, run on the far side of the execv.
+
+    Nothing else can look at it. A syntax error there makes the fenced process die without
+    printing its ceilings, which the probe reports as "the fenced process did not report the
+    ceilings it runs under" — i.e. as a finding about the IMAGE, for a fault in this repository.
+    """
+    ast.parse(probe_constant(BUILD_PROBE_SOURCE, "READBACK"))
+
+
+def test_the_build_probe_answers_every_question_the_gate_declares():
+    """The keys are written twice — once in BUILD_TARGETS, once in the probe's report() calls.
+
+    They cross a process boundary as a JSON list, so nothing can reconcile them at runtime: a
+    key renamed on one side only comes back as "the probe returned no verdict for this one",
+    which is a red gate over an image with nothing wrong with it.
+    """
+    for key, _target in BUILD_TARGETS:
+        assert f'"{key}"' in BUILD_PROBE_SOURCE, (
+            f"BUILD_TARGETS declares {key!r} and the probe never reports it")
+
+
+def test_the_two_marked_probes_do_not_share_a_mark():
+    """One parser reads both, so a shared mark would let (h)'s lines answer (i)'s questions."""
+    assert BUILD_MARK != START_MARK
+
+
+def test_a_build_question_that_passed_parses_as_a_pass():
+    seen = parse_marked_verdicts("{} ok resolve\n".format(BUILD_MARK), BUILD_MARK)
+
+    assert seen == {"resolve": None}
+
+
+def test_a_failed_build_question_keeps_its_whole_reason():
+    """The reason carries the wrapper's own refusal, collapsed to one line by the probe."""
+    output = ("{} bad apply the wrapper refused, with one of its own exit codes -- exit 90"
+              "\n".format(BUILD_MARK))
+
+    seen = parse_marked_verdicts(output, BUILD_MARK)
+
+    assert seen == {"apply": "the wrapper refused, with one of its own exit codes -- exit 90"}
+
+
+def test_another_probes_verdicts_are_not_read_as_this_one_s():
+    """Both probes exec into containers whose output this gate reads with the same function."""
+    output = "{} ok /start/skill.md\n{} ok force\n".format(START_MARK, BUILD_MARK)
+
+    assert parse_marked_verdicts(output, BUILD_MARK) == {"force": None}
+    assert parse_marked_verdicts(output, START_MARK) == {"/start/skill.md": None}

@@ -340,7 +340,16 @@ def copying_builder(project_dir, out_dir, *, pid, **_kw):
     `copytree` and not a move: the sources belong to the job, which removes them
     when it is done, and a build that consumed its own input would hide the fact
     that the two directories are separate on purpose.
+
+    IT REPORTS WHAT THE COPY ACTUALLY TOOK, and the flat `0.0` it used to
+    declare was not a simplification but a false statement about a real clock.
+    `duration_seconds` now reaches the client, which prints it after every build
+    (`cli._print_duration`), so a hard zero here would have been a stand-in
+    quietly deciding what the thing under test does — and it very nearly did:
+    the honest reading of an absent duration is `is None`, and a truthiness test
+    would have passed this suite in silence with the line never printed once.
     """
+    started = time.monotonic()
     shutil.copytree(project_dir, out_dir)
     names = tuple(
         str(path.relative_to(out_dir))
@@ -349,7 +358,7 @@ def copying_builder(project_dir, out_dir, *, pid, **_kw):
     return BuildOutcome(
         status=STATUS_OK, pid=pid, files=names,
         log=f"copying builder: {len(names)} files\n", log_truncated=False,
-        exit_code=0, signal=None, duration_seconds=0.0)
+        exit_code=0, signal=None, duration_seconds=time.monotonic() - started)
 
 
 def failing_builder(status=STATUS_FAILED, log="build failed: no printables\n",

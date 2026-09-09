@@ -82,7 +82,7 @@ export const viewerOptions = {
   // from the camera once the component along the view axis is dropped, so a
   // gesture that has to keep a point under the cursor — the wheel zoom, the
   // swipe pan, the cursor pivot — needs no depth and therefore no picking at
-  // all. `wheelInternals` checks `isOrthographicCamera` and hands everything
+  // all. `gestureInternals` checks `isOrthographicCamera` and hands everything
   // back to the library under perspective, because none of that maths holds
   // there and the fallback (the library's own centre zoom) is a working viewer.
   ortho: true,

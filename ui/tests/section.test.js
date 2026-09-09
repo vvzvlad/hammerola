@@ -741,12 +741,14 @@ describe('captureSection -> restoreSection', () => {
 
   it('applies neither the reader\'s offset nor the placement bias a second time', () => {
     // THE SEQUENCE PRODUCTION RUNS, and the whole reason this test goes past the
-    // restore: what follows a swap on the real page is `reconcile()`, which every
-    // `hmr:state` reaches — a click in the tree, a view tab, a pin — and which
-    // calls `applySection` with `state.cutOffset` still standing. A seed carrying
-    // the offset already would walk the plane those five millimetres a second
-    // time on the first of them, and the placement bias rides along on the
-    // restore itself, once per live reload.
+    // restore: what follows a swap on the real page is `reconcile()`, which
+    // every `hmr:state` THAT STARTS NO LOAD reaches — a click in the tree, a
+    // pin, a step of the offset slider — and which calls `applySection` with
+    // `state.cutOffset` still standing. (A view tab starts a load and returns
+    // before reconcile, so it is not one of them.) A seed carrying the offset
+    // already would walk the plane those five millimetres a second time on the
+    // first of them, and the placement bias rides along on the restore itself,
+    // once per live reload.
     //
     // BOTH SCENES ARE THE SAME SIZE on purpose. The bias is a fraction of the
     // grid, so equal grids make every bias in here equal, and then ANY movement
@@ -808,7 +810,8 @@ describe('captureSection -> restoreSection', () => {
     }
     // ...and the plane itself is back where the reader left it.
     expect(distance(after.g, keep.point)).toBeCloseTo(stood, 9)
-    // ...and stays there through the reconcile that follows every `hmr:state`.
+    // ...and stays there through the reconcile that follows any `hmr:state`
+    // which starts no load.
     applySection(after.vp, after.g)
     expect(distance(after.g, keep.point)).toBeCloseTo(stood, 9)
   })

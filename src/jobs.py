@@ -91,9 +91,13 @@ pusher's builds to destroy, and this module does not make one.
 
 BUILD PARALLELISM IS ITS OWN NUMBER, deliberately not `MAX_CONCURRENT_PUBLISHES`.
 The four accept slots in app.py are sized by what RECEIVING costs — a body on
-disk, a tar reader, a staging tree — and a build is sized by cores and memory
-instead. Sharing one number would mean the day either ceiling is retuned, the
-other moves with it for no reason anybody could reconstruct.
+disk, a tar reader, a staging tree — and a build is sized by memory and by how
+long one hung build may hold a worker. Since 2026-09-09 both numbers happen to
+read four, and that is a COINCIDENCE of two independent decisions rather than a
+link — only ONE of the two is a measurement (this one, issue #80); the accept
+slots are an argument about a body on disk and CI retries, and nobody has ever
+measured them. Sharing one number would mean the day either ceiling is retuned,
+the other moves with it for no reason anybody could reconstruct.
 
 NOTHING IN THIS MODULE IS MODULE-LEVEL STATE. `JobStore` and `BuildQueue` are
 built per server, like `Store` and `CommentStore`, so two hubs in one test
@@ -215,15 +219,23 @@ LOG_TRUNCATED_NOTE = "\n[truncated by the hub: this log is larger than it should
 
 # How many builds may run at once.
 #
-# PROVISIONAL, and the number is honest about that: nothing has ever been
-# measured, because the hub has never been deployed and has never built a model.
-# Two is a starting point that cannot be obviously wrong — a build is CPU-bound
-# and holds an OCCT thread pool, so more of them than cores is pure contention —
-# and it is meant to be replaced by a measurement the first time this service is
-# rolled out, exactly like the container's resource limits in step 0 of the plan.
-# Do not talk yourself into a bigger number here from first principles; take it
-# from a real build.
-MAX_CONCURRENT_BUILDS = 2
+# MEASURED on the deployed hub, 2026-09-09, and raised from two: 145 real jobs on
+# a 20-core host sitting at a load average of 0.6. What the measurement says is
+# that this number buys no SPEED — a build is effectively single-threaded, the
+# cores idle through it, and widening the OCCT pool from 2 to 8 bought about 7%.
+# What it buys is ISOLATION. Every serious queue wait in those jobs — up to 513 s
+# — came from TWO HUNG BUILDS holding both workers for 891 s each, so the queue
+# was starved by two bad builds rather than by a hub that could not keep up. More
+# workers do not make one build finish sooner; they stop one bad project from
+# starving everybody else.
+#
+# MEMORY is what bounds it, not cores. The one figure actually measured is
+# ~450 MB resident right after `import cadquery` (buildproc/limits.py), which is
+# a FLOOR and not a peak — the model's geometry is on top of it, by an amount
+# nobody has measured. Four builds at that floor are 1.8 GB against the ~12 GB
+# the host has free, so the headroom carries a working set several times the
+# floor. The next move comes from another measurement, not from first principles.
+MAX_CONCURRENT_BUILDS = 4
 
 # How many pushes may be WAITING for a worker. Bounded on purpose: an unbounded
 # queue turns a hub that cannot keep up into a hub that accepts everything,
@@ -304,12 +316,13 @@ WORKER_THREAD_PREFIX = "hammerola-build"
 # A BUDGET FOR THE POOL and not a timeout per worker, which is the version of
 # this that looks identical and is not. `shutdown` joins the workers one after
 # another, so a per-worker timeout is multiplied by however many are busy: at
-# MAX_CONCURRENT_BUILDS = 2 a busy pool would spend 2 x 5 s = the ENTIRE grace
-# period on the joins alone, before the queue drain and before `serve_forever`
-# has even noticed the stop (it polls). The number meant to keep an ordinary stop
-# away from SIGKILL would then be what guarantees one — and worse every time the
-# pool grows, which it is expected to once there is a measurement to grow it by.
-# So the joins share one deadline.
+# MAX_CONCURRENT_BUILDS = 4 a busy pool would spend 4 x 5 s = 20 s on the joins
+# alone, TWICE the whole grace period, before the queue drain and before
+# `serve_forever` has even noticed the stop (it polls). The number meant to keep
+# an ordinary stop away from SIGKILL would then be what guarantees one — and it
+# gets worse every time the pool grows, as it did on 2026-09-09 when this number
+# went from two to four without the stop moving at all. So the joins share one
+# deadline.
 #
 # A build still computing is abandoned. Its job is marked failed by `_load` at the
 # next start, and it leaves TWO directories behind, not one: the unpacked sources
@@ -696,15 +709,17 @@ class JobStore:
         MAX_LOG_BYTES, which is 3 MiB apiece. Fourteen days of those is not what
         moving them here was for, and `Store._sweep_leftovers` does not collect
         them: that sweep walks the data root and the project directories, and
-        `data/jobs/` is neither. So they get a cutoff of their own, the same one
-        the store uses for its own leftovers.
+        `data/jobs/` is neither. So they get a cutoff of their own,
+        `WIP_MAX_AGE_SECONDS`.
 
         SAFE BECAUSE OF WHEN THIS RUNS, which is the only reason a short cutoff
         is allowed at all: `JobStore.__init__`, before the pool exists and
         before the socket is bound, so nothing in this process is writing into
-        `data/jobs/`. The store's hour is kept rather than shortened further
-        because the volume can be shared with another hub, and an hour is what
-        that same question was already answered with there.
+        `data/jobs/`. THAT CUTOFF IS NO LONGER THE STORE'S: it was
+        `store.LEFTOVER_MAX_AGE_SECONDS` until 2026-08-29, and the two parted
+        when raising `Limits.wall_seconds` took the store's to four hours. The
+        block at `WIP_MAX_AGE_SECONDS`'s own definition has the reasoning for
+        why an hour still fits here and no longer fits there.
 
         AN mtime IN THE FUTURE IS TREATED AS OLD. The mtime is a value a build
         sets freely, and one dated 2999 is never past any cutoff, so a directory
@@ -1043,8 +1058,8 @@ class BuildQueue:
         wrong. The pusher is told 202 about a build nobody is going to run; the
         unpacked source tree the task owns stays on the volume, and the sweep
         that would collect it (`Store._sweep_leftovers`) runs at startup and
-        skips everything younger than an hour, while a container comes back in
-        seconds.
+        skips everything younger than `store.LEFTOVER_MAX_AGE_SECONDS` — four
+        hours — while a container comes back in seconds.
 
         WHAT THE SECOND CHECK MAY CONCLUDE is narrower than it looks, and the
         previous version of it got this wrong in a way that damaged a LIVE build.
@@ -1281,6 +1296,26 @@ class BuildQueue:
         verdict = None
         try:
             self._jobs.start(task.job_id)
+            if task.commit == DEV_LINK:
+                # THE DRAFT'S POINTER, AT THE START AND NOT AT THE END, which is
+                # the whole of what makes the front page able to say `building`
+                # or `failed` (issue #32). The slot's meta.json carries a `job`
+                # too, but only a build that reached the publish ever writes one
+                # — so a build in flight and a build that failed are, from the
+                # slot's side, indistinguishable from a project nobody has
+                # touched.
+                #
+                # GUARDED, like the bookkeeping tails in `src/store.py`: this is
+                # a write to the data volume for the sake of a chip on a card,
+                # and a volume that will not take it must cost the chip and
+                # never the build.
+                try:
+                    self._store.set_draft_job(task.pid, task.job_id)
+                except Exception:
+                    logger.exception(
+                        f"job {task.job_id}: {task.pid}'s draft pointer could "
+                        f"not be written; the front page will not show this "
+                        f"build until it finishes")
             staging = self._store.build_staging(task.pid, task.commit)
             args, keywords = build_arguments(task.sources, staging, task.pid,
                                              force=task.force)

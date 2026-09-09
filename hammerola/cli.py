@@ -90,12 +90,13 @@ one it was — and, when the build ran at all, with its log.
 
 import argparse
 import sys
+from datetime import datetime
 
 from hammerola import (admin, artifacts, config, gitsuggest, project, queue,
                        revdiff, setup, skill, sources, status, update)
 from hammerola.errors import ClientError
-from hammerola.hub import (JOB_TIMEOUT, UNAUTHORIZED, Hub, HubError,
-                           quoted)
+from hammerola.hub import (JOB_TIMEOUT, SLOW_BUILD_SECONDS, UNAUTHORIZED, Hub,
+                           HubError, quoted)
 from hammerola.limits import DEV_SLOT
 from hammerola.pack import PackError, pack
 
@@ -438,6 +439,11 @@ def _publish(args) -> int:
                                                         flush=True))
 
     _print_log(hub, job_id, record)
+    # AFTER THE LOG AND BEFORE THE VERDICT, which is the one point both endings
+    # pass through: a build that died in its twelfth minute is exactly the run
+    # whose time is worth knowing, so the line may not hang off the success
+    # branch.
+    _print_duration(record)
 
     if record.get("state") == "done":
         return _published(hub, record.get("build_url"), root,
@@ -481,6 +487,119 @@ def _print_log(hub: Hub, job_id: str, record: dict) -> None:
     if record.get("log_truncated"):
         print("--- log truncated by the hub ---")
     print("--- end of build log ---")
+
+
+# The stamps the hub writes into a job record (`store.utcnow_iso`), and the one
+# import this whole line needs. The DURATION below is formatted by hand because
+# the client installs nothing — but subtracting two wall-clock stamps is
+# calendar arithmetic, a queue wait crosses midnight and a month like any other
+# hour does, and `datetime` is standard library the client already may use.
+_STAMP = "%Y-%m-%dT%H:%M:%SZ"
+
+# The two endings that already carry their own diagnosis, in the hub's own words
+# (`buildproc.runner.STATUS_TIMEOUT` and `STATUS_CPU_EXHAUSTED`, copied because
+# the client may not import them; `tests/client/test_buildtime.py` compares this
+# against both). A build killed by a ceiling is not told to try optimising: it
+# has already been told what happened to it, and "this was slow" on top of
+# "killed for being slow" is noise on top of an answer.
+SELF_DIAGNOSING = ("timeout", "cpu_exhausted")
+
+
+def _print_duration(record: dict) -> None:
+    """How long this build took, and a word when that is long enough to matter.
+
+    THE TWO NUMBERS ARE NEVER THE SAME NUMBER. The build is the parent's own
+    `duration_seconds`, measured on a MONOTONIC clock across the child, and it
+    is the only honest account of what the build cost; the queue wait is the gap
+    between two WALL-CLOCK stamps, which is all either end has for it. The build
+    time is therefore never computed from the stamps — those can jump (an NTP
+    step, a container's clock catching up) and would report a negative build or
+    an hour-long one.
+
+    NOT REACHED at all for a push the hub answered 200 to — `_publish` returns
+    before this — and that is a fact about the CALL rather than a branch in here:
+    the `unchanged` route has no job and no record, because nothing was rebuilt.
+    """
+    seconds = _whole_seconds(record.get("duration_seconds"))
+    # `is None` AND NOT A TRUTHINESS TEST, decided on purpose: a build really can
+    # measure zero seconds — `tests/harness.py` used to declare exactly that —
+    # and a falsy check would drop the line for it in silence.
+    if seconds is None:
+        return
+    waited = _queue_wait(record)
+    bracket = f" (queued {_clock(waited)})" if waited is not None else ""
+    print(f"built in {_clock(seconds)}{bracket}")
+    if (seconds > SLOW_BUILD_SECONDS
+            and record.get("status") not in SELF_DIAGNOSING):
+        # A WARNING AND NOT A REFUSAL, said in the line itself: a slow build
+        # publishes, and the reader has to be able to tell this apart from the
+        # gate saying no. Where to go is named rather than described — all three
+        # are written up in the skill, under the section named at the end.
+        # BOTH NUMBERS IN THE SAME FORMAT, so the comparison the line is making
+        # can be read without arithmetic: `3m20s is over the 3m00s` rather than
+        # a measured time against a raw count of seconds.
+        print(f"warning: {_clock(seconds)} is over the "
+              f"{_clock(SLOW_BUILD_SECONDS)} a "
+              f"build should need. It published —\n"
+              f"  this is a warning and not a refusal.\n"
+              f"  Most of a slow build is checks(): ask about a point with\n"
+              f"  `checklib.material_at` rather than a boolean intersect, put "
+              f"`@cache` on the\n"
+              f"  builders, and do not filter pairs by hand in front of "
+              f"`pairwise_interference`.\n"
+              f"  The skill's \"Keeping checks fast enough to run\" has all "
+              f"three.")
+
+
+def _whole_seconds(value):
+    """`value` rounded to whole seconds, or None when it is not a duration.
+
+    The far end chooses this field, so a string, a NaN or an infinity has to
+    fall out here rather than end a run whose build has already finished — that
+    is what the three exceptions are: `int(round(nan))` raises ValueError and
+    `int(round(inf))` raises OverflowError.
+    """
+    try:
+        seconds = int(round(float(value)))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return seconds if seconds >= 0 else None
+
+
+def _queue_wait(record: dict):
+    """Seconds spent waiting for a worker, or None when there is nothing to say.
+
+    None in all three cases where the bracket would be a lie or a distraction:
+    a job that never started (no stamp), a difference that came out NEGATIVE
+    (the stamps are wall-clock and can jump backwards), and a wait under a
+    second, which is the ordinary case on an idle hub and says nothing.
+
+    The stamps carry whole seconds, so the difference is a whole number and
+    nothing here rounds.
+    """
+    try:
+        created = datetime.strptime(record.get("created"), _STAMP)
+        started = datetime.strptime(record.get("started"), _STAMP)
+    except (TypeError, ValueError):
+        return None
+    waited = int((started - created).total_seconds())
+    return waited if waited >= 1 else None
+
+
+def _clock(seconds: int) -> str:
+    """Whole seconds as `8s`, `4m12s`, `1h02m03s`.
+
+    Written out rather than reached for, because the client installs nothing
+    (`tests/client/test_stdlib_only.py`), and zero-padded past the first field so
+    that two builds compared by eye line up.
+    """
+    hours, rest = divmod(seconds, 3600)
+    minutes, whole = divmod(rest, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{whole:02d}s"
+    if minutes:
+        return f"{minutes}m{whole:02d}s"
+    return f"{whole}s"
 
 
 def _suggest_git(root, revision, message) -> None:

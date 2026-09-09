@@ -43,15 +43,18 @@ everything inside it:
 
 WIRED TO HTTP SINCE STEP 5. `src/jobs.py` calls `run_build` from a worker
 thread, with the pushed source tree as the project and the staging directory
-that becomes `<pid>/<commit>` as the output. The gate refusing a build after it
-has been accepted is still step 6.
+that becomes `<pid>/<commit>` as the output. The gate refuses a build AFTER it
+has been accepted -- step 6, closed.
 
-One check is now OWED rather than merely planned: `ci/smoke.py` should grow a
-probe that the ceilings really go on INSIDE the image, under the `app` account,
-and that `-m src.buildproc.*` resolves from /app. The suite runs against a
-checkout and cannot see any of that. Until step 4 was wired up there was nothing
-for a broken image to break, because nothing in the running service called this
-package; a build now lands on the request path, so that argument has expired.
+WHAT THE PYTEST SUITE CANNOT SEE, THE GATE DOES. The suite runs against a
+checkout, so it can never tell whether the ceilings really go on INSIDE the
+image, under the `app` account, or whether `-m src.buildproc.*` resolves from
+/app. `ci/smoke.py` asks the process on the far side of the `execv` what its
+rlimits actually are, inside the built image, as `app` -- check (i), and it is
+counted in the gate's own verdict table. Until step 4 was wired up there was
+nothing for a broken image to break, because nothing in the running service
+called this package; a build lands on the request path now, which is why that
+probe had to exist and not merely be planned for.
 
 Everything here is stdlib. Importing it must not import cadquery, and it must
 not import `src.settings` -- the whole point is a process that has never had a

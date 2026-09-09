@@ -122,7 +122,7 @@ QUERY_TIMEOUT = 30
 # How the status endpoint is polled. Fast at first so a push that is already
 # published, or a model that fails in two seconds, answers immediately; then
 # backing off, because past the first few seconds the build is minutes long and
-# a poll a second is pointless load on a hub with two build workers.
+# a poll a second is pointless load on a hub with four build workers.
 POLL_FIRST_SECONDS = 0.25
 POLL_MAX_SECONDS = 2.0
 POLL_BACKOFF = 1.5
@@ -181,9 +181,9 @@ POLL_NOTICE_MIN_SECONDS = 30
 
 # How long `await_job` waits by default. The worst honest wait is the queue
 # ahead of you: MAX_QUEUED_JOBS (16) builds at buildproc's `wall_seconds` (900,
-# raised from 120 on 2026-08-29) over MAX_CONCURRENT_BUILDS (2) workers is about
-# two hours, and this is that with a little room. `--timeout` moves it; a person
-# presses Ctrl-C long before either.
+# raised from 120 on 2026-08-29) over MAX_CONCURRENT_BUILDS (4 since 2026-09-09,
+# raised from 2) workers is about one hour, and this is that with room to spare.
+# `--timeout` moves it; a person presses Ctrl-C long before either.
 #
 # THIS NUMBER IS A COPY AND CANNOT IMPORT ITS SOURCE -- the client is stdlib-only
 # and may not reach into `src.buildproc` -- so it goes stale the moment
@@ -192,6 +192,29 @@ POLL_NOTICE_MIN_SECONDS = 30
 # legitimately queued, and the build then publishes with nobody watching. Move
 # `wall_seconds`, come back here.
 JOB_TIMEOUT = 8100
+
+# WHEN A BUILD IS SLOW ENOUGH TO SAY SO. Between this and the hub's own wall
+# clock lies the whole zone where everything is green and everything is slow:
+# nothing fails, nothing is refused, and the wait is paid by whoever pushed —
+# every time, for as long as nobody looks at it.
+#
+# IT IS A JUDGEMENT AND IT IS DECLARED AS ONE. Three minutes is not a copy of
+# anything: the hub has no such number, which is why it lives here beside
+# JOB_TIMEOUT rather than in `limits.py`, where every number is a copy compared
+# against its source. Nothing goes stale when it moves — the only thing below it
+# is how often the line is printed. `tests/test_build_ceilings.py` holds the one
+# property that does have to stay true: it is strictly under the wall the hub
+# kills a build at, because a threshold at or above that would only ever be
+# reached by a build that was already dead.
+#
+# WHY THE CLIENT PRINTS IT AND NOT THE BUILD. The hub keeps a build's FIRST
+# megabyte of log and drops the rest (`buildproc.runner._Drain` — the head is
+# kept because that is where a build says what it was doing), so a warning
+# appended at the END of a run would be the part that is lost in exactly the
+# case it is written for: the slowest, chattiest build there is. And the reader
+# it is addressed to is the one who just spent the minutes waiting, which is
+# this side of the wire.
+SLOW_BUILD_SECONDS = 180
 
 TERMINAL_STATES = ("done", "failed")
 
