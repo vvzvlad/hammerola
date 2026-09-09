@@ -471,8 +471,11 @@ def test_concurrent_publishes_to_one_project_all_land(hub):
         thread.join(timeout=30)
 
     assert set(results.values()) == {201}, results
+    # The slot is not one of the builds: every commit mirrors itself into it
+    # (issue #78), so it is there whichever of these six finished last.
     on_disk = {p.name for p in hub.project_dir("proj1").iterdir()
-               if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")}
+               if p.is_dir() and not p.is_symlink()
+               and not p.name.startswith(".") and p.name != store.DEV_LINK}
     assert on_disk == {f"c{day}" for day in range(1, 7)}
 
     # And the derived state agrees with the tree rather than with whichever

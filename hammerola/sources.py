@@ -297,10 +297,17 @@ def run_log(args) -> int:
 def _dev_log() -> int:
     """The one address of the three that the hub cannot answer, said plainly.
 
-    Not a bug and not an oversight: nothing is stored for the local slot, on
-    purpose (SPEC 7.8 — an entry in the store that no published revision points
-    at is one the store cannot answer for). Answering with `latest`'s log
-    instead would be worse than refusing: the two are different builds, and a
-    log that silently belongs to something else is how an afternoon goes.
+    Not a bug and not an oversight: no source and no log are stored for the
+    local slot, on purpose (SPEC 7.8 — an entry in the store that no published
+    revision points at is one the store cannot answer for). Answering with
+    `latest`'s log instead would be worse than refusing, and the reason is that
+    same absence rather than the two being different builds — sometimes they are
+    the same one, because a commit fills the slot with itself. What the hub does
+    record about the slot answers a different question: its payload digest says
+    whether the slot's SOURCES are the ones the newest commit published, and
+    that digest is what the front page's `dev` chip is computed from. A LOG is
+    kept per revision, and the slot is not addressed by a revision, so there is
+    none stored under its name and one handed over as the slot's would be a
+    guess presented as a record.
     """
     raise ClientError(NO_DEV_LOG)

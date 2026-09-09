@@ -46,8 +46,9 @@ from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE,
                       WORKER_THREAD_PREFIX, BuildQueue, BuildTask, JobStore,
                       build_arguments)
 from src import store as store_module
-from src.store import (BODY_PREFIX, JSON_TMP_PREFIX, LEFTOVER_PREFIXES,
-                       SOURCE_PREFIX, PublishError, Store, utcnow_iso)
+from src.store import (BODY_PREFIX, DEV_LINK, JSON_TMP_PREFIX,
+                       LEFTOVER_PREFIXES, PAYLOAD_DIGEST_FILE, SOURCE_PREFIX,
+                       PublishError, Store, utcnow_iso)
 
 # TOKEN comes from the harness rather than being spelled again here: the hub
 # under test is built with that value, and a copy of it in this file was one
@@ -346,8 +347,8 @@ def test_the_local_slot_goes_through_the_same_job(hub):
     #
     # The index is asserted on its CONTENT and not on the file's absence: a local
     # push rewrites index.json now, because a card has to be able to say that a
-    # project's slot is occupied. What it may never do is put a card there, and
-    # this project has no commit build, so there is none.
+    # project holds work no commit has published. What it may never do is put a
+    # card there, and this project has no commit build, so there is none.
     assert not (hub.project_dir("proj1") / "latest").exists()
     assert json.loads((hub.data / "index.json").read_text()) == []
     picker = json.loads((hub.project_dir("proj1") / "builds.json").read_text())
@@ -1593,6 +1594,98 @@ def test_two_builds_of_one_commit_race_to_one_answer(tmp_path):
     finally:
         builder.release.set()
         stop_hub(hub)
+
+
+# -- a commit fills the slot with itself (issue #78) --------------------------
+def test_a_commit_puts_itself_into_the_dev_slot(tmp_path):
+    """`dev` is the freshest state of the project, not the last `build`.
+
+    Through the store rather than a push, because the claim is about the two
+    documents field for field: the slot's meta.json is the revision's with
+    `commit` and `dev` rewritten and NOTHING else moved, which is what makes
+    copying the published tree instead of building it a second time correct.
+    """
+    store = _bare_store(tmp_path / "data")
+    staging, names = _staged(store, "proj1", "abc123", "a")
+    assert store.publish_built("proj1", "abc123", staging, names,
+                               "digest-a")[0] == 201
+
+    pdir = store.projects_dir / "proj1"
+    revision = json.loads((pdir / "abc123" / "meta.json").read_text())
+    slot = json.loads((pdir / DEV_LINK / "meta.json").read_text())
+    assert slot["commit"] == DEV_LINK
+    assert slot["dev"] is True
+    assert ({key: value for key, value in slot.items()
+             if key not in ("commit", "dev")}
+            == {key: value for key, value in revision.items()
+                if key not in ("commit", "dev")})
+    # The digest too, or the next `build` of these sources would rebuild them
+    # to arrive at the tree already sitting in the slot.
+    assert ((pdir / DEV_LINK / PAYLOAD_DIGEST_FILE).read_text()
+            == (pdir / "abc123" / PAYLOAD_DIGEST_FILE).read_text())
+
+
+def test_a_commit_replaces_the_slot_instead_of_merging_into_it(hub):
+    """What an earlier `build` left in the slot does not survive the commit.
+
+    The slot is one directory that gets overwritten (SPEC 7.6), so a file the
+    older tree had and the newer one does not has to be gone — a merge would
+    leave the author looking at two builds at once.
+    """
+    assert hub.publish_dev(
+        "proj1", good_build("slot", extra_files={"stray.json": b"{}"})
+    ).status_code == 201
+    slot = hub.project_dir("proj1") / DEV_LINK
+    assert (slot / "stray.json").is_file()
+
+    assert hub.publish("proj1", "abc123", good_build("commit")).status_code == 201
+
+    revision = hub.project_dir("proj1") / "abc123"
+    assert not (slot / "stray.json").exists()
+    assert (sorted(path.name for path in slot.iterdir())
+            == sorted(path.name for path in revision.iterdir()))
+    assert ((slot / "assembled.json").read_bytes()
+            == (revision / "assembled.json").read_bytes())
+    assert _leftovers(hub, "proj1") == []
+
+
+def test_a_build_of_what_was_just_committed_is_answered_from_the_slot(hub):
+    """The 200 that says the slot already holds these sources.
+
+    It is what the commit put there, so the answer arrives from the push
+    itself — `settled` compares the digest before a build is queued — and the
+    author's next `build` costs nothing at all.
+    """
+    body = good_build("a")
+    assert hub.publish("proj1", "abc123", body).status_code == 201
+
+    reply = hub.publish_dev("proj1", body)
+    assert reply.status_code == 200
+    assert reply.json()["url"] == f"/project/proj1/{DEV_LINK}/"
+
+
+def test_a_slot_that_could_not_be_written_leaves_the_revision_published(
+        tmp_path, monkeypatch):
+    """The mirror runs past the point of no return and swallows its failures.
+
+    The rename IS the publication, so a slot that could not be filled must not
+    turn a live revision into a 422 — nor leave the copy it made behind.
+    """
+    store = _bare_store(tmp_path / "data")
+    staging, names = _staged(store, "proj1", "abc123", "a")
+
+    def broken(_pdir, _staging):
+        raise OSError(errno.EIO, "the slot could not be swapped")
+
+    monkeypatch.setattr(store, "_swap_dev_slot", broken)
+    assert store.publish_built("proj1", "abc123", staging, names, "digest-a") == (
+        201, {"url": "/project/proj1/abc123/"})
+
+    pdir = store.projects_dir / "proj1"
+    assert (pdir / "abc123" / "meta.json").is_file()
+    assert not (pdir / DEV_LINK).exists()
+    assert [p.name for p in pdir.iterdir()
+            if p.name.startswith(LEFTOVER_PREFIXES)] == []
 
 
 # -- stopping ----------------------------------------------------------------

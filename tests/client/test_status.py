@@ -12,6 +12,8 @@ is deliberate: the hub cannot be asked for it (see the docstring of
 `hammerola/status.py`).
 """
 
+import shutil
+
 import pytest
 from harness import TOKEN
 from modeldir import make_model
@@ -92,12 +94,17 @@ def test_the_project_is_named_by_its_id_and_its_title(hub, model, capsys):
     assert "Demo project" in first
 
 
-def test_an_empty_dev_slot_and_no_revision_are_both_said_out_loud(hub, model,
-                                                                  capsys):
-    """A commit and no local build: `latest` is set, the slot is empty, and
-    neither may be silently omitted — an absent line reads as an absent
-    feature."""
+def test_an_empty_dev_slot_is_said_out_loud(hub, model, capsys):
+    """An empty slot is a LINE reading `empty`, not a missing line — an absent
+    one reads as an absent feature.
+
+    A commit fills the slot with itself (issue #78), so the state has to be made
+    rather than published into: the slot goes off the volume, and a rename is
+    what rewrites the picker without publishing anything back into it.
+    """
     publish(model, "commit")
+    shutil.rmtree(hub.project_dir("demo0001") / "dev")
+    assert run(model, "rename", "Demo project") == 0
     capsys.readouterr()
     assert run(model, "status") == 0
     out = capsys.readouterr().out

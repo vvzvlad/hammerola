@@ -31,6 +31,7 @@ from harness import (DEFAULT_EXPORTS, comment_payload, meta_bytes, tar_gz,
                      view_bytes)
 
 from src.jobs import STATE_DONE, JobStore
+from src.store import DEV_LINK
 
 # One past RETENTION_BUILDS, which was 20. Small enough that the suite stays
 # fast, large enough that the ceiling that used to be here would fire.
@@ -57,9 +58,11 @@ def _build(marker, built):
 
 
 def _commits_on_disk(hub, pid):
+    # The slot is not a commit and never was; every commit mirrors itself into
+    # it (issue #78), so it is there whichever build was published last.
     return sorted(p.name for p in hub.project_dir(pid).iterdir()
                   if p.is_dir() and not p.is_symlink()
-                  and not p.name.startswith("."))
+                  and not p.name.startswith(".") and p.name != DEV_LINK)
 
 
 def test_no_number_of_builds_makes_an_older_one_disappear(hub):

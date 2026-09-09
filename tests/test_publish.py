@@ -12,7 +12,7 @@ from harness import (DEFAULT_EXPORTS, TOKEN, good_build, meta_bytes, tar_gz,
                      view_bytes)
 
 from src import app, render
-from src.store import PublishError, Store
+from src.store import DEV_LINK, PublishError, Store
 
 
 def test_publish_creates_the_build_and_points_latest_at_it(hub):
@@ -700,8 +700,11 @@ def test_the_same_sources_mint_the_same_revision(hub):
     assert again.json()["revision"] == first.json()["revision"]
     assert again.json()["url"] == f"/project/proj1/{first.json()['revision']}/"
 
+    # The slot is not a second address for the sources: it is the same build
+    # mirrored into the one name that is rewritten in place (issue #78).
     builds = [entry.name for entry in (hub.project_dir("proj1")).iterdir()
-              if entry.is_dir() and not entry.is_symlink()]
+              if entry.is_dir() and not entry.is_symlink()
+              and entry.name != DEV_LINK]
     assert builds == [first.json()["revision"]]
 
 
