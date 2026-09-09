@@ -709,15 +709,17 @@ class JobStore:
         MAX_LOG_BYTES, which is 3 MiB apiece. Fourteen days of those is not what
         moving them here was for, and `Store._sweep_leftovers` does not collect
         them: that sweep walks the data root and the project directories, and
-        `data/jobs/` is neither. So they get a cutoff of their own, the same one
-        the store uses for its own leftovers.
+        `data/jobs/` is neither. So they get a cutoff of their own,
+        `WIP_MAX_AGE_SECONDS`.
 
         SAFE BECAUSE OF WHEN THIS RUNS, which is the only reason a short cutoff
         is allowed at all: `JobStore.__init__`, before the pool exists and
         before the socket is bound, so nothing in this process is writing into
-        `data/jobs/`. The store's hour is kept rather than shortened further
-        because the volume can be shared with another hub, and an hour is what
-        that same question was already answered with there.
+        `data/jobs/`. THAT CUTOFF IS NO LONGER THE STORE'S: it was
+        `store.LEFTOVER_MAX_AGE_SECONDS` until 2026-08-29, and the two parted
+        when raising `Limits.wall_seconds` took the store's to four hours. The
+        block at `WIP_MAX_AGE_SECONDS`'s own definition has the reasoning for
+        why an hour still fits here and no longer fits there.
 
         AN mtime IN THE FUTURE IS TREATED AS OLD. The mtime is a value a build
         sets freely, and one dated 2999 is never past any cutoff, so a directory
@@ -1056,8 +1058,8 @@ class BuildQueue:
         wrong. The pusher is told 202 about a build nobody is going to run; the
         unpacked source tree the task owns stays on the volume, and the sweep
         that would collect it (`Store._sweep_leftovers`) runs at startup and
-        skips everything younger than an hour, while a container comes back in
-        seconds.
+        skips everything younger than `store.LEFTOVER_MAX_AGE_SECONDS` — four
+        hours — while a container comes back in seconds.
 
         WHAT THE SECOND CHECK MAY CONCLUDE is narrower than it looks, and the
         previous version of it got this wrong in a way that damaged a LIVE build.

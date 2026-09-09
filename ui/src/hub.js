@@ -4,11 +4,16 @@
 // hub's contract. The URL scheme is the whole of the addressing (src/app.py):
 //
 //     /index.json                       what is on this hub -- EDIT_TOKEN, the
-//                                       one route on this site that is guarded
+//                                       only one of the routes LISTED HERE that
+//                                       is guarded (the comment, job and source
+//                                       APIs are guarded too and are not here)
 //     /start                            where to get the skill and the client,
 //                                       and whether anything is published here
-//                                       yet -- PUBLIC, and the only route this
-//                                       bundle asks for without a token
+//                                       yet -- PUBLIC. `meta.json` and
+//                                       `builds.json` below are asked for
+//                                       without a token as well; what is
+//                                       special here is that the ANSWER is for
+//                                       a reader who has no token at all
 //     /project/<pid>/                   the project, on whichever pointer the
 //                                       reader was last on (SPEC 9)
 //     /project/<pid>/<slot>/            the page, where <slot> is a commit id
@@ -32,14 +37,19 @@ export const POINTER_NAMES = ['latest', 'dev'];
 /**
  * The id of the view a model is assembled in.
  *
- * A convention rather than a field: `src/cadbuild/views.py` names its default
- * view `assembled`, and every model in the fleet inherits it. It matters because
- * a distance measured BETWEEN two parts only means anything where the parts
- * stand as assembled — on a print bed they have been moved apart on purpose, and
- * a number taken there would reach the agent as a gap that is not a gap (brief,
- * block 7). A model that names its views something else loses the qualifier's
- * precision in the safe direction: every measurement is then labelled as
- * belonging to the current layout.
+ * A constant shared with the build half, where it is spelled in
+ * `src/cadbuild/artifacts.py` as `ASSEMBLED_VIEW_ID`. No model INHERITS it:
+ * `views.prepare_views` refuses a model that declares no view under this id, so
+ * every build that reaches this hub has one. It matters because a distance
+ * measured BETWEEN two parts only means anything where the parts stand as
+ * assembled — on a print bed they have been moved apart on purpose, and a
+ * number taken there would reach the agent as a gap that is not a gap (brief,
+ * block 7). A rename on the build side would leave every CROSS-PART measurement
+ * here labelled as belonging to the current layout instead — the safe
+ * direction, and silent; a single-part measurement carries `crossPart: false`
+ * and is never labelled either way. The two spellings are checked against each
+ * other by `tests/test_ui_source.py`, which is the only place that can: neither
+ * runtime can import the other's constant.
  */
 export const ASSEMBLED_VIEW_ID = 'assembled';
 
@@ -220,10 +230,13 @@ export function projectCard(card) {
 }
 
 // -- getting started --------------------------------------------------------
-// The one route here that is asked WITHOUT a token, because whoever needs the
-// answer does not have one yet (src/onboarding.py). It carries three relative
-// paths and one boolean about this deployment, and the door renders a block out
-// of them when the boolean says the hub is empty.
+// The route whose ANSWER is meant for somebody who has no token at all, because
+// whoever needs it has not got one yet (src/onboarding.py). It carries six keys
+// — three relative paths, two version numbers and one boolean about this
+// deployment; `onboarding.manifest` is where they are written and
+// tests/test_onboarding.py is what pins the set, so this list is a summary and
+// not the source. This file reads the boolean and two of the paths, and the
+// door renders a block out of them when the boolean says the hub is empty.
 
 const START_URL = '/start';
 

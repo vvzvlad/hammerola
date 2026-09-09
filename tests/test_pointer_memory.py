@@ -115,9 +115,9 @@ def test_a_project_that_does_not_exist_is_a_404(hub):
 def test_the_resolver_page_is_not_the_build_page(hub):
     """It must not drag the viewer in to answer a question about a URL.
 
-    3.6 MB of bundle and a 2 MB view, downloaded to read one localStorage key and
-    leave — and every byte of it on the way to a page that will download them
-    again.
+    A quarter-megabyte bundle, the 3.6 MB viewer it pulls in behind itself and a
+    2 MB view, downloaded to read one localStorage key and leave — and every
+    byte of it on the way to a page that will download them again.
     """
     hub.publish("proj1", "abc123", good_build())
     body = hub.get("/project/proj1/").text

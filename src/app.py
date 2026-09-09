@@ -10,9 +10,9 @@ Routing (SPEC 3, 7.4):
     GET  /                                    the front page shell, from templates/
     GET  /index.json                          what is on this hub      EDIT_TOKEN
     GET  /_v/<file>                           shared viewer bundle, one per site
-    GET  /start                               how to start: three paths, the
-                                              skill's version, and whether this
-                                              hub is empty
+    GET  /start                               how to start: three paths, two
+                                              versions, and whether this hub
+                                              is empty
     GET  /start/skill.md                      the agent instructions
     GET  /start/hammerola                     the client, as one file
     GET  /start/template.tar.gz               a model directory that builds
@@ -68,9 +68,13 @@ page offers what a first run needs instead of nothing. That page is written
 (`ui/src/HammerolaEntry.jsx`, issue #48): when the boolean says the hub is
 empty, the form carries five lines somebody hands to their agent, built out of
 `skill` and `client` and the browser's own origin. Every one of the manifest's
-four fields is read now, where the route once had no reader at all —
-`hammerola create` follows `template`, and the door reads `empty` (the gate on
-whether it draws the block) and then `skill` and `client`. What the
+fields is read now, where the route once had no reader at all —
+`hammerola create` follows `template`, `hammerola/update.py` reads
+`client_version` and the skill's own header reads `skill_version`, and the door
+reads `empty` (the gate on whether it draws the block) and then `skill` and
+`client`. The COUNT is deliberately not written here: `src/onboarding.py` names
+the reader of each, and `tests/test_onboarding.py` pins the set, which is what
+kept "four" from being noticed here after the sixth arrived. What the
 route must never grow is a number, a name or a date: `src/onboarding.py` carries
 that argument in full, and `Store.empty` is the only thing on this service that
 answers a question about the deployment without a token.
@@ -171,8 +175,9 @@ FAVICON_ASSET = "favicon.svg"
 # a build URL is permanent and shared with every other project on the host.
 #
 # `img-src 'self' data:` is not a relaxation to trade away. The vendored viewer
-# css carries its whole toolbar as 74 `--tcv-icon-*: url("data:image/svg+xml,…")`
-# custom properties (SPEC 2.2), and `'self'` does NOT cover the `data:` scheme, so
+# css carries its whole toolbar as several dozen `--tcv-icon-*:
+# url("data:image/svg+xml,…")` custom properties (SPEC 2.2) — declared twice
+# over, once per theme — and `'self'` does NOT cover the `data:` scheme, so
 # a bare `default-src 'self'` silently blanks every button in the toolbar. Inline
 # SVG in a data: URI cannot execute script — it is fetched as an image — so this
 # costs nothing. `script-src` inherits `default-src 'self'` and must stay there.

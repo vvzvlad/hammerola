@@ -51,8 +51,10 @@
  * was published rather than something this browser is allowed to change.
  *
  * CONTRACT WITH THE VIEWPORT — see events.js for the names. Down, one event
- * carrying the whole of what should be on screen; up, nine. `sync()` below is
- * the only place this file writes to that event, exactly as in the mock.
+ * carrying the whole of what should be on screen; up, one per name in
+ * `EVENTS_UP` — spelled there and not counted here, because a count written
+ * here has already gone stale once. `sync()` below is the only place this file
+ * writes to that event, exactly as in the mock.
  *
  * THREE PLACES THE MOCK'S CONTRACT WAS NOT TAKEN LITERALLY, all three because
  * the real viewport is a real one:
@@ -213,7 +215,7 @@ const HOLD_KEY_LABEL = 'C';
  * `parts[key]` on a map that came back from `JSON.parse` answers those with a
  * FUNCTION off `Object.prototype`, and the reads below then slice it, spread it
  * or hand it to React — the same trap `noteFor` documents further down, on the
- * other map keyed by a part's name.
+ * reader's note map, which is keyed by this same catalogue key (issue #75).
  *
  * A NON-OBJECT RECORD IS NO RECORD. The hub refuses one, but this side reads a
  * fetched document rather than a promise about it, and a `"lid": 3` would
@@ -1010,8 +1012,9 @@ export default class HammerolaViewer extends React.Component {
         // click on the row for A still on screen, leaves the bar saying B with
         // nothing else on the page to bring the two back together. F5 opens a
         // build the reader declined, the copied link points at it, and the next
-        // Back reads as "nothing happened". `pageguard` calls that state invalid
-        // in exactly those words.
+        // Back reads as "nothing happened". `pageguard` refuses that state in
+        // its own words — "PAGE stopped describing the address the browser is
+        // on".
         //
         // REPLACE, NEVER PUSH. The reader did not navigate, they CANCELLED a
         // navigation, so the entry the browser has already moved to is the one
@@ -1877,8 +1880,10 @@ export default class HammerolaViewer extends React.Component {
 
   // -- has a newer build landed while we were looking at this one? ----------
   // The only one of the brief's three build questions (block 11) with a source
-  // today: `building` and `failed` need the job status endpoint that comes with
-  // plan step 5. And it never swaps the model by itself — somebody in the middle
+  // today: `building` and `failed` need a JOB to ask about. The endpoint exists
+  // — `GET /api/v1/jobs/<id>`, step 5, closed — but it is behind EDIT_TOKEN and
+  // nothing hands this page the id of the job that produced the build it is
+  // showing. And it never swaps the model by itself — somebody in the middle
   // of a section with half the tree hidden reads a model that changed under them
   // as a breakage.
   schedulePoll(delay) {
@@ -2782,9 +2787,12 @@ export default class HammerolaViewer extends React.Component {
       if (t === 'move' && s.tool !== 'move') this.toast('Drag a part — it snaps back on the next rebuild');
     };
 
-    // Two of these are reachable today. `building` and `failed` need the job
-    // status endpoint that arrives with plan step 5; the brief (block 11) asks
-    // for all of them, and that step is what fills them in.
+    // Two of these are reachable today. `building` and `failed` need a job id
+    // this page does not have: `GET /api/v1/jobs/<id>` exists and is behind
+    // EDIT_TOKEN, but nothing tells a build page which job produced it. The
+    // brief (block 11) asks for all of them; what is missing is that link, not
+    // the endpoint. (The front page does show the two words — issue #32 — off
+    // the draft pointer, which a build page has no equivalent of.)
     const status = s.pending
       ? { text: 'new build ready', style: 'color:#1f6fd0;background:#e3effc;border:1px solid #bcd8f5', dot: '#1f7ae0' }
       : { text: isPointerPage() ? 'up to date' : 'pinned build', style: 'color:#5b6470;background:transparent;border:1px solid transparent', dot: '#2e9e44' };

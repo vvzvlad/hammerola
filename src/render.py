@@ -94,8 +94,10 @@ PART_KINDS = (KIND_PRINTABLE, "hardware", "mock")
 # length of one, with room for a long timezone spelling — not the free-text one.
 # It ends up in three places at once (the index card, the build page header and an
 # <option> caption) and, unlike a title, in the SHARED /index.json that every
-# visitor of `/` downloads with `no-cache`: 200 projects each carrying 200 KB of
-# `built` is a public index nobody can load, from pushes that were each accepted.
+# EDITOR of this hub downloads with `no-cache` (the payload is behind EDIT_TOKEN
+# — `_serve_index_json` in src/app.py, pinned by `tests/test_serving.py`): 200
+# projects each carrying 200 KB of `built` is an index nobody can load, from
+# pushes that were each accepted.
 MAX_BUILT = 64
 
 # Names inside a build directory that belong to the hub, not to the push. A view
@@ -301,7 +303,8 @@ def _check_map_size(value, field: str, files: dict) -> None:
     it (`measure_view`), measured at ~18 ms on a 0.9 MB view, and N entries may
     point at ONE file — `seen` forbids a duplicate view id, not a duplicate file
     name. A hundred thousand of them is hours of CPU inside `_finish_staging`,
-    in a build worker thread, with two of those in the whole process.
+    in a build worker thread, with `jobs.MAX_CONCURRENT_BUILDS` of those in the
+    whole process.
 
     Counted FIRST, before the loop, exactly as the catalogue is counted below —
     the ORDER is what the two share and it is the whole of what they share:
@@ -330,8 +333,8 @@ def _check_map_size(value, field: str, files: dict) -> None:
     thousands of files — nothing stops one, since a build names and counts its
     own output, but it is a deliberate act by whoever holds the secret rather
     than something an honest project drifts into. The cost falls on the visitors
-    of that ONE build page, not on the shared `/index.json` every visitor of `/`
-    downloads with `no-cache` — which is the asymmetry MAX_BUILT above exists
+    of that ONE build page, not on the shared `/index.json` every editor of this
+    hub downloads with `no-cache` — which is the asymmetry MAX_BUILT above exists
     for and the reason its ceiling is a number. And the build is not beyond
     reach afterwards: the project can be removed whole with the same secret that
     published it (`DELETE /api/v1/projects/<pid>`), so "can never be taken back"
@@ -1036,7 +1039,8 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
         # BEFORE THE FILE IS TOUCHED, and the order is the whole point: what
         # this answers costs a lookup per key, while the two lines under it cost
         # a full parse of the view file and a full gzip of it — up to
-        # MAX_BUILD_BYTES of it, in one of two build workers. It used to be
+        # MAX_BUILD_BYTES of it, in one of the `jobs.MAX_CONCURRENT_BUILDS`
+        # build workers. It used to be
         # asked where its value is used, five lines down, so `"parts": "x"` was
         # a 422 bought at the price of the whole file.
         selected = _view_parts(view, view_id, catalogue)
@@ -1204,7 +1208,7 @@ def card_status(state: str | None) -> str:
 
 
 def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
-    """One project's card on the public index.
+    """One project's card in the index payload (`/index.json`, EDIT_TOKEN).
 
     Built from its NEWEST commit build, plus two facts that belong to the project
     rather than to any single build and are therefore passed in by the caller

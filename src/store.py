@@ -1170,8 +1170,11 @@ class Store:
         push therefore leaves up to MAX_BUILD_BYTES of spooled body plus a
         half-unpacked staging tree on the volume, permanently.
 
-        Only entries older than an hour are touched, because a concurrent publish
-        in this very process is using names of exactly the same shape.
+        Only entries older than `LEFTOVER_MAX_AGE_SECONDS` — four hours, and the
+        block at its definition says what fixes that figure — are touched,
+        because a concurrent publish in this very process is using names of
+        exactly the same shape. This runs from `Store.__init__` and from nowhere
+        else, so it is a sweep at startup rather than a periodic one.
         """
         cutoff = time.time() - LEFTOVER_MAX_AGE_SECONDS
         directories = [self.root]
@@ -1343,8 +1346,8 @@ class Store:
         except BaseException:
             # Every way out of the block above except the ordinary one,
             # BaseException included: a KeyboardInterrupt here would otherwise
-            # leave an unpacked tree that only the hourly sweep would ever
-            # remove.
+            # leave an unpacked tree that only the STARTUP sweep would ever
+            # remove, and only four hours later (`_sweep_leftovers`).
             shutil.rmtree(sources, ignore_errors=True)
             raise
         return AcceptedPush(sources=sources, archive=archive, digest=digest,
@@ -3040,8 +3043,12 @@ def atomic_write_bytes(path: Path, data: bytes, *, tmp_dir: Path = None) -> None
     except BaseException:
         # The temp name is dot-prefixed, so a leftover is invisible to every
         # reader and would sit on the volume until the next startup sweep. That
-        # is tolerable after a SIGKILL and not tolerable per failed request on a
-        # PUBLIC endpoint, which is what the comment queue is.
+        # is tolerable after a SIGKILL and not tolerable once per failed
+        # request, which is the rate the comment queue can produce them at: a
+        # caller retrying a rejected write drives this path as fast as it likes.
+        # (It is not a PUBLIC endpoint -- both halves of the comment API have
+        # taken EDIT_TOKEN since step 0 -- but the rate argument never needed
+        # that and is what this line is about.)
         try:
             os.unlink(tmp)
         except OSError:

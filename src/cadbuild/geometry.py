@@ -69,7 +69,7 @@ def load_model():
             raise BuildError(
                 f"model.py does not define {name}(){_contract_moved(model)}")
     _warn_if_checklib_shadowed()
-    # checks() is the optional third of the contract -- run_checks() below
+    # checks() is the optional third of the contract -- `modelchecks.run_checks`
     # deals with a model that has none.
     return model
 

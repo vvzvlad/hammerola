@@ -124,12 +124,15 @@ def hub_text_problem(value, limit, *, angle_brackets_ok=False):
     return None
 
 
-# The build name `make build` publishes under. Reserved on the hub side, where
-# it is a pointer that gets overwritten rather than a snapshot id (SPEC 7.6).
+# The slot name `hammerola build` publishes under. Reserved on the hub side,
+# where it is a pointer that gets overwritten rather than a snapshot id
+# (SPEC 7.6).
 DEV_LABEL = "dev"
 
-# The project id `cad-publish init --test` writes. Everything about it is on
-# purpose:
+# The project id `cad-publish init --test` used to write. NOTHING WRITES IT ANY
+# MORE -- the flag went with the local build path (issue #20) -- so what reaches
+# `project.refuse_test_id()` is a project.json somebody wrote by hand or carried
+# over from before. Everything about the string is still on purpose:
 #
 #   * it is not 12 hex characters, so nobody mistakes it for a generated id;
 #   * it says what it is IN THE URL, which is the one place an id is ever seen;
@@ -143,9 +146,9 @@ DEV_LABEL = "dev"
 # real pipeline and not a shortened one.
 #
 # It lives here, next to the other names the whole package agrees on, rather
-# than in init_project.py where it is written: project.py is what has to
-# recognise it, and importing the one-shot init command from the build path to
-# read one string would point the dependency backwards. Two spellings of it
-# would mean a test id the build no longer recognises, and the entire safety of
-# the flag is that refusal.
+# than in the command that once wrote it: project.py is what has to recognise
+# it, and importing a one-shot init command from the build path to read one
+# string would point the dependency backwards. Two spellings of it would mean a
+# test id the build no longer recognises, and the entire safety of the flag is
+# that refusal.
 TEST_ID = "local-test-do-not-publish"

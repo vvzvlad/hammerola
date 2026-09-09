@@ -157,7 +157,7 @@ KINDS = (MEASURED, DERIVED, ESTIMATED)
 #
 # THE FOUR COPIES OF 200 ARE ONE RULE ON PURPOSE, and that is a DECISION rather
 # than a coincidence four files happen to agree on. They are this one,
-# `hubspec.MAX_NOTE_CHARS`, `render.MAX_TEXT` and `client.limits.MAX_TEXT_CHARS`,
+# `hubspec.MAX_NOTE_CHARS`, `render.MAX_TEXT` and `hammerola.limits.MAX_TEXT_CHARS`,
 # and nothing MECHANICALLY holds a note under the third: metrics.json is served
 # as a file and never passes through `render._plain_text`, so a note is bounded
 # here and nowhere else. The number is kept equal anyway, because one ceiling on

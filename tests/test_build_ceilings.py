@@ -20,7 +20,7 @@ nothing to run and they fail on the commit that breaks them.
 
 from src.buildproc.limits import BUILDS_SHARING_THE_HOST, DEFAULT_LIMITS
 from hammerola.hub import JOB_TIMEOUT, SLOW_BUILD_SECONDS
-from src.jobs import MAX_CONCURRENT_BUILDS, MAX_QUEUED_JOBS
+from src.jobs import MAX_CONCURRENT_BUILDS, MAX_QUEUED_JOBS, WIP_MAX_AGE_SECONDS
 from src.buildproc.limits import _usable_cores
 from src.store import LEFTOVER_MAX_AGE_SECONDS
 
@@ -152,3 +152,29 @@ def test_one_build_never_claims_the_whole_machine():
         f"{MAX_CONCURRENT_BUILDS} builds x {limits.occt_threads} threads = "
         f"{total} on {_usable_cores()} usable cores, and the floor of 2 does "
         f"not explain it.")
+
+
+def test_the_two_sweep_cutoffs_are_not_one_number_again():
+    """`.wip-` files and `.src-`/`.body-` trees are swept on different clocks.
+
+    They read the same constant until 2026-08-29, both spelled "an hour" for
+    the same-sounding reason, and that hid the fact that they are not alike.
+    The store's cutoff covers entries that live from the request until the
+    build ENDS, so it is a function of the queue wait and rose to four hours
+    with `wall_seconds`; a `.wip-` file is the hub's own half-finished write,
+    abandoned in milliseconds and belonging to nothing by the time the sweep
+    runs at all. Collapsing them again would quadruple the second wait as a
+    side effect of a change about the first, leaving megabytes of `.wip-log`
+    on the volume for no reason.
+
+    IT IS ALSO WHAT KEPT THE PROSE WRONG. Four comments across `jobs.py` and
+    `store.py` still said "an hour" about the store's sweep long after it
+    became four (issue #88), because the split was written down once, in one
+    paragraph, and nowhere executable.
+    """
+    assert WIP_MAX_AGE_SECONDS < LEFTOVER_MAX_AGE_SECONDS, (
+        f"jobs.WIP_MAX_AGE_SECONDS={WIP_MAX_AGE_SECONDS} and "
+        f"store.LEFTOVER_MAX_AGE_SECONDS={LEFTOVER_MAX_AGE_SECONDS}: the first "
+        f"sweeps writes abandoned in milliseconds and the second sweeps trees "
+        f"that live for the length of a build, so the first is the smaller of "
+        f"the two or one of them is being read for the other's reason")

@@ -81,9 +81,10 @@ export const MONO = 'var(--hmr-mono)';
  *     thing from the four above: the same detail of the same header, copied
  *     into `site.css` the same way;
  *   * `#1f6fd0` — the site's accent blue, and the resolver's link takes exactly
- *     it. Five more copies live in `HammerolaEntry.jsx` and
- *     `HammerolaViewer.jsx`, so moving the accent in the bundle leaves the
- *     resolver on the old one without a word.
+ *     it. More copies live in `HammerolaEntry.jsx` and `HammerolaViewer.jsx` —
+ *     deliberately not counted here, because nothing holds the count and the
+ *     count written here had already drifted — so moving the accent in the
+ *     bundle leaves the resolver on the old one without a word.
  *
  * Both are deliberate copies rather than oversights, and both can drift in
  * silence. Promoting one is two lines — export it here, add it to the list

@@ -5,8 +5,18 @@ was the obvious candidate and it is REMOVED in Python 3.13 — the image is on 3
 today, so importing it would have worked right up to the base-image bump. The
 `email` package can parse the same bytes, but it is a lenient mail parser: it
 repairs malformed input rather than refusing it, and the one place this parser is
-used (SPEC 7A.2) is the only endpoint on the whole service that reads a body from
-an unauthenticated stranger. There, "refuse anything unusual" is the requirement.
+used (SPEC 7A.2) is the only endpoint on the whole service that reads a
+STRUCTURED body at all. Everywhere else a body is bytes with a length; here it is
+a format with a grammar, and "refuse anything unusual" is what keeps a
+disagreement between this parser and whatever validates the result from becoming
+a value that got past a check.
+
+IT IS NOT AN ANONYMOUS BODY, and this paragraph said it was until issue #88.
+Writing a comment has taken EDIT_TOKEN since step 0, and `_handle_comment_post`
+in src/app.py checks it BEFORE a byte of the body is read — which
+`tests/test_comments.py` pins, so this parser never sees a stranger's bytes. The
+strictness is worth having for its own reasons above; it is not a boundary
+against anybody.
 
 So this is a whitelist, in the same spirit as the tar reader in store.py:
 

@@ -14,8 +14,10 @@
  *                 is not built, so every card draws the mock's own neutral
  *                 plate. No field was invented to hold one.
  *   status     -> the DRAFT's, and only that (issue #32). `/index.json` answers
- *                 `idle`/`building`/`failed` for the last build pushed into the
- *                 project's `dev` slot; the chip is drawn for the middle two and
+ *                 `idle`/`building`/`failed` for the last build pushed AS A
+ *                 DRAFT — not for the last build in the project's `dev` slot,
+ *                 which a commit build fills too (issue #78) while deliberately
+ *                 moving no pointer; the chip is drawn for the middle two and
  *                 for nothing else, because a pill on every card is a pill
  *                 nobody reads. A COMMIT build in flight stays invisible here on
  *                 purpose — see `projectCard` in hub.js.

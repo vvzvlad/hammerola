@@ -26,9 +26,13 @@ from .errors import BuildError
 # The file that says "this directory is a model project" (hub SPEC 3.1).
 PROJECT_FILE = "project.json"
 
-# Names of the two paths a build writes. Relative to the project root, and
-# spelled once: the Makefile's `clean`, the tar exclusions in remote.py and the
-# .gitignore of every project all mean these.
+# Names of the two paths a LOCAL build writes, relative to the project root. A
+# model repository that has not moved over still has a `make build` writing
+# them and a `make clean` removing them; nothing in this repository does either,
+# and the client deliberately does not exclude them from a push -- it refuses a
+# push that carries them, so the author is told rather than quietly packed
+# without the output they are looking at (`hammerola/pack.py`, pinned by
+# `tests/client/test_pack.py`).
 OUT_DIR_NAME = "_out"
 ARCHIVE_NAME = "_out.tar.gz"
 
