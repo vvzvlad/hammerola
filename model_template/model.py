@@ -74,20 +74,70 @@ import checklib
 #
 # `MIN_STL_BYTES` at the end of this block is an `int` and is outside the rule
 # entirely -- a count is not a dimension.
+#
+# TWO KINDS OF NUMBER CARRY A SUFFIX, and they are the pair that is easiest to
+# mix up. `*_AVAILABLE` is room that EXISTS -- what a cavity, a slot or a
+# clearance hole offers -- and `*_NEEDED` is what something DEMANDS of that
+# room. Confusing the two is how a pocket comes out exactly the size of the
+# thing that has to slide into it, which fits on the screen and not on the
+# bench. The check is always `assert needed <= available`, and BOTH SIDES ARE
+# READ OFF THE GEOMETRY rather than off these lines: two constants compared
+# with each other hold however the solids came out, and go on holding after the
+# model has drifted away from them. The suffix goes only where it says
+# something -- a wall thickness is neither.
 # --------------------------------------------------------------------------
 
-LENGTH = checklib.estimated(
-    60.0, "outer X of both parts: the box was drawn round the board with room "
-          "to spare. Settled by the place this actually has to fit")
-WIDTH = checklib.estimated(
-    40.0, "outer Y of both parts, chosen the same way as LENGTH and settled "
-          "by the same thing")
-HEIGHT = checklib.estimated(
-    20.0, "outer Z of the base; the lid sits on top of this. Settled by the "
-          "tallest thing that has to go inside")
+# THE BOARD THE BOX CLOSES OVER, AND IT STANDS FIRST BECAUSE IT IS THE REAL
+# OBJECT. It is a mock, so nothing is exported for it and nobody prints it: what
+# it earns its place with is the FIT. It is cut round the posts, which is what
+# says there is room inside for it, the viewer paints it as a mock rather than
+# as something to make, and it is a leaf of the `assembled` tree you can look at
+# on its own. It is NOT in assembled_preview.png -- that picture is of a shut,
+# opaque box -- so it is something you open the viewer for.
+#
+# THE BOX IS DRAWN ROUND IT AND NOT THE OTHER WAY ROUND, which is why these four
+# numbers come before the outer ones instead of after them. LENGTH and WIDTH
+# below are `derived` from this block, a gap and a wall at a time. Written the
+# other way -- an outer size picked by eye with the board fitted into it
+# afterwards -- the file would state a dependency that never happened, and would
+# go on stating it after somebody measured a different board.
+BOARD_LENGTH = checklib.measured(
+    45.0, "ref/measurements.md#board", "caliper, 3 samples")
+BOARD_WIDTH = checklib.measured(
+    28.0, "ref/measurements.md#board", "caliper, 3 samples")
+BOARD_THICKNESS = checklib.measured(
+    1.6, "ref/measurements.md#board", "caliper over the bare laminate, "
+                                      "away from a pad, 3 samples")
+BOARD_CLEARANCE = checklib.estimated(
+    0.5, "per-side gap round the board: at the inner wall, and where it is cut "
+         "round the posts. Settled by whether the board drops in without being "
+         "pushed")
+
 WALL = checklib.estimated(
     2.4, "wall and floor thickness: four perimeters at a 0.6 mm nozzle. "
          "Settled by printing one and pressing on it")
+
+# What the board DEMANDS of the cavity: itself, plus its gap on both sides. No
+# `CAVITY_LENGTH_AVAILABLE` stands beside it on purpose -- the room that exists
+# is a property of the finished solid, and section 3 of `checks()` reads it off
+# build_base() rather than off this line.
+CAVITY_LENGTH_NEEDED = checklib.derived(
+    BOARD_LENGTH + 2 * BOARD_CLEARANCE,
+    "the board along X plus BOARD_CLEARANCE on each side")
+CAVITY_WIDTH_NEEDED = checklib.derived(
+    BOARD_WIDTH + 2 * BOARD_CLEARANCE,
+    "the board along Y plus BOARD_CLEARANCE on each side")
+
+LENGTH = checklib.derived(
+    CAVITY_LENGTH_NEEDED + 2 * WALL,
+    "outer X of both parts: the room the board needs, plus a wall on each side "
+    "of it")
+WIDTH = checklib.derived(
+    CAVITY_WIDTH_NEEDED + 2 * WALL,
+    "outer Y of both parts, arrived at the same way as LENGTH")
+HEIGHT = checklib.estimated(
+    20.0, "outer Z of the base; the lid sits on top of this. Settled by the "
+          "tallest thing that has to go inside")
 CORNER_RADIUS = checklib.estimated(
     3.0, "vertical corner fillet, outer. Chosen to look right; nothing but a "
          "printed part will settle it")
@@ -162,26 +212,6 @@ CLEAR_DIA = checklib.derived(
                      "plus 0.4 mm, so the screw pulls the lid down rather "
                      "than threading into it")
 
-# The board the box closes over -- a mock, so nothing is exported for it and
-# nobody prints it. What it earns its place with is the FIT: it is notched round
-# the posts, which is what says there is room inside for it, the viewer paints
-# it as a mock rather than as something to make, and it is a leaf of the
-# `assembled` tree you can look at on its own. It is NOT in
-# assembled_preview.png -- that picture is of a shut, opaque box -- so it is
-# something you open the viewer for. Its three sizes are measured off the real
-# board; LENGTH and WIDTH above are what was then drawn around them, not the
-# other way round.
-BOARD_LENGTH = checklib.measured(
-    45.0, "ref/measurements.md#board", "caliper, 3 samples")
-BOARD_WIDTH = checklib.measured(
-    28.0, "ref/measurements.md#board", "caliper, 3 samples")
-BOARD_THICKNESS = checklib.measured(
-    1.6, "ref/measurements.md#board", "caliper over the bare laminate, "
-                                      "away from a pad, 3 samples")
-BOARD_CLEARANCE = checklib.estimated(
-    0.5, "per-side gap where it is notched round the posts. Settled by whether "
-         "the board drops in without being pushed")
-
 PRINT_GAP = checklib.estimated(
     8.0, "space between the two parts in the `print` view: wide enough for a "
          "brim. Settled by the slicer, not by the design")
@@ -192,6 +222,15 @@ FIT_MIN = checklib.estimated(
           "pair and trying it")
 FIT_MAX = checklib.estimated(
     0.40, "above this the lid rattles. Settled the same way as FIT_MIN")
+
+# How much downward surface with nothing under it this design tolerates on the
+# lid. `checklib.unsupported_area` has no default for it, deliberately: some
+# overhang is normal on most parts and a number picked in the library would be a
+# number picked for somebody else's.
+LID_OVERHANG_MM2 = checklib.estimated(
+    0.0, "the lid prints flat face down, so every face of it is on the bed, "
+         "vertical or pointing up, and none at all is the honest budget. "
+         "Settled by turning the part over or by a feature that needs a bridge")
 
 # NOT the bed of anybody's printer -- nobody named one. This is the size below
 # which FDM printers essentially do not exist, so a part that fits inside it
@@ -226,7 +265,7 @@ MIN_STL_BYTES = 1024
 
 # @cache ON EVERY PART BUILDER, and it is not a micro-optimisation. `parts()`
 # builds all four, and `parts()` itself is called twice over -- once by the
-# build and once by section 6 of `checks()` below -- while `checks()` calls the
+# build and once by section 7 of `checks()` below -- while `checks()` calls the
 # builders again directly, from several places. Without this every one of those
 # is a solid computed from scratch, which is about a fifth of the run on a model
 # of any size. It is safe because these are pure functions of the constants
@@ -336,7 +375,7 @@ def build_screw() -> cq.Workplane:
 def build_board() -> cq.Workplane:
     """The board the box closes over, lying on the tray floor.
 
-    Notched round the posts: a mock that ran through them would draw a picture
+    Cut round the posts: a mock that ran through them would draw a picture
     nobody can build from.
     """
     return (cq.Workplane("XY", origin=(0, 0, WALL))
@@ -520,10 +559,12 @@ def checks(out_dir):
     before it measures anything, because a mock is scenery. So "does this fit
     inside the thing it is built around" is a question nothing shared answers --
     a bracket drawn straight through the wall it mounts on publishes clean --
-    and it is exactly the kind of rule this function is for. This model does not
-    write one either, and that is the gap to notice rather than to copy: the
-    board clears the posts because build_board() cuts them out of it, and
-    nothing below measures that it still does.
+    and it is exactly the kind of rule this function is for. Section 3 below is
+    this model's one, and it is worth copying the SHAPE of: the room is read off
+    the finished base and the demand off the mock, so neither side of it can be
+    answered by the constants that drew them. The lines at the top of this file
+    say the cavity is the board plus a gap; that section is what says it still
+    IS, after the shell, the fillets and the posts have had their say.
 
     MEASURE THE SOLIDS, do not restate the constants at the top of this file. A
     check that repeats the arithmetic passes for the wrong reason and goes on
@@ -604,7 +645,33 @@ def checks(out_dir):
                 f"the lid-to-base gap along {axis} is {gap:.2f} mm per side, "
                 f"outside {FIT_MIN}..{FIT_MAX} mm")
 
-    # 3. The two printed parts have to go together without sharing space.
+    # 3. THE CAVITY STILL HOLDS THE THING THE BOX WAS DRAWN AROUND. Nothing
+    #    shared asks this: the gate skips every pair with a `mock` on either
+    #    side, so a board standing through the wall publishes without a word.
+    #
+    #    NEEDED AGAINST AVAILABLE, and BOTH SIDES OFF THE SOLIDS. The room is
+    #    `cavity` -- the inner wire of the rim, read off build_base() two
+    #    sections up, so it is what the shell and the fillets actually left --
+    #    and the demand is the mock's own bounding box out of build_board().
+    #    Neither is CAVITY_LENGTH_NEEDED or BOARD_LENGTH: those are the lines
+    #    that DREW this, and comparing a line with itself passes on the day the
+    #    shell eats the cavity.
+    #
+    #    THE BOUNDING BOX IS THE HONEST QUESTION FOR THIS BOARD and would not
+    #    be for every mock: a rectangle cut round the posts sits inside its own
+    #    box, so what the box says is what the board asks of the walls. A mock
+    #    with an arm reaching out of its footprint needs the arm measured where
+    #    it goes, not a box drawn round the whole of it.
+    with checklib.section("the board fits"):
+        needed_box = build_board().val().BoundingBox()
+        for axis, needed, available in (("X", needed_box.xlen, cavity.xlen),
+                                        ("Y", needed_box.ylen, cavity.ylen)):
+            assert needed <= available, (
+                f"the board needs {needed:.2f} mm along {axis} and the cavity "
+                f"offers {available:.2f} mm. The box is drawn round the board, "
+                f"so this is the box having drifted away from what it is for")
+
+    # 4. The two printed parts have to go together without sharing space.
     #
     #    THE SHARED GATE ALREADY REFUSES THAT, and this section stays anyway --
     #    do not delete it as a duplicate. The gate returns a VERDICT and records
@@ -635,7 +702,7 @@ def checks(out_dir):
         problems += checklib.pairwise_interference(
             [base, lid_as_assembled()], ["base", "lid"])
 
-    # 4. The shell has to have left a floor and a hollow. Asked as two POINTS,
+    # 5. The shell has to have left a floor and a hollow. Asked as two POINTS,
     #    with checklib.material_at -- never as a boolean against a small cube.
     #    The point probe costs microseconds where the boolean costs
     #    milliseconds, and a model that scans a channel or grids a face does
@@ -654,7 +721,7 @@ def checks(out_dir):
         assert not solid(0.0, 0.0, HEIGHT - WALL / 2.0), (
             "the tray is solid where the cavity should be")
 
-    # 5. Both sides of the joint have to stay flat all the way to the edge. One
+    # 6. Both sides of the joint have to stay flat all the way to the edge. One
     #    chamfer there and the box stands open by the size of the bevel -- and
     #    it reads as a modelling detail rather than as a fault.
     with checklib.section("mating faces"):
@@ -662,7 +729,7 @@ def checks(out_dir):
         problems += checklib.mating_face_flat(lid, LID_THICKNESS,
                                               name="lid underside")
 
-    # 6. Every printed part fits a printer that exists, in the orientation it is
+    # 7. Every printed part fits a printer that exists, in the orientation it is
     #    exported in, and the mesh that came out of it is a real one. The
     #    catalogue is walked rather than a list written out here, so a PRINTABLE
     #    added to parts() is a part this section measures -- and only a
@@ -692,5 +759,22 @@ def checks(out_dir):
             size = stl.stat().st_size if stl.exists() else 0
             assert size >= MIN_STL_BYTES, (
                 f"{stl.name} is {size} bytes, which is not a printable mesh")
+
+    # 8. And the lid prints with nothing hanging in the air. build_lid() says in
+    #    its docstring that this is why it is modelled flat face down; this is
+    #    what holds it to that, and it asks the MESH the build already exported
+    #    rather than the solid -- so the orientation measured is the one the
+    #    slicer gets, and the same shape lying the other way up is a different
+    #    answer.
+    #
+    #    WHERE THE BUDGET CAME FROM: LID_OVERHANG_MM2 is 0.0 because this part
+    #    has no downward face off the bed at all -- a plate, a lip on top of it
+    #    and vertical holes through both. `unsupported_area` has no default for
+    #    it deliberately, since some overhang is normal on most parts, so a
+    #    design that tolerates a chamfer under a rim or a short bridge names the
+    #    area it tolerates here and says what that number came from.
+    with checklib.section("overhangs"):
+        problems += checklib.unsupported_area(
+            Path(out_dir) / "lid.stl", LID_OVERHANG_MM2, name="lid")
 
     return problems

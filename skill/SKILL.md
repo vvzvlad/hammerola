@@ -818,7 +818,7 @@ down to the gauge leaves alone. So it runs to the end and the log says
 `checks: N passed` about parts the build has not got. (Measured on the starter
 model: the catalogue cut to the one gauge, `assembled` and `print` rewritten to
 reference it, `checks()` left verbatim — the build went green and the log said
-`checks: 10 passed`, every section of it but the last one measuring a box and a
+`checks: 12 passed`, every section of it but the last one measuring a box and a
 lid the catalogue no longer held.) Only a `checks()` that indexes the
 catalogue by key refuses by itself. The rest holds — a gutted one
 fails the empty-checks gate above, no flag skips checks, and deleting it passes
