@@ -49,9 +49,14 @@ BUILDS_SHARING_THE_HOST = 4
 
 # Ceiling on the pool whatever the machine has. OCCT's parallel sections scale
 # sublinearly, and `cpu_seconds` is a multiple of this number -- on a 64-core
-# host an uncapped share would put the CPU backstop at ten hours, i.e. switch it
-# off. Eight is enough to make the parallel checks parallel and small enough to
-# keep the backstop meaning something.
+# host an uncapped share (64 // 4 = 16 threads) would put the CPU backstop at
+# five hours, i.e. switch it off. Eight is enough to make the parallel checks
+# parallel and small enough to keep the backstop meaning something.
+#
+# THE FIGURE FOLLOWS THE DIVISOR: it read "ten hours" while the divisor was 2
+# and the share was 32 threads, and halved with the divisor on 2026-09-09
+# (issue #80). The argument is the same either way, which is exactly why the
+# number in it has to be recomputed rather than left as prose.
 MAX_OCCT_THREADS = 8
 
 
@@ -247,8 +252,12 @@ class Limits:
     # WITH it -- `LEFTOVER_MAX_AGE_SECONDS` in src/store.py, which would
     # otherwise sweep the sources of a build still queued, and `JOB_TIMEOUT` in
     # hammerola/hub.py, which would otherwise give up on a build that is still
-    # legitimately waiting. Neither is cosmetic and neither is checked by
-    # anything: move this number again and go read both.
+    # legitimately waiting. Neither is cosmetic, and both ARE checked --
+    # `tests/test_build_ceilings.py` computes `worst_honest_wait()` out of this
+    # number and the worker count and compares each of them against it, which
+    # is what said the two could stay put when the workers went from two to
+    # four. What is NOT checked is the PROSE around them, so move this number
+    # again and go read both anyway.
     #
     # It is NOT settable per deployment, and that is worth knowing before
     # somebody goes looking for the variable: nothing reads the environment

@@ -19,7 +19,7 @@ nothing to run and they fail on the commit that breaks them.
 """
 
 from src.buildproc.limits import BUILDS_SHARING_THE_HOST, DEFAULT_LIMITS
-from hammerola.hub import JOB_TIMEOUT
+from hammerola.hub import JOB_TIMEOUT, SLOW_BUILD_SECONDS
 from src.jobs import MAX_CONCURRENT_BUILDS, MAX_QUEUED_JOBS
 from src.buildproc.limits import _usable_cores
 from src.store import LEFTOVER_MAX_AGE_SECONDS
@@ -98,6 +98,24 @@ def test_the_client_waits_at_least_as_long_as_the_hub_may_honestly_take():
         f"waiting its turn.")
 
 
+def test_the_slow_build_warning_fires_well_inside_the_hubs_own_wall():
+    """The client's threshold is only worth having BELOW the ceiling.
+
+    Every other number in this file is a copy that goes stale; this one is a
+    judgement and a copy of nothing, so what has to hold is not equality but the
+    ORDER. `SLOW_BUILD_SECONDS` exists for the zone where a build is green and
+    slow -- between it and `wall_seconds` -- and at or above the wall there is
+    no such zone: the only builds that could reach it are the ones the hub has
+    already killed, which carry their own diagnosis and are the two the client
+    deliberately says nothing to (`cli.SELF_DIAGNOSING`). The warning would then
+    be advice nobody sees, on runs that were answered already.
+    """
+    assert SLOW_BUILD_SECONDS < DEFAULT_LIMITS.wall_seconds, (
+        f"SLOW_BUILD_SECONDS={SLOW_BUILD_SECONDS} is not under the hub's own "
+        f"wall of {DEFAULT_LIMITS.wall_seconds} s: no green build can reach it, "
+        f"so the client's slow-build warning is unreachable.")
+
+
 def test_the_thread_share_knows_how_many_builds_share_the_machine():
     """`limits` spells MAX_CONCURRENT_BUILDS a second time, and must not drift.
 
@@ -123,7 +141,14 @@ def test_one_build_never_claims_the_whole_machine():
     """
     limits = DEFAULT_LIMITS
     total = limits.occt_threads * MAX_CONCURRENT_BUILDS
-    assert total <= _usable_cores() or limits.occt_threads == 2, (
+    # THE EXCUSE IS "THE SHARE ROUNDED BELOW THE FLOOR", not "the pool happens
+    # to be two". Written as the first thing because the second one silently
+    # widens with the divisor: at two builds it excused machines under four
+    # cores, at four builds it would excuse everything under eight -- so a
+    # 4-core machine running 4 x 2 = 8 threads would have passed while reading
+    # like it could not. This spelling means the same thing at any divisor.
+    on_the_floor = _usable_cores() // MAX_CONCURRENT_BUILDS < 2
+    assert total <= _usable_cores() or on_the_floor, (
         f"{MAX_CONCURRENT_BUILDS} builds x {limits.occt_threads} threads = "
         f"{total} on {_usable_cores()} usable cores, and the floor of 2 does "
         f"not explain it.")
