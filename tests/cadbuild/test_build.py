@@ -19,17 +19,23 @@ from pathlib import Path
 from types import SimpleNamespace
 import importlib.util
 import json
+import sys
 import textwrap
 
 import pytest
 
 from src.cadbuild import build as build_module
+from src.cadbuild import checklib
 from src.cadbuild import paths
 from src.cadbuild import provenance as real_provenance
 from src.cadbuild.artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID,
                                     PREVIEW_SUFFIX, PRINT_VIEW_ID)
 from src.cadbuild.build import build
 from src.cadbuild.errors import BuildError
+from src.cadbuild.geometry import load_model as real_load_model
+from src.cadbuild.metrics import METRICS_NAME
+from src.cadbuild.metrics import collect_metrics as real_collect_metrics
+from src.cadbuild.metrics import write_metrics as real_write_metrics
 from src.cadbuild.modelchecks import run_checks as real_run_checks
 
 from fakes import catalogue
@@ -442,6 +448,51 @@ def test_a_build_with_a_print_view_declares_the_plate_and_says_nothing(
     assert f"base{PREVIEW_SUFFIX}" in files
 
 
+def test_every_phase_of_a_build_is_timed_and_the_marks_run_end_to_end(
+        driven, monkeypatch, out_dir):
+    """The timing itself, held on the CALL rather than on the log text.
+
+    NOTHING HELD IT BEFORE. The phase table is how somebody with no CAD kernel
+    on their machine finds out where a fifteen-minute build went, and every
+    assertion about it lived in a comment: a phase could be dropped, or its mark
+    reset to the start of the build, and the suite would not have moved. Reading
+    it back off the printed lines would be a test of the format instead — the
+    fact worth holding is that `build` ASKS for each phase, in order, from the
+    mark the phase before it handed back.
+
+    THE MARK IS A COUNTER AND NOT A CLOCK, which is what makes the second
+    assertion exact rather than approximate: `_phase`'s return value is only
+    ever passed straight back in as the next `since`, so a stand-in may hand
+    back anything it can recognise later. A wall clock would only support "the
+    numbers go up".
+
+    `total` IS THE EXCEPTION AND IS ASSERTED AS ONE: it is measured from the
+    beginning of the build rather than from the phase before it, so it is the
+    one call whose `since` is `build`'s own starting mark.
+    """
+    calls = []
+
+    def phase(name, since):
+        calls.append((name, since))
+        return len(calls)
+
+    monkeypatch.setattr(build_module, "_phase", phase)
+
+    build(out_dir)
+
+    assert [name for name, _since in calls] == [
+        "model", "geometry", "printables", "checks", "rendering",
+        "tessellation", "total"], (
+        "a phase was dropped, renamed or reordered; the log's table is the only "
+        "account of where a slow build spent its time")
+    assert [since for _name, since in calls[1:-1]] == [1, 2, 3, 4, 5], (
+        "a phase is the gap between two marks, and one of these was measured "
+        "from somewhere other than the end of the phase before it")
+    assert calls[-1][1] == calls[0][1], (
+        "`total` is measured from the start of the build, which is the same "
+        "mark the first phase was measured from")
+
+
 def test_a_whole_build_mesh_is_filed_under_the_view_it_is_of(
         with_a_plate, out_dir):
     """`assembled.stl` and `print.stl` are pictures of a VIEW, so they hang off
@@ -682,6 +733,106 @@ def test_a_checks_that_holds_no_check_publishes_under_force(with_real_checks,
     assert "contains no check" in str(exc.value)
 
     build(out_dir, force=True)
+
+
+@pytest.fixture
+def after_a_real_model_import():
+    """Undo what importing a real model.py leaves behind in THIS process.
+
+    Three things, and every one of them is read by something a long way from the
+    test that left it:
+
+      * the unit registry and the three records. `tests/cadbuild/conftest.py`
+        asserts both are empty either side of every test, and a build that runs
+        check units fills both legitimately -- the model is imported here as
+        well as in every worker, because here is where `run_units` reads the
+        names from, and the records the workers measured are merged back into
+        this process on purpose.
+      * `sys.modules["model"]`. `import model` is one name for every project, so
+        a model left behind is the file some later test's build gets instead of
+        its own.
+      * `sys.path`. `geometry.load_model` puts the project root on it and never
+        takes it off, so a scratch project stays importable for the rest of the
+        session -- and pytest's tmp directories outlive the run. That is how
+        this was found: `test_geometry`'s "there is no model.py" test imported
+        the one THIS test had written, three files earlier, and did not raise.
+    """
+    saved_path = list(sys.path)
+    yield
+    checklib._UNITS.clear()
+    checklib._take_records()
+    sys.modules.pop("model", None)
+    sys.path[:] = saved_path
+
+
+def test_a_model_with_a_check_unit_counts_it_and_keeps_what_it_measured(
+        driven, monkeypatch, isolated_project, out_dir,
+        after_a_real_model_import):
+    """`build()` OVER A MODEL THAT REGISTERS A UNIT -- the feature's one door.
+
+    Everything else about check units is tested from `run_units` inwards, which
+    leaves the call itself unwatched: the line in `build()` could be deleted and
+    nothing outside tests/cadbuild/test_checkunits.py would move. What this
+    holds is the three things that call has to get right, and each of them has
+    failed on its own:
+
+      * THE UNITS ARE COUNTED. One registered unit is one check, so a model with
+        one `checks()` assert and one unit reports two. `run_checks` answering
+        `None` for a counted zero is what made that number `null` for a model
+        that had moved every check into units, and `report_metrics` then could
+        not say a project had lost one.
+      * THE UNITS RUN BEFORE THE METRICS ARE WRITTEN, and their records are
+        merged before `collect_metrics` reads them. The interference number here
+        is measured in a WORKER PROCESS and reaches metrics.json only across
+        that boundary -- left in the worker it comes out empty, on a build that
+        measured it, with nothing going red.
+      * THE MODEL IS THE REAL ONE, imported off disk by the real `load_model`,
+        because that import is what fills the registry `run_units` reads.
+    """
+    monkeypatch.setattr(build_module, "load_model", real_load_model)
+    monkeypatch.setattr(build_module, "run_checks", real_run_checks)
+    monkeypatch.setattr(build_module, "collect_metrics", real_collect_metrics)
+    monkeypatch.setattr(build_module, "write_metrics", real_write_metrics)
+    (isolated_project / "model.py").write_text(textwrap.dedent("""
+        import checklib
+
+        # The private record, because the real writer of it -- pairwise_interference
+        # -- wants a CAD kernel this suite does not have. What is under test is
+        # the crossing back out of the worker, not the measuring.
+        from src.cadbuild import checklib as record
+
+
+        def parts():
+            return {}
+
+
+        def views():
+            return []
+
+
+        def build_lid():
+            return 4
+
+
+        @checklib.check("lip joint", needs={"lid": build_lid})
+        def check_lip(lid):
+            record._INTERFERENCE["body|lid"] = 0.5
+
+
+        def checks(out_dir):
+            assert build_lid() == 4, "the lid stopped being the lid"
+    """), encoding="utf-8")
+    sys.modules.pop("model", None)
+
+    build(out_dir)
+
+    metrics = json.loads((out_dir / METRICS_NAME).read_text(encoding="utf-8"))
+    assert metrics["checks_passed"] == 2, (
+        "one assert in checks() and one registered unit are two checks; a "
+        "count that cannot say so is a count metrics.json cannot compare")
+    assert metrics["assembly"]["interference_mm3"] == {"body|lid": 0.5}, (
+        "measured in a worker process and never merged back, this comes out "
+        "empty on a build that measured it and nothing goes red")
 
 
 def test_the_hubs_own_gate_still_refuses_a_forced_build(driven, monkeypatch,

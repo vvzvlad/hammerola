@@ -9,6 +9,7 @@ import time
 
 from .artifacts import ASSEMBLED_STEM, ASSEMBLED_VIEW_ID, PREVIEW_SUFFIX, PRINT_VIEW_ID
 from .assembly import export_assembled, export_print_plate, render_previews
+from .checkunits import run_units
 from .gate import (check_assembled_coverage, check_interference,
                    check_print_layout)
 from .geometry import load_model
@@ -149,6 +150,21 @@ def build(out_dir, preview_mode="iso", force=False):
     if problem:
         print(f"warning: {problem}")
 
+    # IMPORTING model.py IS ITS OWN PHASE, and until it had one it was spent
+    # inside `geometry` with nothing saying so. It is not free and it is not
+    # geometry: everything at module level of the author's file runs here -- the
+    # constants, whatever they are computed from, and any import the model pulls
+    # in -- and on a file that builds something at import time this is where the
+    # time goes, under a name that says the gates were slow.
+    #
+    # The mark sits after the two lines that name the project rather than
+    # straight after the load, for the reason every other phase's mark sits
+    # where it does: a phase is the gap between two marks, so this one covers
+    # everything from the start of the build up to and including the load, and
+    # what is between them (an empty output directory, one string check) is
+    # invisible at a tenth of a second.
+    phase = _phase("model", started)
+
     # WHERE THE NUMBERS CAME FROM, first of all of these. It is a rule about
     # the SOURCE -- the case of a name and the type of a value, read off the
     # file the model was imported from -- so it costs a parse and no geometry
@@ -196,8 +212,10 @@ def build(out_dir, preview_mode="iso", force=False):
     check_interference(prepared, catalogue)
     # Everything above is the model's own geometry being computed -- the @cache
     # builders run for the first time here, which on a heavy model is most of
-    # this number rather than the gates it is measured at the end of.
-    phase = _phase("geometry", started)
+    # this number rather than the gates it is measured at the end of. FROM THE
+    # LOAD'S MARK and not from `started`: the import used to be counted in here
+    # too, so a model that was slow to import read as slow geometry.
+    phase = _phase("geometry", phase)
 
     print("exporting printables:")
     part_files, part_metrics = export_printables(catalogue, out_dir)
@@ -219,7 +237,10 @@ def build(out_dir, preview_mode="iso", force=False):
         print("checks: not run -- this push asked for the model's own checks "
               "to be skipped")
     else:
-        checks_passed, checks_static = run_checks(model, out_dir)
+        # The registered units are the model's own checks too -- so they are
+        # inside `force`'s else, and their count folds into the same report.
+        # `run_units` does nothing at all when the model registered none.
+        checks_passed, checks_static = run_units(run_checks(model, out_dir))
     # Two lines about checks, and they answer different questions: run_checks
     # prints how many there were, this prints what they cost. It is printed for
     # a forced build too, and deliberately: a phase with NO line is how this log

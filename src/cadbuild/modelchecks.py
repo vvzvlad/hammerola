@@ -821,6 +821,11 @@ def print_check_sections():
     below SECTION_FLOOR collapse into one line: their count is what matters
     (twelve tiny sections is a shape worth seeing), not twelve labels.
 
+    THE ROWS CAN NOW ADD UP TO MORE THAN THE PHASE THEY SIT UNDER: a label's
+    seconds are summed across the PARALLEL workers running check units as well
+    as across repeats, so two units that each spent 40 s under `probing` print
+    one 80-second row out of 40 seconds of wall clock.
+
     checklib is imported HERE rather than at module level so this reaches the
     module the MODEL filled. The model's own `import checklib` may be what loads
     it, through the shim at the repository root, and there must be exactly one
@@ -932,11 +937,31 @@ def describe_returned(result):
     return kind
 
 
+def _registered_units():
+    """The units `@checklib.check` registered, for the empty-checks() refusal.
+
+    A `checks()` with no check in it is refused because "every run prints that
+    the checks passed, for a model nothing looked at" -- and that sentence
+    stops being true the moment the model has units, which are checks the build
+    runs and counts (cadbuild.checkunits). A model half way through moving its
+    checks out of `checks()` would otherwise be refused for having got most of
+    the way.
+
+    checklib is imported HERE for `print_check_sections`'s reason: this has to
+    reach the module the MODEL filled, and the model's own `import checklib` may
+    be what loads it, through the shim at the repository root.
+    """
+    from . import checklib
+
+    return checklib.registered_units()
+
+
 # What run_checks answers with: how many checks passed, and how many of the
 # counted sites the constants settled on their own. `passed` is None for TWO
 # reasons -- the body could not be counted, and every site that was counted
-# turned out to be settled by the constants (see run_checks) -- so a caller has
-# to tell "none" from "unknown" either way and a bare number was never enough.
+# turned out to be settled by the constants while the model has no units to add
+# to the number (see run_checks) -- so a caller has to tell "none" from
+# "unknown" either way and a bare number was never enough.
 CheckReport = collections.namedtuple("CheckReport", "passed static")
 
 
@@ -957,6 +982,13 @@ def run_checks(model, out_dir):
     unknown" -- rather than to 0, because 0 is the refusal above and this is
     deliberately not one. It mirrors how `_reraises` is subtracted in
     count_checks without being allowed to reach zero.
+
+    A MODEL WITH UNITS IS THE EXCEPTION TO THAT LAST RULE, and it has to be. 0
+    is only reserved because it is the refusal, and the refusal is waived for a
+    model that has units -- so for that model 0 is an ordinary answer, "checks()
+    holds nothing and the units are where the checks went", and
+    `checkunits.run_units` adds one per unit to it. Left as None it was an
+    unknown that nothing could make known again.
 
     Optional: a model.py without checks() builds exactly as it did before.
     Called after the geometry gate and before anything is packed, so a check
@@ -988,7 +1020,8 @@ def run_checks(model, out_dir):
             "not a function")
 
     count = count_checks(checks)
-    if count == 0:
+    units = _registered_units()
+    if count == 0 and not units:
         raise BuildError(
             "checks() is defined but contains no check: no assert, no raise, "
             "nothing filling the list it returns, not even a call to anything. "
@@ -1103,9 +1136,21 @@ def run_checks(model, out_dir):
     static = static_asserts(checks, vars(model))
     passed = count
     if passed is not None:
-        # `or None` is the "never 0" above: an all-static checks() reports an
-        # unknown count, not a refusal.
-        passed = (passed - len(static)) or None
+        passed -= len(static)
+        if passed == 0 and not units:
+            # The "never 0" above: an all-static checks() reports an unknown
+            # count, not a refusal.
+            #
+            # AND ONLY WHEN THERE ARE NO UNITS, because 0 here is then a real
+            # measurement rather than a value 0 is reserved against. A model
+            # half way through the migration -- an empty `checks()`, which the
+            # units above are what waives the refusal of, plus its units --
+            # counted 0 and left through this line as "unknown", so
+            # `checkunits.run_units` had nothing to add its units to and
+            # metrics.json carried `checks_passed: null` for a model with eight
+            # checks. `report_metrics` could then no longer say the project had
+            # lost one, which is the one thing that number is kept for.
+            passed = None
 
     # Say the number when it is known, and say that it is not when it is not.
     # A bare `passed` reads like "many" and can mean "none". The bracket appears
