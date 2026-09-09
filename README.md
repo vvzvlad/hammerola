@@ -453,6 +453,9 @@ build, which is the one thing the image is there for.
 
 | File | What it holds |
 | --- | --- |
-| `AGENTS.md` | The conventions this repository is written by, and what every directory in it is for. Start here before changing anything. |
+| `AGENTS.md` | The rules themselves, stated in one line each, and where to read the rest. It is deliberately short: it is loaded into every agent's context, so the reasoning lives in the three files below it. Start here before changing anything. |
+| `docs/conventions.md` | The same conventions with the reason each one exists — usually the thing that broke silently before it was written down. |
+| `docs/repo-map.md` | What every directory and every load-bearing file in this repository is for. |
+| `docs/bootstrap.md` | The state of the move from the three repositories this project absorbed: what is closed, what is open, and the decisions that are not reopened. |
 | `docs/SPEC.md` | The requirements, the facts that were verified the hard way, and the work plan. |
 | `ui/README.md` | The browser interface: its layout, its pins, and why it is built twice. |
