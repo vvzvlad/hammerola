@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part", "CadQuery", "STL".
-version: 11
+version: 12
 ---
 
 # hammerola
@@ -627,7 +627,10 @@ section: a working model with the rules written next to the geometry. In short,
   `material_at`; `volume` and `is_empty` say whether a boolean left anything at
   all (`assert wp.vals()` cannot answer that — it is true of an emptied body);
   and `section` marks a stretch of `checks()` so the build log prints what it
-  cost. Every one of them reads EVERY body of the part it is handed — including
+  cost. `check` is the odd one out: it registers a check as a unit the hub runs
+  in a worker of its own rather than measuring anything itself (see «Keeping
+  checks fast enough to run»). Every one of them reads EVERY body of the part it
+  is handed — including
   a part assembled with `.add()`, whose bodies may touch or sit inside one
   another — rather than whichever body happens to be first. The module lives
   inside the hub's image; there is nothing to install and nothing to vendor.
@@ -959,6 +962,43 @@ a range you computed up front, which cannot do this at all. When it really must
 be a `while`, bound it by a count as well as by the condition, and make the
 check fail loudly when the bound is what stopped it — a silent bail-out turns a
 runaway loop into a check that passes.
+
+**Split `checks()` into units and the hub runs them at the same time.** A check
+marked with `@checklib.check` is a UNIT: the hub queues it and drains the queue
+across two worker processes, so two checks run at once instead of one after the
+other. Nothing else changes — a unit still fails by `assert cond, "why"`, still
+appears in the timings table under the name you gave it, and the function is
+returned unchanged, so `checks()` can still call it directly.
+
+```python
+@checklib.check("lip joint", needs={"body": build_body, "lid": build_lid})
+def check_lip_joint(body, lid):
+    assert lip_overlap(body, lid) > MIN_LIP, "lip joint too shallow"
+```
+
+`needs` maps this check's OWN parameter names to the builders that produce those
+arguments — the two lines a `checks()` opens with (`base = build_base()`) are
+literally what becomes one `needs`. It is not a selection out of `parts()`:
+the catalogue is computed whole, so naming a part of it would build every part.
+Everything is verified at the `@` rather than at the call, because the call
+happens in another process — a `needs` key naming no parameter of the function
+would otherwise surface as a bare `TypeError` out of a worker on a build that
+has already spent its geometry phase.
+
+**A unit has its own budget: 120 seconds, enforced by killing the worker.** That
+is the point of the split for a check that hangs — one runaway costs one worker
+and two minutes, and the rest of the queue drains on the other, where before it
+cost the build's whole fifteen-minute wall clock and came back as a timeout
+naming nothing. The log's verdict line is a count: `check units: 4 passed` when
+they all pass, `check units: 3 of 4 passed` when one does not.
+
+**Two things read differently once checks are units.** Section rows sum across
+workers, so the table's total can exceed the phase's wall clock — that is the
+parallelism showing, not a bug. And a builder cached with `@cache` is cached PER
+WORKER: each worker imports the model once and builds what its own units ask
+for, so a part needed on both workers is built twice. That is the price of the
+split and it is usually small against what the split buys, but it is why the
+caching rule below still matters rather than being made redundant by it.
 
 **Build each part once per `checks()`.** Builders are pure functions of the
 constants at the top of the file, and `checks()` typically calls four or five of
