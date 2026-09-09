@@ -333,10 +333,23 @@ def _dev_log(hub: Hub, root) -> int:
     try:
         text = hub.job_log(job)
     except HubError as error:
+        # ONLY A 404 IS EVIDENCE THAT THE JOB IS GONE, and only for that does
+        # this say why and what to do. The same call also fails on a stale token
+        # and on a hub that is not answering, and both of those used to be
+        # reported as a wiped volume with the advice to run `hammerola build` —
+        # a push that would fail for the very same reason a moment later. Those
+        # arrive already carrying the sentence that fits them (`login`, `cannot
+        # reach`), so they are passed through with the context this command has
+        # and nothing else added.
+        if error.status != 404:
+            raise ClientError(
+                f"the `{DEV_SLOT}` slot of project {pid} names job {job}, and "
+                f"reading its log from\n"
+                f"  {hub.url} failed:\n"
+                f"  {error}") from error
         raise ClientError(
             f"the `{DEV_SLOT}` slot of project {pid} names job {job}, and "
-            f"{hub.url} does not have it:\n"
-            f"  {error}\n"
+            f"{hub.url} does not have it.\n"
             f"  A job id means nothing on another hub, and jobs are kept with "
             f"no retention at all — so\n"
             f"  the usual causes are a configured hub that is not the one that "

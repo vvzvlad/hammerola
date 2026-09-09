@@ -714,6 +714,23 @@ def test_log_dev_when_the_hub_does_not_have_that_job(hub, model, capsys):
     assert hub.url in err
 
 
+def test_log_dev_with_a_stale_token_blames_the_token(hub, model, capsys,
+                                                     monkeypatch):
+    """The slot's meta.json is PUBLIC, so a wrong token gets through the first
+    request of this command and is refused only by the second. That must not be
+    reported as a job the hub has lost: the advice attached to that reading is
+    `hammerola build`, and a push fails on the same 401 a moment later."""
+    assert run(model, "build") == 0
+    capsys.readouterr()
+    monkeypatch.setenv("EDIT_TOKEN", "not-the-token")
+
+    assert run(model, "log", "dev") == 1
+    err = capsys.readouterr().err
+    assert "401" in err and "hammerola login" in err
+    assert "does not have it" not in err
+    assert "wiped" not in err
+
+
 def test_log_of_a_revision_the_hub_never_published(hub, model, capsys):
     publish(model, capsys)
     assert run(model, "log", "f" * 64) == 1

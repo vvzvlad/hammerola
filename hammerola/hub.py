@@ -268,7 +268,19 @@ IMPOSSIBLE_JOB_ID = "0" * 22
 
 
 class HubError(Exception):
-    """The hub could not be reached, or answered something unusable."""
+    """The hub could not be reached, or answered something unusable.
+
+    `status` is the HTTP code the hub answered with, and None when there was no
+    answer at all — a refused connection, a timeout, a body that would not
+    parse. It exists for the one caller that has to tell "this hub has no such
+    job" apart from every other way the same call can fail, because it says a
+    DIFFERENT sentence about the first (`sources._dev_log`). Everything else
+    prints the message and does not look: the text is written to stand alone.
+    """
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 # "NO POLL HAS EVER SUCCEEDED", which is not the same fact as "the hub answered
@@ -549,8 +561,18 @@ class Hub:
                                  content_type="application/gzip")
         return status, self._payload(status, raw)
 
+    # BOTH OF THESE NAME A 401 THE WAY EVERY OTHER PRIVATE READ IN THIS FILE
+    # DOES. They were the exception while their only caller was `build`, which
+    # reaches them a moment after a push the same token was accepted for — a 401
+    # there was not a case anyone would meet. `hammerola log dev` (issue #79)
+    # calls them cold, after a PUBLIC read of the slot's meta.json that answers
+    # 200 with any token at all, so a stale token first shows up right here; and
+    # its caller wraps whatever comes out in "the hub does not have that job",
+    # which would be a wrong diagnosis and a suggestion that cannot work.
     def job(self, job_id: str) -> dict:
         status, raw = self._call(f"/api/v1/jobs/{urllib.parse.quote(job_id)}")
+        if status == 401:
+            raise HubError(UNAUTHORIZED)
         if status != 200:
             raise HubError(
                 f"the hub answered HTTP {status} for job {job_id}: "
@@ -560,9 +582,11 @@ class Hub:
     def job_log(self, job_id: str) -> str:
         status, raw = self._call(
             f"/api/v1/jobs/{urllib.parse.quote(job_id)}/log")
+        if status == 401:
+            raise HubError(UNAUTHORIZED)
         if status != 200:
             raise HubError(f"the hub answered HTTP {status} for the log of "
-                           f"job {job_id}")
+                           f"job {job_id}", status)
         return raw.decode("utf-8", "replace")
 
     def _poll_job(self, job_id: str):
