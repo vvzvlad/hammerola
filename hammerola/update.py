@@ -106,7 +106,7 @@ def run(args) -> int:
     return 0
 
 
-def refuse_if_behind(hub) -> None:
+def refuse_if_behind(hub_url: str) -> None:
     """Stop a client the hub has outgrown before it publishes anything.
 
     TWO VERBS ASK AND NOT EVERY VERB, and what decides that is the cost: this is
@@ -128,18 +128,19 @@ def refuse_if_behind(hub) -> None:
     image looks like from this side — and the answer to that direction is
     updating the hub, which is not something this can do or should mention.
 
-    ASKED ON A QUESTION'S BUDGET AND NOT THE PUSH'S. The Hub handed in here
-    belongs to the push and carries `HTTP_TIMEOUT`, which is five minutes
-    because the request that matters is uploading an archive. Spending that on
-    an 80-byte GET is what `QUERY_TIMEOUT` exists to prevent (`hub.py`): an
-    address that black-holes packets instead of refusing them would hang the
-    terminal for five silent minutes BEFORE the first line of output, and then
-    hang it again on the push. Every other verb that only asks builds its Hub
-    the same short way. NO TOKEN either, for the reason `run` gives: `/start` is
-    public, and a client too old to publish may be one that never logged in.
+    AN ADDRESS AND NOT THE PUSH'S HUB, which is what the argument used to be.
+    That object carries `HTTP_TIMEOUT` — five minutes, because the request it
+    exists for is uploading an archive — and asking an 80-byte question with it
+    is what `QUERY_TIMEOUT` exists to prevent (`hub.py`): an address that
+    black-holes packets instead of refusing them hangs the terminal for five
+    silent minutes BEFORE any output, since this runs ahead of the packing, and
+    then hangs it again on the push. Taking the URL leaves that budget outside
+    the function rather than inside it as a thing to reach for. NO TOKEN, for
+    the reason `run` gives: `/start` is public, and a client too old to publish
+    may be one that was never logged in.
     """
     try:
-        manifest = Hub(hub.url, "", timeout=QUERY_TIMEOUT).start()
+        manifest = Hub(hub_url, "", timeout=QUERY_TIMEOUT).start()
     except HubError:
         return
     served = manifest.get(VERSION_KEY)
@@ -147,7 +148,7 @@ def refuse_if_behind(hub) -> None:
     if here is None or there is None or not here < there:
         return
     raise ClientError(
-        f"this hammerola is version {VERSION} and {hub.url} serves version "
+        f"this hammerola is version {VERSION} and {hub_url} serves version "
         f"{served}, so it is out of date. Nothing was published.\n"
         f"  `{UPDATE_HINT}` writes the hub's copy over this one and prints what "
         f"changed between the two.")

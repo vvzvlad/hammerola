@@ -1132,12 +1132,11 @@ class Hub:
             # of them was being told about a template it had not asked for and
             # offered a `create` flag that could not help it.
             raise HubError(
-                f"the hub answered HTTP {code} for {START_PATH}, which is the "
-                f"manifest naming the skill,\n"
-                f"  the client and the starter template. A hub older than this "
-                f"tool has no such route at all;\n"
-                f"  `hammerola create --no-template` is the one command that "
-                f"works without it.")
+                f"the hub answered HTTP {code} for {START_PATH}, the manifest "
+                f"naming the skill, the client and the template.\n"
+                f"  A hub older than this tool has no such route. `create`, "
+                f"`skill`, `skill update` and `update` read it; of those only "
+                f"`hammerola create --no-template` works without it.")
         return self._payload(code, raw)
 
     def fetch_path(self, path: str) -> bytes:

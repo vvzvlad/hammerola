@@ -41,7 +41,8 @@ from harness import TOKEN
 from modeldir import make_model
 
 from src import onboarding
-from hammerola import VERSION, changelog, update
+from hammerola import VERSION, changelog, config, update
+from hammerola import hub as hub_module
 from hammerola.cli import main
 from hammerola.errors import ClientError
 
@@ -415,18 +416,29 @@ def test_only_the_verbs_that_publish_ask_the_hub_about_the_client(monkeypatch,
     """THE COST IS THE WHOLE ARGUMENT: this is one more round trip, and a check
     on every verb would charge `status`, `log` and `comments` for a question
     only a WRITE can get wrong. Counted on the request itself rather than on the
-    call site, so moving the call somewhere convenient does not pass."""
+    call site, so moving the call somewhere convenient does not pass.
+
+    AND ON WHAT BUDGET, which is the same argument one step further. The Hub the
+    push builds carries `HTTP_TIMEOUT`, five minutes, because the request that
+    matters is uploading an archive; asking an 80-byte question with it hangs
+    the terminal for five silent minutes on an address that black-holes packets
+    — before any output at all, since this runs ahead of `pack()` — and then
+    hangs it again on the push. Reusing the caller's Hub is the one-word edit
+    that brings that back, and it would pass every other test in this file.
+    """
     asked = []
     real = update.Hub.start
 
     def counted(self):
-        asked.append(self.url)
+        asked.append((self.url, self.timeout))
         return real(self)
 
     monkeypatch.setattr(update.Hub, "start", counted)
 
     assert publish(model, "build") == 0
-    assert len(asked) == 1
+    assert asked == [(config.hub_url(model), hub_module.QUERY_TIMEOUT)], (
+        "the question a push asks about the client's own version was not sent "
+        "to the project's hub on a query's budget")
     asked.clear()
 
     assert main(["-C", str(model), "status"]) == 0

@@ -52,9 +52,10 @@ serves and will not publish from an older one, the only place in this tool that
 spends a round trip on a question about ITSELF.
 
 WHAT IS STILL NOT HERE. `status` shows no "last job", for a reason that is not
-going to lift on its own — job order is stored nowhere, see `status.py`. `log
-dev` was in that sentence until the slot started naming the job that filled it
-(issue #79), and now answers with that build's log — see `sources._dev_log`.
+going to lift on its own — job order is stored nowhere, see `status.py`.
+`log dev` was in that sentence until the slot started naming the job that
+filled it (issue #79), and now answers with that build's log — see
+`sources._dev_log`.
 
 THE PUBLISHING FLOW, which is what the rest of this file is about. Pack the
 working directory, POST it, poll the job, print what the build printed, and
@@ -360,8 +361,10 @@ def _publish(args) -> int:
     # has outgrown says so in a second rather than after packing a push it is
     # not going to be allowed to make. It is the ONLY verb pair that asks — see
     # `update.refuse_if_behind` for why reading verbs do not pay for it, and why
-    # a hub that cannot answer does not block the push.
-    update.refuse_if_behind(hub)
+    # a hub that cannot answer does not block the push. THE ADDRESS AND NOT THE
+    # HUB ABOVE: that one is built with the push's five-minute budget, and this
+    # question is 80 bytes.
+    update.refuse_if_behind(hub_url)
 
     archive = pack(root)
 
