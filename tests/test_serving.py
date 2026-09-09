@@ -544,7 +544,14 @@ def test_traversal_out_of_the_assets_directory_is_refused(hub):
 
 def test_unknown_paths_are_404(hub):
     for path in ("/nope", "/project", "/project/proj1/abc123/missing.json",
-                 "/api/v1/publish"):
+                 "/api/v1/publish",
+                 # THE PROJECT'S OWN BOOKKEEPING, which lives in the project
+                 # directory beside the builds and is not a build: the renamed
+                 # title and the pointer at the draft's last job. `SAFE_ID`
+                 # forbids a dot in a build id and `builds.json` is the single
+                 # named exception, so neither is reachable — but that is a
+                 # sentence in a docstring until something asks for them.
+                 "/project/proj1/title.json", "/project/proj1/draft.json"):
         assert hub.get(path).status_code == 404, path
 
 

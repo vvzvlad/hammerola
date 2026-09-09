@@ -531,6 +531,24 @@ SOURCE_LOG_NAME = "log.txt"
 # rule that makes `builds.json` reachable only because it is spelled out.
 PROJECT_TITLE_FILE = "title.json"
 
+# The job of the last build pushed into this project's `dev` slot, written when
+# that build STARTS (issue #32). It is what lets the front page say that a
+# project's draft is building or has failed: the slot's own meta.json also
+# carries a `job`, but only a build that SUCCEEDED ever writes one there, so a
+# build in flight and a build that failed leave no trace inside the slot at all.
+#
+# BESIDE `title.json` AND NOT INSIDE THE SLOT, and both halves matter.
+# `_swap_dev_slot` replaces the slot wholesale, so a file written into it before
+# the build is thrown away by the publish it was recording. And the slot's `job`
+# means "the job that FILLED this slot", which is a different fact from "the job
+# that was last asked to fill it" — a failed attempt must not overwrite the one
+# name from which the log of what is actually being served can be found.
+#
+# Unreachable from the outside for the same reason `title.json` is: `SAFE_ID` has
+# no dot in it, and `_serve_project` only takes a second segment that is a
+# pointer name or passes `valid_build_id`.
+PROJECT_DRAFT_JOB_FILE = "draft.json"
+
 # Every transient name the store writes. All dot-prefixed, so none of them is ever
 # served or picked up by `builds_of` — which is exactly why nothing notices when
 # one is left behind by a SIGKILL, and why they are swept explicitly at startup.
@@ -579,18 +597,24 @@ LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, UPLOAD_PREFIX,
 #
 # THAT IS THE ARITHMETIC THAT BROKE, and it broke silently exactly as predicted.
 # At 16, 120 s and 2 it was sixteen minutes, comfortably inside the hour. The
-# 2026-08-29 raise of `wall_seconds` to 900 s makes it TWO HOURS — past an hour,
+# 2026-08-29 raise of `wall_seconds` to 900 s made it TWO HOURS — past an hour,
 # so this sweeper would have deleted the unpacked sources of a build still
 # sitting in the queue, and the build would then have failed on a tree that was
 # there when it was accepted. Nothing tests this and nothing would have said so;
 # the only reason it was caught is that the comment above did the multiplication
 # out loud.
 #
-# Four hours: the two-hour worst case with the same kind of room the hour used to
-# give the sixteen minutes. What it costs is the other end — a killed 64 MiB
-# upload now sits on the volume for up to four hours instead of one — and that is
-# the right side to lose on, because a leftover wastes space while a swept-out
-# source loses a build.
+# SINCE 2026-09-09 THE WORST CASE IS AN HOUR, not two: the workers went from two
+# to four (issue #80), and the wait is divided by them. The number below did not
+# move with it, and deliberately — it was already the safe side of this
+# comparison, and `tests/test_build_ceilings.py` is what said so by computing the
+# worst honest wait out of the live constants and asserting this one clears it.
+#
+# Four hours: the worst case with the same kind of room the hour used to give the
+# sixteen minutes — twice over now that the wait has halved. What it costs is the
+# other end — a killed 64 MiB upload now sits on the volume for up to four hours
+# instead of one — and that is the right side to lose on, because a leftover
+# wastes space while a swept-out source loses a build.
 LEFTOVER_MAX_AGE_SECONDS = 4 * 3600
 
 
@@ -1495,6 +1519,18 @@ class Store:
                 # statement of what the project is called. Before the picker is
                 # written, so the file is rebuilt from the state that survives.
                 self.clear_title(pid)
+                # AND SO IS A DRAFT, for the same reason and one line later. The
+                # mirror above has just put this revision INTO the slot, so
+                # `_uncommitted_in_slot` is false and the `dev` chip goes -- and
+                # a draft status left behind would outlive the draft it is about:
+                # a card whose local work is gone would keep saying that work
+                # failed, until some later DRAFT push, which may be weeks away.
+                #
+                # THE COST, so it is a decision: a draft build in flight right
+                # now loses its `building` chip to this commit. That is the
+                # right way round -- the chip comes back wrong for the rest of
+                # one build, against a red chip that is wrong for ever.
+                self.clear_draft_job(pid)
                 self._switch_latest(pid)
                 self._write_builds_json(pid)
             except Exception:
@@ -2298,6 +2334,14 @@ class Store:
         not empty. A `dev`-only project counts too, because its slot is a
         directory in there. What is left out is exactly the residue.
 
+        THE DRAFT'S POINTER IS RESIDUE TOO, and it is the second thing a build
+        that fails can leave behind (issue #32). `set_draft_job` writes
+        `draft.json` when a draft build STARTS, before there is a slot or
+        anything else under the id — so without this name being skipped, a hub
+        whose very first push was a draft that did not build would answer "not
+        empty" for ever, which is the exact failure the paragraph above is
+        about, arriving by a second road.
+
         FAILS CLOSED. An unreadable `project/` answers "not empty", so no
         onboarding block is shown on a hub that could not be asked; the
         alternative would be to tell somebody their hub is empty on the strength
@@ -2311,8 +2355,10 @@ class Store:
         inherited it rather than having to reinvent it.
         """
         try:
-            return not any(entry.is_dir() and any(entry.iterdir())
-                           for entry in self.projects_dir.iterdir())
+            return not any(
+                entry.is_dir() and any(child.name != PROJECT_DRAFT_JOB_FILE
+                                       for child in entry.iterdir())
+                for entry in self.projects_dir.iterdir())
         except OSError as error:
             # Both `iterdir()`s are inside this, and the inner one is the reason
             # it is worth saying: a project directory the hub cannot read is not
@@ -2534,6 +2580,85 @@ class Store:
                     cards.append(card)
             cards.sort(key=lambda c: c["built"], reverse=True)
             _atomic_write_json(self.root / "index.json", cards)
+
+    # -- the draft's last build --------------------------------------------
+    def draft_job(self, pid: str) -> str | None:
+        """The job of the last build pushed AS A DRAFT, or None.
+
+        "As a draft" and not "into the slot", and the difference is the one this
+        repository has already tripped over once: a commit fills the slot with
+        itself too (issue #78), so "the last build in the slot" is a description
+        a commit build answers — and a commit build deliberately moves no
+        pointer here (`test_a_commit_build_moves_no_pointer`). What is published
+        as a commit has a revision to be addressed by and a card of its own; only
+        the local slot has a state nothing else can report.
+
+        None for a project nobody has ever pushed a draft to, and None for
+        anything unreadable — a torn file, a payload of the wrong shape, a
+        volume that refuses the read. The caller turns every one of those into
+        the same answer it gives for a job the registry no longer has, so there
+        is nothing here for a second kind of failure to mean.
+
+        A JOB ID AND NOT A STATUS WORD, which is the whole reason this file is
+        worth having rather than a `state` written twice. The job is the thing
+        that knows how it ended, and it keeps knowing across a restart: a job
+        left `building` by a SIGKILL is failed by `JobStore._load` at the next
+        start, so the card reads `failed` instead of sticking on `building` for
+        the life of the volume. A word copied in here would have to be corrected
+        by somebody, and there is nobody: the process that would have written it
+        is the one that died.
+
+        Read off the volume on every call rather than cached, like
+        `project_title` — a cache would have to be invalidated from the BUILD
+        thread, which is the sort of coupling `data/` is deliberately free of.
+        The cost is stated rather than waved at, because this is the line
+        somebody will read while pricing the front page: it is one small open
+        per card, and it is the only thing `/index.json` reads besides
+        `index.json` itself, which until this pointer existed was the one file
+        that route touched.
+        """
+        try:
+            payload = json.loads(
+                (self.projects_dir / pid / PROJECT_DRAFT_JOB_FILE
+                 ).read_text(encoding="utf-8"))
+        except (ValueError, OSError, RecursionError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        job = payload.get("job")
+        return job if isinstance(job, str) and job else None
+
+    def set_draft_job(self, pid: str, job_id: str) -> None:
+        """Point this project's draft at the job that has just started building it.
+
+        `mkdir` rather than a check that the project exists, which is where this
+        differs from `set_title`: the pointer is written at the START of a build,
+        and the first build of a brand new project starts before anything has
+        been published under its id, so there is no directory yet.
+        """
+        pdir = self.projects_dir / pid
+        with self._lock_for(pid):
+            pdir.mkdir(parents=True, exist_ok=True)
+            _atomic_write_json(pdir / PROJECT_DRAFT_JOB_FILE, {"job": job_id})
+
+    def clear_draft_job(self, pid: str) -> None:
+        """Forget the draft, because a commit has just replaced what was in the slot.
+
+        The exact shape of `clear_title` above and for the same kind of reason:
+        a commit mirrors itself into the slot (issue #78), so after it there is
+        no draft to have a state — and a pointer left behind would go on
+        reporting the last draft build's ending on a card whose local work is
+        gone. `publish_built` is the only caller, one line after `clear_title`.
+
+        Best effort, and called from inside the publish path: a volume that will
+        not take the unlink must not turn a published build into a failed one.
+        """
+        try:
+            (self.projects_dir / pid / PROJECT_DRAFT_JOB_FILE).unlink()
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            logger.warning(f"could not clear the draft pointer of {pid}: {error}")
 
     # -- rename, and remove ------------------------------------------------
     def project_title(self, pid: str) -> str | None:

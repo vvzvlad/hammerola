@@ -1169,6 +1169,40 @@ def builds_json(pid: str, metas: list[dict], dev: bool = False,
     }
 
 
+# THE THREE WORDS A PROJECT CARD MAY SAY ABOUT ITS DRAFT, and the whole mapping
+# onto them (issue #32). Here rather than in `src/jobs.py` because that module
+# imports `store`, which imports this one: a card word defined over there could
+# not be reached from the card without closing the cycle.
+#
+# So what the mapping takes is a PLAIN STRING and never a job record — this
+# module knows nothing about the registry and is not to learn. The coupling that
+# has to hold, that every state `src/jobs.py` can put a job in lands on one of
+# these words, is held by a TEST importing both rather than by this comment.
+CARD_IDLE = "idle"
+CARD_BUILDING = "building"
+CARD_FAILED = "failed"
+
+
+def card_status(state: str | None) -> str:
+    """What a project's card says about its draft, given that job's state.
+
+    `idle` for everything that is not one of the two answers worth a chip, and
+    that deliberately swallows both shapes of "there is nothing to say": no
+    pointer at all (`None`), and a pointer at a job the registry no longer has.
+    Neither is a failure of the PROJECT, and the front page is about projects.
+    """
+    # The job registry's own words, spelled out rather than imported for the
+    # reason above. That two of them are spelled like card words is a
+    # coincidence of vocabulary and not a shortcut: `queued` maps onto
+    # `building` because "waiting for a worker" is not a distinction the front
+    # page exists to draw.
+    if state in ("queued", "building"):
+        return CARD_BUILDING
+    if state == "failed":
+        return CARD_FAILED
+    return CARD_IDLE
+
+
 def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
     """One project's card on the public index.
 
@@ -1213,6 +1247,15 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
         "built": meta["built"],
         "first_built": first_built,
         "dev": bool(dev),
+        # DECLARED HERE AND ANSWERED BY THE ROUTE. What the draft's build is
+        # doing is a live fact, and this function writes a FILE: whatever word
+        # were put here would be the word that was true at the last publish,
+        # which is precisely the moment nothing is building. `_serve_index_json`
+        # in src/app.py fills it per request, from the project's pointer and the
+        # job registry (`card_status` above). The key is written all the same so
+        # that the field the browser reads is one this function declares —
+        # `tests/test_ui_source.py` holds the two sides to that.
+        "status": None,
         # HOW MANY PARTS GET PRINTED, and the field is called `printables`
         # because it answers a different question from the one the old field
         # asked. That one was `max(v["parts"] for v in meta["variants"])` — the

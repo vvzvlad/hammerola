@@ -165,20 +165,31 @@ export const projectUrl = (pid) => `/project/${encodeURIComponent(pid)}/`;
  * there reads as `undefined`, which renders as an empty string and formats as
  * `NaN` — never as an error.
  *
- * Three of the designer's fields have no line here, and each absence is a fact
+ * Two of the designer's fields have no line here, and each absence is a fact
  * about the hub rather than an omission:
  *
  *   * a PREVIEW image is block 12 of the brief and is not built yet, so every
  *     card draws the neutral plate. No field is invented to hold one.
- *   * a STATUS (`idle`/`building`/`failed`) cannot be answered at all. A build
- *     job is addressable only by its own id, there is no route that lists jobs,
- *     and job order is stored nowhere — it existed for a retention that no
- *     longer exists (SPEC 5.3, and the docstring of src/jobs.py). So the card
- *     carries no status and the page shows none, rather than showing `idle` for
- *     a project that is rebuilding as you look at it.
  *   * a REVISION NUMBER does not exist. A revision is named by the digest of its
  *     sources (SPEC 7.7), so there is no `v241` to show and there is not going
  *     to be one; the hash is shown at the length the rest of this site reads it.
+ *
+ * `status` IS ANSWERED, AND ABOUT THE DRAFT ONLY (issue #32). It is one of
+ * `idle`/`building`/`failed`, and what it describes is the last build pushed AS
+ * A DRAFT — not "the last build in the `dev` slot", which a commit answers too
+ * since it mirrors itself in there (issue #78). The hub records that job's id
+ * when the build STARTS, and `/index.json` maps its live state onto the word per
+ * request (`_serve_index_json` in src/app.py, `render.card_status`). So a draft
+ * that is building says so while it builds, and one that failed keeps saying so
+ * until the next draft push or until a commit replaces what is in the slot — a
+ * restart included, because a job left in flight by a crash is failed at the
+ * next start rather than left building for ever.
+ *
+ * WHAT IT DOES NOT ANSWER is a COMMIT build in flight, and that is deliberate
+ * rather than pending: the card describes what has been published from a commit
+ * (SPEC 7.6), and a chip saying a commit build is running would be the front
+ * page reporting on work that has published nothing. A project whose only build
+ * is local has no card at all, so it shows no status either.
  *
  * `first` is the one field whose NAME differs from what the mock asked for, and
  * deliberately: the mock wanted a creation date, the hub has the oldest build it
@@ -202,6 +213,7 @@ export function projectCard(card) {
     meta: `${card.printables} printables · ${card.views} views · ${card.mb} MB`,
     rev: shortId(card.commit),
     dev: !!card.dev,
+    status: card.status,
     built: card.built,
     first: card.first_built,
   };

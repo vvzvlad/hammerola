@@ -93,9 +93,11 @@ BUILD PARALLELISM IS ITS OWN NUMBER, deliberately not `MAX_CONCURRENT_PUBLISHES`
 The four accept slots in app.py are sized by what RECEIVING costs — a body on
 disk, a tar reader, a staging tree — and a build is sized by memory and by how
 long one hung build may hold a worker. Since 2026-09-09 both numbers happen to
-read four, and that is a COINCIDENCE of two separate measurements rather than a
-link: sharing one number would mean the day either ceiling is retuned, the other
-moves with it for no reason anybody could reconstruct.
+read four, and that is a COINCIDENCE of two independent decisions rather than a
+link — only ONE of the two is a measurement (this one, issue #80); the accept
+slots are an argument about a body on disk and CI retries, and nobody has ever
+measured them. Sharing one number would mean the day either ceiling is retuned,
+the other moves with it for no reason anybody could reconstruct.
 
 NOTHING IN THIS MODULE IS MODULE-LEVEL STATE. `JobStore` and `BuildQueue` are
 built per server, like `Store` and `CommentStore`, so two hubs in one test
@@ -227,9 +229,12 @@ LOG_TRUNCATED_NOTE = "\n[truncated by the hub: this log is larger than it should
 # workers do not make one build finish sooner; they stop one bad project from
 # starving everybody else.
 #
-# MEMORY is what bounds it, not cores: a build peaks around 450 MB resident, so
-# four of them together stay inside the ~12 GB the host has free. The next move
-# comes from another measurement, not from first principles.
+# MEMORY is what bounds it, not cores. The one figure actually measured is
+# ~450 MB resident right after `import cadquery` (buildproc/limits.py), which is
+# a FLOOR and not a peak — the model's geometry is on top of it, by an amount
+# nobody has measured. Four builds at that floor are 1.8 GB against the ~12 GB
+# the host has free, so the headroom carries a working set several times the
+# floor. The next move comes from another measurement, not from first principles.
 MAX_CONCURRENT_BUILDS = 4
 
 # How many pushes may be WAITING for a worker. Bounded on purpose: an unbounded
@@ -1289,6 +1294,26 @@ class BuildQueue:
         verdict = None
         try:
             self._jobs.start(task.job_id)
+            if task.commit == DEV_LINK:
+                # THE DRAFT'S POINTER, AT THE START AND NOT AT THE END, which is
+                # the whole of what makes the front page able to say `building`
+                # or `failed` (issue #32). The slot's meta.json carries a `job`
+                # too, but only a build that reached the publish ever writes one
+                # — so a build in flight and a build that failed are, from the
+                # slot's side, indistinguishable from a project nobody has
+                # touched.
+                #
+                # GUARDED, like the bookkeeping tails in `src/store.py`: this is
+                # a write to the data volume for the sake of a chip on a card,
+                # and a volume that will not take it must cost the chip and
+                # never the build.
+                try:
+                    self._store.set_draft_job(task.pid, task.job_id)
+                except Exception:
+                    logger.exception(
+                        f"job {task.job_id}: {task.pid}'s draft pointer could "
+                        f"not be written; the front page will not show this "
+                        f"build until it finishes")
             staging = self._store.build_staging(task.pid, task.commit)
             args, keywords = build_arguments(task.sources, staging, task.pid,
                                              force=task.force)

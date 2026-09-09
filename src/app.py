@@ -219,9 +219,13 @@ BODY_DEADLINE_SECONDS = 300
 # It is the ceiling on RECEIVING and nothing else. What a push costs to BUILD has
 # its own number, `jobs.MAX_CONCURRENT_BUILDS`, because the two are sized by
 # different things: this one by a body on disk and a tar reader, that one by
-# cores and memory. Merging them would tie two unrelated ceilings together, and
-# the day either is retuned the other would move for no reason anybody could
-# reconstruct.
+# MEMORY and by how long one hung build may hold a worker — not by cores, which
+# the 2026-09-09 measurement settled (issue #80: the build is effectively
+# single-threaded and the cores sit idle). Merging them would tie two unrelated
+# ceilings together, and the day either is retuned the other would move for no
+# reason anybody could reconstruct. That the two read 4 today is a coincidence of
+# two independent decisions, and `tests/test_jobs.py` says so rather than
+# asserting a relation between them.
 MAX_CONCURRENT_PUBLISHES = 4
 
 # Ceiling on the body of a resolve, which is one optional `note`. Not an env var:
@@ -552,14 +556,57 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             here: an unauthenticated caller must not be able to make the hub read
             anything off the volume, and must not be able to tell a hub with no
             projects from one with forty by how long the refusal takes.
+
+            COMPUTED RATHER THAN SERVED AS BYTES, for one field: `status`, what
+            the project's DRAFT is doing right now (issue #32). It is a live
+            fact, so the file cannot hold it — `_refresh_index` runs at a
+            publish, which is the one moment nothing is building — and a card
+            answering it from disk would be `idle` for a project that is
+            rebuilding as somebody looks at it. `render.index_card` therefore
+            writes the key as null and this is what fills it in, from the
+            project's pointer and the job registry, per request.
+
+            A COMMIT BUILD IN FLIGHT STAYS INVISIBLE HERE, deliberately: only a
+            DRAFT build writes the pointer and a commit build writes none, and
+            the front page's whole promise is that a card describes what has
+            been PUBLISHED from a commit (SPEC 7.6).
+
+            The read and the fill are one operation, so the answer is the whole
+            computed list or nothing. A file that is not this hub's index —
+            torn, hand-written, left by an older shape of it — is answered `[]`
+            with a log line, exactly as an absent one already is, rather than
+            half filled in or dropped on the socket as an exception out of a
+            request handler.
             """
             if not self._require_token(with_body):
                 return None
             path = store.root / "index.json"
             if not path.is_file():
                 return self._json(200, [], CACHE_NONE, with_body=with_body)
-            return self._serve_bytes(path.read_bytes(), "application/json",
-                                     CACHE_NONE, with_body)
+            try:
+                cards = json.loads(path.read_bytes())
+                for card in cards:
+                    card["status"] = self._draft_status(card["pid"])
+            except (ValueError, OSError, TypeError, KeyError) as error:
+                logger.warning(
+                    f"the site index could not be read ({error}); answering "
+                    f"with an empty list")
+                return self._json(200, [], CACHE_NONE, with_body=with_body)
+            return self._json(200, cards, CACHE_NONE, with_body=with_body)
+
+        @staticmethod
+        def _draft_status(pid: str) -> str:
+            """One card's `status`: what this project's draft is doing.
+
+            Three steps and each of them may come up empty — no pointer, a
+            pointer at a job the registry no longer has, a job in any state at
+            all — and `render.card_status` is what turns every one of those into
+            one of its three words, in the one place that mapping lives.
+            """
+            job_id = store.draft_job(pid)
+            record = None if job_id is None else jobs.get(job_id)
+            return render.card_status(None if record is None
+                                      else record["state"])
 
         # -- getting started -------------------------------------------
         def _serve_start(self, rest: list[str], with_body: bool):
