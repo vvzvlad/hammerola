@@ -103,6 +103,7 @@ function component({ sel = '/model/lid', notes, mine = {}, token = 'sekrit',
   c.props = { ...HammerolaViewer.defaultProps }
   c.home = null
   c.carry = null
+  c.history = []
   // `render()` hangs the viewport off this ref; without it the two tests that
   // read the drawn tree throw before they get to the box.
   c.host = { current: null }

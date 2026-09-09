@@ -44,7 +44,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
   loadBuilds: vi.fn(),
 }))
 
-import HammerolaViewer from '../src/HammerolaViewer.jsx'
+import HammerolaViewer, { UNDO_DEPTH } from '../src/HammerolaViewer.jsx'
 import { STATE } from '../src/events.js'
 import { PAGE, indexTree, loadBuilds, loadMeta } from '../src/hub.js'
 import { guardPage } from './pageguard.js'
@@ -137,6 +137,7 @@ function component(over = {}) {
   c.props = { ...HammerolaViewer.defaultProps }
   c.home = null
   c.carry = null
+  c.history = []
   c.host = { current: null }
   c.state = {
     meta: {
@@ -1151,6 +1152,181 @@ describe('hidden and translucent parts', () => {
     expect(c.state.hidden).toEqual(['/model/plate'])
     expect(c.state.ghost).toEqual(['/model/post'])
     expect(c.sync).not.toHaveBeenCalled()
+  })
+})
+
+// -- taking one of those gestures back ----------------------------------------
+//
+// Issue #84. The tree's controls are the one place on this page where a single
+// click changes many rows at once — Isolate hides everything the reader did not
+// point at — and until now nothing put them back. The stack lives on the
+// instance rather than in state, so what these tests read is what the reader
+// reads: the two lists, and the scene event they are sent on.
+
+describe('Ctrl+Z over the tree', () => {
+  /** Three parts, so an Isolate has more than one thing to hide. */
+  const THREE = {
+    id: '/model',
+    name: 'model',
+    children: [{ id: '/model/plate', name: 'plate', key: 'plate' },
+               { id: '/model/post', name: 'post', key: 'post' },
+               { id: '/model/lid', name: 'lid', key: 'lid' }],
+  }
+
+  // Expanded, because the panel emits a row for a part only under an open
+  // group — an unexpanded tree has one row and it is the whole model.
+  const opened = (over = {}) => component({
+    tree: indexTree(THREE), expanded: { '/model': true }, ...over,
+  })
+
+  const row = (c, id) => c.computed().rows.find((r) => r.key === id)
+  const click = { stopPropagation() {}, preventDefault() {} }
+
+  it('puts back BOTH lists as the last gesture found them', () => {
+    // Both, and not only the one the gesture named: a step is the pair, which
+    // is what makes a snapshot of the two a whole step to go back to. An undo
+    // that restored `hidden` alone would take the reader's translucent parts
+    // with it every time they unhid something.
+    const c = opened({ ghost: ['/model/lid'] })
+
+    row(c, '/model/plate').onVis(click)
+    expect(c.state.hidden, 'the eye hid nothing').toEqual(['/model/plate'])
+
+    c.undoVisibility()
+
+    expect(c.state.hidden).toEqual([])
+    expect(c.state.ghost).toEqual(['/model/lid'])
+  })
+
+  it('brings back everything Isolate hid, in ONE step', () => {
+    // The gesture this feature is really for: one click, every other row gone.
+    const c = opened()
+    c.state.menu = { id: '/model/plate', x: 0, y: 0 }
+
+    c.computed().menuItems.find((m) => m.label === 'Isolate').onClick(click)
+    expect(c.state.hidden).toEqual(['/model/post', '/model/lid'])
+
+    c.undoVisibility()
+
+    expect(c.state.hidden).toEqual([])
+  })
+
+  it('does nothing on an empty stack, the viewport included', () => {
+    // There is no toast and no disabled button to say why: a page with nothing
+    // to take back has nothing to say, and a state event dispatched for a
+    // change that did not happen is a re-render nobody asked for.
+    const c = opened({ hidden: ['/model/post'] })
+    c.sync.mockClear()
+
+    c.undoVisibility()
+
+    expect(c.state.hidden).toEqual(['/model/post'])
+    expect(c.sync, 'an undo with nothing to undo still told the viewport')
+      .not.toHaveBeenCalled()
+  })
+
+  it('goes with the build when another one is opened', async () => {
+    // Every entry holds leaf IDS of the build being left, and a rebuild is free
+    // to renumber those paths onto other parts — the argument `leaveBuild`
+    // already makes about the carry. Restoring one after the swap would not put
+    // a step back, it would hide somebody else's part.
+    const c = opened()
+    c.captureHome = vi.fn()
+    loadMeta.mockResolvedValue(build())
+
+    row(c, '/model/plate').onVis(click)
+    await c.switchBuild('proj1', B)
+    c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+
+    const landed = c.state.hidden
+    c.undoVisibility()
+
+    expect(c.state.hidden, 'a step of the departed build was applied to this one')
+      .toEqual(landed)
+  })
+
+  it('is ignored while the reader is typing, because the field has its own', () => {
+    // The comment composer is a textarea and Ctrl+Z in it is the browser's undo
+    // over the sentence being written — the same sentence this file's own test
+    // about a half-written comment calls the most expensive thing to lose.
+    //
+    // `readNotes` runs on mount and this runner has no `localStorage`; store.js
+    // catches that and says so, which is one line of noise per test.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const c = opened()
+    c.load = vi.fn(async () => {})
+    c.componentDidMount()
+    onTestFinished(() => c.componentWillUnmount())
+
+    row(c, '/model/plate').onVis(click)
+    const box = document.createElement('textarea')
+    document.body.appendChild(box)
+    onTestFinished(() => box.remove())
+    box.focus()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true }))
+    expect(c.state.hidden, 'the shortcut fired inside a text field')
+      .toEqual(['/model/plate'])
+
+    // And the same keystroke with the field let go, so what the test above
+    // observes is the guard rather than a listener that was never wired up.
+    box.blur()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true }))
+    expect(c.state.hidden).toEqual([])
+  })
+
+  it('drops the OLDEST step when it overflows, never the newest', () => {
+    // `UNDO_DEPTH`'s comment says which end goes, and `shift()` against `pop()`
+    // is one word apart: getting it backwards would silently throw away the one
+    // step the reader is about to take back, which is the entire feature, while
+    // leaving a stack of fifty that all look fine. So the sentence is held here.
+    const c = opened()
+    // One more gesture than the cap, each landing on a state of its own, so the
+    // entry that falls off the bottom is identifiable by what it is NOT.
+    for (let i = 0; i <= UNDO_DEPTH; i += 1) {
+      c.setVisibility({ hidden: [`/model/p${i}`] })
+    }
+    expect(c.history).toHaveLength(UNDO_DEPTH)
+
+    // The newest step is still there: one press goes back to where the last
+    // gesture found the page, not to somewhere fifty gestures ago.
+    c.undoVisibility()
+    expect(c.state.hidden, 'the overflow ate the step about to be taken back')
+      .toEqual([`/model/p${UNDO_DEPTH - 1}`])
+
+    // And walking the rest of the stack out stops at the first gesture's own
+    // state rather than at the empty list the page started on — that empty one
+    // IS the entry that was dropped.
+    for (let i = 0; i < UNDO_DEPTH; i += 1) c.undoVisibility()
+    expect(c.history).toHaveLength(0)
+    expect(c.state.hidden).toEqual(['/model/p0'])
+  })
+
+  it('fires on a Cyrillic layout, where that key does not say "z"', () => {
+    // The reader presses a PHYSICAL key, and `holdkey.js` paid for this finding
+    // in full over the hold key: with a Russian layout up the Z key reports
+    // `key: "я"`. Matched on `key`, the chord is then a shortcut this page's own
+    // author does not have — and it fails silently, with nothing on screen to
+    // say why the step was not taken. Hence `code`, and hence this test: the
+    // fallback path (no `code` at all) is what every other test in this block
+    // exercises, so only this one holds the rule up.
+    //
+    // `readNotes` runs on mount and this runner has no `localStorage`; store.js
+    // catches that and says so, which is one line of noise per test.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const c = opened()
+    c.load = vi.fn(async () => {})
+    c.componentDidMount()
+    onTestFinished(() => c.componentWillUnmount())
+
+    row(c, '/model/plate').onVis(click)
+    expect(c.state.hidden).toEqual(['/model/plate'])
+
+    window.dispatchEvent(new KeyboardEvent(
+      'keydown', { key: 'я', code: 'KeyZ', ctrlKey: true }))
+
+    expect(c.state.hidden, 'the undo chord missed the physical Z key')
+      .toEqual([])
   })
 })
 

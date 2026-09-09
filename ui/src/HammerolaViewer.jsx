@@ -105,6 +105,11 @@ import {
 // under its own guard. Only the two functions come across -- importing the option
 // objects themselves would be this file deciding how the library is started.
 import { readTheme, writeTheme } from './viewport/options.js';
+// The one question this file's keydown handler cannot answer for itself: is the
+// reader in a field. Imported rather than repeated because the rule is subtle —
+// the library's tab strip and the Clip panel's checkboxes are `<input>` too, so
+// "any input" is the wrong test — and a second copy would be free to drift.
+import { typingTarget } from './viewport/holdkey.js';
 
 // `css()`, the font stacks and the mark now live in style.jsx: this page stopped
 // being the only one drawn with them when the front page landed, and a second
@@ -204,6 +209,15 @@ const BUSY_WAIT_MS = 5000;
 
 /** The letter the viewport holds the cut tool up on. Shown, never bound here. */
 const HOLD_KEY_LABEL = 'C';
+
+// How many visibility gestures Ctrl+Z can walk back through. A cap rather than
+// no cap because `this.history` is a list of two id lists per entry and this
+// page is opened and left open — a reader working a tree all afternoon would
+// otherwise grow it for the whole session with nothing ever taking anything off
+// it. The OLDEST goes when it overflows: fifty steps back is already further
+// than anybody reconstructs by pressing a key, and losing the newest instead
+// would break the one step the reader is actually about to take back.
+export const UNDO_DEPTH = 50;
 
 /**
  * One entry of `meta.parts`, or `null` — the ONLY way this page reads the
@@ -558,6 +572,14 @@ export default class HammerolaViewer extends React.Component {
     // renders it, it lives for one model event, and a re-render in the middle of
     // a swap has no business seeing a half-applied one.
     this.carry = null;
+    // What the reader can take back: one entry per visibility gesture, oldest
+    // first, each holding `hidden` and `ghost` as they stood BEFORE it. Written
+    // by `setVisibility` — the ONE door for those two lists, which is what makes
+    // a pair of them a whole step — and spent by `undoVisibility`. Not state,
+    // for the reason `this.carry` is not: nothing on the page is drawn from it,
+    // since there is no undo button and no count of the steps behind one, so a
+    // write to it must not cost a render.
+    this.history = [];
     // Where the last accepted gesture is taking this page, which is NOT where
     // the page has got to (`PAGE.slot`) while a swap is on the wire. `popstate`
     // is compared against this one; see `switchBuild`.
@@ -639,10 +661,13 @@ export default class HammerolaViewer extends React.Component {
         // Keeping the solid's name for the sake of those readers stores a second
         // answer rather than a truer one. EVERY OTHER WRITER THAT PUTS A NAME
         // HERE ALREADY DOES EXACTLY THIS, and a grep for the field is what says
-        // so rather than a count to be taken on trust: five assignments, of
-        // which two carry a name — the tree row's `onSelect` and the menu's
-        // Isolate, both off a row's own `name` — and two carry `''`, the initial
-        // state and `leaveBuild`. This is the fifth.
+        // so rather than a count to be taken on trust: four assignments, of
+        // which one carries a name — the tree row's `onSelect`, off the row's
+        // own `name` — and two carry `''`, the initial state and `leaveBuild`.
+        // This is the fourth. The menu's Isolate was the second namer until
+        // issue #83 took the pair off it entirely: it hides everything else and
+        // writes no selection at all, because the selection shader replaces a
+        // part's colour and colour is an assertion on this page.
         //
         // WHAT THE DIVERGENCE COST IS NOT HYPOTHETICAL, and it is reached
         // without ever leaving the build. `measAdd` fills a comment out of the
@@ -835,7 +860,41 @@ export default class HammerolaViewer extends React.Component {
     // deliberately does not close the composer: a half-written comment is the
     // most expensive thing on this page to lose, and Escape gets pressed by
     // reflex.
+    //
+    // Ctrl+Z and Cmd+Z take back the last thing done to the TREE — hiding,
+    // ghosting, isolating. Both chords, because this page is read on both
+    // platforms and neither is spoken for here; `preventDefault()` so the
+    // browser cannot answer the same keystroke a second time over whatever it
+    // decides is in scope.
+    //
+    // SHIFT AND ALT ARE NOT LOOKED AT. There is no redo for Shift+Z to mean, so
+    // reading the modifier would only turn the reflex into nothing happening.
+    //
+    // NOT WHILE SOMEBODY IS TYPING, which is what `typingTarget()` answers. The
+    // comment composer is a textarea and Ctrl+Z inside it is the browser's own
+    // undo over the sentence being written — the same sentence the paragraph
+    // above calls the most expensive thing on this page to lose.
+    //
+    // THE LIBRARY CANNOT SWALLOW THIS CHORD, which is why the listener stays in
+    // the bubble phase with Escape's rather than moving to capture the way
+    // `holdkey.js` had to: `_handleKeyboardShortcut` is bound on the container
+    // and returns before its keymap is consulted whenever ctrl, alt or meta is
+    // down (read off the bundle at :113836, not assumed).
     this._kd = (e) => {
+      // MATCHED ON `code` AND NOT ON `key`, for the reason `holdkey.js` gives at
+      // length about the hold key: `code` is the physical key, so this fires on
+      // a Cyrillic layout too, where the same key produces "я" and a `key` test
+      // answers nothing at all — silently, with the reader's step un-taken and
+      // the page giving no sign why. `key` is the fallback for the rare input
+      // path that reports no code.
+      const undo = e.code ? e.code === 'KeyZ'
+                          : String(e.key || '').toLowerCase() === 'z';
+      if ((e.ctrlKey || e.metaKey) && undo) {
+        if (typingTarget()) return;
+        e.preventDefault();
+        this.undoVisibility();
+        return;
+      }
       if (e.key !== 'Escape') return;
       this.set({ menu: null, secPop: false, revOpen: false, dlOpen: false,
                  notePop: null, tokenPop: false, tool: null });
@@ -1388,6 +1447,14 @@ export default class HammerolaViewer extends React.Component {
       this.carry = { hidden: this.namesOf(this.state.hidden),
                      ghost: this.namesOf(this.state.ghost) };
     }
+    // AND THE UNDO STACK GOES, on the argument the paragraph above makes about
+    // ids: every entry in it is two lists of leaf ids of the build being left,
+    // and a rebuild is free to renumber those paths onto other parts. Restoring
+    // one after the swap would not put a step back, it would hide somebody
+    // else's part. Nothing carries a step across either — a carry is one
+    // snapshot resolved by name, and the history is a sequence, which is a
+    // different thing to rejoin and not one the reader asked for.
+    this.history = [];
     return {
       state: {
         // Cleared so the panel does not describe the build that has left. The
@@ -1755,8 +1822,22 @@ export default class HammerolaViewer extends React.Component {
    * and is not a substitute: a button nobody can press does not make a stale
    * snapshot fresh, and the tree comes back — on a Retry that works — with the
    * snapshot still standing.
+   *
+   * IT IS ALSO WHERE THE STEP IS RECORDED, and being the one door is exactly
+   * what makes that possible: a patch through here carries `hidden` and `ghost`
+   * and nothing else — issue #83 took the last field that was not one of the two
+   * off Isolate — so the pair read before the write is a COMPLETE description of
+   * where the reader stood, and going back to it needs nothing else remembered.
+   * `record` is false for the one caller that is going back; see
+   * `undoVisibility`.
    */
-  setVisibility(patch, extra) {
+  setVisibility(patch, extra, record = true) {
+    // BEFORE the write, so the entry says where the reader was standing rather
+    // than where this gesture has just taken them.
+    if (record) {
+      this.history.push({ hidden: this.state.hidden, ghost: this.state.ghost });
+      if (this.history.length > UNDO_DEPTH) this.history.shift();
+    }
     this.setState(patch, () => {
       // AFTER the patch, so the names are the ones the reader has just chosen.
       // Read off `this.carry` a second time rather than off a flag taken before
@@ -1770,6 +1851,32 @@ export default class HammerolaViewer extends React.Component {
       }
       this.sync(extra);
     });
+  }
+
+  /**
+   * Take back the last visibility gesture — the eye, the ghost square, Isolate,
+   * Hide, Translucent or "show all parts", whichever of the six it was.
+   *
+   * THROUGH `setVisibility` AND NOT THROUGH `setState`, because everything that
+   * door does besides writing the two lists has to happen for a step BACK as
+   * well: an undo pressed while another build is on the wire must re-seat the
+   * swap's snapshot exactly as the click it undoes would have, or `rejoin` lands
+   * the state the reader has just left on the arriving build.
+   *
+   * AND WITHOUT RECORDING ONE, which is the whole of the third argument. An undo
+   * that pushed its own before-state would push the state it is leaving, so the
+   * next press would come straight back to it: two entries trading places for
+   * ever, and a stack that never empties.
+   *
+   * AN EMPTY STACK DOES NOTHING, and that is the entire feedback story here.
+   * There is no redo, no toast and no button: the scene and the tree panel
+   * changing IS how a reader sees that a step was taken, and a page with nothing
+   * left to take back has nothing to say about it.
+   */
+  undoVisibility() {
+    const step = this.history.pop();
+    if (!step) return;
+    this.setVisibility({ hidden: step.hidden, ghost: step.ghost }, null, false);
   }
 
   toast(msg) {
@@ -2723,10 +2830,15 @@ export default class HammerolaViewer extends React.Component {
     };
 
     const menuItems = !mNode ? [] : [
+      // HIDING EVERYTHING ELSE IS THE WHOLE OF IT, and the selection it used to
+      // write alongside is gone (issue #83). `sel` reaches `selectSolid`, whose
+      // shader REPLACES the part's colour with the selection blue — and colour
+      // is an assertion in this interface, grey for a mock and the author's own
+      // hue for everything else — so isolating a part destroyed the one thing
+      // the reader isolated it to look at.
       mi('Isolate', 'show only this', () => {
         const keep = new Set(mNode.leaves);
-        this.setVisibility({ hidden: tree.leaves.filter((id) => !keep.has(id)),
-                             sel: mNode.id, selName: mNode.name });
+        this.setVisibility({ hidden: tree.leaves.filter((id) => !keep.has(id)) });
       }),
       mi('Hide', '', () => this.setVisibility({ hidden: this.toggle(s.hidden, mNode.leaves) })),
       mi('Translucent', 'see through it', () => this.setVisibility({ ghost: this.toggle(s.ghost, mNode.leaves) })),
