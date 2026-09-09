@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part", "CadQuery", "STL".
-version: 10
+version: 11
 ---
 
 # hammerola
@@ -865,10 +865,27 @@ it is the part that grows every time the part teaches you something.
 You will usually have no way to time this before pushing: the CAD kernel lives
 in the hub's image, so a model that imports `cadquery` does not necessarily run
 anywhere else at all. Do not calibrate against whatever machine you are on —
-write the checks so the question of speed does not arise.
+calibrate against the hub, which now tells you. After every `build` and
+`commit` that actually rebuilt something, under the log, the client prints one
+line off the hub's own clock:
+
+```
+built in 4m12s (queued 8s)
+```
+
+The first number is your build. The second is time your push spent waiting for
+a free worker and is nothing to do with the model; it is absent when there was
+no wait. **Past three minutes the same line is followed by a warning** naming
+the fixes in this section. The warning is not a refusal — a slow build
+publishes exactly like a fast one — and it is not printed for a build the hub
+killed on a ceiling, because a timeout has already said what happened. A push
+the hub answers with `unchanged` prints no line at all, and that is not a fault:
+nothing was rebuilt, so there is no build to report a time for. Otherwise the
+number arrives by itself, so calibrate a change against the build before it
+instead of guessing at what the fix bought.
 
 **Four clocks run over one push, and the one that stops you first is your own.**
-The hub kills a build at 900 seconds of wall clock. It runs two builds at a
+The hub kills a build at 900 seconds of wall clock. It runs four builds at a
 time, so a queue in front of yours is time before your build starts, and the
 client waits out both — its own ceiling is 8100 seconds and you will never see
 it. What you WILL see is the timeout on the tool you launched `hammerola build`
@@ -1075,6 +1092,8 @@ with "what are you digging at, enough".)
 `build` and `commit` print the build log as it happens; that log is the whole
 account of what went wrong. Read it from the top — the gate refuses in a fixed
 order, so the first complaint is the real one and nothing after it ever ran.
+The `built in ...` line comes after the log here too: a build that died in its
+twelfth minute is exactly the one whose time you need.
 
 ```sh
 hammerola log            # the newest published revision's log, again
