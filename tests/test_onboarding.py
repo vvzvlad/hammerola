@@ -728,10 +728,12 @@ def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
     WHAT THIS DOES NOT COVER, said here because a half-pinned document reads as
     a pinned one. The skill also quotes the hub's concurrency ("four builds at a
     time", `MAX_CONCURRENT_BUILDS`) and the slow-build threshold ("past three
-    minutes", `SLOW_BUILD_SECONDS`), and neither is held anywhere. Both survived
-    issue #81 untouched, which is why they are not here: this function covers
-    the sentences that drop broke, and the honest place for the rest is a commit
-    that has a reason to move them.
+    minutes", `SLOW_BUILD_SECONDS`), and neither of THOSE copies is read back by
+    anything -- the constants themselves are asserted in
+    `tests/test_build_ceilings.py`, which is a different claim and does not
+    reach this document. Both survived issue #81 untouched, which is why they
+    are not here: this function covers the sentences that drop broke, and the
+    honest place for the rest is a commit that has a reason to move them.
     """
     skill = hub.get("/start/skill.md").text
 
