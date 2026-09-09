@@ -270,12 +270,16 @@ IMPOSSIBLE_JOB_ID = "0" * 22
 class HubError(Exception):
     """The hub could not be reached, or answered something unusable.
 
-    `status` is the HTTP code the hub answered with, and None when there was no
-    answer at all — a refused connection, a timeout, a body that would not
-    parse. It exists for the one caller that has to tell "this hub has no such
-    job" apart from every other way the same call can fail, because it says a
-    DIFFERENT sentence about the first (`sources._dev_log`). Everything else
-    prints the message and does not look: the text is written to stand alone.
+    `status` IS NOT FILLED IN EVERYWHERE, and do not write a comparison against
+    it without checking that the raise you mean sets it. The two job reads below
+    set it, because one caller has to tell "this hub has no such job" apart from
+    every other way that same call can fail and says a different sentence about
+    each (`sources._dev_log`). Every other raise in this file leaves it None:
+    those messages are written to stand alone, nobody branches on them, and a
+    field carried everywhere for one reader is a field that goes stale
+    everywhere. None therefore means "not recorded here", never "the hub did not
+    answer" — an unreachable hub raises from a place that records nothing, and
+    so does a body that would not parse.
     """
 
     def __init__(self, message, status=None):
@@ -569,21 +573,25 @@ class Hub:
     # 200 with any token at all, so a stale token first shows up right here; and
     # its caller wraps whatever comes out in "the hub does not have that job",
     # which would be a wrong diagnosis and a suggestion that cannot work.
+    # BOTH SET `status` ON EVERY RAISE THAT HAD AN ANSWER, the 401 included, so
+    # the field means the same thing at each of them. Only one reader looks at
+    # it today and only for 404, but a rule with an exception in it is what the
+    # next reader gets wrong.
     def job(self, job_id: str) -> dict:
         status, raw = self._call(f"/api/v1/jobs/{urllib.parse.quote(job_id)}")
         if status == 401:
-            raise HubError(UNAUTHORIZED)
+            raise HubError(UNAUTHORIZED, status)
         if status != 200:
             raise HubError(
                 f"the hub answered HTTP {status} for job {job_id}: "
-                f"{quoted(raw)}")
+                f"{quoted(raw)}", status)
         return self._payload(status, raw)
 
     def job_log(self, job_id: str) -> str:
         status, raw = self._call(
             f"/api/v1/jobs/{urllib.parse.quote(job_id)}/log")
         if status == 401:
-            raise HubError(UNAUTHORIZED)
+            raise HubError(UNAUTHORIZED, status)
         if status != 200:
             raise HubError(f"the hub answered HTTP {status} for the log of "
                            f"job {job_id}", status)

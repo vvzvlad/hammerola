@@ -40,12 +40,11 @@ each is the wrong one:
   * `rm` removes the whole project and asks first. There is no way to remove one
     build: that would break a permanent URL and leave the project standing.
 
-WHAT IS STILL NOT HERE. Self-update is issue #77, and what used to block it is
-gone: the tool has a distribution name now (`pyproject.toml`), so the sentence
-that said it was waiting on one outlived the fact by several commits. `skill
-update` is the shape it copies, and the shape is all — that one writes a
-document, this one would write the running program.
-`status` shows no "last job", for a reason that is not going to lift
+WHAT IS STILL NOT HERE. Self-update is issue #77; the tool has a distribution
+name of its own (`pyproject.toml`), so nothing blocks it. `skill update` is the
+shape it copies, and the shape is all — that one writes a document, this one
+would write the running program. `status` shows no "last job", for a reason
+that is not going to lift
 on its own — job order is stored nowhere, see `status.py`. `log dev` was in that
 sentence until the slot started naming the job that filled it (issue #79), and
 now answers with that build's log — see `sources._dev_log`.

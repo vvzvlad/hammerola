@@ -136,9 +136,8 @@
   no SOURCE — `hammerola source dev` refuses as it always did, and its refusal
   names the log as the half that no longer needs a commit; and the comment
   routes check the same `EDIT_TOKEN` as everything else — the hub's second
-  variable went away
-  in step 0, along with the client's sentence explaining a 401 that meant "this
-  deployment set its other variable differently"
+  variable went away in step 0, along with the client's sentence explaining a
+  401 that meant "this deployment set its other variable differently"
 - `hammerola/buildnames.py` — what a build file may be CALLED, and the one place that
   decides it. Three sides ask the question and they live in three different
   worlds: the file server, of every request for
@@ -389,13 +388,14 @@
   the same check meanwhile
 - `model_template/` — the starter project `hammerola create` unpacks, served at
   `/start/template.tar.gz`: a `model.py` that BUILDS AS IT STANDS, a
-  `.gitignore`, and an `AGENTS.md` with a `CLAUDE.md` pointing at it — the
+  `.gitignore`, a `ref/measurements.md` for the numbers the model claims to
+  have measured, and an `AGENTS.md` with a `CLAUDE.md` pointing at it — the
   template lands in a repository an agent opens cold, and those two say what
   the file is for before it is edited into something it is not. Everything
   under the directory ships: the tarball is an `rglob`, so a file added here
-  reaches every project ever made from it. It is files rather than a section
-  of documentation for one
-  reason, and that reason is the only thing keeping it honest:
+  reaches every project ever made from it. It is files rather than a section of
+  documentation for one reason, and that reason is the only thing keeping it
+  honest:
   `tests/test_template.py` runs it through `run_build` — the same entry point a
   push takes — so a template that stopped satisfying the gate fails here instead
   of being handed to somebody who cannot tell whose fault it is. That test skips

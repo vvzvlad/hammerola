@@ -708,6 +708,29 @@ def test_the_same_sources_mint_the_same_revision(hub):
     assert builds == [first.json()["revision"]]
 
 
+def test_force_is_not_part_of_the_name_the_sources_are_given(hub):
+    """`?force=1` changes how a build RUNS, never what it is called.
+
+    `src/app.py` carries this as a comment calling itself "the line somebody
+    would be tempted to change", which is the project's own definition of a
+    sentence that belongs in a test. A flag folded into the digest would give
+    one tree two permanent addresses — the one thing a minted name may never be
+    — and the same tree pushed again would rebuild instead of answering
+    "unchanged", forced or not.
+
+    Structurally true today: `accept_sources` is not passed `force` at all. This
+    pins it so, rather than repairing anything.
+    """
+    first = hub.publish_async("proj1", None, good_build())
+    assert hub.await_job(first.json()["job"]).status_code == 201
+
+    forced = hub.publish_async("proj1", None, good_build(), query="?force=1")
+    assert forced.status_code == 200, (
+        "a forced push of sources already published started a second build; "
+        "the digest has grown a dependency on the flag")
+    assert forced.json()["revision"] == first.json()["revision"]
+
+
 def test_different_sources_mint_a_different_revision(hub):
     one = hub.publish_async("proj1", None, good_build("a"))
     two = hub.publish_async("proj1", None, good_build("DIFFERENT"))

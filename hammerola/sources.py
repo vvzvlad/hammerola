@@ -104,10 +104,10 @@ def resolve_revision(hub: Hub, root, name: str) -> str:
         raise ClientError(
             f"`{DEV_SLOT}` is the local slot, not a revision, and the hub "
             f"stores no code for it.\n"
-            f"  Publish a revision with `hammerola commit` to read the sources. "
-            f"Its build log needs no\n"
-            f"  commit: `hammerola log {DEV_SLOT}` reads it through the job the "
-            f"slot names.")
+            f"  Publish a revision with `hammerola commit` to read the "
+            f"sources. The slot's build log\n"
+            f"  needs no commit: `hammerola log {DEV_SLOT}` reads it through "
+            f"the job the slot names.")
     if not SAFE_ID.match(name or ""):
         raise ClientError(
             f"{name!r} is not a revision id.\n"
