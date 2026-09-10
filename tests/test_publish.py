@@ -80,6 +80,47 @@ def test_builds_json_and_root_index_are_written(hub):
     assert index[0]["commit"] == "abc123"
 
 
+def test_a_card_carries_the_first_picture_any_view_of_the_build_declared(hub):
+    """The front page's preview, which is a file the build already writes.
+
+    Nothing on the build side changed for issue #34: a view may declare a
+    `preview`, the hub checks it is a file this build published and copies the
+    name onto the view, and the card now reads the first view that has one. The
+    picture in the archive is what makes the declaration legal — an undeclared
+    name is a 422 (`render._check_declared_file`) — so it travels with the push.
+
+    AND A BUILD WITHOUT ONE PUTS `None` THERE rather than leaving the key out. An
+    image with no rendering stack ships no PNGs at all, so this is an ordinary
+    build and not a broken one; the front page draws its neutral plate for it,
+    and it can only do that if the field is written either way.
+
+    THE FIRST VIEW HERE HAS NO PICTURE, and that is the whole point of building
+    two. `index_card` takes the first view that HAS one, which is a different
+    rule from "the first view's" — and a build declaring one view cannot tell
+    them apart, so a card reading `views[0]["preview"]` and crashing on the
+    views that have none would pass a one-view test exactly as this one does.
+    Which order a model's views come in is the model's own business: the build
+    hangs pictures on the two ids it knows, and nothing makes either of them
+    first.
+    """
+    hub.publish("proj1", "abc123", good_build(
+        views=[{"id": "assembled", "name": "assembled", "file": "assembled.json",
+                "parts": ["lid", "pin"]},
+               {"id": "print", "name": "as printed", "file": "print.json",
+                "parts": ["lid"], "preview": "print_preview.png"}],
+        # Two view files, because a view's `parts` has to be exactly what its
+        # file shows and these two show different subsets — the same reason
+        # tests/test_serving.py builds its two-view archive this way.
+        extra_files={"print.json": view_bytes(keys=("lid",)),
+                     "print_preview.png": b"\x89PNG\r\n\x1a\n"}))
+    hub.publish("proj2", "def456", good_build())
+
+    cards = {c["pid"]: c for c in
+             json.loads((hub.data / "index.json").read_text())}
+    assert cards["proj1"]["preview"] == "print_preview.png"
+    assert cards["proj2"]["preview"] is None
+
+
 def test_identical_retry_is_200_not_409(hub):
     body = good_build()
     assert hub.publish("proj1", "abc123", body).status_code == 201

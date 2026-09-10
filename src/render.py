@@ -1243,6 +1243,36 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
     stays the oldest.
     """
     total_gzip = sum(v["gzip"] for v in meta["views"])
+    # THE PICTURE, AND IT IS THE FIRST ONE ANY VIEW OF THIS BUILD DECLARES. A
+    # build renders a sheet per whole-view mesh (`cadbuild.preview_png`) and
+    # hangs it on the view it is of, while a card wants exactly one, so one of
+    # them has to be picked and the first is the pick.
+    #
+    # IT IS NOT A PROMISE ABOUT WHAT THE CARD'S LINK OPENS, and saying it were
+    # would be the easy sentence to write here. Two things break it, and both
+    # are ordinary. Pictures are hung only on the two view ids the build knows
+    # (`cadbuild.build.stem_of_view`), while the ORDER of the views is the
+    # model's own — so a project whose first view is one of its own carries a
+    # picture of a later one. And the card links at the pointer-less URL, which
+    # opens whichever of `latest` and `dev` this reader was last on (SPEC 9),
+    # while the card and this picture both describe the newest COMMIT build. So
+    # what the card promises is what the rest of the card already promises: this
+    # is the newest committed build, picture included.
+    #
+    # DELIBERATELY NOT LOOKED UP BY VIEW ID. The id of the assembled view is
+    # `cadbuild.artifacts.ASSEMBLED_VIEW_ID`, and nothing on the SERVING side
+    # reaches into the build half — the two things that do reach into it are the
+    # build process itself (`src/buildproc/child.py`) and the root `checklib.py`
+    # shim, both deliberate (docs/repo-map.md). It is the same rule the KINDS
+    # transcription at the top of this file already follows. Taking that
+    # dependency on to name one string costs more than this field is worth.
+    #
+    # `None` IS A REAL ANSWER rather than a defect to guard against: a build made
+    # by an image with no rendering stack ships no PNGs at all — `render_previews`
+    # in cadbuild/assembly.py degrades to a warning and returns nothing — so its
+    # views declare none, and that card keeps drawing the neutral plate.
+    preview = next((view["preview"] for view in meta["views"]
+                    if view.get("preview") is not None), None)
     return {
         "pid": meta["pid"],
         "project": meta["project"],
@@ -1279,4 +1309,5 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
                           if record["kind"] == KIND_PRINTABLE),
         "views": len(meta["views"]),
         "mb": f"{total_gzip / 1e6:.1f}",
+        "preview": preview,
     }

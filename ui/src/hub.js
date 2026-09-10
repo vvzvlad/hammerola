@@ -167,6 +167,22 @@ export async function loadIndex(token) {
 export const projectUrl = (pid) => `/project/${encodeURIComponent(pid)}/`;
 
 /**
+ * One FILE of one build, by the name that build declared for it.
+ *
+ * The commit and not a pointer, because the card already names the commit it was
+ * built from: a picture fetched from `latest` could be a different build's the
+ * moment somebody publishes while the list is open, and it would be a picture of
+ * something other than what the card says.
+ *
+ * All three parts are escaped. A pid is a hex id and a commit is a digest today,
+ * but the file name comes out of a build — the model chooses it — and a name is
+ * a path segment here, not a path.
+ */
+export const buildFileUrl = (pid, commit, file) => (
+  `/project/${encodeURIComponent(pid)}/${encodeURIComponent(commit)}`
+  + `/${encodeURIComponent(file)}`);
+
+/**
  * One card of `/index.json`, as the front page renders it.
  *
  * The mapping is HERE, in one function, rather than spread through the JSX, and
@@ -175,14 +191,18 @@ export const projectUrl = (pid) => `/project/${encodeURIComponent(pid)}/`;
  * there reads as `undefined`, which renders as an empty string and formats as
  * `NaN` — never as an error.
  *
- * Two of the designer's fields have no line here, and each absence is a fact
- * about the hub rather than an omission:
+ * A PREVIEW IS ANSWERED NOW (issue #34), and by a picture that was there all
+ * along: every build renders a sheet per whole-view mesh and declares it on the
+ * view it is of, so `render.index_card` puts the first such name on the card and
+ * this line turns it into a URL under that build. THE PLATE IS STILL THE ANSWER
+ * for a card whose build has no picture — an image with no rendering stack ships
+ * no PNGs — and `null` is what says so, rather than a URL that would 404.
  *
- *   * a PREVIEW image is block 12 of the brief and is not built yet, so every
- *     card draws the neutral plate. No field is invented to hold one.
- *   * a REVISION NUMBER does not exist. A revision is named by the digest of its
- *     sources (SPEC 7.7), so there is no `v241` to show and there is not going
- *     to be one; the hash is shown at the length the rest of this site reads it.
+ * One of the designer's fields still has no line here, and the absence is a fact
+ * about the hub rather than an omission: a REVISION NUMBER does not exist. A
+ * revision is named by the digest of its sources (SPEC 7.7), so there is no
+ * `v241` to show and there is not going to be one; the hash is shown at the
+ * length the rest of this site reads it.
  *
  * `status` IS ANSWERED, AND ABOUT THE DRAFT ONLY (issue #32). It is one of
  * `idle`/`building`/`failed`, and what it describes is the last build pushed AS
@@ -226,6 +246,9 @@ export function projectCard(card) {
     status: card.status,
     built: card.built,
     first: card.first_built,
+    preview: card.preview
+      ? buildFileUrl(card.pid, card.commit, card.preview)
+      : null,
   };
 }
 
