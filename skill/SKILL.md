@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part", "CadQuery", "STL".
-version: 13
+version: 14
 ---
 
 # hammerola
@@ -674,16 +674,21 @@ what it published and fetches that, so a file that is renamed goes on arriving
 while a hand-written path stops. You can read a picture and the gate cannot.
 
 Shape is otherwise judged in the browser viewer, and **a size comes back three
-ways**: that footer, `metrics.json`, and whatever the model prints. The second
+ways**: that footer, `metrics.json`, and the build log. The second
 sits in the same build directory and is served as plain JSON, so
 `curl <hub>/project/<pid>/dev/metrics.json` gives `bbox_mm` for every PRINTABLE
 straight after a `build`, with no commit. Printable and not part, and the
 difference is the catalogue's: measuring is done on the way out of the exporter,
 so a `hardware` or a `mock` record is measured nowhere and appears in that file
-not at all. The log itself carries no size — per printable it says
-`valid, volume … cm3, watertight, one body, N triangles` — so
-a `print()` in `model.py` or `checks()` is the third. Print every printable's
-bounding box from `checks()` all the same, for a different reason: the log is
+not at all. **The log carries the sizes too, and that is new** — on top of the
+gate's per-printable `valid, volume … cm3, watertight, one body, N triangles` a
+build now prints what it measured, one line per part —
+`<part>: … cm3, …x…x… mm, first layer … mm2, overhang … mm2` — with
+the assembly's own line under them, and — when the project has a previous `dev`
+build — a `metrics vs dev:` block saying what moved since it. So a `print()` in
+`model.py` or `checks()` is for what the build does NOT measure: a clearance, a
+wall thickness, the one gap this round is about. Printing a bounding box from
+`checks()` is now a second copy of a line the log already has. The log is
 what `commit` keeps, while a picture and a `metrics.json` have to be fetched. That
 log is the child process's stdout and stderr merged and kept to the FIRST 1 MiB — a
 flood loses its tail, not its head — so print short and early. `hammerola diff
@@ -1122,9 +1127,13 @@ about the part. (Of three rounds of edits on a physical part, exactly one
 parameter reached the part; everything else was self-checks inside the script.)
 
 **The part is finished when its numbers stop moving.** A build that prints the
-same measurements as the one before it is the signal, and reading it costs
-nothing: the log carries a volume per printable and the preview footer a
-bounding box. A second such build in a row means the rounds have left the part
+same measurements as the one before it is the signal, and the build now says so
+itself: after the first `build` of a project the log carries a `metrics vs dev:`
+block near its end, and `every measured number is the same (N part numbers
+compared)` is that signal
+in one line — no reading two logs side by side, and the count is there because
+silence would be indistinguishable from a comparison that never ran. A second
+such build in a row means the rounds have left the part
 and moved onto the instrument that measures it and the prose around it. Say it
 can be printed, and stop. (Asked "so, can it be printed?", an agent said no and ran
 three more review rounds over 2 h 18 min. The first was paid for — it found a

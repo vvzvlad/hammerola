@@ -14,7 +14,8 @@ from .gate import (check_assembled_coverage, check_interference,
                    check_print_layout)
 from .geometry import load_model
 from .errors import BuildError
-from .metrics import METRICS_NAME, collect_metrics, write_metrics
+from .metrics import (METRICS_NAME, collect_metrics, read_baseline,
+                      report_metrics, write_metrics)
 from .modelchecks import (call_model, fail_site, raised_by_the_model,
                           run_checks)
 from .modeltext import MAX_MESSAGE_CHARS, shown
@@ -108,7 +109,7 @@ def _answers_for_the_model(run):
 
 
 @_answers_for_the_model
-def build(out_dir, preview_mode="iso", force=False):
+def build(out_dir, preview_mode="iso", force=False, baseline=None):
     """Full local build. Returns (pid, meta, list of files to ship).
 
     `force` skips the model's own checks() and NOTHING else (issue #52): the
@@ -116,6 +117,12 @@ def build(out_dir, preview_mode="iso", force=False):
     most of what a build costs and the point of the flag is to get something
     unfinished published quickly. Every gate this file runs is the hub's rule
     for every model rather than this author's, so none of them is waived.
+
+    `baseline` is a metrics.json to say what moved against -- the previous
+    `dev` build's, copied into this process's scratch by the parent
+    (`buildproc.runner.run_build`), or None when there is none to compare with.
+    Whatever it is, it can only cost the printed comparison and never the
+    build: see `metrics.report_metrics`.
     """
     started = time.monotonic()
     pid, project, title = load_project()
@@ -376,9 +383,28 @@ def build(out_dir, preview_mode="iso", force=False):
                                            checks_static, provenance_summary,
                                            assembled_bbox, plate_bbox))
 
+    # WHAT THIS BUILD MEASURED, AND WHAT MOVED SINCE `dev` -- the last thing
+    # this function says ABOUT THE MODEL (`_phase("total", ...)` still reports
+    # the clock after it), and the only channel that reaches whoever pushed
+    # without a second action from them. It sits HERE, in `build()`, rather than
+    # in the child that calls it: the summary is part of the build and everyone
+    # who calls `build()` gets it, and a call from here can be held by a test
+    # while one from `buildproc.child.main` could not be without a CAD kernel.
+    #
+    # It cannot fail this build. `read_baseline` never raises and
+    # `report_metrics` keeps each walk of the two documents under a guard of its
+    # own -- two blocks, two guards, so a baseline nobody can read costs the
+    # comparison and not this build's own sizes --
+    # both promises are in their own docstrings and both are held by tests,
+    # because a printed diff must never be why a modelled, gated, ready-to-ship
+    # build goes red.
+    previous, why = read_baseline(baseline)
+    report_metrics(out_dir, previous, why)
+
     # metrics.json is named HERE and not derived from meta.json like the rest.
     # meta.json lists what the viewer loads, and the viewer never loads this --
-    # it is written for the next build of this project to read back off `dev`.
+    # it is written for the hub to hand to the next build of this project, which
+    # reads it back as the baseline the line above compares against.
     shipped = ["meta.json", METRICS_NAME]
     shipped += [v["file"] for v in views]
     shipped += sorted({name for files in part_files.values()

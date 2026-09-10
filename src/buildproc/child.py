@@ -3,7 +3,8 @@
 
     python -m src.buildproc.child --project DIR --out DIR --result FILE \
                                   [--preview-mode iso] [--occt-threads N] \
-                                  [--hang-dump-seconds N] [--force true|false]
+                                  [--hang-dump-seconds N] [--force true|false] \
+                                  [--baseline FILE]
 
 This is the first code in the process that knows anything about CAD, and it is
 already behind the fence: the wrapper set the rlimits and exec'd this, the
@@ -105,6 +106,11 @@ _OPTIONS = {
     "--occt-threads": "occt_threads",
     "--hang-dump-seconds": "hang_dump_seconds",
     "--force": "force",
+    # The previous `dev` build's metrics.json, ALREADY COPIED INTO THIS
+    # PROCESS'S SCRATCH by the parent (`runner.run_build`) -- never a path into
+    # the store. Absent when the project has no `dev` build to compare against,
+    # and the build then prints its own numbers and says why there is no diff.
+    "--baseline": "baseline",
 }
 
 # `--force` takes a VALUE because this parser understands `--key value` pairs
@@ -269,7 +275,8 @@ def _run(argv):
     try:
         pid, _meta, files = build(Path(opts["out"]),
                                   preview_mode=opts["preview_mode"],
-                                  force=opts["force"])
+                                  force=opts["force"],
+                                  baseline=opts["baseline"])
     except BuildError as exc:
         # The expected failure: the model does not build, or a gate refused it.
         # Distinguished from a crash by its own exit code because the hub

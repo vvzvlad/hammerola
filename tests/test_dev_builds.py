@@ -424,6 +424,36 @@ def test_the_slots_meta_says_it_is_a_local_build(hub):
     assert other["dev"] is False
 
 
+def test_the_slots_metrics_json_is_what_the_next_build_is_given_to_compare(hub):
+    """The baseline is a FILE IN THE SLOT, and this is the hub's half of it.
+
+    `dev_metrics_path` is asked on the way INTO a build
+    (`jobs._build_and_publish`), and the file it names is copied into that
+    build's scratch before the child starts — so the only thing it has to settle
+    is whether there is something there to copy. A path when the slot published
+    one; None when it did not, which covers a project nobody has pushed, a slot
+    from before builds wrote metrics, and a pid that does not exist.
+    """
+    assert hub.store.dev_metrics_path("proj1") is None
+
+    hub.publish_dev("proj1", _build("v1"))
+    assert hub.store.dev_metrics_path("proj1") is None, (
+        "that build shipped no metrics.json, and a slot without one is a "
+        "missing baseline rather than a path to a file that is not there")
+
+    hub.publish_dev("proj1", tar_gz({
+        "meta.json": meta_bytes(),
+        "assembled.json": view_bytes("v2"),
+        "metrics.json": b'{"version": 1, "parts": {}}\n',
+        **DEFAULT_EXPORTS,
+    }))
+
+    path = hub.store.dev_metrics_path("proj1")
+    assert path == hub.project_dir("proj1") / "dev" / "metrics.json"
+    assert json.loads(path.read_text())["version"] == 1
+    assert hub.store.dev_metrics_path("no-such-project") is None
+
+
 def test_builds_json_offers_the_two_names_only_when_they_resolve(hub):
     """What the picker needs, and no entry that leads to a 404.
 

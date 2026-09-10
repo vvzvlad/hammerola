@@ -129,7 +129,7 @@ def _field_moved(field, old, new):
     return f"{field} {old} -> {new}"
 
 
-def _part_summary(part):
+def _part_summary(part, fields=METRIC_FIELDS):
     """Everything measured about one part, on one line.
 
     THE TWO AREAS CARRY THEIR NAMES and nothing else here does, for the reason
@@ -137,9 +137,17 @@ def _part_summary(part):
     numbers in one unit with no way to tell the bed contact from the overhang,
     where `4 solids` and `watertight` say what they are. A bounding box needs no
     label on this line either -- it is the only `NNxNNxNN mm` on it.
+
+    `fields` NARROWS WHAT THE LINE IS ABOUT, and the caller that narrows it is
+    the build's own summary: it passes PHYSICAL_FIELDS, because millimetres are
+    what a person reads a build log for and a triangle count is a fact about the
+    tessellation. THE DEFAULT DOES NOT CHANGE, which is what keeps `metrics_diff`
+    describing a part that appeared -- or one that went away -- with everything
+    measured about it: nobody has seen that part before, so there is nothing to
+    leave out.
     """
     bits = []
-    for field in METRIC_FIELDS:
+    for field in fields:
         if field not in part:
             continue
         shown = _shown(field, part[field])
@@ -158,11 +166,17 @@ def _swept_summary(record):
             f"{record.get('at')} of {record.get('positions')}")
 
 
-def metrics_summary(metrics):
-    """Every number this build measured, for when there is nothing to diff."""
+def metrics_summary(metrics, fields=METRIC_FIELDS):
+    """Every number this build measured, in the shape a person reads.
+
+    `fields` is handed straight to `_part_summary` and says which of them the
+    per-part line carries; everything below that line -- the assembly, the
+    interference, the swept pairs, the check count -- is one entry per record
+    and is not a per-part field, so it is unaffected by the narrowing.
+    """
     lines = []
     for name, part in sorted((metrics.get("parts") or {}).items()):
-        lines.append(f"{name}: {_part_summary(part)}")
+        lines.append(f"{name}: {_part_summary(part, fields)}")
     assembly = metrics.get("assembly") or {}
     # The whole build on one line, in the same shape a part gets. Absent
     # entirely on a build that measured none of it -- a revision published

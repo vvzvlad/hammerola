@@ -434,7 +434,8 @@ class BuildTask:
     force: bool = False
 
 
-def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool):
+def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
+                    baseline: Path | None):
     """The call the worker makes into `run_build`, written down ONCE.
 
     A seam nothing else in the test suite crosses: every test substitutes the
@@ -446,8 +447,14 @@ def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool):
     worker changes, which is exactly the change it is there to catch. Returned
     as `(args, keywords)` so both sides use this one expression: the worker to
     make the call, the test to bind it.
+
+    `baseline` is the published `dev` metrics.json this build compares itself
+    against, or None when the project has none. It is a PATH IN THE STORE and
+    the build process never opens it: `run_build` copies the file into its own
+    scratch first (see there for why the copy is the correctness).
     """
-    return (sources, staging), {"pid": pid, "force": force}
+    return (sources, staging), {"pid": pid, "force": force,
+                                "baseline": baseline}
 
 
 class JobStore:
@@ -1318,8 +1325,14 @@ class BuildQueue:
                         f"not be written; the front page will not show this "
                         f"build until it finishes")
             staging = self._store.build_staging(task.pid, task.commit)
-            args, keywords = build_arguments(task.sources, staging, task.pid,
-                                             force=task.force)
+            # WHAT THE BUILD COMPARES ITSELF AGAINST, asked for here and not
+            # inside the build: the slot belongs to the hub, and the build
+            # process is handed a copy of the file rather than a way to reach
+            # into the store. None is the ordinary answer for a project's first
+            # build, and the build then says so in one line.
+            args, keywords = build_arguments(
+                task.sources, staging, task.pid, force=task.force,
+                baseline=self._store.dev_metrics_path(task.pid))
             outcome = self._run_build(*args, **keywords)
             if outcome.ok:
                 # THE JOB ID GOES WITH THE TREE, and this is the only place that

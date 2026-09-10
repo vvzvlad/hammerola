@@ -89,6 +89,11 @@ from pathlib import Path
 
 from loguru import logger
 
+# The name of the file a build writes and the next build of the same project is
+# handed back as its baseline (`dev_metrics_path` is what names it here). Taken
+# from the module both readers already share rather than spelled again — a
+# second copy of the string is exactly the drift that module exists to prevent.
+from hammerola.metricsdiff import METRICS_NAME
 from src import render
 
 # Identifiers that arrive in the URL. No dot at all: that keeps a build directory
@@ -2500,6 +2505,19 @@ class Store:
         except (ValueError, OSError, RecursionError):
             return None
         return meta if _usable_meta(meta, DEV_LINK) else None
+
+    def dev_metrics_path(self, pid: str) -> Path | None:
+        """The local slot's metrics.json, or None when there is nothing there.
+
+        A path rather than the parsed file: the only caller hands it to a build
+        process, and parsing it here would mean two readers of the same file
+        disagreeing about what a broken one is. Tolerant like `_dev_meta` next
+        to it — an unreadable slot is a missing baseline, never an exception on
+        the publish path, and `is_file()` answers False for every way a path can
+        refuse to be looked at rather than raising.
+        """
+        path = self.projects_dir / pid / DEV_LINK / METRICS_NAME
+        return path if path.is_file() else None
 
     def _uncommitted_in_slot(self, pid: str) -> bool:
         """Whether the local slot holds sources that no commit has published.
