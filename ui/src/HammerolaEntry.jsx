@@ -748,7 +748,14 @@ export const VIEW_ICONS = Object.freeze({
 /** How each view draws the rows. `page` is the component: hover and card style. */
 export const VIEW_BODIES = Object.freeze({
   grid: (page, rows) => (
-    <div style={css('display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px')}>
+    // `min(320px,100%)` RATHER THAN `320px`, and the difference is the whole of
+    // whether this page fits a phone. `minmax(320px,1fr)` states a floor no
+    // narrower window can honour: on a 320px screen the container is already
+    // 320 minus its own `padding:24px 20px`, so every track was 40px wider than
+    // the room for it and the page scrolled sideways for ever. `min()` lets the
+    // floor fall to the container's own width when there is less than 320 of it,
+    // which on a wide screen is not reached and changes nothing.
+    <div style={css('display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:16px')}>
       {rows.map((p) => (
         <a
           key={p.pid}
@@ -924,8 +931,17 @@ export class HammerolaProjects extends React.Component {
       >
         <style>{ENTRY_CSS}</style>
 
-        {/* ── header ── */}
-        <div style={css('height:50px;display:flex;align-items:center;gap:12px;padding:0 20px;'
+        {/* ── header ──
+            `min-height` and `flex-wrap`, for the reason `static/_v/site.css`
+            gives on the resolver's copy of this row and the build page's header
+            repeats: a row that cannot break its line can only overflow, and a
+            header that overflows is one whose right-hand end — here the sign-out
+            button — is simply not on the screen. When the row no longer fits it
+            grows a second line instead; this page asks no breakpoint and needs
+            none, since the six items here run out of room at around 380px on
+            their own. The row gap only ever applies once it has wrapped. */}
+        <div style={css('min-height:50px;display:flex;flex-wrap:wrap;align-items:center;'
+          + 'gap:6px 12px;padding:0 20px;'
           + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE}`)}>
           <div style={css('display:flex;align-items:center;gap:8px')}>
             <Mark />

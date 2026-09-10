@@ -97,6 +97,37 @@ export const HEADER_BG = '#f7f8fa';
 export const HEADER_LINE = '#d8dce1';
 
 /**
+ * WHERE THE WIDE LAYOUT STOPS FITTING, as the query the page asks the window.
+ *
+ * Not a device and not a phone: it is the width below which the build page's
+ * header — a wordmark, a title, a revision picker, a status chip, downloads,
+ * access and the comment button — has no room left to lay itself out on one
+ * line, and below which a 300px comment rail is most of the screen rather than
+ * a column beside the model.
+ *
+ * ONE READER TODAY, `HammerolaViewer`, and that is not an oversight: the front
+ * page's own narrow answers — a header that wraps, a card grid whose floor can
+ * fall below 320px — are plain CSS that is right at every width, and a page
+ * that asked this question without branching on it would be carrying a listener
+ * for nothing.
+ *
+ * IT IS READ THROUGH `matchMedia` AND NEVER WRITTEN INTO A `@media` BLOCK, and
+ * that is a decision rather than a shortcut. Three reasons, each of them fatal
+ * on its own:
+ *
+ *   * `css()` above turns every rule in this bundle into an INLINE style
+ *     object, and an inline style beats a class rule on specificity — so every
+ *     declaration in a `@media` block would need `!important` to reach these
+ *     elements at all;
+ *   * half of what the narrow branch changes is STRUCTURAL: which toolbar
+ *     buttons exist, whether the tree is drawn. No stylesheet can do that;
+ *   * jsdom evaluates no media query, so a `@media` layout would be the one
+ *     part of this heavily-tested interface that no test in ui/tests could
+ *     reach. A boolean in React state is a value a test can simply set.
+ */
+export const NARROW = '(max-width: 720px)';
+
+/**
  * The mark, at whatever size the page needs it.
  *
  * Inline SVG and not a file, for the reason the stylesheet is inline too: an

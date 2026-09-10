@@ -98,7 +98,7 @@ import {
   readTabs, rememberTab, forgetTab,
 } from './store.js';
 import {
-  css, FONTS, SANS, MONO, Mark, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
+  css, FONTS, SANS, MONO, Mark, NARROW, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
 } from './style.jsx';
 // The canvas theme lives with the rest of the viewport's options, and so does the
 // storage for it: `tests/test_ui_source.py` allows this side exactly one module
@@ -619,6 +619,23 @@ export default class HammerolaViewer extends React.Component {
       // CALLED — see there. Nothing is lost by the wait: below two entries the
       // strip is not drawn at all.
       tabs: [],
+      // -- and how much room there is to draw all of that in. Read here so the
+      // first paint is already the narrow one on a phone, the way `theme` above
+      // is already the reader's: a header that lays itself out wide and then
+      // reflows is a page that looks broken for one frame. `computed()` is the
+      // only reader; see `style.jsx` (NARROW) for why this is a boolean in
+      // state rather than a `@media` block.
+      narrow: !!(window.matchMedia && window.matchMedia(NARROW).matches),
+      // Does the reader want the tree on screen? Asked only in the narrow
+      // branch, where the tree covers the model it describes rather than
+      // sitting in a corner of it — wide, the tree is simply drawn.
+      //
+      // NOT STORED, and deliberately not: store.js is the one module on this
+      // side allowed to touch localStorage, and what belongs there is a
+      // PREFERENCE the reader expressed. This is which of two overlapping
+      // things is in front right now, which the next page has no business
+      // inheriting.
+      treeOpen: false,
     };
   }
 
@@ -932,6 +949,33 @@ export default class HammerolaViewer extends React.Component {
     };
     window.addEventListener('popstate', this._pop);
 
+    // The window can cross the breakpoint while the page is open, and on the
+    // devices this branch is for that is the ORDINARY case rather than an edge
+    // one: turning a phone sideways is a resize. The constructor's read is only
+    // the first answer; this keeps it current.
+    //
+    // `addEventListener` on the MediaQueryList, not the deprecated
+    // `addListener`, and it goes with the window listeners above so that
+    // `componentWillUnmount` takes it down the same way — a live query holding
+    // this component would `setState` on one that is gone.
+    //
+    // AND AN ARMED TOOL DOES NOT SURVIVE THE CROSSING. `tool` is armed from the
+    // toolbar and disarmed from the same buttons or from Escape — and the
+    // narrow branch drops those buttons, while a phone has no Escape key. So
+    // Measure armed in landscape would turn every touch on the model into a
+    // measurement point after a rotation, and Move part, for somebody with a
+    // token, would drag a part where an orbit was meant. Through `this.set`
+    // rather than `setState`, because the VIEWPORT is holding that tool too and
+    // has to be told it is over; the wide direction is a plain `setState`, since
+    // nothing there is being taken away.
+    this._mq = window.matchMedia ? window.matchMedia(NARROW) : null;
+    if (this._mq) {
+      this._narrow = (e) => (e.matches
+        ? this.set({ narrow: true, tool: null })
+        : this.setState({ narrow: false }));
+      this._mq.addEventListener('change', this._narrow);
+    }
+
     // The viewport listens for `hmr:state` from its `connectedCallback`, so a
     // state sent before the element upgrades is simply lost. This is the resend
     // for the case where the adapter's module lands after the first paint — the
@@ -948,6 +992,7 @@ export default class HammerolaViewer extends React.Component {
     Object.keys(this._h || {}).forEach((k) => window.removeEventListener(k, this._h[k]));
     window.removeEventListener('keydown', this._kd);
     window.removeEventListener('popstate', this._pop);
+    if (this._mq) this._mq.removeEventListener('change', this._narrow);
     clearTimeout(this._tt);
     clearTimeout(this._poll);
     // The deferred swap goes with them: it holds `this` and would come back on a
@@ -2944,6 +2989,43 @@ export default class HammerolaViewer extends React.Component {
     const railOpen = s.rail === null ? this.props.commentsOpen : s.rail;
     const cutOn = s.secOn || s.held;
 
+    // THE ONLY QUESTION THE NARROW LAYOUT IS ASKED, and every answer that
+    // depends on it is baked into a style string below rather than branched on
+    // in `render()` — except where the change is which ELEMENTS exist, which no
+    // string can express. `!!` because a state written by hand — which is how
+    // every test in ui/tests builds one — need not carry the field at all, and
+    // "not there" is the wide layout.
+    const narrow = !!s.narrow;
+
+    // A POPOVER AS ONE SHEET ALONG THE BOTTOM EDGE. Panels on this page are
+    // placed from the CONTROL that opens them, which at phone width puts them
+    // off the side of the screen — and the root above is `overflow:hidden`, so
+    // what hangs off it is CUT OFF rather than scrollable. Which panels take
+    // this is asserted in `narrow.test.js`, not listed here.
+    //
+    // `fixed` RATHER THAN `absolute`, and that is the half that does the work:
+    // `left`/`right` resolve against the containing block, which for a panel
+    // placed this way is its own control's wrapper — a couple of hundred
+    // pixels, and after the header wraps not at the window's edge any more — so
+    // an absolute clamp would make the sheet NARROWER than the popover it
+    // replaces and leave it off the side as well. Fixed resolves against the
+    // viewport.
+    //
+    // ANCHORED TO THE BOTTOM, and that is not a taste: the header above is
+    // wrappable BY CONSTRUCTION, so its height is 50px, or two rows, or three,
+    // and with a tab strip under it more again. Every constant measured from the
+    // top of the window therefore has a header height at which it opens ON TOP
+    // OF the button that opened it — and the token sheet stops clicks, so that
+    // covered button could not then be pressed at all. The bottom edge of the
+    // window is the one anchor nothing above it can move. What the sheet covers
+    // instead is the toolbar, which on narrow is the view tabs and Fit:
+    // somebody picking a revision is not switching views at the same moment.
+    //
+    // `top:auto` because `css()` splits on `;` and the LAST spelling of a
+    // property wins: it is what keeps a `top` out of the branch whatever the
+    // wide string beside it says.
+    const popSheet = 'position:fixed;left:8px;right:8px;bottom:8px;top:auto;width:auto;';
+
     // `|| []` because `computed()` runs over a state built by hand as often as
     // over the constructor's: every test file in ui/tests spells the fields out,
     // and a field added here would otherwise take down the ones written before
@@ -2960,7 +3042,42 @@ export default class HammerolaViewer extends React.Component {
     return {
       rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, tokenPop: false }),
 
+      // -- the header row ------------------------------------------------------
+      //
+      // `min-height` RATHER THAN `height`, AND IT WRAPS. Nothing that could be
+      // dropped from this row makes it fit below the breakpoint: what is left —
+      // the mark, the title, the revision picker and three controls — is still
+      // wider than a phone. A row that cannot break its line can only overflow,
+      // and the root this sits in is `overflow:hidden`, so overflowing means
+      // silently CUT OFF rather than scrolled: the comment button would simply
+      // not be there. It grows a second line instead. Same fix, same reason, as
+      // `static/_v/site.css` already makes on the resolver's copy of this header
+      // — read the rule there, the argument is written out in full.
+      headerStyle: 'min-height:50px;flex:none;display:flex;flex-wrap:wrap;align-items:center;'
+        + 'gap:6px 12px;padding:0 16px;'
+        + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE};position:relative;z-index:30`,
+
+      // WHAT THE HEADER LETS GO OF FIRST, and each of these is chosen because
+      // the page still says it somewhere else. The wordmark sits beside a mark
+      // that stays and goes on linking home; the subtitle is a description of
+      // the build (parts, views, size) and not a control, with the same counts
+      // on the view tabs; and the status chip's dot is already on the revision
+      // button next to it, while the one status worth interrupting somebody for
+      // — a newer build — announces itself with the banner over the model.
+      showWordmark: !narrow,
+      showSubtitle: !narrow,
+      showStatus: !narrow,
+
       title: (meta && (meta.title || meta.project)) || '',
+      // THE COLUMN HOLDING THE TITLE HAS TO BE ABLE TO SHRINK, and it could
+      // not: `flex:none` stood here, so the item kept its content width whatever
+      // the window did, and the `text-overflow:ellipsis` on the title inside it
+      // could never fire. A model named after its whole assembly pushed the row
+      // past the edge of the window rather than being cut — the failure the
+      // ellipsis was written to prevent, with the ellipsis in place.
+      // `0 1 auto`: shrink allowed, grow still refused, because a title that
+      // claimed the leftover room would push the picker beside it away from it.
+      titleColStyle: 'display:flex;flex-direction:column;gap:1px;flex:0 1 auto;min-width:0',
       subtitle: meta ? this.subtitle() : '',
       // SHORTENED HERE TOO, and this was the one place it was not. `PAGE.slot`
       // is a path segment straight out of the URL, so on a pinned revision it is
@@ -2981,7 +3098,7 @@ export default class HammerolaViewer extends React.Component {
       slotDate: meta ? stamp(meta.built) : '',
       revToggle: stop(() => this.setState({ revOpen: !s.revOpen, dlOpen: false, tokenPop: false })),
       revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid #d3d8de;background:#fff;border-radius:6px;cursor:pointer',
-      revMenuStyle: 'position:absolute;left:0;top:40px;width:430px;background:#fff;border:1px solid #d3d8de;border-radius:9px;box-shadow:0 10px 34px rgba(20,24,28,.16);z-index:40;display:' + (s.revOpen ? 'block' : 'none'),
+      revMenuStyle: (narrow ? popSheet : 'position:absolute;left:0;top:40px;width:430px;') + 'background:#fff;border:1px solid #d3d8de;border-radius:9px;box-shadow:0 10px 34px rgba(20,24,28,.16);z-index:40;display:' + (s.revOpen ? 'block' : 'none'),
       revRows,
       revEmpty: revRows.length === 0,
       cmpLabel: cmpReady ? `${s.cmp[0]} → ${s.cmp[1]}` : '',
@@ -2995,7 +3112,13 @@ export default class HammerolaViewer extends React.Component {
       downloadGroups,
       dlToggle: stop(() => this.setState({ dlOpen: !s.dlOpen, revOpen: false, tokenPop: false })),
       dlBtnStyle: btn(s.dlOpen) + ';border:1px solid #d3d8de;background:#fff',
-      dlMenuStyle: 'position:absolute;right:0;top:40px;width:250px;background:#fff;border:1px solid #d3d8de;border-radius:9px;box-shadow:0 10px 34px rgba(20,24,28,.16);padding:6px 0;z-index:40;display:' + (s.dlOpen ? 'block' : 'none'),
+      // CLAMPED LIKE THE OTHER TWO. This one is a HEADER button and survives
+      // everything the narrow branch drops, so its menu is reachable on a phone
+      // — and `right:0` is measured from a button that, once the row has
+      // wrapped, is no longer at the window's right edge: a 250px menu then
+      // starts off the left of a 390px screen and is cut off by the root's
+      // `overflow:hidden` with nothing to scroll.
+      dlMenuStyle: (narrow ? popSheet : 'position:absolute;right:0;top:40px;width:250px;') + 'background:#fff;border:1px solid #d3d8de;border-radius:9px;box-shadow:0 10px 34px rgba(20,24,28,.16);padding:6px 0;z-index:40;display:' + (s.dlOpen ? 'block' : 'none'),
 
       // -- the token: the whole customer/viewer split, in one control
       viewer,
@@ -3003,7 +3126,7 @@ export default class HammerolaViewer extends React.Component {
         tokenPop: !s.tokenPop, tokenDraft: '', revOpen: false, dlOpen: false })),
       tokenBtnStyle: btn(false) + ';border:1px solid ' + (viewer ? '#d3d8de;background:#fff' : '#9cc4f0;background:#dcebfc;color:#155bb5'),
       tokenLabel: viewer ? 'View only' : 'Editing on',
-      tokenPopStyle: 'position:absolute;right:0;top:40px;width:320px;background:#fff;border:1px solid #d3d8de;border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px rgba(20,24,28,.16);z-index:40;display:' + (s.tokenPop ? 'block' : 'none'),
+      tokenPopStyle: (narrow ? popSheet : 'position:absolute;right:0;top:40px;width:320px;') + 'background:#fff;border:1px solid #d3d8de;border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px rgba(20,24,28,.16);z-index:40;display:' + (s.tokenPop ? 'block' : 'none'),
       tokenDraft: s.tokenDraft,
       tokenType: (e) => this.setState({ tokenDraft: e.target.value }),
       tokenSave: stop(() => {
@@ -3021,11 +3144,34 @@ export default class HammerolaViewer extends React.Component {
         this.toast('Token removed — back to viewing');
       }),
 
+      // -- the tree, which on narrow is something you open ---------------------
+      //
+      // Wide, it floats over a corner of the model and there is room for both.
+      // Narrow, it covers the thing it describes — so it starts closed and this
+      // button in the header is what opens it. Its openness is state and only
+      // state; the constructor says why it is not remembered.
+      // AND NOT WHILE TWO REVISIONS ARE BEING COMPARED, which is the other way
+      // the tree can be absent: the compare panel stands in its place, so the
+      // button would be offering to open something the page is not drawing
+      // either way.
+      treeShown: !narrow || s.treeOpen,
+      treeToggle: stop(() => this.setState({ treeOpen: !s.treeOpen })),
+      treeBtnStyle: btn(false, !narrow || s.compare) + ';border:1px solid '
+        + (s.treeOpen ? '#9cc4f0;background:#dcebfc;color:#155bb5' : '#d3d8de;background:#fff'),
+
       railToggle: stop(() => this.setState({ rail: !railOpen })),
       railBtnStyle: btn(false) + ';border:1px solid #d3d8de;background:#fff' + (viewer ? ';display:none' : ''),
       railCountStyle: 'min-width:17px;height:17px;padding:0 5px;border-radius:9px;background:' + (openCount ? '#1f7ae0' : '#c3c8cf') + `;color:#fff;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO}`,
       openCount,
-      railStyle: 'width:300px;flex:none;background:#f7f8fa;border-left:1px solid #d8dce1;display:' + (railOpen && !viewer ? 'flex' : 'none') + ';flex-direction:column;min-height:0',
+      // A COLUMN BESIDE THE MODEL, OR A SHEET OVER IT. 300px taken out of the
+      // width is a third of a phone's screen, and what is left is the thing the
+      // page exists to show — so on narrow the rail stops being a column and
+      // covers the body instead, the way the tree already does. It is the same
+      // panel either way: it opens and closes by the same button and holds the
+      // same threads.
+      railStyle: (narrow ? 'position:absolute;inset:0;z-index:20' : 'width:300px;flex:none')
+        + ';background:#f7f8fa;border-left:1px solid #d8dce1;display:'
+        + (railOpen && !viewer ? 'flex' : 'none') + ';flex-direction:column;min-height:0',
       threads,
 
       // -- the strip under the header: the projects this browser has been in
@@ -3089,6 +3235,24 @@ export default class HammerolaViewer extends React.Component {
         style: tab(s.view === v.id),
         onClick: () => this.showView(v.id),
       })),
+      // WHAT THE TOOLBAR KEEPS WHEN IT IS THE WIDTH OF A PHONE: the view tabs
+      // and Fit, which are the two controls about LOOKING at the model. The
+      // rest goes — Measure, Move part and Comment are gestures that want a
+      // pointer and a canvas with room to aim in, Frame saves a PNG a phone has
+      // nowhere to put, and the theme toggle is a preference rather than a step.
+      // The dividers go with them: three rules with nothing left between them.
+      //
+      // IT TAKES AWAY NO POPOVER, and this once said the opposite — it read as
+      // the reason some of this page's popovers needed clamping and others did
+      // not. None of the buttons above opens one, so dropping them narrows
+      // nothing but the toolbar itself.
+      //
+      // WHICH POPOVERS ARE CLAMPED IS NOT WRITTEN DOWN HERE, and that is on
+      // purpose: this comment has carried a count of them twice and been wrong
+      // both times, because a sentence cannot be re-checked when a panel is
+      // added. `narrow.test.js` names the clamped ones and asserts it — the
+      // list lives there, where it can fail.
+      showTools: !narrow,
       tMeasure: setTool('measure'), measureBtnStyle: btn(s.tool === 'measure'),
       tMove: setTool('move'), moveBtnStyle: btn(s.tool === 'move', viewer),
       tComment: setTool('comment'), commentBtnStyle: btn(s.tool === 'comment', viewer),
@@ -3138,7 +3302,15 @@ export default class HammerolaViewer extends React.Component {
       secSub: s.held ? `held · ${HOLD_KEY_LABEL}` : secSub,
       openSecPop: stop(() => this.setState({ secPop: true })),
       closeSecPop: stop(() => this.setState({ secPop: false })),
-      secPopStyle: 'position:absolute;left:278px;top:52px;width:270px;background:#fff;border:1px solid #d3d8de;border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px rgba(20,24,28,.16);z-index:15;display:' + (s.secPop ? 'block' : 'none'),
+      // CLAMPED TO THE SCREEN, and on narrow that is not cosmetic. At
+      // `left:278px` and 270px wide this panel's right-hand end — where its
+      // close cross is — sits past 540px, off a phone screen entirely. Nothing
+      // else takes it back: `rootClick` clears the other popovers and not this
+      // one, the panel stops the click that would reach it anyway, and a phone
+      // has no Escape key. Opened there it could only be closed by reloading
+      // the page. It is reached through the tree, which on narrow the "Parts"
+      // button above is what opens.
+      secPopStyle: (narrow ? popSheet : 'position:absolute;left:278px;top:52px;width:270px;') + 'background:#fff;border:1px solid #d3d8de;border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px rgba(20,24,28,.16);z-index:15;display:' + (s.secPop ? 'block' : 'none'),
       pickFace: stop(() => { this.set({ tool: 'cut', secPop: false }); this.toast('Click a face — the plane will sit on it'); }),
       pickFaceStyle: `padding:7px;text-align:center;border-radius:6px;font:600 11.5px ${MONO};cursor:pointer;` + (s.tool === 'cut' ? 'background:#dcebfc;color:#155bb5;border:1px solid #9cc4f0' : 'background:#1f7ae0;color:#fff;border:1px solid #1c67c2'),
       pickFaceText: s.tool === 'cut' ? 'now click a face on the model…' : (s.secFace ? 'pick another face' : 'pick a face to place the plane'),
@@ -3222,6 +3394,17 @@ export default class HammerolaViewer extends React.Component {
         + `cursor:${s.swapping ? 'default' : 'pointer'}`,
       bannerLater: () => this.dismissPending(),
 
+      // THE CHIPS STAND CLEAR OF THE TREE, which is the whole of what the offset
+      // means: 278px is the clearance the open tree needs beside the model — a
+      // hand-tuned constant, and not a width the tree declares, since its rows
+      // are `inline-flex` and it is as wide as the names in it. On
+      // narrow the tree starts closed and covers the model when it opens, so
+      // that offset would put these chips off the side of a phone entirely —
+      // they take the tree's left margin instead, which is where the tree is
+      // not.
+      chipsStyle: 'position:absolute;left:' + (narrow ? '12px' : '278px')
+        + ';top:14px;display:flex;flex-direction:column;gap:8px;align-items:flex-start;'
+        + 'pointer-events:none;z-index:13',
       movedChipStyle: chip(!!s.moved, '#fdf0d8', '#f0dcae', '#6b5210'),
       movedText: s.moved ? `${s.moved.name} moved ${s.moved.mag} mm` : '',
       movedReset: () => this.set({ moved: null }, { __resetMove: true }),
@@ -3339,7 +3522,15 @@ export default class HammerolaViewer extends React.Component {
       menuStyle: 'position:fixed;width:230px;background:#fff;border:1px solid #d3d8de;border-radius:9px;box-shadow:0 12px 40px rgba(20,24,28,.2);padding:2px 0 6px;z-index:60;display:' + (s.menu ? 'block' : 'none') + ';left:' + (s.menu ? s.menu.x : 0) + 'px;top:' + (s.menu ? s.menu.y : 0) + 'px',
       menuName: mName, menuItems,
 
-      notePopStyle: 'position:absolute;left:310px;top:120px;width:300px;background:#fff;border:1px solid #d3d8de;border-radius:10px;padding:13px 14px;box-shadow:0 12px 40px rgba(20,24,28,.2);z-index:60;display:' + (s.notePop ? 'block' : 'none'),
+      // CLAMPED FOR THE REASON `secPopStyle` IS, and it is the worse of the two:
+      // at `left:310px` and 300px wide, a phone shows the empty left margin of
+      // this panel and nothing else — its Cancel and Save sit past 480px, off
+      // the screen, and the row is `justify-content:flex-end` so they stay
+      // there. `rootClick` does not clear `notePop`, the panel stops the click
+      // that would reach it, and there is no Escape key on a phone: opened, it
+      // could only be dismissed by reloading. Reachable there through the note
+      // box and through the tree row's context menu.
+      notePopStyle: (narrow ? popSheet : 'position:absolute;left:310px;top:120px;width:300px;') + 'background:#fff;border:1px solid #d3d8de;border-radius:10px;padding:13px 14px;box-shadow:0 12px 40px rgba(20,24,28,.2);z-index:60;display:' + (s.notePop ? 'block' : 'none'),
       notePopName: s.notePop || '',
       noteDraft: s.noteDraft,
       noteType: (e) => this.setState({ noteDraft: e.target.value }),
@@ -3381,9 +3572,7 @@ export default class HammerolaViewer extends React.Component {
         <style>{PIN_CSS}</style>
 
         {/* ── header: model, revision, status, downloads, access, comments ── */}
-        <div style={css('height:50px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;'
-          + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE};position:relative;z-index:30`)}
-        >
+        <div style={css(v.headerStyle)}>
           <a href="/" title="all projects" style={css('display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit')}>
             {/* `<Mark />`, not the same SVG written out again. It WAS written out
                 again — byte for byte, defaults and all — which is the third copy
@@ -3392,12 +3581,12 @@ export default class HammerolaViewer extends React.Component {
                 changes when you navigate is one of the three reasons that module
                 exists. */}
             <Mark />
-            <span style={css(`font:700 14px ${SANS};letter-spacing:-.2px`)}>hammerola</span>
+            {v.showWordmark && <span style={css(`font:700 14px ${SANS};letter-spacing:-.2px`)}>hammerola</span>}
           </a>
           <div style={css(`width:1px;height:22px;background:${HEADER_LINE}`)} />
-          <div style={css('display:flex;flex-direction:column;gap:1px;flex:none;min-width:0')}>
+          <div style={css(v.titleColStyle)}>
             <div style={css(`font:600 13.5px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{v.title}</div>
-            <div style={css(`font:400 10.5px ${MONO};color:#787f87;white-space:nowrap`)}>{v.subtitle}</div>
+            {v.showSubtitle && <div style={css(`font:400 10.5px ${MONO};color:#787f87;white-space:nowrap`)}>{v.subtitle}</div>}
           </div>
 
           <div style={css('position:relative;margin-left:8px;flex:none')}>
@@ -3437,7 +3626,7 @@ export default class HammerolaViewer extends React.Component {
             </div>
           </div>
 
-          <div style={css(v.statusChipStyle)}>{v.statusText}</div>
+          {v.showStatus && <div style={css(v.statusChipStyle)}>{v.statusText}</div>}
           <div style={css('flex:1')} />
 
           {/* downloads: whole-build files, exactly the ones meta.json names */}
@@ -3504,6 +3693,16 @@ export default class HammerolaViewer extends React.Component {
             </div>
           </div>
 
+          {/* The tree's own switch, drawn only where the tree is not simply
+              there: narrow, it lies over the model rather than beside it, so it
+              starts closed and something has to open it. Wide, this button is
+              `display:none` — the tree is on screen already and a control that
+              says "Parts" beside a visible list of them is noise. */}
+          <div onClick={v.treeToggle} style={css(v.treeBtnStyle)}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 3h12M4.5 8H14M4.5 13H14" /></svg>
+            Parts
+          </div>
+
           <div onClick={v.railToggle} style={css(v.railBtnStyle)}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /></svg>
             Comments
@@ -3535,7 +3734,7 @@ export default class HammerolaViewer extends React.Component {
 
           {/* ── the tree, floating over the model ── */}
           <div style={css('position:absolute;left:12px;top:10px;max-height:calc(100% - 20px);display:flex;flex-direction:column;align-items:flex-start;overflow:auto;z-index:10')}>
-            {v.notCompare && (
+            {v.notCompare && v.treeShown && (
               <div style={css('display:flex;flex-direction:column;min-height:0')}>
                 <div style={css('flex:none;display:flex;align-items:center;gap:2px;padding:0 0 3px')}>
                   <span onClick={v.expandAll} title="expand all" style={css('width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:#5b6470;cursor:pointer;background:rgba(255,255,255,.78)')}>
@@ -3645,38 +3844,48 @@ export default class HammerolaViewer extends React.Component {
                     <div key={t.key} onClick={t.onClick} title={t.hint} style={css(t.style)}>{t.label}</div>
                   ))}
                 </div>
-                <div style={css('width:1px;height:18px;background:#d8dce1')} />
-                <div onClick={v.tMeasure} style={css(v.measureBtnStyle)}>
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 14L14 2M2 14l2.2-.55M14 2l-.55 2.2M6.2 9.8l1.4 1.4M9 7l1.4 1.4" /></svg>
-                  Measure
-                </div>
-                <div onClick={v.tMove} style={css(v.moveBtnStyle)}>
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M8 1.5v13M1.5 8h13M8 1.5L6.2 3.3M8 1.5l1.8 1.8M8 14.5l-1.8-1.8M8 14.5l1.8-1.8M1.5 8l1.8-1.8M1.5 8l1.8 1.8M14.5 8l-1.8-1.8M14.5 8l-1.8 1.8" /></svg>
-                  Move part
-                </div>
-                <div onClick={v.tComment} style={css(v.commentBtnStyle)}>
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /><path d="M5 5.5h6M5 8h4" /></svg>
-                  Comment
-                </div>
-                <div style={css('width:1px;height:18px;background:#d8dce1')} />
+                {/* Everything between the tabs and Fit belongs to a pointer and
+                    a canvas with room to aim in — see `showTools`. */}
+                {v.showTools && (
+                  <>
+                    <div style={css('width:1px;height:18px;background:#d8dce1')} />
+                    <div onClick={v.tMeasure} style={css(v.measureBtnStyle)}>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 14L14 2M2 14l2.2-.55M14 2l-.55 2.2M6.2 9.8l1.4 1.4M9 7l1.4 1.4" /></svg>
+                      Measure
+                    </div>
+                    <div onClick={v.tMove} style={css(v.moveBtnStyle)}>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M8 1.5v13M1.5 8h13M8 1.5L6.2 3.3M8 1.5l1.8 1.8M8 14.5l-1.8-1.8M8 14.5l1.8-1.8M1.5 8l1.8-1.8M1.5 8l1.8 1.8M14.5 8l-1.8-1.8M14.5 8l-1.8 1.8" /></svg>
+                      Move part
+                    </div>
+                    <div onClick={v.tComment} style={css(v.commentBtnStyle)}>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /><path d="M5 5.5h6M5 8h4" /></svg>
+                      Comment
+                    </div>
+                    <div style={css('width:1px;height:18px;background:#d8dce1')} />
+                  </>
+                )}
                 <div onClick={v.fitView} title="back to the frame this view opened in" style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:#3c4147;cursor:pointer;border:1px solid transparent`)}>
                   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5" /></svg>
                   Fit
                 </div>
-                <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:#3c4147;cursor:pointer;border:1px solid transparent`)}>
-                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
-                  Frame
-                </div>
-                <div style={css('width:1px;height:18px;background:#d8dce1')} />
-                {/* what the model stands on — the canvas only, never the chrome */}
-                <div onClick={v.toggleTheme} title={v.themeTitle} style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:#3c4147;cursor:pointer;border:1px solid transparent`)}>
-                  {v.themeDark ? (
-                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6 5.9 5.9 0 1 0 13.4 9.9z" /></svg>
-                  ) : (
-                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="3.1" /><path d="M8 1.2v1.7M8 13.1v1.7M1.2 8h1.7M13.1 8h1.7M3.2 3.2l1.2 1.2M11.6 11.6l1.2 1.2M12.8 3.2l-1.2 1.2M4.4 11.6l-1.2 1.2" /></svg>
-                  )}
-                  {v.themeLabel}
-                </div>
+                {v.showTools && (
+                  <>
+                    <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:#3c4147;cursor:pointer;border:1px solid transparent`)}>
+                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
+                      Frame
+                    </div>
+                    <div style={css('width:1px;height:18px;background:#d8dce1')} />
+                    {/* what the model stands on — the canvas only, never the chrome */}
+                    <div onClick={v.toggleTheme} title={v.themeTitle} style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:#3c4147;cursor:pointer;border:1px solid transparent`)}>
+                      {v.themeDark ? (
+                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6 5.9 5.9 0 1 0 13.4 9.9z" /></svg>
+                      ) : (
+                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="3.1" /><path d="M8 1.2v1.7M8 13.1v1.7M1.2 8h1.7M13.1 8h1.7M3.2 3.2l1.2 1.2M11.6 11.6l1.2 1.2M12.8 3.2l-1.2 1.2M4.4 11.6l-1.2 1.2" /></svg>
+                      )}
+                      {v.themeLabel}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -3693,7 +3902,7 @@ export default class HammerolaViewer extends React.Component {
             </div>
 
             {/* state chips: a moved part, a live measurement */}
-            <div style={css('position:absolute;left:278px;top:14px;display:flex;flex-direction:column;gap:8px;align-items:flex-start;pointer-events:none;z-index:13')}>
+            <div style={css(v.chipsStyle)}>
               <div style={css(v.movedChipStyle)}>
                 <span style={css('width:7px;height:7px;border-radius:4px;background:#b8710d;flex:none')} />
                 {v.movedText} &mdash; temporary, not saved to the model
