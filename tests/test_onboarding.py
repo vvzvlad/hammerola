@@ -658,6 +658,14 @@ SKILL_BUDGET = re.compile(r"its\s+own\s+budget:\s+(\d+)\s+seconds")
 # three saying 900's worth for a release. Pinning two of the three would have
 # left the survivor to go stale alone, which is the same defect with a smaller
 # blast radius rather than a different one.
+#
+# THE DOCUMENT STATES THE WALL NOWHERE ELSE, which is a property to preserve and
+# not a coincidence: the review of #81 twice caught a fresh unpinned copy that
+# the fix for #81 had itself just written into this file, once as arithmetic off
+# the slow-build threshold. Prose that recomputes a ceiling belongs on this side
+# of the HTTP boundary. The one exception left in the skill is the sentence
+# saying the wall WAS 900 before the units landed -- past tense, dated, and true
+# whatever the number becomes.
 SKILL_WALL_MINUTES = re.compile(r"A\s+build\s+has\s+(\w+)\s+minutes\s+of\s+wall\s+clock")
 SKILL_WALL = re.compile(r"kills\s+a\s+build\s+at\s+(\d+)\s+seconds")
 SKILL_WALL_WHOLE = re.compile(r"whole\s+(\w+)-minute\s+wall\s+clock")

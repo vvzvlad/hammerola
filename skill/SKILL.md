@@ -892,13 +892,13 @@ The hub kills a build at 300 seconds of wall clock. It runs four builds at a
 time, so a queue in front of yours is time before your build starts, and the
 client waits out both — its own ceiling is 2700 seconds and you will never see
 it. That first number was 900 until the heavy models moved their measurements
-into check units, which are killed one at a time on a budget of their own; the
-warning at three minutes therefore now fires with about two minutes of wall
-clock left rather than twelve, and is worth acting on the first time it appears
-rather than the third. What you WILL see is the timeout on the tool you
-launched `hammerola build` with: a shell call that defaults to two minutes cuts
-the command off around the time a heavy model is getting started, and at a wall
-of 300 that is most of the run. The build does not die with it — it goes
+into check units, which are killed one at a time on a budget of their own. The
+warning at three minutes therefore leaves far less room ahead of the ceiling
+than it used to, and is worth acting on the first time it appears rather than
+the third. What you WILL see is the timeout on the tool you launched
+`hammerola build` with: a shell call that defaults to two minutes cuts the
+command off around the time a heavy model is getting started, with most of the
+build's wall clock still ahead of it. The build does not die with it — it goes
 on in the hub, finishes, and publishes — but the log was on that command's
 standard output, and it is gone. So run a push you expect to be slow with the
 timeout raised well past the hub's own ceiling, or in the background. Twice, in
