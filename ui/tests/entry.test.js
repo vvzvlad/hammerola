@@ -52,7 +52,7 @@ vi.mock('../src/store.js', async (importOriginal) => ({
 }))
 
 import HammerolaEntry, {
-  agentBrief, HammerolaLogin, HammerolaProjects, relTime, RevLine,
+  agentBrief, HammerolaLogin, HammerolaProjects, relTime, RevLine, VIEW_BODIES,
 } from '../src/HammerolaEntry.jsx'
 import { loadIndex, loadStart, projectCard, projectUrl, Unauthorized } from '../src/hub.js'
 import {
@@ -87,6 +87,11 @@ const CARD = {
   printables: 14,
   views: 3,
   mb: '1.2',
+  // The name of a file this build published, not a URL: the hub writes what the
+  // first view of the build declared, and turning it into an address is the
+  // browser's half (`buildFileUrl`). `null` here is a build with no picture,
+  // which is what an image with no rendering stack produces.
+  preview: 'assembled_preview.png',
 }
 
 afterEach(() => {
@@ -112,6 +117,7 @@ describe('a card of /index.json', () => {
       status: 'idle',
       built: '2026-08-26T18:20:00Z',
       first: '2026-01-22T09:00:00Z',
+      preview: '/project/0a1b2c3d4e5f/c0ffee1234567890abcdef/assembled_preview.png',
     })
   })
 
@@ -184,6 +190,45 @@ describe('what a card says about its draft', () => {
     // work in the slot, and a build of it running right now.
     expect(drawn({ dev: true, status: 'building' }))
       .toEqual(['c0ffee1', 'dev', 'building'])
+  })
+})
+
+// -- the picture on a card ---------------------------------------------------
+//
+// The plate is a component element, which is where `collect` stops — it walks
+// `props.children`, and `<Preview src={…} />` has none — so what the plate drew
+// is reached by CALLING what the body left in the tree, the same move `RevLine`
+// above needs. The BODIES are rendered rather than the component on its own,
+// because half of what is under test is the two call sites handing it
+// `p.preview`: called directly, both would pass with neither of them wired up.
+
+describe('the picture on a card', () => {
+  /** The two things a view body asks of the page, neither of them under test. */
+  const PAGE = { hover: () => ({}), cardStyle: () => '' }
+
+  const imgs = (card) => {
+    const rows = [projectCard({ ...CARD, ...card })]
+    const drawn = Object.values(VIEW_BODIES).map((body) => body(PAGE, rows))
+    const plates = collect(drawn, (el) => (
+      typeof el.type === 'function' ? el.type(el.props) : undefined))
+    return collect(plates, (el) => (el.type === 'img' ? el : undefined))
+  }
+
+  it('is the file that build published, under that build', () => {
+    // One per view body, and the same address from both: the picture belongs to
+    // the commit the card names, not to whatever `latest` points at by the time
+    // somebody looks.
+    const drawn = imgs({}).map((el) => el.props.src)
+    expect(drawn).toEqual([
+      '/project/0a1b2c3d4e5f/c0ffee1234567890abcdef/assembled_preview.png',
+      '/project/0a1b2c3d4e5f/c0ffee1234567890abcdef/assembled_preview.png',
+    ])
+  })
+
+  it('is nothing at all for a build that has none', () => {
+    // Not an empty `src` and not a hidden element: no img is drawn, so the plate
+    // underneath is the whole of what the card shows.
+    expect(imgs({ preview: null })).toEqual([])
   })
 })
 

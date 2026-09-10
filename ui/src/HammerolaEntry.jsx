@@ -10,9 +10,10 @@
  *   PROJECTS   -> GET /index.json, the file `Store._refresh_index` rewrites on
  *                 every publish. `hub.projectCard` is the whole mapping and says
  *                 which of the mock's fields the hub can answer.
- *   preview    -> nothing. A snapshot of the last build's frame is block 12 and
- *                 is not built, so every card draws the mock's own neutral
- *                 plate. No field was invented to hold one.
+ *   preview    -> the build's own picture (issue #34). Every build renders a
+ *                 sheet for the view it assembles and declares it in meta.json,
+ *                 so `index_card` puts the first view that has one on the card.
+ *                 A build with no picture draws the mock's own neutral plate.
  *   status     -> the DRAFT's, and only that (issue #32). `/index.json` answers
  *                 `idle`/`building`/`failed` for the last build pushed AS A
  *                 DRAFT — not for the last build in the project's `dev` slot,
@@ -588,14 +589,29 @@ const monthYear = (v) => (ts(v)
   : '—');
 
 /**
- * The preview plate.
+ * The preview plate, and the build's own picture over it when there is one.
  *
- * Always the isometric placeholder: a snapshot of the last build's frame is
- * block 12 of the brief and nothing produces one yet. It is drawn rather than
- * left blank because a card with a hole in it reads as a broken image, while
- * this reads as "a model".
+ * `src` is a sheet the build already rendered for one of its whole-view meshes
+ * — which view it was of is not promised, see `render.index_card` — and it is
+ * used AS IT IS (issue #34): the sheet is a square frame with a title band
+ * above it and a two-line footer below, and `object-fit:cover` at card size
+ * carries both bands off-frame by itself. No second artefact, and no cropping by
+ * pixel arithmetic here — that would be this file holding an opinion about a
+ * layout the build side owns.
+ *
+ * THE PLATE STAYS UNDERNEATH rather than being swapped out, which makes it two
+ * answers for the price of one: it is what shows while the picture loads, and it
+ * is what is left if the picture never arrives. `onError` hides the img — a
+ * build whose file 404s falls back to the plate instead of the browser's
+ * broken-image glyph — and it writes the style directly because this file uses
+ * no hooks and this has to stay a function component.
+ *
+ * With no `src` the output is the plate and nothing else, exactly as it was
+ * before any of this: a build made by an image with no rendering stack ships no
+ * pictures, and the placeholder is drawn rather than left blank because a card
+ * with a hole in it reads as a broken image, while this reads as "a model".
  */
-const Preview = ({ radius }) => (
+const Preview = ({ radius, src }) => (
   <div style={css('position:absolute;inset:0;background:linear-gradient(160deg,#f4f5f7,#e2e5e9);'
     + `overflow:hidden;border-radius:${radius || 0}px`)}
   >
@@ -605,6 +621,14 @@ const Preview = ({ radius }) => (
         <path d="M38 35l22 13 22-13M60 48v22" opacity=".7" />
       </g>
     </svg>
+    {src && (
+      <img
+        src={src}
+        alt=""
+        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+        style={css('position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block')}
+      />
+    )}
   </div>
 );
 
@@ -724,7 +748,14 @@ export const VIEW_ICONS = Object.freeze({
 /** How each view draws the rows. `page` is the component: hover and card style. */
 export const VIEW_BODIES = Object.freeze({
   grid: (page, rows) => (
-    <div style={css('display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px')}>
+    // `min(320px,100%)` RATHER THAN `320px`, and the difference is the whole of
+    // whether this page fits a phone. `minmax(320px,1fr)` states a floor no
+    // narrower window can honour: on a 320px screen the container is already
+    // 320 minus its own `padding:24px 20px`, so every track was 40px wider than
+    // the room for it and the page scrolled sideways for ever. `min()` lets the
+    // floor fall to the container's own width when there is less than 320 of it,
+    // which on a wide screen is not reached and changes nothing.
+    <div style={css('display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:16px')}>
       {rows.map((p) => (
         <a
           key={p.pid}
@@ -733,7 +764,7 @@ export const VIEW_BODIES = Object.freeze({
           style={css(`${page.cardStyle(p.pid)}overflow:hidden;display:flex;flex-direction:column`)}
         >
           <div style={css('position:relative;height:190px;flex:none')}>
-            <Preview />
+            <Preview src={p.preview} />
           </div>
           <div style={css('display:flex;flex-direction:column;gap:8px;padding:12px 14px 13px')}>
             <div style={css('display:flex;flex-direction:column;gap:2px;min-width:0')}>
@@ -766,7 +797,7 @@ export const VIEW_BODIES = Object.freeze({
           style={css(`${page.cardStyle(p.pid)}display:flex;align-items:center;gap:12px;padding:8px 12px 8px 8px`)}
         >
           <div style={css('position:relative;width:96px;height:60px;flex:none;border-radius:6px;overflow:hidden')}>
-            <Preview radius={6} />
+            <Preview radius={6} src={p.preview} />
           </div>
           <div style={css('flex:1;min-width:0;display:flex;flex-direction:column;gap:2px')}>
             <span style={css(`font:600 13px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>
@@ -900,8 +931,17 @@ export class HammerolaProjects extends React.Component {
       >
         <style>{ENTRY_CSS}</style>
 
-        {/* ── header ── */}
-        <div style={css('height:50px;display:flex;align-items:center;gap:12px;padding:0 20px;'
+        {/* ── header ──
+            `min-height` and `flex-wrap`, for the reason `static/_v/site.css`
+            gives on the resolver's copy of this row and the build page's header
+            repeats: a row that cannot break its line can only overflow, and a
+            header that overflows is one whose right-hand end — here the sign-out
+            button — is simply not on the screen. When the row no longer fits it
+            grows a second line instead; this page asks no breakpoint and needs
+            none, since the six items here run out of room at around 380px on
+            their own. The row gap only ever applies once it has wrapped. */}
+        <div style={css('min-height:50px;display:flex;flex-wrap:wrap;align-items:center;'
+          + 'gap:6px 12px;padding:0 20px;'
           + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE}`)}>
           <div style={css('display:flex;align-items:center;gap:8px')}>
             <Mark />

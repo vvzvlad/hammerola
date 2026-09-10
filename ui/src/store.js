@@ -1,13 +1,15 @@
 // Everything these pages remember in the browser, and nothing else.
 //
-// Four things are kept, all under the `hammerola.` prefix the rest of the site
+// Five things are kept, all under the `hammerola.` prefix the rest of the site
 // already uses — `hammerola.pointing_device`, the viewport's own answer
 // (viewport/options.js). Two of them are keyed BY PROJECT for the reason
 // pointer_pref.js gives about its own key: somebody editing one model and merely
 // looking at another must not have the two answers collide. The token is one of
-// the two that are not, and the section below says why that changed; the
-// arrangement of the project list is the other, and it never could be — the page
-// that has it names no project.
+// the three that are not, and the section below says why that changed; the
+// arrangement of the project list is another, and it never could be — the page
+// that has it names no project; the tab strip is the third, and it is the one
+// thing here that is ABOUT several projects at once, so no single project could
+// have keyed it either.
 //
 // EVERY access goes through the two functions at the top. `localStorage` is not
 // a property that is always there — a private window, a browser set to block
@@ -223,3 +225,135 @@ export const readProjectView = () => recall(VIEW_KEY, PROJECT_VIEWS);
 export const readProjectSort = () => recall(SORT_KEY, PROJECT_SORTS);
 export const writeProjectView = (value) => remember(VIEW_KEY, PROJECT_VIEWS, value);
 export const writeProjectSort = (value) => remember(SORT_KEY, PROJECT_SORTS, value);
+
+// -- the strip of projects this browser has been in --------------------------
+// A LIST OF LINKS BESIDE THE ADDRESS, and that sentence is the whole design
+// (issue #45). An entry is a link at `/project/<pid>/` — the pointer-less URL
+// `projectUrl` builds — and nothing more. WHICH ONE IS ACTIVE IS NOT STORED,
+// because it is not a fact about this browser: it is the pid in the address the
+// reader is standing on. One remembered field fewer, and nothing that can fall
+// out of step with the URL bar.
+//
+// A TAB IS A PROJECT AND NOT A BUILD, for the same reason a card on the front
+// page is (`projectUrl` says it at length): the URL naming no pointer opens
+// whichever of `latest` and `dev` this reader was last on, and linking straight
+// at one would overwrite that memory from the strip on every click.
+//
+// ONE KEY FOR THE WHOLE SITE, like the arrangement above and for a related but
+// not identical reason. That one has no project to key it by at all; this one is
+// ABOUT several projects at once, so keying it by any of them would store N
+// copies of a list that only means anything whole.
+//
+// TWO DIFFERENT ORDERS, AND THEY HAVE TO STAY DIFFERENT. POSITION is the order
+// of OPENING: an arrival is appended at the end and stays where it is for as
+// long as it is remembered, because a strip that re-sorted itself by recency
+// would move a link out from under a reader already aiming at it. EVICTION is by
+// LAST VISIT: at the cap the entry nobody has opened for longest goes, silently.
+// Dropping the leftmost instead — which is what "oldest" reads as when the two
+// orders are collapsed into one — would evict the project somebody returns to
+// every day and therefore opened first.
+//
+// THIS IS THE FIRST LIST THIS MODULE STORES, and that raises a question none of
+// the scalars above had to answer: what to do with ONE BAD ELEMENT among good
+// ones. A scalar has a ready answer — `recall` reads a value it cannot use as
+// "nothing was remembered" — and the decision here is that same policy applied
+// PER ELEMENT: the unusable entries are dropped and the rest kept. It is the
+// least destructive reading available, and that is the argument for it. Storage
+// holds whatever any version of this page ever wrote, plus whatever was typed
+// into a browser's storage inspector, so one hand-edited entry is an ordinary
+// arrival rather than an attack — and it must not cost a reader the nine good
+// tabs standing beside it. Refusing the whole cell, which is what `readNotes`
+// does with a map it cannot read, would do exactly that. The cell as a whole is
+// still all-or-nothing where it has to be: text that will not parse, and a value
+// that is not an array, name no elements to keep.
+//
+// AN ENTRY IS THREE FIELDS AND THERE IS NO FOURTH: the pid, which is the link; a
+// title, because a strip of ids is a strip nobody can read; and the stamp of the
+// last visit, which is the only input the eviction has. Anything else found in a
+// stored entry is dropped on the way in rather than carried forward.
+
+const TABS_KEY = `${NS}tabs`;
+
+/** How many the strip holds. The eleventh arrival evicts the coldest entry. */
+export const TAB_CAP = 10;
+
+/** Everything an entry needs to be drawn as a link and to be evicted fairly. */
+const usableTab = (entry) => (
+  !!entry && typeof entry === 'object' && !Array.isArray(entry)
+  && typeof entry.pid === 'string' && !!entry.pid
+  && typeof entry.title === 'string'
+  && typeof entry.seen === 'number' && Number.isFinite(entry.seen));
+
+// Down to the cap by LAST VISIT, leaving the order of the survivors alone —
+// which is what keeps the two orders apart. Applied on the way OUT as well as on
+// the way in: a cell somebody grew by hand is answered with the ten that would
+// have survived, rather than with twenty a page then draws.
+const cappedTabs = (list) => {
+  if (list.length <= TAB_CAP) return list;
+  const cold = new Set([...list]
+    .sort((a, b) => a.seen - b.seen)
+    .slice(0, list.length - TAB_CAP));
+  return list.filter((entry) => !cold.has(entry));
+};
+
+/** The strip as it can be drawn: never null, never over the cap. */
+export function readTabs() {
+  const raw = read(TABS_KEY);
+  if (!raw) return [];
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    // Written by an older version of this page, or edited by hand. An empty
+    // strip is what a first visit looks like, which is a page that works;
+    // throwing here happens during render and loses the interface.
+    console.warn('tabs', error);
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  // ONE ENTRY PER PID, KEEPING THE FIRST. Nothing here writes a duplicate —
+  // `rememberTab` finds the pid before it appends — but a cell somebody edited
+  // by hand can hold two, and that is an ordinary arrival rather than an attack
+  // (the paragraph above). Two entries for one project draw two pills that go
+  // to the same place, under one React key, and only the first of them would
+  // ever be refreshed again; the first is kept because position is the order of
+  // opening, and the earlier entry is the one that recorded it.
+  const byPid = new Map();
+  parsed.filter(usableTab).forEach(({ pid, title, seen }) => {
+    if (!byPid.has(pid)) byPid.set(pid, { pid, title, seen });
+  });
+  return cappedTabs([...byPid.values()]);
+}
+
+/**
+ * Record an arrival: this project, under this title, now.
+ *
+ * APPENDED IF IT IS NEW, REFRESHED IF IT IS NOT. A project already on the strip
+ * keeps its position exactly — a link that moves when you revisit it is a link
+ * nobody can aim at — and only its stamp changes, which is what puts it at the
+ * back of the eviction queue rather than at the end of the row.
+ *
+ * THE TITLE IS REFRESHED TOO, and that is deliberate rather than incidental: a
+ * model renamed in `model.py` says its new name here on the next visit instead
+ * of the one it carried when this browser first saw it.
+ */
+export function rememberTab(pid, title) {
+  if (!pid || typeof pid !== 'string') return;
+  const list = readTabs();
+  const at = list.findIndex((entry) => entry.pid === pid);
+  // The pid where there is no title to draw, the way a card falls back to it on
+  // the front page (`projectCard` in hub.js). A blank pill is worse than an ugly
+  // one, and what is left standing is still a working link.
+  const named = String(title || (at >= 0 ? list[at].title : '') || pid);
+  const entry = { pid, title: named, seen: Date.now() };
+  if (at >= 0) list[at] = entry;
+  else list.push(entry);
+  write(TABS_KEY, JSON.stringify(cappedTabs(list)));
+}
+
+/** Forget one project. Nothing else moves — a tab is a link, so this is the
+ *  whole of closing one. */
+export function forgetTab(pid) {
+  if (!pid) return;
+  write(TABS_KEY, JSON.stringify(readTabs().filter((entry) => entry.pid !== pid)));
+}
