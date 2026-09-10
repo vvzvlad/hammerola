@@ -91,10 +91,11 @@ import {
 } from './events.js';
 import {
   PAGE, ASSEMBLED_VIEW_ID, isPointerPage, buildKey, countedName, indexTree,
-  loadMeta, loadBuilds, rereadPage, shortId, stamp, mb,
+  loadMeta, loadBuilds, projectUrl, rereadPage, shortId, stamp, mb,
 } from './hub.js';
 import {
   readToken, writeToken, clearToken, readNotes, writeNotes, rememberPointer,
+  readTabs, rememberTab, forgetTab,
 } from './store.js';
 import {
   css, FONTS, SANS, MONO, Mark, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
@@ -612,6 +613,12 @@ export default class HammerolaViewer extends React.Component {
       // options the viewport starts the library with (viewport/options.js), so
       // the button below never has to correct a canvas that came up wrong.
       theme: readTheme(),
+      // -- where this browser has been lately: the strip under the header.
+      // Empty here and seeded in `load()`, unlike `theme` above, because an
+      // arrival cannot be recorded until `meta` says what this project is
+      // CALLED — see there. Nothing is lost by the wait: below two entries the
+      // strip is not drawn at all.
+      tabs: [],
     };
   }
 
@@ -963,10 +970,35 @@ export default class HammerolaViewer extends React.Component {
     });
     const wanted = new URLSearchParams(location.search).get('v');
     const opening = meta.views.find((v) => v.id === wanted) || meta.views[0];
+    // THE ARRIVAL ON THE TAB STRIP (issue #45), the same fact `rememberPointer`
+    // records in `componentDidMount` and recorded HERE instead, one fetch later,
+    // for one reason: this is the first moment a human-readable name for the
+    // project exists. Before `meta` lands there is only `PAGE.pid`, and a strip
+    // of ids is a strip nobody can read.
+    //
+    // ON ARRIVAL ONLY. The in-place revision switch and the poll's refresh both
+    // replace `meta` without this line, deliberately: they are the same project,
+    // already on the strip, so re-recording there would move nothing and refresh
+    // a stamp for a reader who never left the page.
+    rememberTab(PAGE.pid, meta.title || meta.project);
     // `view` is what makes the viewport fetch and render: it starts null on both
     // sides, so this first sync is also the load.
-    this.setState({ meta, builds, view: opening.id },
+    this.setState({ meta, builds, view: opening.id, tabs: readTabs() },
                   () => { this.sync(); this.schedulePoll(POLL_MS); });
+  }
+
+  /**
+   * Forget one project, and go nowhere.
+   *
+   * INCLUDING WHEN IT IS THE TAB THE READER IS STANDING ON. A tab is a link, so
+   * closing one is forgetting a link and not leaving a page: the model stays on
+   * screen, the address still names this project, and since the address is the
+   * only thing that ever said which tab was active there is no active-tab state
+   * left pointing at something that is gone.
+   */
+  closeTab(pid) {
+    forgetTab(pid);
+    this.setState({ tabs: readTabs() });
   }
 
   // -- switching revisions in place -----------------------------------------
@@ -2912,6 +2944,12 @@ export default class HammerolaViewer extends React.Component {
     const railOpen = s.rail === null ? this.props.commentsOpen : s.rail;
     const cutOn = s.secOn || s.held;
 
+    // `|| []` because `computed()` runs over a state built by hand as often as
+    // over the constructor's: every test file in ui/tests spells the fields out,
+    // and a field added here would otherwise take down the ones written before
+    // it existed, at `.length`.
+    const openTabs = s.tabs || [];
+
     // Both notes on the part in front of the reader, read once: the box below
     // asks three questions of each of them (is it there, does the box open, does
     // a rule go between them) and a method call per question would let the two
@@ -2989,6 +3027,59 @@ export default class HammerolaViewer extends React.Component {
       openCount,
       railStyle: 'width:300px;flex:none;background:#f7f8fa;border-left:1px solid #d8dce1;display:' + (railOpen && !viewer ? 'flex' : 'none') + ';flex-direction:column;min-height:0',
       threads,
+
+      // -- the strip under the header: the projects this browser has been in
+      //
+      // A ROW OF ITS OWN and not part of the 50px header above, which is already
+      // carrying a title, a picker, a status chip and four controls.
+      //
+      // BELOW TWO IT IS NOT DRAWN AT ALL — not drawn `display:none`, but absent:
+      // a strip whose only link is the project already on screen is noise with a
+      // border round it, and the row it would occupy is 30px off the model.
+      //
+      // WHICH ONE IS ACTIVE IS ASKED OF THE ADDRESS, `PAGE.pid`, and of nothing
+      // else. Nothing stores it and no state here holds it, so the highlighted
+      // pill cannot disagree with the page it is drawn on (store.js says why).
+      // IT WRAPS, and that is not a detail. Ten pills at the 190px cap below,
+      // with their gaps and this padding, is close to 2000px — wider than the
+      // window this interface is drawn for, and the root above is
+      // `overflow:hidden`. A row that cannot break its line can only overflow,
+      // and overflowing under `overflow:hidden` means silently CUT OFF rather
+      // than scrolled: the eleventh project this browser opened would evict the
+      // coldest tab, and the reader would watch a strip that never changed. It
+      // is the same failure `static/_v/site.css` fixed on the resolver's own
+      // header, and it is fixed here the same way — wrap, so a full strip grows
+      // a second row instead of losing its tail.
+      tabsShown: openTabs.length > 1,
+      tabsStyle: 'flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:5px 12px;'
+        + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE}`,
+      tabs: openTabs.map((t) => ({
+        key: t.pid,
+        // The pointer-less URL, exactly what a card on the front page links at:
+        // a tab is a PROJECT, and which revision of it opens is the reader's own
+        // remembered answer rather than this strip's to decide (hub.projectUrl).
+        href: projectUrl(t.pid),
+        label: t.title,
+        // The pill the view switcher is drawn with, so "the one you are on"
+        // reads the same way here as it does there rather than in a second
+        // visual language invented for one row.
+        style: tab(t.pid === PAGE.pid)
+          + ';display:flex;align-items:center;gap:7px;max-width:190px;text-decoration:none;color:inherit',
+        // Capped and ellipsised like the header's title: a model named after its
+        // whole assembly must not be able to push the page wider than the
+        // window, and ten of them must not push the strip off the side.
+        labelStyle: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
+        // BOTH CALLS, and `preventDefault` is the one that does the work here:
+        // the ✕ sits INSIDE the anchor, so stopping React's synthetic bubbling
+        // leaves the browser's own navigation entirely untouched and closing a
+        // tab would open it. `stopPropagation` is for the root's click handler,
+        // which would take the open menus down under a gesture about neither.
+        onClose: (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.closeTab(t.pid);
+        },
+      })),
 
       // Views come from the model's code: as many tabs as it declares.
       viewTabs: ((meta && meta.views) || []).map((v) => ({
@@ -3419,6 +3510,26 @@ export default class HammerolaViewer extends React.Component {
             <span style={css(v.railCountStyle)}>{v.openCount}</span>
           </div>
         </div>
+
+        {/* ── the tab strip: the projects this browser has been in lately ──
+            Navigation memory next to the address and nothing more — plain
+            links, in the order they were opened, the one matching this page's
+            pid drawn as the active pill. */}
+        {v.tabsShown && (
+          <div style={css(v.tabsStyle)}>
+            {v.tabs.map((t) => (
+              <a key={t.key} href={t.href} title={t.label} style={css(t.style)}>
+                <span style={css(t.labelStyle)}>{t.label}</span>
+                {/* A bare span, the way every other close control on this page
+                    is written — a `<button>` inside an `<a>` is not markup a
+                    browser is required to make sense of. */}
+                <span onClick={t.onClose} title="forget this project"
+                      style={css('color:#9aa1a9;cursor:pointer;flex:none')}
+                >&#10005;</span>
+              </a>
+            ))}
+          </div>
+        )}
 
         <div style={css('flex:1;display:flex;min-height:0;position:relative')}>
 

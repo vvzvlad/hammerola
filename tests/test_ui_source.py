@@ -704,6 +704,35 @@ def test_every_localstorage_access_is_guarded():
             assert any("try {" in earlier for earlier in window), (
                 f"{path.name}:{number + 1} touches localStorage outside a try")
 
+
+def test_a_project_reaches_the_tab_strip_from_exactly_one_place():
+    """The arrival, and only the arrival, is what the strip records (issue #45).
+
+    `ui/tests/tabs.test.js` drives the real `load()` and holds the recording
+    itself — that the project lands on the strip under the name meta.json gives
+    it. What that cannot see is a SECOND caller, and there are two obvious
+    candidates a page later grows: the in-place revision switch and the poll's
+    refresh, both of which replace `meta` and would look like the same moment.
+
+    They are not the same moment. Recording there would refresh the stamp of a
+    reader who never left the page, and the stamp is the only input the eviction
+    has — so a project somebody sat on all afternoon would outlive the nine they
+    actually visited, and the tab that vanished would look like bad luck rather
+    than like a rule. Position would not move, which is what makes it quiet: the
+    strip goes on looking right while it forgets the wrong thing.
+
+    A count rather than a place, because the place is already held by the suite
+    above. What this refuses is a second one appearing without a decision.
+    """
+    calls = strip_comments(read(COMPONENT)).count("rememberTab(")
+    assert calls == 1, (
+        f"the interface records a tab from {calls} places, not one. The strip "
+        "is filled on arrival — where the project is first NAMED — and a "
+        "second caller on a path that merely replaces `meta` refreshes the "
+        "stamp of a reader who has not gone anywhere, which silently reorders "
+        "what gets evicted")
+
+
 # -- the arrangement of the project list -------------------------------------
 #
 # ONE CHECK, and what is NOT here is the point. The four key sets that have to

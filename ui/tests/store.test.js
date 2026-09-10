@@ -1,6 +1,6 @@
 // ui/src/store.js — everything these pages remember in the browser: the token,
-// the notes, which pointer the reader was last on, and how the front page's
-// list of projects is arranged.
+// the notes, which pointer the reader was last on, how the front page's list of
+// projects is arranged, and the strip of projects this browser has been in.
 //
 // THE STORAGE IS A DOUBLE, AND THE DOUBLE IS THE WHOLE TEST. There is no
 // `localStorage` in this runner at all: Node's own global of that name is
@@ -31,15 +31,16 @@
 // here where a literal is the right answer: they are the OBSERVABLE — the
 // pointer key is read by a module outside this bundle entirely
 // (`static/_v/pointer_pref.js`, compared as text by `tests/test_pointer_memory.py`),
-// and the other two are what a reader's browser carries between visits. Reusing
+// and the others are what a reader's browser carries between visits. Reusing
 // the module's own expression would give a test that agrees with itself whatever
 // it is changed to.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  clearToken, readNotes, readProjectSort, readProjectView, readToken,
-  rememberPointer, writeNotes, writeProjectSort, writeProjectView, writeToken,
+  clearToken, forgetTab, readNotes, readProjectSort, readProjectView, readTabs,
+  readToken, rememberPointer, rememberTab, TAB_CAP, writeNotes,
+  writeProjectSort, writeProjectView, writeToken,
 } from '../src/store.js'
 
 const POINTER_KEY = 'hammerola.pointer.proj1'
@@ -47,6 +48,7 @@ const TOKEN_KEY = 'hammerola.token'
 const NOTES_KEY = 'hammerola.notes.proj1'
 const VIEW_KEY = 'hammerola.projects_view'
 const SORT_KEY = 'hammerola.projects_sort'
+const TABS_KEY = 'hammerola.tabs'
 
 /** The smallest thing store.js can tell from the real one, plus a way to fail. */
 function fakeStorage({ failing = false } = {}) {
@@ -375,5 +377,210 @@ describe('the arrangement of the project list', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(() => writeProjectSort('name')).not.toThrow()
     expect(readProjectSort()).toBeNull()
+  })
+})
+
+// -- the strip of projects this browser has been in --------------------------
+// Navigation memory beside the address: a list of links at `/project/<pid>/`,
+// nothing more. Nothing here stores WHICH tab is active — that is the pid in the
+// URL — so there is no such assertion below and there must not be one.
+//
+// THE FIRST LIST THIS MODULE STORES, and the shape of these tests follows from
+// that. A scalar is either readable or it is not; a list can be nine good
+// entries and one somebody typed into a browser's storage inspector, and the
+// decision (store.js says why at length) is that the bad one costs only itself.
+// That property is the one no smaller test here implies.
+//
+// THE CLOCK IS DRIVEN RATHER THAN WAITED ON. Eviction is by LAST VISIT, so a
+// suite that let `Date.now()` run would be asserting something about ten
+// arrivals within one millisecond — a fact about `Array.prototype.sort`, not
+// about this module. Every test that cares says what time it is.
+
+describe('the tab strip', () => {
+  /** Put the browser's clock where this test needs it. */
+  const at = (ms) => vi.spyOn(Date, 'now').mockReturnValue(ms)
+
+  /** The pids on the strip, in the order it would draw them. */
+  const strip = () => readTabs().map((t) => t.pid)
+
+  it('round-trips a project under one site-wide key', () => {
+    // Site-wide, like the arrangement above: the strip spans projects, so no
+    // one of them could have keyed it.
+    at(1000)
+    rememberTab('proj1', 'Bracket')
+    expect([...storage.cells.keys()]).toEqual([TABS_KEY])
+    expect(readTabs()).toEqual([{ pid: 'proj1', title: 'Bracket', seen: 1000 }])
+  })
+
+  it('appends an arrival at the end, where it then stays', () => {
+    // POSITION IS THE ORDER OF OPENING. A strip that re-sorted itself by
+    // recency would move a link out from under a reader already aiming at it.
+    at(1000); rememberTab('a', 'A')
+    at(2000); rememberTab('b', 'B')
+    at(3000); rememberTab('c', 'C')
+    expect(strip()).toEqual(['a', 'b', 'c'])
+  })
+
+  it('refreshes a repeat visit without moving it', () => {
+    // The other half of the same sentence: opening a project already on the
+    // strip moves nothing at all, it only stamps it.
+    at(1000); rememberTab('a', 'A')
+    at(2000); rememberTab('b', 'B')
+    at(3000); rememberTab('a', 'A')
+    expect(strip()).toEqual(['a', 'b'])
+    expect(readTabs()[0].seen).toBe(3000)
+  })
+
+  it('takes the newer title on a repeat visit', () => {
+    // A model renamed in `model.py` says its new name here on the next visit,
+    // rather than the one this browser saw first and kept forever.
+    at(1000); rememberTab('a', 'Bracket')
+    at(2000); rememberTab('a', 'Bracket mk2')
+    expect(readTabs()).toEqual([{ pid: 'a', title: 'Bracket mk2', seen: 2000 }])
+  })
+
+  it('holds ten and no more', () => {
+    for (let n = 0; n < 12; n += 1) { at(1000 + n); rememberTab(`p${n}`, `P${n}`) }
+    expect(TAB_CAP).toBe(10)
+    expect(readTabs()).toHaveLength(TAB_CAP)
+  })
+
+  it('evicts the LEAST RECENTLY USED, and never the leftmost', () => {
+    // The property the two separate orders exist for. `p0` is the project
+    // somebody opened first and goes back to every day; dropping the leftmost
+    // is exactly what would take it. `p1` was opened once and never again.
+    for (let n = 0; n < 10; n += 1) { at(1000 + n); rememberTab(`p${n}`, `P${n}`) }
+    at(5000); rememberTab('p0', 'P0')        // the daily visit
+    at(6000); rememberTab('fresh', 'Fresh')  // the eleventh project
+
+    const left = strip()
+    expect(left).toHaveLength(TAB_CAP)
+    expect(left).toContain('p0')
+    expect(left).not.toContain('p1')
+    // And surviving did not cost it its place: still the first pill drawn.
+    expect(left[0]).toBe('p0')
+    expect(left[left.length - 1]).toBe('fresh')
+  })
+
+  it('forgets one project and leaves the rest standing', () => {
+    at(1000); rememberTab('a', 'A')
+    at(2000); rememberTab('b', 'B')
+    at(3000); rememberTab('c', 'C')
+    forgetTab('b')
+    expect(strip()).toEqual(['a', 'c'])
+    // A pid that is not on the strip is not an error — the reader closed it in
+    // another window, or it was evicted while this page stood open.
+    forgetTab('nobody')
+    expect(strip()).toEqual(['a', 'c'])
+  })
+
+  it('drops one unusable entry and keeps the good ones', () => {
+    // THE DECISION THE SCALARS ABOVE NEVER HAD TO MAKE. `recall` reads a value
+    // it cannot use as "nothing was remembered"; per element that reads as
+    // "this entry was not remembered", and one hand-edited row must not cost a
+    // reader the nine good tabs standing beside it.
+    storage.setItem(TABS_KEY, JSON.stringify([
+      { pid: 'a', title: 'A', seen: 1 },
+      { pid: '', title: 'no id to link at', seen: 2 },
+      null,
+      'not an entry at all',
+      { pid: 'c', seen: 3 },                       // nothing to draw
+      { pid: 'd', title: 'D' },                    // nothing to evict by
+      { pid: 'e', title: 'E', seen: Number.NaN },  // a stamp that sorts nowhere
+      { pid: 'f', title: 'F', seen: 6 },
+    ]))
+    expect(strip()).toEqual(['a', 'f'])
+  })
+
+  it('keeps one entry per project, and it is the first of them', () => {
+    // Nothing here writes a duplicate — `rememberTab` finds the pid before it
+    // appends — but a hand-edited cell can hold one, and two entries for one
+    // project are two pills going to the same place under one React key, of
+    // which only the first would ever be refreshed again.
+    //
+    // THE FIRST IS THE ONE KEPT because position is the order of OPENING: the
+    // earlier entry is the one that recorded this project's arrival, and
+    // dropping it in favour of the later would move the pill rightwards under
+    // a reader for a reason no rule anywhere states.
+    storage.setItem(TABS_KEY, JSON.stringify([
+      { pid: 'a', title: 'A', seen: 1 },
+      { pid: 'b', title: 'B first', seen: 2 },
+      { pid: 'c', title: 'C', seen: 3 },
+      { pid: 'b', title: 'B again', seen: 4 },
+    ]))
+    expect(strip()).toEqual(['a', 'b', 'c'])
+    expect(readTabs()[1].title).toBe('B first')
+  })
+
+  it('carries no field an entry is not made of', () => {
+    // Three fields and no fourth. Whatever else a hand-edit or an older page
+    // left in there is dropped on the way in rather than written back out.
+    storage.setItem(TABS_KEY, JSON.stringify(
+      [{ pid: 'a', title: 'A', seen: 1, slot: 'dev', note: 'hand-written' }]))
+    expect(readTabs()).toEqual([{ pid: 'a', title: 'A', seen: 1 }])
+  })
+
+  it('reads an empty strip where nothing was stored', () => {
+    expect(readTabs()).toEqual([])
+  })
+
+  it('reads an empty strip rather than throwing on text that is not JSON', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    storage.setItem(TABS_KEY, 'not json at all')
+    expect(readTabs()).toEqual([])
+  })
+
+  it('reads an empty strip when the stored JSON is not a list', () => {
+    // An object parses perfectly well and has no `.filter` — the interface,
+    // gone during render, over a strip of links.
+    storage.setItem(TABS_KEY, JSON.stringify({ a: 'A' }))
+    expect(readTabs()).toEqual([])
+    storage.setItem(TABS_KEY, JSON.stringify(null))
+    expect(readTabs()).toEqual([])
+    storage.setItem(TABS_KEY, JSON.stringify('a,b,c'))
+    expect(readTabs()).toEqual([])
+  })
+
+  it('caps what it READS, not only what it writes', () => {
+    // A cell grown by hand, or by a version of this page with a bigger cap.
+    // What the page draws is what comes back from here, so the answer has to be
+    // a strip and not a list of twenty — and the ten it keeps are the ten the
+    // eviction would have left standing.
+    const many = []
+    for (let n = 0; n < 20; n += 1) many.push({ pid: `p${n}`, title: `P${n}`, seen: n })
+    storage.setItem(TABS_KEY, JSON.stringify(many))
+    expect(strip()).toEqual(
+      ['p10', 'p11', 'p12', 'p13', 'p14', 'p15', 'p16', 'p17', 'p18', 'p19'])
+  })
+
+  it('refuses a project with no id, the way rememberPointer does', () => {
+    rememberTab('', 'A')
+    rememberTab(null, 'A')
+    forgetTab('')
+    expect(storage.cells.size).toBe(0)
+  })
+
+  it('falls back to the id where there is no title to draw', () => {
+    // The same fallback a card makes on the front page (`projectCard`). A blank
+    // pill is worse than an ugly one, and the link under it still works.
+    at(1000)
+    rememberTab('proj1', '')
+    expect(readTabs()).toEqual([{ pid: 'proj1', title: 'proj1', seen: 1000 }])
+  })
+
+  it('survives a browser that refuses storage', () => {
+    install(fakeStorage({ failing: true }))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    at(1000)
+    expect(() => rememberTab('a', 'A')).not.toThrow()
+    expect(() => forgetTab('a')).not.toThrow()
+    expect(readTabs()).toEqual([])
+  })
+
+  it('survives a browser with no storage object at all', () => {
+    delete globalThis.localStorage
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(() => rememberTab('a', 'A')).not.toThrow()
+    expect(readTabs()).toEqual([])
   })
 })
