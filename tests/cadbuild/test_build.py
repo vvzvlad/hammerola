@@ -453,7 +453,7 @@ def test_every_phase_of_a_build_is_timed_and_the_marks_run_end_to_end(
     """The timing itself, held on the CALL rather than on the log text.
 
     NOTHING HELD IT BEFORE. The phase table is how somebody with no CAD kernel
-    on their machine finds out where a fifteen-minute build went, and every
+    on their machine finds out where a slow build went, and every
     assertion about it lived in a comment: a phase could be dropped, or its mark
     reset to the start of the build, and the suite would not have moved. Reading
     it back off the printed lines would be a test of the format instead — the

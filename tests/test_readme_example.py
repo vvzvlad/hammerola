@@ -193,11 +193,17 @@ def built(tmp_path_factory):
 
     The number is worth having anyway, for whoever wonders whether the ceiling
     is close. On this workstation, quiet: 5.1 and 5.3 s; the same run with the
-    machine busy: 13.2 s. `wall_seconds` is production's 900 s, taken rather
-    than widened, so the margin is about 23x on a quiet machine and about 9x on
-    a busy one -- comfortable at both ends, but only the first is an order of
-    magnitude, and a timeout here would mean something is actually wrong rather
-    than merely slow.
+    machine busy: 13.2 s. `wall_seconds` is production's 300 s (issue #81),
+    taken rather than widened, so the margin is about 57x on a quiet machine and
+    about 23x on a busy one -- an order of magnitude at both ends, and a timeout
+    here would mean something is actually wrong rather than merely slow.
+
+    THE RATIOS ARE RECOMPUTED HERE AND WERE WRONG BEFORE, which is the reason to
+    write them out at all: they read "23x and 9x" against a stated wall of 900 s,
+    and 23 x 5.3 is 120 -- the wall this paragraph was measured against, before
+    the 2026-08-29 raise. The sentence kept the old division and took the new
+    number, and nothing could say so, because a margin is not something a test
+    can assert about a build it does not time.
 
     Nothing here is shared state a test can dirty: `BuildOutcome` is a frozen
     dataclass and the output directory is only ever read.

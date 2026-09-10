@@ -604,17 +604,20 @@ LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, UPLOAD_PREFIX,
 # the only reason it was caught is that the comment above did the multiplication
 # out loud.
 #
-# SINCE 2026-09-09 THE WORST CASE IS AN HOUR, not two: the workers went from two
-# to four (issue #80), and the wait is divided by them. The number below did not
-# move with it, and deliberately — it was already the safe side of this
-# comparison, and `tests/test_build_ceilings.py` is what said so by computing the
-# worst honest wait out of the live constants and asserting this one clears it.
+# THE WAIT HAS COME DOWN TWICE SINCE, AND THIS NUMBER MOVED NEITHER TIME. The
+# workers went from two to four on 2026-09-09 (issue #80), halving it to an hour,
+# and `wall_seconds` came back down to 300 s on 2026-09-10 (issue #81), leaving
+# 16 × 300 / 4 = TWENTY MINUTES. Both times the reason for standing still was the
+# same: this side of the comparison is the safe one, and only a RISE in the wait
+# can break it. `tests/test_build_ceilings.py` is what says so rather than this
+# paragraph — it computes the worst honest wait out of the live constants and
+# asserts this one clears it.
 #
-# Four hours: the worst case with the same kind of room the hour used to give the
-# sixteen minutes — twice over now that the wait has halved. What it costs is the
-# other end — a killed 64 MiB upload now sits on the volume for up to four hours
-# instead of one — and that is the right side to lose on, because a leftover
-# wastes space while a swept-out source loses a build.
+# Four hours against twenty minutes is a great deal of room, and it is kept
+# rather than trimmed because the cost of the room is the cheap end: a killed
+# 64 MiB upload sits on the volume for up to four hours instead of one. A
+# leftover wastes space, a swept-out source loses a build, and only one of those
+# two is worth being close about.
 LEFTOVER_MAX_AGE_SECONDS = 4 * 3600
 
 

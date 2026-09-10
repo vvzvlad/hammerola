@@ -244,6 +244,7 @@ function component(tree, over = {}) {
   c.props = { ...HammerolaViewer.defaultProps }
   c.home = null
   c.carry = null
+  c.history = []
   c.host = { current: null }
   c.state = {
     meta: {
@@ -358,6 +359,21 @@ describe('the row a run of copies draws as', () => {
     isolate.onClick(click)
     // Everything BUT the three pins.
     expect(c.state.hidden).toEqual(['/model/lid'])
+  })
+
+  it('isolates without touching the selection, because colour is an assertion', () => {
+    // `sel` reaches `selectSolid`, whose shader REPLACES the part's colour with
+    // the selection blue, and on this page a colour is a statement about the
+    // part — grey means a mock. Isolate used to write it, so isolating a part
+    // destroyed the very thing the reader isolated it to look at (issue #83).
+    const c = component(THREE_PINS, { sel: '/model/lid', selName: 'lid' })
+    c.state.menu = { id: '/model/pin', x: 0, y: 0 }
+    const isolate = c.computed().menuItems.find((m) => m.label === 'Isolate')
+    isolate.onClick(click)
+
+    expect(c.state.hidden).toEqual(['/model/lid'])
+    expect(c.state.sel).toBe('/model/lid')
+    expect(c.state.selName).toBe('lid')
   })
 
   it('heads the menu with the count, because the items act on all of it', () => {

@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part", "CadQuery", "STL".
-version: 12
+version: 13
 ---
 
 # hammerola
@@ -860,7 +860,7 @@ something that was not going anywhere in the first place.)
 
 ## Keeping checks fast enough to run
 
-**A build has fifteen minutes of wall clock, and running past it is not a
+**A build has five minutes of wall clock, and running past it is not a
 polite refusal** — the build is killed mid-run and what comes back is a timeout
 instead of an answer. Geometry is rarely what gets there; `checks()` is, because
 it is the part that grows every time the part teaches you something.
@@ -888,12 +888,17 @@ number arrives by itself, so calibrate a change against the build before it
 instead of guessing at what the fix bought.
 
 **Four clocks run over one push, and the one that stops you first is your own.**
-The hub kills a build at 900 seconds of wall clock. It runs four builds at a
+The hub kills a build at 300 seconds of wall clock. It runs four builds at a
 time, so a queue in front of yours is time before your build starts, and the
-client waits out both — its own ceiling is 8100 seconds and you will never see
-it. What you WILL see is the timeout on the tool you launched `hammerola build`
-with: a shell call that defaults to two minutes cuts the command off around the
-time a heavy model is getting started. The build does not die with it — it goes
+client waits out both — its own ceiling is 2700 seconds and you will never see
+it. That first number was 900 until the heavy models moved their measurements
+into check units, which are killed one at a time on a budget of their own. The
+warning at three minutes therefore leaves far less room ahead of the ceiling
+than it used to, and is worth acting on the first time it appears rather than
+the third. What you WILL see is the timeout on the tool you launched
+`hammerola build` with: a shell call that defaults to two minutes cuts the
+command off around the time a heavy model is getting started, with most of the
+build's wall clock still ahead of it. The build does not die with it — it goes
 on in the hub, finishes, and publishes — but the log was on that command's
 standard output, and it is gone. So run a push you expect to be slow with the
 timeout raised well past the hub's own ceiling, or in the background. Twice, in
@@ -988,7 +993,7 @@ has already spent its geometry phase.
 **A unit has its own budget: 120 seconds, enforced by killing the worker.** That
 is the point of the split for a check that hangs — one runaway costs one worker
 and two minutes, and the rest of the queue drains on the other, where before it
-cost the build's whole fifteen-minute wall clock and came back as a timeout
+cost the build's whole five-minute wall clock and came back as a timeout
 naming nothing. The log's verdict line is a count: `check units: 4 passed` when
 they all pass, `check units: 3 of 4 passed` when one does not.
 
@@ -1058,7 +1063,7 @@ check was meant to see.
 **If you profile, use a sampling profiler — or the section marks above.**
 `cProfile` reports almost nothing here: the CAD kernel spends ~89% of its time
 in a thread pool that a profiler watching the main thread cannot see, so the
-ordinary tool will tell you the build is fast while it takes ten minutes. A
+ordinary tool will tell you the build is fast while it is actually slow. A
 wall clock around a labelled block cannot be fooled that way, which is the
 second reason to mark the sections up.
 

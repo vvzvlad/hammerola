@@ -7,7 +7,9 @@ them -- and 27% of all the machine time the hub burned went to seven builds
 that HUNG, at 891 seconds each. `checks()` is one function in one process, so
 neither number has anywhere to go: the whole budget before a kill is the
 build's own wall clock, and one endless `while` inside a model's checks holds a
-worker for a quarter of an hour with twenty cores idle beside it.
+worker for that entire wall clock with twenty cores idle beside it. Measured
+against the wall of the day that was a quarter of an hour; it follows the
+constant rather than the sentence, which is why it is written this way round.
 
 A unit fixes both at once, and the second half is the one that pays first. K
 persistent workers pull units off ONE shared queue and report back each on a
@@ -92,7 +94,7 @@ from .paths import project_root
 # WHAT REPEATING THE CAP BUYS IS THE CPU CEILING, and that is why it is not
 # optional. `RLIMIT_CPU` is inherited per process and is summed over a process's
 # THREADS, so every worker gets its own copy of `limits.DEFAULT_CPU_SECONDS`
-# (5625 s = 900 x 5 x 1.25, sized for a pool of five). A worker whose pool came
+# (1875 s = 300 x 5 x 1.25, sized for a pool of five). A worker whose pool came
 # up at one thread per logical core -- twenty on the hub -- burns that ceiling
 # four times faster than the number says, and the kernel's SIGKILL arrives with
 # nothing in the log connecting the two: the unit is reported dead or lost and
@@ -102,18 +104,26 @@ CHECK_WORKERS = 2
 # What ONE unit may take before its worker is killed and the unit is reported
 # failed.
 #
-# IT MUST STAY UNDER `buildproc.limits.DEFAULT_HANG_DUMP_SECONDS` (890 s), and
-# comfortably: that ceiling is the whole build's, and a unit budget anywhere
-# near it would mean a hung unit still costs the build everything -- which is
-# the failure this module is for. `tests/cadbuild/test_checkunits.py` holds the
-# two numbers in that order.
+# IT MUST STAY UNDER `buildproc.limits.DEFAULT_HANG_DUMP_SECONDS`, and by a
+# margin: that ceiling is the whole build's, and a unit budget anywhere near it
+# would mean a hung unit still costs the build everything -- which is the failure
+# this module is for. `tests/cadbuild/test_checkunits.py` holds the two numbers
+# in that order, and asks for a factor of two rather than for mere inequality.
+#
+# THE MARGIN IS THINNER THAN IT WAS AND IS STILL A MARGIN. This budget was
+# written against a hang-dump ceiling of 890 s, where 120 s was a seventh of the
+# build; issue #81 took `wall_seconds` to 300 on 2026-09-10, so the ceiling is
+# 290 s and this budget is 41% of it. The order and the factor of two both still
+# hold, and the causation runs the way it should: units are WHY the wall could
+# come down (limits.py says so at `wall_seconds`), so a hung unit costing 120 s
+# of a 300 s build is the bargain being taken, not a regression in it.
 #
 # 120 s is the top of the band the owner set, and it is picked there rather
 # than lower for one reason: the slowest checks phase measured on prod is 160 s
 # for the WHOLE of ford-cup-4's checks(), so a single unit at 120 s would
 # already be three quarters of the slowest model's entire checking. Nothing
-# legitimate measured so far comes close, and a hang now costs 120 s instead of
-# 891 -- a 7.4x cut -- with the rest of the units still finishing beside it.
+# legitimate measured so far comes close, and a hang costs 120 s instead of the
+# whole wall clock, with the rest of the units still finishing beside it.
 UNIT_BUDGET_SECONDS = 120.0
 
 # How long the parent waits on the workers' channels before it looks at the

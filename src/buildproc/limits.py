@@ -129,7 +129,7 @@ DEFAULT_OCCT_THREADS = _default_occt_threads()
 # Wall clock, and the two numbers DERIVED from it, in one place so the
 # derivations are code rather than a comment somebody has to honour. The
 # reasoning for each value is at the field that uses it, below.
-DEFAULT_WALL_SECONDS = 900.0
+DEFAULT_WALL_SECONDS = 300.0
 
 # The gap the child's traceback needs to land in before the parent's SIGKILL.
 DEFAULT_HANG_DUMP_GAP_SECONDS = 10.0
@@ -227,36 +227,46 @@ class Limits:
     # Wall clock. The ONLY ceiling that catches a hang which burns no CPU, and
     # therefore the one that cannot be dropped.
     #
-    # 900 s SINCE 2026-08-29, RAISED FROM 120 BY MEASUREMENT, and the old number
-    # is named because SPEC 8A.2 still carries the estimate it came from --
-    # "60-120 s for a real build" -- which was written before any real build had
-    # been run here. The first one falsified it: seven parts, all exporting
-    # valid solids, killed at 110 s with the geometry finished and the checks
-    # still running. What was measured on that model, on the hub rather than on
-    # a workstation:
+    # 300 s SINCE 2026-09-10 (issue #81), DOWN FROM 900, AND THE ROUTE MATTERS
+    # MORE THAN EITHER NUMBER. 900 was set 2026-08-29 after the first real model
+    # falsified SPEC 8A.2's estimate of "60-120 s for a real build": seven parts,
+    # all exporting valid solids, killed at 110 s with the geometry finished and
+    # the checks still running. Measured on that model, on the hub rather than on
+    # a workstation, the hub is 3.7-4x slower than the author's laptop on the
+    # same geometry -- the booleans are single-threaded, so none of the
+    # container's other cores help -- and its checks() is 254 checks wanting
+    # about 500 s here. 900 was that with room.
     #
-    #   * the hub is 3.7-4x slower than the author's laptop on the same
-    #     geometry, which is ordinary -- the booleans are single-threaded, so
-    #     none of the container's other cores help;
-    #   * its checks() is 254 checks and wants about 500 s here.
-    #
-    # 900 is that with room, and it is deliberately not the smallest number that
-    # would have passed: the next model is not going to be smaller.
+    # SO THE CEILING WAS SIZED BY checks(), AND CHECKS STOPPED BEING ONE LUMP.
+    # Since issue #76 a model's checks run as UNITS, each with its own
+    # `checkunits.UNIT_BUDGET_SECONDS` (120 s) and its own worker: one hung check
+    # now costs 120 s and the other units finish beside it, where before it cost
+    # the whole wall clock. That is what a wall of 900 was buying, and it is not
+    # what buys it any more. The heavy models -- slip-pump, ford-cup-4, slip-tap
+    # -- were migrated to units in their own repositories before this number
+    # moved; slip-pump's legitimate builds measured a median of 377 s and a
+    # maximum of 612 s BEFORE that migration, which is why this could not be done
+    # in the same step and why issue #81 was written as two.
     #
     # THE COST, so it is a decision and not a slide: MAX_CONCURRENT_BUILDS is 4,
-    # so four heavy models can hold the whole pool for a quarter of an hour, and
-    # the worst honest queue wait (MAX_QUEUED_JOBS at this number over those
-    # workers) is 16 x 900 / 4 = an HOUR -- down from the two hours it was while
-    # two workers shared the queue, up from the sixteen minutes it was before
-    # this raise. Two numbers elsewhere are derived from this one and were moved
-    # WITH it -- `LEFTOVER_MAX_AGE_SECONDS` in src/store.py, which would
-    # otherwise sweep the sources of a build still queued, and `JOB_TIMEOUT` in
-    # hammerola/hub.py, which would otherwise give up on a build that is still
-    # legitimately waiting. Neither is cosmetic, and both ARE checked --
+    # so four heavy models can hold the whole pool for five minutes, and the
+    # worst honest queue wait (MAX_QUEUED_JOBS at this number over those workers)
+    # is 16 x 300 / 4 = TWENTY MINUTES -- down from the hour it was at 900 with
+    # four workers, and from the two hours it was while two shared the queue. The
+    # risk is the other end and it is real: a model that has NOT been migrated,
+    # or one whose checks legitimately want more than five minutes, is now killed
+    # where it used to publish. That is the trade the owner took.
+    #
+    # Two numbers elsewhere are derived from this one -- `LEFTOVER_MAX_AGE_SECONDS`
+    # in src/store.py, which would otherwise sweep the sources of a build still
+    # queued, and `JOB_TIMEOUT` in hammerola/hub.py, which would otherwise give up
+    # on a build that is still legitimately waiting. Both ARE checked:
     # `tests/test_build_ceilings.py` computes `worst_honest_wait()` out of this
-    # number and the worker count and compares each of them against it, which
-    # is what said the two could stay put when the workers went from two to
-    # four. What is NOT checked is the PROSE around them, so move this number
+    # number and the worker count and compares each of them against it. A DROP
+    # only ever loosens those two, so neither can break on the way down -- which
+    # is why only `JOB_TIMEOUT` moved with this change, to keep the room it
+    # declares honest, while the store's cutoff stayed where it was on the safe
+    # side. What is NOT checked is the PROSE around them, so move this number
     # again and go read both anyway.
     #
     # It is NOT settable per deployment, and that is worth knowing before
@@ -309,7 +319,9 @@ class Limits:
     # that prompted it asked for "wall ~900, CPU ~900", derived from one model
     # needing ~500 CPU-s. 900 would have been under 2 x 900 and would therefore
     # have fired FIRST on a parallel build -- killing the builds the raise was
-    # made to allow, and reporting them as something other than a timeout.
+    # made to allow, and reporting them as something other than a timeout. The
+    # formula is why the 2026-09-10 drop to a wall of 300 needed no second
+    # thought here: this number followed it down on its own.
     cpu_seconds: int | None = DEFAULT_CPU_SECONDS
     # Address space, NOT resident memory. OCP and VTK map several gigabytes of
     # shared objects before a model does anything, so this cannot be set near
@@ -375,9 +387,9 @@ class Limits:
     # The GAP is what matters, not the number: `__post_init__` refuses anything
     # at or past `wall_seconds`, and the child arms this timer after its own
     # start, so the gap has to cover the slowest start (measured 0.8-7.6 s) --
-    # 10 s, kept at both 120/110 and 900/890. Note what this number IS to
-    # whoever is watching: a build that runs out of time dies HERE, so the kill
-    # a pusher sees lands at 890 s and not at 900. The first real build was
+    # 10 s, kept at 120/110, at 900/890 and now at 300/290. Note what this number
+    # IS to whoever is watching: a build that runs out of time dies HERE, so the
+    # kill a pusher sees lands at 290 s and not at 300. The first real build was
     # reported as "killed at 0:01:50" for exactly that reason, against a wall
     # clock of 120.
     hang_dump_seconds: float | None = DEFAULT_HANG_DUMP_SECONDS

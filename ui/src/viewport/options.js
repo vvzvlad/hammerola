@@ -120,6 +120,31 @@ export const viewerOptions = {
 /** Pointer travel below which a press counts as a click rather than a drag. */
 export const CLICK_PX = 4;
 
+/** The opacity a ghosted part is FINALLY SHOWN AT — an answer, not a factor.
+ *
+ * The distinction is the whole reason this constant is written out. The field
+ * `applyGhost` writes is `group.opacity`, and the library shows a face at
+ * `group.opacity * group.alpha` (`ObjectGroup.setTransparent`), so that field is
+ * a MULTIPLIER over the model's own alpha rather than anything a reader sees.
+ * Assigning this number to it — which parts.js did, as a bare 0.25 — ghosts a
+ * part whose author declared `alpha = 0.5` to half of what was asked for. So
+ * parts.js divides by the alpha, and this is the number that comes out.
+ *
+ * 0.5 IS `renderOptions.defaultOpacity` ABOVE, said again for a second
+ * mechanism. That field is what the library shows a globally transparent scene
+ * at, so it is already this project's own answer to "how see-through is
+ * translucent"; a ghost at some other number would be a second opinion about
+ * the same question, differing for no reason anybody could name.
+ *
+ * A CEILING AND NOT A TARGET. Ghosting means "let me see past this part", so it
+ * must never take a part FURTHER from view than that — and a part the author
+ * already published at `alpha <= 0.5` is at or past ghost level before anybody
+ * touches it. Ghosting it is therefore a no-op rather than a second division
+ * that would leave it all but invisible, and un-ghosting gives back exactly the
+ * alpha the model asked for.
+ */
+export const GHOST_OPACITY = 0.5;
+
 /** Ring radii, in CSS pixels, for sampling a face around the cursor.
  *
  * NOT to be retuned by eye. `IdPicker.pickAt` renders its target at

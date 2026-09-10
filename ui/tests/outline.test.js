@@ -16,6 +16,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { internals } from '../src/viewport/internals.js'
+import { GHOST_OPACITY } from '../src/viewport/options.js'
 import {
   OUTLINE_NAME, clearSectionOutlines, sectionOutline,
 } from '../src/viewport/outline.js'
@@ -489,7 +490,7 @@ describe('the outline under the part passes', () => {
     sectionOutline(vp, g, [1, 0, 0], -1)
     const outline = outlineOf(solid)
     applyGhost(viewer, ['S|body'])
-    expect(outline.material.opacity).toBe(0.25)
+    expect(outline.material.opacity).toBe(GHOST_OPACITY)
     expect(viewer.update).toHaveBeenCalled()
     applyGhost(viewer, [])
     expect(outline.material.opacity).toBe(1)
@@ -498,16 +499,22 @@ describe('the outline under the part passes', () => {
   it('fades by the library\'s arithmetic when the part itself is translucent', () => {
     // `alpha` is the model's own transparency: ghosting takes the face to
     // `opacity * alpha`, restoring gives the alpha back. The outline rides
-    // that one value, never a literal — a flat 0.25 would out-glare the body
+    // that one value, never a literal — a flat number would out-glare the body
     // it belongs to, and a restore to 1 would sit opaque over it.
+    //
+    // 0.8 rather than a value at or below the ghost's own, because that is where
+    // the two directions differ: `applyGhost` divides by the alpha to LAND on
+    // GHOST_OPACITY, so the face goes there and comes back to 0.8, and an
+    // outline that had copied `group.opacity` instead would read 0.625 in the
+    // first place and 0.625 again in the second.
     const { solid, viewer, vp, g } = partScene()
-    solid.alpha = 0.5
+    solid.alpha = 0.8
     sectionOutline(vp, g, [1, 0, 0], -1)
     const outline = outlineOf(solid)
     applyGhost(viewer, ['S|body'])
-    expect(outline.material.opacity).toBe(0.125)
+    expect(outline.material.opacity).toBeCloseTo(GHOST_OPACITY)
     applyGhost(viewer, [])
-    expect(outline.material.opacity).toBe(0.5)
+    expect(outline.material.opacity).toBe(0.8)
   })
 
   it('follows its part through the standing plane when the part moves', () => {

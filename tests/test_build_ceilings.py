@@ -16,6 +16,47 @@ them at once, and both were caught by reading, not by running:
 
 A comment cannot catch either. These are one multiplication each, so they cost
 nothing to run and they fail on the commit that breaks them.
+
+THE 2026-09-10 DROP (900 s -> 300 s, issue #81, made possible by the heavy models
+moving to check units) went the other way, and a drop is NOT the harmless
+direction it reads as. Four of the assertions below are between the wall and a
+number that follows it -- `cpu_seconds`, `hang_dump_seconds`,
+`LEFTOVER_MAX_AGE_SECONDS`, `JOB_TIMEOUT` -- and none of those can break on a
+drop: each number either falls with the wall by formula, or clears a wait that
+got shorter. The hang-dump gap is the flattest of them, pinned at ten seconds
+at 900 and at 300 alike.
+
+`SLOW_BUILD_SECONDS` IS THE ONE THAT TIGHTENS, and it is the reason to run this
+file on the way down rather than only to read the sources. It is a judgement and
+a copy of nothing, so it does not move when the wall does: the room between it
+and the ceiling was 720 s at a wall of 900 and is 120 s at 300, and a wall taken
+to 180 would put the client's slow-build warning at or past the point where no
+green build can reach it. That assertion is not decoration on a drop -- it is
+the one thing here a drop can break.
+
+What ALSO goes stale on a drop is the PROSE: a comment still promising "room to
+spare" over a wait four times what it now is. THERE IS NO LIST OF THOSE PLACES
+HERE, and the omission is deliberate. This one drop had to rewrite the wall out
+of fifteen files, across the service, the client, the docs and the tests' own
+docstrings, some naming the number and some only a duration in words -- and a
+roll-call of them written down here would be one more paragraph going stale on
+the next drop, which is the very failure being described. Worse, it would read
+as complete: the first attempt at this paragraph named four of the fifteen and
+was believed. Find them with a grep for the number and for `wall`, not from
+memory and not from a list.
+
+WHAT IS EXECUTABLE INSTEAD, so far, is the skill: `tests/test_onboarding.py`
+reads the four sentences `skill/SKILL.md` states the build ceilings in back out
+of the document the hub actually serves and compares them with the constants
+here. That file earned it -- it is the one document served to a model author
+over HTTP, the one a `checks()` is sized against, and the one this drop left
+teaching fifteen minutes for a whole release. It is NOT wholly pinned even so:
+the concurrency it quotes ("four builds at a time") and the slow-build threshold
+("past three minutes") are still only prose, so a change to
+`MAX_CONCURRENT_BUILDS` or `SLOW_BUILD_SECONDS` still has to go and read it.
+Every one of these was caught by review rather than by a run, which is the
+argument for moving them into tests one at a time rather than for cataloguing
+them.
 """
 
 from src.buildproc.limits import BUILDS_SHARING_THE_HOST, DEFAULT_LIMITS

@@ -280,7 +280,8 @@ STRANGER_MAX_AGE_SECONDS = 14 * 24 * 3600
 # thing can honestly be in use" — and that hid the fact that the things are not
 # alike. The store's number covers `.src-`/`.body-`, which live from the request
 # until the build ENDS, so it is a function of the queue wait; raising
-# `Limits.wall_seconds` to 900 s took it to four hours. What is swept HERE is a
+# `Limits.wall_seconds` to 900 s took it to four hours, where it stayed when that
+# wall came back down to 300 (issue #81). What is swept HERE is a
 # `.wip-` file: the hub's own half-finished write of a record or a log, abandoned
 # in milliseconds, and belonging to nothing by the time this runs at all
 # (`_sweep_strangers` is called from `JobStore.__init__`, before the pool exists
@@ -306,7 +307,7 @@ WORKER_THREAD_PREFIX = "hammerola-build"
 # pointing somewhere else.
 #
 # Waiting out a BUILD instead would be waiting for something that is not going to
-# be allowed to finish. A build may run to `wall_seconds` (900 s), and the
+# be allowed to finish. A build may run to `wall_seconds` (300 s), and the
 # compose file declares no `stop_grace_period`, so docker sends SIGKILL 10 s after
 # its SIGTERM whatever this number says. A join longer than that grace period
 # therefore saves no build — it just converts every ordinary stop into a SIGKILL,

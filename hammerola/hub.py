@@ -180,9 +180,9 @@ POLL_ERROR_MAX_SECONDS = 10.0
 POLL_NOTICE_MIN_SECONDS = 30
 
 # How long `await_job` waits by default. The worst honest wait is the queue
-# ahead of you: MAX_QUEUED_JOBS (16) builds at buildproc's `wall_seconds` (900,
-# raised from 120 on 2026-08-29) over MAX_CONCURRENT_BUILDS (4 since 2026-09-09,
-# raised from 2) workers is about one hour, and this is that with room to spare.
+# ahead of you: MAX_QUEUED_JOBS (16) builds at buildproc's `wall_seconds` (300
+# since 2026-09-10, issue #81) over MAX_CONCURRENT_BUILDS (4 since 2026-09-09,
+# raised from 2) workers is twenty minutes, and this is that with room to spare.
 # `--timeout` moves it; a person presses Ctrl-C long before either.
 #
 # THIS NUMBER IS A COPY AND CANNOT IMPORT ITS SOURCE -- the client is stdlib-only
@@ -191,7 +191,15 @@ POLL_NOTICE_MIN_SECONDS = 30
 # symptom is not an error: the client reports a timeout on a build that is still
 # legitimately queued, and the build then publishes with nobody watching. Move
 # `wall_seconds`, come back here.
-JOB_TIMEOUT = 8100
+#
+# IT CAME DOWN WITH THE WALL AND DID NOT HAVE TO. `tests/test_build_ceilings.py`
+# only asks that it CLEAR the worst honest wait, and 8100 -- the number this was
+# while the wall was 900 -- cleared twenty minutes several times over. What it
+# stopped doing was describing itself: "that with room to spare" would have been
+# a wait of two and a quarter hours over a queue that can honestly take twenty
+# minutes, i.e. a client sitting silent for two hours on a hub that gave up long
+# ago. The ratio to the honest wait is what is kept, not the literal.
+JOB_TIMEOUT = 2700
 
 # WHEN A BUILD IS SLOW ENOUGH TO SAY SO. Between this and the hub's own wall
 # clock lies the whole zone where everything is green and everything is slow:

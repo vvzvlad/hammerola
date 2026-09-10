@@ -22,6 +22,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { internals } from '../src/viewport/internals.js'
+import { GHOST_OPACITY, renderOptions } from '../src/viewport/options.js'
 import {
   applyGhost, applyHidden, applySelected, movePart, movableGroup, resetMoves,
   statesOf, treeFromShapes,
@@ -365,6 +366,56 @@ describe('applyGhost', () => {
 
     for (const path of wanted) expect(groups[path].transparent).toBe(true)
     for (const path of PATHS.slice(2)) expect(groups[path].transparent).toBe(false)
+  })
+
+  it('shows the part at GHOST_OPACITY, which is not what it writes', () => {
+    // The field is a MULTIPLIER — the library shows a face at
+    // `opacity * alpha` — so the number that has to come out is the product,
+    // and reading `group.opacity` alone would be checking the wrong end of the
+    // arithmetic.
+    const { groups, viewer } = scene()
+    const [target] = PATHS
+    applyGhost(viewer, [target])
+
+    expect(groups[target].front.material.opacity).toBe(GHOST_OPACITY)
+  })
+
+  it('takes a part the AUTHOR made translucent to the same place, not half of it',
+    () => {
+      // The defect a bare literal had: a part published at `alpha = 0.5` was
+      // multiplied by the ghost value instead of being taken to it, so it
+      // ghosted to 0.125 while its neighbours went to 0.25 and the reader was
+      // shown two different meanings of "translucent" in one gesture.
+      const { groups, viewer } = scene()
+      const [target] = PATHS
+      groups[target].alpha = 0.5
+      applyGhost(viewer, [target])
+
+      expect(groups[target].front.material.opacity).toBe(0.5)
+    })
+
+  it('is the same number the library is handed for a transparent scene', () => {
+    // `GHOST_OPACITY`'s own docstring says it IS `renderOptions.defaultOpacity`
+    // "said again for a second mechanism" — the two are one answer to "how
+    // see-through is translucent", reached by different code. That sentence is
+    // a specification, so it is held here rather than in the comment: the two
+    // are declared twenty lines apart in one file with nothing joining them,
+    // and a theme retuned through `defaultOpacity` would leave the ghost behind
+    // at the old value with every other test in this file still green.
+    expect(GHOST_OPACITY).toBe(renderOptions.defaultOpacity)
+  })
+
+  it('never RAISES a part\'s opacity, because the number is a ceiling', () => {
+    // A part the author published fainter than a ghost is already past ghost
+    // level, and "let me see past this" has nothing left to ask for. Dividing
+    // unconditionally would make ghosting it MORE visible than not ghosting it.
+    const { groups, viewer } = scene()
+    const [target] = PATHS
+    groups[target].alpha = 0.2
+    applyGhost(viewer, [target])
+
+    expect(groups[target].opacity).toBe(1)
+    expect(groups[target].front.material.opacity).toBe(0.2)
   })
 
   it('turns it off again, and asks for one re-render rather than one per part', () => {

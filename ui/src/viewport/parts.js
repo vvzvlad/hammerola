@@ -4,6 +4,7 @@
 
 import { internals } from "./internals.js";
 import { finite3 } from "./math.js";
+import { GHOST_OPACITY } from "./options.js";
 import { outlineChild, refreshSectionOutline } from "./outline.js";
 
 /**
@@ -169,14 +170,23 @@ export function applyGhost(viewer, ghost) {
     if (!group || typeof group.setTransparent !== "function") continue;
     const on = list.some((entry) => covers(entry, path));
     try {
-      if (on) group.opacity = 0.25;
+      // DIVIDED, because this field is a MULTIPLIER: the library shows the face
+      // at `group.opacity * group.alpha`, so the product is what a reader sees
+      // and `GHOST_OPACITY` is the value that product has to come out as.
+      // `Math.min` makes it a CEILING — `opacity * alpha` lands on
+      // `Math.min(alpha, GHOST_OPACITY)` — so a part the author already
+      // published translucent is left where it is instead of being halved a
+      // second time. Both decisions are argued in options.js. `|| 1` is for an
+      // alpha of 0, which is not a number this can be divided by.
+      if (on) group.opacity = Math.min(1, GHOST_OPACITY / (group.alpha || 1));
       group.setTransparent(on);
       // `setTransparent` reaches only the library's own face materials; the
       // outline rides along at the FACE'S opacity — read after the toggle, by
       // then the library has ghosted or restored it — because the cut face
       // inherits the body's transparency and the contour is that face's edge.
-      // A literal would ghost a part with `alpha < 1` to a flat 0.25 and
-      // restore it to fully opaque over its translucent body.
+      // Reading a constant here instead would ghost a part with `alpha < 1` to
+      // the ghost value flat, ignoring the alpha the author published it at,
+      // and restore it to fully opaque over its translucent body.
       const outline = outlineChild(group);
       if (outline) outline.material.opacity = group.front.material.opacity;
       touched = true;
