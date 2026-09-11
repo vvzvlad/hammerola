@@ -17,6 +17,7 @@ import json
 import re
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -684,6 +685,144 @@ def test_the_force_flag_arrives_as_a_value_and_leaves_as_a_boolean(tmp_path,
     assert child._parse(required)["force"] is False
     with pytest.raises(ValueError, match="--force takes true or false"):
         child._parse(required + ["--force", "1"])
+
+
+def test_the_baseline_reaches_the_child_as_a_copy_in_its_own_scratch(tmp_path,
+                                                                     monkeypatch):
+    """A COPY, NEVER THE PATH IN THE STORE, and the copy is made in the parent.
+
+    Two things ride on that and neither is visible from the child's side. The
+    slot is replaced by a pair of renames (`store._swap_dev_slot`), so a
+    parallel build of the same project can swap it halfway through this one and
+    a path held into the store would be read as something third. And the copy is
+    taken BEFORE the child starts, while the publish that overwrites the slot
+    happens after the build returns — which is what makes a `dev` build compare
+    against the PREVIOUS `dev` instead of against itself.
+
+    A baseline that cannot be copied costs the comparison and not the build: the
+    child is started with no `--baseline` at all, which is the ordinary "nothing
+    to compare against" branch.
+
+    The process is never started, as in the `--force` test above: what is under
+    test is the composition.
+    """
+    from src.buildproc import runner
+
+    composed = []
+
+    def recording_run_isolated(target_argv, **kw):
+        argv = list(target_argv)
+        if "--baseline" in argv:
+            # READ WHILE THE CALL IS STILL RUNNING, because scratch is removed
+            # in `run_build`'s `finally` — so this is the only moment the copy
+            # exists at all, and that it exists is half of what is asserted.
+            named = Path(argv[argv.index("--baseline") + 1])
+            composed.append((argv, named, named.read_bytes()))
+        else:
+            composed.append((argv, None, None))
+        return runner.ProcessResult(
+            exit_code=child.EXIT_BUILD_FAILED, signal=None, timed_out=False,
+            log="", log_truncated=False, dropped_bytes=0,
+            duration_seconds=0.0, stragglers=False)
+
+    monkeypatch.setattr(runner, "run_isolated", recording_run_isolated)
+    slot = tmp_path / "dev" / "metrics.json"
+    slot.parent.mkdir()
+    slot.write_bytes(b'{"version": 1, "parts": {}}\n')
+
+    for baseline in (slot, tmp_path / "dev" / "nothing-here.json", None):
+        runner.run_build(tmp_path, tmp_path / "out", pid="abc123def456",
+                         limits=TEST_LIMITS, baseline=baseline)
+
+    (_argv, named, content), (missing, _n, _c), (absent, _n2, _c2) = composed
+    assert named != slot, "the child was pointed at the file in the store"
+    assert content == slot.read_bytes()
+    # SCRATCH, and this is what says so rather than the name of the directory.
+    # `run_build` removes it in its `finally`, so a copy that is gone once the
+    # call has returned was in the parent's scratch; one that survives was put
+    # somewhere that outlives the build -- `out`, say, which is the tree the hub
+    # publishes, and where an extra file is a file the author never wrote.
+    assert not named.exists(), (
+        "the copy outlived the build, so it was not made in the scratch that "
+        "is torn down with it")
+    assert named.parent != tmp_path / "out"
+    assert "--baseline" not in missing, (
+        "a baseline that could not be copied has to leave the option off "
+        "entirely, not name a file the child cannot open")
+    assert "--baseline" not in absent
+
+    # ...and the other end of that string: the child takes it as an ordinary
+    # `--key value` pair, and its absence is None rather than an error.
+    required = ["--project", "/tmp", "--out", "/tmp/out", "--result", "/tmp/r"]
+    assert child._parse(required + ["--baseline", "/s/b.json"])["baseline"] == \
+        "/s/b.json"
+    assert child._parse(required)["baseline"] is None
+
+
+def test_the_child_hands_the_parsed_baseline_on_to_the_build(tmp_path,
+                                                             monkeypatch):
+    """THE LAST JOINT, and the one that was holding nothing.
+
+    Every other link of issue #59's wire is pinned: the slot's path
+    (`store.dev_metrics_path`), the copy and the command line (the test above),
+    `_parse`, the worker's call (`tests/test_jobs.py`), and `build()`'s call to
+    `report_metrics`. This one is `baseline=opts["baseline"]` in `_run`, and
+    deleting those four words left the whole suite green while putting the hub
+    back exactly where #59 found it -- no build anywhere printing a comparison,
+    and nothing red to say so.
+
+    `_run` IS CALLED IN THIS PROCESS, which no other test here does: the rest of
+    this suite starts real children, because what they check is a property of an
+    operating-system process. What is checked here is an argument passed between
+    two functions, and a real child would need a CAD kernel to reach the call at
+    all. So the THREE steps that reach past this call are replaced -- capping the
+    OCCT pool, absolutising `sys.path`, and arming `faulthandler`, which would
+    otherwise leave this process's fatal-signal handler pointed at a captured
+    stderr whose descriptor pytest closes when the test ends -- and everything
+    `_run` mutates besides, the working directory and `paths._root`, is put back
+    by `monkeypatch` rather than by this test remembering to.
+
+    Importing `src.cadbuild.build` is safe from here and is not an accident of
+    this machine: the module imports no cadquery at module scope (that is why
+    `_run` can defer it), so neither of the kernel's two names appears in
+    `sys.modules` and the autouse fixture in conftest stays satisfied.
+    """
+    from src.cadbuild import build as build_module
+    from src.cadbuild import paths
+
+    handed = []
+
+    def recording_build(out_dir, **keywords):
+        handed.append(keywords)
+        return "abc123def456", {}, ["model.stl"]
+
+    monkeypatch.setattr(child, "_cap_occt_threads", lambda threads: None)
+    monkeypatch.setattr(child, "_absolutise_sys_path", lambda: None)
+    monkeypatch.setattr(child.faulthandler, "enable", lambda: None)
+    monkeypatch.setattr(build_module, "build", recording_build)
+    # Restored to what it is now (None) whatever `paths.set_project_root` inside
+    # `_run` leaves behind: tests/cadbuild's autouse fixture fails the NEXT
+    # test in the session over state this one left, and this directory sorts
+    # before that one.
+    monkeypatch.setattr(paths, "_root", None)
+    monkeypatch.chdir(tmp_path)
+
+    out = tmp_path / "out"
+    out.mkdir()
+    copy = tmp_path / "scratch-copy.json"
+    argv = ["buildproc", "--project", str(tmp_path), "--out", str(out),
+            "--result", str(tmp_path / "result.json")]
+
+    assert child._run(argv + ["--baseline", str(copy)]) == child.EXIT_OK
+    assert child._run(argv) == child.EXIT_OK
+
+    named, absent = handed
+    assert named.get("baseline") == str(copy), (
+        "the child parsed --baseline and then did not pass it on, so no build "
+        "on the hub compares against anything")
+    assert absent.get("baseline", "not passed at all") is None, (
+        "no --baseline has to reach `build()` as None -- the branch that says "
+        "there is nothing to compare against -- and not as a missing argument")
 
 
 def test_the_exit_codes_do_not_collide():

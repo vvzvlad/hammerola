@@ -1,9 +1,17 @@
-"""What moved since the last build.
+"""What this build measured, and what moved since the last one.
 
-The diff is what a person reads after a build, so what matters is that it
-prints ONLY differences: a block that appears after every build saying the same
-numbers is a block that stops being read some builds before the one where it
-mattered.
+TWO BLOCKS, AND THIS FILE HOLDS THEM TO DIFFERENT PROMISES. The summary is what
+this build measured and is printed on EVERY run, baseline or no baseline: the
+log is the only channel that arrives at whoever pushed without a second action
+from them, so it may not depend on there having been a previous build. The diff
+is what moved since `dev` and is printed whenever there is a baseline -- INCLUDING
+when nothing moved, with how many numbers were compared, because silence there
+reads exactly like a comparison that never happened.
+
+THIS ONCE SAID THE OPPOSITE -- that what matters is printing ONLY differences,
+a block saying the same numbers after every build being one that stops being
+read. That argument is still right about the DIFF and was wrong about the
+summary, which is why there are now two blocks instead of one.
 
 The five tests of `check_project_match` that used to sit here went back to
 cad_publish with the function itself: it refuses to publish over a snapshot
@@ -13,6 +21,8 @@ See the note at the top of src/cadbuild/metrics.py.
 
 import json
 
+import pytest
+
 from fakes import Box
 from src.cadbuild.metrics import (
     METRICS_NAME,
@@ -20,6 +30,8 @@ from src.cadbuild.metrics import (
     collect_metrics,
     metrics_diff,
     metrics_summary,
+    read_baseline,
+    report_metrics,
     source_fingerprints,
     unchanged_code_moved_geometry,
     write_metrics,
@@ -76,13 +88,28 @@ def test_a_changed_volume_is_reported_with_a_percentage():
 def test_a_new_part_is_reported_as_new():
     old = build({"body": measured()})
     new = build({"body": measured(), "lid": measured(volume=500.0)})
-    assert any("lid: new part" in line for line in metrics_diff(old, new))
+    line, = [text for text in metrics_diff(old, new)
+             if text.startswith("lid: new part")]
+
+    # EVERYTHING MEASURED, TESSELLATION INCLUDED, and this is what holds
+    # `_part_summary`'s default where its docstring only claims it: nobody has
+    # seen this part before, so there is nothing to leave out. The build's own
+    # summary narrows the per-part line to PHYSICAL_FIELDS; narrowing the
+    # DEFAULT would take these three off this line and off `hammerola diff`
+    # with it, and nothing else in this suite would notice.
+    assert "1 solid" in line and "12 triangles" in line, line
+    assert "watertight" in line, line
 
 
 def test_a_removed_part_is_reported_as_gone():
     old = build({"body": measured(), "lid": measured()})
     new = build({"body": measured()})
-    assert any("lid: gone" in line for line in metrics_diff(old, new))
+    line, = [text for text in metrics_diff(old, new)
+             if text.startswith("lid: gone")]
+
+    # The other half of the same sentence: a part that went away is described
+    # in full for the same reason, and by the same default.
+    assert "1 solid" in line and "12 triangles" in line, line
 
 
 def test_a_moved_bounding_box_is_reported():
@@ -306,7 +333,10 @@ def test_the_summary_says_which_box_is_the_product_and_which_is_the_bed():
                      "checks passed: 1"]
 
 
-def test_the_summary_lists_every_number_when_there_is_nothing_to_diff():
+def test_the_summary_lists_every_number_it_was_given():
+    # NOT "when there is nothing to diff", which is what this was called: the
+    # summary is printed on every run now, with a baseline as much as without.
+    # This is about its DEFAULT `fields`, which is the whole of METRIC_FIELDS.
     lines = metrics_summary(build({"body": measured()}, checks=3))
     assert lines[0].startswith("body: ")
     assert "1.00 cm3" in lines[0]
@@ -534,3 +564,194 @@ def test_the_metrics_file_name_passes_the_hub_s_member_rule():
 
     assert MEMBER_RE.match(METRICS_NAME)
     assert METRICS_NAME in RESERVED_NAMES
+
+
+# --------------------------------------------------------------------------
+# The baseline, and what the build prints about it
+# --------------------------------------------------------------------------
+#
+# The file being read here is one somebody else's build published, and the
+# promise both functions carry is that nothing in it can fail a build: the whole
+# value of a printed diff is gone the moment it can turn a modelled, gated,
+# ready-to-ship build red.
+
+def test_being_handed_no_baseline_is_a_clause_and_not_silence():
+    """None is what the parent passes when it had no file to copy, and it is a
+    reason rather than a failure: the build says it in one line and publishes.
+
+    THE NAME NO LONGER SAYS "a project with no dev build", and that is the
+    assertion here rather than a tidier wording. None also covers a slot that
+    IS there and could not be copied out of, so the clause deliberately reports
+    what this side can see -- that nothing arrived -- and not a conclusion about
+    the project that only the parent could draw.
+    """
+    baseline, why = read_baseline(None)
+
+    assert baseline is None
+    assert why == "this build was handed no dev metrics.json"
+
+
+@pytest.mark.parametrize("text, fragment", [
+    (None, "published no metrics.json"),
+    ("{not json at all", "is not readable"),
+    ("[]", "is not readable"),
+    ('{"version": 999, "parts": {}}', "is version 999"),
+])
+def test_a_baseline_this_build_cannot_use_is_a_clause_and_never_a_raise(
+        isolated_project, text, fragment):
+    """Four refusals, and every one of them ends as a sentence in the log.
+
+    The file is on the volume and was written by an older build, by hand, or by
+    a version of this code that does not exist yet — so each of these is an
+    ordinary thing to run into, and `read_baseline` settles them all without
+    raising. The version case is the one the comment on METRICS_VERSION promises
+    out loud: a build refuses to compare against a version it does not know and
+    SAYS so, rather than diffing fields whose meaning has quietly changed.
+    """
+    path = isolated_project / "baseline.json"
+    if text is not None:
+        path.write_text(text, encoding="utf-8")
+
+    baseline, why = read_baseline(path)
+
+    assert baseline is None
+    assert fragment in why, why
+
+
+def test_a_baseline_this_build_can_use_comes_back_with_no_complaint(
+        isolated_project):
+    """The other direction, without which every test above is satisfied by a
+    function that refuses everything."""
+    published = build({"body": measured()})
+    path = isolated_project / "baseline.json"
+    path.write_text(json.dumps(published), encoding="utf-8")
+
+    assert read_baseline(path) == (published, None)
+
+
+def test_the_summary_is_printed_with_a_baseline_as_well_as_without(out_dir,
+                                                                   capsys):
+    """WHAT THIS BUILD MEASURED IS PRINTED EVERY RUN, and that is the point of
+    the block: the numbers are in metrics.json too, but that file has to be
+    fetched by name, while the log arrives on its own and arrives at whoever
+    pushed. It must not depend on whether there was a previous build."""
+    write_metrics(out_dir, build({"body": measured(volume=1000.0)}))
+
+    report_metrics(out_dir, None, "this project has no dev build yet")
+    alone = capsys.readouterr().out
+    report_metrics(out_dir, build({"body": measured(volume=900.0)}), None)
+    compared = capsys.readouterr().out
+
+    assert "this project has no dev build yet" in alone
+    assert "body: 1.00 cm3" in alone
+    assert "body: 1.00 cm3" in compared, (
+        "the summary went missing the moment there was something to diff "
+        "against, which is the branch it used to live under")
+    assert "metrics vs dev:" in compared
+
+
+def test_the_summary_line_carries_millimetres_and_not_the_mesh(out_dir, capsys):
+    """PHYSICAL_FIELDS, and the reason is what a build log is read for.
+
+    A face count moves when a fillet is drawn out of two surfaces instead of
+    one, and a triangle count moves on a tolerance nobody touched — neither is
+    the part coming out another shape. Both stay in metrics.json and in the diff
+    below, where they answer WHY something moved.
+    """
+    write_metrics(out_dir, build({"body": measured(triangles=999, faces=777)}))
+
+    report_metrics(out_dir, None, "this project has no dev build yet")
+
+    line, = [text for text in capsys.readouterr().out.splitlines()
+             if text.strip().startswith("body:")]
+    assert "10.00x10.00x10.00 mm" in line, "the size it came out is the point"
+    assert "999" not in line and "777" not in line, line
+
+
+def test_a_baseline_that_moved_nothing_says_how_many_numbers_were_compared(
+        out_dir, capsys):
+    """Silence is indistinguishable from a comparison that never happened.
+
+    Two documents with no field in common — a baseline written before a field
+    existed against a build that writes it — compare nothing and move nothing,
+    and without the count that reads exactly like a build where nothing changed.
+
+    `revdiff._print_geometry` says the same thing for the same reason, and the
+    wording was taken from there — but it is a SECOND COPY of the sentence and
+    not one string used twice (that one ends in a full stop, this one does not),
+    so nothing holds the two together and this test speaks only for this side.
+    Said out loud because the drift has already started at the punctuation, and
+    a docstring claiming the halves cannot answer differently would be claiming
+    a guarantee no test here provides.
+    """
+    write_metrics(out_dir, build({"body": measured()}))
+
+    report_metrics(out_dir, build({"body": measured()}), None)
+
+    out = capsys.readouterr().out
+    assert "metrics vs dev:" in out
+    assert "every measured number is the same (9 part numbers compared)" in out
+
+
+def test_rubbish_inside_a_well_shaped_baseline_costs_the_diff_and_not_the_summary(
+        out_dir, capsys):
+    """The promise in `report_metrics`'s docstring, made to fail if it stops.
+
+    `{"version": 1, "parts": {"body": 42}}` parses, is an object and carries a
+    version this build knows — everything `read_baseline` can settle cheaply —
+    and it is a TypeError in the middle of the comparison. A guard around the
+    whole walk is what turns that into a sentence, and the lines being built
+    before anything is printed is what keeps a half-written block off the log.
+
+    AND IT COSTS THE DIFF ONLY. The summary walks the document THIS build just
+    wrote and has a guard of its own, so a baseline nobody can read cannot take
+    the sizes with it — a build that printed no numbers at all is the defect
+    issue #59 exists to fix, and the previous build's file must not be able to
+    bring it back by another road.
+    """
+    write_metrics(out_dir, build({"body": measured()}))
+
+    report_metrics(out_dir, {"version": METRICS_VERSION,
+                             "parts": {"body": 42}}, None)
+
+    out = capsys.readouterr().out
+    assert "is not shaped like one" in out
+    assert "body: 1.00 cm3" in out, (
+        "the rubbish baseline took this build's own sizes down with it")
+    assert "metrics vs dev:" not in out, (
+        "the block was half printed before the walk fell over")
+
+
+def test_each_block_answers_for_the_document_it_walked(out_dir, capsys):
+    """TWO GUARDS AND NOT ONE, which nothing else here can tell apart.
+
+    The test above pins the ORDER — the summary is printed before the baseline
+    is ever walked — and a single `try` around both blocks passes it, because
+    the summary has already reached the terminal by the time the diff falls
+    over. So this is the input that separates them: rubbish in the document THIS
+    build wrote, with a baseline that is perfectly good.
+
+    Under two guards each block says which document defeated it, and the second
+    still runs. Under one, the first exception takes the rest of the function
+    with it and the log blames the file somebody else published for a problem in
+    this build's own — which is the wrong sentence printed to the wrong person.
+
+    This is also the only test that reaches the summary's `except` at all.
+    """
+    (out_dir / METRICS_NAME).write_text(
+        json.dumps({"version": METRICS_VERSION, "parts": {"body": 42}}),
+        encoding="utf-8")
+
+    report_metrics(out_dir, build({"body": measured()}), None)
+
+    out = capsys.readouterr().out
+    assert "could not be summarised" in out, (
+        "this build's own document was blamed on the baseline, so the two "
+        "blocks are under one guard again")
+    assert "is not shaped like one" in out, (
+        "the summary's failure took the diff with it")
+    # The other half of "each block's lines are built first": the heading is in
+    # `lines` before the walk that fails, so a failed summary prints its one
+    # sentence and no part of the block it was going to print.
+    assert "metrics, this build:" not in out, (
+        "the summary's heading reached the terminal before the walk fell over")

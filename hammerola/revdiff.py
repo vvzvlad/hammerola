@@ -9,11 +9,13 @@ the source diff under it as the explanation.
 
 NEITHER HALF IS COMPUTED HERE. The measurements come out of `metrics.json`, which
 the build wrote and the hub serves from the build directory, and the comparison
-is `hammerola/metricsdiff.metrics_diff` — the same function the build itself prints
-after every run. It is imported rather than reimplemented, and that is the whole
-point of it having been moved out of `src/cadbuild/metrics.py`: two readers of one
-file, one implementation, nothing to drift. (`cad_publish/hubspec.py` is what a
-second copy looks like a year later, and it is why publication broke.)
+is `hammerola/metricsdiff.metrics_diff` — the same function the build itself
+prints against `dev` at the end of every run that has a baseline to compare
+with (`src/cadbuild/metrics.report_metrics`). It is imported rather than
+reimplemented, and that is the whole point of it having been moved out of
+`src/cadbuild/metrics.py`: two readers of one file, one implementation, nothing
+to drift. (`cad_publish/hubspec.py` is what a second copy looks like a year
+later, and it is why publication broke.)
 
 The source diff is `difflib` over the two stored archives, which is possible at
 all only because the hub keeps a revision's code now (SPEC 7.8). Before that this

@@ -33,7 +33,7 @@ from src.cadbuild.artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID,
 from src.cadbuild.build import build
 from src.cadbuild.errors import BuildError
 from src.cadbuild.geometry import load_model as real_load_model
-from src.cadbuild.metrics import METRICS_NAME
+from src.cadbuild.metrics import METRICS_NAME, METRICS_VERSION
 from src.cadbuild.metrics import collect_metrics as real_collect_metrics
 from src.cadbuild.metrics import write_metrics as real_write_metrics
 from src.cadbuild.modelchecks import run_checks as real_run_checks
@@ -491,6 +491,40 @@ def test_every_phase_of_a_build_is_timed_and_the_marks_run_end_to_end(
     assert calls[-1][1] == calls[0][1], (
         "`total` is measured from the start of the build, which is the same "
         "mark the first phase was measured from")
+
+
+def test_a_build_reports_its_metrics_and_it_is_the_CALL_that_is_held(
+        driven, monkeypatch, out_dir, isolated_project):
+    """`report_metrics` existed, was documented in five places and was called
+    from NOWHERE, for as long as nothing held the call (issue #59).
+
+    So what this asserts is the call itself: that `build()` makes it, with its
+    own output directory, and with the baseline it was handed — read through
+    `read_baseline`, which is the other half of the wire. A test that looked for
+    a line in the log would be satisfied by a line printed from anywhere at all,
+    and what broke was never the format.
+
+    BOTH BRANCHES, because the summary is unconditional now: a build with a
+    baseline reports against it, and a build with none reports anyway and
+    carries the reason there is nothing to compare with.
+    """
+    calls = []
+    monkeypatch.setattr(
+        build_module, "report_metrics",
+        lambda out, previous, why: calls.append((out, previous, why)))
+    published = {"version": METRICS_VERSION, "parts": {}}
+    baseline = isolated_project / "baseline.json"
+    baseline.write_text(json.dumps(published), encoding="utf-8")
+
+    build(out_dir, baseline=str(baseline))
+    build(out_dir)
+
+    assert calls[0] == (out_dir, published, None), (
+        "the build did not hand `report_metrics` its own output directory and "
+        "the parsed baseline it was given")
+    where, previous, why = calls[1]
+    assert (where, previous) == (out_dir, None)
+    assert why, "a build with no baseline still reports, and says why it cannot diff"
 
 
 def test_a_whole_build_mesh_is_filed_under_the_view_it_is_of(

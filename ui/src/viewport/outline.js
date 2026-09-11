@@ -20,6 +20,7 @@
 // coming to rebuild for it. The memo below (on the viewport object, never at
 // module scope) holds the rebuild off whenever the PLANE did not move.
 
+import { cross3, unit3 } from "./math.js";
 import { SECTION_INDEX } from "./options.js";
 
 // The name the outline child carries inside its ObjectGroup — ours by
@@ -178,6 +179,137 @@ function planeThroughTriangles(positions, index, n, c) {
 }
 
 /**
+ * The world plane `normal . p + constant = 0` written in a solid's LOCAL frame,
+ * as `{ n, c }`.
+ *
+ * With a column-major `matrixWorld` (e), p_world = R p_local + t, so
+ * `n . p + c` reads `(R^T n) . p_local + (n . t + c)`: ONLY THE PLANE CROSSES
+ * OVER and the triangles are read exactly as stored, which is what saves
+ * transforming a whole tessellation. The local normal is not unit — the matrix
+ * may scale — but every comparison downstream is a sign or a ratio, which a
+ * common factor survives.
+ *
+ * Shared by the contour and by the containment test that answers a right-click
+ * on a cut face (picking.js), because two copies of this transposition would be
+ * two chances to read the matrix down a row instead of across.
+ */
+function localPlane(matrixWorld, nx, ny, nz, constant) {
+  const e = matrixWorld.elements;
+  return {
+    n: [
+      e[0] * nx + e[1] * ny + e[2] * nz,
+      e[4] * nx + e[5] * ny + e[6] * nz,
+      e[8] * nx + e[9] * ny + e[10] * nz,
+    ],
+    c: nx * e[12] + ny * e[13] + nz * e[14] + constant,
+  };
+}
+
+/**
+ * One solid's cross-section by the WORLD plane `normal . p + constant = 0`, as
+ * the flat `xyz xyz` segment list `planeThroughTriangles` produces, carried into
+ * WORLD coordinates. Empty when the plane misses the solid; null when the solid
+ * has no tessellation to intersect at all.
+ *
+ * The contour draws its segments as a child of the solid's own group, so it
+ * keeps them local and lets the scene graph place them. This answers a question
+ * asked in the world — "is the point the cursor lands on inside this shape" —
+ * and the ONLY other way to compare the two is to carry the point the other way,
+ * which needs the INVERSE of `matrixWorld`. So the segments come out instead:
+ * they are the boundary of one cut face, a few dozen points, against a matrix
+ * inversion done per solid per click and a scale the library is free to put in
+ * that matrix.
+ */
+export function sectionSegments(front, normal, constant) {
+  const geometry = front && front.geometry;
+  const position = geometry && geometry.attributes && geometry.attributes.position;
+  if (!position || !geometry.index || !geometry.boundingBox
+      || !front.matrixWorld || !Number.isFinite(constant)) {
+    return null;
+  }
+  const [nx, ny, nz] = read3(normal);
+  const { n, c } = localPlane(front.matrixWorld, nx, ny, nz, constant);
+  // The same box pre-test the contour makes, and it saves the same walk.
+  if (!planeMayCut(geometry.boundingBox, n, c)) return NO_SEGMENTS;
+  const local = planeThroughTriangles(
+    position.array, geometry.index.array, n, c);
+  const e = front.matrixWorld.elements;
+  const world = new Float32Array(local.length);
+  for (let at = 0; at < local.length; at += 3) {
+    const px = local[at];
+    const py = local[at + 1];
+    const pz = local[at + 2];
+    world[at] = e[0] * px + e[4] * py + e[8] * pz + e[12];
+    world[at + 1] = e[1] * px + e[5] * py + e[9] * pz + e[13];
+    world[at + 2] = e[2] * px + e[6] * py + e[10] * pz + e[14];
+  }
+  return world;
+}
+
+/**
+ * Does `point` lie inside the cross-section `segments` bounds? A CROSSING-PARITY
+ * TEST, in the plane, and pure.
+ *
+ * The cross-section of a solid is a set of CLOSED LOOPS — the plane enters the
+ * body and leaves it — so a ray cast from the point in any direction crosses the
+ * boundary an odd number of times exactly when the point is inside. A hole comes
+ * out right for free: its boundary is another loop, so a point in the hole
+ * crosses twice and reads as outside, which is what the reader sees there.
+ *
+ * THE SEGMENTS DO NOT HAVE TO BE ORDERED, which is why this can eat
+ * `planeThroughTriangles`' output as it stands: parity counts crossings, and a
+ * crossing does not care which loop it belongs to or which way round the loop
+ * runs. The zero-length segments that function can emit (a triangle with one
+ * vertex exactly on the plane) are skipped by the first test below rather than
+ * special-cased, both endpoints being on the same side of the ray.
+ *
+ * The two axes are an orthonormal in-plane basis: `u` is the world axis LEAST
+ * aligned with the normal, rotated flat by a cross product so it is never
+ * degenerate whatever the plane's orientation, and `v` completes it. Parity
+ * would survive any invertible projection, but an orthonormal one keeps the
+ * numbers the same size as the model, which is what keeps a 2 mm part and a 2 m
+ * one on the same footing.
+ */
+export function insideSection(segments, point, normal) {
+  // Two segments is the smallest closed loop, i.e. twelve numbers; anything
+  // shorter bounds nothing and nothing is inside it.
+  if (!segments || segments.length < 12) return false;
+  const n = unit3(read3(normal));
+  if (!n || !n.every(Number.isFinite)) return false;
+  const dx = Math.abs(n[0]);
+  const dy = Math.abs(n[1]);
+  const dz = Math.abs(n[2]);
+  const axis = dx <= dy && dx <= dz ? [1, 0, 0]
+    : (dy <= dz ? [0, 1, 0] : [0, 0, 1]);
+  const u = unit3(cross3(n, axis));
+  if (!u) return false;
+  const v = cross3(n, u);
+  const pu = u[0] * point[0] + u[1] * point[1] + u[2] * point[2];
+  const pv = v[0] * point[0] + v[1] * point[1] + v[2] * point[2];
+  if (!Number.isFinite(pu) || !Number.isFinite(pv)) return false;
+  let inside = false;
+  for (let at = 0; at + 5 < segments.length; at += 6) {
+    const au = u[0] * segments[at] + u[1] * segments[at + 1]
+      + u[2] * segments[at + 2];
+    const av = v[0] * segments[at] + v[1] * segments[at + 1]
+      + v[2] * segments[at + 2];
+    const bu = u[0] * segments[at + 3] + u[1] * segments[at + 4]
+      + u[2] * segments[at + 5];
+    const bv = v[0] * segments[at + 3] + v[1] * segments[at + 4]
+      + v[2] * segments[at + 5];
+    // The half-open rule: a segment counts when the ray's v lies in [av, bv)
+    // one way round or the other. It is what keeps a ray passing exactly
+    // through a shared endpoint from counting that endpoint twice — and it
+    // answers a NaN coordinate by skipping the segment, since neither
+    // comparison can be true. A segment that survives it has `bv !== av`, so
+    // the division below cannot divide by zero.
+    if ((av > pv) === (bv > pv)) continue;
+    if (pu < au + ((pv - av) / (bv - av)) * (bu - au)) inside = !inside;
+  }
+  return inside;
+}
+
+/**
  * Rebuild every solid's outline for the plane standing at `normal` through
  * slider value `value`. The two plane-write sites in section.js call this
  * BEFORE the library's own write, because those calls end in a render the
@@ -229,18 +361,9 @@ export function sectionOutline(vp, g, normal, value) {
         || !front.matrixWorld) {
       continue;
     }
-    // The plane in the solid's LOCAL frame. With a column-major matrixWorld
-    // (e), p_world = R p_local + t, so n.p + c reads (R^T n).p_local +
-    // (n.t + c): only the plane crosses over, the triangles are read as
-    // stored. The local normal is not unit — the matrix may scale — but every
-    // comparison below is a sign or a ratio, which a common factor survives.
-    const e = front.matrixWorld.elements;
-    const n = [
-      e[0] * nx + e[1] * ny + e[2] * nz,
-      e[4] * nx + e[5] * ny + e[6] * nz,
-      e[8] * nx + e[9] * ny + e[10] * nz,
-    ];
-    const c = nx * e[12] + ny * e[13] + nz * e[14] + constant;
+    // The plane in the solid's LOCAL frame — see `localPlane` for why it is the
+    // plane that crosses over and not the triangles.
+    const { n, c } = localPlane(front.matrixWorld, nx, ny, nz, constant);
     let outline = outlineChild(group);
     if (!planeMayCut(geometry.boundingBox, n, c)) {
       // The box test only saves the triangle walk — the plane still has to be

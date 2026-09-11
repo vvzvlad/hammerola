@@ -178,6 +178,7 @@ export function fakeViewer({
   clipCenter = [0, 0, 0],
   states = {},
   groups = {},
+  capUnits = [],
   rect = { left: 0, top: 0, width: 800, height: 600 },
   target = null,
 } = {}) {
@@ -200,8 +201,16 @@ export function fakeViewer({
     clipping: {
       clipPlanes: planes,
       setVisible: vi.fn(),
+      // `Clipping` starts this as `[]` (bundle :91131) and `_createStencils`
+      // fills it, so an empty array is what a scene with no solids in it looks
+      // like — not a missing field.
+      _capUnits: capUnits,
     },
-    renderer: { domElement: canvas },
+    // `localClippingEnabled` is the renderer flag `Viewer.setLocalClipping`
+    // writes (:111235) and the only place the answer to "is a cut actually
+    // cutting" is kept. Modelled rather than spied on alone, because reading it
+    // back is how the menu decides whether a cut face can be under the cursor.
+    renderer: { domElement: canvas, localClippingEnabled: false },
     idPicker: {},
     nestedGroup: {
       groups,
@@ -249,7 +258,9 @@ export function fakeViewer({
       sliders[i] = viewer.gridSize / 2
       viewer.setClipSlider(i, value === null ? viewer.gridSize / 2 : value, notify)
     }),
-    setLocalClipping: vi.fn(),
+    setLocalClipping: vi.fn((flag) => {
+      viewer.renderer.localClippingEnabled = !!flag
+    }),
     setActiveTab: vi.fn(),
 
     // -- parts -------------------------------------------------------------
@@ -336,6 +347,10 @@ export function fakeCap(index, size, normal = [0, 0, 1]) {
     plane: { normal: { x: nx, y: ny, z: nz }, constant: 0, center: [0, 0, 0] },
     size,
     center: [0, 0, 0],
+    // `Object3D.visible`, which is what `Clipping.cull` (:91364) writes to take
+    // a cap off the screen — so a cap that has not been culled starts true, the
+    // way every Object3D does.
+    visible: true,
     material: fakeCapMaterial(),
   }
 }
@@ -360,12 +375,22 @@ export function fakeSolidObject(name, { min = [0, 0, 0], max = [10, 10, 10], mat
 }
 
 /** `Clipping._createStencils`' answer for a scene: one unit per solid, each
- *  holding one cap per plane, planes in the library's own order. */
-export function fakeCapUnits(solids, { size = 36, planes = [[0, 0, 1], [0, 1, 0], [1, 0, 0]] } = {}) {
+ *  holding one cap per plane, planes in the library's own order.
+ *
+ *  `omit` leaves the named PLANE INDICES out of every unit while the caps that
+ *  remain keep their own `index`. That is the case the cap lookup's comment is
+ *  about: `capMeshes` is filled plane-major, so a unit the loop skipped for one
+ *  plane has the rest shifted along, and reading `capMeshes[SECTION_INDEX]`
+ *  would then hand back another plane's cap with nothing to say it had. */
+export function fakeCapUnits(solids, {
+  size = 36, planes = [[0, 0, 1], [0, 1, 0], [1, 0, 0]], omit = [],
+} = {}) {
   return solids.map((solid) => ({
     solid,
     stencilGroups: [],
-    capMeshes: planes.map((n, i) => fakeCap(i, size, n)),
+    capMeshes: planes
+      .map((n, i) => (omit.includes(i) ? null : fakeCap(i, size, n)))
+      .filter(Boolean),
     radiusPx: 0,
   }))
 }

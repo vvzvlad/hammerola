@@ -200,9 +200,10 @@ export function placeSectionPlane(vp, g, normal, point) {
   // NORMALISED HERE, because this is one of the two doors a normal enters the
   // module by and everything downstream assumes a unit one (`sectionValueFor`
   // says what breaks otherwise). `faceNormalAt` does hand back a unit vector
-  // today — but picking.js has no tests of its own, so that is a fact about a
-  // file nothing checks, and the cost of it changing is a plane standing metres
-  // from the face with nothing reporting anything.
+  // today, and picking.js has a suite of its own now — but the length of what
+  // that particular function returns is not among the things it pins, and the
+  // cost of it changing is a plane standing metres from the face with nothing
+  // reporting anything.
   //
   // `finite3` AND NOT the null `unit3` returns, because null is only one of the
   // two ways it declines: a component that is already Infinity has no direction

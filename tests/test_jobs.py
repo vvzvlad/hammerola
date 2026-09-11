@@ -2248,9 +2248,69 @@ def test_the_worker_calls_the_real_run_build_the_way_it_is_declared(hub_factory,
         "the worker did not get its arguments from `build_arguments`, so "
         "nothing keeps the call it makes and the call this test binds together")
     # Belt and braces on the helper itself: it is the expression, not a wrapper
-    # that could quietly start returning something else.
+    # that could quietly start returning something else. EVERY KEYWORD IS NAMED
+    # HERE BY HAND, and that is the point of this line rather than an
+    # inconvenience of it: a new argument the worker passes and this does not
+    # leaves the assertion comparing two calls that both lack it — green, and
+    # holding nothing about the new link.
     assert build_arguments(args[0], args[1], keywords["pid"],
-                           force=keywords["force"]) == (args, keywords)
+                           force=keywords["force"],
+                           baseline=keywords["baseline"]) == (args, keywords)
+
+
+def test_a_project_with_no_dev_build_has_no_baseline_to_offer(hub):
+    """The hub's own side of the wire, and deliberately only that.
+
+    `dev_metrics_path` answers None for a project with no slot and for a pid
+    nobody has ever pushed, and a publish made while the answer is None still
+    reaches a revision. That the None then TRAVELS to the builder is the test
+    below, which watches the call the worker made rather than inferring it from
+    a status code.
+    """
+    assert hub.store.dev_metrics_path("proj1") is None
+
+    assert hub.publish("proj1", "abc123", good_build()).status_code == 201
+    assert hub.store.dev_metrics_path("nobody-has-this-pid") is None
+
+
+def test_a_build_is_compared_against_the_previous_dev_and_not_against_itself(
+        hub_factory):
+    """The link issue #59 exists for, watched from the outside of the worker.
+
+    Three comments in this codebase say a build is compared against the
+    PREVIOUS `dev` rather than against itself, and until this test nothing held
+    it: `baseline=None` at the call site left the whole suite green, because the
+    stand-in builder swallows the keyword and the signature test feeds
+    `build_arguments` the captured value and compares it with the captured call.
+
+    So the builder here RECORDS the keyword and reads the file it names, at the
+    moment of the call — the first build of a project is handed None, and the
+    second is handed the metrics.json the first one published. By CONTENT and
+    not by path: in production the child is given a copy in its own scratch
+    (`buildproc.runner.run_build`), so the spelling of the path is exactly the
+    thing this must not depend on.
+    """
+    handed = []
+
+    def recording_builder(project_dir, out_dir, *, pid, baseline=None, **kw):
+        handed.append(None if baseline is None
+                      else Path(baseline).read_text(encoding="utf-8"))
+        return copying_builder(project_dir, out_dir, pid=pid, **kw)
+
+    hub = hub_factory(build_runner=recording_builder)
+    first = '{"version": 1, "project": "proj1", "parts": {"lid": 1}}\n'
+    second = '{"version": 1, "project": "proj1", "parts": {"lid": 2}}\n'
+
+    assert hub.publish_dev("proj1", good_build(
+        marker="d1", extra_files={"metrics.json": first.encode()})
+    ).status_code == 201
+    assert hub.publish_dev("proj1", good_build(
+        marker="d2", extra_files={"metrics.json": second.encode()})
+    ).status_code == 201
+
+    assert handed == [None, first], (
+        "the second build was not handed what the first one published, so "
+        "nothing keeps a build from comparing itself against itself")
 
 
 def test_a_publish_reply_is_reconstructed_from_the_job(hub):

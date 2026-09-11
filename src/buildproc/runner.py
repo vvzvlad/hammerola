@@ -168,7 +168,7 @@ class BuildOutcome:
 
 
 def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
-              preview_mode="iso", force=False):
+              preview_mode="iso", force=False, baseline=None):
     """Build the model in `project_dir` into `out_dir`, in a process of its own.
 
     `project_dir` is an UNTRUSTED tree -- someone pushed it and the hub
@@ -189,6 +189,10 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
     `force` is the push asking for the MODEL's own checks() not to be run
     (issue #52). Those are the author's, so they are the author's to waive; the
     hub's own gates are not, and every one of them runs on a forced build.
+
+    `baseline` is the `dev` slot's metrics.json, which the build prints what
+    moved against. It is COPIED into the scratch directory below rather than
+    named where it lies, and the copy is what the child is told about.
     """
     project_dir = Path(project_dir).resolve()
     out_dir = Path(out_dir).resolve()
@@ -221,6 +225,31 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
         ]
         if limits.hang_dump_seconds is not None:
             target += ["--hang-dump-seconds", str(limits.hang_dump_seconds)]
+        # A COPY, AND THE ORDER OF THESE LINES IS THE CORRECTNESS. It is taken
+        # here, in the parent and before the child starts, so a `dev` build is
+        # compared against the PREVIOUS `dev` rather than against itself: the
+        # publish that overwrites the slot happens after this call returns
+        # (`jobs._build_and_publish`). Copying also settles the other race --
+        # `store._swap_dev_slot` is a pair of renames, so a parallel build of
+        # the same project can replace the slot halfway through this one and a
+        # path held into the store would then be read as something third.
+        #
+        # Scratch is the channel: it is the parent's directory, the one
+        # `result.json` already travels in, and it is the only way this side
+        # hands the child a file.
+        #
+        # A COPY THAT WILL NOT BE MADE COSTS THE COMPARISON AND NOT THE BUILD.
+        # The child is then started without `--baseline`, which is the ordinary
+        # "nothing to compare against" branch, and the build publishes as it
+        # otherwise would.
+        if baseline is not None:
+            copy = scratch / "baseline.json"
+            try:
+                shutil.copyfile(baseline, copy)
+            except OSError:
+                pass
+            else:
+                target += ["--baseline", str(copy)]
 
         process = run_isolated(
             target, limits=limits,

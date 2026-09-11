@@ -28,7 +28,7 @@ import { cameraBasis, canvasXY, ndcAt, ndcOffset } from "./camera.js";
 import { gestureInternals, internals } from "./internals.js";
 import { measureDistance, measureEntity } from "./measure.js";
 import { movePart, movableGroup } from "./parts.js";
-import { faceNormalAt, pickEntity } from "./picking.js";
+import { capOwnerAt, faceNormalAt, pickEntity } from "./picking.js";
 import { CLICK_PX } from "./options.js";
 import {
   dragSection, keepSectionCut, placeSectionPlane, sectionAxis,
@@ -290,15 +290,26 @@ export function installTools(vp) {
     if (!at) return;
     const [x, y] = at;
     if (p.menu) {
-      // The same `pickEntity` the plain pick below uses, so the identifier the
-      // menu opens on is the identifier a selection would have produced — the
-      // interface looks both of them up in the same tree.
+      // The same `pickEntity` the plain pick below uses, so the identifier is of
+      // the same kind and the interface looks it up in the same tree. On a CUT
+      // FACE it is not the same identifier a selection would produce — the cut
+      // face is asked about first, and the paragraph below says why only here.
       //
       // AND IT DOES NOT EMIT A PICK. The menu is about the part under the
       // cursor; the selection is about the part the reader chose. A tree row's
       // menu leaves the selection where it was, and one menu with two behaviours
       // is worse than either.
-      const entity = pickEntity(g, x, y);
+      //
+      // THE CUT FACE IS ASKED ABOUT FIRST, and only while a cut stands — with
+      // none, `capOwnerAt` returns before it does any work and this is the same
+      // line it always was. The stencil cap that closes a cut off carries no
+      // component id, so the picker reads straight through it to whatever lies
+      // behind (picking.js says why that cannot be fixed at the picker), and the
+      // menu would open on the wrong part. HERE ONLY: the other four callers of
+      // `pickEntity` — measure, comment, move, plain selection — are about a
+      // point on a real surface, and a cap has no surface to measure or pin.
+      const ndc = ndcAt(g.canvas, event);
+      const entity = (ndc && capOwnerAt(vp, g, ndc)) || pickEntity(g, x, y);
       emit(vp, EVENT_MENU, {
         id: entity ? entity.id : null,
         name: entity ? entity.name : null,
