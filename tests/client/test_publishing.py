@@ -15,6 +15,7 @@ the archive, the token, the 202, the job, the log, the pointers, the exit code �
 is the real thing.
 """
 
+import json
 import os
 import shlex
 
@@ -24,6 +25,7 @@ from harness import TOKEN, copying_builder, failing_builder
 
 from hammerola import gitsuggest
 from hammerola.cli import main
+from hammerola.limits import MAX_TEXT_CHARS
 
 
 @pytest.fixture(autouse=True)
@@ -208,6 +210,80 @@ def test_the_job_id_and_the_revision_are_both_shown_and_told_apart(
     assert "this build's progress" in job_line
 
 
+# -- what the revision says it is --------------------------------------------
+def _stored(hub, revision, pid="demo0001"):
+    return json.loads(
+        (hub.project_dir(pid) / revision / "meta.json").read_text())
+
+
+def _picker(hub, pid="demo0001"):
+    r = hub.get(f"/project/{pid}/builds.json")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_the_message_travels_from_the_command_line_into_the_picker(
+        hub, model, capsys):
+    """The whole channel at once, and until issue #67 it stopped at the laptop.
+
+    `-m` was read by `gitsuggest` alone: the hub never heard the text, so a
+    revision was a digest and a date on every surface that shows one. Every hop
+    here is somewhere else — the flag becomes a header on the push, the route
+    reads it, the task carries it into the worker, the publish writes it into
+    the revision's own record — so what is worth holding is the END of it, which
+    is the file the browser's picker actually reads.
+    """
+    assert run(model, "commit", "-m", "the bracket got thicker") == 0
+    revision = printed_revision(capsys.readouterr().out)
+
+    assert _stored(hub, revision)["message"] == "the bracket got thicker"
+    assert [(b["commit"], b.get("message")) for b in _picker(hub)["builds"]] \
+        == [(revision, "the bracket got thicker")]
+
+
+def test_a_message_that_is_not_ascii_arrives_verbatim(hub, model, capsys):
+    """An HTTP header value is latin-1 and a revision message is not.
+
+    That is why the client percent-encodes and the hub unquotes: the alternative
+    is a client that refuses to push at all — `http.client` encodes header
+    values with latin-1 — over a message written in the language the author
+    writes in. What the round trip owes is the string that was typed, not an
+    approximation of it.
+    """
+    message = "крепление стало толще, зазор 0,2 мм"
+    assert run(model, "commit", "-m", message) == 0
+    revision = printed_revision(capsys.readouterr().out)
+
+    assert _stored(hub, revision)["message"] == message
+    assert [b.get("message") for b in _picker(hub)["builds"]] == [message]
+
+
+def test_a_second_push_of_the_same_tree_restates_it_without_minting_a_revision(
+        hub, model, capsys):
+    """The name IS the digest of the sources, so this cannot become a second
+    revision — and the message is the one thing about an already-published
+    revision that a push may still change.
+
+    The hub answers 200 out of the request and builds nothing, which is exactly
+    the path the update had to be put on: there is no job to do it in.
+    """
+    assert run(model, "commit", "-m", "first cut") == 0
+    revision = printed_revision(capsys.readouterr().out)
+
+    assert run(model, "commit", "-m", "actually, the pin moved") == 0
+    out = capsys.readouterr().out
+    assert "unchanged" in out
+    assert printed_revision(out) == revision
+    assert revisions_of(hub) == [revision]
+    assert [b.get("message") for b in _picker(hub)["builds"]] == \
+        ["actually, the pin moved"]
+
+    # And `commit` with the flag left off is an ordinary re-push, not a way to
+    # take the message back: there is no way to clear one.
+    assert run(model, "commit") == 0
+    assert _stored(hub, revision)["message"] == "actually, the pin moved"
+
+
 # -- the git commit that is OFFERED afterwards -------------------------------
 def test_a_dirty_repository_is_offered_a_commit_carrying_the_revision(
         hub, model, capsys):
@@ -337,6 +413,94 @@ def test_a_missing_token_fails_before_anything_is_packed(model, monkeypatch,
     monkeypatch.delenv("EDIT_TOKEN", raising=False)
     assert run(model, "build") == 1
     assert "EDIT_TOKEN is not set" in capsys.readouterr().err
+
+
+def test_an_over_long_message_is_refused_before_anything_is_packed(
+        hub, model, capsys):
+    """A COURTESY, and the test says which part of it is worth having.
+
+    The hub refuses this perfectly well and its 400 arrives intact — that is why
+    the validation sits below the body in `src/app.py`. What the local check buys
+    is the minute in between: on a real tree the alternative is walking it,
+    compressing it and uploading it to be told a thing that was knowable before
+    any of that started. `project.check_title` asks the same number of a title
+    for the same reason.
+
+    So what is pinned is that the refusal happened HERE: the client's own
+    sentence, with the count in it, and nothing packed and nothing published.
+    """
+    assert run(model, "commit", "-m", "x" * (MAX_TEXT_CHARS + 1)) == 1
+
+    printed = capsys.readouterr()
+    assert f"{MAX_TEXT_CHARS + 1} characters" in printed.err
+    assert str(MAX_TEXT_CHARS) in printed.err
+    assert "packed" not in printed.out
+    assert revisions_of(hub) == []
+
+
+def test_an_empty_message_is_refused_before_anything_is_packed(
+        hub, model, capsys):
+    """`-m ""` is the one the hub cannot catch.
+
+    An empty string never becomes a header at all, so the push arrives looking
+    exactly like one made without `-m` — accepted, built, published, and nothing
+    on the row. `-m "   "` reaches the hub and is refused there; this one has to
+    be refused here or nowhere, which is the whole reason the client says
+    anything about a message.
+    """
+    assert run(model, "commit", "-m", "") == 1
+
+    printed = capsys.readouterr()
+    assert "must not be empty" in printed.err
+    assert "packed" not in printed.out
+    assert revisions_of(hub) == []
+
+
+def test_the_hubs_refusal_survives_an_archive_worth_uploading(hub, tmp_path,
+                                                              capsys):
+    """THE REGRESSION THAT MOVED THE VALIDATION BELOW THE BODY (issue #67).
+
+    A message the hub refuses is refused after `_spool_body`, and that position
+    is the whole of it. Refused ABOVE the body — where it sat, next to the 401
+    and the 413 that genuinely belong there — the hub closes the connection while
+    this client is still writing the archive: urllib raises `Broken pipe`,
+    `Hub._call` reports it as "cannot reach <hub>", and the sentence saying what
+    was wrong with the message is never read. A 256 KiB body still delivered the
+    400 over loopback and 1 MiB did not, so every fixture in this suite was small
+    enough to hide it and a real tree with one vendored `.step` in it was not.
+
+    THREE MEGABYTES OF INCOMPRESSIBLE BYTES, therefore, and an angle bracket —
+    the refusal a person is most likely to trip, since `clearance < 0.2 mm` is a
+    sentence somebody would really type. What is asserted is the diagnosis: the
+    hub's own words, and specifically NOT the sentence about reaching it.
+    """
+    model = make_model(tmp_path / "big", extra={"ref/vendor/part.step":
+                                                os.urandom(3 * 1024 * 1024)})
+    assert run(model, "commit", "-m", "clearance < 0.2 mm") == 1
+
+    printed = capsys.readouterr()
+    assert "angle bracket" in printed.err
+    assert "cannot reach" not in printed.err
+    # It really was a push worth protecting: the archive was packed and sent.
+    assert "packed" in printed.out
+    assert revisions_of(hub) == []
+
+
+def test_a_message_at_the_ceiling_with_a_trailing_newline_publishes(
+        hub, model, capsys):
+    """The client measures what the HUB measures, or it refuses good pushes.
+
+    `render.revision_message` strips before it counts, so 200 characters with a
+    newline after them is a legal message. A client counting the raw string makes
+    it 201 and stops the push — a courtesy check doing the one kind of harm it
+    can do, which is refusing something that would have worked. `-m "$(cat
+    subject.txt)"` is how a person meets this.
+    """
+    assert run(model, "commit", "-m", "x" * MAX_TEXT_CHARS + "\n") == 0
+
+    revision = printed_revision(capsys.readouterr().out)
+    # Stored stripped, which is the same rule seen from the other end.
+    assert _stored(hub, revision)["message"] == "x" * MAX_TEXT_CHARS
 
 
 @pytest.mark.parametrize("bad_url, why", [

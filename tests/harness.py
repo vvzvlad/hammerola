@@ -133,7 +133,7 @@ class Hub:
         kw.setdefault("timeout", 10)
         return httpx.request(method, self.url + path, **kw)
 
-    def publish(self, pid, commit, body, token=TOKEN):
+    def publish(self, pid, commit, body, token=TOKEN, headers=None):
         """Push, wait for the build, and answer as the synchronous endpoint did.
 
         201/200/409/422/413/401 come back exactly as they used to. A 202 is
@@ -145,28 +145,35 @@ class Hub:
         where the hub makes one out of the sources. The reply of a finished job
         carries the name it chose in `record["commit"]`; the reply of the PUSH
         carries it in `revision`, which only `publish_async` can show.
+
+        `headers` are sent alongside the two this always sends, for the tests
+        whose subject is a header the route reads — `X-Hammerola-Message` is the
+        only one today (issue #67).
         """
-        reply = self.publish_async(pid, commit, body, token=token)
+        reply = self.publish_async(pid, commit, body, token=token,
+                                   headers=headers)
         if reply.status_code != 202:
             return reply
         return self.await_job(reply.json()["job"], token=token)
 
-    def publish_async(self, pid, commit, body, token=TOKEN, query=""):
+    def publish_async(self, pid, commit, body, token=TOKEN, query="",
+                      headers=None):
         """POST the push and return whatever the endpoint said, 202 included.
 
         `query` is appended verbatim, `?` and all, for the tests that are about
         what the route reads out of one — `?force=1` is the only such parameter
         today.
         """
-        headers = {"Content-Type": "application/gzip"}
+        sent = {"Content-Type": "application/gzip"}
         if token is not None:
-            headers["Authorization"] = f"Bearer {token}"
+            sent["Authorization"] = f"Bearer {token}"
+        sent.update(headers or {})
         path = f"/api/v1/publish/{pid}"
         if commit is not None:
             path = f"{path}/{commit}"
         path = f"{path}{query}"
         return httpx.post(f"{self.url}{path}",
-                          content=body, headers=headers, timeout=30,
+                          content=body, headers=sent, timeout=30,
                           trust_env=self.TRUST_ENV)
 
     def job(self, job_id, token=TOKEN):

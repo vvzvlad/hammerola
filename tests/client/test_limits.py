@@ -69,6 +69,23 @@ def test_the_text_ceiling_is_the_hubs():
     assert limits.MAX_TEXT_CHARS == MAX_TITLE_CHARS
 
 
+def test_the_message_header_is_spelled_the_same_on_both_sides():
+    """The name of the header a revision's message travels on (issue #67).
+
+    Spelled twice for the reason everything in this file is: the client must
+    import under a bare python3 and cannot see `src`. Two spellings of one wire
+    name is exactly the shape the module docstring above calls the thing that
+    broke publication — and this one would break QUIETLY, because a header
+    nobody reads is not an error: the push succeeds, the build publishes, and the
+    message is simply gone from every row.
+    """
+    from src.app import MESSAGE_HEADER as hub_header
+
+    from hammerola.hub import MESSAGE_HEADER as client_header
+
+    assert client_header == hub_header
+
+
 def test_the_size_ceiling_matches_the_hubs_default():
     """The DEFAULT, which is all the client can know.
 

@@ -423,6 +423,12 @@ class BuildTask:
     ordinary build, and because that is the direction a forgotten argument has
     to fail in — a build that runs the checks nobody asked it to skip is slow,
     and one that skips checks nobody waived is wrong.
+
+    `message` is about NEITHER: it is what the push said this revision is (issue
+    #67), and it rides here because this dataclass is the only thing that crosses
+    into the build thread. The build never reads it — it is written into the
+    published document on the other side — and the `dev` route ignores it, the
+    slot being the working copy rather than a version of anything.
     """
 
     job_id: str
@@ -432,6 +438,7 @@ class BuildTask:
     archive: Path
     digest: str
     force: bool = False
+    message: str | None = None
 
 
 def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
@@ -1347,7 +1354,7 @@ class BuildQueue:
                 else:
                     status, payload = self._store.publish_built(
                         task.pid, task.commit, staging, outcome.files,
-                        task.digest, job=task.job_id)
+                        task.digest, job=task.job_id, message=task.message)
                 logger.info(
                     f"job {task.job_id}: published {task.pid}/{task.commit} "
                     f"-> {payload['url']}")

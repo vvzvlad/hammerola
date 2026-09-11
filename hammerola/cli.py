@@ -97,7 +97,7 @@ from hammerola import (admin, artifacts, config, gitsuggest, project, queue,
 from hammerola.errors import ClientError
 from hammerola.hub import (JOB_TIMEOUT, SLOW_BUILD_SECONDS, UNAUTHORIZED, Hub,
                            HubError, quoted)
-from hammerola.limits import DEV_SLOT
+from hammerola.limits import DEV_SLOT, MAX_TEXT_CHARS
 from hammerola.pack import PackError, pack
 
 EXIT_OK = 0
@@ -162,8 +162,9 @@ def build_parser() -> argparse.ArgumentParser:
         "commit", help="publish an immutable revision; the hub names it")
     revision.add_argument(
         "-m", "--message", default=None,
-        help="what this revision is; becomes the subject of the git commit "
-             "suggested afterwards")
+        help="what this revision is. It is stored with the revision and shown "
+             "in the build picker, and it becomes the subject of the git "
+             "commit suggested afterwards")
     _add_common(revision)
 
     state = commands.add_parser(
@@ -345,6 +346,40 @@ def _publish(args) -> int:
     # `dev` for the slot, and NOTHING for a revision: the absence of a last path
     # segment is how the hub is asked to name it (`Hub.publish`).
     slot = DEV_SLOT if args.command == "build" else None
+    # `getattr` because both verbs land here and only `commit` has `-m`: a
+    # revision is a version of the project and can say what it is, while the
+    # local slot is the working copy and is overwritten by the next push.
+    message = getattr(args, "message", None)
+    # A COURTESY, AND NOTHING MORE — the same kind of check as the size ceiling
+    # in `limits.py`, and held to the same modesty. It saves a minute of packing
+    # and a pointless upload of a push the hub is going to refuse anyway; it does
+    # NOT shape the refusal, and it is not where the rule lives. The hub's own
+    # 400 is the authority and says it better, which is why only these two cases
+    # are here: they are the ones a person hits by accident, and neither needs
+    # the hub to be asked. Everything else `render.revision_message` refuses —
+    # control characters, angle brackets — is left to the hub, because a second
+    # copy of a rule is how the two drift apart (`tests/client/test_limits.py`
+    # is what keeps the one number here honest).
+    #
+    # STRIPPED BEFORE IT IS MEASURED, because that is what the hub measures
+    # (`render.revision_message` strips first). Without it a 200-character
+    # subject with a trailing newline — `-m "$(cat subject.txt)"` — is refused
+    # here as 201 and would have been accepted there, which is the one way a
+    # courtesy check can do real harm: refusing a push that would have worked.
+    if message is not None:
+        subject = message.strip()
+        if not subject:
+            # `-m ""` never becomes a header at all, so without this the flag is
+            # typed, the push succeeds, and the row says nothing — the same hole
+            # the hub closes for `-m "   "`, and the hub cannot see this one.
+            raise ClientError(
+                "the revision message must not be empty.\n"
+                "  Say what this revision is, or leave `-m` off.")
+        if len(subject) > MAX_TEXT_CHARS:
+            raise ClientError(
+                f"the revision message is {len(subject)} characters; the hub "
+                f"shows at most {MAX_TEXT_CHARS} and refuses a longer one.\n"
+                f"  Shorten it.")
 
     # BUILT HERE AND NOT AT THE PUSH, which is the second half of the paragraph
     # above. Reading the two settings early only catches the variable being
@@ -381,7 +416,8 @@ def _publish(args) -> int:
     sys.stdout.flush()
 
     # `code` and not `status`, because `status` is a module of this package.
-    code, payload = hub.publish(pid, archive.body, slot=slot, force=args.force)
+    code, payload = hub.publish(pid, archive.body, slot=slot, force=args.force,
+                                message=message)
 
     if code == 200:
         # `Store.settled`: this exact source tree is already published under
@@ -397,8 +433,7 @@ def _publish(args) -> int:
         print("unchanged: the hub already has this exact source, nothing rebuilt")
         _print_revision(payload.get("revision"))
         return _published(hub, payload.get("url"), root,
-                          revision=payload.get("revision"),
-                          message=getattr(args, "message", None))
+                          revision=payload.get("revision"), message=message)
 
     if code == 401:
         # Named rather than shown as one more refusal code: it is the only one
@@ -447,8 +482,7 @@ def _publish(args) -> int:
 
     if record.get("state") == "done":
         return _published(hub, record.get("build_url"), root,
-                          revision=payload.get("revision"),
-                          message=getattr(args, "message", None))
+                          revision=payload.get("revision"), message=message)
 
     why = record.get("error")
     return _fail(f"the build failed (HTTP {record.get('code')}): "

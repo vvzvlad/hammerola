@@ -13,7 +13,11 @@ tests/test_ui_source.py (`test_the_build_picker_reads_the_fields_builds_json_car
 which is where it stayed live when the old page viewer was deleted.
 """
 
+from urllib.parse import quote
+
 from harness import DEFAULT_EXPORTS, meta_bytes, tar_gz, view_bytes
+
+from src.app import MESSAGE_HEADER
 
 
 def _build(marker, built="2026-08-21T04:16:00Z"):
@@ -38,6 +42,29 @@ def test_the_picker_carries_the_slot_the_pointer_and_the_history(hub):
     assert info["latest"] == "bbb222"
     # Newest first, and commits only — the slot is a destination, not an entry.
     assert [b["commit"] for b in info["builds"]] == ["bbb222", "aaa111"]
+
+
+def test_a_row_carries_what_its_revision_said_it_was(hub):
+    """The list is DERIVED from each revision's own meta.json, and this is the
+    field that makes it readable (issue #67).
+
+    A row is a twelve-character digest and a timestamp: between them they tell
+    two revisions apart without saying what either one is. The message travels
+    on the push, is stored with the record, and is projected here beside the id.
+
+    A revision pushed without one gets no key rather than an empty string. The
+    picker is fetched by every visitor of every build page of the project, and
+    "absent" is what every revision published before this field looks like — so
+    the browser has to read it as optional either way.
+    """
+    hub.publish("proj1", "aaa111", _build("c1", "2026-08-01T00:00:00Z"),
+                headers={MESSAGE_HEADER: quote("first cut of the bracket",
+                                               safe="")})
+    hub.publish("proj1", "bbb222", _build("c2", "2026-08-02T00:00:00Z"))
+
+    rows = {b["commit"]: b for b in _picker(hub)["builds"]}
+    assert rows["aaa111"]["message"] == "first cut of the bracket"
+    assert "message" not in rows["bbb222"]
 
 
 def test_a_name_that_resolves_to_nothing_is_not_offered(hub):

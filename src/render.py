@@ -175,6 +175,49 @@ def project_title(value) -> str:
     return _plain_text(value.strip(), "title")
 
 
+def revision_message(value: str) -> str:
+    """What a revision says about itself, checked exactly as a part name is.
+
+    THE PART-NAME RULE, CALLED AND NOT RESTATED (issue #67). A message arrives
+    on a header of the push, so it never went through `build_meta`'s walk and has
+    no validation of its own to inherit — and the field it most resembles is a
+    part name. This used to repeat that function's three lines sixty lines below
+    it, which is a second copy of a rule: `MAX_TEXT` is shared so the cap could
+    not drift, but the angle brackets could, and silently.
+
+    THE HALF THAT IS LOAD-BEARING IS `_plain_text`, inside it. The revision list
+    renders a message as a JSX child, so React escapes it and the brackets buy
+    nothing there; what the cap and the printable-text rule buy is that a subject
+    stays a subject — 200 characters, one line, no U+202E reversing the date
+    beside it and no control character turning a log line into two. The brackets
+    come with the precedent rather than instead of it.
+
+    STRIPPED BEFORE IT IS CHECKED, and the order is not cosmetic: measuring the
+    raw string would refuse a 200-character subject with a newline after it —
+    twice over, once as 201 characters and once as a control character — and that
+    is a legal message somebody gets from `-m "$(cat subject.txt)"`. It is also
+    the number the client is held to (`hammerola/cli.py`), so the two have to
+    measure the same thing.
+
+    A non-string is refused before the strip rather than coerced, like
+    `project_title` above: `.strip()` on one would raise AttributeError, which is
+    not a ValueError and would leave the route answering 500 instead of 400.
+
+    AND SO IS A MESSAGE THAT IS ONLY SPACES, for the reason `project_title`
+    refuses one: the push ASKED for a subject, and "  " is not one. It used to
+    strip to "" and then evaporate at every `if message:` downstream — a flag
+    typed, accepted, and silently dropped, which is precisely what the route
+    refuses to do with a message it cannot store.
+    """
+    if not isinstance(value, str):
+        raise ValueError("`message` must be a string")
+    text = value.strip()
+    if not text:
+        raise ValueError("`message` must not be empty")
+    _check_part_name(text, "message")
+    return text
+
+
 @lru_cache(maxsize=None)
 def _template(name: str) -> str:
     """Read a page template once per process.
@@ -984,7 +1027,7 @@ def _match_selection(declared: list, shown: set, view_id: str) -> None:
 
 def build_meta(pid: str, commit: str, raw: dict, staging: Path,
                files: dict, published: str, dev: bool = False,
-               job: str = None) -> dict:
+               job: str = None, message: str = None) -> dict:
     """Validate the uploaded meta.json and normalize it for the viewer.
 
     NOTHING IS RENAMED ANY MORE. `views` used to be handed to the browser as
@@ -1135,6 +1178,17 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
     # written without one still has to be a published slot.
     if dev:
         meta["job"] = job
+    # AND THE ONE FIELD THAT COMES FROM THE PUSH RATHER THAN FROM THE BUILD
+    # (issue #67). It is a property of ONE revision — what the author said this
+    # version is — so it is stored with that record and nowhere else; the picker
+    # is derived from these documents (`Store.builds_of`) and reads it back out
+    # of them. Written like `job` above, after the document and only when there
+    # is one, so a revision pushed without `-m` has a meta.json byte-identical
+    # to the one it would have had before this field existed. Already validated
+    # by `revision_message` at the door, where a bad one is refused rather than
+    # dropped.
+    if message:
+        meta["message"] = message
     return meta
 
 
@@ -1169,8 +1223,27 @@ def builds_json(pid: str, metas: list[dict], dev: bool = False,
         "title": header.get("title", pid),
         "has_dev": bool(dev),
         "latest": latest,
-        "builds": [{"commit": m["commit"], "built": m["built"]} for m in metas],
+        "builds": [_picker_entry(m) for m in metas],
     }
+
+
+def _picker_entry(meta: dict) -> dict:
+    """One row of the picker: which revision, when, and what it says it is.
+
+    A PROJECTION AND NOT A COPY, which is why it is spelled out rather than
+    filtered: a build's meta.json is several hundred kilobytes of catalogue and
+    view records, and this file is fetched by every visitor of every build page
+    of the project. Only what a row draws is carried.
+
+    `message` is present only when the revision has one (issue #67) — a project
+    whose revisions were pushed without `-m` gets exactly the file it got
+    before — and the picker draws a row without it as it always drew every row.
+    """
+    entry = {"commit": meta["commit"], "built": meta["built"]}
+    message = meta.get("message")
+    if message:
+        entry["message"] = message
+    return entry
 
 
 # THE THREE WORDS A PROJECT CARD MAY SAY ABOUT ITS DRAFT, and the whole mapping
