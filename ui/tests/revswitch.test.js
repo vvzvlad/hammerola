@@ -1907,7 +1907,7 @@ describe('the banner\'s Switch while a picked revision is on the wire', () => {
     expect(live).toContain('cursor:pointer')
     expect(spent, 'the cursor still promises a click').not.toContain('cursor:pointer')
     expect(spent, 'and it is still painted the colour of a live button')
-      .not.toContain('background:#1f7ae0')
+      .not.toContain('background:var(--accent)')
   })
 
   it('is a live button again once that swap has failed', async () => {

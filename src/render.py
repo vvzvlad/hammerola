@@ -218,36 +218,136 @@ def revision_message(value: str) -> str:
     return text
 
 
+# -- the theme, which the SERVER decides (issue #35) --------------------------
+#
+# The whole interface is painted from `data-theme` on `<html>`: everything the
+# bundle draws is an INLINE style, which beats any class rule, so a `var()`
+# resolved against an ancestor is the only thing that can repaint it (the
+# docstring over `css()` in ui/src/style.jsx has the full argument). That
+# attribute therefore has to be right in the first byte the browser parses, and
+# neither of the two ways a page could work that out for itself is open here: an
+# inline pre-paint script is refused by the CSP, which inherits `script-src` from
+# `default-src 'self'` (`CSP_HTML` in src/app.py), and the resolver page runs no
+# bundle at all by design. A cookie is what is left, and it is the one that
+# actually fits: the reader's answer arrives WITH the request that asks for the
+# page.
+
+THEME_COOKIE = "hammerola.theme"
+
+# The two the palette defines and the vendored library takes. Spelled here as
+# well as in ui/src/store.js because the two sides cannot share a module;
+# `tests/test_ui_source.py` holds the name and the values equal across them, the
+# way `tests/test_pointer_memory.py` does for the pointer key.
+THEMES = ("light", "dark")
+DEFAULT_THEME = "light"
+
+# What the templates carry, and therefore what a swap has to replace. Writing the
+# default INTO the files rather than a placeholder into them keeps each template
+# a working light page on its own — openable from disk, and correct if this
+# substitution ever stops happening.
+THEME_ATTRIBUTE = 'data-theme="{}"'
+DEFAULT_STAMP = THEME_ATTRIBUTE.format(DEFAULT_THEME)
+
+# …and the swap is confined to the OPENING `<html>` TAG rather than run over the
+# document, which is not caution but a bug already met: `templates/build.html`
+# explains the ordering of its stylesheets by quoting the library's own
+# `[data-theme="light"]` selector, in prose, and a plain `str.replace` over the
+# file is one edit away from stamping a comment instead of the element. Every
+# template is a document with one `<html>` in it, and that is the one the theme
+# belongs on.
+HTML_TAG = re.compile(r"<html\b[^>]*>")
+
+
+def cookie_theme(header: str) -> str:
+    """The theme this request asks for: one of THEMES, always.
+
+    ABSENT, UNPARSEABLE OR UNKNOWN ALL MEAN LIGHT, which is what the browser half
+    answers for the same cell (`readTheme` in ui/src/store.js) and for the same
+    reason: this header carries whatever any version of this site ever wrote,
+    plus whatever else is set on this host, plus whatever was typed into a
+    browser's cookie inspector. There is no adversary here to refuse — a value
+    nobody recognises is simply not an answer, and the page opens the way a first
+    visit does.
+
+    PARSED BY HAND RATHER THAN WITH `http.cookies`, in four lines. SimpleCookie
+    drops the REST OF THE HEADER when it meets a pair it cannot parse, so one odd
+    cookie belonging to something else on this host would silently take ours with
+    it — a theme that stops working depending on what else is in the jar is
+    exactly the kind of bug nobody reproduces.
+    """
+    for part in (header or "").split(";"):
+        name, _, value = part.partition("=")
+        if name.strip() == THEME_COOKIE:
+            value = value.strip()
+            return value if value in THEMES else DEFAULT_THEME
+    return DEFAULT_THEME
+
+
 @lru_cache(maxsize=None)
-def _template(name: str) -> str:
-    """Read a page template once per process.
+def _template(name: str, theme: str) -> str:
+    """One page template, read once per process and stamped with one theme.
 
     Cached because these are immutable inside the image: a template edit ships as
     a new image, so re-reading per request would buy nothing and cost a syscall on
     the hot path.
+
+    THE KEY WAS WIDENED RATHER THAN THE STAMP MOVED BEHIND THE CACHE, which is
+    the better trade as long as the key set stays tiny: caching the FINISHED
+    document does the substitution twice per template per process instead of once
+    per page view. `_page` below is what keeps it tiny, and it is a function
+    rather than a sentence in this docstring for the usual reason — the three
+    page functions are public and annotated `str`, so "nobody passes anything
+    else" is a claim about today's callers, while `maxsize=None` keyed on
+    something a request could choose is a way to fill memory from outside.
     """
-    return (TEMPLATES_DIR / name).read_text(encoding="utf-8")
+    html = (TEMPLATES_DIR / name).read_text(encoding="utf-8")
+    return HTML_TAG.sub(
+        lambda tag: tag.group(0).replace(
+            DEFAULT_STAMP, THEME_ATTRIBUTE.format(theme), 1),
+        html, count=1)
 
 
-def build_page_html() -> str:
-    """The page for ONE build, written into the build directory at publish time."""
-    return _template("build.html")
+def _page(name: str, theme: str) -> str:
+    """One page, in a theme this module recognises — whatever it was handed.
+
+    THE NORMALIZATION HAPPENS HERE AND NOT INSIDE `_template`, and the difference
+    is the whole point of the helper: a correction behind the cache would still
+    mint a cache entry per distinct string, so the memory half of the invariant
+    would be exactly as open as before while the document came out right.
+    """
+    return _template(name, theme if theme in THEMES else DEFAULT_THEME)
 
 
-def index_page_html() -> str:
+def build_page_html(theme: str) -> str:
+    """The shell of ONE build's page, served from the image on every request.
+
+    NOT written into the build directory, which this docstring used to say and
+    which is the opposite of the decision `app._serve_build_page` is built on: the
+    shell is identical for every build and CHANGES with the image, so a copy
+    written at publish time and served under the year of `immutable` a commit URL
+    carries would freeze each build on the markup of the day it was pushed.
+    """
+    return _page("build.html", theme)
+
+
+def index_page_html(theme: str) -> str:
     """The public index at `/`. Served from the image, not from data/."""
-    return _template("index.html")
+    return _page("index.html", theme)
 
 
-def pointer_page_html() -> str:
+def pointer_page_html(theme: str) -> str:
     """`/project/<pid>/` — the URL that names no pointer (SPEC 9).
 
     A page and not a 302, because what decides the destination is a localStorage
     key and only the browser can read it. It carries no project-specific text at
     all: the script reads the pid off its own URL, exactly as the build page
     does, so this stays one template rather than a per-project render.
+
+    The THEME is the one thing about this page the browser cannot work out for
+    itself — it loads no bundle and reads no storage — so the stamp above is the
+    only reason it can be dark at all.
     """
-    return _template("pointer.html")
+    return _page("pointer.html", theme)
 
 
 def _view_fields(pairs):

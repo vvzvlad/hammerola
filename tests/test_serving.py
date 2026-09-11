@@ -96,11 +96,12 @@ def test_our_own_assets_are_not_immutable(hub):
     # one and this suite runs against a checkout. What covers it is the rule
     # rather than the list -- `_serve_asset` decides the header from the path, and
     # `static/_v/` is `no-cache` whatever is in it.
-    for path in ("/_v/site.css", "/_v/pointer.js"):
+    for path in ("/_v/tokens.css", "/_v/site.css", "/_v/pointer.js"):
         r = hub.get(path)
         assert r.status_code == 200, path
         assert r.headers["Cache-Control"] == "no-cache", path
-    assert hub.get("/_v/site.css").headers["Content-Type"].startswith("text/css")
+    for path in ("/_v/tokens.css", "/_v/site.css"):
+        assert hub.get(path).headers["Content-Type"].startswith("text/css"), path
     # A wrong Content-Type makes the browser refuse an ES module outright, and
     # every script this site loads is one (`<script type="module">`).
     for path in ("/_v/pointer.js", "/_v/pointer_pref.js"):
@@ -441,6 +442,169 @@ def test_the_index_page_has_no_inline_script(hub):
     r = hub.get("/")
     assert re.search(r'<script[^>]*\bsrc="/_v/[^"]+"', r.text), r.text
     assert "<script type=\"module\">" not in r.text
+
+
+# -- the theme, which the server decides (issue #35) --------------------------
+#
+# The whole interface is painted from `data-theme` on `<html>`, and that
+# attribute has to be right in the FIRST BYTE the browser parses: everything the
+# bundle draws is an inline style, so the only thing that can repaint it is a
+# `var()` resolved against an ancestor, and an ancestor stamped after the
+# document arrives is a page that flashes the other theme first. Neither of the
+# two ways a page could work this out for itself is open — an inline pre-paint
+# script is refused by our own CSP, and the resolver at /project/<pid>/ runs no
+# bundle at all — so the reader's answer travels on a cookie and the hub stamps
+# it. What follows is that path, end to end, on all three pages.
+
+# Every HTML document this hub serves, and the whole list: a page added without a
+# theme is a page that comes up light while the rest of the site is dark.
+def _pages(hub):
+    hub.publish("proj1", "abc123", good_build())
+    return ["/", "/project/proj1/", "/project/proj1/abc123/"]
+
+
+def _theme_of(text):
+    """The theme on the document's `<html>` element, and only there.
+
+    READ OFF THE OPENING TAG rather than found anywhere in the file, for the same
+    reason the server writes it there: `templates/build.html` quotes the
+    library's own `[data-theme="light"]` selector in a comment while explaining
+    the order of its stylesheets, so a check that searched the document would
+    have two answers and would report whichever came first.
+    """
+    tags = re.findall(r"<html\b[^>]*>", text)
+    assert len(tags) == 1, f"expected one <html> element, found {tags}"
+    found = re.findall(r'data-theme="([^"]*)"', tags[0])
+    assert len(found) == 1, f"expected one data-theme on <html>, found {found}"
+    return found[0]
+
+
+def test_a_page_with_no_cookie_comes_up_light(hub):
+    for path in _pages(hub):
+        r = hub.get(path)
+        assert r.status_code == 200, path
+        assert _theme_of(r.text) == "light", path
+
+
+def test_the_cookie_decides_the_theme_of_every_page(hub):
+    # The cookie is `Path=/`, so one answer covers the front page, the resolver
+    # and a build page under /project/<pid>/<commit>/ — which is the whole point
+    # of it not being keyed by project.
+    for path in _pages(hub):
+        r = hub.get(path, headers={"Cookie": "hammerola.theme=dark"})
+        assert r.status_code == 200, path
+        assert _theme_of(r.text) == "dark", path
+
+
+def test_an_unrecognised_theme_is_answered_with_light(hub):
+    # The header carries whatever any version of this site ever wrote, whatever
+    # else is set on this host, and whatever was typed into a browser's cookie
+    # inspector. An answer nobody recognises is not an answer, and the page opens
+    # the way a first visit does — the same reading `readTheme` gives in
+    # ui/src/store.js.
+    for value in ("midnight", "", "DARK", "dark%20", "[dark]"):
+        r = hub.get("/", headers={"Cookie": f"hammerola.theme={value}"})
+        assert _theme_of(r.text) == "light", value
+
+
+def test_other_cookies_on_the_host_do_not_disturb_it(hub):
+    # A jar is a shared namespace and the hub is not the only thing that can set
+    # one on this host. The parse is ours rather than `http.cookies` for exactly
+    # this: SimpleCookie drops the rest of the header when it meets a pair it
+    # cannot read, so one odd cookie belonging to something else would silently
+    # take ours with it.
+    jar = ('sessionid=abc; not_hammerola.theme=light; hammerola.theme=dark; '
+           'broken; equals=in=value')
+    assert _theme_of(hub.get("/", headers={"Cookie": jar}).text) == "dark"
+
+
+def test_every_page_says_it_varies_on_the_cookie(hub):
+    # The same URL answers with two different documents, so a cache that stored
+    # one of them and handed it to the next reader would be serving somebody
+    # else's theme. `no-cache` is not enough on its own: it permits STORING and
+    # revalidating, and it is the stored copy this header is about.
+    for path in _pages(hub):
+        r = hub.get(path)
+        assert r.headers.get("Vary") == "Cookie", path
+        assert r.headers["Cache-Control"] == "no-cache", path
+
+
+def test_the_theme_survives_a_head_request(hub):
+    # HEAD answers the headers of the GET it stands for, and a cache keys on
+    # those. Nothing here may depend on a body being written.
+    hub.publish("proj1", "abc123", good_build())
+    r = hub.request("HEAD", "/", headers={"Cookie": "hammerola.theme=dark"})
+    assert r.status_code == 200
+    assert r.headers["Vary"] == "Cookie"
+    assert r.content == b""
+
+
+def test_every_template_carries_the_stamp_the_server_replaces():
+    """The substitution has to have something to land on, in every template.
+
+    `render._template` swaps the DEFAULT attribute for the reader's, which keeps
+    each file a working light page on its own — and makes a template that lost
+    the attribute silently un-themeable: every reply would be light, with the
+    cookie stored, sent and read correctly. Exactly once, because a second one is
+    an attribute somewhere other than `<html>` that the swap would not reach.
+    """
+    from src import render
+
+    for name in ("index.html", "build.html", "pointer.html"):
+        text = (render.TEMPLATES_DIR / name).read_text(encoding="utf-8")
+        # On the root element, which is where the swap looks and the only
+        # ancestor that exists before the first byte of the body is parsed: a
+        # `var()` anywhere on the page resolves against this and nothing else.
+        assert _theme_of(text) == render.DEFAULT_THEME, name
+        assert render.HTML_TAG.search(text).group(0).count(
+            render.DEFAULT_STAMP) == 1, name
+        # AND THE TAG IS THE FIRST ONE IN THE FILE, which is what `count=1`
+        # depends on. These templates carry long comments, and a comment that
+        # writes the opening tag in prose would be matched instead — the swap
+        # would find no attribute there, do nothing, and every reply would be
+        # light with the cookie stored, sent and read perfectly correctly.
+        assert text.count("<html") == 1, (
+            f"{name} writes `<html` more than once. The theme is stamped on the "
+            f"FIRST match, so a second one — in prose, in a comment — silently "
+            f"takes the stamp and the page stops being themeable")
+
+
+def test_the_cookie_reader_answers_one_of_the_two_themes(hub):
+    """The unit under the route, at the values a header can actually hold."""
+    from src.render import DEFAULT_THEME, THEMES, cookie_theme
+
+    assert cookie_theme("") == DEFAULT_THEME
+    assert cookie_theme(None) == DEFAULT_THEME
+    assert cookie_theme("hammerola.theme=dark") == "dark"
+    assert cookie_theme("  hammerola.theme = dark  ") == "dark"
+    assert cookie_theme("a=1;hammerola.theme=dark;b=2") == "dark"
+    assert cookie_theme("hammerola.theme") == DEFAULT_THEME
+    assert cookie_theme("hammerola.themex=dark") == DEFAULT_THEME
+    for header in ("hammerola.theme=<script>", "hammerola.theme=" + "x" * 5000):
+        assert cookie_theme(header) in THEMES
+
+
+def test_a_page_asked_for_a_theme_that_does_not_exist_is_still_a_page():
+    """The three page functions are public, annotated `str`, and take the theme
+    straight through to a `maxsize=None` cache.
+
+    Today every caller gets it from `cookie_theme`, so nothing but `light` or
+    `dark` reaches them — and that is a fact about today's callers rather than
+    about these functions. What the correction buys is both halves of it at once:
+    the document cannot come out carrying `data-theme="midnight"`, and the cache
+    cannot grow a key per distinct string somebody passes.
+    """
+    from src import render
+
+    before = render._template.cache_info().currsize
+    for junk in ("midnight", "", "Dark", "light dark"):
+        page = render.index_page_html(junk)
+        assert f'data-theme="{render.DEFAULT_THEME}"' in page, junk
+        # The attribute, not the bare string: `""` is a substring of every
+        # document ever written, and the question here is what was STAMPED.
+        assert f'data-theme="{junk}"' not in page, junk
+    # One key per (template, THEME) and no more, however many were asked for.
+    assert render._template.cache_info().currsize <= before + len(render.THEMES)
 
 
 def test_head_returns_headers_without_a_body(hub):

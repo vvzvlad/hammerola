@@ -1,17 +1,20 @@
-// The three documents this bundle does NOT draw, against the values it does.
+// The documents this bundle does NOT draw, against the values it does.
 //
-//   * `templates/build.html` and `templates/index.html` state the page colour
-//     inline, because everything else in them is drawn by 255 KB of bundle and
-//     until that has rendered the body has no background at all;
+//   * `static/_v/tokens.css` is the ONE place the palette is written down, and
+//     all three page templates link it — the whole interface, the pre-paint page
+//     colour and the resolver's header are painted from the names in it;
+//   * `templates/build.html`, `templates/index.html` and `templates/pointer.html`
+//     have to link it, and must not state a colour of their own beside it;
 //   * `static/_v/site.css` reproduces the interface's header on the resolver at
 //     /project/<pid>/, so that opening a project does not flash another design.
 //
-// None of the three can import JavaScript, so all three are copies, and a copy
-// is only worth having while it is still the same thing. What makes this file
-// trustworthy rather than another parser is WHICH SIDE is read as text: the
-// interface's values are IMPORTED and executed — `PAGE_BG`, `FONTS`, `Mark` —
-// and only the documents, which are static declarative files with no comments
-// worth confusing anything, are matched against them.
+// None of them can import JavaScript, so what they carry are NAMES the bundle
+// also uses, and a name is only worth anything while both sides still spell it
+// the same. What makes this file trustworthy rather than another parser is WHICH
+// SIDE is read as text: the interface's values are IMPORTED and executed —
+// `PAGE_BG`, `FONTS`, `Mark` — and only the documents, which are static
+// declarative files with no comments worth confusing anything, are matched
+// against them.
 //
 // That distinction is the lesson of two failures in this area. A colour check
 // written in Python survived a mutation because it found the hex in a sentence
@@ -30,9 +33,13 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import HammerolaViewer from '../src/HammerolaViewer.jsx'
+import { HammerolaProjects } from '../src/HammerolaEntry.jsx'
+import { indexTree, rereadPage } from '../src/hub.js'
 import {
-  FONTS, HEADER_BG, HEADER_LINE, Mark, PAGE_BG, PAGE_FG,
+  css, FONTS, HEADER_BG, HEADER_LINE, Mark, PAGE_BG, PAGE_FG,
 } from '../src/style.jsx'
+import { collect, styles, texts } from './eltree.js'
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
 
@@ -81,7 +88,9 @@ const fromRepoRoot = (path) => read(`../../${path}`)
 
 const BUILD_HTML = read('../../templates/build.html')
 const INDEX_HTML = read('../../templates/index.html')
+const POINTER_HTML = read('../../templates/pointer.html')
 const SITE_CSS = read('../../static/_v/site.css')
+const TOKENS_CSS = read('../../static/_v/tokens.css')
 
 /** CSS with `/* … *\/` comments removed — they name the very values checked. */
 const withoutComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, ' ')
@@ -90,11 +99,12 @@ const withoutComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, ' ')
 const withoutMarkupComments = (html) => html.replace(/<!--[\s\S]*?-->/g, ' ')
 
 
-/** The declarations of the first `html,body{…}` rule, as a map. */
-function pageRule(source, where) {
-  const match = /html\s*,\s*body\s*\{([^}]*)\}/.exec(withoutMarkupComments(withoutComments(source)))
-  expect(match, `${where} declares no html,body rule — so it is white until the `
-    + 'bundle renders, which is the flash this file exists for').toBeTruthy()
+/** The declarations of a `SELECTOR{…}` rule, as a map. */
+function ruleOf(source, selector, where) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`)
+    .exec(withoutMarkupComments(withoutComments(source)))
+  expect(match, `${where} declares no ${selector} rule`).toBeTruthy()
   const out = {}
   for (const decl of match[1].split(';')) {
     const at = decl.indexOf(':')
@@ -104,26 +114,339 @@ function pageRule(source, where) {
   return out
 }
 
-// -- the colour of a page before there is a page -----------------------------
+/** `#fff` and `#FFFFFF` as one value; anything that is not a hex as `null`. */
+const colour = (value) => {
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i
+    .exec(String(value).trim())
+  if (!hex) return null
+  const digits = hex[1].length <= 4
+    ? [...hex[1]].map((c) => c + c).join('') : hex[1]
+  return `#${digits.toLowerCase()}`
+}
 
-describe('the page colour', () => {
-  // EVERY DOCUMENT, and each against the value the interface itself uses. The
-  // first version of this check compared the resolver against the FRONT page
-  // while the resolver's redirect goes to the BUILD page — so the one document
-  // on the path stayed unchecked, and changing the viewer's colour left the
-  // flash behind with both suites green. There is now one constant and every
-  // document is held to it.
+/**
+ * WCAG relative luminance, 0 (black) to 1 (white).
+ *
+ * Module scope because two blocks need it and it is four lines: `the mark` asks
+ * which side of 0.5 an ink is on, to tell the light drawing from the dark one,
+ * and the call-site block below turns it into a contrast ratio.
+ */
+const luminance = (hex) => {
+  const [r, g, b] = [1, 3, 5]
+    .map((at) => parseInt(hex.slice(at, at + 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/**
+ * WCAG contrast between two opaque colours, 1:1 to 21:1.
+ *
+ * THE OTHER QUESTION FROM `deltaE`, and the two are not interchangeable. dE76
+ * asks whether a boundary between two fills can be SEEN; this asks whether
+ * glyphs of one colour on the other can be READ, which is what a pill with a
+ * number in it needs and what the dE floor says nothing about.
+ */
+function contrast(a, b) {
+  // The same guard `deltaE` carries, and for the same reason: `colour()` answers
+  // null for the one rgba role in the palette, and `luminance(null)` then throws
+  // somewhere that names neither the role nor the theme it came from.
+  const of = (value) => {
+    const hex = colour(value)
+    if (!hex) throw new Error(`contrast was handed ${value}, which is not a hex colour`)
+    return luminance(hex)
+  }
+  const [one, two] = [of(a), of(b)]
+  return (Math.max(one, two) + 0.05) / (Math.min(one, two) + 0.05)
+}
+
+/**
+ * How far apart two colours LOOK, as CIELAB dE76.
+ *
+ * Sixteen lines of arithmetic rather than a dependency, and worth them: the one
+ * question this palette keeps getting wrong is whether two near-identical greys
+ * are far enough apart to be seen as two things, and that question has no
+ * answer in sRGB. `#f2f3f5` and `#e3e6ea` are 15 apart per channel and
+ * `#16181b` and `#1a1d21` are 5 — the second pair is the more visible of the
+ * two, because the eye's resolution near black is not the same as near white.
+ *
+ * dE76 is the crude member of the family (CIE94 and CIEDE2000 correct its
+ * hue/chroma weighting) and that is fine here: everything it is asked about is
+ * a neutral, where those corrections barely move. ~2.3 is the conventional
+ * just-noticeable difference.
+ */
+function deltaE(a, b) {
+  const lab = (value) => {
+    const hex = colour(value)
+    if (!hex) throw new Error(`deltaE was handed ${value}, which is not a hex colour`)
+    const linear = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+    const [r, g, bl] = [1, 3, 5].map((at) =>
+      linear(parseInt(hex.slice(at, at + 2), 16) / 255))
+    // sRGB -> XYZ (D65), then XYZ -> L*a*b* against the D65 white point.
+    const xyz = [
+      (0.4124 * r + 0.3576 * g + 0.1805 * bl) / 0.95047,
+      0.2126 * r + 0.7152 * g + 0.0722 * bl,
+      (0.0193 * r + 0.1192 * g + 0.9505 * bl) / 1.08883,
+    ].map((t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116))
+    return [116 * xyz[1] - 16, 500 * (xyz[0] - xyz[1]), 200 * (xyz[1] - xyz[2])]
+  }
+  const [one, two] = [lab(a), lab(b)]
+  return Math.hypot(one[0] - two[0], one[1] - two[1], one[2] - two[2])
+}
+
+// -- the palette -------------------------------------------------------------
+//
+// ONE FILE DEFINES IT AND EVERY DOCUMENT REFERENCES IT, which is what this block
+// is about and what it replaces. What used to be here compared a colour written
+// in `templates/build.html` against a colour written in `templates/index.html`
+// against a colour written in `static/_v/site.css` against a constant in the
+// bundle — four copies of one value, held together by this test and by nothing
+// else, with two MORE copies in site.css that nothing held at all (one of which
+// had already drifted: #1f6fd0 against the bundle's #1f7ae0). There is one
+// definition now, so what is worth checking has moved with it: that the two
+// themes define the same names, that every document links the file instead of
+// answering for itself, and that no document has quietly kept a colour of its
+// own beside it.
+
+/** `--name: value` pairs of one rule in tokens.css, with duplicates reported. */
+function tokensOf(selector) {
+  const declarations = ruleOf(TOKENS_CSS, selector, 'static/_v/tokens.css')
+  const names = Object.keys(declarations).filter((key) => key.startsWith('--'))
+  // `ruleOf` builds a map, so a name written twice would silently keep the last
+  // one — which is exactly the edit this block has to fail on, since the two
+  // values would be a palette that depends on source order.
+  const body = new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`)
+    .exec(withoutComments(TOKENS_CSS))[1]
+  for (const name of names) {
+    const written = [...body.matchAll(new RegExp(`(^|[;{\\s])${name}\\s*:`, 'g'))].length
+    expect(written, `tokens.css defines ${name} ${written} times under ${selector} — `
+      + 'two values for one role is a palette that depends on source order').toBe(1)
+  }
+  return Object.fromEntries(names.map((name) => [name, declarations[name]]))
+}
+
+const LIGHT = tokensOf(':root')
+const DARK = tokensOf(':root[data-theme="dark"]')
+
+describe('the palette', () => {
+  it('is defined once per theme, for exactly the same set of roles', () => {
+    // The failure this is written for is not a missing file, it is a token
+    // added to one theme and forgotten in the other: the interface then paints
+    // that one detail in the light colour on a dark page, which is a single
+    // unreadable label rather than a page that is obviously wrong.
+    expect(Object.keys(DARK).sort(), 'the two themes in static/_v/tokens.css do not '
+      + 'define the same roles — whatever is missing from one of them is painted in the '
+      + 'other theme\'s colour on that page').toEqual(Object.keys(LIGHT).sort())
+    expect(Object.keys(LIGHT).length).toBeGreaterThan(0)
+  })
+
+  it('keeps apart the roles that were split because one value could not do both', () => {
+    // FOUR ROLES EXIST ONLY AS A DIFFERENCE, and each of them was added after a
+    // conversion folded it into its neighbour and something the reader had been
+    // using went away (issue #35). A role that exists to be different from
+    // another one is a role somebody will later "simplify" by giving it that
+    // other one's value — the names stay, both themes stay in step, every other
+    // check here stays green, and the distinction is gone a second time.
+    //
+    // WHAT EACH PAIR CARRIES, so the next person can weigh the simplification
+    // rather than guess at it:
+    //
+    //   accent-bg / accent-bg-soft   the row you PICKED against the row you are
+    //                                ON — same hue, adjacent panels, told apart
+    //                                by weight and nothing else
+    //   accent / accent-muted        a live button against one waiting on the
+    //                                network, which is the whole of what says a
+    //                                press was taken
+    //   accent-line / accent-muted   a border colour against a fill; equal
+    //                                values are how the fill goes back to being
+    //                                spelled `--accent-line`
+    //   warn / warn-soft             a heading in the note box against the
+    //                                captions under it, where one ink makes
+    //                                three headings
+    //   sunken-bg / chip-bg          a surface set INTO its container against a
+    //                                shape lying ON it; the test below measures
+    //                                what the second one needs that the first
+    //                                does not
+    const split = [['--accent-bg', '--accent-bg-soft'], ['--accent', '--accent-muted'],
+                   ['--accent-line', '--accent-muted'], ['--warn', '--warn-soft'],
+                   ['--sunken-bg', '--chip-bg']]
+    for (const [role, other] of split) {
+      for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
+        expect(set[role], `tokens.css defines no ${role} in the ${theme} theme`).toBeTruthy()
+        expect(set[other], `tokens.css defines no ${other} in the ${theme} theme`).toBeTruthy()
+        expect(set[role], `${role} and ${other} hold one value in the ${theme} theme, so `
+          + 'the two things they tell apart are painted the same').not.toBe(set[other])
+      }
+    }
+  })
+
+  it('leaves the pin\'s halo translucent, in both themes', () => {
+    // The active comment pin wears `box-shadow: 0 0 0 3px var(--accent-ring)`,
+    // and it wears it ON THE MODEL. Opaque, that is a blue disc sitting over
+    // the geometry the pin is pointing at — so the alpha is doing a job here
+    // rather than softening an edge, and it is the only alpha in the palette
+    // that is not a shadow or a floating panel.
+    //
+    // ONE VALUE FOR BOTH THEMES, like the fill it is made of: the ring is
+    // `--accent` spread thin, and `--accent` is one of the two accent roles the
+    // dark set does not lift — the other is `--accent-strong`, its hover — for
+    // the same reason. White on a fill reads the same whatever is behind the
+    // button, so lifting one only makes its label harder to read.
+    for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
+      expect(set['--accent-ring'], `no --accent-ring in the ${theme} theme`)
+        .toMatch(/^rgba\(/)
+      const alpha = Number(set['--accent-ring'].split(',').pop().replace(')', '').trim())
+      expect(alpha, `--accent-ring is opaque in the ${theme} theme — the halo now `
+        + 'hides the geometry the pin is pointing at').toBeLessThan(1)
+      expect(alpha).toBeGreaterThan(0)
+    }
+    expect(DARK['--accent-ring'], 'the halo is the accent FILL spread thin, and that '
+      + 'fill is the same in both themes').toBe(LIGHT['--accent-ring'])
+  })
+
+  it('keeps a chip visible against every surface a chip is laid on', () => {
+    // A CHIP IS ITS EDGES. A pill, a rev-id chip, a segmented track: what says
+    // each of them is an object rather than a run of text is the boundary
+    // between its fill and the surface under it, and nothing else — no border,
+    // no shadow, no weight change. So "can that boundary be seen" is the whole
+    // specification of `--chip-bg`, and it is a number rather than a taste.
+    //
+    // THE FAILURE THIS IS WRITTEN FOR ALREADY HAPPENED. The palette conversion
+    // put chips and tracks on `--sunken-bg`, which is the OTHER recessed fill —
+    // the one that exists to barely separate, because a field at rest should
+    // read as part of its card. On `--header-bg` that took the rail's count
+    // pill from dE 6.5 to 1.7, and on the front page it took the switcher track
+    // past invisible to inverted: lighter than the page it lies on, a groove
+    // drawn as a ridge. Both still rendered, in both themes, with no test
+    // anywhere going red.
+    //
+    // CIELAB AND NOT A CONTRAST RATIO, because WCAG contrast answers a question
+    // about TEXT — will these glyphs be legible — and every value here would
+    // pass it comfortably while looking like nothing at all. dE76 is the crude
+    // one of the perceptual metrics and is right for exactly this: two greys a
+    // step apart, where hue barely moves.
+    //
+    // 2.5 IS THE FLOOR because the just-noticeable difference is about 2.3, and
+    // a boundary at the JND is one somebody has to look for. The real values
+    // clear it at 2.9 in light and 2.9 in dark on their tightest ground, which
+    // is thin — deliberately: this is the check saying the chip may not get any
+    // closer to its ground than it already is, not a wide berth.
+    const GROUNDS = ['--card-bg', '--header-bg', '--page-bg']
+    for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
+      for (const ground of GROUNDS) {
+        const apart = deltaE(set['--chip-bg'], set[ground])
+        expect(apart, `in the ${theme} theme --chip-bg is dE ${apart.toFixed(2)} from `
+          + `${ground} — a chip laid on that surface has no edge to see, so it reads `
+          + 'as a run of text rather than as an object').toBeGreaterThan(2.5)
+      }
+    }
+  })
+
+  it('paints the page from its own tokens, in the names the interface uses', () => {
+    // The pre-paint rule, which is why the palette is a stylesheet and not a
+    // JavaScript object: every page here is drawn by something that has not
+    // arrived yet, and until it does the body has no background at all.
+    //
+    // `toBe` and not `toContain`: containment passes on
+    // `background:linear-gradient(#ff0000,var(--page-bg))`, where the name is
+    // present and the page is red. The declaration has to BE the reference —
+    // and the reference is what the bundle imports, so the two cannot drift.
+    const rule = ruleOf(TOKENS_CSS, 'html, body', 'static/_v/tokens.css')
+    expect(rule.background, 'tokens.css paints the page from something other than the '
+      + 'token the interface uses').toBe(PAGE_BG)
+    expect(rule.color, 'tokens.css sets the text colour from something other than the '
+      + 'token the interface uses').toBe(PAGE_FG)
+  })
+
   it.each([
     ['templates/build.html', BUILD_HTML],
     ['templates/index.html', INDEX_HTML],
-    ['static/_v/site.css', SITE_CSS],
-  ])('is the interface\'s own in %s', (where, source) => {
-    const rule = pageRule(source, where)
-    // `toBe` and not `toContain`, on both: containment passes on
-    // `background:linear-gradient(#ff0000,#eceef1)`, where the colour named is
-    // present and the page is red. The declaration has to BE the colour.
-    expect(rule.background, `${where} paints a different page colour`).toBe(PAGE_BG)
-    expect(rule.color, `${where} sets a different text colour`).toBe(PAGE_FG)
+    ['templates/pointer.html', POINTER_HTML],
+  ])('is linked by %s rather than restated in it', (where, source) => {
+    const html = withoutMarkupComments(source)
+    expect(html, `${where} does not link the palette, so it is white until whatever `
+      + 'draws it arrives — which is the flash this file exists for')
+      .toContain('href="/_v/tokens.css"')
+    // A document that links the palette AND carries a stylesheet of its own is
+    // how the second copy comes back: the link satisfies the check above while
+    // the colours on screen come from the block below it.
+    expect(/<style[\s>]/.test(html), `${where} carries a <style> block. The palette is `
+      + 'one file now; a second statement of it here is the copy that drifts').toBe(false)
+  })
+
+  it('is the only thing the resolver\'s mark takes its ink from', () => {
+    // templates/pointer.html is the one document that still writes colours out,
+    // because its mark is a transcription of the designer's file and is compared
+    // against it attribute for attribute. Those two inks are therefore the ONLY
+    // colours it may contain — anything else is a value that has escaped the
+    // palette on the one page that cannot run a line of our JavaScript.
+    const found = [...withoutMarkupComments(POINTER_HTML).matchAll(/#[0-9a-fA-F]{3,8}\b/g)]
+      .map(([hex]) => colour(hex)).filter(Boolean)
+    expect(found.length, 'templates/pointer.html draws no mark any more, so this check '
+      + 'is comparing nothing').toBeGreaterThan(0)
+    const inks = [colour(LIGHT['--mark-ink']), colour(LIGHT['--mark-hole'])]
+    for (const hex of new Set(found)) {
+      expect(inks, `templates/pointer.html writes ${hex}, which is neither of the mark's `
+        + 'two inks — every other colour on that page comes from tokens.css').toContain(hex)
+    }
+  })
+
+  it('hands the vendored viewer its page colour where the library will look', () => {
+    // THE RULE THAT LOOKS LIKE A TYPO AND IS NOT, checked because the version
+    // before it looked perfectly reasonable and did nothing at all.
+    //
+    // `Display.setTheme` stamps `data-theme` on `document.body` AND on its own
+    // container — the `div.hmr_canvas` our adapter hands it — and the vendored
+    // stylesheet declares `--tcv-bg-color` under `[data-theme="…"]`. So the
+    // variable is DECLARED on that box, and everything painted from it is a
+    // descendant inheriting it from there. This rule was `html[data-theme] body`
+    // and therefore reached the document and never the widget: deleting it left
+    // both suites green while the canvas kept the library's colour.
+    //
+    // The property is not specificity alone — `html[data-theme] body` outweighs
+    // `[data-theme="dark"]` and still loses, because it never MATCHES the
+    // element the declaration is on. What is needed is a selector made of the
+    // attribute and nothing else, repeated so it outweighs the library's on the
+    // elements they share. A type selector anywhere in it is the old bug.
+    const match = /([^{}]+)\{[^}]*--tcv-bg-color\s*:([^;}]+)/.exec(withoutComments(TOKENS_CSS))
+    expect(match, 'tokens.css no longer shadows the vendored --tcv-bg-color, so the '
+      + 'canvas is the one surface left with its own idea of the theme').toBeTruthy()
+    expect(match[2].trim(), 'the shadow no longer resolves to our own token').toBe('var(--canvas-bg)')
+    expect(match[1].trim().replace(/\s+/g, ''), 'the --tcv-bg-color shadow is aimed at '
+      + `\`${match[1].trim()}\`. It has to be attribute-only — the library stamps its own `
+      + 'container as well as the body, and a selector naming an element type cannot reach '
+      + 'that box, so the rule would paint nothing while looking right')
+      .toMatch(/^(\[data-theme\]){2,}$/)
+  })
+
+  it('is what the resolver repaints its mark from', () => {
+    // The headline of this stage on the one page that runs no JavaScript: the
+    // SVG in pointer.html is inked light in its attributes, and these two
+    // declarations are the only thing that makes it follow a dark page. Deleting
+    // them is invisible — the mark still draws, in the wrong ink, on a page whose
+    // every other colour moved.
+    const css = withoutComments(SITE_CSS)
+    for (const name of ['--mark-ink', '--mark-hole']) {
+      expect(css, `static/_v/site.css does not spend ${name}. The resolver's mark is `
+        + 'transcribed with the LIGHT inks in its attributes, so without this rule it stays '
+        + 'light on a dark page — and nothing else on that page can repaint it')
+        .toContain(`var(${name})`)
+    }
+  })
+
+  it('is what site.css spends, with nothing of its own left in it', () => {
+    // The resolver's chrome used to hold six colours: four copied from the
+    // bundle and checked here, two copied and checked nowhere. It holds none.
+    const css = withoutComments(SITE_CSS)
+    const hexes = [...css.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map(([hex]) => hex)
+    expect(hexes, 'static/_v/site.css writes a colour of its own again. Every one of them '
+      + 'is a copy of a value defined in tokens.css, and the two that nothing compared had '
+      + 'already drifted apart before this file existed').toEqual([])
+    // …and every name it spends is one the palette actually defines, in both
+    // themes. A typo here is a declaration the browser drops in silence.
+    for (const [, name] of css.matchAll(/var\(\s*(--[\w-]+)\s*\)/g)) {
+      expect(LIGHT[name], `static/_v/site.css uses ${name}, which tokens.css does not `
+        + 'define — the browser drops that declaration without a word').toBeTruthy()
+    }
   })
 })
 
@@ -173,11 +496,14 @@ describe('the mark', () => {
   // document that has it instead of as "these two disagree, pick one".
   //
   // AND THE SECOND INK IS HELD TO THE SAME DRAWING. `brand/mark-on-dark.svg` is
-  // the pair's other half, for a dark background; nothing renders it until the
-  // theme covers the interface (issue #35). An unrendered file is
-  // exactly the thing that drifts in silence, so its GEOMETRY is compared here
-  // too — the day it is wired in it is provably the same logo, and not a second
-  // one that quietly became different while nobody was looking at it.
+  // the pair's other half, for a dark background. Nothing renders that FILE even
+  // now — the mark is a transcription on every page, as the paragraph above says
+  // — but its two colours stopped being unused the moment the theme covered the
+  // interface (issue #35): they are the dark values of `--mark-ink` and
+  // `--mark-hole`, and the last check in this block holds the palette to them.
+  // Its GEOMETRY is compared here for the reason it always was — an unrendered
+  // file is exactly the thing that drifts in silence — and what has changed is
+  // that a drift in it would now be a drift in something on screen.
   //
   // TWO OF THESE CHECKS ASK A DIFFERENT QUESTION, and they are here because
   // "the same drawing" is not the same as "a drawing at all". Everything else
@@ -509,18 +835,32 @@ describe('the mark', () => {
     }
   })
 
-  /** `#fff` and `#FFFFFF` as one value; anything that is not a hex as `null`. */
-  const colour = (value) => {
-    const hex = /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i
-      .exec(String(value).trim())
-    if (!hex) return null
-    const digits = hex[1].length <= 4
-      ? [...hex[1]].map((c) => c + c).join('') : hex[1]
-    return `#${digits.toLowerCase()}`
+  /**
+   * A `var(--…)` reference resolved through the LIGHT palette, anything else
+   * unchanged.
+   *
+   * The component draws the mark in `var(--mark-ink)` / `var(--mark-hole)` so
+   * that it follows the page (issue #35), while the designer's file has to hold
+   * real ink — it is a document an image viewer opens. Resolving one side here
+   * is what keeps the comparison below element-for-element instead of dropping
+   * the two attributes that carry the colour: the triangle is component ->
+   * token -> file rather than one link shorter, and every link of it fails
+   * loudly. LIGHT and not DARK because `brand/mark-on-light.svg` is the file the
+   * component is compared against; the dark pair is checked against its own file
+   * a few tests down.
+   */
+  const resolved = (value) => {
+    const ref = /^var\(\s*(--[\w-]+)\s*\)$/.exec(String(value).trim())
+    if (!ref) return value
+    expect(LIGHT[ref[1]], `the mark is drawn with ${ref[1]}, which static/_v/tokens.css `
+      + 'does not define — the browser drops that attribute and the shape is painted '
+      + 'black').toBeTruthy()
+    return LIGHT[ref[1]]
   }
 
-  const same = (got, want) => {
-    if (got === undefined || want === undefined) return got === want
+  const same = (rawGot, rawWant) => {
+    if (rawGot === undefined || rawWant === undefined) return rawGot === rawWant
+    const [got, want] = [resolved(rawGot), resolved(rawWant)]
     // Colours first, and by VALUE rather than by spelling: `#fff` in the
     // designer's file and `#ffffff` in a transcription of it are the same ink,
     // and failing on that would train whoever hits it to stop trusting this.
@@ -596,14 +936,6 @@ describe('the mark', () => {
     return { ribbon: [...of.ribbon][0], hole: [...of.hole][0] }
   }
 
-  /** WCAG relative luminance, 0 (black) to 1 (white). */
-  const luminance = (hex) => {
-    const [r, g, b] = [1, 3, 5]
-      .map((at) => parseInt(hex.slice(at, at + 2), 16) / 255)
-      .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-  }
-
   /**
    * THE ROOT `<svg>`, which the shape comparison structurally cannot see: the
    * children are the INSIDE of the mark, and `size` sets `width`/`height` on
@@ -670,6 +1002,25 @@ describe('the mark', () => {
   // `size` and vary by call site. Everything else on those roots — `viewBox`,
   // and any `opacity`, `fill`, `class` or `style` somebody adds — has to match.
   const FILE_ROOT_MAY_DIFFER = ['xmlns', 'width', 'height'].map(canon)
+
+  it('takes its two inks from the palette rather than writing them out', () => {
+    // THE OTHER HALF OF "the mark follows the page", and the half every
+    // comparison in this block is blind to: `resolved()` unwraps a `var()`
+    // through the light palette and hands anything else back untouched, so a
+    // component that went back to `ink = '#1c1f23'` compares EQUAL to the
+    // designer's file and passes — with a mark that stays dark on a dark page
+    // wherever the bundle draws it.
+    const painted = drawn.flatMap(({ attrs }) => [attrs.fill, attrs.stroke])
+      .filter((value) => value !== undefined && value !== 'none')
+    expect(painted.length, 'the mark paints nothing, so this is comparing an empty list')
+      .toBeGreaterThan(0)
+    for (const value of painted) {
+      expect(/^var\(--[\w-]+\)$/.test(String(value)), `the mark is drawn with `
+        + `${JSON.stringify(value)}. A literal here is a logo that does not follow the `
+        + 'theme, and every other check in this block passes on one because it resolves '
+        + 'the token before comparing').toBe(true)
+    }
+  })
 
   it('is the drawing in brand/mark-on-light.svg, ink and all', () => {
     // THE FILE IS THE ORIGINAL and the component is the transcription, so this
@@ -784,6 +1135,27 @@ describe('the mark', () => {
     const dark = inks(ON_DARK.children, ON_DARK_FILE)
     expect(dark.ribbon).not.toBe(light.ribbon)
     expect(dark.hole).not.toBe(light.hole)
+  })
+
+  it.each(INKED)('%s is the ink the palette draws the mark in', (where, document, background) => {
+    // WHAT FINALLY RENDERS THE SECOND FILE. `brand/mark-on-dark.svg` sat in this
+    // repository from 2026-08-28 with nothing drawing it, kept only because an
+    // unrendered asset is the one that drifts in silence — and everything above
+    // could do no more than hold its GEOMETRY to the other file, since no page
+    // could choose between the two inks. `--mark-ink` / `--mark-hole` are that
+    // choice (issue #35): the component's defaults are those two tokens, and
+    // site.css repaints the resolver's transcription from them, so both
+    // renderings of the mark follow `data-theme`. This is what says the values
+    // in tokens.css are the DESIGNER'S two pairs and not a third pair that looks
+    // about right.
+    const tokens = background === 'light' ? LIGHT : DARK
+    const { ribbon, hole } = inks(document.children, where)
+    expect(colour(tokens['--mark-ink']), `the ${background} --mark-ink is not the ribbon `
+      + `colour in ${where}`).toBe(ribbon)
+    expect(colour(tokens['--mark-hole']), `the ${background} --mark-hole is not the hole `
+      + `colour in ${where} — the holes show the page through the ribbon, so a hole that `
+      + 'does not follow its ink is a mark with four dots of the other theme in it')
+      .toBe(hole)
   })
 
 
@@ -999,20 +1371,361 @@ describe('the mark', () => {
 
 // -- where the page colour has to sit ----------------------------------------
 
-describe('the build page\'s inline style', () => {
+describe('the build page\'s palette link', () => {
   it('comes after the vendored stylesheet, which also paints the body', () => {
     // Load-bearing, and nothing checked it. three-cad-viewer.css carries
     // `body { background-color: var(--tcv-bg-color) }`, and the library sets
-    // `data-theme` ON `document.body` when it first renders — so from that
-    // moment the custom property resolves and the rule is live, at the same
-    // specificity as ours. Same specificity means source order decides, and
-    // ours has to be second or the library repaints the page after
-    // initialisation.
+    // `data-theme` ON `document.body` when it first renders — which the server
+    // now also stamps on `<html>`, so that rule is live from the first paint, at
+    // the same specificity as ours. Same specificity means source order decides,
+    // and ours has to be second or the library repaints the page out from under
+    // the interface.
     const html = withoutMarkupComments(BUILD_HTML)
-    const link = html.indexOf('three-cad-viewer.css')
-    const style = html.indexOf('<style>')
-    expect(link, 'build.html no longer links the vendored stylesheet').toBeGreaterThan(-1)
-    expect(style, 'build.html no longer states the page colour').toBeGreaterThan(-1)
-    expect(style).toBeGreaterThan(link)
+    const vendored = html.indexOf('three-cad-viewer.css')
+    const palette = html.indexOf('tokens.css')
+    expect(vendored, 'build.html no longer links the vendored stylesheet').toBeGreaterThan(-1)
+    expect(palette, 'build.html no longer links the palette').toBeGreaterThan(-1)
+    expect(palette).toBeGreaterThan(vendored)
+  })
+})
+
+// -- the call sites those measurements are about ------------------------------
+//
+// EVERY CHECK ABOVE IS ABOUT THE PALETTE FILE, WHICH IS HALF OF THE PROPERTY.
+// `--chip-bg` can be dE 2.9 from every ground in both themes while nothing on
+// either page still asks for it — and that is not hypothetical: repointing
+// every `var(--chip-bg)` in the two components at `--sunken-bg` left the whole
+// suite green, and so did `--warn-soft` -> `--warn` and `--accent-ring` ->
+// `--accent-line`. Three roles that exist ONLY as a difference, each deletable
+// with one search and replace, with the file that measures them agreeing all
+// the while.
+//
+// SO THESE READ THE RENDER AND MEASURE THE PAIR. Not "this style says
+// --chip-bg", which is the source copied out with an `expect` around it, but:
+// the shape's fill and the surface UNDER it are two different roles, and the
+// two values those roles hold are far enough apart, in both themes, to be seen
+// as an edge. A call site moved onto the neighbouring neutral fails on the
+// number, in the theme where it matters, naming the shape that went invisible
+// and what it went invisible against.
+//
+// WHAT IS ASSERTED IS THE SAME 2.5 the palette block uses, for the same reason:
+// the just-noticeable difference is about 2.3, and a boundary at the JND is one
+// somebody has to look for.
+
+const REV = 'e05f73ba91b263b8517147e338d23e868533c6a034a342ad5926abb6edcb7b40'
+
+/**
+ * The build page, with one comment still open and one already processed.
+ *
+ * The prototype and a state object spelled out, which is ui/tests/theme.test.js
+ * and ui/tests/narrow.test.js's arrangement: `computed()` and `render()` are the
+ * real ones and what they drew is read off the returned element objects. The
+ * address goes through `rereadPage`, hub.js's own answer for a caller that knows
+ * the path before the browser does — `PAGE` is derived from `location` when that
+ * module loads, and this runner's location is not a build page.
+ */
+const COMMENTS = [
+  { id: 'c1', label: '1', part: 'lid', time: 'just now', text: 'open', resolved: false },
+  { id: 'c2', label: '2', part: 'lid', time: 'just now', text: 'done', resolved: true },
+]
+
+function buildPage({ comments = COMMENTS } = {}) {
+  rereadPage(`/project/proj1/${REV}/`)
+  const c = Object.create(HammerolaViewer.prototype)
+  c.props = { ...HammerolaViewer.defaultProps }
+  c.home = null
+  c.host = { current: null }
+  c.setState = () => {}
+  c.sync = () => {}
+  c.state = {
+    meta: {
+      project: 'fixture', title: 'Fixture bracket', commit: REV,
+      built: '2026-08-27T18:20:00Z',
+      parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
+      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+                parts: ['lid'], gzip: 1000 }],
+    },
+    builds: null,
+    tree: indexTree({ id: '/model', name: 'model', children: [] }),
+    error: null, viewError: null, pending: null, swapping: false,
+    view: 'assembled', tool: null, held: false,
+    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
+    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
+    secFace: null, secPop: false,
+    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
+    bannerGone: false, rail: true, menu: { id: null, x: 0, y: 0 },
+    // A note of each kind, so the amber box is drawn with both of its levels.
+    notePop: null, noteDraft: '', notes: { lid: 'mine' },
+    comments,
+    activePin: null, composer: null,
+    measure: null, moved: null, toast: null,
+    token: 'sekrit', tokenPop: false, tokenDraft: '',
+    theme: 'light', tabs: [], narrow: false, treeOpen: false,
+  }
+  return c
+}
+
+/** The front page's signed-in list, as ui/tests/narrow.test.js builds it. */
+function projectsPage() {
+  const c = Object.create(HammerolaProjects.prototype)
+  c.props = { ...HammerolaProjects.defaultProps, projects: [] }
+  c.state = { view: null, sort: null, hover: null }
+  return HammerolaProjects.prototype.render.call(c)
+}
+
+describe('the shapes the palette is measured for', () => {
+  /** The one element drawn with `style`, found by the object `css()` cached. */
+  function drawnWith(node, style, what) {
+    const wanted = css(style)
+    const found = collect(node, (el) => (el.props.style === wanted ? el : undefined))
+    expect(found, `nothing on the page is drawn with ${what}'s own style`).toHaveLength(1)
+    return found[0]
+  }
+
+  /**
+   * The INNERMOST element under `node` whose text contains `words`.
+   *
+   * `collect` walks parents before children, so the last hit is the deepest —
+   * the element that actually carries the words rather than a box around it.
+   */
+  function labelled(node, words, what) {
+    const hits = collect(node, (el) => (texts(el).join(' ').includes(words) ? el : undefined))
+    expect(hits.length, `nothing inside ${what} says "${words}"`).toBeGreaterThan(0)
+    return hits[hits.length - 1]
+  }
+
+  const REFERENCE = /^var\(\s*(--[\w-]+)\s*\)$/
+  const nameOf = (reference) => REFERENCE.exec(reference)[1]
+
+  /** The role a background is painted from, out of a style object or string. */
+  function fillOf(style, what) {
+    const value = typeof style === 'string'
+      ? (/background:\s*(var\(\s*--[\w-]+\s*\))/.exec(style) || [])[1]
+      : (style || {}).background
+    expect(value, `${what} does not paint its background from the palette`)
+      .toMatch(REFERENCE)
+    return value
+  }
+
+  /** The role an ink is written in, out of a style object or string. */
+  function inkOf(style, what) {
+    const value = typeof style === 'string'
+      // `(?:^|[;\s])` and not a bare `color:`, which also matches the tail of
+      // `background-color:` and would answer with the fill.
+      ? (/(?:^|[;\s])color:\s*(var\(\s*--[\w-]+\s*\))/.exec(style) || [])[1]
+      : (style || {}).color
+    expect(value, `${what} does not take its ink from the palette`).toMatch(REFERENCE)
+    return value
+  }
+
+  /** A shape and its ground: two roles, and how far apart they actually look. */
+  function seenAgainst(fill, ground, what) {
+    expect(fill, `${what} is filled from the very role that paints the surface under `
+      + 'it, so there is no edge to see and the shape is a run of text').not.toBe(ground)
+    for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
+      const apart = deltaE(set[nameOf(fill)], set[nameOf(ground)])
+      expect(apart, `in the ${theme} theme ${what} is dE ${apart.toFixed(2)} from the `
+        + `surface under it — ${fill} on ${ground}`).toBeGreaterThan(2.5)
+    }
+  }
+
+  it('keeps the rail\'s count chip off the rail\'s own fill', () => {
+    // The pill saying "N sent here", lying directly on the rail with no border
+    // and no shadow: its fill against the rail's fill is the whole of what says
+    // it is an object. This is the pair the conversion got wrong — dE 6.5 down
+    // to 1.7 — and the pair nothing was checking afterwards.
+    const c = buildPage()
+    const rail = drawnWith(c.render(), c.computed().railStyle, 'the comment rail')
+    const chip = labelled(rail, 'sent here', 'the comment rail')
+    seenAgainst(fillOf(chip.props.style, 'the rail\'s count chip'),
+      fillOf(c.computed().railStyle, 'the comment rail'), 'the rail\'s count chip')
+  })
+
+  it('keeps the resting count pill readable, and a pill', () => {
+    // THE ROUND BEFORE THIS ONE MOVED THIS PILL AND PINNED IT WITH NOTHING, so
+    // every number the move was made on lived in a comment: reverting it whole
+    // left the suite green, and so did dropping its ink a step. What the pill
+    // owes is not a token but a READABLE LABEL — the count is the only thing on
+    // it — and the two states are told apart by the fill turning blue rather
+    // than by making the resting one faint. That was the defect: faintness was
+    // measured in the light theme alone, where white on `--line-strong` is
+    // 1.68:1, and came out at 9.89:1 in dark, so the resting pill was the
+    // clearer of the two in half the interface.
+    const live = buildPage().computed().railCountStyle
+    const rest = buildPage({ comments: [] }).computed().railCountStyle
+    expect(rest, 'the pill is drawn the same way whether or not anybody is '
+      + 'waiting, so nothing on it says which').not.toBe(live)
+
+    const fill = fillOf(rest, 'the resting count pill')
+    const ink = inkOf(rest, 'the resting count pill')
+    for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
+      const ratio = contrast(set[nameOf(ink)], set[nameOf(fill)])
+      expect(ratio, `in the ${theme} theme the resting count reads at `
+        + `${ratio.toFixed(2)}:1 — ${ink} on ${fill}, under the 4.5 a small label `
+        + 'needs').toBeGreaterThanOrEqual(4.5)
+    }
+
+    // AND IT IS A SHAPE ON THE BUTTON RATHER THAN A HOLE IN IT: the same role on
+    // both is a pill you cannot see, whatever its label reads at.
+    expect(fill, 'the resting pill is painted in the very role that paints the '
+      + 'button under it, so there is no pill there at all')
+      .not.toBe(fillOf(buildPage().computed().railBtnStyle, 'the comments button'))
+
+    // THE SAME COUNT IS DRAWN IN TWO PLACES — here, and at the head of the rail
+    // as "N sent here" — and they are one thing said twice rather than two that
+    // happen to look alike. Which is also what carries the measurement onto this
+    // one: the rail's copy lies on `--header-bg` and the case above holds it to
+    // a dE there, so a fill moved on one of the two is caught here and a fill
+    // moved on both is caught there.
+    const c = buildPage()
+    const twin = labelled(drawnWith(c.render(), c.computed().railStyle, 'the comment rail'),
+      'sent here', 'the comment rail').props.style
+    expect(fill, 'the two places this count is drawn no longer agree on the fill')
+      .toBe(fillOf(twin, 'the rail\'s count chip'))
+    expect(ink, 'the two places this count is drawn no longer agree on the ink')
+      .toBe(inkOf(twin, 'the rail\'s count chip'))
+  })
+
+  it('keeps the processed badge off the card it lies on', () => {
+    // Both halves come from `computed()` as strings, which is the whole reason
+    // this one is cheap: the badge and the card it sits in are two values of one
+    // thread. The margin here is the thinnest in the interface — dE 2.88 in dark
+    // — which is why it is measured rather than looked at.
+    const thread = buildPage().computed().threads.find((t) => t.resolved)
+    expect(thread, 'the fixture has no processed comment, so this measures nothing')
+      .toBeTruthy()
+    seenAgainst(fillOf(thread.pinStyle, 'the processed badge'),
+      fillOf(thread.style, 'the thread card'), 'the processed badge')
+  })
+
+  it('keeps the front page\'s switcher tracks off the page', () => {
+    // The hardest ground in the interface, and the one that inverted: a track
+    // lies directly on `--page-bg` with nothing between, so it is the call site
+    // where the two recessed fills are a groove and a ridge rather than two
+    // shades. Found by their shape — the only elements on that page with a 2px
+    // pad and a 2px gap — rather than by the token they are painted in, which
+    // would be the source copied out.
+    const tracks = styles(projectsPage())
+      .filter((s) => s.padding === '2px' && s.gap === '2px')
+    expect(tracks, 'the front page draws no segmented track any more, or draws it '
+      + 'in another shape — this case is measuring nothing').toHaveLength(2)
+    for (const track of tracks) {
+      // PAGE_BG is what `html, body` in tokens.css paints, and nothing between
+      // the body and these two rows paints anything of its own.
+      seenAgainst(fillOf(track, 'a switcher track'), PAGE_BG, 'a switcher track')
+    }
+  })
+
+  it('writes the note box\'s captions in the quieter of the two ambers', () => {
+    // `--warn-soft` exists so a heading and the labels under it are not three
+    // headings. What says it is still doing that is not its VALUE but its
+    // position: the caption has to sit closer to the panel it is written on than
+    // the heading does, in both themes — which is what "a fifth of the way back
+    // into `--warn-bg`" means, and what collapsing it into `--warn` undoes.
+    const c = buildPage()
+    const box = drawnWith(c.render(), c.computed().noteBoxStyle, 'the note box')
+    const inks = new Set(styles(box).map((s) => s.color).filter((c2) => REFERENCE.test(c2)))
+    expect(inks.has('var(--warn)'), 'the note box has no amber heading').toBe(true)
+    expect(inks.has('var(--warn-soft)'), 'the note box writes its two captions in '
+      + 'something other than the caption ink, so they read as headings').toBe(true)
+
+    const fill = fillOf(c.computed().noteBoxStyle, 'the note box')
+    for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
+      const heading = deltaE(set['--warn'], set[nameOf(fill)])
+      const caption = deltaE(set['--warn-soft'], set[nameOf(fill)])
+      expect(caption, `in the ${theme} theme the note box's captions are ${caption > heading
+        ? 'louder' : 'exactly as loud'} as its heading`).toBeLessThan(heading)
+    }
+  })
+
+  /**
+   * PIN_CSS as text, off the render.
+   *
+   * The one stylesheet this bundle writes, because a pin is placed by the
+   * viewport sixty times a second and cannot be a React element — so it arrives
+   * here as a `<style>` element's only child rather than as a style object.
+   */
+  function pinSheet() {
+    const found = collect(buildPage().render(),
+      (el) => (el.type === 'style' ? el : undefined))
+    expect(found, 'the build page injects no stylesheet, so the pins have no rules')
+      .toHaveLength(1)
+    return String(found[0].props.children)
+  }
+
+  /** One rule's declarations out of that sheet, by selector. */
+  function pinRule(sheet, selector) {
+    const rule = new RegExp(`${selector.replace(/[.]/g, '\\.')}\\s*\\{([^}]*)\\}`).exec(sheet)
+    expect(rule, `PIN_CSS no longer carries a ${selector} rule`).toBeTruthy()
+    return rule[1]
+  }
+
+  it('leaves the active pin\'s halo something the model shows through', () => {
+    // The halo is drawn ON the geometry the pin points at, so what matters is
+    // not which name is spelled in the rule but that the name resolves to a
+    // value with an alpha: an opaque one is a blue disc over the part.
+    const halo = /box-shadow:[^;]*var\(\s*(--[\w-]+)\s*\)/
+      .exec(pinRule(pinSheet(), '.hmr_pin.is_active'))
+    expect(halo, 'the active pin wears no halo from the palette').toBeTruthy()
+    for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
+      expect(set[halo[1]], `the ${theme} theme has no ${halo[1]}`).toBeTruthy()
+      expect(set[halo[1]], `in the ${theme} theme the pin's halo is ${halo[1]}, which is `
+        + 'opaque — a disc of it covers the geometry the pin is pointing at')
+        .toMatch(/^rgba\(/)
+    }
+  })
+
+  it('never lifts a filled accent above the label it carries', () => {
+    // WHAT ROUND ONE CAUGHT BY EYE AND NOTHING HELD AFTERWARDS. The dark set
+    // lifts the accent INKS, because #1f7ae0 read as a link on near-black is too
+    // dim — and `--accent-strong` was lifted with them although it is a FILL:
+    // the picked pin here, the hovered button on the front page, both under a
+    // white label. At #4e97ea that label came to 3.03:1, below AA and below the
+    // 4.27:1 of the state it is the emphasis OF, so picking a pin made its
+    // number fainter and the signal ran backwards. Every test passed.
+    //
+    // READ OFF THE PIN RULES rather than named here, so what is asserted is "the
+    // emphasis state of a filled accent, whatever it is painted in" and not a
+    // pair of token names copied out of the palette. The pin is a PROXY for the
+    // front page's button, which spends the same pair — and that is checked
+    // below rather than asserted here, because the day the button moves off the
+    // pair is the day this case silently stops covering it.
+    //
+    // THE RESTING FLOOR IS 4.2 AND NOT 4.5, with the number said out loud: white
+    // on `--accent` is 4.27:1 in both themes, under AA for a label this size. It
+    // has been that since before this palette existed and moving `--accent` is
+    // not this change's business, so the floor sits just under where the value
+    // stands — pinning it rather than licensing a quiet slide down to 3.
+    const sheet = pinSheet()
+    const resting = pinRule(sheet, '.hmr_pin')
+    const label = inkOf(resting, 'the comment pin')
+    const fills = {
+      resting: fillOf(resting, 'the comment pin'),
+      picked: fillOf(pinRule(sheet, '.hmr_pin.is_active'), 'the picked comment pin'),
+    }
+    expect(fills.picked, 'a picked pin is filled exactly like a resting one, so '
+      + 'nothing on the model says which comment is open').not.toBe(fills.resting)
+
+    const button = read('../src/HammerolaEntry.jsx')
+    for (const fill of [fills.resting, fills.picked]) {
+      expect(button, `the front page's button no longer spends ${fill}, so it is `
+        + 'no longer the pair measured here and needs a case of its own')
+        .toContain(fill)
+    }
+
+    for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
+      const reads = (fill) => contrast(set[nameOf(fill)], set[nameOf(label)])
+      const [rest, picked] = [reads(fills.resting), reads(fills.picked)]
+      expect(picked, `in the ${theme} theme the picked pin carries its label at `
+        + `${picked.toFixed(2)}:1 against the resting pin's ${rest.toFixed(2)}:1 — the `
+        + 'emphasis state is the fainter of the two, so the signal runs backwards')
+        .toBeGreaterThan(rest)
+      expect(picked, `in the ${theme} theme the picked pin's label reads at `
+        + `${picked.toFixed(2)}:1, under the 4.5 a small label needs`)
+        .toBeGreaterThanOrEqual(4.5)
+      expect(rest, `in the ${theme} theme the resting pin's label reads at `
+        + `${rest.toFixed(2)}:1 — it has been 4.27:1 since before this palette, and `
+        + 'this floor is here so it cannot quietly drop further').toBeGreaterThanOrEqual(4.2)
+    }
   })
 })

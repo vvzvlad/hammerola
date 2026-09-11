@@ -1,21 +1,36 @@
 // Everything these pages remember in the browser, and nothing else.
 //
-// Five things are kept, all under the `hammerola.` prefix the rest of the site
+// Six things are kept, all under the `hammerola.` prefix the rest of the site
 // already uses — `hammerola.pointing_device`, the viewport's own answer
-// (viewport/options.js). Two of them are keyed BY PROJECT for the reason
+// (viewport/options.js). FIVE OF THEM LIVE IN `localStorage` AND ONE IN A
+// COOKIE, and the odd one out is the theme: it is the only remembered answer the
+// SERVER has to know, because the page has to arrive already painted in it (the
+// section at the foot of this file has the whole argument). Everything else here
+// is nobody's business but this browser's, and a cookie would only put it on
+// every request for nothing.
+//
+// Two of the FIVE IN `localStorage` are keyed BY PROJECT for the reason
 // pointer_pref.js gives about its own key: somebody editing one model and merely
-// looking at another must not have the two answers collide. The token is one of
-// the three that are not, and the section below says why that changed; the
+// looking at another must not have the two answers collide. The count is of
+// those five and not of all six, because the theme is not in the arithmetic at
+// all: it is one answer for the browser, the server reads it, and there is no
+// project in a cookie to key it by. The token is one of the other three, and
+// the section below says why that changed; the
 // arrangement of the project list is another, and it never could be — the page
 // that has it names no project; the tab strip is the third, and it is the one
 // thing here that is ABOUT several projects at once, so no single project could
 // have keyed it either.
 //
-// EVERY access goes through the two functions at the top. `localStorage` is not
-// a property that is always there — a private window, a browser set to block
-// site data, and an iframe with third-party storage blocked all THROW on the
-// getter itself rather than returning null — and an uncaught throw here happens
-// during render, which takes the whole interface down over a preference.
+// EVERY access goes through the two functions at the top, and the cookie's two
+// at the bottom. `localStorage` is not a property that is always there — a
+// private window, a browser set to block site data, and an iframe with
+// third-party storage blocked all THROW on the getter itself rather than
+// returning null — and an uncaught throw here happens during render, which takes
+// the whole interface down over a preference. `document.cookie` is the same
+// shape of hazard: it is an accessor, a sandboxed frame throws on it, and a
+// browser that refuses the write simply reads back what was there before.
+// `tests/test_ui_source.py` holds both to one site per side and to a `try`
+// around every access.
 
 import { POINTER_NAMES } from './hub.js';
 
@@ -152,9 +167,11 @@ export function rememberPointer(pid, name) {
 // ONE KEY EACH FOR THE WHOLE SITE, and here that is not even a choice. A hub has
 // ONE list of projects, on the page at `/`, and that URL names no project to key
 // anything by — the same fact that took the per-project key off the token above.
-// Per BROWSER rather than per anything else, like the canvas theme
-// (viewport/options.js): it is a property of the person in front of the screen,
-// and somebody who asked for rows meant rows on the next model too.
+// Per BROWSER rather than per anything else, like the one pointing device this
+// browser has — `hammerola.pointing_device`, read and written in
+// viewport/wheel.js, and not the per-project `pointer.<pid>` above: it is a
+// property of the person in front of the screen, and somebody who asked for
+// rows meant rows on the next model too.
 //
 // TWO KEYS RATHER THAN ONE JSON OBJECT, so that a value nobody can read costs
 // only itself. Together they would be one cell to parse, and a cell that fails
@@ -356,4 +373,118 @@ export function rememberTab(pid, title) {
 export function forgetTab(pid) {
   if (!pid) return;
   write(TABS_KEY, JSON.stringify(readTabs().filter((entry) => entry.pid !== pid)));
+}
+
+// -- the theme ---------------------------------------------------------------
+// Which of the two palettes this reader is in. Per BROWSER, like the
+// arrangement of the project list above and for the same reason: it is a
+// property of the eyes in front of the screen, and somebody who asked for a dark
+// page on one model meant it for the next one too.
+//
+// A COOKIE AND NOT `localStorage`, AND IT IS THE ONLY ONE HERE. Everything else
+// in this file is read by the page after it has loaded, so storage is the
+// cheaper home for it — a cookie is sent on every request, including the
+// multi-megabyte view fetches, to tell the hub something the hub has no use for.
+// The theme is the exception because the SERVER is what has to know it: the
+// whole interface is painted from `data-theme` on `<html>`, and an attribute
+// applied after the document arrives is a page that flashes the other theme
+// first. The two ways to avoid the flash without a cookie are both closed —
+// an inline pre-paint script is refused by the CSP (`default-src 'self'`,
+// src/app.py), and the resolver page at /project/<pid>/ runs no JavaScript of
+// ours at all by design. So the cookie is what makes the first paint right, and
+// `src/render.py` is the half that reads it.
+//
+// IT MOVED OUT OF THE VIEWPORT TO GET HERE (issue #35). It used to be
+// `hammerola.viewport_theme` in ui/src/viewport/options.js, exempt from the
+// one-place rule because that is an adapter with storage of its own — which was
+// the right place while the theme meant "the colour of the 3D canvas" and the
+// rest of the page was light whatever it said. It is the whole interface's
+// answer now, so it belongs with the rest of the per-reader state, and the
+// viewport reads it from here.
+//
+// WHAT IS REMEMBERED UNDER THE OLD KEY IS NOT MIGRATED. Reading it once and
+// writing it here would mean carrying the old key, its parsing and a "have we
+// migrated yet" question forever, to save the two readers who had ever changed
+// this setting one click. They come up light and click the toggle again.
+
+const THEME_COOKIE = `${NS}theme`;
+
+/** The two the palette and the vendored library both take. */
+export const THEMES = Object.freeze(['light', 'dark']);
+
+/** What a browser that has never said anything gets, on every page. */
+export const DEFAULT_THEME = 'light';
+
+// A year, which is "until they say otherwise" in the only unit a cookie has.
+// A SESSION cookie would forget the answer when the browser closes, and this is
+// a preference rather than a login.
+//
+// NO `Secure`, deliberately: the hub is reachable over plain HTTP (SPEC 3), and
+// a `Secure` cookie is simply never sent there — the setting would be written,
+// vanish on the next navigation, and look like a hub that does not remember.
+// `SameSite=Lax` is what every browser now defaults an unmarked cookie to, said
+// out loud so nobody has to know that; there is no cross-site request to this
+// hub that would want it either way.
+const THEME_COOKIE_ATTRS = `;Path=/;Max-Age=${60 * 60 * 24 * 365};SameSite=Lax`;
+
+function readCookie(name) {
+  let jar = '';
+  try {
+    jar = document.cookie || '';
+  } catch (error) {
+    // A sandboxed frame, or a browser refusing site data. "Nothing was
+    // remembered" is a complete answer, and this read happens during render.
+    console.warn('cookie', error);
+    return null;
+  }
+  for (const part of jar.split(';')) {
+    const at = part.indexOf('=');
+    if (at < 0) continue;
+    if (part.slice(0, at).trim() === name) return part.slice(at + 1).trim();
+  }
+  return null;
+}
+
+function writeCookie(name, value) {
+  try {
+    document.cookie = `${name}=${value}${THEME_COOKIE_ATTRS}`;
+  } catch (error) {
+    // The setting still holds for this page — `writeTheme` stamps the attribute
+    // separately — it just will not outlive it.
+    console.warn('cookie', error);
+  }
+}
+
+/** The remembered theme, or the default. Never throws, whatever the jar does. */
+export function readTheme() {
+  const saved = readCookie(THEME_COOKIE);
+  return THEMES.includes(saved) ? saved : DEFAULT_THEME;
+}
+
+/**
+ * Remember the reader's answer, apply it to the page, and hand back the one
+ * that was actually taken.
+ *
+ * THE RETURN VALUE IS THE POINT: an unknown theme is corrected to the default
+ * HERE, so a caller cannot store one thing and show another.
+ *
+ * IT WRITES IN TWO PLACES, and neither is redundant. The cookie is for the NEXT
+ * page load, where the server reads it and stamps the attribute before the
+ * document is sent; the attribute written here is for THIS one, where nothing is
+ * going to be sent again and every `var(--…)` in the interface resolves against
+ * it. Setting only the cookie would leave the reader looking at the old theme
+ * until they navigated.
+ */
+export function writeTheme(value) {
+  const theme = THEMES.includes(value) ? value : DEFAULT_THEME;
+  writeCookie(THEME_COOKIE, theme);
+  // Guarded on its own: a document with no `documentElement` is not a page this
+  // code can run on, but a throw here would lose the setting the line above just
+  // stored successfully.
+  try {
+    document.documentElement.setAttribute('data-theme', theme);
+  } catch (error) {
+    console.warn('theme', error);
+  }
+  return theme;
 }

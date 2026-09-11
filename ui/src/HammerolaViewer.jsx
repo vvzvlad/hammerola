@@ -93,19 +93,20 @@ import {
   PAGE, ASSEMBLED_VIEW_ID, isPointerPage, buildKey, countedName, indexTree,
   loadMeta, loadBuilds, projectUrl, rereadPage, shortId, stamp, mb,
 } from './hub.js';
+// `readTheme`/`writeTheme` COME FROM HERE AND NOT FROM THE VIEWPORT, which is
+// the last step of the move issue #35 made: the theme stopped being the colour
+// of the canvas and became the whole interface's palette, so it is per-reader
+// state like the token, the notes and the tabs rather than a viewport setting.
+// `viewport/options.js` re-exported the pair for as long as this file asked it
+// for them; it does not any more, and there is again exactly one module that
+// reaches the cookie.
 import {
   readToken, writeToken, clearToken, readNotes, writeNotes, rememberPointer,
-  readTabs, rememberTab, forgetTab,
+  readTabs, rememberTab, forgetTab, readTheme, writeTheme,
 } from './store.js';
 import {
   css, FONTS, SANS, MONO, Mark, NARROW, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
 } from './style.jsx';
-// The canvas theme lives with the rest of the viewport's options, and so does the
-// storage for it: `tests/test_ui_source.py` allows this side exactly one module
-// that touches localStorage (store.js), and the viewport keeps its own answers
-// under its own guard. Only the two functions come across -- importing the option
-// objects themselves would be this file deciding how the library is started.
-import { readTheme, writeTheme } from './viewport/options.js';
 // The one question this file's keydown handler cannot answer for itself: is the
 // reader in a field. Imported rather than repeated because the rule is subtle —
 // the library's tab strip and the Clip panel's checkboxes are `<input>` too, so
@@ -144,10 +145,10 @@ import { typingTarget } from './viewport/holdkey.js';
  */
 const PIN_CSS = `
 .hmr_canvas {
-  background: #e4e7ea;
+  background: var(--page-bg);
 }
 .hmr_overlay {
-  color: #1c1f23;
+  color: var(--text);
   font-family: ${FONTS['--hmr-sans']};
 }
 .hmr_pin {
@@ -155,15 +156,30 @@ const PIN_CSS = `
   min-width: 20px; height: 20px; padding: 0 5px;
   transform: translate(-50%, -100%);
   border: none; border-radius: 10px 10px 10px 3px;
-  background: #1f7ae0; color: #fff; cursor: pointer;
+  background: var(--accent); color: var(--text-on-accent); cursor: pointer;
   font: 600 10.5px ${FONTS['--hmr-mono']};
-  box-shadow: 0 2px 6px rgba(20, 24, 28, .35);
+  box-shadow: 0 2px 6px var(--shadow);
 }
-.hmr_pin.is_active { background: #14538f; box-shadow: 0 0 0 3px rgba(31, 122, 224, .35); }
-.hmr_pin.is_resolved { background: #c3c8cf; color: #4a5057; }
+.hmr_pin.is_active { background: var(--accent-strong); box-shadow: 0 0 0 3px var(--accent-ring); }
+/* THE LINE ROLE AND NOT THE CHIP FILL, which is a line painting a surface on
+   purpose: this pin lies on the 3D MODEL rather than on any of our own
+   surfaces, so its ground is a WHITE canvas in one theme and a mid-grey one in
+   the other. Those two pull in opposite directions and no neutral fill is the
+   better one on both. Against white this is dE 20.01 and the chip fill 9.12;
+   against the dark canvas it is 6.06 and the chip fill 12.03. So the line role
+   takes the decisive margin on the ground where a pale badge washes out, and
+   the smaller of the two where both are far above the dE 2.5 a shape needs to
+   read as a shape at all.
+   An earlier version of this note said the chip fill "has no silhouette
+   against either", which was the light measurement written as if it held in
+   both: in dark it is the chip fill that has the wider margin. The rail draws
+   the same badge ON the chip fill, because there it lies on a card and none of
+   this arises.
+   (No backticks in here: this block is a template literal.) */
+.hmr_pin.is_resolved { background: var(--line-strong); color: var(--text-soft); }
 .hmr_measure_label {
   padding: 3px 7px; border-radius: 4px;
-  background: rgba(28, 31, 35, .88); color: #f2f3f5;
+  background: var(--tooltip-bg); color: var(--tooltip-text);
   font: 600 11px ${FONTS['--hmr-mono']};
 }
 `;
@@ -2028,23 +2044,39 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * Light or dark under the model — remembered, and applied to the live scene.
+   * Light or dark for the WHOLE page — remembered, and applied to the live scene.
    *
-   * THE CHROME DOES NOT MOVE. Everything this interface draws stays light in
-   * both modes; what changes is the canvas, which is the library's and which is
-   * the whole of what looked out of place. `theme` is the library's own word for
-   * it and carries more than the background — the grid and the orientation
-   * marker are tinted with it — but both of those are off in this viewport
-   * (viewport/options.js), so on this page it IS the background.
+   * THIS USED TO MOVE ONLY THE CANVAS, and the note that stood here said so:
+   * "everything this interface draws stays light in both modes". That is what
+   * issue #35 changed. Every colour in the interface is a `var(--…)` now
+   * (static/_v/tokens.css) and resolves against `data-theme` on `<html>`, so
+   * the whole of the chrome turns with the canvas.
    *
-   * WHY IT GOES THROUGH `viewer` AND NOT THROUGH THE ELEMENT. This is the one
-   * place this file reaches past the element's imperative half, and it is worth
-   * saying why rather than tidying later. The library resolves the theme once,
-   * at construction, into its own state, and re-asserts THAT value at the end of
-   * every render — so setting the attribute from outside, or changing the option
-   * object, holds only until the next view switch. `setTheme` is the library's
-   * public answer to exactly this and keeps its state in step; the element has no
-   * method to forward it, and adding one is not this change's file to edit.
+   * WHICH MAKES THIS METHOD THREE WRITES AND NOT ONE, in three different
+   * places, none of which can do the others' work:
+   *
+   *   * `writeTheme` puts the answer in the cookie AND stamps the attribute —
+   *     the attribute is what repaints the interface, with no re-render, and
+   *     the cookie is what the SERVER reads so the next page arrives already
+   *     painted (ui/src/store.js);
+   *   * `setState` is not for the colours at all. Nothing in the palette needs
+   *     React. It is for the BUTTON, which names the mode the reader is in and
+   *     would otherwise go on naming the old one;
+   *   * `viewer.setTheme` is the canvas, and it is the one that cannot be done
+   *     by attribute.
+   *
+   * WHY THE CANVAS GOES THROUGH `viewer` AND NOT THROUGH THE ELEMENT. This is
+   * the one place this file reaches past the element's imperative half, and it
+   * is worth saying why rather than tidying later. The library resolves the
+   * theme once, at construction, into its own state, and re-asserts THAT value
+   * at the end of every render — so setting the attribute from outside, or
+   * changing the option object, holds only until the next view switch.
+   * `setTheme` is the library's public answer to exactly this and keeps its
+   * state in step; the element has no method to forward it, and adding one is
+   * not this change's file to edit. `theme` is the library's own word and
+   * carries more than the background — the grid and the orientation marker are
+   * tinted with it — but both of those are off in this viewport
+   * (viewport/options.js), so for the library it IS the background.
    *
    * Guarded end to end, because every step of it is allowed to be missing: no
    * adapter on the page, a viewport that has not rendered yet, an older library.
@@ -2633,9 +2665,9 @@ export default class HammerolaViewer extends React.Component {
 
     // -- the tree: a flat list of rows, indented by depth
     const rows = [];
-    const eyeOuter = (st) => 'width:15px;height:10px;border:1.5px solid ' + (st === 'off' ? '#c3c8cf' : '#4a5057') + ';border-radius:50%;display:flex;align-items:center;justify-content:center';
-    const eyeDot = (st) => 'width:5px;height:5px;border-radius:3px;' + (st === 'on' ? 'background:#4a5057' : st === 'part' ? 'background:linear-gradient(90deg,#4a5057 50%,#c3c8cf 50%)' : 'background:transparent');
-    const ghostIcon = (on) => 'width:11px;height:11px;border-radius:3px;' + (on ? 'background:linear-gradient(135deg,#4a5057 50%,rgba(74,80,87,.2) 50%);border:1px solid #4a5057' : 'border:1px solid #b6bcc4;background:linear-gradient(135deg,rgba(182,188,196,.5) 50%,transparent 50%)');
+    const eyeOuter = (st) => 'width:15px;height:10px;border:1.5px solid ' + (st === 'off' ? 'var(--line-strong)' : 'var(--text-soft)') + ';border-radius:50%;display:flex;align-items:center;justify-content:center';
+    const eyeDot = (st) => 'width:5px;height:5px;border-radius:3px;' + (st === 'on' ? 'background:var(--text-soft)' : st === 'part' ? 'background:linear-gradient(90deg,var(--text-soft) 50%,var(--line-strong) 50%)' : 'background:transparent');
+    const ghostIcon = (on) => 'width:11px;height:11px;border-radius:3px;' + (on ? 'background:linear-gradient(135deg,var(--text-soft) 50%,var(--hover-bg) 50%);border:1px solid var(--text-soft)' : 'border:1px solid var(--line-strong);background:linear-gradient(135deg,var(--hover-bg) 50%,transparent 50%)');
 
     const emit = (node) => {
       const expanded = !!s.expanded[node.id];
@@ -2650,13 +2682,13 @@ export default class HammerolaViewer extends React.Component {
         : (node.known ? '' : '?');
       rows.push({
         key: node.id,
-        rowStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px ' + (node.depth * 16) + 'px;border-radius:4px;background:' + (selected ? '#cfe6fb' : 'rgba(255,255,255,.78)') + ';cursor:default',
+        rowStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px ' + (node.depth * 16) + 'px;border-radius:4px;background:' + (selected ? 'var(--accent-bg)' : 'var(--float-bg-soft)') + ';cursor:default',
         caret: node.isNode ? (expanded ? '▾' : '▸') : '',
-        caretStyle: 'width:14px;flex:none;text-align:center;font-size:9px;color:#8a9099;cursor:pointer;' + (node.isNode ? '' : 'visibility:hidden'),
+        caretStyle: 'width:14px;flex:none;text-align:center;font-size:9px;color:var(--text-faint);cursor:pointer;' + (node.isNode ? '' : 'visibility:hidden'),
         onExpand: stop(() => node.isNode
           && this.setState({ expanded: { ...s.expanded, [node.id]: !expanded } })),
         eyeOuter: eyeOuter(eye), eyeDot: eyeDot(eye), ghostIcon: ghostIcon(ghosted),
-        dotStyle: 'width:9px;height:9px;border-radius:3px;flex:none;margin:0 4px 0 2px;background:' + (node.color || 'transparent') + (node.isNode ? ';border:1px solid #c3c8cf;background:transparent' : ''),
+        dotStyle: 'width:9px;height:9px;border-radius:3px;flex:none;margin:0 4px 0 2px;background:' + (node.color || 'transparent') + (node.isNode ? ';border:1px solid var(--line-strong);background:transparent' : ''),
         // `pin ×5` where the row collapsed five copies of one part (issue #75).
         // A GROUP NEVER GETS ONE, and the reason is that it would not be the
         // same quantity: a group's `leaves` is every leaf path UNDERNEATH it
@@ -2668,13 +2700,13 @@ export default class HammerolaViewer extends React.Component {
         // smaller remark: it says why the count is still visible on the row, not
         // why it is kept out of the name.
         name: node.isNode ? node.name : countedName(node.name, node.leaves.length),
-        nameStyle: 'white-space:nowrap;cursor:pointer;padding-right:4px;font:' + (node.isNode ? '600 12px ' : '400 12px ') + MONO + ';color:' + (eye === 'off' ? '#9aa1a9' : '#2a2e33'),
+        nameStyle: 'white-space:nowrap;cursor:pointer;padding-right:4px;font:' + (node.isNode ? '600 12px ' : '400 12px ') + MONO + ';color:' + (eye === 'off' ? 'var(--text-faint)' : 'var(--text)'),
         meta: meta_,
         // Said out loud rather than dropped: a leaf the viewport could not match
         // to the library's own state map is a row nothing can be done to, and a
         // tree missing a row reads as a build with fewer parts.
         metaTitle: node.isNode || node.known ? '' : 'the viewport does not know this part',
-        metaStyle: `flex:none;font:400 10px ${MONO};color:#b0b6bd;padding:0 2px`,
+        metaStyle: `flex:none;font:400 10px ${MONO};color:var(--text-faint);padding:0 2px`,
         // A group toggles as a whole: anything still visible means hide it all,
         // nothing visible means show it all. Expressed in LEAF ids — see
         // hub.indexTree for why.
@@ -2742,7 +2774,7 @@ export default class HammerolaViewer extends React.Component {
       return {
         key: r.id,
         head: r.head || '',
-        headStyle: r.head ? `padding:7px 14px 3px;font:600 9.5px ${MONO};color:#9aa1a9;letter-spacing:.09em` : 'display:none',
+        headStyle: r.head ? `padding:7px 14px 3px;font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.09em` : 'display:none',
         id: r.pointer ? r.id : shortId(r.id),
         date: r.date,
         // IN THE PLACE THE SPACER USED TO HOLD, which is what keeps the row one
@@ -2751,13 +2783,19 @@ export default class HammerolaViewer extends React.Component {
         // rest of a long one, and a row with no message is the flexible gap the
         // spacer always was.
         message: r.message,
-        messageStyle: `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 11.5px ${SANS};color:#8a9099`,
-        idStyle: `font:600 12px ${MONO};color:` + (current ? '#1f6fd0' : r.pointer ? '#7c3aad' : '#2a2e33'),
+        messageStyle: `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 11.5px ${SANS};color:var(--text-muted)`,
+        idStyle: `font:600 12px ${MONO};color:` + (current ? 'var(--accent-text)' : r.pointer ? 'var(--note)' : 'var(--text)'),
         badge: current && !r.badge ? 'viewing' : r.badge,
-        badgeStyle: `font:500 10.5px ${MONO};` + (r.pointer ? 'color:#8a9099' : (current || r.badge) ? 'padding:2px 6px;border-radius:4px;background:#e3effc;color:#1f6fd0' : 'display:none'),
-        style: 'display:flex;align-items:center;gap:4px;padding:7px 14px 7px 10px;' + (current ? 'background:#f0f6fd;' : '') + 'cursor:default',
+        badgeStyle: `font:500 10.5px ${MONO};` + (r.pointer ? 'color:var(--text-muted)' : (current || r.badge) ? 'padding:2px 6px;border-radius:4px;background:var(--accent-bg);color:var(--accent-text)' : 'display:none'),
+        // THE SOFT TINT AND NOT THE FULL ONE, because this row says "you are
+        // here" and the tree's selected row a few pixels away says "you picked
+        // this" — two markers the reader tells apart by weight rather than by
+        // hue. One tint for both makes the picker shout and takes the
+        // difference away; `--accent-bg-soft` is what the row was drawn in
+        // before the palette existed, said as a role.
+        style: 'display:flex;align-items:center;gap:4px;padding:7px 14px 7px 10px;' + (current ? 'background:var(--accent-bg-soft);' : '') + 'cursor:default',
         cmpMark: inCmp ? '✓' : '',
-        cmpStyle: `width:16px;height:16px;border-radius:4px;flex:none;margin-right:6px;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO};cursor:pointer;` + (inCmp ? 'background:#1f7ae0;color:#fff;border:1px solid #1c67c2' : 'border:1px solid #c3c8cf;background:#fff;color:transparent'),
+        cmpStyle: `width:16px;height:16px;border-radius:4px;flex:none;margin-right:6px;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO};cursor:pointer;` + (inCmp ? 'background:var(--accent);color:var(--text-on-accent);border:1px solid var(--accent-strong)' : 'border:1px solid var(--line-strong);background:var(--card-bg);color:transparent'),
         onCmp: stop(() => {
           let picked = s.cmp.includes(r.id) ? s.cmp.filter((x) => x !== r.id) : s.cmp.concat(r.id);
           if (picked.length > 2) picked = picked.slice(-2);
@@ -2788,7 +2826,7 @@ export default class HammerolaViewer extends React.Component {
     // -- the downloads, out of the part catalogue: key -> {extension -> file}
     const catalogue = (meta && meta.parts) || null;
     const fileHref = (file) => PAGE.base + encodeURIComponent(String(file));
-    const dlRowStyle = `display:flex;align-items:center;gap:10px;padding:6px 14px 6px 22px;text-decoration:none;color:#2a2e33;font:400 12px ${SANS}`;
+    const dlRowStyle = `display:flex;align-items:center;gap:10px;padding:6px 14px 6px 22px;text-decoration:none;color:var(--text);font:400 12px ${SANS}`;
     const downloadGroups = groupDownloads(catalogue).map((g) => ({
       key: g.ext,
       ext: g.ext,
@@ -2796,8 +2834,8 @@ export default class HammerolaViewer extends React.Component {
         key: f.file, label: f.label, file: f.file, href: fileHref(f.file),
         style: dlRowStyle,
       })),
-      headStyle: `display:flex;align-items:center;gap:8px;padding:8px 14px 3px;font:600 10px ${MONO};color:#8a9099;letter-spacing:.08em`,
-      allStyle: `cursor:pointer;font:500 10.5px ${MONO};color:#1f6fd0;text-decoration:underline`,
+      headStyle: `display:flex;align-items:center;gap:8px;padding:8px 14px 3px;font:600 10px ${MONO};color:var(--text-muted);letter-spacing:.08em`,
+      allStyle: `cursor:pointer;font:500 10.5px ${MONO};color:var(--accent-text);text-decoration:underline`,
       // ONE CLICK, N DOWNLOADS, DONE IN THE BROWSER — the owner's decision, and
       // the cost is worth stating rather than discovering. A browser does not
       // block the second file and the ones after it; it ASKS, once, with a
@@ -2816,9 +2854,16 @@ export default class HammerolaViewer extends React.Component {
 
     const threads = s.comments.map((c) => ({
       key: c.id, label: c.label, part: c.part, time: c.time, text: c.text, meas: c.meas,
-      style: 'padding:10px 12px;background:#fff;border:1px solid ' + (s.activePin === c.id ? '#9cc4f0' : '#e3e6ea') + ';border-radius:8px;cursor:pointer;' + (c.resolved ? 'opacity:.62' : ''),
-      pinStyle: `width:20px;height:20px;border-radius:10px 10px 10px 3px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO};` + (c.resolved ? 'background:#e3e6ea;color:#8a9099' : 'background:#1f7ae0;color:#fff'),
-      measStyle: c.meas ? `margin-top:6px;display:inline-flex;padding:3px 7px;background:#fdf0d8;border-radius:4px;font:500 10.5px ${MONO};color:#8a6a1f` : 'display:none',
+      style: 'padding:10px 12px;background:var(--card-bg);border:1px solid ' + (s.activePin === c.id ? 'var(--accent-line)' : 'var(--line)') + ';border-radius:8px;cursor:pointer;' + (c.resolved ? 'opacity:.62' : ''),
+      // RESOLVED IS A LIGHTER GREY HERE THAN ON THE CANVAS, and that is the
+      // ground rather than an inconsistency: this badge sits on a card in the
+      // rail, where the ordinary chip fill is already a visible pill, while
+      // `.hmr_pin.is_resolved` sits on the 3D MODEL, where nothing lighter than
+      // `--line-strong` keeps a silhouette against a white canvas. Same badge,
+      // two backdrops, two weights — which is why they were two literals before
+      // they were two roles.
+      pinStyle: `width:20px;height:20px;border-radius:10px 10px 10px 3px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO};` + (c.resolved ? 'background:var(--chip-bg);color:var(--text-muted)' : 'background:var(--accent);color:var(--text-on-accent)'),
+      measStyle: c.meas ? `margin-top:6px;display:inline-flex;padding:3px 7px;background:var(--warn-bg);border-radius:4px;font:500 10.5px ${MONO};color:var(--warn)` : 'display:none',
       onOpen: stop(() => this.set({ activePin: c.id })),
       resolved: !!c.resolved,
       // A real request since step 0 — see resolveComment. Closing an item is
@@ -2878,8 +2923,8 @@ export default class HammerolaViewer extends React.Component {
     const mi = (label, hint, fn, tone, href) => ({
       key: label, label, hint: hint || '', href: href || '',
       style: `display:flex;align-items:center;gap:10px;padding:7px 14px;text-decoration:none;font:400 12px ${SANS};`
-        + (tone === 'said' ? 'cursor:default;color:#8a9099' : 'cursor:pointer;color:#2a2e33')
-        + (tone === 'top' || tone === 'said' ? ';border-top:1px solid #e3e6ea' : ''),
+        + (tone === 'said' ? 'cursor:default;color:var(--text-faint)' : 'cursor:pointer;color:var(--text)')
+        + (tone === 'top' || tone === 'said' ? ';border-top:1px solid var(--line-soft)' : ''),
       onClick: tone === 'said'
         ? undefined
         : stop(() => { fn(); this.setState({ menu: null }); }),
@@ -2980,9 +3025,9 @@ export default class HammerolaViewer extends React.Component {
       }, 'top'),
     ];
 
-    const btn = (active, hide) => `display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:6px;font:500 12px ${SANS};cursor:pointer;border:1px solid ` + (active ? '#9cc4f0;background:#dcebfc;color:#155bb5' : 'transparent;color:#3c4147') + (hide ? ';display:none' : '');
-    const tab = (active) => `padding:5px 13px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;` + (active ? 'background:#fff;color:#1c1f23;box-shadow:0 1px 2px rgba(0,0,0,.1)' : 'color:#5b6470');
-    const chip = (show, bg, border, color) => 'pointer-events:auto;display:' + (show ? 'flex' : 'none') + `;align-items:center;gap:8px;padding:7px 12px;background:${bg};border:1px solid ${border};border-radius:7px;font:500 11.5px ${SANS};color:${color};box-shadow:0 2px 8px rgba(20,24,28,.08)`;
+    const btn = (active, hide) => `display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:6px;font:500 12px ${SANS};cursor:pointer;border:1px solid ` + (active ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'transparent;color:var(--text-soft)') + (hide ? ';display:none' : '');
+    const tab = (active) => `padding:5px 13px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;` + (active ? 'background:var(--card-bg);color:var(--text);box-shadow:0 1px 2px var(--shadow-soft)' : 'color:var(--text-soft)');
+    const chip = (show, bg, border, color) => 'pointer-events:auto;display:' + (show ? 'flex' : 'none') + `;align-items:center;gap:8px;padding:7px 12px;background:${bg};border:1px solid ${border};border-radius:7px;font:500 11.5px ${SANS};color:${color};box-shadow:0 2px 8px var(--shadow-soft)`;
 
     const setTool = (t) => () => {
       this.set({ tool: s.tool === t ? null : t, revOpen: false, dlOpen: false, menu: null });
@@ -2998,8 +3043,8 @@ export default class HammerolaViewer extends React.Component {
     // the endpoint. (The front page does show the two words — issue #32 — off
     // the draft pointer, which a build page has no equivalent of.)
     const status = s.pending
-      ? { text: 'new build ready', style: 'color:#1f6fd0;background:#e3effc;border:1px solid #bcd8f5', dot: '#1f7ae0' }
-      : { text: isPointerPage() ? 'up to date' : 'pinned build', style: 'color:#5b6470;background:transparent;border:1px solid transparent', dot: '#2e9e44' };
+      ? { text: 'new build ready', style: 'color:var(--accent-text);background:var(--accent-bg);border:1px solid var(--accent-line)', dot: 'var(--accent)' }
+      : { text: isPointerPage() ? 'up to date' : 'pinned build', style: 'color:var(--text-soft);background:transparent;border:1px solid transparent', dot: 'var(--ok)' };
 
     const railOpen = s.rail === null ? this.props.commentsOpen : s.rail;
     const cutOn = s.secOn || s.held;
@@ -3061,8 +3106,9 @@ export default class HammerolaViewer extends React.Component {
       //
       // `min-height` RATHER THAN `height`, AND IT WRAPS. Nothing that could be
       // dropped from this row makes it fit below the breakpoint: what is left —
-      // the mark, the title, the revision picker and three controls — is still
-      // wider than a phone. A row that cannot break its line can only overflow,
+      // the mark, the title, the revision picker and four controls — is still
+      // wider than a phone, and the theme button #35 moved in here is a fifth.
+      // A row that cannot break its line can only overflow,
       // and the root this sits in is `overflow:hidden`, so overflowing means
       // silently CUT OFF rather than scrolled: the comment button would simply
       // not be there. It grows a second line instead. Same fix, same reason, as
@@ -3112,12 +3158,12 @@ export default class HammerolaViewer extends React.Component {
       slotTitle: shortId(PAGE.slot) === PAGE.slot ? '' : PAGE.slot,
       slotDate: meta ? stamp(meta.built) : '',
       revToggle: stop(() => this.setState({ revOpen: !s.revOpen, dlOpen: false, tokenPop: false })),
-      revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid #d3d8de;background:#fff;border-radius:6px;cursor:pointer',
-      revMenuStyle: (narrow ? popSheet : 'position:absolute;left:0;top:40px;width:430px;') + 'background:#fff;border:1px solid #d3d8de;border-radius:9px;box-shadow:0 10px 34px rgba(20,24,28,.16);z-index:40;display:' + (s.revOpen ? 'block' : 'none'),
+      revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid var(--line);background:var(--card-bg);border-radius:6px;cursor:pointer',
+      revMenuStyle: (narrow ? popSheet : 'position:absolute;left:0;top:40px;width:430px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);z-index:40;display:' + (s.revOpen ? 'block' : 'none'),
       revRows,
       revEmpty: revRows.length === 0,
       cmpLabel: cmpReady ? `${s.cmp[0]} → ${s.cmp[1]}` : '',
-      compareBtnStyle: `padding:7px 14px;border-radius:6px;font:600 12px ${SANS};cursor:pointer;` + (cmpReady ? 'background:#1f7ae0;color:#fff' : 'background:#eceef1;color:#b0b6bd;pointer-events:none'),
+      compareBtnStyle: `padding:7px 14px;border-radius:6px;font:600 12px ${SANS};cursor:pointer;` + (cmpReady ? 'background:var(--accent);color:var(--text-on-accent)' : 'background:var(--sunken-bg);color:var(--text-faint);pointer-events:none'),
       startCompare: stop(() => this.setState({ compare: true, revOpen: false })),
 
       statusChipStyle: `display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:6px;font:500 11.5px ${SANS};` + status.style,
@@ -3126,22 +3172,22 @@ export default class HammerolaViewer extends React.Component {
 
       downloadGroups,
       dlToggle: stop(() => this.setState({ dlOpen: !s.dlOpen, revOpen: false, tokenPop: false })),
-      dlBtnStyle: btn(s.dlOpen) + ';border:1px solid #d3d8de;background:#fff',
+      dlBtnStyle: btn(s.dlOpen) + ';border:1px solid var(--line);background:var(--card-bg)',
       // CLAMPED LIKE THE OTHER TWO. This one is a HEADER button and survives
       // everything the narrow branch drops, so its menu is reachable on a phone
       // — and `right:0` is measured from a button that, once the row has
       // wrapped, is no longer at the window's right edge: a 250px menu then
       // starts off the left of a 390px screen and is cut off by the root's
       // `overflow:hidden` with nothing to scroll.
-      dlMenuStyle: (narrow ? popSheet : 'position:absolute;right:0;top:40px;width:250px;') + 'background:#fff;border:1px solid #d3d8de;border-radius:9px;box-shadow:0 10px 34px rgba(20,24,28,.16);padding:6px 0;z-index:40;display:' + (s.dlOpen ? 'block' : 'none'),
+      dlMenuStyle: (narrow ? popSheet : 'position:absolute;right:0;top:40px;width:250px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;z-index:40;display:' + (s.dlOpen ? 'block' : 'none'),
 
       // -- the token: the whole customer/viewer split, in one control
       viewer,
       tokenToggle: stop(() => this.setState({
         tokenPop: !s.tokenPop, tokenDraft: '', revOpen: false, dlOpen: false })),
-      tokenBtnStyle: btn(false) + ';border:1px solid ' + (viewer ? '#d3d8de;background:#fff' : '#9cc4f0;background:#dcebfc;color:#155bb5'),
+      tokenBtnStyle: btn(false) + ';border:1px solid ' + (viewer ? 'var(--line);background:var(--card-bg)' : 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)'),
       tokenLabel: viewer ? 'View only' : 'Editing on',
-      tokenPopStyle: (narrow ? popSheet : 'position:absolute;right:0;top:40px;width:320px;') + 'background:#fff;border:1px solid #d3d8de;border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px rgba(20,24,28,.16);z-index:40;display:' + (s.tokenPop ? 'block' : 'none'),
+      tokenPopStyle: (narrow ? popSheet : 'position:absolute;right:0;top:40px;width:320px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px var(--shadow);z-index:40;display:' + (s.tokenPop ? 'block' : 'none'),
       tokenDraft: s.tokenDraft,
       tokenType: (e) => this.setState({ tokenDraft: e.target.value }),
       tokenSave: stop(() => {
@@ -3172,11 +3218,33 @@ export default class HammerolaViewer extends React.Component {
       treeShown: !narrow || s.treeOpen,
       treeToggle: stop(() => this.setState({ treeOpen: !s.treeOpen })),
       treeBtnStyle: btn(false, !narrow || s.compare) + ';border:1px solid '
-        + (s.treeOpen ? '#9cc4f0;background:#dcebfc;color:#155bb5' : '#d3d8de;background:#fff'),
+        + (s.treeOpen ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'var(--line);background:var(--card-bg)'),
 
       railToggle: stop(() => this.setState({ rail: !railOpen })),
-      railBtnStyle: btn(false) + ';border:1px solid #d3d8de;background:#fff' + (viewer ? ';display:none' : ''),
-      railCountStyle: 'min-width:17px;height:17px;padding:0 5px;border-radius:9px;background:' + (openCount ? '#1f7ae0' : '#c3c8cf') + `;color:#fff;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO}`,
+      railBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)' + (viewer ? ';display:none' : ''),
+      // WHAT SEPARATES THE TWO STATES IS TONE, NOT INK CONTRAST, and saying so
+      // plainly is the only honest version. White on `--accent` is 4.27:1 in
+      // both themes and cannot be raised without moving the accent itself, so
+      // the live pill is not the high-contrast one; and the resting pill
+      // cannot be "the faint version" of it either, because a grey that looks
+      // faint on a light page is a grey that stands out on a dark one. What
+      // does carry across both themes and reads at 17px is the disc turning
+      // BLUE — so that is the signal, and each state simply gets an ink its
+      // own fill can be read with.
+      //
+      // WHICH MEANS THE RESTING PILL IS AN ORDINARY CHIP: the neutral chip
+      // fill with the secondary ink on it, `--text-soft` on `--chip-bg` —
+      // 6.51:1 in light, 8.36:1 in dark. It reads as a count at rest in both.
+      //
+      // IT WAS `--line-strong` UNDER WHITE, a line role spent as a fill on the
+      // strength of a number measured in the light theme alone: white on light
+      // `--line-strong` is 1.68:1, which is not "faint" but illegible, and on
+      // the dark value it is 9.89:1 — so the resting pill came out CLEARER
+      // than the live one, exactly backwards, in half the interface.
+      railCountStyle: 'min-width:17px;height:17px;padding:0 5px;border-radius:9px;'
+        + (openCount ? 'background:var(--accent);color:var(--text-on-accent)'
+                     : 'background:var(--chip-bg);color:var(--text-soft)')
+        + `;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO}`,
       openCount,
       // A COLUMN BESIDE THE MODEL, OR A SHEET OVER IT. 300px taken out of the
       // width is a third of a phone's screen, and what is left is the thing the
@@ -3185,9 +3253,45 @@ export default class HammerolaViewer extends React.Component {
       // panel either way: it opens and closes by the same button and holds the
       // same threads.
       railStyle: (narrow ? 'position:absolute;inset:0;z-index:20' : 'width:300px;flex:none')
-        + ';background:#f7f8fa;border-left:1px solid #d8dce1;display:'
+        + ';background:var(--header-bg);border-left:1px solid var(--line);display:'
         + (railOpen && !viewer ? 'flex' : 'none') + ';flex-direction:column;min-height:0',
       threads,
+
+      // -- the theme, standing next to the comments ----------------------------
+      //
+      // WHERE THE ISSUE PUTS IT, in as many words: «кнопка — жить у
+      // комментариев» (#35). It used to sit in the floating strip under the
+      // model, with Measure and Fit, and that was right while it changed the
+      // CANVAS and nothing else. It changes the whole page now, so the strip
+      // that belongs to the viewport is the wrong drawer for it — and it is the
+      // one part of this page a phone does not draw at all (`showTools`), which
+      // is how a page-wide preference came to be unreachable at the width where
+      // a reader is most likely to want the dark one.
+      //
+      // BESIDE THE COMMENTS BUTTON AND NOT INSIDE THE RAIL, which is the half
+      // of that instruction worth writing down rather than deciding twice. The
+      // rail is `display:none` two ways over — while it is closed, and for a
+      // reader with no token at all — so a control living IN it would be a
+      // preference you reach by opening a panel you may not even have. The
+      // header row holds the comments control itself, wraps instead of being
+      // clipped, and is drawn at every width and for every reader: the button
+      // stands next to the comments and stays reachable.
+      //
+      // NO `stop()`, unlike the two buttons before it — this one is last in the
+      // row and nothing follows it. Parts and Comments each open
+      // something and must not have the same click close it again; this one
+      // opens nothing, so letting the click reach `rootClick` is what makes a
+      // press over here dismiss a menu left open over there.
+      //
+      // THE LABEL NAMES THE MODE THE READER IS IN, the way the access button
+      // beside the token does; what it switches to is in the tooltip.
+      themeDark: s.theme === 'dark',
+      themeLabel: s.theme === 'dark' ? 'Dark' : 'Light',
+      themeTitle: s.theme === 'dark'
+        ? 'the whole interface is dark — click for light'
+        : 'the whole interface is light — click for dark',
+      themeBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)',
+      toggleTheme: () => this.applyTheme(s.theme === 'dark' ? 'light' : 'dark'),
 
       // -- the strip under the header: the projects this browser has been in
       //
@@ -3273,18 +3377,6 @@ export default class HammerolaViewer extends React.Component {
       tComment: setTool('comment'), commentBtnStyle: btn(s.tool === 'comment', viewer),
       fitView: () => this.fitView(),
       grabFrame: () => this.saveFrame(),
-
-      // The canvas theme, in the strip that belongs to the viewport rather than
-      // in a menu about something else — it changes what is behind the model, so
-      // it sits with the other things that do. The button names the mode the
-      // reader is IN, the way the access button beside the token does; what it
-      // switches to is in the tooltip.
-      themeDark: s.theme === 'dark',
-      themeLabel: s.theme === 'dark' ? 'Dark' : 'Light',
-      themeTitle: s.theme === 'dark'
-        ? 'the model sits on a dark canvas — click for light'
-        : 'the model sits on a light canvas — click for dark',
-      toggleTheme: () => this.applyTheme(s.theme === 'dark' ? 'light' : 'dark'),
       hintText: s.tool === 'comment' ? 'click the model to pin a task'
         : s.tool === 'measure' ? 'click a part, or two, to measure'
         : s.tool === 'move' ? 'drag a part · esc to stop'
@@ -3292,7 +3384,7 @@ export default class HammerolaViewer extends React.Component {
         : `drag — orbit · wheel — zoom · hold ${HOLD_KEY_LABEL} — section`,
 
       viewError: s.viewError || '',
-      viewErrorStyle: 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:420px;padding:14px 16px;background:#fff;border:1px solid #e0bcbc;border-radius:9px;box-shadow:0 8px 28px rgba(20,24,28,.14);z-index:14;text-align:center;display:' + (s.viewError ? 'block' : 'none'),
+      viewErrorStyle: 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:420px;padding:14px 16px;background:var(--card-bg);border:1px solid var(--danger-line);border-radius:9px;box-shadow:0 8px 28px var(--shadow);z-index:14;text-align:center;display:' + (s.viewError ? 'block' : 'none'),
       retryView: () => this.retryView(),
 
       notCompare: !s.compare, compare: s.compare,
@@ -3311,7 +3403,7 @@ export default class HammerolaViewer extends React.Component {
       // The section is a ROW in the tree with its own eye, not a mode with a
       // panel: a panel in the page's column takes height from the canvas, so
       // every press and release of the hold key would resize the model.
-      secRowStyle: 'flex:none;display:inline-flex;align-items:center;gap:7px;margin:0 0 3px;padding:4px 8px;border-radius:5px;border:1px solid ' + (cutOn ? '#9cc4f0;background:rgba(234,243,253,.92)' : 'transparent;background:rgba(255,255,255,.78)'),
+      secRowStyle: 'flex:none;display:inline-flex;align-items:center;gap:7px;margin:0 0 3px;padding:4px 8px;border-radius:5px;border:1px solid ' + (cutOn ? 'var(--accent-line);background:var(--accent-bg-soft)' : 'transparent;background:var(--float-bg-soft)'),
       secEyeClick: stop(() => this.set({ secOn: !s.secOn })),
       secEyeOuter: eyeOuter(cutOn ? 'on' : 'off'), secEyeDot: eyeDot(cutOn ? 'on' : 'off'),
       secSub: s.held ? `held · ${HOLD_KEY_LABEL}` : secSub,
@@ -3325,9 +3417,9 @@ export default class HammerolaViewer extends React.Component {
       // has no Escape key. Opened there it could only be closed by reloading
       // the page. It is reached through the tree, which on narrow the "Parts"
       // button above is what opens.
-      secPopStyle: (narrow ? popSheet : 'position:absolute;left:278px;top:52px;width:270px;') + 'background:#fff;border:1px solid #d3d8de;border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px rgba(20,24,28,.16);z-index:15;display:' + (s.secPop ? 'block' : 'none'),
+      secPopStyle: (narrow ? popSheet : 'position:absolute;left:278px;top:52px;width:270px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px var(--shadow);z-index:15;display:' + (s.secPop ? 'block' : 'none'),
       pickFace: stop(() => { this.set({ tool: 'cut', secPop: false }); this.toast('Click a face — the plane will sit on it'); }),
-      pickFaceStyle: `padding:7px;text-align:center;border-radius:6px;font:600 11.5px ${MONO};cursor:pointer;` + (s.tool === 'cut' ? 'background:#dcebfc;color:#155bb5;border:1px solid #9cc4f0' : 'background:#1f7ae0;color:#fff;border:1px solid #1c67c2'),
+      pickFaceStyle: `padding:7px;text-align:center;border-radius:6px;font:600 11.5px ${MONO};cursor:pointer;` + (s.tool === 'cut' ? 'background:var(--accent-bg);color:var(--accent-text);border:1px solid var(--accent-line)' : 'background:var(--accent);color:var(--text-on-accent);border:1px solid var(--accent-strong)'),
       pickFaceText: s.tool === 'cut' ? 'now click a face on the model…' : (s.secFace ? 'pick another face' : 'pick a face to place the plane'),
       secOff: s.secOff, secMin: secRange[0], secMax: secRange[1],
       secStep: Math.max(0.1, Math.round((secRange[1] - secRange[0]) / 40) / 10),
@@ -3337,7 +3429,7 @@ export default class HammerolaViewer extends React.Component {
       resetSec: stop(() => this.set({ secOn: false, secFace: null, secOff: 0, secFlip: false },
                                      { __resetCut: true })),
       toggleHatch: stop(() => this.set({ hatch: !s.hatch })),
-      hatchBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;' + (s.hatch ? 'background:#1f7ae0;color:#fff' : 'border:1px solid #c3c8cf;background:#fff;color:transparent'),
+      hatchBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;' + (s.hatch ? 'background:var(--accent);color:var(--text-on-accent)' : 'border:1px solid var(--line-strong);background:var(--card-bg);color:transparent'),
       hatchMark: s.hatch ? '✓' : '',
 
       // -- the two notes on the selected part ---------------------------------
@@ -3356,7 +3448,7 @@ export default class HammerolaViewer extends React.Component {
       // showed with no way to change it would be a box the reader cannot get
       // out of. Which is also why the box opens for either one alone: an author
       // note on a build a viewer is looking at is the ordinary case.
-      noteBoxStyle: 'position:absolute;right:14px;top:14px;width:250px;padding:9px 11px;background:#fdf6e3;border:1px solid #eadfc0;border-radius:7px;box-shadow:0 4px 16px rgba(20,24,28,.1);z-index:11;display:'
+      noteBoxStyle: 'position:absolute;right:14px;top:14px;width:250px;padding:9px 11px;background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:7px;box-shadow:0 4px 16px var(--shadow-soft);z-index:11;display:'
         + (!s.compare && (authorNote || (!viewer && readerNote)) ? 'block' : 'none'),
       // THE HEADING IS THE CATALOGUE KEY AND NOT THE ROW'S LABEL, because that
       // is what the two notes below it are actually about. The row is one solid
@@ -3370,7 +3462,7 @@ export default class HammerolaViewer extends React.Component {
       // one note in the box gets a line separating it from nothing.
       readerNoteStyle: 'display:' + (!viewer && readerNote ? 'block' : 'none')
         + (authorNote
-          ? ';margin-top:7px;padding-top:7px;border-top:1px solid #eadfc0'
+          ? ';margin-top:7px;padding-top:7px;border-top:1px solid var(--warn-line)'
           : ';margin-top:5px'),
       noteText: readerNote,
       // The link edits the READER's note and nothing else, so it says so and it
@@ -3378,7 +3470,7 @@ export default class HammerolaViewer extends React.Component {
       // "edit" it is about to do, because with an author note on screen the box
       // now stands for parts this browser has written nothing about — and that
       // is the one place a reader can start one from besides the row menu.
-      editNoteStyle: 'cursor:pointer;color:#8a9099;font-weight:400;text-transform:lowercase'
+      editNoteStyle: 'cursor:pointer;color:var(--text-muted);font-weight:400;text-transform:lowercase'
         + (viewer ? ';display:none' : ''),
       editNoteLabel: readerNote ? 'edit yours' : 'add yours',
       editNote: stop(() => this.setState({ notePop: this.selectedKey(), noteDraft: this.selectedNote() })),
@@ -3392,7 +3484,7 @@ export default class HammerolaViewer extends React.Component {
       // The new build is offered, never substituted: somebody may be halfway
       // through a section with half the tree hidden, and a model that changes by
       // itself reads as a breakage.
-      bannerStyle: chip(!!s.pending && !s.bannerGone, '#fff', '#d3d8de', '#1c1f23') + ';padding:8px 8px 8px 14px',
+      bannerStyle: chip(!!s.pending && !s.bannerGone, 'var(--card-bg)', 'var(--line)', 'var(--text)') + ';padding:8px 8px 8px 14px',
       bannerId: s.pending ? shortId(s.pending.commit) : '',
       bannerSwitch: () => this.takePending(),
       // A REVISION PICKED FROM THE PICKER TAKES THIS BUTTON OUT OF SERVICE, and
@@ -3404,8 +3496,15 @@ export default class HammerolaViewer extends React.Component {
       // failure the refusal was added to prevent, wearing the refusal's clothes.
       // It lasts one fetch: `swapFailed` and the swap's own landing both lower
       // the flag.
-      bannerSwitchStyle: `padding:5px 12px;background:${s.swapping ? '#9cbde3' : '#1f7ae0'};`
-        + `color:#fff;border-radius:5px;font:600 12px ${SANS};`
+      //
+      // `--accent-muted` is the washed accent SURFACE, and this call site is
+      // half of why that role exists: it was `--accent-line` for a while, which
+      // is a border colour asked to fill a button, and the front page's Sign-in
+      // button was doing the same thing for the same want. A name that has
+      // stopped describing what it paints is how the next reader learns that
+      // the names here are approximate.
+      bannerSwitchStyle: `padding:5px 12px;background:${s.swapping ? 'var(--accent-muted)' : 'var(--accent)'};`
+        + `color:var(--text-on-accent);border-radius:5px;font:600 12px ${SANS};`
         + `cursor:${s.swapping ? 'default' : 'pointer'}`,
       bannerLater: () => this.dismissPending(),
 
@@ -3420,7 +3519,7 @@ export default class HammerolaViewer extends React.Component {
       chipsStyle: 'position:absolute;left:' + (narrow ? '12px' : '278px')
         + ';top:14px;display:flex;flex-direction:column;gap:8px;align-items:flex-start;'
         + 'pointer-events:none;z-index:13',
-      movedChipStyle: chip(!!s.moved, '#fdf0d8', '#f0dcae', '#6b5210'),
+      movedChipStyle: chip(!!s.moved, 'var(--warn-bg)', 'var(--warn-line)', 'var(--warn)'),
       movedText: s.moved ? `${s.moved.name} moved ${s.moved.mag} mm` : '',
       movedReset: () => this.set({ moved: null }, { __resetMove: true }),
       // `part` IS A DISPLAYED STRING AND NOTHING MORE, and it is displayed
@@ -3482,7 +3581,7 @@ export default class HammerolaViewer extends React.Component {
         },
         tool: null,
       }),
-      measChipStyle: chip(!!s.measure && !s.composer, '#fff', '#d3d8de', '#1c1f23'),
+      measChipStyle: chip(!!s.measure && !s.composer, 'var(--card-bg)', 'var(--line)', 'var(--text)'),
       measText: s.measure ? s.measure.text : '',
       measNote: s.measure ? s.measure.note : '',
       // Measuring is open to everyone, so the CHIP stays; filing a comment is
@@ -3513,15 +3612,15 @@ export default class HammerolaViewer extends React.Component {
       },
       measClear: () => this.set({ measure: null }, { __clearMeasure: true }),
 
-      composerStyle: 'position:absolute;right:16px;bottom:16px;width:400px;background:#fff;border:1px solid #d3d8de;border-radius:10px;box-shadow:0 12px 40px rgba(20,24,28,.2);z-index:16;display:' + (s.composer && !viewer ? 'block' : 'none'),
+      composerStyle: 'position:absolute;right:16px;bottom:16px;width:400px;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px var(--shadow);z-index:16;display:' + (s.composer && !viewer ? 'block' : 'none'),
       nextLabel: String(s.comments.length + 1),
       composerPart: s.composer ? s.composer.part : '',
       composerText: s.composer ? s.composer.text : '',
       compType: (e) => this.setState({ composer: { ...s.composer, text: e.target.value } }),
-      compMeasChipStyle: 'display:' + (s.composer && s.composer.meas ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:#fdf0d8;border-radius:5px;font:500 10.5px ${MONO};color:#8a6a1f`,
+      compMeasChipStyle: 'display:' + (s.composer && s.composer.meas ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
       compMeasText: (s.composer && s.composer.meas) || '',
       compMeasRemove: stop(() => this.setState({ composer: { ...s.composer, meas: null } })),
-      compMoveChipStyle: 'display:' + (s.composer && s.composer.move ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:#fdf0d8;border-radius:5px;font:500 10.5px ${MONO};color:#8a6a1f`,
+      compMoveChipStyle: 'display:' + (s.composer && s.composer.move ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
       compMoveText: (s.composer && s.composer.move) || '',
       compPhotoName: s.composer && s.composer.photo ? s.composer.photo.name : '',
       compPhoto: (e) => {
@@ -3534,7 +3633,7 @@ export default class HammerolaViewer extends React.Component {
         this.toast('Could not send the comment');
       }),
 
-      menuStyle: 'position:fixed;width:230px;background:#fff;border:1px solid #d3d8de;border-radius:9px;box-shadow:0 12px 40px rgba(20,24,28,.2);padding:2px 0 6px;z-index:60;display:' + (s.menu ? 'block' : 'none') + ';left:' + (s.menu ? s.menu.x : 0) + 'px;top:' + (s.menu ? s.menu.y : 0) + 'px',
+      menuStyle: 'position:fixed;width:230px;background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 12px 40px var(--shadow);padding:2px 0 6px;z-index:60;display:' + (s.menu ? 'block' : 'none') + ';left:' + (s.menu ? s.menu.x : 0) + 'px;top:' + (s.menu ? s.menu.y : 0) + 'px',
       menuName: mName, menuItems,
 
       // CLAMPED FOR THE REASON `secPopStyle` IS, and it is the worse of the two:
@@ -3545,7 +3644,7 @@ export default class HammerolaViewer extends React.Component {
       // that would reach it, and there is no Escape key on a phone: opened, it
       // could only be dismissed by reloading. Reachable there through the note
       // box and through the tree row's context menu.
-      notePopStyle: (narrow ? popSheet : 'position:absolute;left:310px;top:120px;width:300px;') + 'background:#fff;border:1px solid #d3d8de;border-radius:10px;padding:13px 14px;box-shadow:0 12px 40px rgba(20,24,28,.2);z-index:60;display:' + (s.notePop ? 'block' : 'none'),
+      notePopStyle: (narrow ? popSheet : 'position:absolute;left:310px;top:120px;width:300px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 12px 40px var(--shadow);z-index:60;display:' + (s.notePop ? 'block' : 'none'),
       notePopName: s.notePop || '',
       noteDraft: s.noteDraft,
       noteType: (e) => this.setState({ noteDraft: e.target.value }),
@@ -3559,7 +3658,7 @@ export default class HammerolaViewer extends React.Component {
         this.setState({ notePop: null });
       }),
 
-      toastStyle: `position:absolute;left:50%;bottom:18px;transform:translateX(-50%);padding:9px 16px;background:#1c1f23;color:#f2f3f5;border-radius:7px;font:500 12px ${SANS};box-shadow:0 6px 20px rgba(20,24,28,.3);z-index:70;display:` + (s.toast ? 'block' : 'none'),
+      toastStyle: `position:absolute;left:50%;bottom:18px;transform:translateX(-50%);padding:9px 16px;background:var(--tooltip-bg);color:var(--tooltip-text);border-radius:7px;font:500 12px ${SANS};box-shadow:0 6px 20px var(--shadow);z-index:70;display:` + (s.toast ? 'block' : 'none'),
       toastText: s.toast || '',
     };
   }
@@ -3568,9 +3667,9 @@ export default class HammerolaViewer extends React.Component {
     if (this.state.error) {
       return (
         <div style={{ ...css(`position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:${PAGE_BG};color:${PAGE_FG};font:400 13px ${SANS};z-index:5`), ...FONTS }}>
-          <div style={css('max-width:420px;padding:18px 20px;background:#fff;border:1px solid #d3d8de;border-radius:9px')}>
+          <div style={css('max-width:420px;padding:18px 20px;background:var(--card-bg);border:1px solid var(--line);border-radius:9px')}>
             <div style={css(`font:600 13px ${SANS};margin-bottom:6px`)}>This build did not load</div>
-            <div style={css(`font:400 12px/1.6 ${MONO};color:#5b6470`)}>{this.state.error}</div>
+            <div style={css(`font:400 12px/1.6 ${MONO};color:var(--text-soft)`)}>{this.state.error}</div>
           </div>
         </div>
       );
@@ -3601,15 +3700,15 @@ export default class HammerolaViewer extends React.Component {
           <div style={css(`width:1px;height:22px;background:${HEADER_LINE}`)} />
           <div style={css(v.titleColStyle)}>
             <div style={css(`font:600 13.5px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{v.title}</div>
-            {v.showSubtitle && <div style={css(`font:400 10.5px ${MONO};color:#787f87;white-space:nowrap`)}>{v.subtitle}</div>}
+            {v.showSubtitle && <div style={css(`font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap`)}>{v.subtitle}</div>}
           </div>
 
           <div style={css('position:relative;margin-left:8px;flex:none')}>
             <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>
               <span style={css(v.statusDotStyle)} />
               <span style={css(`font:600 12px ${MONO}`)}>{v.slot}</span>
-              <span style={css(`font:400 11px ${MONO};color:#787f87`)}>{v.slotDate}</span>
-              <span style={css('font-size:9px;color:#9aa1a9')}>&#9662;</span>
+              <span style={css(`font:400 11px ${MONO};color:var(--text-muted)`)}>{v.slotDate}</span>
+              <span style={css('font-size:9px;color:var(--text-faint)')}>&#9662;</span>
             </div>
 
             {/* pointers on top, the history below; the ticks pick two to compare */}
@@ -3624,18 +3723,18 @@ export default class HammerolaViewer extends React.Component {
                         <span style={css(r.idStyle)}>{r.id}</span>
                         <span style={css(r.badgeStyle)}>{r.badge}</span>
                         <span title={r.message} style={css(r.messageStyle)}>{r.message}</span>
-                        <span style={css(`font:400 11px ${MONO};color:#8a9099`)}>{r.date}</span>
+                        <span style={css(`font:400 11px ${MONO};color:var(--text-muted)`)}>{r.date}</span>
                       </span>
                     </div>
                   </React.Fragment>
                 ))}
                 {v.revEmpty && (
-                  <div style={css(`padding:12px 14px;font:400 11.5px ${SANS};color:#8a9099`)}>
+                  <div style={css(`padding:12px 14px;font:400 11.5px ${SANS};color:var(--text-muted)`)}>
                     This project has no other builds yet.
                   </div>
                 )}
               </div>
-              <div style={css('display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid #e3e6ea')}>
+              <div style={css('display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line-soft)')}>
                 <div onClick={v.startCompare} style={css(v.compareBtnStyle)}>Compare {v.cmpLabel}</div>
               </div>
             </div>
@@ -3663,13 +3762,13 @@ export default class HammerolaViewer extends React.Component {
                   {g.files.map((f) => (
                     <a key={f.key} href={f.href} download style={css(f.style)}>
                       <span style={css('flex:1')}>{f.label}</span>
-                      <span style={css(`font:400 10.5px ${MONO};color:#b0b6bd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
+                      <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
                     </a>
                   ))}
                 </React.Fragment>
               ))}
               {v.downloadGroups.length === 0 && (
-                <div style={css(`padding:10px 14px;font:400 11.5px ${SANS};color:#8a9099`)}>
+                <div style={css(`padding:10px 14px;font:400 11.5px ${SANS};color:var(--text-muted)`)}>
                   This build ships no files to download.
                 </div>
               )}
@@ -3686,7 +3785,7 @@ export default class HammerolaViewer extends React.Component {
               <div style={css(`font:600 12.5px ${SANS};margin-bottom:4px`)}>
                 {v.viewer ? 'Enter your token' : 'Editing is on'}
               </div>
-              <div style={css(`font:400 11.5px/1.6 ${SANS};color:#5b6470;margin-bottom:9px`)}>
+              <div style={css(`font:400 11.5px/1.6 ${SANS};color:var(--text-soft);margin-bottom:9px`)}>
                 {v.viewer
                   ? 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens notes, moving a part, and writing a comment. Without one everything else still works: orbiting, the tree, the section, measuring and the downloads. It is kept in this browser, for the whole site.'
                   : 'The token is stored in this browser, for the whole site. Remove it to go back to viewing.'}
@@ -3695,14 +3794,14 @@ export default class HammerolaViewer extends React.Component {
                 <>
                   <input type="password" value={v.tokenDraft} onChange={v.tokenType}
                          placeholder="paste the token"
-                         style={css(`width:100%;box-sizing:border-box;border:1px solid #d3d8de;border-radius:6px;outline:none;padding:8px 10px;font:400 12px ${MONO};background:#fff`)} />
+                         style={css(`width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;outline:none;padding:8px 10px;font:400 12px ${MONO};background:var(--card-bg)`)} />
                   <div style={css('display:flex;justify-content:flex-end;margin-top:9px')}>
-                    <span onClick={v.tokenSave} style={css(`padding:6px 14px;background:#1f7ae0;color:#fff;border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`)}>Save</span>
+                    <span onClick={v.tokenSave} style={css(`padding:6px 14px;background:var(--accent);color:var(--text-on-accent);border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`)}>Save</span>
                   </div>
                 </>
               ) : (
                 <div style={css('display:flex;justify-content:flex-end')}>
-                  <span onClick={v.tokenClear} style={css(`padding:6px 14px;border:1px solid #d3d8de;border-radius:6px;font:600 11.5px ${SANS};cursor:pointer;color:#b03a2e;background:#fff`)}>Remove token</span>
+                  <span onClick={v.tokenClear} style={css(`padding:6px 14px;border:1px solid var(--line);border-radius:6px;font:600 11.5px ${SANS};cursor:pointer;color:var(--danger);background:var(--card-bg)`)}>Remove token</span>
                 </div>
               )}
             </div>
@@ -3723,6 +3822,21 @@ export default class HammerolaViewer extends React.Component {
             Comments
             <span style={css(v.railCountStyle)}>{v.openCount}</span>
           </div>
+
+          {/* Light or dark for the whole page — here because #35 says here, and
+              drawn immediately after the comments so it stands against them.
+              Unconditional, deliberately: the two buttons above it are taken
+              away by a wide window and by a missing token, and this is the one
+              control in the row that belongs to the person rather than to what
+              they are allowed to do. `computed()` has the whole argument. */}
+          <div onClick={v.toggleTheme} title={v.themeTitle} style={css(v.themeBtnStyle)}>
+            {v.themeDark ? (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6 5.9 5.9 0 1 0 13.4 9.9z" /></svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="3.1" /><path d="M8 1.2v1.7M8 13.1v1.7M1.2 8h1.7M13.1 8h1.7M3.2 3.2l1.2 1.2M11.6 11.6l1.2 1.2M12.8 3.2l-1.2 1.2M4.4 11.6l-1.2 1.2" /></svg>
+            )}
+            {v.themeLabel}
+          </div>
         </div>
 
         {/* ── the tab strip: the projects this browser has been in lately ──
@@ -3738,7 +3852,7 @@ export default class HammerolaViewer extends React.Component {
                     is written — a `<button>` inside an `<a>` is not markup a
                     browser is required to make sense of. */}
                 <span onClick={t.onClose} title="forget this project"
-                      style={css('color:#9aa1a9;cursor:pointer;flex:none')}
+                      style={css('color:var(--text-faint);cursor:pointer;flex:none')}
                 >&#10005;</span>
               </a>
             ))}
@@ -3752,13 +3866,13 @@ export default class HammerolaViewer extends React.Component {
             {v.notCompare && v.treeShown && (
               <div style={css('display:flex;flex-direction:column;min-height:0')}>
                 <div style={css('flex:none;display:flex;align-items:center;gap:2px;padding:0 0 3px')}>
-                  <span onClick={v.expandAll} title="expand all" style={css('width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:#5b6470;cursor:pointer;background:rgba(255,255,255,.78)')}>
+                  <span onClick={v.expandAll} title="expand all" style={css('width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--text-soft);cursor:pointer;background:var(--float-bg-soft)')}>
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M4 5.5L8 1.5l4 4M4 10.5l4 4 4-4" /></svg>
                   </span>
-                  <span onClick={v.collapseAll} title="collapse all" style={css('width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:#5b6470;cursor:pointer;background:rgba(255,255,255,.78)')}>
+                  <span onClick={v.collapseAll} title="collapse all" style={css('width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--text-soft);cursor:pointer;background:var(--float-bg-soft)')}>
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M4 1.5l4 4 4-4M4 14.5l4-4 4 4" /></svg>
                   </span>
-                  <span onClick={v.showAll} title="show all parts" style={css('width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:#5b6470;cursor:pointer;background:rgba(255,255,255,.78)')}>
+                  <span onClick={v.showAll} title="show all parts" style={css('width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--text-soft);cursor:pointer;background:var(--float-bg-soft)')}>
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><ellipse cx="8" cy="8" rx="6.5" ry="4.5" /><circle cx="8" cy="8" r="1.8" /></svg>
                   </span>
                 </div>
@@ -3767,9 +3881,9 @@ export default class HammerolaViewer extends React.Component {
                   <div onClick={v.secEyeClick} style={css('width:24px;display:flex;justify-content:center;cursor:pointer;padding:2px 0')}>
                     <span style={css(v.secEyeOuter)}><span style={css(v.secEyeDot)} /></span>
                   </div>
-                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#5b6470" strokeWidth="1.4" style={{ flex: 'none' }}><rect x="2" y="2" width="12" height="12" rx="1" /><path d="M2 14L14 2" /></svg>
-                  <span onClick={v.openSecPop} style={css(`font:600 12px ${MONO};color:#2a2e33;cursor:pointer;white-space:nowrap`)}>section</span>
-                  <span onClick={v.openSecPop} style={css(`font:400 10.5px ${MONO};color:#8a9099;cursor:pointer;white-space:nowrap;padding-right:2px`)}>{v.secSub}</span>
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--text-soft)" strokeWidth="1.4" style={{ flex: 'none' }}><rect x="2" y="2" width="12" height="12" rx="1" /><path d="M2 14L14 2" /></svg>
+                  <span onClick={v.openSecPop} style={css(`font:600 12px ${MONO};color:var(--text);cursor:pointer;white-space:nowrap`)}>section</span>
+                  <span onClick={v.openSecPop} style={css(`font:400 10.5px ${MONO};color:var(--text-muted);cursor:pointer;white-space:nowrap;padding-right:2px`)}>{v.secSub}</span>
                 </div>
 
                 <div style={css('padding:1px 0 6px;display:flex;flex-direction:column;align-items:flex-start')}>
@@ -3791,7 +3905,7 @@ export default class HammerolaViewer extends React.Component {
                       on `hmr:model`, i.e. once the viewport has fetched and drawn
                       a view, so this is also what a page with no adapter shows. */}
                   {!v.hasTree && (
-                    <div style={css(`padding:6px 8px;border-radius:4px;background:rgba(255,255,255,.78);font:400 11.5px ${SANS};color:#8a9099`)}>
+                    <div style={css(`padding:6px 8px;border-radius:4px;background:var(--float-bg-soft);font:400 11.5px ${SANS};color:var(--text-muted)`)}>
                       waiting for the model&hellip;
                     </div>
                   )}
@@ -3801,17 +3915,17 @@ export default class HammerolaViewer extends React.Component {
 
             {/* ── comparing two revisions ── */}
             {v.compare && (
-              <div style={css('display:flex;flex-direction:column;min-height:0;width:288px;background:rgba(249,250,252,.95);border:1px solid #d3d8de;border-radius:10px;box-shadow:0 6px 24px rgba(20,24,28,.12);overflow:hidden')}>
-                <div style={css('flex:none;padding:12px 14px;border-bottom:1px solid #e3e6ea')}>
+              <div style={css('display:flex;flex-direction:column;min-height:0;width:288px;background:var(--float-bg);border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px var(--shadow-soft);overflow:hidden')}>
+                <div style={css('flex:none;padding:12px 14px;border-bottom:1px solid var(--line-soft)')}>
                   <div style={css('display:flex;align-items:center;gap:8px')}>
                     <span style={css(`font:600 12.5px ${SANS}`)}>Comparing</span>
-                    <span style={css(`font:600 12px ${MONO};background:#e3e6ea;padding:2px 7px;border-radius:4px`)}>{v.cmpA}</span>
-                    <span style={css('color:#8a9099')}>&#8594;</span>
-                    <span style={css(`font:600 12px ${MONO};background:#e3e6ea;padding:2px 7px;border-radius:4px`)}>{v.cmpB}</span>
+                    <span style={css(`font:600 12px ${MONO};background:var(--chip-bg);padding:2px 7px;border-radius:4px`)}>{v.cmpA}</span>
+                    <span style={css('color:var(--text-muted)')}>&#8594;</span>
+                    <span style={css(`font:600 12px ${MONO};background:var(--chip-bg);padding:2px 7px;border-radius:4px`)}>{v.cmpB}</span>
                     <span style={css('flex:1')} />
-                    <span onClick={v.exitCompare} style={css(`font:500 11px ${MONO};color:#1f6fd0;cursor:pointer`)}>exit &#10005;</span>
+                    <span onClick={v.exitCompare} style={css(`font:500 11px ${MONO};color:var(--accent-text);cursor:pointer`)}>exit &#10005;</span>
                   </div>
-                  <div style={css('display:flex;gap:2px;padding:3px;background:#e3e6ea;border-radius:7px;margin-top:10px')}>
+                  <div style={css('display:flex;gap:2px;padding:3px;background:var(--chip-bg);border-radius:7px;margin-top:10px')}>
                     <div style={css(v.dsBothStyle)}>Overlay</div>
                     <div style={css(v.dsAStyle)}>{v.cmpA} only</div>
                     <div style={css(v.dsBStyle)}>{v.cmpB} only</div>
@@ -3822,24 +3936,30 @@ export default class HammerolaViewer extends React.Component {
                     block has to be able to give. */}
                 <div style={css('flex:1;overflow:auto;padding:12px 14px')}>
                   <div style={css(`font:600 11.5px ${SANS};margin-bottom:6px`)}>Not available yet</div>
-                  <div style={css(`font:400 11.5px/1.6 ${SANS};color:#5b6470`)}>
+                  <div style={css(`font:400 11.5px/1.6 ${SANS};color:var(--text-soft)`)}>
                     The hub cannot compare two builds yet — there is no endpoint that
                     returns the difference, so nothing can be listed here and nothing
                     can be lit up on the model. This panel is the shape it will take.
                   </div>
                 </div>
-                <div style={css('flex:none;margin:0 14px 14px;padding:10px 12px;background:#fff;border:1px solid #e3e6ea;border-radius:7px')}>
-                  <div style={css(`font:600 10px ${MONO};color:#8a9099;letter-spacing:.08em;margin-bottom:7px`)}>LEGEND &mdash; WHAT THE COLOURS WILL MEAN</div>
-                  <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:5px')}><span style={css('width:12px;height:12px;border-radius:3px;background:#1f7ae0;flex:none')} /><span style={css(`font:400 11.5px ${SANS}`)}>added &mdash; material only in {v.cmpB}</span></div>
-                  <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:5px')}><span style={css('width:12px;height:12px;border-radius:3px;background:#e08a1f;flex:none')} /><span style={css(`font:400 11.5px ${SANS}`)}>removed &mdash; material only in {v.cmpA}</span></div>
-                  <div style={css('display:flex;align-items:center;gap:8px')}><span style={css('width:12px;height:12px;border-radius:3px;background:#b8bec6;flex:none')} /><span style={css(`font:400 11.5px ${SANS}`)}>unchanged (ghosted)</span></div>
+                <div style={css('flex:none;margin:0 14px 14px;padding:10px 12px;background:var(--card-bg);border:1px solid var(--line-soft);border-radius:7px')}>
+                  <div style={css(`font:600 10px ${MONO};color:var(--text-muted);letter-spacing:.08em;margin-bottom:7px`)}>LEGEND &mdash; WHAT THE COLOURS WILL MEAN</div>
+                  {/* THE GREY SWATCH IS `--line-strong` AND NOT THE CHIP FILL,
+                      which is a line role painting a surface on purpose. These
+                      three squares are samples of what the diff will paint on
+                      the MODEL, not chrome — and the grey one stands beside two
+                      saturated ones, where the chip fill reads as an empty
+                      square rather than as the third colour in a set. */}
+                  <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:5px')}><span style={css('width:12px;height:12px;border-radius:3px;background:var(--accent);flex:none')} /><span style={css(`font:400 11.5px ${SANS}`)}>added &mdash; material only in {v.cmpB}</span></div>
+                  <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:5px')}><span style={css('width:12px;height:12px;border-radius:3px;background:var(--warn);flex:none')} /><span style={css(`font:400 11.5px ${SANS}`)}>removed &mdash; material only in {v.cmpA}</span></div>
+                  <div style={css('display:flex;align-items:center;gap:8px')}><span style={css('width:12px;height:12px;border-radius:3px;background:var(--line-strong);flex:none')} /><span style={css(`font:400 11.5px ${SANS}`)}>unchanged (ghosted)</span></div>
                 </div>
               </div>
             )}
           </div>
 
           {/* ── the model, and everything laid over it ── */}
-          <div style={css('flex:1;position:relative;min-width:0;background:linear-gradient(165deg,#f2f4f6 0%,#e2e5e9 60%,#d4d8dd 100%)')}>
+          <div style={css('flex:1;position:relative;min-width:0;background:linear-gradient(165deg,var(--header-bg) 0%,var(--sunken-bg) 60%,var(--page-bg) 100%)')}>
             {/* The custom element the adapter registers. RENDERED BY NAME rather
                 than by a reference to the class, and that is the point: what
                 defines the tag is `import './viewport/index.js'` in main.jsx,
@@ -3853,8 +3973,8 @@ export default class HammerolaViewer extends React.Component {
 
             {/* views and tools */}
             <div style={css('position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:12')}>
-              <div style={css('pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;background:rgba(249,250,252,.92);backdrop-filter:blur(10px);border:1px solid #d3d8de;border-radius:9px;box-shadow:0 4px 16px rgba(20,24,28,.1)')}>
-                <div style={css('display:flex;gap:2px;padding:2px;background:#e3e6ea;border-radius:6px')}>
+              <div style={css('pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;background:var(--float-bg);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)')}>
+                <div style={css('display:flex;gap:2px;padding:2px;background:var(--chip-bg);border-radius:6px')}>
                   {v.viewTabs.map((t) => (
                     <div key={t.key} onClick={t.onClick} title={t.hint} style={css(t.style)}>{t.label}</div>
                   ))}
@@ -3863,7 +3983,7 @@ export default class HammerolaViewer extends React.Component {
                     a canvas with room to aim in — see `showTools`. */}
                 {v.showTools && (
                   <>
-                    <div style={css('width:1px;height:18px;background:#d8dce1')} />
+                    <div style={css('width:1px;height:18px;background:var(--line)')} />
                     <div onClick={v.tMeasure} style={css(v.measureBtnStyle)}>
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 14L14 2M2 14l2.2-.55M14 2l-.55 2.2M6.2 9.8l1.4 1.4M9 7l1.4 1.4" /></svg>
                       Measure
@@ -3876,30 +3996,18 @@ export default class HammerolaViewer extends React.Component {
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /><path d="M5 5.5h6M5 8h4" /></svg>
                       Comment
                     </div>
-                    <div style={css('width:1px;height:18px;background:#d8dce1')} />
+                    <div style={css('width:1px;height:18px;background:var(--line)')} />
                   </>
                 )}
-                <div onClick={v.fitView} title="back to the frame this view opened in" style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:#3c4147;cursor:pointer;border:1px solid transparent`)}>
+                <div onClick={v.fitView} title="back to the frame this view opened in" style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:var(--text-soft);cursor:pointer;border:1px solid transparent`)}>
                   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5" /></svg>
                   Fit
                 </div>
                 {v.showTools && (
-                  <>
-                    <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:#3c4147;cursor:pointer;border:1px solid transparent`)}>
-                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
-                      Frame
-                    </div>
-                    <div style={css('width:1px;height:18px;background:#d8dce1')} />
-                    {/* what the model stands on — the canvas only, never the chrome */}
-                    <div onClick={v.toggleTheme} title={v.themeTitle} style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:#3c4147;cursor:pointer;border:1px solid transparent`)}>
-                      {v.themeDark ? (
-                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6 5.9 5.9 0 1 0 13.4 9.9z" /></svg>
-                      ) : (
-                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="3.1" /><path d="M8 1.2v1.7M8 13.1v1.7M1.2 8h1.7M13.1 8h1.7M3.2 3.2l1.2 1.2M11.6 11.6l1.2 1.2M12.8 3.2l-1.2 1.2M4.4 11.6l-1.2 1.2" /></svg>
-                      )}
-                      {v.themeLabel}
-                    </div>
-                  </>
+                  <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:var(--text-soft);cursor:pointer;border:1px solid transparent`)}>
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
+                    Frame
+                  </div>
                 )}
               </div>
             </div>
@@ -3907,19 +4015,19 @@ export default class HammerolaViewer extends React.Component {
             {/* a newer build landed — offered, not substituted */}
             <div style={css('position:absolute;left:0;right:0;top:14px;display:flex;justify-content:center;pointer-events:none;z-index:13')}>
               <div style={css(v.bannerStyle)}>
-                <span style={css('width:8px;height:8px;border-radius:4px;background:#2e9e44;flex:none')} />
+                <span style={css('width:8px;height:8px;border-radius:4px;background:var(--ok);flex:none')} />
                 <span style={css(`font:500 12.5px ${SANS}`)}>
                   Build <b style={{ fontFamily: MONO }}>{v.bannerId}</b> is ready &mdash; you are viewing {v.slot}
                 </span>
                 <span onClick={v.bannerSwitch} style={css(v.bannerSwitchStyle)}>Switch</span>
-                <span onClick={v.bannerLater} style={css(`padding:5px 10px;color:#5b6470;border-radius:5px;font:500 12px ${SANS};cursor:pointer`)}>Later</span>
+                <span onClick={v.bannerLater} style={css(`padding:5px 10px;color:var(--text-soft);border-radius:5px;font:500 12px ${SANS};cursor:pointer`)}>Later</span>
               </div>
             </div>
 
             {/* state chips: a moved part, a live measurement */}
             <div style={css(v.chipsStyle)}>
               <div style={css(v.movedChipStyle)}>
-                <span style={css('width:7px;height:7px;border-radius:4px;background:#b8710d;flex:none')} />
+                <span style={css('width:7px;height:7px;border-radius:4px;background:var(--warn);flex:none')} />
                 {v.movedText} &mdash; temporary, not saved to the model
                 <span onClick={v.movedAttach} style={css('cursor:pointer;text-decoration:underline;margin-left:2px')}>attach to comment</span>
                 <span onClick={v.movedReset} style={css('cursor:pointer;text-decoration:underline')}>reset</span>
@@ -3928,7 +4036,7 @@ export default class HammerolaViewer extends React.Component {
                 <span style={css(`font:600 12px ${MONO}`)}>{v.measText}</span>
                 {/* The qualifier the brief insists on: a distance taken between
                     parts that have been laid apart is not the assembled one. */}
-                {v.measNote && <span style={css(`font:500 10.5px ${MONO};color:#8a6a1f;background:#fdf0d8;padding:3px 7px;border-radius:4px`)}>{v.measNote}</span>}
+                {v.measNote && <span style={css(`font:500 10.5px ${MONO};color:var(--warn);background:var(--warn-bg);padding:3px 7px;border-radius:4px`)}>{v.measNote}</span>}
                 <span onClick={v.measAdd} style={css(v.measAddStyle)}>add to comment</span>
                 <span onClick={v.measClear} style={css('cursor:pointer;opacity:.6')}>&#10005;</span>
               </div>
@@ -3949,18 +4057,25 @@ export default class HammerolaViewer extends React.Component {
                 allow-list of schemes, because `javascript:` in an href is script
                 execution on the origin every project on this hub shares. */}
             <div style={css(v.noteBoxStyle)}>
-              <div style={css(`display:flex;align-items:center;gap:6px;font:600 10px ${MONO};color:#8a6a1f;letter-spacing:.06em`)}>
+              <div style={css(`display:flex;align-items:center;gap:6px;font:600 10px ${MONO};color:var(--warn);letter-spacing:.06em`)}>
                 NOTE &middot; {v.noteName}
                 <span style={css('flex:1')} />
                 <span onClick={v.editNote} style={css(v.editNoteStyle)}>{v.editNoteLabel}</span>
               </div>
+              {/* `--warn-soft` AND NOT `--warn`, on both of these: the box has
+                  a heading above them (`NOTE · <key>`) and these two label the
+                  halves under it. Drawn in the same amber as the heading they
+                  stop being labels and become three headings, which is the one
+                  thing this box is FOR — a reader who cannot tell the author's
+                  specification from their own reminder is the failure it was
+                  built to prevent. */}
               <div style={css(v.authorNoteStyle)}>
-                <div style={css(`font:600 9px ${MONO};color:#a2894e;letter-spacing:.07em`)}>FROM THE MODEL</div>
-                <div style={css(`font:400 11.5px/1.5 ${SANS};color:#4a4436;margin-top:3px`)}>{v.authorNote}</div>
+                <div style={css(`font:600 9px ${MONO};color:var(--warn-soft);letter-spacing:.07em`)}>FROM THE MODEL</div>
+                <div style={css(`font:400 11.5px/1.5 ${SANS};color:var(--text-soft);margin-top:3px`)}>{v.authorNote}</div>
               </div>
               <div style={css(v.readerNoteStyle)}>
-                <div style={css(`font:600 9px ${MONO};color:#a2894e;letter-spacing:.07em`)}>ONLY IN THIS BROWSER</div>
-                <div style={css(`font:400 11.5px/1.5 ${SANS};color:#4a4436;margin-top:3px`)}>{v.noteText}</div>
+                <div style={css(`font:600 9px ${MONO};color:var(--warn-soft);letter-spacing:.07em`)}>ONLY IN THIS BROWSER</div>
+                <div style={css(`font:400 11.5px/1.5 ${SANS};color:var(--text-soft);margin-top:3px`)}>{v.noteText}</div>
               </div>
             </div>
 
@@ -3970,8 +4085,8 @@ export default class HammerolaViewer extends React.Component {
                 clears that memory. */}
             <div style={css(v.viewErrorStyle)}>
               <div style={css(`font:600 12.5px ${SANS};margin-bottom:5px`)}>This view did not render</div>
-              <div style={css(`font:400 11.5px/1.6 ${MONO};color:#5b6470`)}>{v.viewError}</div>
-              <div onClick={v.retryView} style={css(`display:inline-block;margin-top:11px;padding:6px 14px;background:#1f7ae0;color:#fff;border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`)}>Try again</div>
+              <div style={css(`font:400 11.5px/1.6 ${MONO};color:var(--text-soft)`)}>{v.viewError}</div>
+              <div onClick={v.retryView} style={css(`display:inline-block;margin-top:11px;padding:6px 14px;background:var(--accent);color:var(--text-on-accent);border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`)}>Try again</div>
             </div>
 
             {/* The bottom-left corner is the VIEWPORT'S: it draws the view cube
@@ -3979,44 +4094,44 @@ export default class HammerolaViewer extends React.Component {
                 be drawn here instead, and it never turned with the camera — see
                 issues #23 and #24. */}
 
-            <div style={css(`position:absolute;right:14px;bottom:12px;font:400 10.5px ${MONO};color:#9aa1a9;pointer-events:none`)}>{v.hintText}</div>
+            <div style={css(`position:absolute;right:14px;bottom:12px;font:400 10.5px ${MONO};color:var(--text-muted);pointer-events:none`)}>{v.hintText}</div>
 
             {/* the composer: the frame rides along by itself, the photo does not */}
             <div onClick={(e) => e.stopPropagation()} style={css(v.composerStyle)}>
-              <div style={css('display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #e3e6ea')}>
-                <span style={css(`width:20px;height:20px;border-radius:10px 10px 10px 3px;background:#1f7ae0;color:#fff;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO}`)}>{v.nextLabel}</span>
+              <div style={css('display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line-soft)')}>
+                <span style={css(`width:20px;height:20px;border-radius:10px 10px 10px 3px;background:var(--accent);color:var(--text-on-accent);display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO}`)}>{v.nextLabel}</span>
                 <span style={css(`font:600 12px ${SANS}`)}>Task for the agent</span>
                 {/* Only when there IS a part: the separator belongs to the name,
                     and a draft that lost its attachment to a revision swap would
                     otherwise keep a lone middle dot standing where it used to
                     be — a leftover pointing at the build the page has left. */}
                 {v.composerPart
-                  ? <span style={css(`font:400 11px ${MONO};color:#8a9099`)}>&middot; {v.composerPart}</span>
+                  ? <span style={css(`font:400 11px ${MONO};color:var(--text-muted)`)}>&middot; {v.composerPart}</span>
                   : null}
                 <span style={css('flex:1')} />
-                <span onClick={v.compCancel} style={css('color:#9aa1a9;cursor:pointer')}>&#10005;</span>
+                <span onClick={v.compCancel} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
               </div>
               <textarea
                 value={v.composerText}
                 onChange={v.compType}
                 maxLength={MAX_COMMENT_CHARS}
                 placeholder="e.g. gap here is 2.4 — make it 3"
-                style={css(`width:100%;box-sizing:border-box;border:none;outline:none;resize:none;padding:10px 12px;font:400 12.5px/1.5 ${SANS};color:#1c1f23;height:64px;background:transparent`)}
+                style={css(`width:100%;box-sizing:border-box;border:none;outline:none;resize:none;padding:10px 12px;font:400 12.5px/1.5 ${SANS};color:var(--text);height:64px;background:transparent`)}
               />
               <div style={css('display:flex;align-items:center;gap:6px;padding:0 12px 10px;flex-wrap:wrap')}>
-                <span style={css(`display:flex;align-items:center;gap:5px;padding:4px 8px;background:#eef1f4;border-radius:5px;font:400 10.5px ${MONO};color:#5b6470`)}>
+                <span style={css(`display:flex;align-items:center;gap:5px;padding:4px 8px;background:var(--sunken-bg);border-radius:5px;font:400 10.5px ${MONO};color:var(--text-soft)`)}>
                   <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
                   camera frame &mdash; attached automatically
                 </span>
                 <span style={css(v.compMeasChipStyle)}>&#8596; {v.compMeasText} <span onClick={v.compMeasRemove} style={css('cursor:pointer;opacity:.6')}>&#10005;</span></span>
                 <span style={css(v.compMoveChipStyle)}>&#10021; {v.compMoveText}</span>
-                <label style={css(`padding:4px 8px;border:1px dashed #c3c8cf;border-radius:5px;font:400 10.5px ${MONO};color:#8a9099;cursor:pointer`)}>
+                <label style={css(`padding:4px 8px;border:1px dashed var(--line-strong);border-radius:5px;font:400 10.5px ${MONO};color:var(--text-muted);cursor:pointer`)}>
                   {v.compPhotoName ? `photo: ${v.compPhotoName}` : '+ photo of the print'}
                   <input type="file" accept="image/jpeg,image/png,image/webp"
                          onChange={v.compPhoto} style={{ display: 'none' }} />
                 </label>
                 <span style={css('flex:1')} />
-                <span onClick={v.compSend} style={css(`padding:6px 14px;background:#1f7ae0;color:#fff;border-radius:6px;font:600 12px ${SANS};cursor:pointer`)}>Send</span>
+                <span onClick={v.compSend} style={css(`padding:6px 14px;background:var(--accent);color:var(--text-on-accent);border-radius:6px;font:600 12px ${SANS};cursor:pointer`)}>Send</span>
               </div>
             </div>
 
@@ -4025,11 +4140,11 @@ export default class HammerolaViewer extends React.Component {
               <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:10px')}>
                 <span style={css(`font:600 12.5px ${SANS}`)}>Section plane</span>
                 <span style={css('flex:1')} />
-                <span onClick={v.closeSecPop} style={css('color:#9aa1a9;cursor:pointer')}>&#10005;</span>
+                <span onClick={v.closeSecPop} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
               </div>
               <div onClick={v.pickFace} style={css(v.pickFaceStyle)}>{v.pickFaceText}</div>
-              <div style={css(`display:flex;justify-content:space-between;font:500 11px ${MONO};color:#5b6470;margin:12px 0 5px`)}>
-                <span>offset</span><span style={css('color:#1c1f23')}>{v.secOffLabel}</span>
+              <div style={css(`display:flex;justify-content:space-between;font:500 11px ${MONO};color:var(--text-soft);margin:12px 0 5px`)}>
+                <span>offset</span><span style={css('color:var(--text)')}>{v.secOffLabel}</span>
               </div>
               {/* The range is the viewport's: it comes back on `hmr:face` from the
                   model's own extent, so a 400 mm part and a 4 mm one both get a
@@ -4037,12 +4152,12 @@ export default class HammerolaViewer extends React.Component {
               <input type="range" min={v.secMin} max={v.secMax} step={v.secStep}
                      value={v.secOff} onChange={v.setSecOff} style={{ width: '100%' }} />
               <div style={css('display:flex;gap:6px;margin-top:10px')}>
-                <div onClick={v.flipSec} style={css(`flex:1;padding:6px;text-align:center;border:1px solid #d3d8de;border-radius:5px;font:500 11px ${MONO};color:#3c4147;cursor:pointer;background:#fff`)}>flip side</div>
-                <div onClick={v.resetSec} style={css(`flex:1;padding:6px;text-align:center;border:1px solid #d3d8de;border-radius:5px;font:500 11px ${MONO};color:#3c4147;cursor:pointer;background:#fff`)}>reset</div>
+                <div onClick={v.flipSec} style={css(`flex:1;padding:6px;text-align:center;border:1px solid var(--line);border-radius:5px;font:500 11px ${MONO};color:var(--text-soft);cursor:pointer;background:var(--card-bg)`)}>flip side</div>
+                <div onClick={v.resetSec} style={css(`flex:1;padding:6px;text-align:center;border:1px solid var(--line);border-radius:5px;font:500 11px ${MONO};color:var(--text-soft);cursor:pointer;background:var(--card-bg)`)}>reset</div>
               </div>
               <div onClick={v.toggleHatch} style={css('display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:11px')}>
                 <span style={css(v.hatchBox)}>{v.hatchMark}</span>
-                <span style={css(`font:400 11.5px ${SANS};color:#3c4147`)}>hatch the cut face</span>
+                <span style={css(`font:400 11.5px ${SANS};color:var(--text-soft)`)}>hatch the cut face</span>
               </div>
             </div>
 
@@ -4051,11 +4166,11 @@ export default class HammerolaViewer extends React.Component {
 
           {/* ── the comment rail ── */}
           <div style={css(v.railStyle)}>
-            <div style={css('flex:none;display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid #e3e6ea')}>
+            <div style={css('flex:none;display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line-soft)')}>
               <span style={css(`font:600 12.5px ${SANS}`)}>Comments</span>
-              <span style={css(`font:500 10.5px ${MONO};background:#e3e6ea;color:#5b6470;padding:2px 7px;border-radius:8px`)}>{v.openCount} sent here</span>
+              <span style={css(`font:500 10.5px ${MONO};background:var(--chip-bg);color:var(--text-soft);padding:2px 7px;border-radius:8px`)}>{v.openCount} sent here</span>
               <span style={css('flex:1')} />
-              <span onClick={v.railToggle} style={css('color:#9aa1a9;cursor:pointer;font-size:14px')}>&#10005;</span>
+              <span onClick={v.railToggle} style={css('color:var(--text-faint);cursor:pointer;font-size:14px')}>&#10005;</span>
             </div>
             {/* The feed still has no source ON THIS PAGE, and an empty list
                 would read as "no comments on this build" — a different
@@ -4069,7 +4184,7 @@ export default class HammerolaViewer extends React.Component {
                 lines; deciding what a pin from another revision does is the
                 feature. Until that is answered the rail states what it holds
                 rather than implying the queue is empty. */}
-            <div style={css(`flex:none;margin:10px;padding:10px 12px;background:#fdf6e3;border:1px solid #eadfc0;border-radius:7px;font:400 11.5px/1.6 ${SANS};color:#4a4436`)}>
+            <div style={css(`flex:none;margin:10px;padding:10px 12px;background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:7px;font:400 11.5px/1.6 ${SANS};color:var(--text-soft)`)}>
               This lists what was sent from this session. The full queue for the
               project is not shown here yet — a comment is pinned to a point on
               the revision it was left on, and what such a pin means on a
@@ -4080,14 +4195,14 @@ export default class HammerolaViewer extends React.Component {
                 <div key={c.key} onClick={c.onOpen} style={css(c.style)}>
                   <div style={css('display:flex;align-items:center;gap:8px')}>
                     <span style={css(c.pinStyle)}>{c.label}</span>
-                    <span style={css(`font:500 11.5px ${MONO};color:#2a2e33`)}>{c.part}</span>
+                    <span style={css(`font:500 11.5px ${MONO};color:var(--text)`)}>{c.part}</span>
                     <span style={css('flex:1')} />
-                    <span style={css(`font:400 10.5px ${MONO};color:#9aa1a9`)}>{c.time}</span>
+                    <span style={css(`font:400 10.5px ${MONO};color:var(--text-muted)`)}>{c.time}</span>
                   </div>
-                  <div style={css(`font:400 12px/1.5 ${SANS};color:#2a2e33;margin:7px 0 8px`)}>{c.text}</div>
+                  <div style={css(`font:400 12px/1.5 ${SANS};color:var(--text);margin:7px 0 8px`)}>{c.text}</div>
                   <div style={css(c.measStyle)}>&#8596; {c.meas}</div>
                   <div style={css('display:flex;align-items:center;gap:10px;margin-top:8px')}>
-                    <span onClick={c.onResolve} style={css(`font:500 10.5px ${MONO};color:#8a9099;` + (c.resolved ? 'cursor:default' : 'cursor:pointer'))}>
+                    <span onClick={c.onResolve} style={css(`font:500 10.5px ${MONO};color:var(--text-muted);` + (c.resolved ? 'cursor:default' : 'cursor:pointer'))}>
                       {c.resolved ? 'processed' : 'mark processed'}
                     </span>
                   </div>
@@ -4098,7 +4213,7 @@ export default class HammerolaViewer extends React.Component {
 
           {/* ── the tree row's context menu ── */}
           <div onClick={(e) => e.stopPropagation()} style={css(v.menuStyle)}>
-            <div style={css(`padding:7px 14px 6px;font:600 10.5px ${MONO};color:#8a9099;border-bottom:1px solid #e3e6ea`)}>{v.menuName}</div>
+            <div style={css(`padding:7px 14px 6px;font:600 10.5px ${MONO};color:var(--text-muted);border-bottom:1px solid var(--line-soft)`)}>{v.menuName}</div>
             {/* A row that carries a file is an ANCHOR and not a div: the download
                 is the browser's to do, exactly as in the header's menu, so the
                 link is a real one and can be middle-clicked or saved as. */}
@@ -4106,7 +4221,7 @@ export default class HammerolaViewer extends React.Component {
               const inner = (
                 <>
                   <span style={css('flex:1')}>{m.label}</span>
-                  <span style={css(`font:400 10.5px ${MONO};color:#b0b6bd`)}>{m.hint}</span>
+                  <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint)`)}>{m.hint}</span>
                 </>
               );
               return m.href
@@ -4118,13 +4233,13 @@ export default class HammerolaViewer extends React.Component {
           {/* ── the note editor: bound to a CATALOGUE KEY, for the project ── */}
           <div onClick={(e) => e.stopPropagation()} style={css(v.notePopStyle)}>
             <div style={css(`font:600 12px ${SANS};margin-bottom:2px`)}>
-              Note &middot; <span style={css(`font:500 11.5px ${MONO};color:#5b6470`)}>{v.notePopName}</span>
+              Note &middot; <span style={css(`font:500 11.5px ${MONO};color:var(--text-soft)`)}>{v.notePopName}</span>
             </div>
             <textarea
               value={v.noteDraft}
               onChange={v.noteType}
               placeholder="e.g. thin wall here — do not touch"
-              style={css(`width:100%;box-sizing:border-box;border:1px solid #d3d8de;border-radius:6px;outline:none;resize:none;padding:8px 10px;font:400 12px/1.5 ${SANS};height:64px;background:#fff`)}
+              style={css(`width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;outline:none;resize:none;padding:8px 10px;font:400 12px/1.5 ${SANS};height:64px;background:var(--card-bg)`)}
             />
             {/* Half of this used to be false: it said the hub has no endpoint
                 for notes, and the hub now publishes the AUTHOR's. What is still
@@ -4133,13 +4248,13 @@ export default class HammerolaViewer extends React.Component {
                 a note that has to travel is written instead. Somebody who wants
                 the next reader to see what they just typed needs that address
                 more than they need to know what this box does not do. */}
-            <div style={css(`font:400 10.5px/1.5 ${MONO};color:#9aa1a9;margin-top:6px`)}>
+            <div style={css(`font:400 10.5px/1.5 ${MONO};color:var(--text-muted);margin-top:6px`)}>
               stays in this browser &mdash; nothing sends it to the hub. A note that
               travels with the build, for everyone who opens it, is written in model.py
             </div>
             <div style={css('display:flex;gap:8px;justify-content:flex-end;margin-top:8px')}>
-              <span onClick={v.noteCancel} style={css(`padding:6px 12px;border-radius:6px;font:500 11.5px ${SANS};color:#5b6470;cursor:pointer`)}>Cancel</span>
-              <span onClick={v.noteSave} style={css(`padding:6px 14px;background:#1f7ae0;color:#fff;border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`)}>Save</span>
+              <span onClick={v.noteCancel} style={css(`padding:6px 12px;border-radius:6px;font:500 11.5px ${SANS};color:var(--text-soft);cursor:pointer`)}>Cancel</span>
+              <span onClick={v.noteSave} style={css(`padding:6px 14px;background:var(--accent);color:var(--text-on-accent);border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`)}>Save</span>
             </div>
           </div>
 

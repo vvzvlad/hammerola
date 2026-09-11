@@ -1,10 +1,23 @@
 <!doctype html>
-<html lang="en"><head>
+<!-- `data-theme` is written by the server from the reader's cookie before this
+     document is sent; the word in the file is the default the hub answers with
+     when there is no cookie. It matters more here than on the other two pages:
+     this one runs no bundle and reads no storage, so an attribute it arrived
+     with is the ONLY way it can know which theme it is in. templates/build.html
+     carries the long version. -->
+<html lang="en" data-theme="light"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>hammerola</title>
 <!-- A browser handed this link stops asking for /favicon.ico, which is what
      keeps two 404s out of the log on every single page load. -->
 <link rel="icon" type="image/svg+xml" href="/_v/favicon.svg">
+<!-- The palette first, the chrome that spends it second. Both are stylesheets
+     this page waits for, and it is the one page here with a reason to count
+     them: its whole job is to leave quickly. They are two files rather than one
+     because tokens.css is shared with the two pages that must NOT take site.css
+     — that file's `overflow:hidden` and flex body belong to this document
+     alone, and the front page's card grid scrolls. -->
+<link rel="stylesheet" href="/_v/tokens.css">
 <link rel="stylesheet" href="/_v/site.css">
 </head><body>
 <!-- /project/<pid>/ — the URL that names no pointer, and therefore the only one
@@ -23,22 +36,18 @@
      together (ui/tests/chrome.test.js, which imports what the interface
      actually uses and compares it against this file and that one).
 
-     The link colour is part of the copy too, and it is one of the two values in
-     it that NOTHING CHECKS. #1f6fd0 is the site's accent blue, with several
-     copies inside the bundle (HammerolaEntry.jsx and HammerolaViewer.jsx) whose
-     number nothing holds and which is therefore not written down, and this
-     page takes exactly it -- so moving the accent there leaves the resolver on
-     the old blue silently, which is the class of failure the four imported
-     constants exist to prevent. It is a known gap, not a checked value:
-     ui/src/style.jsx says what promoting it would cost, and site.css lists it
-     beside the other unchecked one. (The interface's header does have a link,
-     `all projects` in HammerolaViewer.jsx -- it just inherits its colour, which
-     is why there is no constant to compare against rather than no link.)
+     The link colour used to be the worst of that copying and is no longer a
+     copy at all: #1f6fd0 was written here, #1f7ae0 in the bundle, and nothing
+     anywhere compared the two -- so the site's accent had already drifted into
+     two blues that nobody could see side by side. This link is
+     `var(--accent-text)` now, the role tokens.css names for blue ink on a page
+     (the fill a button takes is `--accent`, which is a different job and moves
+     differently in the dark theme), and there is one definition of each.
 
      What the colour has to satisfy regardless is the half of "still works with
      no script" that is easy to ship broken: a visited link has to stay readable
-     on the background under it, which is now the interface's #eceef1 and was,
-     for as long as this page carried the old dark chrome, #1e1e1e.
+     on the background under it, which is `var(--page-bg)` in whichever theme
+     this page arrived in.
 
      The link is not decoration. It is what is left when the script does not
      run, and a reader who lands on a page with no way forward is worse off than
@@ -54,16 +63,19 @@
      BOTH OF THOSE ARE COPIES OF A THIRD THING, brand/mark-on-light.svg, which
      is the drawing the designer sent; ui/tests/chrome.test.js holds all three
      to each other, element for element. So this is transcribed from the file
-     and not eyeballed from the component, and the inks are the light-page pair
-     because this page is light like the rest of the interface.
+     and not eyeballed from the component, and the inks written in the
+     attributes below are the light-page pair, exactly as that file has them.
 
-     THE INK IS WRITTEN OUT AND THE THEME IS NOT CONSULTED. There is a second
-     ink for a dark background (brand/mark-on-dark.svg) and this page will need
-     it when issue #35 lands, but it cannot pick between them today: it
-     reads no localStorage, runs no bundle, and its whole point is to be gone
-     before a script could repaint anything. Whatever answers that for
-     site.css's palette has to answer it here in the same commit -- issue #35
-     names this page for exactly that reason. -->
+     THE INK IN THE MARKUP IS THE LIGHT ONE AND THE THEME OVERRIDES IT FROM CSS.
+     This page cannot choose between the two drawings itself -- it reads no
+     storage, runs no bundle, and its whole point is to be gone before a script
+     could repaint anything -- but it no longer has to: the server stamps
+     `data-theme` on the root element from the reader's cookie, and site.css
+     repaints these shapes from `--mark-ink` / `--mark-hole`, whose dark values are
+     brand/mark-on-dark.svg's inks. A presentation attribute loses to any rule
+     in a stylesheet, so the attributes stay as the designer's file has them --
+     which is what keeps the element-for-element comparison honest -- and the
+     dark page still gets the dark mark (issue #35). -->
 <div id="bar"><span class="mark">
     <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
       <rect x="11" y="5" width="9" height="38" fill="#1c1f23"/>

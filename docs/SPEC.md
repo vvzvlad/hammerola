@@ -978,7 +978,7 @@ artifacts`.
 | `/project/<pid>/<commit>/` и `.../index.html` — сама страница | `no-cache` |
 | `/project/<pid>/latest/*` и `/project/<pid>/dev/*` | `no-cache` |
 | `/_v/three-cad-viewer.*` | `public, max-age=31536000, immutable` |
-| `/_v/hammerola.js`, `/_v/pointer.js`, `/_v/site.css` | `no-cache` |
+| `/_v/hammerola.js`, `/_v/pointer.js`, `/_v/tokens.css`, `/_v/site.css` | `no-cache` |
 | `/`, `/index.json`, `/project/<pid>/builds.json` | `no-cache` |
 | `/api/v1/jobs/<id>` и `/api/v1/jobs/<id>/log` | `no-cache` |
 | `/api/v1/sources/<revision>` и `/api/v1/sources/<revision>/log` | `no-cache` |

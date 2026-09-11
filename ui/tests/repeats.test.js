@@ -504,7 +504,7 @@ describe('the selection the viewport is given', () => {
     expect(synced(c).selected).toEqual(PIN_PATHS)
     // And the row draws as the selected one, which is the half a raw path would
     // have lost: `/model/pin(3)` is the id of no row at all.
-    expect(rowFor(c, '/model/pin').rowStyle).toContain('#cfe6fb')
+    expect(rowFor(c, '/model/pin').rowStyle).toContain('var(--accent-bg)')
   })
 
   it('draws the row highlighted for a copy\'s path the pick never resolved', () => {
@@ -516,12 +516,12 @@ describe('the selection the viewport is given', () => {
     // the two halves of one selection would disagree on screen.
     const c = component(THREE_PINS, { sel: '/model/pin(2)' })
     expect(synced(c).selected).toEqual(PIN_PATHS)
-    expect(rowFor(c, '/model/pin').rowStyle).toContain('#cfe6fb')
+    expect(rowFor(c, '/model/pin').rowStyle).toContain('var(--accent-bg)')
 
     // And a path no row claims still highlights nothing, which is what the raw
     // comparison did too: `node()` answers null and a row is always an object.
     const stale = component(THREE_PINS, { sel: '/elsewhere/x' })
-    expect(stale.computed().rows.filter((r) => r.rowStyle.includes('#cfe6fb')))
+    expect(stale.computed().rows.filter((r) => r.rowStyle.includes('var(--accent-bg)')))
       .toEqual([])
   })
 

@@ -287,6 +287,41 @@ describe('the build picker', () => {
     expect(rows([{ commit: REV, built: '2026-08-27T18:20:00Z' }])[0].id).toBe('e05f73b')
   })
 
+  it('marks the revision you are ON more faintly than the row you PICKED', () => {
+    // TWO BLUE WASHES A FEW PIXELS APART, saying two different things: this row
+    // is the build the address names, and the tree's highlighted row is the
+    // part the reader just clicked. Nothing but WEIGHT tells them apart — same
+    // hue, same shape, adjacent panels — so the two must not resolve to one
+    // token.
+    //
+    // WHICH IS EXACTLY WHAT THE PALETTE CONVERSION DID (issue #35). Three blue
+    // tints in this file collapsed onto `--accent-bg` on the way to tokens.css,
+    // this row's `#f0f6fd` among them, and the result reads perfectly well —
+    // one shade of blue, correct in both themes, with a distinction the reader
+    // had been using quietly deleted. That is the failure this asserts against,
+    // and it is invisible to every other test here: the row still has a
+    // background, the page still renders, both themes still agree.
+    //
+    // The TOKENS and not their values, because the values are in
+    // static/_v/tokens.css and that file's own tests hold the two apart there.
+    // What this owns is that the two CALL SITES keep asking for different ones.
+    const c = picker()
+    c.state.sel = '/model'
+    const v = c.computed()
+
+    const current = v.revRows.find((r) => r.key === REV)
+    const [row] = v.rows
+    const tokenOf = (style) => (style.match(/background:(var\(--[\w-]+\))/) || [])[1]
+
+    expect(tokenOf(current.style), 'the current revision row draws no background')
+      .toBeTruthy()
+    expect(tokenOf(row.rowStyle), 'the selected tree row draws no background')
+      .toBeTruthy()
+    expect(tokenOf(current.style),
+      'the row you are on and the row you picked are painted the same')
+      .not.toBe(tokenOf(row.rowStyle))
+  })
+
   // -- and what happens when one is picked -----------------------------------
 
   const OTHER = '7b1c0d4a2e6f8901234567890abcdef0123456789abcdef0123456789abcdef0'

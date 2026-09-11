@@ -199,6 +199,17 @@ FAVICON_ASSET = "favicon.svg"
 # `render.check_view_file`.
 CSP_HTML = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
 
+# What every one of the three HTML pages carries besides the headers on every
+# reply, and the reason it is a constant rather than three literals: the pages
+# are rendered in the theme the reader's cookie asks for (`render.cookie_theme`),
+# so the SAME URL answers with two different documents. `Vary: Cookie` is what
+# tells a cache — the browser's own, and any proxy in front of this hub — that it
+# may not hand a dark page to the next reader. The pages are `no-cache` anyway,
+# which makes this belt and braces rather than the only thing holding it: a
+# `no-cache` response may still be STORED and revalidated, and it is the stored
+# copy this header is about.
+PAGE_HEADERS = {"Vary": "Cookie"}
+
 # Per-connection socket timeout, in seconds. See HubHandler.timeout below.
 SOCKET_TIMEOUT = 30
 
@@ -504,9 +515,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
 
             try:
                 if not segments:
-                    return self._serve_bytes(
-                        render.index_page_html().encode("utf-8"),
-                        "text/html; charset=utf-8", CACHE_NONE, with_body)
+                    return self._serve_page(render.index_page_html, with_body)
 
                 head = segments[0]
                 if head == "health" and len(segments) == 1:
@@ -546,9 +555,21 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
 
             return self._error(404, "not found", with_body=with_body)
 
-        def _serve_bytes(self, body: bytes, content_type: str, cache: str,
-                         with_body: bool):
-            self._send(200, body, content_type, cache, with_body=with_body)
+        def _serve_page(self, page, with_body: bool):
+            """One of the three HTML documents, in this reader's own theme.
+
+            ONE PLACE FOR ALL THREE, and that is what the helper buys. Every page
+            here answers differently depending on one cookie, and three things
+            have to be true of each of them: the theme comes from the request, the
+            reply says `Vary: Cookie`, and neither is left out of the next page
+            somebody adds. `page` names only WHICH template — everything else is
+            decided here, so the three call sites have nothing left to disagree
+            about.
+            """
+            theme = render.cookie_theme(self.headers.get("Cookie", ""))
+            self._send(200, page(theme).encode("utf-8"), HTML_TYPE, CACHE_NONE,
+                       PAGE_HEADERS, with_body)
+            return None
 
         def _serve_index_json(self, with_body: bool):
             """The project cards — EDIT_TOKEN. Absent until the first push.
@@ -849,8 +870,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 resolved.relative_to(store.root)
             except (OSError, ValueError):
                 return self._error(404, "not found", with_body=with_body)
-            return self._serve_bytes(render.build_page_html().encode("utf-8"),
-                                     HTML_TYPE, CACHE_NONE, with_body)
+            return self._serve_page(render.build_page_html, with_body)
 
         def _serve_pointer_page(self, pid: str, with_body: bool):
             """`/project/<pid>/` — the tiny page that picks a pointer (SPEC 9).
@@ -867,9 +887,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             """
             if not (store.projects_dir / pid).is_dir():
                 return self._error(404, "not found", with_body=with_body)
-            return self._serve_bytes(
-                render.pointer_page_html().encode("utf-8"),
-                HTML_TYPE, CACHE_NONE, with_body)
+            return self._serve_page(render.pointer_page_html, with_body)
 
         def _redirect(self, location: str, with_body: bool):
             self._json(302, {"location": location}, CACHE_NONE,

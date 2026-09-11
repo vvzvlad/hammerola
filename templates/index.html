@@ -1,5 +1,9 @@
 <!doctype html>
-<html lang="en"><head>
+<!-- `data-theme` is written by the server from the reader's cookie before this
+     document is sent; the word in the file is the default the hub answers with
+     when there is no cookie. templates/build.html carries the long version of
+     why it is on the root element and not on the body. -->
+<html lang="en" data-theme="light"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>hammerola</title>
 <!-- A browser handed this link stops asking for /favicon.ico, which is what
@@ -14,19 +18,16 @@
 
      The library's own stylesheet is not linked either. That one belongs to the
      3D viewport, which this page does not mount. -->
-<!-- The page colour, before there is a page: everything in this document is
-     drawn by the bundle, and until that has been fetched, parsed and rendered
-     the body has no background and the browser paints it white. Two
-     declarations inline rather than a stylesheet, because a `<link>` on the
-     critical path would be a round trip to say what the markup says for free,
-     and the CSP allows it (`style-src 'self' 'unsafe-inline'`, src/app.py).
+<!-- The palette, and with it the page colour before there is a page: everything
+     in this document is drawn by the bundle, and until that has been fetched,
+     parsed and rendered the body has no background and the browser paints it
+     white. This file is the ONE place the palette is written down — all three
+     documents link it, which is what stops one of them being left behind on a
+     colour the other two have moved off.
 
-     No ordering constraint here, unlike build.html: this page links no
-     stylesheet at all, so there is nothing for this rule to come after. The
-     values are `PAGE_BG` / `PAGE_FG` from ui/src/style.jsx, and
-     `ui/tests/chrome.test.js` holds this copy, build.html's and the resolver's
-     to them. -->
-<style>html,body{background:#eceef1;color:#1c1f23}</style>
+     No ordering constraint here, unlike build.html: this page links no other
+     stylesheet at all, so there is nothing for these rules to come after. -->
+<link rel="stylesheet" href="/_v/tokens.css">
 </head><body>
 <!-- The whole page. The bundle looks this id up and does nothing at all when it
      is absent, which is what keeps pointer.html unaffected by it; build.html

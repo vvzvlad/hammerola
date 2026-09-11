@@ -342,11 +342,11 @@ function recentre(viewer, g) {
 /** Face fill: lighter the more squarely the face faces the reader.
  *
  * OPAQUE, AND THE SAME IN BOTH THEMES on purpose. The canvas under this widget
- * is white or near-black depending on the reader's answer (THEME_KEY in
- * options.js), so the cube brings its own ground instead of borrowing one: light
- * grey faces inside a dark outline read on either. A theme-dependent palette
- * would have to be measured against both canvases, and nothing here has been
- * measured.
+ * is white or near-black depending on the reader's answer (`readTheme` in
+ * ui/src/store.js), so the cube brings its own ground instead of borrowing
+ * one: light grey faces inside a dark outline read on either. A palette that
+ * followed the theme would have to be measured against both canvases, and
+ * nothing here has been measured.
  */
 function shade(nz) {
   const value = 214 + Math.round(32 * Math.min(1, Math.max(0, nz)));
