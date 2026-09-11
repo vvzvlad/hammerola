@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  cameraBasis, canvasXY, ndcAt, ndcOffset, panCamera, projectPoint,
+  cameraBasis, canvasXY, ndcAt, ndcOffset, ndcRay, panCamera, projectPoint,
 } from '../src/viewport/camera.js'
 import { dot3 } from '../src/viewport/math.js'
 import { eventAt, fakeViewer, orthoCamera } from './fakes.js'
@@ -146,6 +146,76 @@ describe('ndcOffset', () => {
     const { viewer, g } = scene()
     const b = cameraBasis(viewer, g)
     expect(ndcOffset(g, b.eye, b.view, NaN, 0)).toBeNull()
+  })
+})
+
+describe('ndcRay', () => {
+  // Same discipline as `ndcOffset` above: the ray is not compared against a
+  // second copy of the formula, it is asked the one thing a ray is for — does
+  // every point of it come back to the pixel it was built from.
+  const along = (ray, t) => [ray.origin[0] + t * ray.dir[0],
+                             ray.origin[1] + t * ray.dir[1],
+                             ray.origin[2] + t * ray.dir[2]]
+
+  it('is a ray whose every point projects back to its own pixel, under ortho', () => {
+    const { camera, viewer, g } = scene()
+    const b = cameraBasis(viewer, g)
+    const ndc = [0.4, -0.7]
+    const ray = ndcRay(g, b.eye, b.view, ndc[0], ndc[1])
+    for (const t of [-25, 0, 12, 90]) {
+      const back = camera.project(along(ray, t))
+      expect(back[0]).toBeCloseTo(ndc[0], 10)
+      expect(back[1]).toBeCloseTo(ndc[1], 10)
+    }
+  })
+
+  it('runs along the view axis under ortho, whatever pixel it was asked about', () => {
+    // The half a section cut leans on: with the camera parallel-projecting, two
+    // pixels see the same direction and differ only in where their ray starts.
+    const { viewer, g } = scene()
+    const b = cameraBasis(viewer, g)
+    const left = ndcRay(g, b.eye, b.view, -0.9, 0.2)
+    const right = ndcRay(g, b.eye, b.view, 0.9, -0.2)
+    expect(left.dir).toEqual(b.view)
+    expect(right.dir).toEqual(b.view)
+    expect(left.origin).not.toEqual(right.origin)
+  })
+
+  it('does NOT start every ortho ray at the eye', () => {
+    // The regression the ortho branch exists for: an eye-origin ray answers the
+    // middle of the screen for every pixel on it, so a cut face would resolve to
+    // whichever part happens to sit in the centre of the view.
+    const { viewer, g } = scene()
+    const b = cameraBasis(viewer, g)
+    const ray = ndcRay(g, b.eye, b.view, 0.6, 0.6)
+    expect(ray.origin).not.toEqual(b.C)
+  })
+
+  it('leaves the eye it borrowed where it was', () => {
+    // `unproject` transforms IN PLACE, so the vector the library handed back is
+    // cloned before it is overwritten — the same borrowed-Vector3 trick
+    // `ndcOffset` uses, and the same thing to get wrong.
+    const { viewer, g } = scene()
+    const b = cameraBasis(viewer, g)
+    const before = [b.eye.x, b.eye.y, b.eye.z]
+    ndcRay(g, b.eye, b.view, 0.3, 0.3)
+    expect([b.eye.x, b.eye.y, b.eye.z]).toEqual(before)
+  })
+
+  it('declines a camera that is not orthographic', () => {
+    // The viewport's standing answer to a non-ortho camera, the same one
+    // `gestureInternals` gives: decline. Nothing here serves perspective, so
+    // nothing here may quietly hand back an ortho ray for one.
+    const { viewer, g } = scene()
+    const b = cameraBasis(viewer, g)
+    g.cam.isOrthographicCamera = false
+    expect(ndcRay(g, b.eye, b.view, 0.4, -0.7)).toBeNull()
+  })
+
+  it('is null when the projection comes back unusable', () => {
+    const { viewer, g } = scene()
+    const b = cameraBasis(viewer, g)
+    expect(ndcRay(g, b.eye, b.view, NaN, 0)).toBeNull()
   })
 })
 

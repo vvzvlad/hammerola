@@ -77,6 +77,35 @@ export function ndcOffset(g, eye, view, nx, ny) {
 }
 
 /**
+ * The world ray a canvas pixel looks along, as `{ origin, dir }` with `dir` a
+ * unit vector — or null, ORTHO ONLY.
+ *
+ * The companion of `ndcOffset`, built out of the same single `unproject` call and
+ * for the same reason: it goes through the matrix the camera is actually drawing
+ * with, so an off-centre or offset frustum needs no handling of its own here.
+ * What the two do with the point differs because what they are asked differs. A
+ * pan wants the depth along the view axis REMOVED; a ray wants it to be
+ * irrelevant, and under ortho it is: every point of a pixel's ray carries the
+ * same offset from the camera, so the unprojected point IS a point on the ray
+ * and the direction is the view axis. Taking the eye as the origin instead would
+ * send the ray down the middle of the screen whatever pixel was asked about.
+ *
+ * A camera that is not orthographic is DECLINED rather than served, which is
+ * this viewport's standing answer to that question — `gestureInternals`
+ * (internals.js) refuses the same way and says why at length. The viewport is
+ * ortho by construction (options.js), so a perspective branch here would be code
+ * nothing can reach and no test can honestly exercise.
+ */
+export function ndcRay(g, eye, view, nx, ny) {
+  if (!g.cam.isOrthographicCamera) return null;
+  const p = eye.clone().set(nx, ny, 0).unproject(g.cam);
+  if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)
+      || !Number.isFinite(p.z)) return null;
+  return view && view.every(Number.isFinite)
+    ? { origin: [p.x, p.y, p.z], dir: view } : null;
+}
+
+/**
  * Move camera and target by the SAME world vector — a pure pan.
  *
  * Why every gesture here ends up in this call and not in something cleverer: the

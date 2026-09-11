@@ -18,7 +18,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { internals } from '../src/viewport/internals.js'
 import { GHOST_OPACITY } from '../src/viewport/options.js'
 import {
-  OUTLINE_NAME, clearSectionOutlines, sectionOutline,
+  OUTLINE_NAME, clearSectionOutlines, insideSection, sectionOutline,
+  sectionSegments,
 } from '../src/viewport/outline.js'
 import {
   applyGhost, applyHidden, movePart, resetMoves,
@@ -547,6 +548,211 @@ describe('the outline under the part passes', () => {
     resetMoves(vp)
     expect(outline.geometry.setPositionsCalls).toBe(3)
     expect(outline.geometry.instanceCount).toBe(8)
+  })
+})
+
+describe('sectionSegments', () => {
+  // The same intersection the contour draws, handed back in WORLD coordinates
+  // instead of laid into the solid's own group — which is what lets a question
+  // asked in the world ("is the cursor's point inside this cut face") be
+  // answered without inverting the solid's matrix.
+
+  /** Every segment as a pair of points, off the flat xyz xyz list. */
+  const pairs = (flat) => {
+    const out = []
+    for (let at = 0; at < flat.length; at += 6) {
+      out.push([[flat[at], flat[at + 1], flat[at + 2]],
+                [flat[at + 3], flat[at + 4], flat[at + 5]]])
+    }
+    return out
+  }
+
+  // The plane z = 1 as the library carries one: `distanceToPoint(p) = n . p + c`.
+  const AT_Z1 = { normal: [0, 0, 1], constant: -1 }
+
+  it('cuts the cube along the square the plane crosses it in', () => {
+    const { solid } = cubeScene()
+    const segments = pairs(
+      sectionSegments(solid.front, AT_Z1.normal, AT_Z1.constant))
+    expect(segments).toHaveLength(8)
+    expect(totalLength(segments)).toBeCloseTo(8, 9)
+    for (const [p, q] of segments) {
+      expect(p[2]).toBeCloseTo(1, 9)
+      expect(q[2]).toBeCloseTo(1, 9)
+      for (const point of [p, q]) {
+        expect(point[0]).toBeGreaterThanOrEqual(-1e-9)
+        expect(point[0]).toBeLessThanOrEqual(2 + 1e-9)
+        expect(point[1]).toBeGreaterThanOrEqual(-1e-9)
+        expect(point[1]).toBeLessThanOrEqual(2 + 1e-9)
+      }
+    }
+  })
+
+  it('answers in WORLD coordinates, so a moved part reports where it now is', () => {
+    // The whole reason this exists beside the contour. The contour hangs off the
+    // solid's group and lets the scene graph place it; nothing places this, so a
+    // local answer would put a part that has been dragged five units away back
+    // at the origin and the menu would open on it from the wrong pixel.
+    const { solid } = cubeScene({ matrix: fakeMatrix({ position: [5, 0, 0] }) })
+    const segments = pairs(
+      sectionSegments(solid.front, AT_Z1.normal, AT_Z1.constant))
+    expect(segments).toHaveLength(8)
+    for (const [p, q] of segments) {
+      for (const point of [p, q]) {
+        expect(point[0]).toBeGreaterThanOrEqual(5 - 1e-9)
+        expect(point[0]).toBeLessThanOrEqual(7 + 1e-9)
+      }
+    }
+  })
+
+  it('carries a ROTATION, which a transposed lift would mirror', () => {
+    // Every other matrix in this block is diagonal, and a diagonal matrix reads
+    // the same down a column as across a row — so transposing the lift survives
+    // them all. Rz(90 degrees): local (x, y, z) lands at world (-y, x, z).
+    //
+    // The world plane y = 1 is the solid's local x = 1, so the cut is the local
+    // square in (y, z), and lifting it puts every point at world y = 1 with
+    // world x in [-2, 0]. Read down the rows instead and the segments come back
+    // at world y = -1: the same shape, mirrored onto the wrong side of the part.
+    const { solid } = cubeScene({
+      matrix: { elements: [0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
+    })
+    const segments = pairs(sectionSegments(solid.front, [0, 1, 0], -1))
+    expect(segments).toHaveLength(8)
+    expect(totalLength(segments)).toBeCloseTo(8, 9)
+    for (const [p, q] of segments) {
+      for (const point of [p, q]) {
+        expect(point[1]).toBeCloseTo(1, 9)
+        expect(point[0]).toBeGreaterThanOrEqual(-2 - 1e-9)
+        expect(point[0]).toBeLessThanOrEqual(1e-9)
+      }
+    }
+  })
+
+  it('carries the matrix SCALE too, not only the translation', () => {
+    const { solid } = cubeScene({ matrix: fakeMatrix({ scale: [3, 3, 3] }) })
+    // The cube now spans [0,6]^3, so the plane z = 1 still crosses it and the
+    // square it cuts is three times as wide.
+    const segments = pairs(
+      sectionSegments(solid.front, AT_Z1.normal, AT_Z1.constant))
+    expect(totalLength(segments)).toBeCloseTo(24, 9)
+  })
+
+  it('is empty when the plane misses the solid altogether', () => {
+    const { solid } = cubeScene()
+    expect(sectionSegments(solid.front, [0, 0, 1], -9)).toHaveLength(0)
+  })
+
+  it('is null when there is no tessellation to intersect', () => {
+    expect(sectionSegments({ matrixWorld: fakeMatrix() }, [0, 0, 1], -1)).toBeNull()
+    expect(sectionSegments(null, [0, 0, 1], -1)).toBeNull()
+  })
+
+  it('is null for a plane with no constant, rather than a buffer of NaN', () => {
+    const { solid } = cubeScene()
+    expect(sectionSegments(solid.front, [0, 0, 1], undefined)).toBeNull()
+  })
+})
+
+describe('insideSection', () => {
+  // A pure predicate, so it is fed shapes directly rather than through a solid:
+  // the cases that matter — a hole, an unordered buffer, a degenerate segment —
+  // are awkward to reach through a tessellation and trivial to state here.
+
+  /** A closed loop in the plane z = 1, as the flat `xyz xyz` list the predicate
+   *  eats: each corner to the next, wrapping. */
+  const loop = (points, z = 1) => {
+    const flat = []
+    for (let i = 0; i < points.length; i += 1) {
+      const a = points[i]
+      const b = points[(i + 1) % points.length]
+      flat.push(a[0], a[1], z, b[0], b[1], z)
+    }
+    return flat
+  }
+  const UP = [0, 0, 1]
+  const SQUARE = [[0, 0], [2, 0], [2, 2], [0, 2]]
+  const buffer = (...loops) => new Float32Array(loops.flat())
+
+  it('says yes inside the shape and no outside it', () => {
+    const shape = buffer(loop(SQUARE))
+    expect(insideSection(shape, [1, 1, 1], UP)).toBe(true)
+    expect(insideSection(shape, [5, 1, 1], UP)).toBe(false)
+    expect(insideSection(shape, [1, -3, 1], UP)).toBe(false)
+    // Just inside and just outside the same edge, so a test that answered
+    // "somewhere near the shape" fails here.
+    expect(insideSection(shape, [1.99, 1, 1], UP)).toBe(true)
+    expect(insideSection(shape, [2.01, 1, 1], UP)).toBe(false)
+  })
+
+  it('reads a hole as outside, which is what the reader sees there', () => {
+    // A cross-section is a set of CLOSED LOOPS and a hole is one of them, so
+    // parity gets this right with no notion of which loop is which: a point in
+    // the hole crosses the boundary twice.
+    const shape = buffer(loop(SQUARE), loop([[0.5, 0.5], [1.5, 0.5],
+                                             [1.5, 1.5], [0.5, 1.5]]))
+    expect(insideSection(shape, [1, 1, 1], UP)).toBe(false)
+    expect(insideSection(shape, [0.25, 1, 1], UP)).toBe(true)
+  })
+
+  it('does not care what order the segments arrive in', () => {
+    // `planeThroughTriangles` emits one chord per triangle, in triangle order,
+    // so the loops it produces are not walked round — and this is the property
+    // that lets its output be used as it stands.
+    const ordered = loop(SQUARE)
+    const shuffled = []
+    for (const at of [3, 0, 2, 1]) {
+      shuffled.push(...ordered.slice(at * 6, at * 6 + 6))
+    }
+    // ...and one of them reversed end for end, which a walk would also trip on.
+    const [ax, ay, az, bx, by, bz] = shuffled.slice(0, 6)
+    shuffled.splice(0, 6, bx, by, bz, ax, ay, az)
+    expect(insideSection(new Float32Array(shuffled), [1, 1, 1], UP)).toBe(true)
+    expect(insideSection(new Float32Array(shuffled), [3, 1, 1], UP)).toBe(false)
+  })
+
+  it('ignores the zero-length segments a vertex on the plane produces', () => {
+    // `planeThroughTriangles` emits those deliberately (its own note says why
+    // they are harmless to the fat-line shader); here they must not toggle
+    // parity, which would turn a point inside the shape into a point outside it.
+    const shape = buffer(loop(SQUARE), [1, 1, 1, 1, 1, 1, 0.5, 0.5, 1, 0.5, 0.5, 1])
+    // THE SAME THREE ANSWERS THE BARE SQUARE GIVES, asked of a buffer that also
+    // carries two degenerate segments — one of them sitting exactly on the ray
+    // the first probe casts. Stated as a whole answer rather than as one `true`,
+    // because "the degenerates changed nothing" is only worth anything if the
+    // reading is discriminating in the first place.
+    expect(insideSection(shape, [1, 1, 1], UP)).toBe(true)
+    expect(insideSection(shape, [1, -3, 1], UP)).toBe(false)
+    expect(insideSection(shape, [5, 1, 1], UP)).toBe(false)
+  })
+
+  it('works on a plane no world axis is parallel to', () => {
+    // The in-plane basis is derived from the normal, and a projection that
+    // ignored it would collapse this plane onto a LINE: it stands vertically,
+    // through the world z axis, so dropping z takes every one of its points onto
+    // the diagonal y = x and parity stops meaning anything.
+    //
+    // The same square as above, laid into that plane: `a` runs along the
+    // in-plane horizontal and `b` straight up.
+    const k = Math.SQRT1_2
+    const put = ([a, b]) => [a * k, a * k, b]
+    const corners = SQUARE.map(put)
+    const flat = []
+    for (let i = 0; i < corners.length; i += 1) {
+      flat.push(...corners[i], ...corners[(i + 1) % corners.length])
+    }
+    const shape = new Float32Array(flat)
+    const normal = [k, -k, 0]
+    expect(insideSection(shape, put([1, 1]), normal)).toBe(true)
+    expect(insideSection(shape, put([5, 1]), normal)).toBe(false)
+    expect(insideSection(shape, put([1, 5]), normal)).toBe(false)
+  })
+
+  it('refuses a buffer too short to close a loop, and a normal with no direction', () => {
+    expect(insideSection(new Float32Array([0, 0, 1, 2, 0, 1]), [1, 1, 1], UP))
+      .toBe(false)
+    expect(insideSection(null, [1, 1, 1], UP)).toBe(false)
+    expect(insideSection(buffer(loop(SQUARE)), [1, 1, 1], [0, 0, 0])).toBe(false)
   })
 })
 

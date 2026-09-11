@@ -36,12 +36,15 @@ vi.mock('../src/viewport/picking.js', async (importOriginal) => ({
 
 import { HmrViewport } from '../src/viewport/element.js'
 import { EVENT_FACE, EVENT_MENU, EVENT_MOVED, EVENT_PICK } from '../src/viewport/events.js'
+import { projectPoint } from '../src/viewport/camera.js'
 import { internals } from '../src/viewport/internals.js'
 import { CLICK_PX } from '../src/viewport/options.js'
 import { faceNormalAt, pickEntity } from '../src/viewport/picking.js'
 import { placeSectionPlane, sectionOffset } from '../src/viewport/section.js'
 import { installTools } from '../src/viewport/tools.js'
-import { fakeGroup, fakeViewer, fakeViewport } from './fakes.js'
+import {
+  fakeCapUnits, fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
+} from './fakes.js'
 
 const teardowns = []
 
@@ -292,6 +295,123 @@ describe('the right button: a menu or a pan', () => {
 
     expect(details(vp, EVENT_MENU)).toHaveLength(1)
     expect(faceNormalAt).not.toHaveBeenCalled()
+  })
+
+  describe('with a section cut standing', () => {
+    // ISSUE #73. The stencil cap that closes a cut off carries no component id,
+    // so the picker reads straight through it to whatever lies behind — measured
+    // in a browser, the cut face of `plate` answered `reference_spacer`. The
+    // menu therefore asks about the cut face FIRST, and only while a cut stands.
+    //
+    // `pickEntity` is the mock this file already installs, and here it is the
+    // WITNESS: whether it was consulted at all is what says which of the two
+    // paths a press took.
+
+    // The suite's 10 mm cube, tessellated as outline.test.js has it.
+    const CUBE_POSITIONS = new Float32Array([
+      0, 0, 0, 2, 0, 0, 2, 2, 0, 0, 2, 0,
+      0, 0, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2,
+    ])
+    const CUBE_INDEX = new Uint32Array([
+      0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7,
+      0, 5, 4, 0, 1, 5, 3, 2, 6, 3, 6, 7,
+      0, 3, 7, 0, 7, 4, 1, 2, 6, 1, 6, 5,
+    ])
+    const RECT = { left: 0, top: 0, width: 800, height: 600 }
+
+    /** A viewport over one cube, looking down -Z, with the real cut laid on its
+     *  +z face. `standing` is the renderer's clipping flag: switched off, the
+     *  plane and the seed stay exactly where they are and nothing is cut — the
+     *  state `suspendSectionCut` leaves behind. */
+    function plateScene({ standing = true } = {}) {
+      const camera = orthoCamera({
+        eye: [0, 0, 80], right: [1, 0, 0], up: [0, 1, 0], forward: [0, 0, -1],
+      })
+      const solid = fakeShapeSolid('model|plate', {
+        positions: CUBE_POSITIONS, index: CUBE_INDEX,
+      })
+      const viewer = fakeViewer({
+        camera, groups: { '/model/plate': solid },
+        capUnits: fakeCapUnits([solid]), rect: RECT,
+      })
+      const vp = toolViewport({ tool: null }, viewer)
+      expect(placeSectionPlane(vp, internals(viewer), [0, 0, 1], [1, 1, 1]))
+        .toBe(true)
+      viewer.setLocalClipping(standing)
+      return { solid, viewer, vp }
+    }
+
+    /** The client pixel a world point sits under. The canvas is at the page
+     *  origin here, so the NDC the module's own `projectPoint` gives is the
+     *  whole of the conversion. */
+    function clientOver(vp, x, y) {
+      const [nx, ny] = projectPoint(internals(vp.viewer), [x, y, 0])
+      return [((nx + 1) / 2) * RECT.width, ((1 - ny) / 2) * RECT.height]
+    }
+
+    it('opens the menu on the part the cut belongs to, not on what lies behind', () => {
+      const { vp } = plateScene()
+      const at = clientOver(vp, 1, 1)
+
+      rightDown(vp, at)
+      pointerUp(at)
+
+      expect(details(vp, EVENT_MENU)).toEqual([
+        { id: '/model/plate', name: 'plate', x: at[0], y: at[1] },
+      ])
+      // And the picker was never asked. It is what used to answer here, and its
+      // answer was the part underneath.
+      expect(pickEntity).not.toHaveBeenCalled()
+    })
+
+    it('still closes the menu on empty space, cut or no cut', () => {
+      // The other side of the same branch, and the one that keeps the menu
+      // dismissable: a pixel the cut face does not cover falls through to the
+      // picker exactly as it always did, and a miss there is still `id: null`.
+      const { vp } = plateScene()
+      const at = clientOver(vp, 9, 9)
+
+      rightDown(vp, at)
+      pointerUp(at)
+
+      expect(pickEntity).toHaveBeenCalledTimes(1)
+      expect(details(vp, EVENT_MENU))
+        .toEqual([{ id: null, name: null, x: at[0], y: at[1] }])
+    })
+
+    it('leaves the same pixel entirely to the picker when no cut stands', () => {
+      // Nothing new runs without a cut on screen. The plane and the seed are
+      // exactly where the test above has them — `suspendSectionCut` keeps both,
+      // so that turning the cut back on needs no second click — and the very
+      // pixel that resolved to the cut face goes to `pickEntity` instead, whose
+      // answer is used unchanged.
+      const { vp } = plateScene({ standing: false })
+      pickEntity.mockReturnValue(PLATE)
+      const at = clientOver(vp, 1, 1)
+
+      rightDown(vp, at)
+      pointerUp(at)
+
+      expect(pickEntity).toHaveBeenCalledTimes(1)
+      expect(details(vp, EVENT_MENU)).toEqual([
+        { id: '/model/plate', name: 'plate', x: at[0], y: at[1] },
+      ])
+    })
+
+    it('leaves the plain pick alone — only the menu asks about the cut face', () => {
+      // The other four callers of `pickEntity` are about a point on a real
+      // surface, and a cap has no surface to measure, pin or drag. A left click
+      // on the cut face therefore still selects whatever the picker names.
+      const { vp } = plateScene()
+      const at = clientOver(vp, 1, 1)
+
+      pointerDown(vp, at)
+      pointerUp(at)
+
+      expect(pickEntity).toHaveBeenCalledTimes(1)
+      expect(details(vp, EVENT_PICK))
+        .toEqual([{ id: null, name: null, point: null }])
+    })
   })
 
   it('keeps the browser\'s own menu off the canvas', () => {
