@@ -96,7 +96,7 @@ afterEach(() => {
  * callback would make that assertion unfalsifiable.
  */
 function component({ narrow = false, treeOpen = false, rail = null, tool = null,
-                     compare = false } = {}) {
+                     compare = false, token = 'sekrit' } = {}) {
   const c = Object.create(HammerolaViewer.prototype)
   c.props = { ...HammerolaViewer.defaultProps }
   c.home = null
@@ -127,9 +127,11 @@ function component({ narrow = false, treeOpen = false, rail = null, tool = null,
     notePop: null, noteDraft: '', notes: {},
     comments: [], activePin: null, composer: null,
     measure: null, moved: null, toast: null,
-    // A token, because half of what the header draws is hidden from a viewer
-    // for a reason that has nothing to do with the width.
-    token: 'sekrit', tokenPop: false, tokenDraft: '',
+    // A token by default, because half of what the header draws is hidden from
+    // a viewer for a reason that has nothing to do with the width — and a
+    // parameter, because one control in that row is drawn for BOTH readers and
+    // one block below is about which.
+    token, tokenPop: false, tokenDraft: '',
     theme: 'light',
     tabs: [],
     narrow, treeOpen,
@@ -422,19 +424,82 @@ describe('the toolbar on a narrow window', () => {
       expect(narrow).toContain(kept)
     }
 
-    // Gestures that want a pointer and a canvas with room to aim in, a PNG a
-    // phone has nowhere to put, and a preference.
-    for (const gone of ['Measure', 'Move part', 'Comment', 'Frame', 'Light']) {
+    // Gestures that want a pointer and a canvas with room to aim in, and a PNG
+    // a phone has nowhere to put.
+    for (const gone of ['Measure', 'Move part', 'Comment', 'Frame']) {
       expect(wide).toContain(gone)
       expect(narrow).not.toContain(gone)
     }
+
+    // AND THE THEME IS NO LONGER ONE OF THEM. It stood in this list while it
+    // was a canvas setting living in this strip, which left the one preference
+    // on the page unreachable at exactly the width where a reader is most
+    // likely to want the dark one. Issue #35 moved it to the header, beside the
+    // comments — so it now survives the narrow branch, and the block below
+    // says WHERE it survives.
+    expect(wide).toContain('Light')
+    expect(narrow).toContain('Light')
   })
 
   it('draws no rules with nothing left between them', () => {
-    // The three `width:1px` dividers separate groups that are no longer there.
+    // The two `width:1px` dividers separate groups that are no longer there.
     const rules = (over) => drawn(over).filter((s) => s.width === '1px' && s.height === '18px')
-    expect(rules({})).toHaveLength(3)
+    expect(rules({})).toHaveLength(2)
     expect(rules({ narrow: true })).toHaveLength(0)
+  })
+})
+
+// -- the one control that was moved OUT of that strip -------------------------
+
+describe('the theme button', () => {
+  /** The header row itself, found by the style `computed()` names for it. */
+  function header(c) {
+    const wanted = css(c.computed().headerStyle)
+    const found = collect(c.render(), (el) => (el.props.style === wanted ? el : undefined))
+    expect(found, 'no element on the page carries the header row\'s own style').toHaveLength(1)
+    return found[0]
+  }
+
+  it('stands in the header beside the comments, at both widths', () => {
+    // ISSUE #35 IN ITS OWN WORDS: «кнопка — жить у комментариев». What makes
+    // that a test rather than a sentence is the PAIR of facts: the button is
+    // inside the header row, which is the one part of this page drawn at every
+    // width, and it is drawn after the comments control rather than somewhere
+    // else in the same row. Either one alone is satisfiable by an arrangement
+    // the issue was written against.
+    for (const over of [{}, { narrow: true }]) {
+      const c = component(over)
+      const said = texts(header(c))
+      expect(said).toContain('Comments')
+      expect(said).toContain('Light')
+      expect(said.indexOf('Light'), 'the theme button is in the header but not '
+        + 'beside the comments').toBeGreaterThan(said.indexOf('Comments'))
+      // IN THE MARKUP IS NOT ON THE SCREEN. Every other control in this row is
+      // taken away by `display:none` rather than by being left out, so a
+      // reading that only walks the tree would pass on the one regression this
+      // case exists for — the theme hidden at the width it was moved here for.
+      expect(css(c.computed().themeBtnStyle).display).toBe('flex')
+    }
+  })
+
+  it('was MOVED and not copied', () => {
+    // A button left behind in the floating strip would keep every assertion
+    // above green and give one setting two controls, which disagree the moment
+    // one of them is used.
+    for (const over of [{}, { narrow: true }]) {
+      expect(texts(component(over).render()).filter((t) => t === 'Light')).toHaveLength(1)
+    }
+  })
+
+  it('is drawn for a reader who has no comments button at all', () => {
+    // Which is the whole reason it stands BESIDE the comments rather than
+    // inside the rail: without a token the rail and its button are both
+    // `display:none`, and the theme is the reader's own answer rather than
+    // something they need permission for.
+    const c = component({ token: null })
+    expect(css(c.computed().railBtnStyle).display).toBe('none')
+    expect(css(c.computed().themeBtnStyle).display).toBe('flex')
+    expect(texts(header(c))).toContain('Light')
   })
 })
 

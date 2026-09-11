@@ -348,14 +348,17 @@
 - `templates/` — page templates that ship inside the image: `index.html`,
   `build.html`, `pointer.html`, one per URL the hub serves
 - `static/` — the viewer payload that ships inside the image (`static/_v/`):
-  `three-cad-viewer.esm.js`, the scripts for the pointer page, the
-  site CSS and `favicon.svg`. A separate tree with its own `COPY` line in the
-  Dockerfile and its own smoke
-  check (g). FOUR OF THESE FILES ARE READ BY `ui/tests/chrome.test.js`, so all
-  four are named on the JS tar line of both workflows: `site.css` (the resolver's
-  copy of the header) at module scope, `favicon.svg` through a walk of this
-  directory for `.svg`, and `pointer.js` / `pointer_pref.js` through the walk
-  that sweeps for a second copy of the mark. `favicon.svg` is held to two
+  `three-cad-viewer.esm.js`, the scripts for the pointer page, `tokens.css` (THE
+  PALETTE — every colour the site paints with, named once per theme, linked by
+  all three templates; issue #35), the resolver's `site.css` and `favicon.svg`.
+  A separate tree with its own `COPY` line in the Dockerfile and its own smoke
+  check (g), which names `tokens.css` because its absence looks like nothing —
+  every page still answers 200 and every `var(--…)` in it resolves to nothing.
+  FIVE OF THESE FILES ARE READ BY `ui/tests/chrome.test.js`, so all five are
+  named on the JS tar line of both workflows: `tokens.css` and `site.css` (the
+  resolver's copy of the header) at module scope, `favicon.svg` through a walk
+  of this directory for `.svg`, and `pointer.js` / `pointer_pref.js` through the
+  walk that sweeps for a second copy of the mark. `favicon.svg` is held to two
   document-level checks and nothing about geometry — the icon is a related
   drawing, not the mark (see `brand/`). It is found by WALKING this directory
   for `*.svg` rather than by being named, but that walk only ever sees what CI
@@ -364,12 +367,11 @@
   here is checked on a workstation and INVISIBLE to both workflows until the two
   tar lines name it as well — the asymmetry is deliberate and worth knowing:
   `brand/` travels whole, so a new drawing there is checked everywhere at once.
-  NOT EVERYTHING IN `static/_v/`
-  IS COMMITTED: files matching
-  `hammerola*` are the browser bundle, produced by `make ui` or by the image's
-  `ui` stage, and they are in `.gitignore` and `.dockerignore` both. Never
-  commit one, and do not expect one in a fresh checkout — an asset that belongs
-  in the repository has to be a name outside that prefix
+  NOT EVERYTHING IN `static/_v/` IS COMMITTED: files matching `hammerola*` are
+  the browser bundle, produced by `make ui` or by the image's `ui` stage, and
+  they are in `.gitignore` and `.dockerignore` both. Never commit one, and do
+  not expect one in a fresh checkout — an asset that belongs in the repository
+  has to be a name outside that prefix
 - `brand/` — the mark as the designer drew it, and the SOURCE the two inline
   copies of it are transcribed from: `Mark` in `ui/src/style.jsx` and the
   `<svg>` in `templates/pointer.html`, neither of which can import a file (one

@@ -23,7 +23,7 @@ attack surface for cosmetics. A nested bundle would build, ship, satisfy the
 publish gate and then 404 in the browser.
 
 The consequence is that built files share a directory with committed ones —
-`site.css`, `pointer.js`, `pointer_pref.js`,
+`tokens.css`, `site.css`, `pointer.js`, `pointer_pref.js`,
 `three-cad-viewer.esm.js` —
 so **everything that copies this build copies it BY NAME**, one file per line:
 `UI_FILES` in the `Makefile`, `COPY --from=ui /ui/dist/hammerola.js

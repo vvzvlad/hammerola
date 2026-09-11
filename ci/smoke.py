@@ -216,6 +216,14 @@ REQUIRED_PATHS = [
     "/app/templates/build.html",
     "/app/templates/pointer.html",
     "/app/static/_v/three-cad-viewer.esm.js",
+    # The palette — every colour the site paints with, and the one stylesheet all
+    # three pages link (issue #35). It is a committed file under `static/`, so it
+    # travels with the tree the row above proves is copied; it is named anyway
+    # because of what its ABSENCE looks like, which is nothing at all: every page
+    # still answers 200, the bundle still renders, and every `var(--…)` in it
+    # resolves to nothing — white text on white, no borders, no header. A 404 on
+    # one stylesheet is not something any other check here can see.
+    "/app/static/_v/tokens.css",
     # `checklib.py` is a single file rather than a tree, and it is here for the same reason as
     # the templates and the viewer payload: nothing else can see it go missing. It is copied on
     # a line of its own (`COPY checklib.py .`) and is the top-level name every model.py imports;

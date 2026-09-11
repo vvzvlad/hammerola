@@ -4,6 +4,13 @@
 // somewhere else is a number the next person will "simplify". The measured ones
 // are pinned again, with their derivations, in tests/test_viewport_adapter.py.
 
+// The one thing this adapter reaches OUT of itself for. The theme stopped being
+// a viewport setting with issue #35 — it is the whole interface's palette now
+// and the server decides it — so it is read from the module that keeps the rest
+// of the per-reader state, rather than kept twice. The foot of this file says
+// what used to be here and why it left.
+import { readTheme } from "../store.js";
+
 /**
  * `tools: false` is the whole point of this port: the library keeps the scene
  * and we draw the interface.
@@ -25,17 +32,17 @@
  *
  * That is a rule about the MODEL and not a ban on settings. The canvas the model
  * stands on asserts nothing about the geometry, which is why `theme` below is the
- * reader's own answer and is remembered for them (THEME_KEY).
+ * reader's own answer and is remembered for them (`readTheme`, ui/src/store.js).
  */
 export const displayOptions = {
   glass: true,
   tools: false,
-  // A GETTER, not a value, and for two reasons that both bite at module scope: a
-  // call up here runs before `THEME_KEY` is initialised further down the file (a
-  // `const` in its temporal dead zone), and it would touch storage on every
-  // import of this module — including the ones a runner with no storage makes,
-  // where the answer is not wanted and the warning is noise. Read here, it runs
-  // exactly once, where element.js spreads this object to build the viewer.
+  // A GETTER, not a value: a call at module scope would read the reader's answer
+  // on every import of this module — including the ones a runner with no cookie
+  // jar makes, where the answer is not wanted and the warning is noise — and it
+  // would freeze it at import time, which is before anybody has been asked
+  // anything. Read here, it runs exactly once, where element.js spreads this
+  // object to build the viewer.
   get theme() { return readTheme(); },
   treeWidth: 240,
   cadWidth: 800,
@@ -210,51 +217,27 @@ export const PINCH_DELTA_PER_E_FOLD = 100;
 /** localStorage key for the one pointing-device answer. */
 export const INPUT_KEY = "hammerola.pointing_device";
 
-/** localStorage key for the canvas theme, the second per-reader answer here.
+/** THE THEME IS NOT KEPT HERE ANY MORE, and this note is what replaces it.
  *
- * Everything the interface draws around the viewport — the header, the tree, the
- * panels, the bottom strip — is light, and a dark canvas in the middle of it
- * reads as two programs sharing one window. So the DEFAULT is light; dark stays
- * reachable because a dark canvas is the better one for looking at a single part
- * on a dim screen, and neither answer is detectable from here.
+ * `hammerola.viewport_theme` lived in this file, in `localStorage`, and it was
+ * the right home for exactly as long as the name said what it was: the colour of
+ * the CANVAS, in an interface that was light around it whatever the canvas did.
+ * Issue #35 made it the whole page's answer, which is a per-reader fact like the
+ * token and the notes rather than a viewport setting, and the SERVER has to know
+ * it before the page is sent — so it is a cookie now, and it lives with the rest
+ * of that state in ui/src/store.js.
  *
- * Kept per BROWSER and not per project, unlike the token and the notes
- * (ui/src/store.js): this is a property of the eyes in front of the screen, and a
- * reader who set it on one model meant it for the next one too.
+ * What stays here is the one line the library needs: `displayOptions.theme`
+ * above, still a getter, still answering at the moment element.js builds the
+ * viewer — and `readTheme` is imported at the head of this file for it alone.
+ *
+ * THE BRIDGE IS GONE TOO. `readTheme` and `writeTheme` were re-exported from
+ * here for one caller, HammerolaViewer.jsx, which had always asked this module
+ * for them and could not be touched while the palette was being moved. It asks
+ * store.js directly now, so the alias has no reader left — and an alias nobody
+ * imports is a second name for one function, which is the thing this whole
+ * issue is spending its effort removing.
  */
-export const THEME_KEY = "hammerola.viewport_theme";
-
-/** The two the library takes, and the one this page opens on. */
-export const THEMES = ["light", "dark"];
-export const DEFAULT_THEME = "light";
-
-/** The remembered theme, or the default. Never throws, whatever storage does. */
-export function readTheme() {
-  let saved = null;
-  try {
-    saved = localStorage.getItem(THEME_KEY);
-  } catch (error) {
-    // A private window, storage turned off, or a runner with no storage at all:
-    // "nothing was remembered" is a complete answer here.
-    console.warn("theme", error);
-  }
-  return THEMES.includes(saved) ? saved : DEFAULT_THEME;
-}
-
-/** Remember the reader's answer, and hand back the one that was actually taken.
- *
- * The return value is the point: an unknown theme is corrected to the default
- * HERE, so a caller cannot store one thing and show another. */
-export function writeTheme(value) {
-  const theme = THEMES.includes(value) ? value : DEFAULT_THEME;
-  try {
-    localStorage.setItem(THEME_KEY, theme);
-  } catch (error) {
-    // The setting still holds for this page; it just will not outlive it.
-    console.warn("theme", error);
-  }
-  return theme;
-}
 
 /** How long after the last press or wheel the viewport still counts as busy.
  *

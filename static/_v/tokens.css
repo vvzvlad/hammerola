@@ -1,0 +1,361 @@
+/* THE PALETTE, AND THE ONLY PLACE IT IS WRITTEN DOWN.
+ *
+ * Every colour this site paints with is named here once per theme, by the ROLE
+ * it plays rather than by what it looks like: `--page-bg`, `--text`, `--line`,
+ * `--accent`. A role survives a palette change and a hex does not, which is the
+ * whole reason the interface's ~300 hand-written colour literals are being
+ * replaced by references to these names (issue #35).
+ *
+ * ALL THREE DOCUMENTS LINK THIS FILE, and that is the point of it being a file.
+ * `templates/index.html`, `templates/build.html` and `templates/pointer.html`
+ * used to state the page colour themselves — two of them inline, the third
+ * through `site.css` — so one palette lived as three copies with nothing but a
+ * test holding them together. There is one copy now and nothing left to drift.
+ *
+ * CUSTOM PROPERTIES AND NOT A JAVASCRIPT PALETTE, which is forced by how the
+ * interface is drawn: `css()` in ui/src/style.jsx turns every rule in the bundle
+ * into an INLINE style object, and an inline style beats a class rule on
+ * specificity — so no `[data-theme]` rule could ever repaint those elements.
+ * A `var()` INSIDE an inline style is the other way round: it is resolved
+ * against whatever `data-theme` is in force on an ancestor, so one attribute on
+ * `<html>` repaints the whole interface with no re-render and no component
+ * state.
+ *
+ * WHICH THEME IS IN FORCE IS DECIDED BY THE SERVER, from a cookie, and stamped
+ * onto `<html>` before the document is sent (`src/render.py`, `cookie_theme`).
+ * The two alternatives are both closed: an inline pre-paint script is blocked
+ * outright by the CSP (`default-src 'self'`, src/app.py), and the resolver page
+ * runs no bundle at all by design. So the attribute is already right in the
+ * first byte the browser parses, and there is no flash of the other theme.
+ *
+ * NO `prefers-color-scheme`, deliberately. This project answers media queries in
+ * JavaScript on purpose (the NARROW docstring in ui/src/style.jsx says why at
+ * length), and a theme the reader chose has to beat what the operating system
+ * guesses anyway.
+ *
+ * THE LIGHT SET IS `:root` AND THE DARK SET IS `:root[data-theme="dark"]`, each
+ * name written exactly once in each. The bare `:root` carries light because
+ * light is what a document with no attribute at all must come up in — the same
+ * answer the cookie reader gives for an absent or unrecognised value.
+ * `ui/tests/chrome.test.js` holds the two blocks to the same set of names, so a
+ * token added to one and forgotten in the other is a failure and not a colour
+ * that silently stays light in the dark theme.
+ */
+
+:root {
+  /* -- surfaces ------------------------------------------------------------
+   * The page, and everything raised off it. `--card-bg` is the white of a
+   * card, a panel, a popover, a menu and an input; `--hover-bg` is what any of
+   * them turns into under the pointer.
+   *
+   * TWO RECESSED FILLS AND NOT ONE, and which to reach for is decided by what
+   * the fill has to do rather than by how deep it looks:
+   *
+   *   * `--sunken-bg` is a surface set INTO the one it lies in — a field at
+   *     rest, a disabled button, a striped row. It is read as part of its
+   *     container, so barely separating from it is correct;
+   *   * `--chip-bg` is a small SHAPE lying on that surface — a chip, a pill, a
+   *     segmented track. It has to have an outline you can see without looking
+   *     for it, because its edges are the whole of what says it is an object.
+   *
+   * ONE FILL COULD NOT DO BOTH, and the way that failed is worth keeping: the
+   * conversion put both on `--sunken-bg`, and the rail's "N sent here" pill —
+   * which lies on `--header-bg` — went from dE 6.5 against its ground to 1.7,
+   * i.e. from a pill to a faint smudge. On the front page it was worse than
+   * faint: the switcher track came out LIGHTER than the page it lies on
+   * (L* 95.8 against 94.0), so the track inverted. Nothing about that is
+   * visible in a screenshot of the light theme unless you know what it used to
+   * look like, which is why `ui/tests/chrome.test.js` now measures it.
+   *
+   * `--chip-bg` IN DARK IS NOT A GUESS. The two themes run the neutral ladder
+   * in opposite directions — light descends card -> header -> sunken -> page ->
+   * chip -> line, dark climbs page -> sunken -> header -> card -> chip -> line
+   * — so the chip is placed at the same RUNG rather than at some inverted
+   * value: 0.443 of the way from the surface it lies on to `--line`, which is
+   * where #e3e6ea sits between `--page-bg` and `--line` in light. It comes out
+   * at #272c32, and the arithmetic checks: the weakest ground a chip has to be
+   * seen against is dE 2.92 in light and 2.88 in dark. */
+  --page-bg: #eceef1;
+  --header-bg: #f7f8fa;
+  --card-bg: #ffffff;
+  --sunken-bg: #f2f3f5;
+  --chip-bg: #e3e6ea;
+  --hover-bg: #e3e6ea;
+
+  /* Panels that float OVER the 3D canvas, where the model has to stay partly
+   * visible through them. Translucent for that reason, so they take a colour
+   * of their own rather than `--card-bg` with an opacity. */
+  --float-bg: rgba(249, 250, 252, .95);
+  --float-bg-soft: rgba(255, 255, 255, .78);
+
+  /* The one surface that is INVERTED against the page in both themes: a
+   * tooltip is read as a label the interface is speaking, not as part of it. */
+  --tooltip-bg: rgba(28, 31, 35, .88);
+  --tooltip-text: #f2f3f5;
+
+  /* -- ink -----------------------------------------------------------------
+   * Four levels and no more: body text, a secondary line beside it, the mono
+   * meta captions, and what is disabled or placeholder. Ten greys were in use
+   * before this file existed; four roles is what they collapse onto. */
+  --text: #1c1f23;
+  --text-soft: #4a5057;
+  --text-muted: #787f87;
+  --text-faint: #9aa1a9;
+  /* On a filled `--accent` surface, which is the same blue in both themes. */
+  --text-on-accent: #ffffff;
+
+  /* -- lines ---------------------------------------------------------------
+   * `--line` is the ordinary border and the header's underline; `--line-soft`
+   * a divider inside a panel, where a full border would be noise;
+   * `--line-strong` an edge that has to be seen against a card. */
+  --line: #d8dce1;
+  --line-soft: #e3e6ea;
+  --line-strong: #c3c8cf;
+
+  /* -- the accent ----------------------------------------------------------
+   * EIGHT ROLES AND NOT ONE COLOUR, because the same blue is asked to do two
+   * opposite jobs: it fills a button that carries white text, and it inks a
+   * link on the page. Those pull in opposite directions the moment the page
+   * goes dark — a fill has to stay dark enough for white text, an ink has to
+   * get light enough to be read on near-black — so they are separate names
+   * here and only happen to be near each other in the light theme.
+   *
+   * `--accent` is therefore the SAME value in both themes: it is a filled
+   * surface, and white on it reads the same whatever is behind the button.
+   *
+   * THE LAST THREE ARE THE ONES THE CONVERSION ASKED FOR, each because a role
+   * it was folded into could not carry what the reader was reading off it:
+   *
+   *   * `--accent-bg-soft` is a SECOND tint because one tint cannot say both
+   *     "this is the revision you are on" and "this is the row you picked".
+   *     Those two markers stand a few pixels apart in the same interface and
+   *     the reader tells them apart by weight; folded together, the picker
+   *     came up shouting and the distinction was simply gone.
+   *   * `--accent-muted` is a washed accent SURFACE — a button that has been
+   *     pressed and is waiting on the network. It was `--accent-line` at two
+   *     call sites, which is a line role spent as a fill, and a palette where
+   *     the names have stopped describing what they paint is a palette that
+   *     rots from here on.
+   *   * `--accent-ring` is the halo on the active comment pin, and it is the
+   *     one token here with an alpha of its own rather than a flat value.
+   *     That is functional: the pin sits ON the 3D model, and a halo the
+   *     model shows through is a halo that does not hide the geometry it is
+   *     pointing at. Opaque, it is a blue disc over the part.
+   *
+   * ITS VALUE IS THE SAME IN BOTH THEMES for the reason `--accent` is: it is
+   * that fill spread thin, so it follows the fill and not the inks. */
+  --accent: #1f7ae0;
+  --accent-strong: #155bb5;
+  --accent-text: #1c67c2;
+  --accent-line: #9cc4f0;
+  --accent-bg: #dcebfc;
+  --accent-bg-soft: #f0f6fd;
+  --accent-muted: #9cc0e8;
+  --accent-ring: rgba(31, 122, 224, .35);
+
+  /* -- states --------------------------------------------------------------
+   * Amber for "look at this", red for "this failed", green for "this is
+   * fine", violet for an author's note. Each carries the ink it is written
+   * in; the two that also paint a banner carry that banner's fill and edge.
+   *
+   * TWO AMBER INKS AND ONE OF EVERYTHING ELSE, because the amber is the only
+   * state that paints a PANEL somebody reads paragraphs in — the note box on
+   * the model and the rail's standing note. A panel has a heading and it has
+   * captions under it, and with one ink those two levels flatten into each
+   * other; the other states colour a chip, a dot or a line, where there is
+   * one thing to say and no hierarchy to lose. `--warn-soft` is the caption
+   * level: `--warn` mixed a fifth of the way back into `--warn-bg`. */
+  --warn: #8a6a1f;
+  --warn-soft: #a2894e;
+  --warn-bg: #fdf0d8;
+  --warn-line: #eadfc0;
+  --danger: #b03a2e;
+  --danger-bg: #fbe6e6;
+  --danger-line: #e2a8a0;
+  --ok: #2e9e44;
+  --note: #7c3aad;
+  --note-bg: #f3ebfa;
+
+  /* -- depth ---------------------------------------------------------------
+   * A shadow is a colour here rather than a whole `box-shadow`, so the offsets
+   * and the blur stay where the element is drawn. Black at low alpha reads as
+   * depth on a light page and as nothing at all on a dark one, which is why
+   * the dark set lifts the alpha instead of keeping the colour. */
+  --shadow: rgba(20, 24, 28, .16);
+  --shadow-soft: rgba(20, 24, 28, .08);
+
+  /* -- the mark ------------------------------------------------------------
+   * The two inks the logo is drawn with. `--mark-ink` is the ribbon,
+   * `--mark-hole` is the page showing through the punched holes — they move
+   * together, because an ink change with the old hole colour is an unreadable
+   * mark. The values are `brand/mark-on-light.svg` and `brand/mark-on-dark.svg`
+   * element for element, and `ui/tests/chrome.test.js` compares them against
+   * those files rather than trusting this comment. The dark pair had been
+   * waiting in the repository with nothing rendering it since 2026-08-28. */
+  --mark-ink: #1c1f23;
+  --mark-hole: #ffffff;
+
+  /* -- the 3D canvas -------------------------------------------------------
+   * WHAT YOU SEE BEHIND THE MODEL, and it really is this declaration rather
+   * than something the renderer paints: the WebGL context is cleared to
+   * `setClearColor(0xffffff, 0)` — fully TRANSPARENT, with the theme playing no
+   * part in it (three-cad-viewer.esm.js) — so the colour around a part is
+   * whatever CSS puts under the canvas, which is `--tcv-bg-color` on
+   * `.tcv_cad_viewer`. The rule at the foot of this file is what makes that
+   * variable resolve to this one, so changing the canvas IS a line here.
+   *
+   * The values start as the library's own (`#fff` / `#444` in
+   * three-cad-viewer.css), which is a deliberate no-op: this stage moves who
+   * owns the colour, not the colour. The edge contrast the dark one was
+   * measured against is in ui/src/viewport/options.js
+   * (`renderOptions.edgeColor`), and it is the thing to re-measure before
+   * moving it. */
+  --canvas-bg: #ffffff;
+}
+
+:root[data-theme="dark"] {
+  /* Derived from the designer's own dark mark rather than invented:
+   * `brand/mark-on-dark.svg` is ink #f2f4f6 on #1c1f23, which fixes the text
+   * colour and the raised chrome, and the page is set one step below the
+   * chrome so the header still reads as raised. */
+  --page-bg: #16181b;
+  --header-bg: #1c1f23;
+  --card-bg: #22262b;
+  --sunken-bg: #1a1d21;
+  /* Placed by the ladder rather than by eye; the light block does the
+   * arithmetic. It lands a step below `--hover-bg`, which is close — but the
+   * two are the SAME value in the light theme, so a chip and a hover state
+   * being near neighbours is what this palette already says they are. */
+  --chip-bg: #272c32;
+  --hover-bg: #2a2f35;
+
+  --float-bg: rgba(34, 38, 43, .95);
+  --float-bg-soft: rgba(28, 31, 35, .78);
+
+  --tooltip-bg: rgba(242, 244, 246, .92);
+  --tooltip-text: #1c1f23;
+
+  --text: #f2f4f6;
+  --text-soft: #c3c8cf;
+  --text-muted: #9aa1a9;
+  --text-faint: #767d86;
+  --text-on-accent: #ffffff;
+
+  --line: #2e343a;
+  --line-soft: #262b30;
+  --line-strong: #3c444c;
+
+  /* THE TWO FILLS ARE UNCHANGED and the INKS are lifted, which is the split the
+   * light block argues for: #1f7ae0 as a link on near-black is too dim to
+   * read, while #1f7ae0 under white text is the same button it always was.
+   *
+   * `--accent-strong` IS ONE OF THE FILLS, and it was on the wrong side of that
+   * split until it was measured. Lifted to #4e97ea it dropped white text to
+   * 3.03:1 — under AA, and under the 4.27:1 of the RESTING button it is the
+   * hover state of, so hovering made the label fainter and the whole signal ran
+   * backwards. Every one of its four call sites is a filled surface or a rim on
+   * one (a hover, a pressed pin, two borders drawn on `--accent` itself); none
+   * of them is ink on a page, which is the only thing the lift was for. So it
+   * takes the light value here for exactly the reason `--accent` does: white on
+   * it reads the same whatever is behind the button — 6.57:1, above AA and
+   * above the resting state, in both themes.
+   *
+   * The three that carry a tint or a wash are MIXED INTO #16181b rather than
+   * chosen, which is how every dark fill in this block was derived — the page
+   * is the ground here the way white is the ground in the light block, and the
+   * ratio is read off the light pair rather than picked by eye:
+   *
+   *   --accent-bg        #16181b + 17% accent   (the tint that was already here)
+   *   --accent-bg-soft   #16181b + 8% accent    — half of it, which is the ratio
+   *                      #f0f6fd stands to #dcebfc against white
+   *   --accent-muted     #16181b + 46% accent   — the same distance #9cc0e8 is
+   *                      washed toward white, taken toward the page instead
+   *
+   * MEASURED RATHER THAN EYEBALLED, because the pair that matters here is a
+   * pair of near-identical tints and "looks about right" is exactly the method
+   * that inverts one. In CIELAB, the strong tint sits 12.6 from the card it
+   * marks a row on in light and 10.6 in dark; the soft one 5.3 and 5.7; and
+   * the two stand 7.3 apart in light against 7.1 in dark. So the heavier
+   * marker stays the heavier one, by nearly the same margin, in both.
+   *
+   * `--accent-ring` is NOT here, and its absence is the point: it is the one
+   * value the two blocks share besides the fill it is made of. The light block
+   * says why. */
+  --accent: #1f7ae0;
+  --accent-strong: #155bb5;
+  --accent-text: #7cb4f2;
+  --accent-line: #2f5d92;
+  --accent-bg: #17293c;
+  --accent-bg-soft: #17202b;
+  --accent-muted: #1a4575;
+  --accent-ring: rgba(31, 122, 224, .35);
+
+  /* Lifted for the same reason the accent ink is: an amber, a red and a green
+   * picked to be read on white are all too dark to be seen on #16181b. The
+   * fills go the other way — a tint of the state colour mixed into the page
+   * rather than into white.
+   *
+   * `--warn-soft` is the caption level under an amber heading, and it steps the
+   * same way it does in light — a fifth of the way from `--warn` back into
+   * `--warn-bg`. Which means it goes DARKER here and LIGHTER there, because
+   * both times it is stepping toward the panel it is written on. */
+  --warn: #e3b341;
+  --warn-soft: #bb9437;
+  --warn-bg: #2b2415;
+  --warn-line: #4a3c1a;
+  --danger: #ef6f61;
+  --danger-bg: #33201e;
+  --danger-line: #5c3029;
+  --ok: #4ec26a;
+  --note: #c39bef;
+  --note-bg: #2a2137;
+
+  --shadow: rgba(0, 0, 0, .55);
+  --shadow-soft: rgba(0, 0, 0, .35);
+
+  --mark-ink: #f2f4f6;
+  --mark-hole: #1c1f23;
+
+  --canvas-bg: #444444;
+}
+
+/* THE PAGE COLOUR, before there is a page.
+ *
+ * Every one of the three documents is drawn by something that has not arrived
+ * yet — 255 KB of bundle on two of them, a stylesheet and a redirect on the
+ * third — and until then the body has no background and the browser paints it
+ * white. This is the rule that stops that, and it is here rather than inline in
+ * each document so that the three cannot disagree.
+ *
+ * ON `build.html` IT HAS TO COME AFTER THE VENDORED STYLESHEET, which is why
+ * that page links this file second: three-cad-viewer.css carries
+ * `body { background-color: var(--tcv-bg-color) }` at the same specificity, so
+ * source order decides, and the library would otherwise repaint the page out
+ * from under the interface the moment it initialises. `ui/tests/chrome.test.js`
+ * checks that order; it is not a formatting preference. */
+html, body { background: var(--page-bg); color: var(--text); }
+
+/* THE LIBRARY'S OWN PAGE VARIABLE, SHADOWED FROM OURS, so the canvas stops
+ * being the one surface with an independent opinion about the theme.
+ *
+ * THE SELECTOR IS THE WHOLE RULE, and it looks like a typo on purpose.
+ * `Display.setTheme` stamps `data-theme` on TWO elements — `document.body` AND
+ * its own container, which is the `div.hmr_canvas` our adapter hands it
+ * (ui/src/viewport/element.js) — and three-cad-viewer.css declares
+ * `--tcv-bg-color` under `[data-theme="light"]` / `[data-theme="dark"]`. So the
+ * variable is DECLARED ON that box, and every element painted from it
+ * (`.tcv_cad_viewer`, `.tcv_cad_help`, `.tcv_dropdown-content`, `select option`)
+ * is a descendant that inherits it from there. A declared value on a nearer
+ * ancestor beats an inherited one however specific the rule that set the
+ * inherited one was, so a version of this aimed at `html` or `body` — this rule
+ * WAS `html[data-theme] body` — reaches the document and never the widget, and
+ * deleting it changes nothing at all.
+ *
+ * What is needed is a selector that lands on EVERY element the library stamps
+ * and outweighs its `[data-theme="…"]` there. `[data-theme][data-theme]` is
+ * exactly that: it matches on the attribute alone, so it applies wherever the
+ * library put one, and repeating the attribute makes it (0,2,0) against the
+ * library's (0,1,0) on the same element. Naming an element type in it would
+ * narrow it back to the document and bring the bug back, which is why
+ * `ui/tests/chrome.test.js` holds this selector to that shape. */
+[data-theme][data-theme] { --tcv-bg-color: var(--canvas-bg); }

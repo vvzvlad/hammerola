@@ -73,6 +73,10 @@ ADAPTER_FILES = sorted(VIEWPORT.glob("*.js")) if VIEWPORT.is_dir() else []
 # that stops at one.
 ALL_UI_FILES = sorted(p for p in UI.rglob("*.js*") if p.is_file())
 
+# The palette: one file, every page links it, and every `var(--…)` the interface
+# spends has to name something in it.
+TOKENS_CSS = ROOT / "static" / "_v" / "tokens.css"
+
 EVENTS_JS = UI / "events.js"
 ADAPTER_EVENTS_JS = VIEWPORT / "events.js"
 COMPONENT = UI / "HammerolaViewer.jsx"
@@ -674,15 +678,425 @@ def test_nothing_writes_markup():
 def test_localstorage_is_touched_in_one_place_only():
     """One module, so there is one place to audit for the try/catch below.
 
-    The viewport keeps its own answers — the pointing device and the canvas
-    theme, both in `viewport/options.js` — and is exempt: that is a separate
-    module with its own guard, and the rule is one place PER SIDE, not one place
-    in the repository.
+    The viewport keeps its own answer — the pointing device, in
+    `viewport/wheel.js` — and is exempt: that is a separate module with its own
+    guard, and the rule is one place PER SIDE, not one place in the repository.
+    The canvas theme used to be the second of those and is not any more: issue
+    #35 made it the whole interface's palette, which the SERVER has to know
+    before the page is sent, so it is a cookie in store.js now (the two tests
+    below are its half of this rule).
     """
     users = [p.name for p in INTERFACE_FILES
              if "localStorage" in strip_comments(read(p))]
     assert users == ["store.js"], (
         f"localStorage is reached from {users} — it belongs in store.js")
+
+
+def test_the_cookie_is_touched_in_one_place_only():
+    """The theme is the one thing here that is kept in a cookie, and one module
+    writes it.
+
+    STRICTER THAN THE RULE ABOVE, ON PURPOSE: `localStorage` is one place PER
+    SIDE because the viewport legitimately keeps an answer of its own, while a
+    cookie is sent to the hub on every request and there is exactly one thing on
+    this site the hub needs to be told. A second writer would be a second
+    per-request header nobody asked for, and — since the server reads this one by
+    name — a second spelling of a name that has to match `src/render.py`.
+    """
+    users = [p.name for p in INTERFACE_FILES + ADAPTER_FILES
+             if "document.cookie" in strip_comments(read(p))]
+    assert users == ["store.js"], (
+        f"document.cookie is reached from {users} — it belongs in store.js")
+
+
+def test_every_cookie_access_is_guarded():
+    """`document.cookie` is an accessor, and a sandboxed frame throws on it.
+
+    Exactly the hazard `localStorage` has one test down, and it bites in the same
+    place: this is read while the page is being built, so an uncaught throw is a
+    blank page instead of a remembered preference.
+    """
+    for path in INTERFACE_FILES + ADAPTER_FILES:
+        lines = strip_comments(read(path)).splitlines()
+        for number, line in enumerate(lines):
+            if "document.cookie" not in line:
+                continue
+            # The nearest `try {` above, within the block a guard can plausibly
+            # cover — the same window the localStorage check uses, and for the
+            # same reason: a `try` twenty lines up is not a guard anybody can see
+            # from the access.
+            window = lines[max(0, number - 6):number]
+            assert any("try {" in earlier for earlier in window), (
+                f"{path.name}:{number + 1} touches document.cookie outside a try")
+
+
+def test_the_browser_and_the_hub_spell_the_theme_the_same_way():
+    """One cookie, two languages, and nothing in a browser to notice (issue #35).
+
+    The hub stamps `data-theme` on `<html>` from this cookie before the page is
+    sent, and the interface writes it when the reader toggles. They cannot share
+    a module, so the name and the two values are spelled on both sides — and
+    drift is silent in the worst way: the browser goes on remembering, the server
+    goes on answering light, and the reader's chosen theme simply stops surviving
+    a navigation with nothing logged anywhere.
+
+    The Python side is IMPORTED and the JavaScript side is read as text, which is
+    the division this file's header insists on: the values that can be executed
+    are executed, and only the file that cannot be imported is parsed.
+    """
+    from src.render import DEFAULT_THEME, THEME_COOKIE, THEMES
+
+    store = strip_comments(read(UI / "store.js"))
+    namespace = re.search(r"const NS = '([^']+)'", store)
+    assert namespace, "ui/src/store.js no longer declares the `hammerola.` namespace"
+    built = re.search(r"const THEME_COOKIE = `\$\{NS\}([^`$]*)`", store)
+    assert built, (
+        "ui/src/store.js no longer builds the theme cookie's name out of NS")
+    assert namespace.group(1) + built.group(1) == THEME_COOKIE, (
+        f"the interface writes `{namespace.group(1) + built.group(1)}` and "
+        f"src/render.py reads `{THEME_COOKIE}`")
+
+    themes = re.search(r"THEMES = Object\.freeze\(\[([^\]]*)\]\)", store)
+    assert themes, "ui/src/store.js no longer declares the two themes"
+    assert tuple(re.findall(r"'([^']+)'", themes.group(1))) == THEMES, (
+        f"the interface knows themes {themes.group(1)} and src/render.py knows "
+        f"{THEMES} — a value one side accepts and the other corrects away is a "
+        f"page that arrives in one theme and repaints into the other")
+
+    default = re.search(r"DEFAULT_THEME = '([^']+)'", store)
+    assert default, "ui/src/store.js no longer declares the default theme"
+    assert default.group(1) == DEFAULT_THEME, (
+        f"a browser with no cookie opens on {default.group(1)!r} and the hub "
+        f"sends {DEFAULT_THEME!r}")
+
+
+def test_every_palette_token_the_interface_spends_is_defined():
+    """A `var(--…)` nothing defines is a declaration the browser drops in silence.
+
+    THE CHECK THE NEXT TWO STAGES OF ISSUE #35 NEED. The interface's colours are
+    being converted from ~300 hex literals into references to the roles in
+    `static/_v/tokens.css`, and a typo in one of those names does not fail
+    anything: the declaration is simply invalid, the element keeps its inherited
+    or initial colour, and the page still renders — one label black on a dark
+    panel, or a border that is not there.
+
+    A NAME AND NOT A VALUE, which is why it is here rather than in `ui/tests/`:
+    this is the question text can answer. Whether a token holds the right colour
+    is a value, and `ui/tests/chrome.test.js` imports and executes that side.
+
+    The `--hmr-` prefix is the one exemption, and it is derived rather than
+    written out: those are the FONT stacks, which the bundle defines itself in
+    `FONTS` and spreads onto the element it mounts into, so they are never in a
+    stylesheet at all.
+    """
+    tokens = set(re.findall(r"^\s*(--[\w-]+)\s*:",
+                            strip_comments(read(TOKENS_CSS)), flags=re.M))
+    assert tokens, "static/_v/tokens.css defines no custom properties at all"
+    own = set(re.findall(r"'(--hmr-[\w-]+)':", read(UI / "style.jsx")))
+    assert own, "ui/src/style.jsx no longer declares the font custom properties"
+
+    missing = {}
+    for path in ALL_UI_FILES:
+        for name in re.findall(r"var\(\s*(--[\w-]+)", strip_comments(read(path))):
+            if name not in tokens and name not in own:
+                missing.setdefault(name, path.name)
+    assert not missing, (
+        f"these custom properties are used and defined nowhere: {missing}. The "
+        f"browser drops every declaration that references one, without a word")
+
+
+# The page whose colours have all been converted into references to those roles
+# (issue #35, the front page's stage of it).
+FRONT_PAGE = UI / "HammerolaEntry.jsx"
+
+# HOW A COLOUR IS WRITTEN DOWN, in two forms that are complete and one that is
+# not. A hex and the `rgb()`/`hsl()` families are every value this interface has
+# ever spent and every one the mock-ups it was ported from spent; the KEYWORDS
+# are the common end of a 148-name CSS vocabulary and are deliberately not
+# claimed to be all of it, because an enumeration that cannot be finished is
+# still worth having when the cases it misses are ones nobody types. What it
+# catches is the `#fff` somebody actually writes.
+#
+# `transparent` and `currentColor` are on none of the three lists, on purpose:
+# neither of them names a colour. One says paint nothing — the spinner's missing
+# arc — and the other says "whatever this element is already written in", which
+# is how the sign-out icon follows the palette without mentioning it.
+COLOUR_LITERAL = re.compile(
+    r"#[0-9a-fA-F]{3,8}\b"
+    r"|\b(?:rgba?|hsla?)\s*\("
+    r"|(?<![\w-])(?:white|black|silver|gray|grey|red|green|blue|yellow|orange"
+    r"|purple|pink|brown|navy|teal|olive|lime|aqua|fuchsia|maroon|cyan|magenta"
+    r"|violet|indigo|crimson|coral|salmon|gold)(?![\w-])",
+    re.I,
+)
+
+
+def test_the_front_page_spends_the_palette_and_writes_no_colour_of_its_own():
+    """Not one value in the whole file — every colour is a role in tokens.css.
+
+    THE ASSERTION THE CONVERSION EXISTS TO MAKE TRUE, and it has to be a test
+    because of how the failure looks: a literal that survives is not a broken
+    page. It is a page where one label, one border or one chip is painted in the
+    light value while everything around it went dark — legible, plausible, and
+    invisible to anybody who never opens the other theme. Nothing in a browser
+    reports it, nothing in a build reports it, and the file is 60 colours long,
+    so "we converted them all" is a claim only a sweep can hold.
+
+    COMMENTS ARE STRIPPED, which is this module's own oldest lesson rather than
+    a convenience: a check written here once looked for a colour and found it in
+    the prose explaining the colour. The file argues its mapping at length —
+    which literal became which role, and why a shade that was two greys is one
+    now — and prose paints nothing.
+
+    NO EXEMPTIONS. There is nothing in the file this rule has to be bent for:
+    the two words that look like colours and are not (`transparent`,
+    `currentColor`) are not colours by the definition above, and the one colour
+    that genuinely cannot be a `var()` — the backdrop's ink, which a canvas 2D
+    context would refuse to parse — is not written here either. It is read off
+    the element at draw time, which the check below is about.
+    """
+    source = strip_comments(read(FRONT_PAGE))
+    found = sorted({match.group(0) for match in COLOUR_LITERAL.finditer(source)})
+    assert not found, (
+        f"{FRONT_PAGE.name} writes {found} rather than naming a role from "
+        f"static/_v/tokens.css. A value here is right in one theme and wrong in "
+        f"the other, and the page that is wrong still renders")
+    # Otherwise a file that stopped painting anything at all would pass by
+    # having nothing to find, which is this module's own oldest failure mode.
+    assert re.search(r"var\(\s*--", source), (
+        f"{FRONT_PAGE.name} spends no palette token at all — this check is "
+        f"sweeping a file that has stopped drawing")
+
+
+def test_the_backdrop_reads_its_ink_off_its_own_element():
+    """The one colour on that page a `var()` cannot reach, and how it still does.
+
+    A canvas 2D context parses colours itself and knows nothing about the
+    cascade: `ctx.strokeStyle = 'var(--text-muted)'` is an unparseable value,
+    which the context DISCARDS — keeping whatever was set before it, i.e. the
+    initial black. So the backdrop's mesh cannot be themed by substitution the
+    way every other colour on the page was.
+
+    What it does instead is three parts that have to agree and that nothing in
+    either runner can execute: the token goes onto the canvas ELEMENT, where the
+    browser resolves it; the drawing reads the resolved value back with
+    `getComputedStyle`; and the context is stroked with THAT and not with a
+    colour of its own. Drop the first and the declaration is gone, so the
+    computed colour is the one the element INHERITS — the page's own text ink,
+    which draws the backdrop as a black cage across the sign-in screen. Drop the
+    second or the third and the strokes go back to a literal or to black.
+    Nothing throws, no build fails, and none of it is visible in jsdom:
+    `getContext('2d')` returns nothing there, so the whole draw path is
+    unreachable from ui/tests/.
+
+    AND A FOURTH, since the read stopped happening once per frame.
+    `getComputedStyle` flushes pending style, so sixty of them a second was most
+    of what this effect cost; the value is cached and re-read when `data-theme`
+    changes, which is the only thing that can move it. Drop THAT subscription and
+    everything above still holds — the backdrop simply keeps the theme the page
+    was opened in, for ever, which is invisible to anybody who does not toggle
+    while looking at it.
+    """
+    source = strip_comments(read(FRONT_PAGE))
+    assert re.search(r"style=\{css\(.*?color:\$\{this\.props\.color\}", source, flags=re.S), (
+        "the backdrop no longer puts its ink on the canvas element, so "
+        "getComputedStyle below it reads whatever the page's text colour is")
+    assert re.search(r"ink\s*=\s*window\.getComputedStyle\(canvas\)\.color", source), (
+        "the backdrop no longer reads its stroke colour back off the element — "
+        "a canvas context resolves no var(), so whatever replaced this is "
+        "either a literal or the context's initial black")
+    assert re.search(r"ctx\.strokeStyle\s*=\s*ink\b", source), (
+        "the backdrop strokes with something other than the value it read off "
+        "the element, and the read above is then decoration")
+    assert re.search(r"attributeFilter:\s*\['data-theme'\]", source), (
+        "nothing re-reads the ink when the theme changes, so the backdrop keeps "
+        "the one the page was opened in")
+    assert re.search(r"color:\s*'var\(--[\w-]+\)'", source), (
+        "the backdrop's default ink is no longer a palette role")
+
+
+# A NUMERIC CHARACTER REFERENCE IS NOT A COLOUR, and it is spelled like one.
+# The build page draws its close crosses, its carets and its arrows as `&#10005;`
+# `&#9662;` `&#8594;` — which `COLOUR_LITERAL` above reads as `#10005`, `#9662`,
+# `#8594`, three perfectly well-formed hexes. Removed before the sweep rather
+# than exempted after it: an exemption list would have to hold every glyph the
+# page ever grows, and the thing that makes these safe is not which ones they
+# are, it is that `&#…;` is a different notation entirely.
+CHARACTER_REFERENCE = re.compile(r"&#\w+;")
+
+
+def test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own():
+    """Not one value in 4000 lines — every colour is a role in tokens.css.
+
+    THE SAME ASSERTION THE FRONT PAGE MAKES, on the file that carried five times
+    as many: 247 hexes and 28 `rgba()`s, written inline through `css()` and in
+    the `PIN_CSS` block. It has to be a test for the reason given up there — a
+    literal that survives is not a broken page but a page where one chip keeps
+    its light value on a dark panel, which nothing in a browser, a build or a
+    unit test reports.
+
+    AND IT IS WHAT MAKES THE COLLAPSE HOLD. Ten greys went onto four ink roles
+    here, three blue tints onto one `--accent-bg`, five ambers onto `--warn`. The
+    cost of that is that the next person with a shade to draw has a real reason
+    to reach for a hex — the role they want is "nearly `--text-muted`" — and one
+    such literal undoes the theme for that element with nothing to say so. The
+    answer is to argue for a role in tokens.css, and this is what forces the
+    argument to happen.
+
+    COMMENTS ARE STRIPPED. The file explains its own mapping at length — which
+    literal became which role, and why `#8a9099` and `#9aa1a9` are one level and
+    not two — and prose paints nothing.
+
+    NO EXEMPTIONS. The only colour on this page that is not ours is the tree
+    swatch's, and it never was a literal here: it is `node.color`, read out of
+    the pushed model, which is the part's own colour and not the interface's to
+    theme.
+    """
+    source = CHARACTER_REFERENCE.sub("", strip_comments(read(COMPONENT)))
+    found = sorted({match.group(0) for match in COLOUR_LITERAL.finditer(source)})
+    assert not found, (
+        f"{COMPONENT.name} writes {found} rather than naming a role from "
+        f"static/_v/tokens.css. A value here is right in one theme and wrong in "
+        f"the other, and the page that is wrong still renders")
+    # Otherwise a file that stopped painting anything at all would pass by
+    # having nothing to find, which is this module's own oldest failure mode.
+    assert re.search(r"var\(\s*--", source), (
+        f"{COMPONENT.name} spends no palette token at all — this check is "
+        f"sweeping a file that has stopped drawing")
+
+
+# A `css()` SOURCE FILE, CUT INTO DECLARATION-SIZED PIECES.
+#
+# There is no cascade to consult here and no element to inspect: every rule in
+# this interface is a string, so which property a value belongs to is a question
+# about the text. Two things end a declaration in that text — a `;`, and the end
+# of the string literal it was written in — and both are single characters,
+# which is the whole of the parser below.
+#
+# THE INTERPOLATIONS ARE FLATTENED FIRST, and that is the part that earns its
+# keep: `background:${busy ? 'var(--a)' : 'var(--b)'}` is ONE declaration with
+# two possible values, and the quotes inside it are not string boundaries at
+# all. Stripping them out of the `${…}` puts both branches in the same piece,
+# which is how a defect hiding in EITHER branch is seen. It removes no newline,
+# so an offset into the flattened text still names the right line.
+#
+# THE WHOLE FILE AND NOT A LINE AT A TIME, because a declaration here regularly
+# is not on one line: the front page's Sign-in button ends a template literal on
+# `…;background:` and opens the value on the next line as a concatenated
+# ternary. A line-scoped version of this check was written first and passed on
+# exactly that button — which is this module's oldest lesson arriving for the
+# third time.
+#
+# The two cheaper methods are recorded because both look right. The nearest
+# property keyword BEFORE the value reads `'var(--x);background:var(--y)' :
+# 'var(--z)'` as painting z, since the ternary's other branch is nearer than z's
+# own property. And matching the text `background:var(--x)` misses the
+# interpolated form entirely, which is the form the defect was written in.
+INTERPOLATION = re.compile(r"\$\{([^{}]*)\}")
+DECLARATION_END = re.compile(r"""[;'"`]""")
+
+
+def declarations(source):
+    """`source` as `(offset, text)` declaration-sized pieces, in order."""
+    flat = INTERPOLATION.sub(
+        lambda m: m.group(1).replace("'", " ").replace('"', " "), source)
+    pieces, at = [], 0
+    for end in DECLARATION_END.finditer(flat):
+        pieces.append((at, flat[at:end.start()]))
+        at = end.end()
+    pieces.append((at, flat[at:]))
+    return flat, pieces
+
+
+def test_the_accents_line_roles_are_never_spent_as_a_fill():
+    """A role named for a line, painting a surface, is where a palette starts to rot.
+
+    IT HAD ALREADY HAPPENED TWICE, in the same week and for the same want: the
+    build page's Switch button and the front page's Sign-in button both go
+    inert while the network answers, both have to LOOK inert, and the palette
+    had no washed accent surface — so both reached for `--accent-line`, which is
+    pale enough to pass. Nothing was wrong on the screen. What was wrong is that
+    `--accent-line` then meant "a border, and also the colour of a waiting
+    button", so the next person to restyle borders would have moved a button
+    without knowing they had, and the person after that would have read the name
+    as approximate and reached for whatever else was near. `--accent-muted`
+    exists so neither has to.
+
+    NARROW TO THE ACCENT ON PURPOSE, and the reason is worth stating so the rule
+    is not "generalised" into something that has to be exempted: the accent owns
+    five surfaces — `--accent`, `--accent-strong`, `--accent-muted`,
+    `--accent-bg`, `--accent-bg-soft` — so a fill drawn from its LINE roles is
+    always a substitution for one of those, with no case on the other side.
+
+    THE NEUTRAL RAMP CANNOT BE SWEPT THE SAME WAY, and it is worth writing out
+    why rather than leaving it as a feeling, because the obvious objection —
+    "it has `--chip-bg` now, so widen it" — is half right. There are four CASES
+    here painted from a line role, and every one of them is correct:
+
+      * the 1px `<div>` dividers — two in the build page's toolbar and one in
+        each page's header — take `background: var(--line)`. That is a LINE,
+        drawn the only way a flex row can draw one;
+      * `.hmr_pin.is_resolved` takes `--line-strong` because it lies on the 3D
+        MODEL rather than on a surface of ours, and the two canvases pull
+        opposite ways: against the white one it is dE 20.01 to the chip fill's
+        9.12, against the dark one 6.06 to its 12.03. It takes the decisive
+        margin where a pale badge washes out and the smaller one where both are
+        far clear of the floor — a trade, and PIN_CSS states it as one;
+      * the compare legend's grey swatch takes `--line-strong` because it is a
+        sample of a colour the MODEL will be painted in, standing beside two
+        saturated ones;
+      * the tree's tri-state eye dot — `eyeDot` in HammerolaViewer.jsx — fills
+        HALF of a 5px circle with it, `linear-gradient(90deg, var(--text-soft)
+        50%, var(--line-strong) 50%)`, to say "some of this branch is hidden".
+        The two halves are the SAME two roles the eye's outline already uses for
+        "shown" and "hidden", so the dot is those two states drawn side by side;
+        a chip fill in the second half would say nothing, since a chip is not
+        what the outline is drawn in.
+
+    A FIFTH WAS THE RAIL'S COUNT PILL and it is gone, which is the honest end of
+    the same argument: it held `--line-strong` under white on the strength of a
+    light-theme measurement (1.68:1, illegible rather than "faint") that came
+    out at 9.89:1 in dark, making the resting pill clearer than the live one. It
+    is an ordinary chip now, `--text-soft` on `--chip-bg`, and what separates
+    its two states is the fill turning blue.
+
+    A rule with four exemptions is not a rule, it is a list — so the list is
+    here, in prose, where the next person can weigh a fifth case against it.
+    The protection that DOES generalise is in `ui/tests/chrome.test.js`, which
+    measures whether the chip fill can still be seen against every surface it
+    lies on, and whether the two pills that ARE chips can be read; that is the
+    property these four are trading against.
+
+    HOW A DECLARATION IS FOUND is `declarations` above, which says what it sees
+    and why the two obvious cheaper methods do not.
+    """
+    role = re.compile(r"var\(\s*--accent-(?:line|ring)\s*\)")
+    offenders = []
+    for path in ALL_UI_FILES:
+        flat, pieces = declarations(strip_comments(read(path)))
+        for index, (offset, piece) in enumerate(pieces):
+            fill = piece.rfind("background")
+            if fill < 0:
+                continue
+            found = [(offset + fill, piece[fill:])]
+            # A property left dangling at the end of its own piece takes its
+            # value from whatever is concatenated on, across lines and comments:
+            # `` `…;background:` `` + `(busy ? 'var(--x)' : 'var(--y)')`.
+            if not re.search(r"var\(", found[0][1]):
+                found = [(at, text) for at, text in pieces[index + 1:]
+                         if re.search(r"var\(", text)][:1]
+            for at, text in found:
+                for hit in role.finditer(text):
+                    line = flat.count("\n", 0, at + hit.start()) + 1
+                    offenders.append(f"{path.name}:{line} {hit.group(0)}")
+    assert not offenders, (
+        f"a line role is filling a surface at {offenders}. The accent has five "
+        f"surfaces of its own — --accent, --accent-strong, --accent-muted, "
+        f"--accent-bg, --accent-bg-soft — and one of them is the one meant here")
+    # The sweep has to be looking at something: these roles ARE used, as lines.
+    used = sum(len(re.findall(r"var\(\s*--accent-(?:line|ring)\s*\)",
+                              strip_comments(read(path)))) for path in ALL_UI_FILES)
+    assert used, "no --accent-line or --accent-ring anywhere — this check sweeps nothing"
 
 
 def test_every_localstorage_access_is_guarded():

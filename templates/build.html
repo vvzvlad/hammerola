@@ -1,5 +1,17 @@
 <!doctype html>
-<html lang="en"><head>
+<!-- `data-theme` IS WRITTEN BY THE SERVER, from the reader's cookie, before this
+     document is sent (`render.cookie_theme` / `render._template`). The attribute
+     in the file is the default the hub answers with when there is no cookie, so
+     the template on disk is a working light page and the dark one is the same
+     document with this one word swapped.
+
+     ON THE ROOT ELEMENT AND NOT ON THE BODY: the interface is drawn with inline
+     styles, which beat any class rule, so the only thing that can repaint it is a
+     `var()` resolved against an ancestor -- and the root is the one ancestor that
+     exists in the first byte the browser parses. The body is also where the
+     vendored viewer writes a `data-theme` of its OWN (`Display.setTheme`), so
+     putting ours there would be two writers on one attribute. -->
+<html lang="en" data-theme="light"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>hammerola</title>
 <!-- A browser handed this link stops asking for /favicon.ico, which is what
@@ -15,42 +27,42 @@
      page was chrome that has gone -- #bar, the settings and download panels, the
      comment form, #cad_viewer, #err -- plus one rule aimed at the library
      (.tcv_tab_material), which is moot now that the viewport starts it with
-     `tools: false` and the whole panel is display:none. What is left in it is the
-     old dark page chrome, and painting that under a light interface would buy a
-     dark flash before the first render. index.html has since left it for exactly
-     the same reason -- the front page is drawn by this same bundle now -- so
-     pointer.html is the only page that still links it, and the only one that
-     still has that chrome. -->
+     `tools: false` and the whole panel is display:none. What is left in it is
+     the RESOLVER'S chrome, including an `overflow:hidden` and a flex body that
+     belong to a page holding one line of text; the front page's card grid
+     scrolls, and this page lays itself out. The palette the three pages really
+     do share left site.css with issue #35 and is linked below. -->
 <link rel="stylesheet" href="/_v/three-cad-viewer.css">
-<!-- THE PAGE COLOUR, before there is a page. Everything below this line is
-     drawn by the bundle, and until 255 KB of it has been fetched, parsed and
-     rendered the document is whatever the browser makes of a body with no
-     background: white. That is a flash of the wrong colour on the page a reader
-     arrives at from every project card, and the longer of the two loads.
-     Measured, frame by frame: transparent from the first paint until React
-     rendered, and then `rgb(68,68,68)` — white, and then a flash of the
+<!-- THE PALETTE, and the page colour before there is a page. Everything below
+     this line is drawn by the bundle, and until 255 KB of it has been fetched,
+     parsed and rendered the document is whatever the browser makes of a body
+     with no background: white. That is a flash of the wrong colour on the page
+     a reader arrives at from every project card, and the longer of the two
+     loads. Measured, frame by frame: transparent from the first paint until
+     React rendered, and then `rgb(68,68,68)` — white, and then a flash of the
      library's dark grey.
 
      THAT SECOND COLOUR IS WHY THIS SITS WHERE IT SITS. three-cad-viewer.css
      carries `body { background-color: var(--tcv-bg-color) }`, and the custom
      property is defined under `[data-theme="light"]` / `[data-theme="dark"]` —
      an attribute the LIBRARY ITSELF puts on `document.body` when it first
-     renders (`Display.setTheme`, reached through our `applyTheme`). So the rule
-     paints nothing before that moment and is live from it on, at the same
-     specificity as the one below. Same specificity means source order decides,
-     and ours has to come SECOND or the library repaints the page out from under
-     the interface once it initialises. `ui/tests/chrome.test.js` checks that
+     renders (`Display.setTheme`, reached through our `applyTheme`), and which
+     the server now also stamps on the root element above. So that rule is live
+     from the first paint, at the same specificity as the `html,body` rule in
+     the palette below, and ours has to come SECOND or the library repaints the
+     page out from under the interface. `ui/tests/chrome.test.js` checks that
      order; it is not a formatting preference.
 
-     Inline rather than a file because it is two declarations on the critical
-     path — a `<link>` would be a round trip to say what the markup can say for
-     free — and the CSP allows it (`style-src 'self' 'unsafe-inline'`,
-     src/app.py).
-
-     The values are the interface's own (`PAGE_BG` / `PAGE_FG` in
-     ui/src/style.jsx), and `ui/tests/chrome.test.js` holds this copy,
-     index.html's and the resolver's to them. -->
-<style>html,body{background:#eceef1;color:#1c1f23}</style>
+     A LINK AND NO LONGER TWO INLINE DECLARATIONS, which is the trade issue #35
+     forced and it is worth being explicit about. What used to be here was
+     `html,body{background:#eceef1;color:#1c1f23}` — cheap enough to inline, and
+     copied verbatim into index.html and site.css, which is three places for one
+     palette to drift. A whole palette cannot be inlined three times, so it
+     became a file, and the cost is one request on the critical path: a
+     same-origin stylesheet of a couple of kilobytes, fetched in parallel with
+     the bundle and render-blocking, so the first paint is already the right
+     colour rather than a white one corrected later. -->
+<link rel="stylesheet" href="/_v/tokens.css">
 </head><body>
 <!-- The whole page. The interface draws its own header, its own panels and its
      own error box inside this div, so the template carries no markup of its own:

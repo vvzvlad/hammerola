@@ -96,10 +96,18 @@ import {
  * The only two rules that cannot be inline styles.
  *
  * A `@keyframes` has no inline form at all, and `html`/`body` are elements above
- * anything React renders here. The page background is on both because this page
- * SCROLLS — unlike the build page, whose root is a fixed full-screen box — so
- * the document's own canvas shows through past the end of the list and, for a
- * moment, before the first render.
+ * anything React renders here.
+ *
+ * THE PAGE COLOUR USED TO BE THE OTHER HALF OF THAT SENTENCE and is not here any
+ * more (issue #35). It still has to be on both elements, and for the reason it
+ * always did — this page SCROLLS, unlike the build page whose root is a fixed
+ * full-screen box, so the document's own canvas shows through past the end of
+ * the list and, for a moment, before the first render — but it is painted from
+ * the palette now, by the `html, body` rule in `static/_v/tokens.css` that all
+ * three documents link. Restating it here would be a second declaration of one
+ * value, and the one that WINS: this block is injected into the body, so it
+ * comes after the linked stylesheet at the same specificity, and a page that had
+ * drifted would drift from the copy nobody can see.
  *
  * Injected as a `<style>` element rather than an imported stylesheet: an
  * `import './x.css'` would make this build emit a second output file, and that
@@ -113,7 +121,7 @@ import {
  * the document also holds a vendored stylesheet nobody here maintains.
  */
 const ENTRY_CSS = `
-html, body { margin: 0; background: ${PAGE_BG}; }
+html, body { margin: 0; }
 @keyframes hmr_spin { to { transform: rotate(360deg) } }
 `;
 
@@ -214,9 +222,43 @@ const BACKDROP_SHAPES = [
  *     are not run for a document that is not being rendered, so a backgrounded
  *     tab already costs nothing, and a `visibilitychange` listener beside it
  *     would be a second mechanism that cannot be observed to work.
+ *
+ * THE INK IS THE ONE COLOUR ON THIS PAGE THAT A `var()` CANNOT REACH, which is
+ * why it is a prop at all and why the prop is spent the way it is. A canvas 2D
+ * context parses its own colour strings and knows nothing about the cascade:
+ * `ctx.strokeStyle = 'var(--text-muted)'` is an unparseable value, which the
+ * context DISCARDS — leaving whatever was set before it, i.e. the initial black
+ * — so the mesh would be a black cage on a light page and nothing said anywhere.
+ *
+ * So the token is put where the cascade can resolve it, on the canvas ELEMENT
+ * (`color` in `render()` below), and the drawing reads back the resolved value
+ * with `getComputedStyle` — which hands over an `rgb(…)` triple the context does
+ * parse.
+ *
+ * READ WHEN IT CAN HAVE CHANGED, AND NOT ONCE PER FRAME. `getComputedStyle`
+ * flushes whatever style the document has pending, so asking it for a colour
+ * sixty times a second is most of what this effect costs — and the answer moves
+ * only when somebody changes the theme, which is one attribute on `<html>`
+ * (store.js). A `MutationObserver` on that attribute is therefore the whole
+ * subscription, and the value in between is a cached string. The property still
+ * has to be ASSIGNED every frame: `canvas.width = …` resets the 2D context to
+ * its defaults, which is why `lineJoin` is set in the loop as well.
+ *
+ * The backdrop still follows `data-theme` on the frame after it changes rather
+ * than on the next page load; a reduced-motion reader draws one frame and gets
+ * the theme they arrived in.
+ *
+ * `--text-muted` is the role: this is the faintest thing on the page that still
+ * has to be SEEN, the same weight as the mono meta a card is captioned with, and
+ * it is the one grey that gets lighter rather than darker when the page goes
+ * dark. The per-edge alpha that says depth moves to `globalAlpha`, which
+ * multiplies whatever the stroke colour is — so the depth cue survives the ink
+ * becoming a value this file no longer knows.
  */
 export class MeshBackdrop extends React.Component {
-  static defaultProps = { shapes: BACKDROP_SHAPES, period: 54, color: '122,130,140' };
+  static defaultProps = {
+    shapes: BACKDROP_SHAPES, period: 54, color: 'var(--text-muted)',
+  };
 
   componentDidMount() {
     const canvas = this.canvas;
@@ -229,6 +271,23 @@ export class MeshBackdrop extends React.Component {
     const ico = levels();
     const TOP = ico.length - 1;
 
+    // The palette's answer for whatever theme is in force, resolved by the
+    // browser off the element rather than by us off a name — and re-read only
+    // when the one attribute that can change it changes. Guarded because a
+    // document without an observer, or without a `documentElement` to watch, is
+    // still a document this backdrop can draw on: it keeps the ink the page
+    // arrived in, which is the same bargain reduced motion already makes.
+    let ink = window.getComputedStyle(canvas).color;
+    try {
+      this.watch = new MutationObserver(() => {
+        ink = window.getComputedStyle(canvas).color;
+      });
+      this.watch.observe(document.documentElement,
+        { attributes: true, attributeFilter: ['data-theme'] });
+    } catch (error) {
+      console.warn('backdrop', error);
+    }
+
     const draw = (now) => {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
@@ -240,6 +299,9 @@ export class MeshBackdrop extends React.Component {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
       ctx.lineJoin = 'round';
+      // Assigned here and not once above, for the same reason `lineJoin` is:
+      // the resize a few lines up wipes the context back to its defaults.
+      ctx.strokeStyle = ink;
 
       this.props.shapes.forEach((sp) => {
         // How detailed, as a triangle wave 0..TOP..0 that dwells on whole levels.
@@ -283,7 +345,7 @@ export class MeshBackdrop extends React.Component {
           // A collapsed edge, i.e. a vertex that has not left its parent yet.
           if (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) < 0.7) return;
           const depth = (a[2] + b[2]) / 2; // -1 behind .. 1 in front
-          ctx.strokeStyle = `rgba(${this.props.color},${(0.26 + 0.34 * (depth + 1) / 2).toFixed(3)})`;
+          ctx.globalAlpha = 0.26 + 0.34 * (depth + 1) / 2;
           ctx.lineWidth = 0.6 + 0.4 * (depth + 1) / 2;
           ctx.beginPath();
           ctx.moveTo(a[0], a[1]);
@@ -291,6 +353,9 @@ export class MeshBackdrop extends React.Component {
           ctx.stroke();
         });
       });
+      // Put it back: everything above sets it per edge, so nothing here depends
+      // on this line — it is the context's own invariant, for whatever draws next.
+      ctx.globalAlpha = 1;
 
       if (!reduce) this.raf = requestAnimationFrame(draw);
     };
@@ -299,13 +364,18 @@ export class MeshBackdrop extends React.Component {
 
   componentWillUnmount() {
     cancelAnimationFrame(this.raf);
+    // The same reason the frame is cancelled: this component really is
+    // unmounted while the page stays open, and an observer left watching
+    // `<html>` would go on resolving a colour for a canvas nobody draws.
+    if (this.watch) this.watch.disconnect();
   }
 
   render() {
     return (
       <canvas
         ref={(el) => { this.canvas = el; }}
-        style={css('position:absolute;inset:0;width:100%;height:100%;pointer-events:none')}
+        style={css('position:absolute;inset:0;width:100%;height:100%;pointer-events:none;'
+          + `color:${this.props.color}`)}
       />
     );
   }
@@ -462,26 +532,28 @@ export class HammerolaLogin extends React.Component {
    */
   drawStart(start) {
     return (
-      <div style={css('width:100%;margin-top:24px;padding-top:18px;border-top:1px solid #e9ecef')}>
+      <div style={css('width:100%;margin-top:24px;padding-top:18px;border-top:1px solid var(--line-soft)')}>
         <div style={css('display:flex;align-items:center;gap:8px')}>
-          <span style={css(`font:600 11.5px ${SANS};color:#2a2e33`)}>Nothing published here yet</span>
+          <span style={css(`font:600 11.5px ${SANS};color:var(--text)`)}>Nothing published here yet</span>
           <span style={css('flex:1')} />
           <div
             onClick={this.copy}
             style={css('padding:4px 9px;border-radius:5px;cursor:pointer;user-select:none;'
-              + `font:600 10.5px ${SANS};border:1px solid #d3d8de;background:#fff;color:#2a2e33`)}
+              + `font:600 10.5px ${SANS};border:1px solid var(--line);`
+              + 'background:var(--card-bg);color:var(--text)')}
           >
             {COPY_LABELS[this.state.copied] || 'Copy'}
           </div>
         </div>
-        <div style={css(`font:400 11px/1.55 ${SANS};color:#8a9099;margin-top:5px`)}>
+        <div style={css(`font:400 11px/1.55 ${SANS};color:var(--text-muted);margin-top:5px`)}>
           Hand this to your agent.
         </div>
         <div style={css('margin-top:9px;padding:10px 11px;border-radius:6px;'
-          + 'border:1px solid #d3d8de;background:#f7f8fa;display:flex;flex-direction:column;gap:3px')}
+          + 'border:1px solid var(--line);background:var(--sunken-bg);'
+          + 'display:flex;flex-direction:column;gap:3px')}
         >
           {agentBrief(start).map((line) => (
-            <span key={line} style={css(`font:400 11px/1.55 ${MONO};color:#1c1f23;overflow-wrap:anywhere`)}>
+            <span key={line} style={css(`font:400 11px/1.55 ${MONO};color:var(--text);overflow-wrap:anywhere`)}>
               {line}
             </span>
           ))}
@@ -505,17 +577,25 @@ export class HammerolaLogin extends React.Component {
         {animate && <MeshBackdrop />}
 
         <div style={css('position:relative;width:360px;max-width:calc(100% - 32px);box-sizing:border-box;'
-          + 'background:#fff;border:1px solid #d8dce1;border-radius:12px;'
-          + 'box-shadow:0 14px 44px rgba(20,24,28,.10);padding:40px 36px 32px;'
+          + 'background:var(--card-bg);border:1px solid var(--line);border-radius:12px;'
+          + 'box-shadow:0 14px 44px var(--shadow);padding:40px 36px 32px;'
           + 'display:flex;flex-direction:column;align-items:center')}
         >
           <Mark size={44} />
           <div style={css(`font:700 22px ${SANS};letter-spacing:-.3px;margin-top:14px`)}>{title}</div>
-          <div style={css(`font:400 12.5px/1.55 ${SANS};color:#787f87;text-align:center;margin-top:8px;text-wrap:pretty`)}>
+          <div style={css(`font:400 12.5px/1.55 ${SANS};color:var(--text-muted);text-align:center;margin-top:8px;text-wrap:pretty`)}>
             {description}
           </div>
 
           <div style={css('width:100%;display:flex;flex-direction:column;gap:10px;margin-top:26px')}>
+            {/* THE FIELD IS RECESSED AT REST AND RISES TO THE CARD ON FOCUS, which
+                is what the three fills say and the one thing to get right when
+                reading them: `--sunken-bg` is a surface set INTO whatever it
+                sits in, `--card-bg` is that surface itself. In the light theme
+                those are an off-white and a white and the difference is barely a
+                tint; in the dark one the same two tokens are what keeps a field
+                from being a hole in the card. The error state paints the palette's
+                own red tint rather than a third neutral. */}
             <input
               type="password"
               placeholder="EDIT_TOKEN"
@@ -525,12 +605,12 @@ export class HammerolaLogin extends React.Component {
               onFocus={() => this.setState({ focus: true })}
               onBlur={() => this.setState({ focus: false })}
               onKeyDown={(e) => { if (e.key === 'Enter') this.submit(); }}
-              style={css(`width:100%;box-sizing:border-box;height:38px;padding:0 12px;border-radius:6px;font:500 13px ${MONO};color:#1c1f23;outline:none;`
-                + (error ? 'border:1px solid #e2a8a0;background:#fdf5f4'
-                  : s.focus ? 'border:1px solid #9cc4f0;background:#fff'
-                    : 'border:1px solid #d3d8de;background:#f7f8fa'))}
+              style={css(`width:100%;box-sizing:border-box;height:38px;padding:0 12px;border-radius:6px;font:500 13px ${MONO};color:var(--text);outline:none;`
+                + (error ? 'border:1px solid var(--danger-line);background:var(--danger-bg)'
+                  : s.focus ? 'border:1px solid var(--accent-line);background:var(--card-bg)'
+                    : 'border:1px solid var(--line);background:var(--sunken-bg)'))}
             />
-            <div style={css(error ? `font:400 11px ${SANS};color:#b03a2e;margin-top:-4px` : 'display:none')}>
+            <div style={css(error ? `font:400 11px ${SANS};color:var(--danger);margin-top:-4px` : 'display:none')}>
               {error}
             </div>
             <div
@@ -538,18 +618,33 @@ export class HammerolaLogin extends React.Component {
               onMouseEnter={() => this.setState({ hover: true })}
               onMouseLeave={() => this.setState({ hover: false })}
               style={css('display:flex;align-items:center;justify-content:center;gap:8px;height:38px;'
-                + `border-radius:6px;color:#fff;font:600 13px ${SANS};cursor:pointer;background:`
-                + (busy ? '#9cc0e8;cursor:default' : s.hover ? '#1a6bc7' : '#1f7ae0'))}
+                + `border-radius:6px;color:var(--text-on-accent);font:600 13px ${SANS};cursor:pointer;background:`
+                // `--accent-muted` is the button WAITING: the accent washed
+                // roughly halfway toward the ground, which reads as "not yet"
+                // under white text in either theme. It was `--accent-line` for
+                // one round — a border colour asked to fill a button, because
+                // the palette had no washed accent at all — and a role spent on
+                // something other than what its name says is how the names stop
+                // being trustworthy. The build page's Switch button wanted the
+                // same thing and had made the same substitution; the token was
+                // added for the pair. The other two here are the accent doing
+                // exactly its job.
+                + (busy ? 'var(--accent-muted);cursor:default'
+                  : s.hover ? 'var(--accent-strong)' : 'var(--accent)'))}
             >
               {busy && (
-                <span style={css('width:11px;height:11px;border-radius:50%;'
-                  + 'border:1.6px solid rgba(255,255,255,.55);border-top-color:transparent;'
+                // A ring of the ink the button is written in, dimmed. The alpha
+                // is the ELEMENT'S — there is no translucent white in the
+                // palette and no reason for one, and an element that is nothing
+                // but a border renders identically either way.
+                <span style={css('width:11px;height:11px;border-radius:50%;opacity:.55;'
+                  + 'border:1.6px solid var(--text-on-accent);border-top-color:transparent;'
                   + 'animation:hmr_spin .9s linear infinite')}
                 />
               )}
               {busy ? 'Checking…' : 'Sign in'}
             </div>
-            <div style={css(`font:400 11px/1.6 ${SANS};color:#8a9099;text-align:center`)}>
+            <div style={css(`font:400 11px/1.6 ${SANS};color:var(--text-muted);text-align:center`)}>
               The same token <span style={css(`font:500 11px ${MONO}`)}>hammerola login</span> asks
               for. Kept in this browser only. A build somebody linked you to
               opens without it; the list of what is here does not.
@@ -558,7 +653,7 @@ export class HammerolaLogin extends React.Component {
 
           {start && this.drawStart(start)}
 
-          <div style={css(`font:400 11px ${MONO};color:#b0b6bd;margin-top:22px`)}>rev-pinned · agent-built</div>
+          <div style={css(`font:400 11px ${MONO};color:var(--text-faint);margin-top:22px`)}>rev-pinned · agent-built</div>
         </div>
       </div>
     );
@@ -612,11 +707,22 @@ const monthYear = (v) => (ts(v)
  * with a hole in it reads as a broken image, while this reads as "a model".
  */
 const Preview = ({ radius, src }) => (
-  <div style={css('position:absolute;inset:0;background:linear-gradient(160deg,#f4f5f7,#e2e5e9);'
+  // TWO NEIGHBOURING NEUTRALS AND NOT ONE, which is the plate's whole drawing:
+  // a flat fill with a wireframe on it reads as a missing image, a shallow
+  // gradient reads as a surface. `--hover-bg` is the second stop because it is
+  // the step the same surface takes under a pointer, and it stays a neighbour
+  // of `--sunken-bg` in both themes. NOT `--chip-bg`, which is now the other
+  // neutral in that gap: a chip fill is sized to be seen as an EDGE against
+  // what it lies on, and an edge is the one thing a gradient must not have.
+  <div style={css('position:absolute;inset:0;'
+    + 'background:linear-gradient(160deg,var(--sunken-bg),var(--hover-bg));'
     + `overflow:hidden;border-radius:${radius || 0}px`)}
   >
     <svg width="100%" height="100%" viewBox="0 0 120 80" preserveAspectRatio="xMidYMid slice" style={css('display:block')}>
-      <g stroke="#c9ced4" strokeWidth=".7" fill="none">
+      {/* A presentation attribute is a CSS declaration, so a `var()` in one is
+          resolved against the cascade exactly as an inline style is — the same
+          mechanism that inks the mark in style.jsx. */}
+      <g stroke="var(--line-strong)" strokeWidth=".7" fill="none">
         <path d="M60 22l22 13v22L60 70 38 57V35z" />
         <path d="M38 35l22 13 22-13M60 48v22" opacity=".7" />
       </g>
@@ -657,11 +763,11 @@ const Preview = ({ radius, src }) => (
 const STATUS_CHIPS = Object.freeze({
   building: {
     title: 'a build of this project\'s draft is running now',
-    style: 'color:#8a5a00;background:#fdf1d8',
+    style: 'color:var(--warn);background:var(--warn-bg)',
   },
   failed: {
     title: 'the last build of this project\'s draft failed',
-    style: 'color:#a32020;background:#fbe6e6',
+    style: 'color:var(--danger);background:var(--danger-bg)',
   },
 });
 
@@ -669,11 +775,11 @@ export const RevLine = ({ p }) => {
   const status = STATUS_CHIPS[p.status];
   return (
     <React.Fragment>
-      <span style={css(`font:600 12px ${MONO};color:#1f6fd0`)}>{p.rev}</span>
+      <span style={css(`font:600 12px ${MONO};color:var(--accent-text)`)}>{p.rev}</span>
       {p.dev && (
         <span
           title="this project also has uncommitted work in its dev slot"
-          style={css(`font:500 10px ${MONO};color:#7c3aad;background:#f3ebfa;padding:2px 6px;border-radius:4px`)}
+          style={css(`font:500 10px ${MONO};color:var(--note);background:var(--note-bg);padding:2px 6px;border-radius:4px`)}
         >
           dev
         </span>
@@ -769,17 +875,17 @@ export const VIEW_BODIES = Object.freeze({
           <div style={css('display:flex;flex-direction:column;gap:8px;padding:12px 14px 13px')}>
             <div style={css('display:flex;flex-direction:column;gap:2px;min-width:0')}>
               <span style={css(`font:600 13.5px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>
-              <span style={css(`font:400 10.5px ${MONO};color:#787f87;white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>
+              <span style={css(`font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>
                 {p.slug} · {p.meta}
               </span>
             </div>
             <div style={css('display:flex;align-items:center;gap:8px')}>
               <RevLine p={p} />
               <span style={css('flex:1')} />
-              <span title={stamp(p.built)} style={css(`font:400 11px ${MONO};color:#787f87`)}>{relTime(p.built)}</span>
+              <span title={stamp(p.built)} style={css(`font:400 11px ${MONO};color:var(--text-muted)`)}>{relTime(p.built)}</span>
             </div>
             <div style={css('display:flex;align-items:center;gap:8px')}>
-              <span style={css(`font:400 10.5px ${MONO};color:#b0b6bd`)}>first built {monthYear(p.first)}</span>
+              <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint)`)}>first built {monthYear(p.first)}</span>
             </div>
           </div>
         </a>
@@ -801,15 +907,15 @@ export const VIEW_BODIES = Object.freeze({
           </div>
           <div style={css('flex:1;min-width:0;display:flex;flex-direction:column;gap:2px')}>
             <span style={css(`font:600 13px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>
-            <span style={css(`font:400 10.5px ${MONO};color:#787f87;white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>
+            <span style={css(`font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>
               {p.slug} · {p.meta}
             </span>
           </div>
           <div style={css('width:150px;flex:none;display:flex;align-items:center;gap:8px')}>
             <RevLine p={p} />
           </div>
-          <div title={stamp(p.built)} style={css(`width:110px;flex:none;font:400 11px ${MONO};color:#787f87`)}>{relTime(p.built)}</div>
-          <div style={css(`width:150px;flex:none;font:400 10.5px ${MONO};color:#b0b6bd`)}>first built {monthYear(p.first)}</div>
+          <div title={stamp(p.built)} style={css(`width:110px;flex:none;font:400 11px ${MONO};color:var(--text-muted)`)}>{relTime(p.built)}</div>
+          <div style={css(`width:150px;flex:none;font:400 10.5px ${MONO};color:var(--text-faint)`)}>first built {monthYear(p.first)}</div>
         </a>
       ))}
     </div>
@@ -895,12 +1001,18 @@ export class HammerolaProjects extends React.Component {
     onMouseLeave: () => this.setState({ hover: null }),
   });
 
-  /** A card's frame, which is the only thing the two view bodies share. */
+  /** A card's frame, which is the only thing the two view bodies share.
+   *
+   * `--line` is the SAME border the sign-in card is drawn with, and the two were
+   * a shade apart in the mock. A card's edge is one job; two greys for it is the
+   * drift the palette exists to end, so they are one name now.
+   */
   cardStyle(id) {
     const lit = this.state.hover === id;
-    return 'background:#fff;border:1px solid ' + (lit ? '#9cc4f0' : '#e3e6ea')
+    return 'background:var(--card-bg);border:1px solid '
+      + (lit ? 'var(--accent-line)' : 'var(--line)')
       + ';border-radius:10px;text-decoration:none;color:inherit;'
-      + (lit ? 'box-shadow:0 3px 14px rgba(20,24,28,.07);' : '');
+      + (lit ? 'box-shadow:0 3px 14px var(--shadow-soft);' : '');
   }
 
   tab(active, onClick, content, key) {
@@ -909,7 +1021,9 @@ export class HammerolaProjects extends React.Component {
         key={key}
         onClick={onClick}
         style={css(`display:flex;align-items:center;padding:4px 12px;border-radius:5px;font:500 11.5px ${SANS};cursor:pointer;user-select:none;`
-          + (active ? 'background:#fff;color:#1c1f23;box-shadow:0 1px 2px rgba(0,0,0,.10)' : 'color:#5b6470'))}
+          + (active
+            ? 'background:var(--card-bg);color:var(--text);box-shadow:0 1px 2px var(--shadow-soft)'
+            : 'color:var(--text-soft)'))}
       >
         {content}
       </div>
@@ -948,9 +1062,9 @@ export class HammerolaProjects extends React.Component {
             <span style={css(`font:700 14px ${SANS};letter-spacing:-.2px`)}>hammerola</span>
           </div>
           <div style={css(`width:1px;height:22px;background:${HEADER_LINE}`)} />
-          <span style={css(`font:600 13px ${SANS};color:#5b6470`)}>Projects</span>
+          <span style={css(`font:600 13px ${SANS};color:var(--text-soft)`)}>Projects</span>
           <span style={css('flex:1')} />
-          <span style={css(`font:400 11px ${MONO};color:#9aa1a9`)}>
+          <span style={css(`font:400 11px ${MONO};color:var(--text-faint)`)}>
             {rows.length === 1 ? '1 project' : `${rows.length} projects`}
           </span>
           {/* The only control the header needs, because being here IS being
@@ -961,7 +1075,8 @@ export class HammerolaProjects extends React.Component {
           <div
             onClick={this.props.onSignOut}
             style={css('display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:6px;cursor:pointer;'
-              + `font:600 11.5px ${SANS};border:1px solid #d3d8de;background:#fff;color:#2a2e33`)}
+              + `font:600 11.5px ${SANS};border:1px solid var(--line);`
+              + 'background:var(--card-bg);color:var(--text)')}
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
               <rect x="2.5" y="7" width="11" height="7" rx="1.5" />
@@ -974,13 +1089,19 @@ export class HammerolaProjects extends React.Component {
         <div style={css('width:100%;max-width:1180px;margin:0 auto;padding:24px 20px 48px;box-sizing:border-box')}>
           {/* ── sort, and which way to look at it ── */}
           <div style={css('display:flex;align-items:center;gap:8px;padding:0 2px 16px;flex-wrap:wrap')}>
-            <span style={css(`font:500 11px ${SANS};color:#8a9099`)}>Sort by</span>
-            <div style={css('display:flex;background:#e0e3e8;border-radius:6px;padding:2px;gap:2px')}>
+            <span style={css(`font:500 11px ${SANS};color:var(--text-muted)`)}>Sort by</span>
+            {/* THE TRACK IS `--chip-bg` AND IT MATTERS MORE HERE THAN ANYWHERE,
+                because this one lies directly on `--page-bg`. On `--sunken-bg`
+                it was not merely faint, it was INVERTED — L* 95.8 against the
+                page's 94.0, a groove drawn lighter than the surface it is cut
+                into — where the literal it replaced was darker than the page by
+                dE 4.0. Both pills below take the same track. */}
+            <div style={css('display:flex;background:var(--chip-bg);border-radius:6px;padding:2px;gap:2px')}>
               {PROJECT_SORTS.map((id) =>
                 this.tab(this.sort === id, () => this.choose({ sort: id }), SORT_LABELS[id], id))}
             </div>
             <span style={css('flex:1')} />
-            <div style={css('display:flex;background:#e0e3e8;border-radius:6px;padding:2px;gap:2px')}>
+            <div style={css('display:flex;background:var(--chip-bg);border-radius:6px;padding:2px;gap:2px')}>
               {PROJECT_VIEWS.map((id) =>
                 this.tab(this.view === id, () => this.choose({ view: id }),
                   <svg width="13" height="13" viewBox="0 0 13 13"><path d={VIEW_ICONS[id]} fill="currentColor" /></svg>, id))}
@@ -991,7 +1112,7 @@ export class HammerolaProjects extends React.Component {
           {body(this, rows)}
 
           {!rows.length && (
-            <div style={css(`padding:60px 0;text-align:center;font:400 12px ${SANS};color:#8a9099`)}>
+            <div style={css(`padding:60px 0;text-align:center;font:400 12px ${SANS};color:var(--text-muted)`)}>
               No projects yet.
             </div>
           )}
@@ -1001,7 +1122,7 @@ export class HammerolaProjects extends React.Component {
               is in the local slot has NO card here, on purpose (SPEC 7.6, and
               Store._refresh_index). Without saying so, "I published and my
               project is missing" looks like a bug. */}
-          <div style={css(`font:400 11px/1.7 ${MONO};color:#b0b6bd;text-align:center;padding-top:28px`)}>
+          <div style={css(`font:400 11px/1.7 ${MONO};color:var(--text-faint);text-align:center;padding-top:28px`)}>
             a project appears here after its first `hammerola commit` —
             <br />
             work published into the local dev slot is never listed

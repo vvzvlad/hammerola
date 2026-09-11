@@ -58,43 +58,41 @@ export const SANS = 'var(--hmr-sans)';
 export const MONO = 'var(--hmr-mono)';
 
 /**
- * FOUR OF THE SIX colours that exist outside this bundle as well as inside it.
+ * FOUR ROLES OF THE PALETTE, as the references a rule writes.
  *
- * Everything else in the interface is a hex written where it is used, and that
- * is fine: one file draws it and one file changes it. These four are different
- * because three documents this bundle does not draw have to state them too —
- * `templates/build.html` and `templates/index.html` paint the page before there
- * is a page, and `static/_v/site.css` reproduces this header on the resolver at
- * /project/<pid>/ so that opening a project does not flash another design.
+ * THE COLOURS THEMSELVES ARE NOT HERE ANY MORE AND ARE NOT JAVASCRIPT AT ALL.
+ * They live in `static/_v/tokens.css`, once per theme, and every one of them is
+ * reached as `var(--name)` — so what these constants hold is a NAME rather than
+ * a value, and the value is whatever `data-theme` on `<html>` says it is when
+ * the browser resolves the rule.
  *
- * Named here so that there is ONE source rather than a component's literal and
- * a template's copy of it — the shape that lets a colour change in one place and
- * quietly stop matching in three. `ui/tests/chrome.test.js` reads those three
- * documents and compares them against these values, which it can only do
- * because they are values it can import and not text it has to parse.
+ * That indirection is forced by `css()` above rather than chosen: it turns every
+ * rule in this bundle into an INLINE style object, and an inline style beats a
+ * class rule on specificity, so no `[data-theme]` stylesheet could ever repaint
+ * these elements. A `var()` inside an inline style is the other way round — it
+ * resolves against the ancestor, which is how one attribute repaints the whole
+ * interface with no re-render and no new field in any component's state.
  *
- * THE OTHER TWO ARE NOT HERE AND ARE NOT CHECKED, and naming them is the whole
- * point of this paragraph: an unmentioned copy reads exactly like an absent one,
- * and both of these are one `grep` away.
+ * WHAT THIS PARAGRAPH USED TO SAY, and why it is worth writing down that it no
+ * longer does: these four were the only colours held to the three documents this
+ * bundle does not draw (`templates/build.html`, `templates/index.html`,
+ * `static/_v/site.css`), each of which had to state the page's colours itself.
+ * Two more were copied into `site.css` and checked by NOTHING — `#787f87` on the
+ * meta line, and `#1f6fd0`, which was the resolver's idea of the accent while
+ * the bundle used `#1f7ae0`: a drift that had already happened and that nobody
+ * could see, because seeing it meant opening two files. Every one of those
+ * copies is now a reference to one definition, so there is no longer a set of
+ * "checked" colours and a set of uncounted ones — there is one file, and
+ * `ui/tests/chrome.test.js` holds it to the documents that link it.
  *
- *   * `#787f87` — the mono meta line beside the title. Not a different kind of
- *     thing from the four above: the same detail of the same header, copied
- *     into `site.css` the same way;
- *   * `#1f6fd0` — the site's accent blue, and the resolver's link takes exactly
- *     it. More copies live in `HammerolaEntry.jsx` and `HammerolaViewer.jsx` —
- *     deliberately not counted here, because nothing holds the count and the
- *     count written here had already drifted — so moving the accent in the
- *     bundle leaves the resolver on the old one without a word.
- *
- * Both are deliberate copies rather than oversights, and both can drift in
- * silence. Promoting one is two lines — export it here, add it to the list
- * chrome.test.js holds `site.css` to — and until somebody does, this is a known
- * gap and not a covered one.
+ * THESE FOUR NAMES REMAIN BECAUSE TWO COMPONENTS IMPORT THEM. A rule written
+ * from here on says `var(--card-bg)` in its own text; there is no constant to
+ * add, and adding one would be a second vocabulary for the same palette.
  */
-export const PAGE_BG = '#eceef1';
-export const PAGE_FG = '#1c1f23';
-export const HEADER_BG = '#f7f8fa';
-export const HEADER_LINE = '#d8dce1';
+export const PAGE_BG = 'var(--page-bg)';
+export const PAGE_FG = 'var(--text)';
+export const HEADER_BG = 'var(--header-bg)';
+export const HEADER_LINE = 'var(--line)';
 
 /**
  * WHERE THE WIDE LAYOUT STOPS FITTING, as the query the page asks the window.
@@ -149,18 +147,26 @@ export const NARROW = '(max-width: 720px)';
  *
  * TWO COLOURS, BECAUSE THE HOLES ARE PUNCHED rather than transparent: `ink` is
  * the ribbon, `hole` is the page showing through it. They move together — an
- * ink change with the old hole colour is an unreadable mark — which is why
- * there is a second file, `brand/mark-on-dark.svg`, holding the other pair
- * ready for the day the theme covers the interface (issue #35). Nothing
- * passes these props today; they exist so that day is a call site and not a
- * redraw.
+ * ink change with the old hole colour is an unreadable mark — and since issue
+ * #35 they move together BY THEMSELVES: the defaults are the two tokens, so the
+ * mark follows `data-theme` on every page that draws it, and the dark pair the
+ * designer sent as `brand/mark-on-dark.svg` is what those tokens resolve to.
+ * The file had been sitting unrendered since 2026-08-28 for want of exactly
+ * this. The props remain because a call site may still want to ink the mark
+ * against something that is not the page — a swatch, a dark banner — and that
+ * has to be a call site rather than a redraw.
+ *
+ * `ui/tests/chrome.test.js` still compares this drawing against the designer's
+ * file attribute for attribute; it resolves a `var(--…)` through the LIGHT
+ * token before comparing, so the triangle is component -> token -> file rather
+ * than one link shorter.
  *
  * THE STROKE WIDTH IS NOT A PROP ANY MORE. It used to be, and a caller thinned
  * it at large sizes, which is a sensible thing to do to an outlined hexagon and
  * a meaningless one here: 6.5 is the WIDTH OF THE RIBBON where it turns, so
  * changing it does not adjust the mark's weight, it draws a different mark.
  */
-export const Mark = ({ size = 18, ink = '#1c1f23', hole = '#fff' }) => (
+export const Mark = ({ size = 18, ink = 'var(--mark-ink)', hole = 'var(--mark-hole)' }) => (
   <svg width={size} height={size} viewBox="0 0 48 48">
     <rect x="11" y="5" width="9" height="38" fill={ink} />
     <path d="M20 23.5h8a8.5 8.5 0 018.5 8.5v11" fill="none" stroke={ink} strokeWidth="6.5" />
