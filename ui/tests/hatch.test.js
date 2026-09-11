@@ -15,9 +15,10 @@
 //   * the cap units moving, so nothing gets patched at all;
 //   * the patch becoming per-material, which would silently share one compiled
 //     program between caps that wanted different ones;
-//   * the per-part fields collapsing — every part onto one slope, the pitch
-//     following the scene instead of the part, the angle drifting between
-//     revisions — none of which draws a word from any console;
+//   * the per-part fields collapsing — every part onto one slope, the angle
+//     drifting between revisions — none of which draws a word from any console;
+//   * the pitch starting to follow the part again, which is a decision the
+//     owner has already reversed once and which no console would mention;
 //   * the checkbox unwiring itself, so toggling `cutHatch` stops reaching the
 //     caps at all.
 
@@ -27,8 +28,8 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  HATCH_SLOPES, hatchMarker, hatchSectionCaps, hatchShader, hatchTargetLines,
-  safeHatch, setCutHatch,
+  HATCH_LINE_PX, HATCH_PITCH_PX, HATCH_SLOPES, hatchMarker, hatchSectionCaps,
+  hatchShader, safeHatch, setCutHatch,
 } from '../src/viewport/hatch.js'
 import { fakeCapMaterial, fakeCapUnits, fakeMatrix, fakeSolidObject } from './fakes.js'
 
@@ -125,7 +126,7 @@ describe('hatchSectionCaps', () => {
       expect(m.defines.STANDARD).toBe('')     // and nothing it had is lost
       // The part's numbers ride on the MATERIAL, from where the patch reads
       // them at compile time.
-      for (const field of ['periods', 'dirX', 'dirY', 'phase', 'on']) {
+      for (const field of ['dirX', 'dirY', 'phase', 'on']) {
         expect(typeof m.userData.hatch[field]).toBe('number')
       }
     }
@@ -167,7 +168,7 @@ describe('hatchSectionCaps', () => {
     const g = fakeInternals(['|model|lid', '|model|body', '|model|pin'])
     const units = unitsOf(g)
     units[0] = null                                  // a unit that never got filled
-    units[1].solid.front = null                      // a solid with no mesh to measure
+    units[1].solid.name = null                       // a solid with no path to hash
     units[2].capMeshes[1].material = null            // a cap with nothing to patch
     expect(hatchSectionCaps(g)).toBe(2)
     expect(warn).toHaveBeenCalledTimes(1)      // once per render, not per cap
@@ -250,59 +251,79 @@ describe('one field per part', () => {
     expect(b.dirY).toBe(a.dirY)
     expect(b.phase).toBe(a.phase)
   })
-
-  it('measures the part in WORLD space, not in its own local one', () => {
-    // The bounding box is LOCAL (`front.geometry.boundingBox`) and the scene is
-    // not obliged to leave a solid unscaled. A part built at half scale but
-    // placed twice as large covers twice the plane, and the hatch has to count
-    // what is on the screen, not what is in the file.
-    const g = fakeInternals(['|model|lid'])
-    unitsOf(g)[0].solid.front.matrixWorld = fakeMatrix({ scale: [2, 2, 2] })
-    hatchSectionCaps(g)
-    // A 10 mm cube at scale 2 spans 20 mm: half the periods per uv unit of the
-    // unscaled 10 mm one under the same 36 mm region.
-    const scaled = capsOf(g)[0].userData.hatch.periods
-    const plain = fakeInternals(['|model|lid'])
-    hatchSectionCaps(plain)
-    expect(scaled).toBeCloseTo(capsOf(plain)[0].userData.hatch.periods / 2, 12)
-  })
 })
 
-describe('pitch', () => {
-  it('lays TARGET_LINES lines across the part, not across the region', () => {
-    // The owner's formula, read back off a stored uniform: one uv unit of the
-    // cap quad is `cap.size` world units, so periods x extent / size IS the
-    // number of lines the part gets. The 10 mm cube cut by the Z plane shows
-    // its 10 mm extent; the 36 mm region spans the uv.
-    const g = fakeInternals(['|model|lid'])
+describe('one pitch for every cut face', () => {
+  /** What `hatchSectionCaps` stored on the first cap of a one-solid scene built
+   *  the given way. Same part name throughout, so angle and phase are fixed and
+   *  anything that moves moved because of the geometry. */
+  const paramsOf = (options) => {
+    const g = fakeInternals(['|model|lid'], options)
     hatchSectionCaps(g)
-    const hatch = capsOf(g)[0].userData.hatch
-    expect(hatch.periods).toBe(36 * hatchTargetLines / 10)
-  })
+    return capsOf(g)[0].userData.hatch
+  }
 
-  it('keeps the line count over a part as the region grows around it', () => {
-    // What "the pitch follows the part" buys: the same bracket in a 36 mm
-    // scene and a 400 mm one is hatched with the same number of lines, though
-    // the two store very different periods per uv unit.
-    for (const size of [36, 400]) {
-      const g = fakeInternals(['|model|lid'], { size })
-      hatchSectionCaps(g)
-      const hatch = capsOf(g)[0].userData.hatch
-      expect(hatch.periods * 10 / size).toBeCloseTo(hatchTargetLines, 12)
+  it('stores the same numbers whatever the part and the region measure', () => {
+    // The owner's decision, and the reverse of the one it replaced: one step
+    // everywhere, like Fusion's. Every variant below moved the pitch that
+    // followed the part — a part twenty times the size, the same part placed at
+    // twice its own scale, a clipping region ten times as wide — and not one of
+    // them may move anything now.
+    const plain = paramsOf({})
+    for (const variant of [{ max: [200, 200, 200] },
+                           { matrix: fakeMatrix({ scale: [2, 2, 2] }) },
+                           { size: 400 }]) {
+      expect(paramsOf(variant)).toEqual(plain)
     }
   })
 
-  it('counts the extent IN the plane of the cut', () => {
-    // A 10 x 20 x 30 block: the Z plane crosses the 10 x 20 face, the Y plane
-    // the 10 x 30 one, and the pitch of each follows ITS face — one hatch per
-    // part per plane, not one per part.
-    const g = fakeInternals(['|model|lid'], {
-      min: [0, 0, 0], max: [10, 20, 30], planes: [[0, 0, 1], [0, 1, 0]],
-    })
-    hatchSectionCaps(g)
-    const [z, y] = capsOf(g).map((m) => m.userData.hatch)
-    expect(z.periods).toBe(36 * hatchTargetLines / 20)
-    expect(y.periods).toBe(36 * hatchTargetLines / 30)
+  it('keeps no size-derived field for a pitch to come back in', () => {
+    // Stronger than the equality above, and the reason it is a second line: a
+    // per-part pitch that happened to agree across those three scenes would
+    // pass there. What a cap carries is the part's direction, its phase and the
+    // checkbox — there is no fourth field.
+    expect(Object.keys(paramsOf({})).sort())
+      .toEqual(['dirX', 'dirY', 'on', 'phase'])
+  })
+
+  it('measures the pitch on the SCREEN, off the fragment\'s own derivative', () => {
+    // Where the pitch went instead: into the GLSL, which no runner here can
+    // execute. What IS assertable is the step that turns a distance in the
+    // plane of the cut into a distance in FRAMEBUFFER PIXELS — dividing by the
+    // LENGTH of its own screen gradient — because that division is the whole of
+    // why the density does not follow the zoom, and because losing it costs
+    // nothing visible until somebody turns the wheel.
+    //
+    // THE LENGTH AND NOT `fwidth`, which is why the second assertion is here:
+    // the two read alike and only one of them is a pitch. `fwidth` is
+    // `abs(dFdx) + abs(dFdy)`, which runs up to 1.41 times the gradient
+    // depending on how the stripes happen to lie on the screen — one pitch per
+    // angle, and a pattern that breathes while the model turns, instead of the
+    // one pitch everywhere the owner asked for.
+    const shader = { fragmentShader: hatchMarker }
+    hatchShader(shader)
+    expect(shader.fragmentShader)
+      .toMatch(/hatchUv\s*\/\s*max\(\s*length\(\s*vec2\(\s*dFdx\(\s*hatchUv\s*\)\s*,\s*dFdy\(\s*hatchUv\s*\)\s*\)\s*\)/)
+    expect(shader.fragmentShader).not.toMatch(/fwidth/)
+    // ...and those pixels are counted in the exported pitch.
+    expect(shader.fragmentShader).toContain(`/ ${HATCH_PITCH_PX.toFixed(1)}`)
+  })
+
+  it('draws the line LINE_PX wide and softens it over about one pixel', () => {
+    // The numbers the shader is cut at are in PERIOD units — one period is
+    // PITCH_PX pixels — so they are read back out of the source and returned to
+    // pixels here rather than restated. The band matters as much as the width:
+    // the two-pixel `fwidth` band this replaced is wider than the line itself,
+    // and a line with no inked middle is an even grey wash, which reads as a
+    // colour decision rather than as a bug.
+    const shader = { fragmentShader: hatchMarker }
+    hatchShader(shader)
+    const cut = shader.fragmentShader.match(/smoothstep\(([\d.]+) - ([\d.]+),/)
+    expect(cut).not.toBeNull()
+    const [halfWidth, halfBand] = [Number(cut[1]), Number(cut[2])]
+    expect(2 * halfWidth * HATCH_PITCH_PX).toBeCloseTo(HATCH_LINE_PX, 12)
+    expect(2 * halfBand * HATCH_PITCH_PX).toBeCloseTo(1, 12)
+    expect(halfBand).toBeLessThan(halfWidth)
   })
 })
 
@@ -427,16 +448,15 @@ describe('hatchShader', () => {
   })
 
   it('declares every uniform it reads, at global scope ahead of main', () => {
-    // The five identifiers exist for the GLSL compiler only because the
+    // The four identifiers exist for the GLSL compiler only because the
     // declarations are spliced in beside three.js's own uniform block. Losing
     // that splice is a shader that fails to compile — and a cut face that
     // renders as an error where the fill used to be.
     const material = fakeCapMaterial()
-    material.userData.hatch = { periods: 2, dirX: 1, dirY: 0, phase: 0.5, on: 1 }
+    material.userData.hatch = { dirX: 1, dirY: 0, phase: 0.5, on: 1 }
     const shader = { uniforms: {}, fragmentShader: 'uniform vec3 diffuse;\n' + TAIL }
     hatchShader.call(material, shader)
-    for (const name of ['hatchPeriods', 'hatchDirX', 'hatchDirY', 'hatchPhase',
-                        'hatchOn']) {
+    for (const name of ['hatchDirX', 'hatchDirY', 'hatchPhase', 'hatchOn']) {
       const declaration = shader.fragmentShader.indexOf(`uniform float ${name};`)
       expect(declaration).toBeGreaterThan(-1)
       // The marker sits inside `main()`, so ahead of it is what makes these
@@ -450,13 +470,12 @@ describe('hatchShader', () => {
     // three.js calls `material.onBeforeCompile(parameters, renderer)`, so `this`
     // is the material and the numbers were written there by `patchCapMaterial`.
     // This is the half that lets every cap share ONE compiled program while
-    // hatching to its own pitch and slope.
+    // hatching to its own slope and phase.
     const material = fakeCapMaterial()
-    const hatch = { periods: 2.5, dirX: -0.5, dirY: 0.5, phase: 0.25, on: 0 }
+    const hatch = { dirX: -0.5, dirY: 0.5, phase: 0.25, on: 0 }
     material.userData.hatch = hatch
     const shader = { uniforms: {}, fragmentShader: 'uniform vec3 diffuse;\n' + TAIL }
     hatchShader.call(material, shader)
-    expect(shader.uniforms.hatchPeriods.value).toBe(2.5)
     expect(shader.uniforms.hatchDirX.value).toBe(-0.5)
     expect(shader.uniforms.hatchDirY.value).toBe(0.5)
     expect(shader.uniforms.hatchPhase.value).toBe(0.25)

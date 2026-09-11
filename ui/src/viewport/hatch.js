@@ -9,18 +9,21 @@
 // (`clipObjectColors`, options.js) and a diagonal hatch over it, `Show Hatch`,
 // on by default and with no settings of its own. This file is the second layer.
 //
-// IN THE PLANE OF THE CUT, NOT ON THE SCREEN, and that is the decision the rest
-// of the file follows from. A screen-space hatch reads as a film laid over the
-// picture: it stands still while the model turns under it. The cap quad already
-// carries the frame this needs — `uv` runs 0..1 across a quad that
-// `PlaneMesh.updateMatrixWorld` scales to `0.5 * size` and turns to face the
-// clip normal, so uv IS the section plane, in world proportions.
+// IN THE PLANE OF THE CUT, NOT ON THE SCREEN — the pattern, that is; the PITCH
+// is the one thing measured on the screen, and the nuance is the second bullet
+// below. A screen-space hatch reads as a film laid over the picture: it stands
+// still while the model turns under it. The cap quad already carries the frame
+// this needs — `uv` runs 0..1 across a quad that `PlaneMesh.updateMatrixWorld`
+// scales to `0.5 * size` and turns to face the clip normal, so uv IS the
+// section plane, in world proportions. Direction and phase are read out of that
+// plane and turn with the model, exactly as they always did.
 //
 // PER PART, AND NOT ONE FIELD ACROSS THE CUT (issue #13). The first version
 // hatched every cap out of the quad's own frame, which made one clip plane's
 // stripes run through wall, board and lid unbroken — the cut read as one body,
-// which is the one reading a section exists to correct. Two decisions, both the
-// owner's, and neither re-opens from here:
+// which is the one reading a section exists to correct. What stayed per part
+// after that, and what pointedly did not, are the two decisions below — both
+// the owner's, and neither re-opens from here:
 //
 //   * every SOLID gets its own field AND its own angle, so neighbouring bodies
 //     differ in slope — the drawing convention — even where their phases
@@ -31,10 +34,18 @@
 //     particular keys can hash onto one slope; the set below is what keeps the
 //     rest of the convention, and the phase, taken from different bits of the
 //     same hash, is what separates the rare pair that collides;
-//   * the pitch follows the PART, not the scene: roughly the same number of
-//     lines on any cut face, so a small part in a big assembly stays readable.
-//     The accepted cost is that the hatch is no longer a scale — two builds of
-//     different extents no longer hatch with the same pitch.
+//   * ONE PITCH FOR EVERY CUT FACE IN THE SCENE, measured in FRAMEBUFFER
+//     PIXELS, with the lines very thin — Fusion's hatch, which is what the
+//     owner asked for. It replaces a pitch that followed each part's own
+//     bounding box: that gave a big part wide bands and a small one fine lines,
+//     and the two side by side read as two different drawings. Measuring on the
+//     screen is also what keeps the density off the ZOOM, the owner's other
+//     condition: `hatchUv` over the LENGTH of its own screen gradient — and
+//     pointedly not over `fwidth`, see `HATCH` — is a distance in pixels, so
+//     what is held constant is what the eye sees, not what the model measures.
+//     The accepted cost is that the hatch is not a scale — a 5 mm boss and a
+//     500 mm plate hatch identically, and a part small on screen gets fewer
+//     lines across it rather than the same number.
 //
 // WHY `onBeforeCompile` AND NOT A MATERIAL OF OUR OWN. The cap material carries
 // the stencil test that makes the cap appear only where the solid was opened,
@@ -61,13 +72,19 @@ const MARKER = "#include <opaque_fragment>";
  *  the vendored bundle. */
 const UNIFORM_ANCHOR = "uniform vec3 diffuse;";
 
-/** Lines laid across ONE PART's extent in the plane of the cut. Twelve is the
- *  middle of the owner's 10–14 range, and it is where the two edges of that
- *  range stop working: below ten, a narrow face reads as a tint rather than as
- *  hatching; above fourteen, the moire crossfade at the bottom of the shader
- *  starts averaging the pattern away on a part that is small on screen. The
- *  pitch itself is `cap.size * TARGET_LINES / extent` — see `capUniforms`. */
-const TARGET_LINES = 12.0;
+/** The two measurements of the hatch, BOTH IN FRAMEBUFFER PIXELS: the lines sit
+ *  PITCH_PX apart and each is LINE_PX across, on every cut face in the scene and
+ *  at every zoom. The shader is where they are applied — see `HATCH`.
+ *
+ *  FRAMEBUFFER AND NOT CSS PIXELS, which is the one thing to know about the
+ *  numbers: on a 2x display the hatch comes out at half the CSS size, four CSS
+ *  pixels apart and three quarters of one wide. That is deliberate and not an
+ *  oversight to correct by multiplying by `devicePixelRatio` — a pixel and a
+ *  half OF THE FRAMEBUFFER is what reads as a drawn hairline, while the same
+ *  1.5 taken as CSS pixels would be three device pixels on a retina screen and
+ *  read as a band. */
+const PITCH_PX = 8.0;
+const LINE_PX = 1.5;
 
 /** The set every part's line direction is drawn from, in DEGREES, as the
  *  direction the lines RUN in the cap quad's uv plane. Six slopes covering the
@@ -104,15 +121,26 @@ function mix(h) {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
-/** Half a line's width, in period units: the lines cover 2 x this. A fifth of
- *  the pitch reads as a drawn line rather than as stripes. */
-const HALF_WIDTH = 0.1;
+/** Half a line's width, IN PERIOD UNITS, which is what the shader counts in:
+ *  the lines cover 2 x this. Derived from the two pixel constants rather than
+ *  typed, so the line stays LINE_PX wide if the pitch is ever retuned. */
+const HALF_WIDTH = LINE_PX / 2 / PITCH_PX;
 
-/** The hatch's five uniforms, declared at global scope just ahead of three.js's
+/** Half the anti-aliasing band, in the same period units: a transition of about
+ *  ONE PIXEL in total, half a pixel each side of the edge. One period is
+ *  PITCH_PX pixels, so a pixel is `1 / PITCH_PX` of one.
+ *
+ *  RETUNED FOR A THIN LINE, not carried over. The band this replaced was
+ *  `fwidth(hatchS)` on each side — two pixels across a line that is now 1.5
+ *  wide, which leaves no fully inked middle at all and washes the whole hatch
+ *  into an even grey. That is the failure to watch for if these numbers move:
+ *  it looks like a colour choice rather than a bug. */
+const AA_HALF = 0.5 / PITCH_PX;
+
+/** The hatch's four uniforms, declared at global scope just ahead of three.js's
  *  own — see UNIFORM_ANCHOR. Plain `float`s and nothing structured, because no
  *  THREE constructor is reachable from this module to build a Vector2 with. */
 const HATCH_UNIFORMS = `
-uniform float hatchPeriods;
 uniform float hatchDirX;
 uniform float hatchDirY;
 uniform float hatchPhase;
@@ -125,9 +153,44 @@ uniform float hatchOn;
  * `vUv` is the section plane (see the header). The line direction comes in as
  * the `hatchDirX`/`hatchDirY` pair — one slope out of HATCH_SLOPES, turned 90
  * degrees because the stripes are the LEVEL SETS of `dot(p, dir)` and so run
- * perpendicular to it — and the pitch and phase in as `hatchPeriods` and
- * `hatchPhase`, all of them per part. See `capUniforms` for where the numbers
- * come from.
+ * perpendicular to it — and the phase in as `hatchPhase`. Those two are per
+ * part and are the only per-part numbers there are; see `capUniforms` for where
+ * they come from. The pitch is not among them: it is PITCH_PX, one constant for
+ * the whole scene.
+ *
+ * THE PITCH IS COUNTED IN FRAMEBUFFER PIXELS, and the screen-space gradient of
+ * `hatchUv` is the whole of that measure. `hatchUv` is a distance in the plane
+ * of the cut; the LENGTH of `vec2(dFdx, dFdy)` of it is how much of that
+ * distance one pixel covers ACROSS THE STRIPES; so their ratio is that distance
+ * in pixels. `cap.size`, the part's bounding box and the camera's zoom all
+ * cancel out of the ratio — which is why nothing outside this shader needs to
+ * know any of them, and why turning the wheel does not change the density.
+ *
+ * `length` AND NOT `fwidth`, which is the trap this spent a review on: `fwidth`
+ * is `abs(dFdx) + abs(dFdy)`, the L1 sum and not the length, so it runs from
+ * the true gradient up to 1.41 times it depending on how the stripes happen to
+ * lie on the screen. As the width of an anti-aliasing band that overshoot is
+ * harmless, which is what it used to be here; as the PITCH it would make the
+ * spacing depend on the angle — every slope in HATCH_SLOPES a different
+ * density, and the whole pattern breathing between 8 and 11.3 pixels while the
+ * model turns. One pitch everywhere means the Euclidean length.
+ *
+ * The `max` is a floor against a ZERO gradient, which is uv that does not
+ * change from one pixel to the next — a degenerate cap, or one magnified until
+ * the difference falls under float precision. It is not a tolerance. A cap
+ * turned edge-on is the opposite case and needs no floor: its gradient is huge,
+ * `hatchPx` collapses towards zero, and the sliver on screen comes out as one
+ * flat tone.
+ *
+ * EXACT RATHER THAN APPROXIMATE, and it is the camera that makes it so: this
+ * viewport is ORTHOGRAPHIC by construction (`ortho: true`, options.js), so the
+ * map from a flat cap's uv to pixels is ONE CONSTANT LINEAR MAP over the whole
+ * face — foreshortened along one axis where the cap is tilted, but the same map
+ * at every fragment, which is what makes the gradient the SAME NUMBER over the
+ * whole face. Constant, not isotropic: that foreshortening is why the length is
+ * taken per fragment here and could not be computed once on the CPU. The lines therefore come out straight
+ * and evenly spaced. Under a perspective camera the ratio would drift across
+ * the face and this would be a near-enough approximation instead.
  *
  * FLAT, and deliberately: this REPLACES `gl_FragColor` rather than tinting the
  * lit result. A `MeshStandardMaterial` would shade the lines along with the
@@ -137,11 +200,11 @@ uniform float hatchOn;
  * written here is in the working (linear) space exactly like `diffuse` and goes
  * out through the same conversions as the rest of the scene.
  *
- * `fwidth` is the whole of the anti-aliasing AND of the behaviour when the
- * model is small on screen: once a period is a couple of pixels wide the sharp
- * coverage is crossfaded to the pattern's own average, so a cut that is too
- * small to hatch settles into an evenly darker fill instead of aliasing into
- * moire or filling in solid.
+ * THE ANTI-ALIASING IS THE SMOOTHSTEP'S BAND AND NOTHING ELSE — AA_HALF, about
+ * a pixel in total. There is no moire crossfade any more: a period pinned at
+ * PITCH_PX pixels cannot shrink towards a pixel however small the part is on
+ * screen, so the case that code existed for stopped being reachable with the
+ * pitch it followed.
  *
  * `hatchOn` gates the whole thing and is the reason the checkbox costs no
  * recompile: at 0 the coverage multiplies out and the cap is a flat fill in the
@@ -154,15 +217,14 @@ uniform float hatchOn;
  */
 const HATCH = `
   {
-    float hatchS = dot(vUv - 0.5, vec2(hatchDirX, hatchDirY)) * hatchPeriods
-                   + hatchPhase;
-    float hatchW = fwidth(hatchS);
+    float hatchUv = dot(vUv - 0.5, vec2(hatchDirX, hatchDirY));
+    float hatchPx = hatchUv
+                    / max(length(vec2(dFdx(hatchUv), dFdy(hatchUv))), 1e-8);
+    float hatchS = hatchPx / ${PITCH_PX.toFixed(1)} + hatchPhase;
     float hatchF = abs(fract(hatchS) - 0.5);
-    float hatchSharp = 1.0 - smoothstep(${HALF_WIDTH} - hatchW,
-                                        ${HALF_WIDTH} + hatchW, hatchF);
-    float hatchCov = mix(hatchSharp, ${(2 * HALF_WIDTH).toFixed(2)},
-                         smoothstep(${HALF_WIDTH}, ${(3 * HALF_WIDTH).toFixed(2)},
-                                    hatchW)) * hatchOn;
+    float hatchCov = (1.0 - smoothstep(${HALF_WIDTH} - ${AA_HALF},
+                                       ${HALF_WIDTH} + ${AA_HALF},
+                                       hatchF)) * hatchOn;
     // The ink is the part's own colour taken further, so the hatch says the
     // same thing about the material as the fill does. A part whose colour is
     // already near black is lightened instead, because there is nothing below
@@ -193,7 +255,7 @@ const HATCH = `
  * `shader` object is kept on `material.userData.hatchShader` so `setCutHatch`
  * can flip a value in place later, without a recompile.
  *
- * DECLARED, NOT JUST READ: the five identifiers exist for the GLSL compiler
+ * DECLARED, NOT JUST READ: the four identifiers exist for the GLSL compiler
  * only because `HATCH_UNIFORMS` is spliced in ahead of three.js's own uniform
  * block. Losing that splice is a shader that fails to compile — loud in the
  * console, and the suite holds the anchor to the vendored bundle for it.
@@ -201,7 +263,6 @@ const HATCH = `
 export function hatchShader(shader) {
   const p = this && this.userData && this.userData.hatch;
   if (p) {
-    shader.uniforms.hatchPeriods = { value: p.periods };
     shader.uniforms.hatchDirX = { value: p.dirX };
     shader.uniforms.hatchDirY = { value: p.dirY };
     shader.uniforms.hatchPhase = { value: p.phase };
@@ -256,110 +317,28 @@ function patchCapMaterial(material, params) {
 }
 
 /**
- * The eight corners of a solid's bounding box, taken to world with plain
- * arithmetic over `matrixWorld.elements` (a column-major 4x4; the w row is
- * dropped because a mesh matrix is affine).
+ * The hatch parameters for every cap of the part named `key`.
  *
- * NOT `_solidWorldBox()`: it returns one SHARED scratch Box3 that the library's
- * cull loop overwrites every frame, so a box kept past the next frame holds
- * whoever culled last. The corners land in a fresh array of 24 numbers instead.
- * `boundingBox` is computed at build time by the library (when the front mesh
- * is built) and is in LOCAL coordinates; `front.matrixWorld` folds in the group
- * transforms down to the solid.
+ * ANGLE AND PHASE, AND NOTHING ELSE — which is all that is left of the per-part
+ * arithmetic now that the pitch is one constant counted in pixels by the shader
+ * (see `HATCH`). Nothing here reads the cap, the clipping region's size or the
+ * part's bounding box, and nothing should start to: a number derived from any
+ * of those is a pitch that follows the part again, which is the decision the
+ * header records the owner reversing.
+ *
+ * Both come from the part's key alone, through one mixed hash, so they are
+ * stable across revisions and independent of where the part sits. The slope is
+ * one of HATCH_SLOPES, all pairwise far enough apart to read as different; the
+ * phase takes the bits a second mix produces, so two keys that do land on one
+ * slope still hatch out of step — and two that coincide in BOTH are the rare
+ * pair the header accepts.
  */
-function worldCorners(solid) {
-  const front = solid && solid.front;
-  const bb = front && front.geometry && front.geometry.boundingBox;
-  const e = front && front.matrixWorld && front.matrixWorld.elements;
-  if (!bb || !bb.min || !bb.max || !e || e.length < 16) return null;
-  const corners = [];
-  for (const x of [bb.min.x, bb.max.x]) {
-    for (const y of [bb.min.y, bb.max.y]) {
-      for (const z of [bb.min.z, bb.max.z]) {
-        corners.push(
-          e[0] * x + e[4] * y + e[8] * z + e[12],
-          e[1] * x + e[5] * y + e[9] * z + e[13],
-          e[2] * x + e[6] * y + e[10] * z + e[14],
-        );
-      }
-    }
-  }
-  return corners;
-}
-
-/**
- * The hatch parameters for ONE cap of the part named `key`, or null when the
- * cap does not carry what the arithmetic needs.
- *
- * PITCH. One uv unit of the cap quad is `cap.size` world units (a
- * `PlaneGeometry(2, 2)` scaled by `0.5 * size`), and `extent` is the part's
- * world-box footprint in the plane of the cut, so
- * `periods = cap.size * TARGET_LINES / extent` lays about TARGET_LINES lines
- * across the part — the pitch follows the part and not the scene, which is the
- * owner's first decision. The footprint is read as the larger of the two spans
- * the eight world corners cover along an in-plane basis.
- *
- * WHAT THAT MEASURES IS THE PART, NOT THE CUT FACE, and the two can differ by
- * any amount — so TARGET_LINES is what a cut ACROSS the part gets, not a floor
- * under every cut. A plane taken through a 5 mm boss on a 100 mm bracket cuts a
- * face one twentieth of the box it is measured against and is hatched with
- * about half a line: one diagonal stroke, not a hatch. That is the honest cost
- * of measuring a box, and it is written here rather than discovered, because
- * the number in the docstring above is otherwise read as a promise. Measuring
- * the face itself means intersecting the plane with the part's triangles —
- * which is exactly what the section outline already does (`outline.js`,
- * `planeThroughTriangles`). Its bounds are the better number to divide by;
- * nothing here reads them yet, so that is a wiring job outstanding rather than
- * a piece of work not done.
- *
- * ANGLE AND PHASE come from the part's key alone, through one mixed hash, so
- * they are stable across revisions and independent of where the part sits. The
- * slope is one of HATCH_SLOPES, all pairwise far enough apart to read as
- * different; the phase takes the bits a second mix produces, so two keys that
- * do land on one slope still hatch out of step — and two that coincide in
- * BOTH are the rare pair the header accepts.
- */
-function capUniforms(key, cap, corners) {
-  const n = cap && cap.plane && cap.plane.normal;
-  const size = cap && cap.size;
-  if (!n || typeof size !== "number" || !(size > 0) || !Number.isFinite(size)) {
-    return null;
-  }
-  // Unit normal, normalised here rather than assumed: a scaled normal would
-  // tilt the in-plane projection and quietly stretch the pitch.
-  const nl = Math.sqrt(n.x * n.x + n.y * n.y + n.z * n.z) || 1;
-  const nx = n.x / nl, ny = n.y / nl, nz = n.z / nl;
-  // An in-plane basis. u is the world axis LEAST aligned with the normal,
-  // rotated flat by the cross product, so it is never degenerate whatever the
-  // plane's orientation; v completes it. All plain arithmetic — no THREE
-  // constructor is reachable here (the vendored bundle exports no symbols).
-  let ax = 0, ay = 0, az = 1;
-  const dx = Math.abs(nx), dy = Math.abs(ny), dz = Math.abs(nz);
-  if (dx <= dy && dx <= dz) { ax = 1; ay = 0; az = 0; }
-  else if (dy <= dz) { ax = 0; ay = 1; az = 0; }
-  let ux = ny * az - nz * ay, uy = nz * ax - nx * az, uz = nx * ay - ny * ax;
-  const ul = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
-  ux /= ul; uy /= ul; uz /= ul;
-  const vx = ny * uz - nz * uy, vy = nz * ux - nx * uz, vz = nx * uy - ny * ux;
-  // The larger of the two spans the corners cover in the plane. One reference
-  // point cancels out of a span, so no plane origin is needed.
-  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
-  for (let i = 0; i < corners.length; i += 3) {
-    const du = corners[i] * ux + corners[i + 1] * uy + corners[i + 2] * uz;
-    const dv = corners[i] * vx + corners[i + 1] * vy + corners[i + 2] * vz;
-    if (du < minU) minU = du;
-    if (du > maxU) maxU = du;
-    if (dv < minV) minV = dv;
-    if (dv > maxV) maxV = dv;
-  }
-  const extent = Math.max(maxU - minU, maxV - minV);
-  if (!Number.isFinite(extent) || extent <= 0) return null;
+function capUniforms(key) {
   const h = mix(hashKey(key));
   const slope = HATCH_SLOPES[h % HATCH_SLOPES.length];
   // The stripes run perpendicular to the dot direction, hence the +90.
   const rad = (slope + 90) * Math.PI / 180;
   return {
-    periods: size * TARGET_LINES / extent,
     dirX: Math.cos(rad),
     dirY: Math.sin(rad),
     phase: (mix(h ^ 0x9e3779b9) % 1000) / 1000,
@@ -373,7 +352,7 @@ function capUniforms(key, cap, corners) {
  * CALLED AFTER `render()` AND NOWHERE ELSE, because that is when the cap meshes
  * exist: the library builds them in `Clipping._createStencils`, one per (plane,
  * solid), grouped per solid into `_capUnits` — the field this reads, because
- * the per-part parameters need the SOLID and its caps together. There is a
+ * the parameters are hashed from the SOLID and applied to its caps. There is a
  * second path that rebuilds them — `rebuildStencils`, from
  * `addPart`/`updatePart` growing the bounds and from the public
  * `ensureStencilSize` — and this viewport uses neither, since changing what is
@@ -400,11 +379,14 @@ export function hatchSectionCaps(g, on = true) {
     const caps = unit && unit.capMeshes;
     const solid = unit && unit.solid;
     const key = solid && typeof solid.name === "string" && solid.name;
-    const corners = key ? worldCorners(solid) : null;
+    // ONE FIELD PER PART: the hash runs once per unit, so every cap of the
+    // solid — one per clip plane — is a window onto the same hatch. Each still
+    // gets its own object below, because `patchCapMaterial` keeps it on the
+    // material and `setCutHatch` writes the toggle into it.
+    const params = key ? capUniforms(key) : null;
     const count = Array.isArray(caps) ? caps.length : 0;
     for (let k = 0; k < count; k++) {
       total += 1;
-      const params = corners && capUniforms(key, caps[k], corners);
       if (params && patchCapMaterial(caps[k] && caps[k].material,
                                      { ...params, on: flag })) {
         done += 1;
@@ -491,7 +473,8 @@ export function safeHatch(g, on) {
  *  already silently not happened, and the page renders perfectly without it. */
 export const hatchMarker = MARKER;
 
-/** Lines per part extent, exported for the suite — the pitch test works the
- *  owner's formula (`cap.size * TARGET_LINES / extent`) against what
- *  `hatchSectionCaps` actually stored. */
-export const hatchTargetLines = TARGET_LINES;
+/** The pitch and the line width, in framebuffer pixels, exported for the suite:
+ *  the pitch tests read the two numbers back out of the GLSL the patch splices,
+ *  which is the only place they are applied. */
+export const HATCH_PITCH_PX = PITCH_PX;
+export const HATCH_LINE_PX = LINE_PX;
