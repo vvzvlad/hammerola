@@ -307,8 +307,10 @@ export function fakeGroup(position = [0, 0, 0]) {
 
 /** A world matrix as `Object3D.matrixWorld` carries one: column-major, as the
  *  bundle's `makeReflectionMatrix`/`compose` results are read back. Diagonal
- *  scale plus translation only, which is all the hatch arithmetic can see a
- *  difference between. */
+ *  scale plus translation only — enough for the outline suite, which does read
+ *  it, and for the hatch suite, which varies it as a NEGATIVE CONTROL: the
+ *  pitch is one constant counted in pixels now, so a part placed at twice its
+ *  own scale has to hatch identically. */
 export function fakeMatrix({ scale = [1, 1, 1], position = [0, 0, 0] } = {}) {
   const e = new Array(16).fill(0)
   e[0] = scale[0]; e[5] = scale[1]; e[10] = scale[2]; e[15] = 1
@@ -331,9 +333,10 @@ export function fakeCapMaterial() {
 /** A `PlaneMesh` as its constructor leaves it: the fields it writes (`type`,
  *  `index`, `plane`, `size`, `center`) on a `PlaneGeometry(2, 2)` that
  *  `updateMatrixWorld` scales to `0.5 * size` — so one uv unit ACROSS the cap
- *  quad is `size` world units, the fact the hatch's pitch arithmetic rides on.
- *  `size` is the clipping region's size and every cap of a scene carries the
- *  same one.
+ *  quad is `size` world units. `size` is the clipping region's size and every
+ *  cap of a scene carries the same one. Nothing in `hatch.js` reads it any
+ *  more: the pitch is counted in framebuffer pixels, in which that factor
+ *  cancels, and the hatch suite varies `size` exactly to prove it cancels.
  *
  *  The `plane` is the `CenteredPlane` the constructor was handed, and its
  *  `normal` is a THREE `Vector3` — read as `.x/.y/.z`, NOT as the array the
