@@ -5,6 +5,8 @@ import json
 import os
 import socket
 import time
+from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -12,6 +14,7 @@ from harness import (DEFAULT_EXPORTS, TOKEN, copying_builder, good_build,
                      meta_bytes, tar_gz, view_bytes)
 
 from src import app, render
+from src import store as store_module
 from src.store import DEV_LINK, PublishError, Store
 
 
@@ -128,6 +131,222 @@ def test_identical_retry_is_200_not_409(hub):
     again = hub.publish("proj1", "abc123", body)
     assert again.status_code == 200
     assert again.json() == {"url": "/project/proj1/abc123/"}
+
+
+def _message(text):
+    """A message on the wire, encoded the way the client encodes one.
+
+    `hammerola.hub` percent-encodes it because a header value is latin-1 and a
+    message is not, and the route unquotes it — so a test that sent the raw
+    string would be exercising a wire format nothing produces.
+    """
+    return {app.MESSAGE_HEADER: quote(text, safe="")}
+
+
+def test_a_revision_pushed_without_a_message_is_the_document_it_always_was(hub):
+    """The field is written only when there is one (issue #67).
+
+    Which is what makes the whole change invisible to every revision that came
+    before it: no key in the record, no key in the picker, and a row that draws
+    exactly as it drew — so a hub full of old builds does not have to be
+    migrated, and nothing downstream may start subscripting the field.
+    """
+    assert hub.publish("proj1", "abc123", good_build()).status_code == 201
+
+    meta = json.loads(
+        (hub.project_dir("proj1") / "abc123" / "meta.json").read_text())
+    assert "message" not in meta
+
+    picker = json.loads(
+        (hub.project_dir("proj1") / "builds.json").read_text())
+    assert [sorted(row) for row in picker["builds"]] == [["built", "commit"]]
+
+
+def test_a_message_longer_than_the_cap_is_refused(hub):
+    """The rule every displayed field on this hub is held to, and the same
+    reason: a subject that is really a paragraph is a picker one revision can
+    push every other row of off the screen (`render.MAX_TEXT`).
+
+    Refused rather than trimmed — the push is the author's to correct, and a
+    message quietly cut in half is worse than one that was not accepted."""
+    r = hub.publish("proj1", "abc123", good_build(),
+                    headers=_message("x" * (render.MAX_TEXT + 1)))
+    assert r.status_code == 400
+    assert not (hub.project_dir("proj1") / "abc123").exists()
+
+
+def test_a_message_with_a_control_character_in_it_is_refused(hub):
+    """A newline is what turns one line of a log into two, and U+202E reverses
+    the text around whatever it is smuggled into. `_plain_text` keeps both out
+    of every other caption a push can write; a message is no different."""
+    for text in ("first line\nsecond line", "safe ‮gnihtemos"):
+        r = hub.publish("proj1", "abc123", good_build(),
+                        headers=_message(text))
+        assert r.status_code == 400, text
+        assert not (hub.project_dir("proj1") / "abc123").exists()
+
+
+def test_a_message_with_an_angle_bracket_is_refused(hub):
+    """The other half of the part-name rule `revision_message` reuses.
+
+    `clearance < 0.2 mm` is a sentence somebody would really type, and it is
+    refused: the message is held to the rule every free-text field a push can put
+    on a page is held to, rather than to a weaker one written just for it
+    (`render._check_part_name`). Worth a test of its own because the branch is
+    invisible from the outside — the picker escapes what it renders, so deleting
+    this refusal breaks no page and no other test in the suite.
+    """
+    for text in ("clearance < 0.2 mm", "the bracket is <b>thicker</b>"):
+        r = hub.publish("proj1", "abc123", good_build(),
+                        headers=_message(text))
+        assert r.status_code == 400, text
+        assert not (hub.project_dir("proj1") / "abc123").exists()
+
+
+def test_a_message_of_nothing_but_spaces_is_refused(hub):
+    """`-m "   "` asked for a subject and gave none.
+
+    It used to strip to "" and then evaporate at every `if message:` between here
+    and the document — the flag typed, the push accepted, and nothing on the row
+    to show for it. Refused instead, exactly as `project_title` refuses a blank
+    title: the one thing this route may not do with a message is take it and lose
+    it.
+    """
+    r = hub.publish("proj1", "abc123", good_build(), headers=_message("   "))
+    assert r.status_code == 400
+    assert not (hub.project_dir("proj1") / "abc123").exists()
+
+
+def test_a_repeat_push_restates_the_message_and_mints_nothing(hub):
+    """The same tree is the same revision, and its message is the one thing
+    about it a second push can still change (issue #67).
+
+    `Store.settled` answers 200 out of the request thread and never queues a
+    build, so this update happens there or nowhere. What it has to reach is the
+    PICKER: `builds.json` is the file every surface that shows a message reads,
+    and it is the one that answers "which revision was that".
+
+    And a push with no message leaves the stored one standing: there is no way
+    to clear a message, and an ordinary re-push is not one.
+    """
+    body = good_build()
+    assert hub.publish("proj1", "abc123", body,
+                       headers=_message("first cut")).status_code == 201
+    assert hub.publish("proj1", "abc123", body,
+                       headers=_message("actually, the pin moved")
+                       ).status_code == 200
+
+    meta = json.loads(
+        (hub.project_dir("proj1") / "abc123" / "meta.json").read_text())
+    assert meta["message"] == "actually, the pin moved"
+    picker = json.loads((hub.project_dir("proj1") / "builds.json").read_text())
+    assert [row["message"] for row in picker["builds"]] == \
+        ["actually, the pin moved"]
+    # The 200 path wrote the message and NOTHING ELSE: one build directory
+    # where there was one before.
+    #
+    # THIS IS NOT THE MINTING CLAIM, and the comment here used to say it was.
+    # These pushes go by the NAMED route, where the directory is called what the
+    # URL called it — so a second name could not appear whatever the digest did,
+    # and the line would pass with the message mixed straight into it. What
+    # proves the message stays out of the name is the push where the HUB does
+    # the naming: `tests/client/test_publishing.py`,
+    # `test_a_second_push_of_the_same_tree_restates_it_without_minting_a_revision`.
+    assert [entry.name for entry in hub.project_dir("proj1").iterdir()
+            if entry.is_dir() and not entry.is_symlink()
+            and entry.name != DEV_LINK] == ["abc123"]
+
+    assert hub.publish("proj1", "abc123", body).status_code == 200
+    meta = json.loads(
+        (hub.project_dir("proj1") / "abc123" / "meta.json").read_text())
+    assert meta["message"] == "actually, the pin moved"
+
+
+def _build_contents(build):
+    """Every file of a published build except meta.json, by path and bytes."""
+    return {str(path.relative_to(build)): path.read_bytes()
+            for path in sorted(build.rglob("*"))
+            if path.is_file() and path.name != "meta.json"}
+
+
+def test_a_restate_writes_its_temporary_where_the_startup_sweep_looks(
+        hub, monkeypatch):
+    """`_sweep_leftovers` is the only thing that collects a `.wip-`, and it
+    walks `data/` plus ONE level of `data/project/` — never inside a build.
+
+    So a restate writing its temporary beside the target, which is the default
+    and what every other `_atomic_write_json` wants, would put the one
+    uncollectable transient in the store inside a published revision's own
+    directory. It takes a SIGKILL between the write and the rename to orphan one,
+    which is rare and is exactly the case the sweep exists for.
+
+    Asserted at the call rather than by hunting for a file afterwards, because on
+    every path that does not crash the temporary is renamed or unlinked before
+    anything could look: what has to hold is WHERE it would have been.
+
+    And asserted for EVERY write the store makes here, not just the restate's:
+    the rule is about the store's temporaries, not about `meta.json`, so a new
+    write landing somewhere unswept should fail this whether or not anyone
+    remembers to come back and add its name.
+    """
+    written = []
+    real = store_module.atomic_write_bytes
+
+    def recording(path, data, *, tmp_dir=None):
+        # The EFFECTIVE directory: `atomic_write_bytes` falls back to the
+        # target's own parent, so `None` here means "beside the target".
+        written.append((path, Path(tmp_dir) if tmp_dir else path.parent))
+        return real(path, data, tmp_dir=tmp_dir)
+
+    monkeypatch.setattr(store_module, "atomic_write_bytes", recording)
+
+    body = good_build()
+    assert hub.publish("proj1", "abc123", body,
+                       headers=_message("first cut")).status_code == 201
+    assert hub.publish("proj1", "abc123", body,
+                       headers=_message("the pin moved")).status_code == 200
+
+    swept = (hub.data, hub.project_dir("proj1"))
+    assert any(path.name == "meta.json" for path, _ in written), (
+        "the restate did not rewrite meta.json at all")
+    for target, tmp in written:
+        assert tmp in swept, (
+            f"a .wip- for {target} would land in {tmp}, which the startup "
+            f"sweep does not walk")
+
+
+def test_a_restate_moves_the_message_and_leaves_the_build_untouched(hub):
+    """SPEC 3.2's "everything else is immutable" as a test, not a claim.
+
+    The document says a repeat push may rewrite exactly ONE field of exactly one
+    file, and that the build behind that permanent URL is otherwise the build it
+    was. The test above does not say that: it checks the message changed and that
+    no second directory appeared, which a rewrite that also moved `published`,
+    reordered `views`, dropped a part or rewrote a view file would pass just as
+    happily.
+
+    So this compares the whole build across a restate — every other key of
+    meta.json, and the bytes of every other file in the directory,
+    `.payload.sha256` included. That digest is the one worth naming: it is what
+    `settled` compares the NEXT push against, so a restate that disturbed it
+    would turn the following identical push into a 409 on a revision nobody
+    changed.
+    """
+    body = good_build()
+    build = hub.project_dir("proj1") / "abc123"
+    assert hub.publish("proj1", "abc123", body,
+                       headers=_message("first cut")).status_code == 201
+    before = json.loads((build / "meta.json").read_text())
+    contents_before = _build_contents(build)
+
+    assert hub.publish("proj1", "abc123", body,
+                       headers=_message("the pin moved")).status_code == 200
+
+    after = json.loads((build / "meta.json").read_text())
+    assert before["message"] == "first cut" and after["message"] == "the pin moved"
+    assert {k: v for k, v in after.items() if k != "message"} == \
+           {k: v for k, v in before.items() if k != "message"}
+    assert _build_contents(build) == contents_before
 
 
 def test_identical_retry_ignores_tar_framing(hub):

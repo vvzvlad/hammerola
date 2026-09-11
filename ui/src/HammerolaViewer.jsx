@@ -2708,11 +2708,12 @@ export default class HammerolaViewer extends React.Component {
     const revs = [];
     if (info.has_dev) {
       revs.push({ id: 'dev', head: 'POINTERS', badge: '→ dev slot',
-                  date: '', pointer: true });
+                  date: '', message: '', pointer: true });
     }
     if (info.latest) {
       revs.push({ id: 'latest', head: info.has_dev ? '' : 'POINTERS',
-                  badge: `→ ${shortId(info.latest)}`, date: '', pointer: true });
+                  badge: `→ ${shortId(info.latest)}`, date: '', message: '',
+                  pointer: true });
     }
     history.forEach((b, at) => revs.push({
       id: b.commit, head: at === 0 ? 'BUILDS' : '', badge: '',
@@ -2726,6 +2727,13 @@ export default class HammerolaViewer extends React.Component {
       // does — and shows it in the same shape, which is the second half of the
       // fix: the two were formatted differently while naming the same instant.
       date: stamp(b.built), pointer: false,
+      // WHAT THE AUTHOR SAID THIS REVISION IS (issue #67), and the reason this
+      // menu can now be read at all: every other thing on the row — twelve hex
+      // characters and a timestamp — tells two revisions apart without saying
+      // what either one is. Absent on the ones pushed before the field existed
+      // and on any push made without `-m`, so it is read as "" and the row is
+      // then exactly the row it always was.
+      message: typeof b.message === 'string' ? b.message : '',
     }));
 
     const revRows = revs.map((r) => {
@@ -2737,6 +2745,13 @@ export default class HammerolaViewer extends React.Component {
         headStyle: r.head ? `padding:7px 14px 3px;font:600 9.5px ${MONO};color:#9aa1a9;letter-spacing:.09em` : 'display:none',
         id: r.pointer ? r.id : shortId(r.id),
         date: r.date,
+        // IN THE PLACE THE SPACER USED TO HOLD, which is what keeps the row one
+        // line: it takes the free width between the id and the date, and gives
+        // it back by ellipsis when there is more text than room. `title` is the
+        // rest of a long one, and a row with no message is the flexible gap the
+        // spacer always was.
+        message: r.message,
+        messageStyle: `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 11.5px ${SANS};color:#8a9099`,
         idStyle: `font:600 12px ${MONO};color:` + (current ? '#1f6fd0' : r.pointer ? '#7c3aad' : '#2a2e33'),
         badge: current && !r.badge ? 'viewing' : r.badge,
         badgeStyle: `font:500 10.5px ${MONO};` + (r.pointer ? 'color:#8a9099' : (current || r.badge) ? 'padding:2px 6px;border-radius:4px;background:#e3effc;color:#1f6fd0' : 'display:none'),
@@ -3608,7 +3623,7 @@ export default class HammerolaViewer extends React.Component {
                       <span onClick={r.onPick} style={css('display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;min-width:0')}>
                         <span style={css(r.idStyle)}>{r.id}</span>
                         <span style={css(r.badgeStyle)}>{r.badge}</span>
-                        <span style={css('flex:1')} />
+                        <span title={r.message} style={css(r.messageStyle)}>{r.message}</span>
                         <span style={css(`font:400 11px ${MONO};color:#8a9099`)}>{r.date}</span>
                       </span>
                     </div>

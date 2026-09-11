@@ -18,7 +18,10 @@ THE PROTOCOL, as `src/app.py` and `src/jobs.py` define it:
 
     POST /api/v1/publish/<pid>            Bearer, body = tar.gz. The HUB names
                                           the revision, out of the sources in
-                                          the body.
+                                          the body. `X-Hammerola-Message`, when
+                                          the push carries one, is what this
+                                          revision says about itself —
+                                          percent-encoded UTF-8 (issue #67).
       202 {"job", "status_url", "log_url", "revision"} + Location -> queued
       200 {"url", "revision"}                          -> this exact push is
                                                           already published, and
@@ -297,6 +300,13 @@ START_PATH = "/start"
 # "the token was accepted and the id was not found" and 401 means the opposite.
 IMPOSSIBLE_JOB_ID = "0" * 22
 
+# WHERE A REVISION'S MESSAGE TRAVELS (issue #67). A header and not a form field
+# or a file in the archive: the message is not part of what is being built, and
+# the digest that NAMES the revision is taken over the archive's members — so the
+# same tree pushed twice with two different messages has to go on being one
+# revision. The hub reads this name in `src/app.py`.
+MESSAGE_HEADER = "X-Hammerola-Message"
+
 
 class HubError(Exception):
     """The hub could not be reached, or answered something unusable.
@@ -347,12 +357,23 @@ class Hub:
 
     # -- transport ---------------------------------------------------------
     def _call(self, path: str, *, method: str = "GET", body=None,
-              content_type=None, max_bytes=None, timeout=None):
+              content_type=None, max_bytes=None, timeout=None, message=None):
         """(status, bytes). Raises HubError only when there was no answer.
 
         `max_bytes` is how much of the answer this call will hold; it defaults to
         `MAX_REPLY_BYTES`, and the ONE caller that raises it is the one fetching
         a build's artefacts (see the constants above).
+
+        `message` is the one header this client sends that is somebody's PROSE,
+        and it is percent-encoded for that reason. An HTTP header value is
+        latin-1 — `config.header_value_problem` says so of the secret, and
+        `http.client` enforces it — while a revision message here is as often as
+        not written in Russian. `quote` leaves an ASCII message legible on the
+        wire (`fix%20the%20bracket`) and turns everything else into ASCII that
+        SURVIVES instead of being refused before it is sent; the hub unquotes it.
+        Encoding rather than widening is also what keeps that predicate intact: a
+        percent-encoded value passes it by construction, so nothing here has to
+        be routed around the rule the token is held to.
 
         `timeout` overrides the Hub's for ONE request, and it exists for the
         poll in `await_job`: the Hub's own is sized for the push (300 s, an
@@ -377,6 +398,8 @@ class Hub:
             headers["Content-Type"] = content_type
         if body is not None:
             headers["Content-Length"] = str(len(body))
+        if message:
+            headers[MESSAGE_HEADER] = urllib.parse.quote(message, safe="")
         try:
             request = urllib.request.Request(
                 self.url + path, data=body, method=method, headers=headers)
@@ -571,7 +594,7 @@ class Hub:
 
     # -- the two routes ----------------------------------------------------
     def publish(self, pid: str, body: bytes, *, slot: str = None,
-                force: bool = False):
+                force: bool = False, message: str = None):
         """POST one archive. -> (status, payload dict).
 
         `slot` is the last path segment, and the only thing that differs between
@@ -586,6 +609,12 @@ class Hub:
         either way — where a build lands is decided by the URL and never by the
         body — because a query parameter IS the URL, and this one changes how
         the build runs rather than where it lands.
+
+        `message` is what the revision says about itself, and it travels as a
+        HEADER — the one part of this push that is neither the URL nor the
+        sources. It deliberately does NOT reach the digest the revision is named
+        by: the same tree with a different message is the SAME revision, and
+        pushing it again updates the message the hub stored (issue #67).
         """
         path = f"/api/v1/publish/{urllib.parse.quote(pid)}"
         if slot is not None:
@@ -593,7 +622,8 @@ class Hub:
         if force:
             path = f"{path}?force=1"
         status, raw = self._call(path, method="POST", body=body,
-                                 content_type="application/gzip")
+                                 content_type="application/gzip",
+                                 message=message)
         return status, self._payload(status, raw)
 
     # BOTH OF THESE NAME A 401 THE WAY EVERY OTHER PRIVATE READ IN THIS FILE

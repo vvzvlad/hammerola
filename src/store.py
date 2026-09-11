@@ -566,7 +566,12 @@ UPLOAD_PREFIX = ".upload-"      # one spooled request body, up to MAX_BUILD_BYTE
 # This is the ONLY thing that parks a directory now: a published build is never
 # deleted (see the top of this module), so nothing else ever moves one aside.
 TRASH_PREFIX = ".trash-"
-JSON_TMP_PREFIX = ".wip-"       # builds.json / index.json mid-write
+# Any atomic write this module makes, for as long as it is not yet renamed into
+# place — a rule rather than a list, because naming three of them invites the
+# fourth to be forgotten. All of them land where the sweep below looks; the one
+# that has to ask for it is `_restate_message`, whose target lives in a build
+# directory the sweep does not walk.
+JSON_TMP_PREFIX = ".wip-"
 # One pushed SOURCE tree, from the moment it is unpacked until its build ends.
 # At the root and not inside the project directory, and that is deliberate: it is
 # not a build, it is never renamed anywhere, and a project directory that exists
@@ -1361,11 +1366,17 @@ class Store:
         return AcceptedPush(sources=sources, archive=archive, digest=digest,
                             commit=name)
 
-    def settled(self, pid: str, commit: str,
-                digest: str) -> tuple[int, dict] | None:
+    def settled(self, pid: str, commit: str, digest: str,
+                message: str = None) -> tuple[int, dict] | None:
         """Has this exact push already been published? (status, body), or None.
 
         Raises PublishError(409) when the name is taken by different content.
+
+        `message` is the ONE thing a repeat push can still change (issue #67).
+        The tree is identical, so there is nothing to rebuild and nothing else to
+        write — but what the author says this revision is may well be the reason
+        they pushed again, and the answer to "which revision was that" lives in
+        the picker rather than in the geometry.
 
         Asked BEFORE a build is queued, which is the whole point: rebuilding a
         commit that is already on disk costs minutes of CPU to arrive at an
@@ -1373,10 +1384,13 @@ class Store:
         request keeps both of those codes where the pusher already expects them —
         immediately, rather than through a job it would have to poll.
 
-        Not under the project lock, on purpose. It is a read whose answer can
-        only go stale in one direction — another push landing the same commit
-        between here and the rename — and `publish_built` makes exactly the same
-        comparison again, under the lock, where it is authoritative.
+        Not under the project lock, on purpose. THE COMPARISON is a read whose
+        answer can only go stale in one direction — another push landing the same
+        commit between here and the rename — and `publish_built` makes exactly
+        the same comparison again, under the lock, where it is authoritative.
+        The one WRITE that can follow from it takes the lock for itself, because
+        it is not a comparison and a lost update there is a lost update
+        (`_restate_message`).
         """
         pdir = self.projects_dir / pid
         if commit == DEV_LINK:
@@ -1395,6 +1409,7 @@ class Store:
         existing = _read_digest(final)
         if existing is not None and existing == digest:
             logger.info(f"publish {pid}/{commit}: identical retry, kept")
+            self._restate_message(pid, commit, final, message)
             return 200, _build_url(pid, commit)
         # The build directory is immutable and was served with a one-year
         # immutable cache, so silently replacing it would make every cached copy
@@ -1414,6 +1429,62 @@ class Store:
         raise PublishError(
             409, f"build {commit} already exists with different content")
 
+    def _restate_message(self, pid: str, commit: str, final: Path,
+                         message: str) -> None:
+        """Put a new message on a revision that is already published.
+
+        ONLY WHEN THERE IS ONE AND IT DIFFERS. A push without `-m` leaves the
+        stored message alone, and that is a decision rather than an omission:
+        there is no way to clear a message and this is not it — `commit` with the
+        flag left off is the ordinary re-push, not a statement that the revision
+        has nothing to say.
+
+        UNDER THE PROJECT LOCK, unlike the comparison that leads here: that one
+        is a read whose answer can only go stale in one direction, and this
+        WRITES — to the very file `_write_builds_json` reads back through
+        `builds_of` on the next line.
+
+        WHAT A READER SEES IS ALWAYS THE NEW TEXT, and it is worth writing down
+        why, because the arrangement looks like it should go stale and does not.
+        Every surface that SHOWS a message reads `builds.json`
+        (`render._picker_entry` -> the revision list), and that file is served
+        `no-cache` and rewritten on the line below — so the picker is current the
+        moment anybody opens it. The copy that does get frozen is the `message`
+        key inside the revision's own meta.json, which is served `immutable` for
+        a year; nothing renders it. It is read exactly twice, both times on this
+        side of the wire and both times off the disk rather than out of a cache:
+        here, to compare against, and by `builds_of` when the picker is composed.
+
+        So nothing here busts a cache and nothing needs to: the immutability of a
+        build URL is what the whole scheme rests on (SPEC 3.2), and what this
+        rewrite puts out of date is a field no page fetches.
+
+        BEST EFFORT. The revision is published and the answer is 200 either way,
+        so a volume that will not take this write costs the message and never the
+        push.
+        """
+        if not message:
+            return
+        try:
+            with self._lock_for(pid):
+                path = final / "meta.json"
+                meta = json.loads(path.read_text(encoding="utf-8"))
+                if meta.get("message") == message:
+                    return
+                meta["message"] = message
+                # THE TEMPORARY GOES ONE LEVEL UP, into `<pid>/`: the only
+                # target in this module that sits where the sweep cannot reach.
+                # `_atomic_write_json` explains the parameter, and
+                # `test_a_restate_writes_its_temporary_where_the_startup_sweep_looks`
+                # holds it.
+                _atomic_write_json(path, meta, tmp_dir=final.parent)
+                self._write_builds_json(pid)
+            logger.info(f"publish {pid}/{commit}: message updated")
+        except Exception:
+            logger.exception(
+                f"publish {pid}/{commit}: the revision is published, but its "
+                f"message could not be updated")
+
     def build_staging(self, pid: str, commit: str) -> Path:
         """Where a build writes: the directory that becomes `<pid>/<commit>`.
 
@@ -1432,7 +1503,7 @@ class Store:
 
     # -- publishing what a build produced (in a worker thread) --------------
     def publish_built(self, pid: str, commit: str, staging: Path, names,
-                      digest: str, job=None) -> tuple[int, dict]:
+                      digest: str, job=None, message=None) -> tuple[int, dict]:
         """Put one built tree at `<pid>/<commit>`. Returns (status, response).
 
         201 published, 200 identical retry, 409 same commit / different content.
@@ -1446,6 +1517,11 @@ class Store:
 
         `job` reaches only the COPY this makes into the slot: the revision's own
         document does not carry one (issue #79, `render.build_meta`).
+
+        `message` goes the other way — into the REVISION's document, because it
+        is what that revision says about itself (issue #67). The mirror below
+        copies it into the slot along with everything else that is the same
+        build's.
         """
         files = _hash_output(staging, names)
         pdir = self.projects_dir / pid
@@ -1466,7 +1542,8 @@ class Store:
                 raise PublishError(
                     409, f"build {commit} already exists with different content")
 
-            meta = self._finish_staging(pid, commit, staging, files, digest)
+            meta = self._finish_staging(pid, commit, staging, files, digest,
+                                        message=message)
             try:
                 os.rename(staging, final)
             except OSError as error:
@@ -1693,12 +1770,23 @@ class Store:
 
         A COPY of the published tree, because the rename that publishes it is
         what emptied the staging directory. Nothing is validated a second time
-        and `_finish_staging` is not called again: a revision's meta.json and
-        the slot's differ in exactly three keys, `commit`, `dev` and `job`
-        (`render.build_meta`), and every other field is the same build's. The
-        third one is why this takes a `job` at all — the slot names the build
-        that filled it, and a commit fills it as much as a `build` does, so the
-        id has to be carried across with the tree (issue #79).
+        and `_finish_staging` is not called again: AT THIS MOMENT a revision's
+        meta.json and the slot's differ in exactly three keys, `commit`, `dev`
+        and `job` (`render.build_meta`), and every other field is the same
+        build's. The third one is why this takes a `job` at all — the slot names
+        the build that filled it, and a commit fills it as much as a `build`
+        does, so the id has to be carried across with the tree (issue #79).
+
+        "AT THIS MOMENT" IS LOAD-BEARING AND THE SENTENCE USED TO LACK IT. The
+        three hold at publication and a fourth can appear afterwards: a repeat
+        push of the same tree rewrites `message` on the REVISION alone
+        (`_restate_message`, issue #67), and this copy is not made again — the
+        build never runs — so the slot keeps the text the revision carried when
+        it filled the slot. That is a difference in the documents, not a defect
+        in either: nothing reads the slot's `message`, because the picker lists
+        commits and the slot is not one of them (SPEC 7.6). Left as a copy that
+        goes stale rather than as a second place to keep in step, which is what
+        the field would become the moment anything did read it.
 
         THE SWAP IS UNCONDITIONAL, including where the slot already holds these
         very sources — the case `publish_dev_built` short-circuits on, to spare
@@ -2265,7 +2353,7 @@ class Store:
 
     # -- staging -> publishable directory ----------------------------------
     def _finish_staging(self, pid, commit, staging: Path, files, digest,
-                        job=None) -> dict:
+                        job=None, message=None) -> dict:
         """Validate meta.json and write everything the build page needs.
 
         `staging` is what the BUILD wrote (SPEC 8A.2 step 5), so the meta.json
@@ -2277,12 +2365,18 @@ class Store:
         `job` is the id of the job that produced this tree. It is handed on and
         not read here: `build_meta` records it in the SLOT's document only
         (issue #79), so it is ignored on the revision path.
+
+        `message` is the mirror image of that: what the PUSH said this revision
+        is (issue #67). It came off a header rather than out of the tree, which
+        is why it arrives as an argument at all — nothing in `staging` knows
+        about it — and it is already validated (`render.revision_message`).
         """
         raw = self._read_meta(staging)
         try:
             meta = render.build_meta(
                 pid=pid, commit=commit, raw=raw, staging=staging, files=files,
-                published=published_stamp(), dev=(commit == DEV_LINK), job=job)
+                published=published_stamp(), dev=(commit == DEV_LINK), job=job,
+                message=message)
         except ValueError as error:
             # render.py validates without knowing about HTTP; every way it can
             # refuse is "the push described something that is not there", i.e. 422.
@@ -3009,9 +3103,18 @@ def _read_digest(build_dir: Path) -> str | None:
         return None
 
 
-def _atomic_write_json(path: Path, payload) -> None:
-    """Write JSON so a reader sees the old file or the new one, never a torn one."""
-    atomic_write_bytes(path, json.dumps(payload, indent=1).encode("utf-8"))
+def _atomic_write_json(path: Path, payload, *, tmp_dir: Path = None) -> None:
+    """Write JSON so a reader sees the old file or the new one, never a torn one.
+
+    `tmp_dir` is passed straight through, and it exists for ONE caller:
+    `_restate_message`, whose target sits inside `<pid>/<commit>/`. Every other
+    write here lands in `self.root` or in `<pid>/`, which are exactly the two
+    levels `_sweep_leftovers` walks — so their temporaries are collectable where
+    a build directory's would not be, the sweep never descending into one. Same
+    volume either way, so the rename stays a rename.
+    """
+    atomic_write_bytes(path, json.dumps(payload, indent=1).encode("utf-8"),
+                       tmp_dir=tmp_dir)
 
 
 def atomic_write_bytes(path: Path, data: bytes, *, tmp_dir: Path = None) -> None:

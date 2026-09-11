@@ -250,6 +250,12 @@ MAX_TITLE_BODY_BYTES = 2 * 1024
 # rather than a thread parked until the socket times out.
 PUBLISH_WAIT_SECONDS = 60
 
+# The header a push carries its revision's message on (issue #67). The client
+# spells the same name in `hammerola/hub.py` and percent-encodes the value, which
+# is what lets a message written in Russian travel on a header at all; the route
+# unquotes it. `X-`, because it is ours and nobody else's.
+MESSAGE_HEADER = "X-Hammerola-Message"
+
 # Types our OWN files are served as — templates and generated JSON only.
 CONTENT_TYPES = {
     ".html": HTML_TYPE,
@@ -1045,6 +1051,34 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                         with_body=with_body)
             return False
 
+        def _revision_message(self):
+            """What this revision says it is, off the push's own header. Or None.
+
+            A HEADER AND NOT A FIELD OF THE BODY (issue #67): the archive is what
+            gets hashed into the revision's NAME, so a message carried inside it
+            would make the same tree with a different subject a different
+            revision.
+
+            PERCENT-DECODED, because a header value is latin-1 and these are
+            written in Russian as often as in English; the client encodes with
+            `quote` for exactly that (`hammerola/hub.py`).
+
+            REFUSED AND NOT DROPPED when it fails the rule: a message silently
+            thrown away is a flag the author typed, a push that succeeded, and a
+            row that says nothing. Raised as a PublishError so it leaves through
+            the path every other refusal about the CONTENT of a push takes —
+            logged with the target, answered without `Connection: close`, because
+            by the time this is called the body has been read and the connection
+            is clean.
+            """
+            raw = self.headers.get(MESSAGE_HEADER)
+            if not raw:
+                return None
+            try:
+                return render.revision_message(unquote(raw))
+            except ValueError as error:
+                raise PublishError(400, str(error)) from error
+
         def do_POST(self):
             try:
                 return self._handle_post()
@@ -1160,19 +1194,46 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 # `finally`), which is what made this look like a flaky test
                 # rather than an ordering bug: it takes a loaded machine for the
                 # request thread to lose the race, and CI is one.
-                refusal = None          # (status, message, extra headers)
+                refusal = None          # (status, why, extra headers)
                 accepted = None
+                message = None
                 try:
                     problem = self._spool_body(length, spool)
                     if problem is not None:
-                        status, message = problem
+                        # `why` and not `message`: THIS route already has a
+                        # `message`, and it is the revision's own (read off the
+                        # header below and handed to `_queue_build`). Rebinding
+                        # that name to refusal text was correct only because
+                        # both branches return immediately, which is not a
+                        # property anybody should have to re-derive from a
+                        # hundred lines away.
+                        status, why = problem
                         logger.warning(
-                            f"publish {target} refused: {message}")
+                            f"publish {target} refused: {why}")
                         # Closed, like every other refusal that leaves bytes
                         # unread: on a keep-alive connection the remains of the
                         # body would be parsed as the next request.
-                        refusal = (status, message, {"Connection": "close"})
+                        refusal = (status, why, {"Connection": "close"})
                     else:
+                        # BELOW THE BODY, AND THAT POSITION IS THE WHOLE
+                        # CORRECTNESS OF IT. This used to be read and refused up
+                        # with the `Content-Length` checks, which looked like the
+                        # same kind of question and is not: 401 and 413 are
+                        # refused before the body because the point of them is
+                        # NOT to receive 64 MiB, while there is nothing to save
+                        # here — every ordinary push is read in full a line
+                        # later. What the early position cost was the refusal
+                        # itself. The client is still writing the archive when
+                        # the header is parsed, so closing on it lands as a
+                        # broken pipe at the pusher's end (measured: a 256 KiB
+                        # body still delivers the 400 over loopback, 1 MiB does
+                        # not, and a real network is far less forgiving) — and
+                        # `Hub._call` then reports the hub as unreachable, which
+                        # is a true sentence about what it saw and the wrong
+                        # diagnosis entirely. Down here the body is drained and
+                        # the 400 arrives, for exactly the reason
+                        # `accept_sources`' own 422 always has.
+                        message = self._revision_message()
                         # `<pid>/dev` is the laptop's route (SPEC 7.6): the work
                         # has no commit to be addressed by, so it goes into the
                         # project's one local slot, overwriting whatever was
@@ -1213,15 +1274,15 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                             f"publish {target}: the spooled body could not be "
                             f"removed")
                 if refusal is not None:
-                    status, message, extra = refusal
-                    return self._error(status, message, extra)
+                    status, why, extra = refusal
+                    return self._error(status, why, extra)
                 return self._queue_build(pid, accepted, minted=commit is None,
-                                         force=forced)
+                                         force=forced, message=message)
             finally:
                 publish_slots.release()
 
         def _queue_build(self, pid: str, accepted, *, minted: bool,
-                         force: bool):
+                         force: bool, message: str = None):
             """Hand an accepted source tree to the build pool. 200, 202 or 503.
 
             200 rather than 202 when this exact push is already published: the
@@ -1256,6 +1317,12 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             `force` rides PAST `accepted` rather than inside it, like `minted`
             above and for the same reason: `AcceptedPush` records what was
             accepted, and this is a request about how to build it.
+
+            `message` rides the same way and for a third reason: it is what the
+            push SAYS about the revision (issue #67), and the revision is named
+            by the digest of the sources alone. So it reaches both endings — the
+            task, for a build that is about to run, and `settled`, where a tree
+            the hub already has still gets to be re-described.
             """
             commit = accepted.commit
             # Only on the minting route: on the named one the caller already
@@ -1274,7 +1341,8 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 # rebuild — and a flag mixed into the digest would make the same
                 # sources two different revisions, which is the one thing a
                 # minted name may never be.
-                settled = store.settled(pid, commit, accepted.digest)
+                settled = store.settled(pid, commit, accepted.digest,
+                                        message=message)
                 if settled is not None:
                     status, payload = settled
                     reply = (status, {**payload, **named}, None)
@@ -1284,7 +1352,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     outcome = builds.submit(BuildTask(
                         job_id=job_id, pid=pid, commit=commit,
                         sources=accepted.sources, archive=accepted.archive,
-                        digest=accepted.digest, force=force))
+                        digest=accepted.digest, force=force, message=message))
                     if outcome == SUBMIT_ACCEPTED:
                         handed_over = True
                         status_url = f"/api/v1/jobs/{job_id}"

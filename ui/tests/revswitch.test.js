@@ -379,6 +379,56 @@ describe('picking a revision', () => {
   })
 })
 
+// -- what a row says ----------------------------------------------------------
+
+describe('the message on a picker row', () => {
+  it('is what the revision said it was, and the pointers have none', () => {
+    // The menu is a column of twelve hex characters and a column of timestamps:
+    // between them they tell two revisions APART without saying what either one
+    // is. `builds.json` carries the subject of a revision that was pushed with
+    // `-m` (issue #67), and the row is where it lands.
+    //
+    // `dev` and `latest` are NAMES that resolve to whatever is current, so
+    // there is no one revision for them to describe — an empty string, which is
+    // also what keeps their rows the shape every row used to be.
+    const c = component({
+      builds: {
+        has_dev: true,
+        latest: A,
+        builds: [{ commit: A, built: '2026-08-27T18:20:00Z',
+                   message: 'the bracket got thicker' },
+                 { commit: B, built: '2026-08-26T10:00:00Z' }],
+      },
+    })
+
+    const rows = new Map(c.computed().revRows.map((r) => [r.key, r]))
+    expect(rows.get(A).message).toBe('the bracket got thicker')
+    // Pushed before the field existed, or pushed without `-m`: the row draws
+    // exactly as it drew when the spacer was in that place.
+    expect(rows.get(B).message).toBe('')
+    expect(rows.get('dev').message).toBe('')
+    expect(rows.get('latest').message).toBe('')
+  })
+
+  it('takes the free width and stays on one line', () => {
+    // It sits where the spacer sat, which is the whole reason a message can be
+    // put here at all: the row is a flex line and that element is what grows,
+    // so an eighty-character subject has to give the width back by ellipsis
+    // rather than by wrapping the date onto a second line.
+    const c = component({
+      builds: { has_dev: false, latest: null,
+                builds: [{ commit: A, built: '2026-08-27T18:20:00Z',
+                           message: 'x'.repeat(200) }] },
+    })
+
+    const style = c.computed().revRows[0].messageStyle
+    expect(style).toContain('flex:1')
+    expect(style).toContain('min-width:0')
+    expect(style).toContain('white-space:nowrap')
+    expect(style).toContain('text-overflow:ellipsis')
+  })
+})
+
 // -- back and forward ---------------------------------------------------------
 
 describe('popstate', () => {
