@@ -219,14 +219,13 @@ jobs:
         # failing CI for a reason that has nothing to do with the commit, while an allocation
         # that runs away still dies inside this job instead of on the host.
         #
-        # ONE CONTAINER OF SEVERAL CARRIES A CEILING, and that is a statement about what has
-        # been measured rather than a finding that the rest do not need one. The argument for
-        # having a ceiling at all is a property of the RUNNER — 19 GB shared with every other
-        # repository's jobs — so it holds word for word for the JS suite's
-        # node:22-bookworm-slim container (`npm ci` plus vitest), for the `docker build` step
-        # in the build job, and for the containers ci/smoke.py starts. None of those has been
-        # put through a pass/fail sweep, and a number here comes from a measurement rather
-        # than from a guess, so none of them gets one until it has. That sweep is issue #28.
+        # EVERY CONTAINER THIS CI STARTS NOW CARRIES ONE, each from a pass/fail sweep of its
+        # own (issue #28): the JS suite's node:22-bookworm-slim container, the `docker build`
+        # step in the build job, and the three ci/smoke.py starts. The argument was never
+        # specific to this step — it is a property of the RUNNER, 19 GB shared with every
+        # other repository's jobs — and what WAS specific is that only this step had been
+        # measured. Each number is written where its container is started, next to the
+        # pass/fail pair it came from. None of them is a guess and none may become one.
         #
         # Measured AFTER 473ca4c, and that matters: before it the process ceilings were
         # applied to the pytest process itself, RLIMIT_CPU killed the run part way through,
@@ -396,10 +395,21 @@ jobs:
         # runner, not the container over on the host's daemon. That one goes on running, never
         # exits, so `--rm` never fires — and unnamed it would be unreachable by anything at all,
         # because every cleanup in these workflows removes containers BY NAME.
+        # `--memory` / `--memory-swap` for the reason the Python step above carries them — this
+        # runner's 19 GB are shared with every other repository's jobs — and measured the same
+        # way, by a pass/fail pair at a limit and never by `memory.peak` (issue #28). The kernel
+        # kills this run (exit 137, `OOMKilled=true`) at 768m and it passes at 1g, so 3g sits
+        # between 3× and 4× the floor. WHAT SPENDS IT IS VITEST'S JSDOM WORKER POOL, whose size
+        # follows the CPU COUNT — 8 here — so the floor rises on a bigger runner with nothing in
+        # this repository changing, and absorbing that is what the margin is for. THE TWO FLAGS
+        # MUST STAY EQUAL, exactly as up there: `--memory-swap` is the memory+swap TOTAL, and
+        # leaving it unset hands the container swap equal to the limit, so a run that goes away
+        # thrashes to twice the number instead of being killed at it.
         tar -cf - --exclude=./ui/node_modules --exclude=./ui/dist ./ui ./templates ./brand \
           ./static/_v/tokens.css ./static/_v/site.css ./static/_v/favicon.svg \
           ./static/_v/pointer.js ./static/_v/pointer_pref.js ./static/_v/three-cad-viewer.esm.js \
           | docker run --rm -i --pull always --name "$JS_NAME" \
+          --memory=3g --memory-swap=3g \
           -e CI=true \
           -e NPM_CONFIG_UPDATE_NOTIFIER=false \
           -e NPM_CONFIG_FUND=false \
@@ -578,7 +588,22 @@ jobs:
         # This is what shellcheck reports as SC2086, so it looks like an oversight and is not —
         # do not "fix" it. What makes it safe is that the value is assembled right here out of
         # the list `set --` already split and vouched for, never taken from a branch name.
-        docker build --pull . --file Dockerfile $tag_args
+        # --memory / --memory-swap, and the first thing measured was whether they BITE at all
+        # (issue #28): the builder here is the BuildKit built into the daemon, v0.32.2, and it
+        # applies the limit per RUN. A synthetic 700 MB allocation inside a RUN dies with
+        # `Killed` / `exit code: 137` at 64m and succeeds at 1g, so this is an enforced ceiling
+        # rather than a flag the builder accepts and ignores. Measured with --no-cache
+        # necessarily — a warm cache executes no RUN and can never reach the limit, which is
+        # also why a green build here is not evidence that the number is still right.
+        # THE FLOOR IS `pip install --require-hashes -r requirements.lock`, the OCCT wheels:
+        # killed at 512m, passes at 768m, and the ui stage survives 512m on its own. That puts
+        # 2g between 2.7× and 4× the floor — the same shape of margin as the test containers,
+        # and for the same reason: a dependency that grows must not redden CI for something
+        # that has nothing to do with the commit.
+        # THE TWO FLAGS MUST STAY EQUAL, as in the test job: left unset, --memory-swap hands
+        # the build swap equal to the limit, and a runaway thrashes to twice the number instead
+        # of being killed at it.
+        docker build --pull --memory=2g --memory-swap=2g . --file Dockerfile $tag_args
 
     - name: Smoke-test the built image
       # THE GATE. It sits BETWEEN build and push on purpose: a red smoke means nothing ever
