@@ -36,8 +36,8 @@ import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
 import { measureChrome, refit, sized, treeWidth } from "./sizing.js";
 import { muteStatusLine } from "./statusline.js";
-import { applyGhost, applyHidden, applySelected, resetMoves, statesOf, treeFromShapes }
-  from "./parts.js";
+import { applyGhost, applyHidden, applySelected, partCentre, resetMoves, statesOf,
+  treeFromShapes } from "./parts.js";
 import { applySection, keepSectionCut, suspendSectionCut } from "./section.js";
 import { displayOptions, renderOptions, viewerOptions } from "./options.js";
 
@@ -639,6 +639,15 @@ export class HmrViewport extends HTMLElement {
     } catch (error) {
       console.warn("camera", error);
     }
+  }
+
+  /** Where one part is in the world: the centre of its box, or null.
+   *
+   * Asked per comment whose anchor is a PART rather than a point, so the pin
+   * follows the part through a rebuild that moved it.
+   */
+  partPoint(path) {
+    return partCentre(this.viewer, path);
   }
 
   /** This frame as a PNG blob, for the snapshot a comment carries. */

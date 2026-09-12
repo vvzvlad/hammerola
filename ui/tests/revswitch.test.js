@@ -154,7 +154,7 @@ function component(over = {}) {
     revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
     bannerGone: false, rail: false, menu: null, swapping: false,
     notePop: null, noteDraft: '', notes: {},
-    comments: [], activePin: null, composer: null,
+    feed: [], activePin: null, composer: null,
     measure: null, moved: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
     theme: 'light',
@@ -1194,14 +1194,20 @@ describe('hidden and translucent parts', () => {
   it('are left alone by an ordinary live reload', () => {
     // Every model event that is not a swap — a first load, a rebuild arriving
     // under a pointer, a view tab — has nothing carried and must change neither
-    // list, nor dispatch a state event for a change that did not happen.
+    // list.
     const c = component({ hidden: ['/model/plate'], ghost: ['/model/post'] })
 
     c.onModel({ tree: TREE, view: 'assembled', live: true })
 
     expect(c.state.hidden).toEqual(['/model/plate'])
     expect(c.state.ghost).toEqual(['/model/post'])
-    expect(c.sync).not.toHaveBeenCalled()
+    // THE STATE EVENT GOES OUT ANYWAY, which it did not before issue #33: it was
+    // withheld unless something had been rejoined, on the ground that nothing
+    // else in it had changed. A comment pin now hangs on the catalogue key and
+    // is placed by asking the viewport where that part IS, so every model event
+    // moves pins — the tree that has just landed is a rebuild free to have
+    // renumbered or moved the part a comment names.
+    expect(c.sync).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -1494,9 +1500,16 @@ describe('what does not survive', () => {
     // renumber. It is what `composerPart` renders while `sendComment` sends
     // `partId`, so keeping it shows the reader an attachment the posted comment
     // will not carry — a mismatch with nothing on screen to reveal it.
+    //
+    // AND SO DOES `key`, which is the same argument read backwards and the one
+    // worth a line of its own: the catalogue key is the field DESIGNED to
+    // outlive a rebuild, so of everything here it is the one a reader of the
+    // code expects to stay. It cannot. Nothing on screen shows a key — the
+    // composer draws `part` — so a draft that kept it would look unattached and
+    // post anchored to a part the reader never picked on this build.
     const c = component({
       composer: {
-        part: 'plate', partId: '/model/plate', p: [1, 2, 3],
+        part: 'plate', partId: '/model/plate', key: 'plate', p: [1, 2, 3],
         text: 'this hole is', photo: null,
         meas: '3.00 mm', move: 'plate by 2 mm',
       },
@@ -1508,6 +1521,7 @@ describe('what does not survive', () => {
     expect(c.state.composer.text).toBe('this hole is')
     expect(c.state.composer.part).toBe('')
     expect(c.state.composer.partId).toBeNull()
+    expect(c.state.composer.key).toBeNull()
     expect(c.state.composer.p).toBeNull()
     expect(c.state.composer.meas).toBeNull()
     expect(c.state.composer.move).toBeNull()
@@ -1533,32 +1547,37 @@ describe('what does not survive', () => {
     expect(v.composerText).toBe('this hole is')
   })
 
-  it('drops the comments filed in this session, and the pin that was open', async () => {
-    // This list only ever holds what the reader posted while the page was open,
-    // each one against the commit it was posted on. Kept, the rail would attribute
-    // them to a revision they say nothing about.
-    const c = component({
-      comments: [{ id: 'c1', label: '1', part: 'plate', pin: [1, 2, 3],
-                   text: 'too thin', resolved: false }],
-      activePin: 'c1',
-    })
+  it('keeps the project\'s queue and drops only the pin that was open', async () => {
+    // THE QUEUE IS THE PROJECT'S and not this build's (SPEC 7A.3): the same
+    // items are open on the revision being opened, so it is not refetched and
+    // not cleared. What does belong to the build that left is the pin the reader
+    // had OPENED — it named a comment drawn over geometry that is going.
+    const queue = [{ id: 'c1', commit: A, view: 'assembled', part: '/model/plate',
+                     key: 'plate', point: [1, 2, 3], text: 'too thin',
+                     status: 'open', created: '2026-08-27T18:30:00Z' }]
+    const c = component({ feed: queue, activePin: 'c1' })
     loadMeta.mockResolvedValue(build())
 
     await c.switchBuild('proj1', B)
 
-    expect(c.state.comments).toEqual([])
+    expect(c.state.feed).toEqual(queue)
     expect(c.state.activePin).toBeNull()
   })
 
-  it('sends the viewport no pin belonging to the build it left', async () => {
-    // THE OBSERVABLE HALF, and the reason that list cannot simply stay: a pin is
-    // a POINT IN THE MODEL SPACE of the build it was placed on, `sync` reads the
-    // pins straight off `comments` on every frame, and the new build need not
-    // contain that point at all — so the old ones would be drawn on geometry that
-    // never carried them. The draft's own pin goes the same way, through the
+  it('sends the viewport no pin at the coordinate the build it left recorded', async () => {
+    // A STORED POINT IS ONLY TRUE ON THE BUILD IT WAS TAKEN ON, and that is what
+    // survives of the old claim here: `anchorFor` reads the coordinate when the
+    // record's commit AND view are the ones on screen, and after a swap neither
+    // is, so the numbers are not handed to the new geometry — which need not
+    // contain that point at all. Where the comment goes instead is wherever its
+    // catalogue key is drawn, a place only `partPoint` can answer; there is no
+    // viewport in this fixture (`host.current` is null), so nothing answers and
+    // no pin is sent. The draft's own pin goes the other way, through the
     // composer's anchor.
     const c = component({
-      comments: [{ id: 'c1', label: '1', part: 'plate', pin: [1, 2, 3], resolved: false }],
+      feed: [{ id: 'c1', commit: A, view: 'assembled', part: '/model/plate',
+               key: 'plate', point: [1, 2, 3], status: 'open',
+               created: '2026-08-27T18:30:00Z' }],
       activePin: 'c1',
       composer: { part: 'plate', partId: '/model/plate', p: [4, 5, 6], text: 'x' },
     })
@@ -1598,15 +1617,17 @@ describe('taking the banner\'s build', () => {
     ...over,
   })
 
-  it('sends the viewport no pin belonging to the build the banner replaced', () => {
+  it('sends the viewport no pin at the coordinate the banner\'s build replaced', () => {
     // THE TWIN of the swap's own claim above, and the reason it had to be
-    // written twice: a pin is a POINT IN THE MODEL SPACE of the build it was
-    // placed on, `sync` reads the pins straight off `comments` on every frame,
-    // and the build the banner is offering need not contain that point at all.
+    // written twice: the stored coordinate was measured on the build the banner
+    // is replacing, and the one it offers need not contain that point at all.
     // Without it the old pins were drawn on geometry that never carried them —
     // invisible as a defect, because a pin looks like a pin wherever it lands.
+    const queue = [{ id: 'c1', commit: A, view: 'assembled', part: '/model/plate',
+                     key: 'plate', point: [1, 2, 3], status: 'open',
+                     created: '2026-08-27T18:30:00Z' }]
     const c = offered({
-      comments: [{ id: 'c1', label: '1', part: 'plate', pin: [1, 2, 3], resolved: false }],
+      feed: queue,
       activePin: 'c1',
       composer: { part: 'plate', partId: '/model/plate', p: [4, 5, 6], text: 'x' },
     })
@@ -1621,7 +1642,8 @@ describe('taking the banner\'s build', () => {
     expect(c.state.meta.commit, 'the offer was not taken at all').toBe('ccc')
     expect(seen).toHaveLength(1)
     expect(seen[0].pins).toEqual([])
-    expect(c.state.comments).toEqual([])
+    expect(c.state.feed, 'the queue is the project\'s and outlives the offer')
+      .toEqual(queue)
     expect(c.state.activePin).toBeNull()
   })
 
@@ -1633,7 +1655,7 @@ describe('taking the banner\'s build', () => {
     // that replaced it, and the numbers among them reaching an agent as a task.
     const c = offered({
       composer: {
-        part: 'plate', partId: '/model/plate', p: [1, 2, 3],
+        part: 'plate', partId: '/model/plate', key: 'plate', p: [1, 2, 3],
         text: 'this hole is', photo: null, meas: '3.00 mm', move: 'plate by 2 mm',
       },
     })
@@ -1643,6 +1665,7 @@ describe('taking the banner\'s build', () => {
     expect(c.state.composer.text).toBe('this hole is')
     expect(c.state.composer.part).toBe('')
     expect(c.state.composer.partId).toBeNull()
+    expect(c.state.composer.key).toBeNull()
     expect(c.state.composer.p).toBeNull()
     expect(c.state.composer.meas).toBeNull()
     expect(c.state.composer.move).toBeNull()

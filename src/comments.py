@@ -12,9 +12,9 @@ Deliberately OUTSIDE the build directory (SPEC 7A.3), and for two reasons that
 both stand on their own. ACCESS: a build directory is served to anybody who has
 the URL, with a year of `immutable`, so a comment placed in one would be public
 and irrevocably cached — and this queue is not public to read (SPEC 7A.2).
-LIFETIME: a comment is about the PROJECT more than about one revision — a part
-name and a coordinate still mean something ten commits later — so it must not be
-a file that goes wherever the build goes. Nothing deletes a build on its own any
+LIFETIME: a comment is about the PROJECT more than about one revision — the
+catalogue key it carries names the same entity ten commits later — so it must not
+be a file that goes wherever the build goes. Nothing deletes a build on its own any
 more (SPEC 5.3), but somebody clearing space on the volume does, and a comment on
 a build that is gone stays readable; only the link back to the frame stops
 opening.
@@ -44,9 +44,18 @@ not:
     only decides how much of their own queue the author may keep, and that
     question was already answered everywhere else (SPEC 5.3 — no retention).
 
-The text of a comment is never rendered on any page (SPEC 7A.4). That is what
-keeps this whole feature off the XSS surface: the only consumer is an agent
-reading JSON.
+THE ANCHOR IS THE CATALOGUE KEY. A comment stores `key` beside `part`: `part` is
+a path in ONE revision's tree (`/model/pin(2)` — a number the tessellator hands
+out for uniqueness), while `key` is the entity's identity in `meta.parts`, which
+survives a rebuild that renumbers or reorders the tree. The build page follows
+the key to find the part again, and says so in the feed when the key names
+nothing in the current catalogue — the entity is gone and the comment is
+orphaned. Records written before the field existed simply have no `key`.
+
+The text of a comment IS rendered: the build page shows the project's queue in
+its rail. It reaches the DOM as text and never as markup, which is where that
+duty lives now — this module's job is to keep the stored text plain (`_body_text`
+refuses the control characters) rather than to be its only reader.
 """
 
 import json
@@ -224,7 +233,7 @@ def validate_payload(raw, max_text_chars: int) -> dict:
     if not isinstance(raw, dict):
         raise CommentError(422, "the comment must be a JSON object")
     payload = {"text": _body_text(raw.get("text"), max_text_chars)}
-    for field in ("view", "part"):
+    for field in ("view", "part", "key", "published"):
         value = raw.get(field)
         payload[field] = None if value is None else _one_line(value, field)
     point = raw.get("point")
@@ -343,6 +352,19 @@ class CommentStore:
         The photo is written BEFORE the record, on purpose. A photo with no record
         is invisible to every reader and gets cleaned up; a record naming a photo
         that is not there is a broken entry in the queue an agent has to handle.
+
+        `published` is the stamp of the build the comment was written on, and it
+        is what says WHICH build that was: `commit` alone does not, because the
+        local slot's is the constant `dev` for every build it ever holds (SPEC
+        7.6), so without this a comment from a previous incarnation of the slot
+        would still look like it was left on the geometry now on screen. IT COMES
+        FROM THE CALLER, in the payload beside `part` and `key`, and the hub
+        deliberately does not read it off its own disk: for the local slot that
+        directory holds whatever was built LAST, which is not necessarily what
+        the caller was looking at — the slot can rebuild between the click that
+        placed the point and the Send that posts it. A caller that sends no stamp
+        gets `None`, and the comment then hangs by its catalogue key like any
+        other.
         """
         if not SAFE_ID.match(pid or ""):
             raise CommentError(422, "invalid project id")
@@ -363,8 +385,10 @@ class CommentStore:
             "id": cid,
             "pid": pid,
             "commit": commit,
+            "published": payload["published"],
             "view": payload["view"],
             "part": payload["part"],
+            "key": payload["key"],
             "point": payload["point"],
             "camera": payload["camera"],
             "text": payload["text"],

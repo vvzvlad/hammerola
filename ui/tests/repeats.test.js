@@ -265,7 +265,7 @@ function component(tree, over = {}) {
     revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
     bannerGone: false, rail: false, menu: null, swapping: false,
     notePop: null, noteDraft: '', notes: {},
-    comments: [], activePin: null, composer: null,
+    feed: [], activePin: null, composer: null,
     measure: null, moved: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
     theme: 'light',
@@ -600,6 +600,9 @@ describe('the chip that reports a drag', () => {
     c.computed().movedAttach()
     expect(c.state.composer.part).toBe('pin ×3')
     expect(c.state.composer.move).toBe('pin ×3 by 3 mm')
+    // The counted name is for the reader; the KEY is what the comment hangs on
+    // once this build is gone, and it is the row's bare one either way.
+    expect(c.state.composer.key).toBe('pin')
   })
 })
 
@@ -622,6 +625,9 @@ describe('the part a comment is opened against', () => {
     // BARE, not `pin ×3`: a point sits on one solid, and the anchor posted with
     // it stays that solid's own path rather than the row's first.
     expect(c.state.composer.partId).toBe('/model/pin(2)')
+    // The catalogue key is the row's and says nothing about WHICH copy — which
+    // is the point of it: the path renumbers on a rebuild and this does not.
+    expect(c.state.composer.key).toBe('pin')
   })
 
   it('falls back to the placed name for a path no row claims', () => {
@@ -631,6 +637,10 @@ describe('the part a comment is opened against', () => {
     window.dispatchEvent(new CustomEvent(PLACE,
       { detail: { id: '/elsewhere/x', name: 'x', p: [1, 2, 3] } }))
     expect(c.state.composer.part).toBe('x')
+    // NULL, AND NOT THE NAME AS A STAND-IN. A path no row claims has no
+    // catalogue key, and inventing one would anchor the comment to whatever
+    // part happens to be keyed `x` in some later build.
+    expect(c.state.composer.key).toBeNull()
   })
 
   it('agrees with the id it posts after a pick, a view tab and a measurement',
@@ -663,6 +673,14 @@ describe('the part a comment is opened against', () => {
 
     expect(c.state.composer.partId).toBe('/model/pin')
     expect(c.state.composer.part).toBe('pin')
+    // AND THE KEY IS NULL HERE, on the one door of the three where the name
+    // survives the tree that carried it. `part` comes from `selName`, cached by
+    // the pick handler while the row was still drawn; the key is read from the
+    // tree at this instant, and this view has no pin in it. So the comment goes
+    // to the hub UNANCHORED under a name the reader recognises — which is the
+    // honest pair, and the reason the rail's `none` sentence cannot say the
+    // record predates keys.
+    expect(c.state.composer.key).toBeNull()
   })
 })
 

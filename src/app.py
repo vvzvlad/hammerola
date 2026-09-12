@@ -1892,12 +1892,16 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     attachments[kind] = part.data
 
             record = comment_store.add(pid, commit, payload, attachments)
-            # Only the id comes back. The text is never echoed to the caller
-            # and never rendered on a page (SPEC 7A.4) — that is what keeps this
-            # endpoint off the XSS surface entirely, and it stays true now that
-            # the writer holds the token: the queue is still read by a tool, and
-            # a page that rendered its own input would be a stored XSS on a
-            # same-origin URL whatever the writer's credentials were.
+            # Only the id comes back, and the text is never echoed to the caller
+            # (SPEC 7A.4). It used to be true that the text was never rendered on
+            # a page either, and this comment used to claim that was what kept
+            # the endpoint off the XSS surface — issue #33 ended that: the build
+            # page now draws the whole queue in its rail. The boundary moved
+            # rather than went. It is that the text reaches the DOM AS TEXT and
+            # never as markup, which is a property of the page and is pinned by a
+            # test there (`ui/tests/feed.test.js`); this route's own share of it
+            # is `_body_text`, which refuses the control characters, and this
+            # reply, which stays a bare id because nothing needs more.
             return self._json(201, {"id": record["id"]})
 
         def _read_body(self, length: int):

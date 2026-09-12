@@ -601,6 +601,97 @@ export function indexTree(root) {
   return { nodes, roots, leaves };
 }
 
+// -- where a comment hangs ---------------------------------------------------
+// A comment is bound to the PRINTED ENTITY, and the entity's identity is its
+// catalogue key (issue #75). Not the tree path — the tessellator numbers repeats
+// apart, so `/model/pin(2)` is a coordinate in one revision's tree and means
+// something else in the next. Not the point either: a coordinate is a place in
+// one tessellation, and the geometry moves under it on the next build. The key
+// travels between revisions while the part is alive, and when it stops being in
+// the catalogue the comment is ORPHANED — which the feed has to say out loud
+// rather than quietly drop the pin.
+
+/**
+ * Every catalogue key in a tree, mapped to the row that draws it.
+ *
+ * FIRST ROW IN TREE ORDER WINS, and there can be a second: `runsOf` collapses
+ * ADJACENT siblings only, so a view that places the same part in two groups
+ * draws it as two rows. A comment gets ONE pin — the rail labels its rows 1, 2,
+ * 3 against the pins on the canvas, and a comment that drew two of them would
+ * make that numbering a lie.
+ */
+export function rowsByKey(tree) {
+  const rows = new Map();
+  if (!tree || !tree.nodes) return rows;
+  // `nodes` keys every leaf PATH as well as every row id, so one row arrives
+  // several times; the first insertion is the one in tree order.
+  for (const node of tree.nodes.values()) {
+    if (node.key && !rows.has(node.key)) rows.set(node.key, node);
+  }
+  return rows;
+}
+
+/**
+ * Where one stored comment hangs in the build on screen: `{state, path, point}`.
+ *
+ * `path` is a tree path to hang the pin on and `point` a world coordinate to
+ * hang it at; each is null unless the state names it. The five states, each a
+ * different sentence for the reader:
+ *
+ *   `point`     — the record was written on THIS build in THIS view, so the
+ *                 coordinate it stored is still a place in the model on screen.
+ *                 Only then: on any other build the same numbers point at
+ *                 whatever the rebuild moved there.
+ *
+ *                 WHICH BUILD THIS IS takes `published` and not `commit` alone:
+ *                 the local slot's commit is the constant `dev` for every build
+ *                 it will ever hold (SPEC 7.6), so on the name that rebuilds
+ *                 most often `commit` matches every previous incarnation of the
+ *                 slot too. `published` is the field `buildKey` falls back to
+ *                 for exactly that reason — but this is NOT the same predicate:
+ *                 `buildKey` reads one field or the other, and this requires
+ *                 BOTH to match, so a change to `buildKey` is not automatically
+ *                 safe here. A record with no stamp, or a build whose meta.json
+ *                 carried none, never reaches this state — an absent stamp on
+ *                 both sides must not compare equal.
+ *
+ *   `part`      — the key names a row in the tree on screen. The pin goes on the
+ *                 first instance, `leaves[0]` (see `rowsByKey`).
+ *   `elsewhere` — the catalogue has the part, but this view does not draw it:
+ *                 the comment was left in another view of the same project.
+ *   `orphan`    — the key is in no catalogue entry. The entity the comment was
+ *                 left on is gone from the model.
+ *   `none`      — no key at all: a record written before the field existed, or
+ *                 one left on nothing in particular. Unanchored.
+ *
+ * `parts` is read through `hasOwnProperty` and never by `parts[key]`: a key is a
+ * string the author chose, and `__proto__` is one they may choose.
+ */
+export function anchorFor(record, { commit, published, view, keyRows, parts }) {
+  const unanchored = { state: 'none', path: null, point: null };
+  if (!record || typeof record !== 'object') return unanchored;
+
+  const p = record.point;
+  const here = record.commit === commit
+    && typeof published === 'string' && published !== ''
+    && record.published === published
+    && record.view === view;
+  if (here && Array.isArray(p) && p.length === 3
+      && p.every((n) => typeof n === 'number' && Number.isFinite(n))) {
+    return { state: 'point', path: null, point: [p[0], p[1], p[2]] };
+  }
+
+  const key = typeof record.key === 'string' && record.key ? record.key : null;
+  if (!key) return unanchored;
+
+  const row = keyRows ? keyRows.get(key) : null;
+  if (row && row.leaves && row.leaves.length) {
+    return { state: 'part', path: row.leaves[0], point: null };
+  }
+  const known = !!parts && Object.prototype.hasOwnProperty.call(parts, key);
+  return { state: known ? 'elsewhere' : 'orphan', path: null, point: null };
+}
+
 // -- display helpers --------------------------------------------------------
 // Everything below formats a string that came out of a PUSHED meta.json. It is
 // rendered as text by React and never as markup, which is the rule every page

@@ -97,7 +97,7 @@ function component({ builds = null, rail = null, props = {} } = {}) {
     revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
     bannerGone: false, rail, menu: { id: null, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
-    comments: [], activePin: null, composer: null,
+    feed: [], activePin: null, composer: null,
     measure: null, moved: null, toast: null,
     // A token, because the rail is drawn for the customer and hidden from the
     // viewer entirely — without one, "closed" would be true for the wrong
@@ -397,9 +397,9 @@ describe('the comment rail', () => {
     // the count is on the button, so nothing is hidden from a reader who has a
     // reason to open it.
     const c = component({ rail: null })
-    c.state.comments = [
-      { id: '1', text: 'a', resolved: false },
-      { id: '2', text: 'b', resolved: true },
+    c.state.feed = [
+      { id: '1', text: 'a', status: 'open' },
+      { id: '2', text: 'b', status: 'resolved' },
     ]
     expect(c.computed().openCount).toBe(1)
   })
