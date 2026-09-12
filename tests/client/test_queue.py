@@ -1,4 +1,4 @@
-"""`hammerola comments` and `... comments resolve`, against a real queue.
+"""`hammerola comments` and its `files` and `resolve`, against a real queue.
 
 The comments here are POSTED THE WAY A VIEWER POSTS THEM — multipart, no token,
 at a build that was published a moment earlier by the client itself — so what
@@ -19,11 +19,15 @@ deployment set its second variable to something else", and there is no second
 variable to set.
 """
 
+import json
+
 import pytest
-from harness import PNG_BYTES, TOKEN, comment_payload
+from harness import JPEG_BYTES, PNG_BYTES, TOKEN, comment_payload
 from modeldir import make_model
 
+from hammerola import queue, sources
 from hammerola.cli import main
+from src import app
 
 
 @pytest.fixture
@@ -105,10 +109,11 @@ def test_only_this_projects_queue_is_read(hub, tmp_path, capsys):
     assert yours not in out
 
 
-def test_an_attachment_is_reported_as_the_url_that_serves_it(hub, model,
-                                                             capsys):
-    """The bytes are behind the same token as the queue, and a photo of a
-    printed part is not something a terminal shows."""
+def test_an_attachment_is_reported_as_the_command_that_fetches_it(hub, model,
+                                                                  capsys):
+    """NOT AS THE URL, which is what used to be printed here. The bytes are
+    behind the same token as the queue, so a reader given the URL can only open
+    it by taking the secret out of the configuration — and one did."""
     publish_dev(model)
     reply = hub.post_comment("demo0001", "dev", payload=comment_payload(),
                              photo=("part.png", PNG_BYTES, "image/png"))
@@ -118,7 +123,9 @@ def test_an_attachment_is_reported_as_the_url_that_serves_it(hub, model,
 
     assert run(model, "comments") == 0
     out = capsys.readouterr().out
-    assert f"{hub.url}/api/v1/comments/{cid}/photo" in out
+    assert f"{hub.url}/api/v1/comments/{cid}/photo" not in out
+    assert "photo" in out
+    assert f"hammerola comments files {cid}" in out
 
 
 def test_since_is_the_hubs_filter_and_reaches_it(hub, model, capsys):
@@ -148,6 +155,100 @@ def test_a_comment_of_several_lines_stays_one_comment(hub, model, capsys):
     out = capsys.readouterr().out
     assert "  first line" in out
     assert "  second line" in out
+
+
+# -- fetching the attachments ------------------------------------------------
+def with_attachments(hub, model, pid="demo0001"):
+    """One comment carrying both a photo and the viewer's frame. -> its id.
+
+    TWO FORMATS AND NOT ONE, because each attachment keeps the extension its own
+    bytes earned: a phone photograph arrives as JPEG and the viewer's frame is
+    always a PNG, so a client that took one extension for both would write the
+    photo under a name nothing opens. That is the ordinary case, not an odd one.
+    """
+    publish_dev(model)
+    reply = hub.post_comment(pid, "dev", payload=comment_payload(),
+                             photo=("part.jpg", JPEG_BYTES, "image/jpeg"),
+                             shot=("frame.png", PNG_BYTES, "image/png"))
+    assert reply.status_code == 201, reply.text
+    return reply.json()["id"]
+
+
+def test_files_saves_the_bytes_that_were_posted(hub, model, capsys):
+    """The point of the verb: the caller gets the picture without ever holding
+    the token the route behind it takes."""
+    cid = with_attachments(hub, model)
+    capsys.readouterr()
+
+    assert run(model, "comments", "files", cid) == 0
+    out = capsys.readouterr().out
+
+    # Under `.hammerola/`, never in the working copy: a photo beside model.py is
+    # a file the next push would try to publish.
+    fetched = model / sources.SCRATCH_DIR / "comments"
+    assert (fetched / f"{cid}.jpg").read_bytes() == JPEG_BYTES
+    assert (fetched / f"{cid}.shot.png").read_bytes() == PNG_BYTES
+    assert str(fetched) in out
+
+
+def test_files_takes_an_output_directory(hub, model, tmp_path, capsys):
+    cid = with_attachments(hub, model)
+    where = tmp_path / "elsewhere"
+    capsys.readouterr()
+
+    assert run(model, "comments", "files", cid, "-o", str(where)) == 0
+    assert (where / f"{cid}.jpg").read_bytes() == JPEG_BYTES
+    assert not (model / sources.SCRATCH_DIR / "comments").exists()
+
+
+def test_a_comment_with_no_attachments_is_a_success(hub, model, capsys):
+    """Most comments carry neither, so the ordinary answer must not look like a
+    failure — the same reasoning an empty queue is printed with."""
+    cid = leave_comment(hub, model)
+    capsys.readouterr()
+
+    assert run(model, "comments", "files", cid) == 0
+    assert f"no photo or frame on {cid}" in capsys.readouterr().out
+
+
+def test_the_client_takes_exactly_the_extensions_the_hub_stores():
+    """THE SENTENCE OVER `ATTACHMENT_EXTENSIONS`, WRITTEN AS A TEST.
+
+    That tuple is a fourth copy of one decision — `comments.sniff_image`,
+    `comments._safe_attachment_name` and `app.ATTACHMENT_CONTENT_TYPES` are the
+    other three — and a copy that drifts fails in the direction that reads as
+    the hub's fault: `files` would refuse a real photo with a message saying the
+    record did not come from a hub that kept the bytes.
+    """
+    served = {suffix.removeprefix(".")
+              for suffix in app.ATTACHMENT_CONTENT_TYPES}
+    assert set(queue.ATTACHMENT_EXTENSIONS) == served
+
+
+def test_a_record_naming_a_file_this_hub_never_writes_is_refused(
+        hub, model, capsys):
+    """REFUSED RATHER THAN SKIPPED, for the reason `hammerola/artifacts.py`
+    refuses a name it was handed: a photo missing from a directory reported as
+    complete is the outcome worth avoiding, and this record cannot have come
+    from a hub that stored the bytes — the serving gate
+    (`comments._safe_attachment_name`) would never hand out a `.gif`.
+
+    Staged by rewriting the record on the volume, because no upload can carry
+    such a name past the hub's sniffer in the first place.
+    """
+    cid = with_attachments(hub, model)
+    record_path = hub.comment_dir("demo0001") / f"{cid}.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["photo"] = f"{cid}.gif"
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    capsys.readouterr()
+
+    assert run(model, "comments", "files", cid) == 1
+    assert "not a file this hub stores" in capsys.readouterr().err
+    # AND NOTHING WAS WRITTEN: the refusal is raised while the list of names is
+    # built, before the first byte lands, so the directory is not left holding
+    # the frame and calling itself the comment's attachments.
+    assert not (model / sources.SCRATCH_DIR / "comments").exists()
 
 
 # -- resolving ---------------------------------------------------------------

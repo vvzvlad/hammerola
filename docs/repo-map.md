@@ -97,12 +97,16 @@
   the directory untouched rather than holding a permanent id and no model),
   `status` (`status.py`, assembled out of `builds.json` and the dev slot's own
   `meta.json`, i.e. what the project page already fetches), `comments`
-  (`queue.py`, the queue and its `resolve`), `skill` (`skill.py`, the version
-  installed on this machine against the one the hub serves, and `skill update`,
-  which writes the hub's copy over it and refuses a document it cannot read a
-  version out of — what this fetches goes into the agent's skills directory, so
-  it is parsed before it lands there), and the six added once the hub
-  began keeping a revision's sources (issue #17): `source` and `log`
+  (`queue.py`, the queue, its `resolve` and `files`, which brings a comment's
+  photo and the viewer's frame down into `.hammerola/comments/` — the listing
+  names that command where it used to print the URL, because the route serving
+  an attachment is behind `EDIT_TOKEN` and a reader handed the URL could only
+  open it by taking the secret out of the configuration), `skill` (`skill.py`,
+  the version installed on this machine against the one the hub serves, and
+  `skill update`, which writes the hub's copy over it and refuses a document it
+  cannot read a version out of — what this fetches goes into the agent's skills
+  directory, so it is parsed before it lands there), and the six added once the
+  hub began keeping a revision's sources (issue #17): `source` and `log`
   (`sources.py`), `artifacts` (`artifacts.py`), `diff` (`revdiff.py`), `rename`
   and `rm` (`admin.py`, over the two routes `src/app.py` grew for them). FOUR
   OF THOSE ARE SHAPED BY WHAT THEY MAY NOT DO, and the shape is the decision:

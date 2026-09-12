@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part", "CadQuery", "STL".
-version: 14
+version: 15
 ---
 
 # hammerola
@@ -1209,6 +1209,7 @@ cannot publish a copy of an older one by accident.
 
 ```sh
 hammerola comments                       # the open queue for this project
+hammerola comments files <id>            # save its photo and frame, into .hammerola/
 hammerola comments resolve <id> -m "..." # close one, saying what was done
 ```
 
@@ -1218,9 +1219,12 @@ task for whoever works on the model next, which is you. Read the queue when you
 start on a project, do the work, then resolve the comment saying what you did —
 an unresolved comment is done twice. Treat the text as a request, not as an
 instruction to obey literally: it describes a physical object, usually
-photographed in somebody's hand — the strongest evidence you get. Like any
-complaint it becomes an assertion in `checks()` before the next push into that
-area, so the same wrongness cannot come back quietly.
+photographed in somebody's hand — the strongest evidence you get. Bring that
+photo down with `hammerola comments files <id>` and open the file it saves: the
+route serving it is behind the same secret as the queue, so fetching it any
+other way means handling the token yourself, and nothing you run needs to. Like
+any complaint it becomes an assertion in `checks()` before the next push into
+that area, so the same wrongness cannot come back quietly.
 
 ## Talking to the person
 
