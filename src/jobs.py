@@ -133,6 +133,7 @@ from src.buildproc import (
     Limits,
     run_build,
 )
+from src.safeio import read_regular_bytes
 from src.store import (DEV_LINK, JSON_TMP_PREFIX,
                        PublishError, atomic_write_bytes, utcnow_iso)
 
@@ -825,10 +826,13 @@ class JobStore:
             if job_id not in self._records:
                 return None
         try:
-            with open(self.root / job_id / LOG_NAME, "rb") as handle:
-                # One byte over the ceiling, which is what makes "too big"
-                # distinguishable from "exactly at the ceiling".
-                raw = handle.read(MAX_LOG_BYTES + 1)
+            # One byte over the ceiling, which is what makes "too big"
+            # distinguishable from "exactly at the ceiling". Through `safeio`
+            # for the same reason the ceiling is here at all: the directory is
+            # writable by every build, so neither the size of what is at that
+            # name nor its TYPE is decided by this hub.
+            raw = read_regular_bytes(self.root / job_id / LOG_NAME,
+                                     MAX_LOG_BYTES + 1)
         except OSError:
             # Queued, still building, or ended before there was anything to
             # say. An empty log is the honest answer; a 404 would mean the job
@@ -1641,10 +1645,18 @@ def _read_capped(path: Path, limit: int) -> bytes | None:
 
     One byte over the limit is read so that "too big" can be told from "exactly
     the limit", and nothing beyond that ever reaches memory.
+
+    THE ONE READ ON THIS VOLUME THAT RUNS BEFORE THE SOCKET IS BOUND, which is
+    why it goes through `safeio` even though the failure it prevents looks like
+    every other. It is reached from `_read_record` <- `_load` <-
+    `JobStore.__init__` <- `create_server`, so a fifo at
+    `data/jobs/<id>/job.json` did not cost a request thread — it cost the
+    PROCESS: the hub never finished starting, never answered `/health`, and came
+    up from the same volume next time, so it never started again. Silently, and
+    with no log line to say why.
     """
     try:
-        with open(path, "rb") as handle:
-            data = handle.read(limit + 1)
+        data = read_regular_bytes(path, limit + 1)
     except OSError:
         return None
     if len(data) > limit:

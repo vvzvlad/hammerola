@@ -60,6 +60,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from src.safeio import read_regular_text
 from src.store import SAFE_ID, atomic_write_bytes, utcnow_iso
 
 # A comment id, as it appears in a URL and as a filename. uuid4 hex and nothing
@@ -306,7 +307,20 @@ class CommentStore:
         return None if path is None else _read_record(path)
 
     def attachment(self, cid: str, kind: str) -> Path | None:
-        """The photo or the viewer's render for this comment, if it has one."""
+        """The path the record NAMES for this comment's photo or render.
+
+        A NAME, NOT A VERDICT ABOUT THE FILE, and the one-liner above says so
+        because the contract changed: there used to be a `candidate.is_file()`
+        here, and dropping it removed a check that was never one. `is_file()`
+        FOLLOWS the link, so it answered True for an attachment that was a
+        symlink to something else entirely — the very case it looked like it
+        was covering — and being a separate syscall from the read, it left a
+        window for the file to change in between. The caller opens with
+        O_NOFOLLOW and fstats the handle it got (`app._serve_attachment`),
+        which answers both questions at once and answers them about the bytes
+        it is going to send. A name for a file that is not there costs that
+        caller the same 404 it always gave.
+        """
         record = self.get(cid)
         if record is None:
             return None
@@ -319,8 +333,7 @@ class CommentStore:
         path = self._path_of(cid)
         if path is None:
             return None
-        candidate = path.parent / name
-        return candidate if candidate.is_file() else None
+        return path.parent / name
 
     # -- writing ------------------------------------------------------------
     def add(self, pid: str, commit: str, payload: dict,
@@ -468,9 +481,17 @@ def _read_record(path: Path) -> dict | None:
     A file that fails these checks is skipped rather than raised on: the queue is
     read by a listing endpoint, and one damaged entry must not take the whole
     queue offline.
+
+    THROUGH `safeio` BECAUSE THE CALLER IS A GLOB. `_read_all` collects
+    `*/*.json` and a glob returns a fifo like any other name, so the worst
+    version of this was not a comment somebody had to know the id of — it was
+    the LISTING, i.e. `hammerola comments`, losing a request thread on every
+    call for as long as the file sat there. `NotRegularFile` is an `OSError`, so
+    it lands in the arm already written below and reads as one more unreadable
+    entry.
     """
     try:
-        record = json.loads(path.read_text(encoding="utf-8"))
+        record = json.loads(read_regular_text(path))
     except (OSError, ValueError) as error:
         logger.warning(f"unreadable comment {path}: {error}")
         return None

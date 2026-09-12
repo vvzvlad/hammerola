@@ -28,10 +28,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // the branch that keys on that class, and a stubbed one would let it agree with
 // itself instead of with the code.
 //
-// `loadStart` is stubbed beside it and answers "no block" by default, which is
-// what a hub with projects on it answers. What the real one does with what a hub
-// actually sends is `start.test.js`, in a file of its own for the reason given
-// there: this one needs the module mocked, that one needs it real.
+// `loadStart` is stubbed beside it and answers `null` by default — a hub that
+// could NOT be asked, which since issue #91 is the only thing `null` means. A hub
+// with projects on it answers `{ ...paths, empty: false }`, and a test that wants
+// that one says so: `FULL` below. What the real one does with what a hub actually
+// sends is `start.test.js`, in a file of its own for the reason given there: this
+// one needs the module mocked, that one needs it real.
 vi.mock('../src/hub.js', async (importOriginal) => ({
   ...(await importOriginal()),
   loadIndex: vi.fn(),
@@ -582,22 +584,30 @@ describe('which screen is drawn', () => {
   })
 })
 
-// -- the block for an agent, on a hub with nothing on it ---------------------
+// -- the block for an agent, on the door ------------------------------------
 //
 // Five lines somebody copies and hands to their agent: where the skill is, where
 // the client is, what this hub's address is, install the skill and follow it,
 // ask the owner for the token (issue #48). What is pinned here is the
-// three properties that are decisions rather than layout — it is on the DOOR and
-// appears at every arrival there, every address in it is BUILT from the browser's
-// origin and the manifest's paths, and it never claims to have copied itself
-// when it has not.
+// properties that are decisions rather than layout — it appears at every arrival
+// at the door AND ONLY ON A HUB WITH NOTHING PUBLISHED, every address in it is
+// BUILT from the browser's origin and the manifest's paths, it carries no token,
+// and it never claims to have copied itself when it has not.
 //
-// WHAT IS NOT HERE is what the manifest has to say for the block to exist at
+// THE CONDITION IS THIS SCREEN'S OWN NOW (issue #91). `startHint` used to answer
+// `null` for a hub with projects, so nothing here could draw a block on one even
+// by mistake; it answers `empty: false` instead, because the list draws the
+// block on such a hub. So the assertion that the DOOR does not is the only thing
+// holding that line, and it is the second test below.
+//
+// WHAT IS NOT HERE is what the manifest has to say for the paths to exist at
 // all: that lives in start.test.js, where hub.js is the real module.
 
-const HINT = { skill: '/start/skill.md', client: '/start/hammerola' }
+const HINT = { skill: '/start/skill.md', client: '/start/hammerola', empty: true }
 /** A hub reached at an address nothing in this repository could have written. */
 const AT = { origin: 'https://hub.example', ...HINT }
+/** The same hub, once something has been published on it. */
+const FULL = { ...AT, empty: false }
 
 /** A HammerolaLogin as React builds one: defaultProps applied, state seeded. */
 function login(props) {
@@ -626,9 +636,22 @@ describe('the block for an agent', () => {
   })
 
   it('is not on the door when the hub has something on it', () => {
-    // `start` is null for a hub with projects, for a hub that could not be
-    // asked and for one that answered something unreadable — all three by the
-    // time it gets here (hub.js). The form has to be the form either way.
+    // THE ASSERTION THE GATE BECAME. The paths reach this screen on a hub with
+    // forty projects exactly as they do on an empty one — the list needs them
+    // there — so `empty` is the whole of what keeps the block off the door, and
+    // a heading reading "Nothing published here yet" over a hub full of work is
+    // what it costs to lose it.
+    const drawn = texts(drawnDoor({ start: FULL }))
+    for (const line of agentBrief(FULL)) expect(drawn).not.toContain(line)
+    expect(drawn).not.toContain('Nothing published here yet')
+    expect(drawn).toContain('Sign in')
+    expect(fields(drawnDoor({ start: FULL }))).toHaveLength(1)
+  })
+
+  it('is not on the door when the hub was never asked', () => {
+    // The other `null`: a hub that did not answer, or answered something this
+    // page could not read (hub.js). There is nothing to draw a block out of,
+    // and the form has to be the form all the same.
     const drawn = texts(drawnDoor({ start: null }))
     for (const line of agentBrief(AT)) expect(drawn).not.toContain(line)
     expect(drawn).not.toContain('Nothing published here yet')
@@ -641,7 +664,12 @@ describe('the block for an agent', () => {
     // nothing names the paths either — the origin is the browser's and the paths
     // are the hub's own answer. Fed an address and paths no deployment uses,
     // the block has to print exactly those.
-    const odd = { origin: 'https://elsewhere.example:8443', skill: '/get/s.md', client: '/get/tool' }
+    const odd = {
+      origin: 'https://elsewhere.example:8443',
+      skill: '/get/s.md',
+      client: '/get/tool',
+      empty: true,
+    }
     const drawn = texts(drawnDoor({ start: odd }))
     expect(drawn).toContain('Skill: https://elsewhere.example:8443/get/s.md')
     expect(drawn).toContain('Client: https://elsewhere.example:8443/get/tool')
@@ -684,9 +712,60 @@ describe('the block for an agent', () => {
     // whose reader has not read the first one yet.
     expect(agentBrief(AT)).toHaveLength(5)
   })
+
+  it('is handed no token to print, whatever the page is holding', () => {
+    // THE RULE THAT USED TO BE A RULE ABOUT THE WHOLE FILE, now a rule about
+    // this screen (issue #91): the lines CAN carry a token, and the door is
+    // where they must not — its reader has not got in, so there is nothing of
+    // theirs to print and a token on that screen could only be somebody else's.
+    //
+    // DRIVEN FROM THE PAGE, not from the screen, because what keeps the door's
+    // copy tokenless is not a check inside it: it is that `render` hands the
+    // token to the list and to nothing else. Asserted on the props as well as
+    // on the text, so that passing it down "harmlessly" fails here rather than
+    // the first time something prints it.
+    const c = Object.create(HammerolaEntry.prototype)
+    c.state = { projects: null, token: 'sekrit', busy: false, refused: '', start: AT }
+    const screen = HammerolaEntry.prototype.render.call(c)
+    expect(screen.type).toBe(HammerolaLogin)
+    expect(Object.values(screen.props)).not.toContain('sekrit')
+    const drawn = texts(HammerolaLogin.prototype.render.call(login(screen.props)))
+    expect(drawn.join('\n')).not.toContain('sekrit')
+    expect(drawn).toContain('Ask the owner of this instance for the token.')
+  })
 })
 
-describe('when the door asks whether the hub is empty', () => {
+// -- the fifth line, which is the only one the two blocks differ in ----------
+
+describe('the fifth line of the brief', () => {
+  it('is the token, where a token was passed', () => {
+    // The four above it are the same four either way: what the list's copy is
+    // is the door's copy with the last line answered instead of deferred.
+    expect(agentBrief({ ...AT, token: 'sekrit' }))
+      .toEqual([...agentBrief(AT).slice(0, 4), 'Token: sekrit'])
+  })
+
+  it('is the sentence, where none was', () => {
+    // Three ways of passing nothing, because the caller that has no token
+    // passes no key at all and the page's own default is an empty string. An
+    // empty `Token:` line would read as a hub with no secret on it.
+    for (const token of [undefined, null, '']) {
+      expect(agentBrief({ ...AT, token })).toEqual(agentBrief(AT))
+      expect(agentBrief({ ...AT, token }).join('\n')).not.toMatch(/^Token:/m)
+    }
+  })
+
+  it('puts it in that line and in no other', () => {
+    // The token is one line's worth of the block. An address that carried it as
+    // well would be a secret in a string somebody pastes into a browser bar,
+    // and it would still be there after the fifth line was cut.
+    const lines = agentBrief({ ...AT, token: 'sekrit' })
+    expect(lines.filter((line) => line.includes('sekrit'))).toEqual(['Token: sekrit'])
+    expect(agentBrief(AT).join('\n')).not.toMatch(/sekrit/)
+  })
+})
+
+describe('when the page asks the hub about itself', () => {
   it('asks on a page load with no token, which is the arrival it exists for', async () => {
     // THE ONE THAT ACTUALLY HAPPENS: somebody deployed this, opened it, and has
     // no token — the whole reason the block was written. It was also the one
@@ -703,15 +782,21 @@ describe('when the door asks whether the hub is empty', () => {
     expect(c.state.start).toEqual({ origin: window.location.origin, ...HINT })
   })
 
-  it('does not ask at all for a reader who has a token', async () => {
-    // Lazy: somebody with a token is going to the list, where no block is
-    // drawn, and a second request on that path buys the page nothing.
+  it('asks for a reader who has a token too, and after their list has come back', async () => {
+    // THE LAZINESS THAT WENT WITH THE GATE (issue #91). While the door was the
+    // only screen drawing a block, a reader with a token was somebody the
+    // question bought nothing for; the list draws one now, so that reader is
+    // exactly who it is asked for. Asserted end to end — the answer has to reach
+    // `start`, not merely be requested — and the list is asserted first, because
+    // the ask is deliberately behind it: this is the screen that reads it.
     loadIndex.mockResolvedValue([CARD])
-    loadStart.mockImplementation(async () => HINT)
+    loadStart.mockImplementation(async () => ({ ...HINT, empty: false }))
     const c = page('remembered')
     await HammerolaEntry.prototype.componentDidMount.call(c)
     await vi.waitFor(() => expect(c.state.projects).not.toBeNull())
-    expect(loadStart).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(c.state.start).not.toBeNull())
+    expect(loadStart).toHaveBeenCalledTimes(1)
+    expect(c.state.start).toEqual({ origin: window.location.origin, ...HINT, empty: false })
   })
 
   it('asks once, however often the door is arrived at', async () => {
@@ -755,11 +840,16 @@ describe('when the door asks whether the hub is empty', () => {
     expect(c.state.start).toBeNull()
   })
 
-  it('draws no block when the hub answered that it has projects', async () => {
-    loadStart.mockImplementation(async () => null)
+  it('keeps the paths when the hub answered that it has projects', async () => {
+    // WHAT THE GATE'S REMOVAL LOOKS LIKE FROM UP HERE. This used to be a hub
+    // whose answer was `null`, i.e. one the page learnt nothing addressable
+    // from; it now hands the paths over with `empty: false` on them, because the
+    // list has to print them on such a hub. `null` is left meaning one thing —
+    // the hub was not asked, or could not be read — which is the test below.
+    loadStart.mockImplementation(async () => ({ ...HINT, empty: false }))
     const c = page()
     await c.askStart()
-    expect(c.state.start).toBeNull()
+    expect(c.state.start).toEqual({ origin: window.location.origin, ...HINT, empty: false })
   })
 
   it('asks again after an ask that brought nothing back', async () => {
@@ -926,5 +1016,180 @@ describe('copying the block', () => {
     await c.copy()
     expect(seen).toEqual([''])
     expect(c.state.copied).toBe('done')
+  })
+})
+
+// -- the footer of the list: one caption, and the same block with the token --
+//
+// The list is behind the token, so this is the one page in the bundle that can
+// print one — and the one whose reader is the owner who already has it. What is
+// pinned here is that the block is drawn from what the page was handed, that the
+// lines it copies are the lines it drew, and that it is drawn ON EVERY HUB
+// (issue #91): the door's `empty` is the door's, and a page that only offered
+// the brief while the list was empty would offer it for the one hour of a hub's
+// life when nobody needs a page to find it.
+
+/** The list as the page hands it over: defaultProps applied, state seeded. */
+function list(props) {
+  const c = new HammerolaProjects({ ...HammerolaProjects.defaultProps, projects: [], ...props })
+  c.setState = vi.fn((patch) => { c.state = { ...c.state, ...patch } })
+  return c
+}
+
+const clipboard = (writeText) => {
+  vi.stubGlobal('navigator', { clipboard: writeText ? { writeText } : undefined })
+}
+
+describe('the caption under the list', () => {
+  it('says both halves of it, in one line', () => {
+    // SHORTER, NOT SMALLER (issue #91). The two claims are the whole of the
+    // sentence and neither survives being dropped: a project is listed from its
+    // first commit, and a push into the local `dev` slot never lists one. What
+    // is asserted is that ONE string carries both — the old wording said them on
+    // two lines either side of a `<br>`, so a reading that found them in two
+    // strings would pass on the sentence this replaced.
+    const drawn = texts(list({}).render())
+    const said = drawn.filter((line) => line.includes('hammerola commit'))
+    expect(said).toHaveLength(1)
+    expect(said[0]).toMatch(/listed/)
+    expect(said[0]).toMatch(/`dev`/)
+    expect(said[0]).toMatch(/never/)
+  })
+})
+
+describe('the block on the list', () => {
+  it('draws the brief with the token in it, under the caption', () => {
+    const c = list({ start: AT, token: 'sekrit' })
+    const drawn = texts(c.render())
+    for (const line of agentBrief({ ...AT, token: 'sekrit' })) expect(drawn).toContain(line)
+    expect(drawn).toContain('Token: sekrit')
+    // UNDER IT, in that order: the caption answers why a project is or is not
+    // in the list above, and the block answers what to do next. Reversed, the
+    // page offers the next step before saying what the step is about.
+    const at = (needle) => drawn.findIndex((line) => line.includes(needle))
+    expect(at('hammerola commit')).toBeGreaterThan(-1)
+    expect(at('Hand this to your agent')).toBeGreaterThan(at('hammerola commit'))
+  })
+
+  it('says what pasting it costs, beside the button that offers to', () => {
+    // The warning the door's old rule carried, at the one place it is now true:
+    // these lines ARE a credential once they are out of this page.
+    const drawn = texts(list({ start: AT, token: 'sekrit' }).render())
+    expect(drawn.join('\n')).toMatch(/credential/)
+    expect(drawn).toContain('Copy')
+  })
+
+  it('is there on a hub with projects on it, which is the hub it is for', () => {
+    // THE POINT OF THE SECOND BLOCK. `empty: false` is what takes the door's
+    // copy down and it must do nothing at all here: the reader is the owner,
+    // and what they are doing on a hub that already has projects is starting
+    // the next one. Drawn beside a real card, because "the footer of an empty
+    // page" is exactly the state this must not be limited to.
+    const c = list({ start: FULL, token: 'sekrit', projects: [projectCard(CARD)] })
+    const drawn = texts(c.render())
+    for (const line of agentBrief({ ...FULL, token: 'sekrit' })) expect(drawn).toContain(line)
+    expect(drawn).toContain('Token: sekrit')
+    expect(drawn).toContain('Hand this to your agent')
+  })
+
+  it('is not there at all until the paths have come back', () => {
+    // The one state that takes it down: a hub that was not asked, or answered
+    // something unreadable. There is nothing to print, and the token must not go
+    // on the screen without the lines it belongs to.
+    const c = list({ start: null, token: 'sekrit', projects: [projectCard(CARD)] })
+    const drawn = texts(c.render())
+    expect(drawn.join('\n')).not.toContain('sekrit')
+    expect(drawn).not.toContain('Hand this to your agent')
+    for (const line of agentBrief({ ...AT, token: 'sekrit' })) expect(drawn).not.toContain(line)
+  })
+
+  it('copies the lines it drew, and no others', async () => {
+    // The rule the door keeps, at the second place it now has to hold: what is
+    // copied cannot differ from what is read. Both come from `brief()`.
+    const writeText = vi.fn(async () => {})
+    clipboard(writeText)
+    const c = list({ start: AT, token: 'sekrit' })
+    await c.copy()
+    const drawn = texts(c.render())
+    expect(writeText).toHaveBeenCalledWith(drawn.filter((line) => (
+      agentBrief({ ...AT, token: 'sekrit' }).includes(line)
+    )).join('\n'))
+    expect(writeText).toHaveBeenCalledWith(agentBrief({ ...AT, token: 'sekrit' }).join('\n'))
+    expect(drawn).toContain('Copied')
+  })
+
+  it('does not claim to have copied where there is no clipboard', async () => {
+    // The case this hub is actually deployed in as often as not: plain http on
+    // a local network is an insecure context, and `navigator.clipboard` is
+    // simply absent there. The button has to send the reader to select the
+    // lines by hand rather than leave them pasting whatever was in the buffer.
+    clipboard(null)
+    const c = list({ start: AT, token: 'sekrit' })
+    await c.copy()
+    expect(c.state.copied).toBe('none')
+    const drawn = texts(c.render())
+    expect(drawn).toContain('Copy by hand')
+    expect(drawn).not.toContain('Copied')
+  })
+
+  it('says so when the clipboard refused', async () => {
+    clipboard(vi.fn(async () => { throw new DOMException('not focused') }))
+    const c = list({ start: AT, token: 'sekrit' })
+    await c.copy()
+    expect(c.state.copied).toBe('failed')
+    expect(texts(c.render())).toContain('Copy failed')
+  })
+
+  it('does nothing at all when there is no block to copy', async () => {
+    const writeText = vi.fn(async () => {})
+    clipboard(writeText)
+    const c = list({ start: null, token: 'sekrit' })
+    await c.copy()
+    expect(writeText).not.toHaveBeenCalled()
+    expect(c.state.copied).toBe('')
+  })
+
+  it('clears the last verdict before trying again', async () => {
+    // The door's rule, on this copy of the button: a retry must not read as its
+    // own result for however long the clipboard takes to answer. Asserted from
+    // INSIDE `writeText`, because that is the only moment the stale verdict
+    // would be on screen — after the promise settles both spellings agree.
+    const c = list({ start: AT, token: 'sekrit' })
+    const seen = []
+    clipboard(vi.fn(async () => { seen.push(c.state.copied) }))
+    c.state = { ...c.state, copied: 'failed' }
+    await c.copy()
+    expect(seen).toEqual([''])
+    expect(c.state.copied).toBe('done')
+  })
+})
+
+describe('what the page hands the list', () => {
+  it('is the block and the token it can put in it', () => {
+    // The other half of the door's rule: the token goes to the screen that is
+    // already behind it, and `start` is the same field both screens read.
+    const c = Object.create(HammerolaEntry.prototype)
+    c.state = { projects: [], token: 'sekrit', busy: false, refused: '', start: AT }
+    const screen = HammerolaEntry.prototype.render.call(c)
+    expect(screen.type).toBe(HammerolaProjects)
+    expect(screen.props.start).toBe(AT)
+    expect(screen.props.token).toBe('sekrit')
+  })
+
+  it.each([
+    ['nothing at all', [], { ...HINT }],
+    ['a project', [CARD], { ...HINT, empty: false }],
+  ])('asks for the paths when the list came back with %s', async (_name, cards, answer) => {
+    // BOTH CASES, because the ask has no condition on it and a condition is
+    // exactly what would creep back. It was `if (!rows.length)` for one round —
+    // which is the empty half of this passing and the other half quietly not,
+    // i.e. no block on the hub the block is written for.
+    loadIndex.mockResolvedValue(cards)
+    loadStart.mockImplementation(async () => answer)
+    const c = page('remembered')
+    await HammerolaEntry.prototype.componentDidMount.call(c)
+    await vi.waitFor(() => expect(c.state.start).not.toBeNull())
+    expect(c.state.projects).toHaveLength(cards.length)
+    expect(c.state.start).toEqual({ origin: window.location.origin, ...answer })
   })
 })

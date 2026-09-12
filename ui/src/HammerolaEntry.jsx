@@ -54,17 +54,19 @@
  * would be one devtools tab away, and the check would live on the wrong side of
  * the wire.
  *
- * AND ON A HUB WITH NOTHING ON IT THE DOOR CARRIES ONE MORE THING: five lines a
- * person copies and hands to their agent — where the skill is, where the client
- * is, what this hub's address is, install the skill and follow it, ask the owner
- * for the token. It is on the DOOR and not on the list, because the list is
- * behind the very token somebody opening an empty hub does not have yet: a block
- * living past the form would only ever be read by whoever no longer needs it.
- * `agentBrief` below is the whole of the text and `/start` (src/onboarding.py)
- * is where the paths come from; the two properties that make it safe to add to a
- * page whose job is elsewhere are that it is fetched LAZILY — a reader with a
- * token goes straight to the list and pays for no second request — and that
- * every failure of that fetch is silence. See `loadStart` in hub.js.
+ * AND BOTH SCREENS CARRY ONE MORE THING: five lines a person copies and hands to
+ * their agent — where the skill is, where the client is, what this hub's address
+ * is, install the skill and follow it, and the token. TWO COPIES OF IT, and they
+ * differ in exactly the two ways the screens do (issue #91). The door is read by
+ * somebody who has not got in: its copy says where the secret comes from instead
+ * of carrying it, and it is drawn only on a hub with nothing published, since a
+ * reader who cannot get into a hub that is already full is not being set up. The
+ * list is behind the token: its copy carries it, and it is drawn on every hub,
+ * because starting the next project on a hub with forty is the ordinary case and
+ * the only one there is a page for. `agentBrief` below is the whole of the text
+ * and `/start` (src/onboarding.py) is where the paths come from; what makes it
+ * safe to add to a page whose job is elsewhere is that every failure of that
+ * fetch is silence. See `loadStart` in hub.js.
  *
  * A CARD IS AN `<a>`, not a div with a click handler, which is the one place the
  * mock's markup was not taken literally. The page it replaced used a real link
@@ -389,7 +391,7 @@ const DESCRIPTION = '3D models built from code. Every link is pinned to a revisi
   + 'and always shows the exact same geometry.';
 
 /**
- * The block a hub with nothing on it offers, as the lines it is made of.
+ * The block both screens offer, as the lines it is made of.
  *
  * IT IS ADDRESSED TO AN AGENT, not to the person copying it — imperative, no
  * greeting, no explanation of what this service is. That is the shape of the
@@ -405,9 +407,21 @@ const DESCRIPTION = '3D models built from code. Every link is pinned to a revisi
  * its own rather than something to be cut out of the two above it because that
  * is how it is used: as the argument to `hammerola login`.
  *
- * NO TOKEN, AND NO FIELD FOR ONE. The secret travels another way, from a person
- * to a person; what stands here is the sentence that says so. A block that
- * carried it would be a credential in whatever the reader pasted it into.
+ * NO TOKEN ON THE SIGN-IN SCREEN, AND NO FIELD FOR ONE THERE. That rule was
+ * written as a rule about this function and it is a rule about the DOOR (issue
+ * #91): the reader of the door has not got in, the page holds no token, and
+ * there is nothing to put in the block — so its fifth line says where the secret
+ * comes from instead, from a person to a person. The list is the other case. It
+ * is drawn only once the hub has accepted a token, so that page holds one
+ * already and the person copying it is the owner who has it anyway; passing it
+ * here is what puts it in the lines. The warning the old rule carried holds
+ * wherever `token` is passed — the block then IS a credential in whatever it is
+ * pasted into — which is why the list prints that sentence beside its button.
+ *
+ * ONE FUNCTION WITH BOTH FIFTH LINES rather than two functions with one each:
+ * they are alternatives to the same line, and side by side it is legible that
+ * exactly one of them is ever printed. Two functions would be two texts to keep
+ * in step, and the first thing to drift would be the four lines they share.
  *
  * Everything addressable is BUILT from what the caller passes: `origin` is the
  * browser's own (`hubOrigin`), the two paths are the manifest's. Nothing in this
@@ -419,13 +433,16 @@ const DESCRIPTION = '3D models built from code. Every link is pinned to a revisi
  * a third name invented on this one page leaves the agent that reads the block
  * and then the skill working out that the two are the same thing.
  */
-export function agentBrief({ origin, skill, client }) {
+export function agentBrief({ origin, skill, client, token }) {
   return [
     `Skill: ${origin}${skill}`,
     `Client: ${origin}${client}`,
     `Hub: ${origin}`,
     'Install the skill and follow it.',
-    'Ask the owner of this instance for the token.',
+    // A caller with no token passes none, and the line then says so rather than
+    // printing an empty one: `Token:` with nothing after it reads as a hub that
+    // has no secret at all.
+    token ? `Token: ${token}` : 'Ask the owner of this instance for the token.',
   ];
 }
 
@@ -439,6 +456,29 @@ export function agentBrief({ origin, skill, client }) {
  * nothing was: the person would paste whatever was in the buffer before.
  */
 const COPY_LABELS = { done: 'Copied', failed: 'Copy failed', none: 'Copy by hand' };
+
+/**
+ * The lines into the clipboard, in one piece, and which of the three happened.
+ *
+ * ONE FUNCTION FOR BOTH BLOCKS (issue #91). The door's and the list's differ in
+ * what their lines SAY and in nothing else, and the three answers above are the
+ * part that is easy to get wrong twice: the `none` branch is what keeps a hub on
+ * a plain http address from claiming a copy no clipboard was there to make.
+ *
+ * IT RESOLVES FOR EVERY OUTCOME, so no caller has to catch anything — what it
+ * hands back is a key of that table and never a rejection.
+ */
+function copyLines(lines) {
+  const clipboard = typeof navigator === 'undefined' ? null : navigator.clipboard;
+  if (!clipboard || typeof clipboard.writeText !== 'function') return Promise.resolve('none');
+  return clipboard.writeText(lines.join('\n')).then(
+    () => 'done',
+    // Rejected rather than absent: the document was not focused, or the
+    // permission was refused. Same rule as the branch above — say what
+    // happened, never "Copied".
+    () => 'failed',
+  );
+}
 
 /**
  * The door. Everything on the other side of it is one fetch away, and this
@@ -460,9 +500,10 @@ export class HammerolaLogin extends React.Component {
     animate: true,
     busy: false,
     error: '',
-    // `{origin, skill, client}` when this hub has nothing published on it, and
-    // null every other time — including when the hub could not be asked. The
-    // page above decides; this screen only draws what it was handed.
+    // `{origin, skill, client, empty}` once the hub has answered its manifest,
+    // and null until then — or for good, if it could not be asked at all. THE
+    // BOOLEAN IS THIS SCREEN'S TO READ (issue #91): the paths arrive on every
+    // hub, and the block below them is the door's only where `empty` is true.
     start: null,
   };
 
@@ -506,18 +547,9 @@ export class HammerolaLogin extends React.Component {
     // what keeps a retry from reading as its own result for however long the
     // clipboard takes to answer.
     if (this.state.copied) this.setState({ copied: '' });
-    const clipboard = typeof navigator === 'undefined' ? null : navigator.clipboard;
-    if (!clipboard || typeof clipboard.writeText !== 'function') {
-      this.setState({ copied: 'none' });
-      return Promise.resolve();
-    }
-    return clipboard.writeText(agentBrief(start).join('\n')).then(
-      () => this.setState({ copied: 'done' }),
-      // Rejected rather than absent: the document was not focused, or the
-      // permission was refused. Same rule as the branch above — say what
-      // happened, never "Copied".
-      () => this.setState({ copied: 'failed' }),
-    );
+    // NO TOKEN IN THE ARGUMENT, and it is not an omission: this screen has none
+    // to pass. See `agentBrief`.
+    return copyLines(agentBrief(start)).then((copied) => this.setState({ copied }));
   };
 
   /**
@@ -529,6 +561,11 @@ export class HammerolaLogin extends React.Component {
    * second card would make them two screens competing for the middle of the
    * page. Same card, same fonts, same palette; the mono box is the interface's
    * own input colour, so it reads as text to be taken rather than as a warning.
+   *
+   * IT DRAWS WHATEVER IT IS CALLED WITH, and whether to call it is `render`'s —
+   * see the gate there. The heading is the reason the two cannot be swapped: on
+   * a hub with projects on it, "Nothing published here yet" is a lie about the
+   * one thing this screen is refusing to show.
    */
   drawStart(start) {
     return (
@@ -651,7 +688,13 @@ export class HammerolaLogin extends React.Component {
             </div>
           </div>
 
-          {start && this.drawStart(start)}
+          {/* THE DOOR'S OWN GATE, and the only place it is applied (issue #91).
+              The paths arrive on every hub — the list prints them there — so
+              what keeps this screen's copy off a hub with forty projects is this
+              boolean and nothing upstream of it. A reader who cannot get into a
+              full hub is not the person somebody is setting a hub up for, and
+              the heading of the block says so in as many words. */}
+          {start && start.empty && this.drawStart(start)}
 
           <div style={css(`font:400 11px ${MONO};color:var(--text-faint);margin-top:22px`)}>rev-pinned · agent-built</div>
         </div>
@@ -923,7 +966,21 @@ export const VIEW_BODIES = Object.freeze({
 });
 
 export class HammerolaProjects extends React.Component {
-  static defaultProps = { projects: [], defaultView: 'grid', defaultSort: 'modified' };
+  static defaultProps = {
+    projects: [],
+    defaultView: 'grid',
+    defaultSort: 'modified',
+    // `{origin, skill, client, empty}` once the hub has answered its manifest,
+    // and null until then — or for good, if it could not be asked. The same
+    // value the door is handed, from the same ask. THE BOOLEAN IN IT IS NOT
+    // READ HERE: it is the door's condition, and this page draws its block
+    // wherever the paths arrived, a hub with forty projects included.
+    start: null,
+    // The token this browser got in with, which the footer's block prints. It
+    // is never read for anything else here: what opens the list is the fetch
+    // the page above already made.
+    token: '',
+  };
 
   // Seeded from what this browser remembered, and `null` when it remembered
   // nothing legible — which is what the two getters below already read as "use
@@ -935,7 +992,9 @@ export class HammerolaProjects extends React.Component {
   // draws this list.
   constructor(props) {
     super(props);
-    this.state = { view: readProjectView(), sort: readProjectSort(), hover: null };
+    this.state = {
+      view: readProjectView(), sort: readProjectSort(), hover: null, copied: '',
+    };
   }
 
   get view() { return this.state.view || this.props.defaultView; }
@@ -1026,6 +1085,86 @@ export class HammerolaProjects extends React.Component {
             : 'color:var(--text-soft)'))}
       >
         {content}
+      </div>
+    );
+  }
+
+  /**
+   * The block's text, from the ONE call the box and the button both read.
+   *
+   * Same rule the door keeps and for the same reason: what is copied cannot
+   * differ from what is read. Here it is a method rather than the call written
+   * twice because the argument is assembled — the page's `start` with this
+   * page's token on top — and two assemblies are two chances to hand the
+   * clipboard a line the reader was never shown.
+   */
+  brief() {
+    return agentBrief({ ...this.props.start, token: this.props.token });
+  }
+
+  copy = () => {
+    if (!this.props.start) return Promise.resolve();
+    // The verdict is about the press before this one — see the door's `copy`.
+    if (this.state.copied) this.setState({ copied: '' });
+    return copyLines(this.brief()).then((copied) => this.setState({ copied }));
+  };
+
+  /**
+   * The block, in the footer under the caption, on EVERY hub whose paths came
+   * back — not only on one with nothing published (issue #91).
+   *
+   * That is the difference from the door's copy, and it is the reason this one
+   * was written: the reader here is the owner, and what they are doing on a hub
+   * that already has projects is starting the next one. A block that appeared
+   * only on an empty hub would be a block for the single hour of this system's
+   * life when the list has nothing in it, on the one page that is not the door.
+   *
+   * WHAT IS DIFFERENT HERE IS ALSO THE FIFTH LINE, and it is the other half of
+   * why the block is on this page at all: the list is behind the token, so this
+   * page has one to put in it and the door does not. That is what the sentence
+   * under the heading is for — the lines are a credential now, and the reader
+   * about to press Copy is the one person who can be told so.
+   *
+   * NO `componentDidUpdate` CLEARING THE VERDICT, unlike the door's copy, and
+   * the asymmetry is a fact about the inputs rather than an omission: the lines
+   * cannot change while this block is on the screen. `start` arrives once, from
+   * an ask that is made at most once (`answered`), and it arrives BEFORE the
+   * block exists — there is no block to press until it does; the token is fixed
+   * for as long as the list is drawn at all, because losing it takes the whole
+   * page back to the door. `entry.test.js` holds the page to that.
+   */
+  drawBrief() {
+    if (!this.props.start) return null;
+    return (
+      <div style={css('max-width:560px;margin:14px auto 0;box-sizing:border-box;'
+        + 'padding:12px 13px;border-radius:8px;'
+        + 'border:1px solid var(--line);background:var(--card-bg);text-align:left')}
+      >
+        <div style={css('display:flex;align-items:center;gap:8px;flex-wrap:wrap')}>
+          <span style={css(`font:600 11.5px ${SANS};color:var(--text)`)}>Hand this to your agent</span>
+          <span style={css('flex:1')} />
+          <div
+            onClick={this.copy}
+            style={css('padding:4px 9px;border-radius:5px;cursor:pointer;user-select:none;'
+              + `font:600 10.5px ${SANS};border:1px solid var(--line);`
+              + 'background:var(--card-bg);color:var(--text)')}
+          >
+            {COPY_LABELS[this.state.copied] || 'Copy'}
+          </div>
+        </div>
+        <div style={css(`font:400 11px/1.55 ${SANS};color:var(--text-muted);margin-top:5px`)}>
+          It carries this hub&apos;s token: whatever you paste it into is holding a credential.
+        </div>
+        <div style={css('margin-top:9px;padding:10px 11px;border-radius:6px;'
+          + 'border:1px solid var(--line);background:var(--sunken-bg);'
+          + 'display:flex;flex-direction:column;gap:3px')}
+        >
+          {this.brief().map((line) => (
+            <span key={line} style={css(`font:400 11px/1.55 ${MONO};color:var(--text);overflow-wrap:anywhere`)}>
+              {line}
+            </span>
+          ))}
+        </div>
       </div>
     );
   }
@@ -1121,12 +1260,19 @@ export class HammerolaProjects extends React.Component {
               the one that answers a support question: a project whose only build
               is in the local slot has NO card here, on purpose (SPEC 7.6, and
               Store._refresh_index). Without saying so, "I published and my
-              project is missing" looks like a bug. */}
+              project is missing" looks like a bug.
+
+              ONE LINE NOW, AND BOTH HALVES STILL IN IT (issue #91). What went is
+              the wording, not a claim: `from its first commit` is `appears here
+              after its first commit`, and `never from a dev push` is `work
+              published into the local dev slot is never listed`. It had to
+              shrink because it is no longer the only thing in this footer — the
+              block under it answers the next question, which is what to do
+              about any of that. */}
           <div style={css(`font:400 11px/1.7 ${MONO};color:var(--text-faint);text-align:center;padding-top:28px`)}>
-            a project appears here after its first `hammerola commit` —
-            <br />
-            work published into the local dev slot is never listed
+            a project is listed from its first `hammerola commit` — never from a `dev` push
           </div>
+          {this.drawBrief()}
         </div>
       </div>
     );
@@ -1148,9 +1294,11 @@ export default class HammerolaEntry extends React.Component {
       token: readToken(),
       busy: false,
       refused: '',
-      // The block the door draws when this hub has nothing on it: `{origin,
-      // skill, client}`, or null for "not asked", "not empty" and "could not be
-      // asked" alike. Those three are one state on purpose — see `askStart`.
+      // What both screens build their block out of: `{origin, skill, client,
+      // empty}`, or null for "not asked yet" and "could not be asked" alike.
+      // Those two are one state on purpose — see `askStart`. "This hub has
+      // projects" is NOT one of them any more (issue #91): it is the `empty`
+      // field, which the door reads and the list does not.
       start: null,
     };
     // Whether the hub has ANSWERED — not whether it has been asked. Two fields
@@ -1164,10 +1312,14 @@ export default class HammerolaEntry extends React.Component {
   }
 
   componentDidMount() {
-    // THE REQUEST IS LAZY, and the branch is the whole of it: somebody who
-    // already has a token is going to the list, and asking a hub with forty
-    // projects whether it is empty answers a question nothing on that screen
-    // asks. The door is the only screen that reads it, so the door is what pays.
+    // THE REQUEST IS NO LONGER LAZY, and the branch below no longer makes it so
+    // (issue #91). The branch itself is unchanged and still routes: whoever has
+    // a token goes straight to the list. What went is the assumption behind it —
+    // that arriving with a token meant nobody would read the answer, true while
+    // the door was the only screen that drew the block. The list draws it now,
+    // on every hub, so `open` asks too, after the list has come back. It costs one
+    // public, uncached GET of a small JSON with no credential on it, once per
+    // page, and `loadStart` cannot fail loudly enough to be felt.
     if (this.state.token) {
       this.open(this.state.token);
       return;
@@ -1184,6 +1336,10 @@ export default class HammerolaEntry extends React.Component {
    * to be there — a hub is at its emptiest for the person who just signed out of
    * one they had nothing in.
    *
+   * AND FROM THE ARRIVAL THAT IS NOT AT THE DOOR (issue #91): a list that came
+   * back at all, whatever was in it. One ask serves both screens, and what they
+   * do with the answer differs — the door reads `empty` and the list ignores it.
+   *
    * THE FLAG IS SET ON THE ANSWER AND NOT ON THE REQUEST, which is the whole of
    * what `this.answered` is worth saying about. Set on the way in, one failed
    * ask spent the only one there was: the door's first arrival is a page load,
@@ -1192,16 +1348,16 @@ export default class HammerolaEntry extends React.Component {
    * is usually its owner — found the question already asked and drew nothing
    * until a reload. That is the ordinary sequence, not a corner of it.
    *
-   * A `null` therefore leaves the flag down, and a hub with projects on it is
-   * asked again at the next arrival, because `loadStart` collapses "not empty"
-   * and "could not ask" into one value on purpose (hub.js). The cost of that is
-   * one public, uncached GET per sign-out or mistyped token, which is nothing;
-   * the alternative is telling the two apart, and there is nothing the door
-   * would do differently if it could. `this.asking` covers the other direction —
-   * two arrivals inside one flight ask once between them.
+   * A `null` therefore leaves the flag down and the question is asked again at
+   * the next arrival, which is right because nothing was learned: `null` is now
+   * only "the hub did not answer, or answered something unreadable" (hub.js).
+   * The cost is one public, uncached GET per sign-out or mistyped token, which
+   * is nothing. `this.asking` covers the other direction — two arrivals inside
+   * one flight ask once between them.
    *
    * The answer cannot go stale in the direction that matters: what turns `empty`
-   * false is a push, and the person who pushes reloads to see it.
+   * false is a push, and the person who pushes reloads to see it. The paths do
+   * not go stale at all — they are constants of the image serving this page.
    *
    * NO `catch`, and that is a property of `loadStart` rather than an oversight:
    * it resolves for every failure it can have, so there is nothing here to
@@ -1256,12 +1412,22 @@ export default class HammerolaEntry extends React.Component {
     return loadIndex(token).then(
       (cards) => {
         writeToken(token);
+        const rows = (Array.isArray(cards) ? cards : []).map(projectCard);
         this.setState({
-          projects: (Array.isArray(cards) ? cards : []).map(projectCard),
+          projects: rows,
           token,
           busy: false,
           refused: '',
         });
+        // THE LIST'S OWN ARRIVAL AT THE BLOCK (issue #91), and there is no
+        // condition on it: the block is drawn on this page whatever the hub
+        // holds, so the paths are wanted whatever came back. Asked HERE rather
+        // than at mount so that the request goes out with the screen that reads
+        // it — a token the hub refuses lands on the door instead, and that path
+        // asks for itself, in the branch below. Somebody who came through the
+        // door has been answered already; `askStart` sees its own flag and
+        // makes no second request.
+        this.askStart();
       },
       (error) => {
         if (error instanceof Unauthorized) {
@@ -1328,6 +1494,8 @@ export default class HammerolaEntry extends React.Component {
     return (
       <HammerolaProjects
         projects={s.projects}
+        start={s.start}
+        token={s.token}
         onSignOut={() => this.signOut()}
       />
     );

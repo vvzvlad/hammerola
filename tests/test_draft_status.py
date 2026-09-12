@@ -24,10 +24,12 @@ is no pointer for a commit build to move.
 """
 
 import json
+import os
 import threading
 
 import pytest
-from harness import copying_builder, good_build, start_hub, stop_hub, tar_gz
+from harness import (TOKEN, copying_builder, good_build, start_hub, stop_hub,
+                     tar_gz)
 
 from src import render
 from src.jobs import (KNOWN_STATES, STATE_BUILDING, STATE_DONE, STATE_FAILED,
@@ -266,6 +268,37 @@ def test_an_unreadable_pointer_is_idle(hub):
         (hub.project_dir("proj1") / "draft.json").write_bytes(payload)
         assert hub.store.draft_job("proj1") is None, payload
         assert _status(hub, "proj1") == render.CARD_IDLE, payload
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"),
+                    reason="this platform has no os.mkfifo, so no fifo can "
+                           "reach a project directory in the first place")
+def test_a_fifo_where_the_pointer_belongs_is_idle_and_not_a_wedged_thread(hub):
+    """`draft.json` is read PER CARD, from the request thread (issue #74).
+
+    The pointer is deliberately read off the volume on every call rather than
+    cached, and `data/project/<pid>/` is writable by every build — so a fifo
+    there is not an unreadable pointer, it is a plain `open()` that never
+    returns, and it fires on `/index.json`, which is the front page. One
+    `os.mkfifo` in `model.py` and every visit costs another thread.
+
+    `idle` is the answer for the same reason every other unreadable pointer
+    gets it: the front page is about projects, and "the volume would not say"
+    is not a state of the project.
+
+    THE DEADLINE IS PART OF THE ASSERTION — spelled out here rather than
+    inherited from `Hub.get`, because without one a regression hangs the suite
+    instead of failing this test.
+    """
+    hub.publish("proj1", "abc123", good_build())
+    pointer = hub.project_dir("proj1") / "draft.json"
+    pointer.unlink(missing_ok=True)
+    os.mkfifo(pointer)
+    reply = hub.get("/index.json", headers={"Authorization": f"Bearer {TOKEN}"},
+                    timeout=5)
+    assert reply.status_code == 200, reply.text
+    assert [card["pid"] for card in reply.json()] == ["proj1"]
+    assert reply.json()[0]["status"] == render.CARD_IDLE
 
 
 def test_a_draft_stranded_by_a_restart_reads_failed(tmp_path):

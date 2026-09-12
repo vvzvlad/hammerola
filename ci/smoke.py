@@ -122,6 +122,33 @@ NAME_ENV = "SMOKE_NAME"
 GUARD_SUFFIX = "-guard"
 CMD_SUFFIX = "-cmd"
 
+# A MEMORY CEILING PER CONTAINER, one number each because they run different programs, and
+# every number is a pass/fail pair on the self-hosted runner rather than a reading of
+# `memory.peak` — that counter rises with the limit it is meant to justify, which is written
+# out at length beside the test container in both workflows (issue #28). The reason for having
+# ceilings at all is the runner: 19 GB shared with every other repository's jobs, so a runaway
+# here stops being this job's failure.
+#   PROBE  the sleeping one the execs go into, where the CAD checks import OCP and map a couple
+#          of hundred MB of OpenCASCADE: gate red at 192m, green at 256m -> 768m.
+#   CMD    the hub under the image's own command: red at 32m, green at 48m -> 192m.
+#   GUARD  the one that is MEANT to die at once, started with no environment: red at 24m,
+#          green at 32m -> 128m.
+# Each limit was swept ALONE with the other two unlimited, because a floor measured under two
+# other ceilings is not that container's floor. Every ceiling above is ~4× its floor, the same
+# shape of margin as the workflows'.
+# ONE OF THESE CHECKS DEGENERATES RATHER THAN FAILING when the number is too low, which is why
+# the numbers are pass/fail pairs and not comfortable-looking round figures:
+#   - `-guard` is graded partly on "it exited non-zero", and 137 IS non-zero. Under an OOM kill
+#     that half stays GREEN and only the two lines about the wording of the message go red — so
+#     a ceiling that kills it hollows the check instead of failing it legibly.
+#   - the probe's PID 1 is `sleep`, which allocates nothing, so the kernel takes the exec'd
+#     python and leaves the container `Status=running` with `OOMKilled=true`. That one is loud
+#     anyway: checks (f) and (g) go red, not the container.
+# `--memory` and `--memory-swap` are always set TOGETHER and always EQUAL — see `memory_flags`.
+PROBE_MEMORY = "768m"
+CMD_MEMORY = "192m"
+GUARD_MEMORY = "128m"
+
 # The Dockerfile's contract with this repo. Hardcoded rather than read back out of the image:
 # these are the terms, so a Dockerfile that quietly changes them has to go red here and be
 # looked at, not be politely followed.
@@ -1082,6 +1109,21 @@ def environment_flags():
     return flags
 
 
+def memory_flags(limit):
+    """One container's ceiling, as `--memory` AND `--memory-swap`, always equal.
+
+    A function rather than a pair of literals at each `docker run` because the two flags only
+    mean a ceiling TOGETHER. `--memory-swap` is the memory+swap TOTAL, so leaving it out gives
+    the container swap equal to the limit: a process that ran away would thrash to twice the
+    number instead of being killed at it, and the floors measured beside the constants above
+    would describe something that no longer happens. Written out three times, that is three
+    places for one of the two to be dropped or edited on its own;
+    `tests/test_ci_memory_ceilings.py` holds the same rule over the workflows, where the flags
+    have to be literal text.
+    """
+    return ["--memory", limit, "--memory-swap", limit]
+
+
 def check_image_contract(image):
     """(a) What the image DECLARES: how it is started, where it runs, how it is buffered.
 
@@ -1210,7 +1252,8 @@ def check_required_variable_guard(image, name):
     remove_container(name)
 
     status, output = docker(
-        ["run", "--rm", "--name", name, image], GUARD_TIMEOUT)
+        ["run", "--rm", "--name", name] + memory_flags(GUARD_MEMORY) + [image],
+        GUARD_TIMEOUT)
     if status is None:
         return [(target, "not attempted: " + output) for target in targets]
 
@@ -1569,7 +1612,8 @@ def check_startup(image, name):
     # No `--rm`: both rows below are read AFTER the container may already have exited, and
     # `--rm` would have taken its logs and its exit code away with it.
     status, output = docker(
-        ["run", "-d", "--name", name] + environment_flags() + [image], START_TIMEOUT)
+        ["run", "-d", "--name", name] + memory_flags(CMD_MEMORY)
+        + environment_flags() + [image], START_TIMEOUT)
     if status is None:
         return [(target, "not attempted: " + output) for target in targets]
     if status != 0:
@@ -2049,7 +2093,8 @@ def main():
         # instance, and starting two would double the slowest part of this gate for nothing.
         remove_container(probe_name)
         start_status, start_output = docker(
-            ["run", "-d", "--name", probe_name] + environment_flags() + [image] + IDLE_COMMAND,
+            ["run", "-d", "--name", probe_name] + memory_flags(PROBE_MEMORY)
+            + environment_flags() + [image] + IDLE_COMMAND,
             START_TIMEOUT)
         if start_status is None:
             blocked = "not attempted: " + start_output

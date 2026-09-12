@@ -55,41 +55,48 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-// -- what the door gets ------------------------------------------------------
+// -- what the two pages get --------------------------------------------------
 
 describe('reading the manifest', () => {
-  it('offers the two paths when the hub says it has nothing published', async () => {
+  it('offers the two paths and what the hub said about being empty', async () => {
     answering(served(MANIFEST))
     expect(await loadStart()).toEqual({
       skill: '/start/skill.md',
       client: '/start/hammerola',
+      empty: true,
     })
   })
 
   it('asks /start and sends no credential with it', async () => {
-    // The whole init, not just the URL: the route is public and its reader has
-    // no token, so a header here would make the block's arrival depend on the
-    // very thing it exists to help somebody get. `no-store` because `empty` is
-    // a fact about the deployment that changes with the first push.
+    // The whole init, not just the URL: the route is public and its reader at
+    // the door has no token, so a header here would make the block's arrival
+    // depend on the very thing it exists to help somebody get. `no-store`
+    // because `empty` is a fact about the deployment that changes with the
+    // first push.
     const fetching = answering(served(MANIFEST))
     await loadStart()
     expect(fetching).toHaveBeenCalledWith('/start', { cache: 'no-store' })
   })
 
-  it('carries nothing but the two paths onward', async () => {
+  it('carries nothing but the two paths and the boolean onward', async () => {
     // `template` is in the manifest and has a reader (`hammerola create`); this
-    // page is not it. Passing the whole document through would put a field on
-    // the door that nothing draws and that the next reader has to decide about.
+    // page is not it. The two versions are read by the client for the same
+    // reason. Passing the whole document through would put fields on these
+    // screens that nothing draws and that the next reader has to decide about.
     answering(served(MANIFEST))
-    expect(Object.keys(await loadStart()).sort()).toEqual(['client', 'skill'])
+    expect(Object.keys(await loadStart()).sort()).toEqual(['client', 'empty', 'skill'])
   })
 })
 
 // -- the boolean -------------------------------------------------------------
+//
+// IT IS A FIELD HERE AND A CONDITION ON THE DOOR (issue #91). What this file
+// pins is that the field says exactly what the hub said; that the door and only
+// the door acts on it is entry.test.js's, in `the block for an agent`.
 
 describe('how empty is read', () => {
-  it('is the block only when the hub said exactly true', () => {
-    expect(startHint(MANIFEST)).not.toBeNull()
+  it('is true only when the hub said exactly true', () => {
+    expect(startHint(MANIFEST).empty).toBe(true)
   })
 
   it.each([
@@ -98,15 +105,17 @@ describe('how empty is read', () => {
     ['the word', 'true'],
     ['a number', 1],
     ['a list of nothing', []],
-  ])('draws nothing for %s', (_name, empty) => {
+  ])('is false for %s', (_name, empty) => {
     // A strict comparison and not a truthy test, because what comes back need
     // not be the manifest: three of the five above are truthy, and each of them
-    // would put a "nothing published here yet" block on a hub with forty
-    // projects on it.
-    expect(startHint({ ...MANIFEST, empty })).toBeNull()
+    // would put a "nothing published here yet" block on the door of a hub with
+    // forty projects on it. The paths come through all the same — the list
+    // prints them on such a hub, which is the whole of why the gate moved.
+    expect(startHint({ ...MANIFEST, empty }).empty).toBe(false)
+    expect(startHint({ ...MANIFEST, empty }).skill).toBe('/start/skill.md')
   })
 
-  it('draws nothing for a document that is not one', () => {
+  it('is nothing at all for a document that is not one', () => {
     expect(startHint(null)).toBeNull()
     expect(startHint('empty')).toBeNull()
     expect(startHint(42)).toBeNull()
