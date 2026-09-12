@@ -137,7 +137,7 @@ from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
                       STATE_FAILED, STOPPED_ERROR, SUBMIT_ACCEPTED,
                       SUBMIT_QUEUE_FULL, BuildQueue, BuildTask, JobStore)
 from src.multipart import MultipartError, parse_multipart
-from src.safeio import nonblocking, read_regular_bytes
+from src.safeio import nonblocking, read_regular_bytes, resolve_settled
 from src.store import DEV_LINK, POINTER_NAMES, PublishError, Store
 
 # SPEC 7.4. `immutable` tells a browser not to even revalidate on reload, which is
@@ -720,6 +720,11 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             `latest` is a symlink, and following it is the whole point, so the
             question is not "is there a symlink" but "where did it land".
 
+            `resolve_settled` AND NOT `resolve`, because that symlink is being
+            swapped under this reader by whoever is publishing — `safeio` carries
+            the measurement (issue #70). It is the same answer with an EINVAL
+            retried; a missing file is still refused on the first try.
+
             `uploaded` says whether the bytes came out of a push, which decides
             how narrowly the content type is whitelisted. `content` overrides
             both the type and the extra headers outright, for the one file whose
@@ -727,7 +732,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             served as an opaque attachment whatever it is called.
             """
             try:
-                resolved = path.resolve(strict=True)
+                resolved = resolve_settled(path)
                 resolved.relative_to(store.root)
             except (OSError, ValueError):
                 return self._error(404, "not found", with_body=with_body)
@@ -847,9 +852,16 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             build directory can exist without being publishable (nothing else
             creates one, but a restore or a hand-copy can), and a page that then
             fails every fetch is worse than a 404.
+
+            `resolve_settled` for the reason `_send_file` gives, and this is the
+            SECOND of the two sites rather than a second observation: both
+            failures issue #70 recorded were files, not pages. `build_dir` is
+            `<project>/latest` whenever the URL named that pointer, so this
+            resolve crosses the same symlink at the same instant — a 404 here
+            costs the whole page instead of one fetch.
             """
             try:
-                resolved = (build_dir / "meta.json").resolve(strict=True)
+                resolved = resolve_settled(build_dir / "meta.json")
                 resolved.relative_to(store.root)
             except (OSError, ValueError):
                 return self._error(404, "not found", with_body=with_body)
