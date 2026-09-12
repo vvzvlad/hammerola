@@ -38,6 +38,7 @@ from pathlib import Path
 # question of every displayed field, and the two must not drift apart on what
 # "printable" means.
 from hammerola.buildnames import first_nonprintable, unservable_reason
+from src.safeio import open_regular
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
@@ -921,8 +922,11 @@ def check_view_file(path: Path, view_id: str, catalogue: dict) -> set:
     Walked iteratively, with a depth ceiling, so neither a deeply nested tree nor
     a wide one can turn a malformed upload into a RecursionError.
     """
+    # Through `safeio` like every other read of this volume: the file is one the
+    # BUILD wrote, `runner._verified_files` checked it was regular at a moment
+    # that has passed, and a concurrent build writes the same volume.
     try:
-        with open(path, "rb") as handle:
+        with open_regular(path) as handle:
             doc = json.load(handle, object_pairs_hook=_view_fields)
     # RecursionError is in the list because it is what a few thousand nested
     # arrays produce in the parser itself, and it is the push's fault, not ours.
@@ -1010,7 +1014,7 @@ def measure_view(path: Path) -> tuple[int, int]:
     """
     counter = _ByteCounter()
     raw = 0
-    with open(path, "rb") as handle:
+    with open_regular(path) as handle:
         with gzip.GzipFile(fileobj=counter, mode="wb", compresslevel=6) as gz:
             while True:
                 chunk = handle.read(256 * 1024)

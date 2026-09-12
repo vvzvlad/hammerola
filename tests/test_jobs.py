@@ -836,6 +836,62 @@ def test_a_stranded_job_is_reported_over_http_too(tmp_path):
         stop_hub(hub)
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"),
+                    reason="this platform has no os.mkfifo, so no fifo can "
+                           "reach a job directory in the first place")
+def test_a_fifo_where_a_record_belongs_does_not_stop_the_hub_from_starting(
+        tmp_path):
+    """The worst reachable form of issue #74: not a thread, the whole process.
+
+    `_read_capped` is reached from `_read_record` <- `_load` <-
+    `JobStore.__init__` <- `create_server`, i.e. BEFORE the socket is bound. So
+    a plain `open()` on a fifo at `data/jobs/<id>/job.json` did not cost a
+    request thread — the hub never finished starting, never answered `/health`,
+    and came up from the same volume next time, so it never started again.
+    Silently: no exception, no log line, and from outside indistinguishable
+    from a slow boot until the rollback gate gives up.
+
+    Planting one takes an `os.mkfifo` in `model.py` and no privilege at all —
+    `data/jobs/` is writable by every build, which is what its own module
+    docstring already says about who may have written what is in there.
+
+    THE DEADLINE IS THE ASSERTION. A regression hangs rather than fails, and
+    there is no `pytest-timeout` in this suite, so the start runs on a thread
+    of its own and this insists it comes back.
+    """
+    data = tmp_path / "data"
+    healthy = JobStore(data).create("proj1", "abc123")["id"]
+    trap = "F" * 22
+    (data / "jobs" / trap).mkdir(parents=True)
+    os.mkfifo(data / "jobs" / trap / "job.json")
+
+    outcome = {}
+
+    def start():
+        try:
+            outcome["hub"] = start_hub(data)
+        except BaseException as error:  # noqa: BLE001 - reported, not handled
+            outcome["error"] = error
+
+    thread = threading.Thread(target=start, daemon=True)
+    thread.start()
+    thread.join(timeout=20)
+    assert not thread.is_alive(), (
+        "the hub did not finish starting — a fifo in one job directory is "
+        "holding `JobStore._load`, which runs before the socket is bound")
+    assert "hub" in outcome, outcome.get("error")
+
+    hub = outcome["hub"]
+    try:
+        # The poisoned directory costs its own record and nothing else: it
+        # reads as one this hub did not write, and the job beside it is loaded
+        # and served exactly as it would have been on its own.
+        assert hub.job(healthy).status_code == 200
+        assert hub.job(trap).status_code == 404
+    finally:
+        stop_hub(hub)
+
+
 def test_a_pushed_job_survives_a_restart_and_is_still_readable(tmp_path):
     """The log is on the volume, so it outlives the process that captured it."""
     data = tmp_path / "data"

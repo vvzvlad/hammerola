@@ -137,6 +137,7 @@ from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
                       STATE_FAILED, STOPPED_ERROR, SUBMIT_ACCEPTED,
                       SUBMIT_QUEUE_FULL, BuildQueue, BuildTask, JobStore)
 from src.multipart import MultipartError, parse_multipart
+from src.safeio import nonblocking, read_regular_bytes
 from src.store import DEV_LINK, POINTER_NAMES, PublishError, Store
 
 # SPEC 7.4. `immutable` tells a browser not to even revalidate on reload, which is
@@ -338,24 +339,6 @@ def build_content_type(name: str) -> tuple[str, dict]:
     if ctype is not None:
         return ctype, {}
     return OCTET_TYPE, {"Content-Disposition": "attachment"}
-
-
-def _nonblocking(path, flags):
-    """`open()`'s opener, adding O_NONBLOCK — see `_send_file` for why.
-
-    An opener rather than `os.fdopen(os.open(...))`, and the difference is a
-    descriptor leak rather than style: `os.open` SUCCEEDS on a directory, and
-    the `os.fdopen` that follows then raises `IsADirectoryError` without closing
-    what it was handed. Through an opener the descriptor belongs to CPython's
-    `FileIO` the moment this returns, and `FileIO` closes it on every failure
-    path of its own.
-
-    NOT a rule for the whole repository, and the counter-example is deliberate:
-    `Store._extract_members` keeps the `os.fdopen` shape with a hand-rolled
-    `os.close` in its error branch, correctly, because its `os.open` carries
-    `dir_fd=parent_fd`, which an opener's `(path, flags)` signature cannot pass.
-    """
-    return os.open(path, flags | os.O_NONBLOCK)
 
 
 def _safe_name(name: str) -> bool:
@@ -616,7 +599,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             if not path.is_file():
                 return self._json(200, [], CACHE_NONE, with_body=with_body)
             try:
-                cards = json.loads(path.read_bytes())
+                cards = json.loads(read_regular_bytes(path))
                 for card in cards:
                     card["status"] = self._draft_status(card["pid"])
             except (ValueError, OSError, TypeError, KeyError) as error:
@@ -775,10 +758,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             # answer, which is why the leak this shape closed was invisible:
             # every response was already correct while `os.fdopen(os.open(...))`
             # lost one descriptor per request on a directory (see
-            # `_nonblocking`), on a public unauthenticated route, until
+            # `safeio.nonblocking`), on a public unauthenticated route, until
             # `accept()` had none left.
             try:
-                handle = open(resolved, "rb", opener=_nonblocking)
+                handle = open(resolved, "rb", opener=nonblocking)
             except OSError:
                 return self._error(404, "not found", with_body=with_body)
             with handle:
@@ -1012,6 +995,20 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             a tool, not browsed, and an inline image is one content-type mistake
             away from being a page. Cached not at all — the URL is behind a
             token and the reader is an agent.
+
+            `follow_symlinks=False` KEEPS THE ANSWER HONEST TO ITS URL, and it
+            is not a barrier against anybody: this route takes EDIT_TOKEN, the
+            symlink would be planted by a build, and a build takes EDIT_TOKEN
+            too — there is nothing here for a stranger to reach. What it is
+            against is an ORDINARY MISTAKE. `data/comments/` is written by
+            builds like the rest of the volume, one stray `os.symlink` in
+            `model.py` puts a link where the photo goes, and the hub then serves
+            somebody else's file under `/comments/<cid>/photo`, typed as a JPEG
+            because the NAME ends in `.jpg`. `_safe_attachment_name` has already
+            established the name is one ordinary component belonging to this
+            comment, so the last component BEING a link is the only way left for
+            the bytes and the URL to disagree. O_NOFOLLOW settles it in the open
+            rather than in a stat somebody has to trust afterwards.
             """
             path = comment_store.attachment(cid, kind)
             if path is None:
@@ -1020,7 +1017,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             if ctype is None:
                 return self._error(404, "not found", with_body=with_body)
             try:
-                data = path.read_bytes()
+                data = read_regular_bytes(path, follow_symlinks=False)
             except OSError:
                 return self._error(404, "not found", with_body=with_body)
             return self._send(200, data, ctype, CACHE_NONE,
@@ -1580,6 +1577,12 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 # branch would pull all of it into the request thread — the
                 # container carries no memory ceiling on purpose (step 0).
                 #
+                # THE SAME PREMISE ALSO DECIDES THE TYPE, and for a round it was
+                # only carried as far as the size: what a build plants there can
+                # be a FIFO as easily as a large file, and a plain `open()` on
+                # one never comes back. `safeio` is where both follow from the
+                # one sentence now.
+                #
                 # `MAX_LOG_BYTES` rather than a number of our own:
                 # `Store.keep_build_log` already says the ceiling belongs to
                 # whoever captured the log, and a second constant is how the
@@ -1589,8 +1592,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 # somebody came to read.
                 log = store.source_log(revision)
                 try:
-                    with open(log, "rb") as handle:
-                        raw = handle.read(MAX_LOG_BYTES + 1)
+                    raw = read_regular_bytes(log, MAX_LOG_BYTES + 1)
                 except OSError:
                     raw = b""
                 if len(raw) > MAX_LOG_BYTES:
