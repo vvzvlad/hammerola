@@ -39,7 +39,7 @@ import { indexTree, rereadPage } from '../src/hub.js'
 import {
   css, FONTS, HEADER_BG, HEADER_LINE, Mark, PAGE_BG, PAGE_FG,
 } from '../src/style.jsx'
-import { collect, styles, texts } from './eltree.js'
+import { collect, styles } from './eltree.js'
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
 
@@ -1425,11 +1425,13 @@ const REV = 'e05f73ba91b263b8517147e338d23e868533c6a034a342ad5926abb6edcb7b40'
  * module loads, and this runner's location is not a build page.
  */
 const COMMENTS = [
-  { id: 'c1', label: '1', part: 'lid', time: 'just now', text: 'open', resolved: false },
-  { id: 'c2', label: '2', part: 'lid', time: 'just now', text: 'done', resolved: true },
+  { id: 'c1', commit: REV, view: 'assembled', part: '/model/lid', key: 'lid',
+    point: null, text: 'open', status: 'open', created: '2026-08-27T18:25:00Z' },
+  { id: 'c2', commit: REV, view: 'assembled', part: '/model/lid', key: 'lid',
+    point: null, text: 'done', status: 'resolved', created: '2026-08-27T18:26:00Z' },
 ]
 
-function buildPage({ comments = COMMENTS } = {}) {
+function buildPage({ feed = COMMENTS } = {}) {
   rereadPage(`/project/proj1/${REV}/`)
   const c = Object.create(HammerolaViewer.prototype)
   c.props = { ...HammerolaViewer.defaultProps }
@@ -1456,7 +1458,7 @@ function buildPage({ comments = COMMENTS } = {}) {
     bannerGone: false, rail: true, menu: { id: null, x: 0, y: 0 },
     // A note of each kind, so the amber box is drawn with both of its levels.
     notePop: null, noteDraft: '', notes: { lid: 'mine' },
-    comments,
+    feed,
     activePin: null, composer: null,
     measure: null, moved: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
@@ -1480,18 +1482,6 @@ describe('the shapes the palette is measured for', () => {
     const found = collect(node, (el) => (el.props.style === wanted ? el : undefined))
     expect(found, `nothing on the page is drawn with ${what}'s own style`).toHaveLength(1)
     return found[0]
-  }
-
-  /**
-   * The INNERMOST element under `node` whose text contains `words`.
-   *
-   * `collect` walks parents before children, so the last hit is the deepest —
-   * the element that actually carries the words rather than a box around it.
-   */
-  function labelled(node, words, what) {
-    const hits = collect(node, (el) => (texts(el).join(' ').includes(words) ? el : undefined))
-    expect(hits.length, `nothing inside ${what} says "${words}"`).toBeGreaterThan(0)
-    return hits[hits.length - 1]
   }
 
   const REFERENCE = /^var\(\s*(--[\w-]+)\s*\)$/
@@ -1529,16 +1519,20 @@ describe('the shapes the palette is measured for', () => {
     }
   }
 
-  it('keeps the rail\'s count chip off the rail\'s own fill', () => {
-    // The pill saying "N sent here", lying directly on the rail with no border
-    // and no shadow: its fill against the rail's fill is the whole of what says
-    // it is an object. This is the pair the conversion got wrong — dE 6.5 down
-    // to 1.7 — and the pair nothing was checking afterwards.
+  it('keeps a thread card off the rail\'s own fill', () => {
+    // A card lying directly on the rail with no shadow: its fill against the
+    // rail's fill is the whole of what says it is an object. The pill saying
+    // "N sent here" used to be this pair — the one the conversion got wrong, dE
+    // 6.5 down to 1.7 — and it went with issue #33, which put the project's
+    // whole queue in the rail and left it nothing to count off against. The
+    // cards are what lies on that ground now, and they lie on it in numbers.
     const c = buildPage()
+    const open = c.computed().threads.find((t) => !t.resolved)
+    expect(open, 'the fixture has no open comment, so this measures nothing').toBeTruthy()
     const rail = drawnWith(c.render(), c.computed().railStyle, 'the comment rail')
-    const chip = labelled(rail, 'sent here', 'the comment rail')
-    seenAgainst(fillOf(chip.props.style, 'the rail\'s count chip'),
-      fillOf(c.computed().railStyle, 'the comment rail'), 'the rail\'s count chip')
+    const card = drawnWith(rail, open.style, 'an open thread card')
+    seenAgainst(fillOf(card.props.style, 'a thread card'),
+      fillOf(c.computed().railStyle, 'the comment rail'), 'a thread card')
   })
 
   it('keeps the resting count pill readable, and a pill', () => {
@@ -1552,7 +1546,7 @@ describe('the shapes the palette is measured for', () => {
     // 1.68:1, and came out at 9.89:1 in dark, so the resting pill was the
     // clearer of the two in half the interface.
     const live = buildPage().computed().railCountStyle
-    const rest = buildPage({ comments: [] }).computed().railCountStyle
+    const rest = buildPage({ feed: [] }).computed().railCountStyle
     expect(rest, 'the pill is drawn the same way whether or not anybody is '
       + 'waiting, so nothing on it says which').not.toBe(live)
 
@@ -1571,19 +1565,12 @@ describe('the shapes the palette is measured for', () => {
       + 'button under it, so there is no pill there at all')
       .not.toBe(fillOf(buildPage().computed().railBtnStyle, 'the comments button'))
 
-    // THE SAME COUNT IS DRAWN IN TWO PLACES — here, and at the head of the rail
-    // as "N sent here" — and they are one thing said twice rather than two that
-    // happen to look alike. Which is also what carries the measurement onto this
-    // one: the rail's copy lies on `--header-bg` and the case above holds it to
-    // a dE there, so a fill moved on one of the two is caught here and a fill
-    // moved on both is caught there.
-    const c = buildPage()
-    const twin = labelled(drawnWith(c.render(), c.computed().railStyle, 'the comment rail'),
-      'sent here', 'the comment rail').props.style
-    expect(fill, 'the two places this count is drawn no longer agree on the fill')
-      .toBe(fillOf(twin, 'the rail\'s count chip'))
-    expect(ink, 'the two places this count is drawn no longer agree on the ink')
-      .toBe(inkOf(twin, 'the rail\'s count chip'))
+    // THE COUNT IS DRAWN IN ONE PLACE NOW. The rail's head used to repeat it as
+    // "N sent here", and the two copies were held to the same fill and the same
+    // ink here; issue #33 took that chip out, because the rail shows the whole
+    // project queue and there is nothing left for a count at its head to mean.
+    // So this pill is the only one, and the case above is the only measurement
+    // it has.
   })
 
   it('keeps the processed badge off the card it lies on', () => {
@@ -1673,6 +1660,20 @@ describe('the shapes the palette is measured for', () => {
         + 'opaque — a disc of it covers the geometry the pin is pointing at')
         .toMatch(/^rgba\(/)
     }
+  })
+
+  it('lifts the picked pin above the ones it overlaps', () => {
+    // NOT DECORATION, WHICH IS WHY IT IS HERE AND NOT ONLY IN THE COMMENT ABOVE
+    // THE RULE. Two comments left on the same part resolve to one anchor — one
+    // catalogue key, one bounding-box centre — so their pins land on the same
+    // screen point and only the one appended last can be clicked. The active
+    // pin's lift is the way out of that stack: clicking either rail row raises
+    // its own pin. Tidying the `z-index` away as a stray declaration during some
+    // later pass over the palette would pass every other case in this file.
+    expect(pinRule(pinSheet(), '.hmr_pin.is_active'),
+      'the picked pin no longer rises above the pins it exactly overlaps, so a '
+      + 'second comment on the same part is unreachable on the model')
+      .toMatch(/z-index:\s*1\b/)
   })
 
   it('never lifts a filled accent above the label it carries', () => {

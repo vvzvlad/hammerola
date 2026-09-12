@@ -29,14 +29,17 @@
  *                     exactly like the part's name, and a part with nothing to
  *                     say carries no `note` key at all, which is the ordinary
  *                     case rather than an error.
- *   comments       -> the write endpoint is real, used, and since step 0 it
- *                     REQUIRES the token. The FEED is still not fetched, but the
- *                     reason has changed and the difference matters to whoever
- *                     picks this up: reading the queue used to be behind an
- *                     agent-only secret that could never travel to a browser,
- *                     and it now takes the same EDIT_TOKEN this page already
- *                     holds. What is left is a design question, not a
- *                     permission — the rail says which one.
+ *   comments       -> the PROJECT's queue, read and written under the same
+ *                     EDIT_TOKEN this page holds. `loadFeed` fetches it, the
+ *                     rail draws all of it oldest first, and a build swap
+ *                     neither refetches nor clears it: the queue belongs to the
+ *                     project rather than to one revision (SPEC 7A.3). A comment
+ *                     is bound to the PRINTED ENTITY, whose identity is its
+ *                     catalogue key (issue #75) — so its pin travels between
+ *                     revisions while the part is alive, and when the part
+ *                     leaves the catalogue the row says the comment is orphaned
+ *                     instead of quietly losing its pin. `hub.anchorFor` makes
+ *                     that decision and `sync` draws its answer.
  *   buildStatus    -> polling meta.json on the two pointer URLs, which answers
  *                     exactly one of the brief's three questions: "has a new
  *                     build arrived while I was looking at this one".
@@ -90,8 +93,9 @@ import {
   VIEWPORT_TAG,
 } from './events.js';
 import {
-  PAGE, ASSEMBLED_VIEW_ID, isPointerPage, buildKey, countedName, indexTree,
-  loadMeta, loadBuilds, projectUrl, rereadPage, shortId, stamp, mb,
+  PAGE, ASSEMBLED_VIEW_ID, anchorFor, isPointerPage, buildKey, countedName,
+  indexTree, loadMeta, loadBuilds, projectUrl, rereadPage, rowsByKey, shortId,
+  stamp, mb,
 } from './hub.js';
 // `readTheme`/`writeTheme` COME FROM HERE AND NOT FROM THE VIEWPORT, which is
 // the last step of the move issue #35 made: the theme stopped being the colour
@@ -160,7 +164,16 @@ const PIN_CSS = `
   font: 600 10.5px ${FONTS['--hmr-mono']};
   box-shadow: 0 2px 6px var(--shadow);
 }
-.hmr_pin.is_active { background: var(--accent-strong); box-shadow: 0 0 0 3px var(--accent-ring); }
+/* THE Z-INDEX IS WHAT MAKES A STACK OF PINS REACHABLE, and it is not decoration.
+   Two comments left on the SAME part now resolve to the same anchor — one
+   catalogue key, one bounding-box centre — so setPins places them at the same
+   screen point, exactly overlapping, and only the last one appended can be
+   clicked. Raising the active pin turns the rail into the way out: clicking
+   either row lifts its own pin to the top, and the one underneath is a click
+   away rather than lost. A screen-space fan-out was the other answer and buys
+   nothing the rail does not already give.
+   (No backticks in here either: this block is still the template literal.) */
+.hmr_pin.is_active { background: var(--accent-strong); box-shadow: 0 0 0 3px var(--accent-ring); z-index: 1; }
 /* THE LINE ROLE AND NOT THE CHIP FILL, which is a line painting a surface on
    purpose: this pin lies on the 3D MODEL rather than on any of our own
    surfaces, so its ground is a WHITE canvas in one theme and a mid-grey one in
@@ -618,7 +631,9 @@ export default class HammerolaViewer extends React.Component {
       revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
       bannerGone: false, rail: null, menu: null,
       notePop: null, noteDraft: '', notes: {},
-      comments: [], activePin: null, composer: null,
+      // The project's whole comment queue, as the hub answers it (`loadFeed`),
+      // in the records' own shape — oldest first, as SPEC 7A.2 sorts them.
+      feed: [], activePin: null, composer: null,
       measure: null, moved: null, toast: null,
       // -- who the reader is
       // No project id: the secret is one string for the whole hub since step 0,
@@ -676,6 +691,10 @@ export default class HammerolaViewer extends React.Component {
       console.error('hammerola', error);
       this.setState({ error: String(error && error.message ? error.message : error) });
     });
+    // The queue takes the token, so a reader without one asks for nothing. The
+    // other door is `tokenSave`, where a reader who has just entered one is in
+    // exactly this position.
+    if (this.state.token) this.loadFeed();
 
     this._h = {
       [PICK]: (e) => {
@@ -870,7 +889,7 @@ export default class HammerolaViewer extends React.Component {
         this.set({
           composer: {
             part: (row && row.name) || d.name || 'model',
-            partId: d.id || null, p: d.p || null,
+            partId: d.id || null, key: (row && row.key) || null, p: d.p || null,
             text: '', photo: null,
             meas: this.state.measure ? this.state.measure.full : null,
           },
@@ -1576,15 +1595,14 @@ export default class HammerolaViewer extends React.Component {
         // BANNER is the callers' own business, because "taken" and "no longer
         // on this road" are different answers.
         pending: null,
-        // THE COMMENTS FILED IN THIS SESSION GO WITH THEM, and the pins are why.
-        // This list only ever holds what the reader posted while this page was
-        // open — each one against the commit it was posted on — and every pin in
-        // it is a POINT IN THE MODEL SPACE of that build, which `sync` reads
-        // straight out of here and hands to the viewport on the next frame. Kept,
-        // they would be drawn on geometry that never carried them, at coordinates
-        // the new build need not contain at all. Nothing is lost: the comments are
-        // on the hub, filed against the revision they were written about.
-        comments: [], activePin: null,
+        // THE QUEUE ITSELF STAYS, because it is the PROJECT's and not this
+        // build's: the same items are open on the revision being opened, and
+        // `loadFeed` is not asked again for a swap. What goes is the pin the
+        // reader had opened — it named a comment drawn over geometry that has
+        // left. Where each item hangs on the new build is not carried across
+        // either, because it is not stored: `sync` asks `anchorFor` for it on
+        // every frame, and the tree that answers arrives with `onModel`.
+        activePin: null,
         // THE TEXT SURVIVES THE SWAP AND NOTHING POSITIONAL DOES, and the line
         // between them is what the reader WROTE against what this page MEASURED.
         //
@@ -1607,8 +1625,16 @@ export default class HammerolaViewer extends React.Component {
         // part of the new build was the other way out and is worse still: it aims
         // "this chamfer is too sharp" at a chamfer nobody looked at. Unattached
         // and honest, then; one click puts it back where the reader means it.
+        //
+        // AND THE CATALOGUE KEY GOES WITH THE NAME, which is the same decision
+        // read the other way round. The key is the one field here that DOES
+        // survive a rebuild — it is what the whole anchor is built on — so the
+        // reflex is to keep it. But the composer shows `part` and nothing else:
+        // a draft with the name cleared and the key kept looks unattached on
+        // screen and posts anchored, which is the invisible mismatch above with
+        // the two halves swapped. Both go, or neither.
         composer: this.state.composer
-          ? { ...this.state.composer, part: '', partId: null, p: null, meas: null, move: null }
+          ? { ...this.state.composer, part: '', partId: null, key: null, p: null, meas: null, move: null }
           : null,
         // The toast that `clearTimeout(this._tt)` above disarmed.
         toast: null,
@@ -1737,9 +1763,10 @@ export default class HammerolaViewer extends React.Component {
       if (!d.live || this._refit) this.captureHome();
       this._refit = false;
       // The rejoined ids have to reach the viewport, and a state event is the
-      // only way there. Only when something was rejoined: every other model
-      // event would otherwise dispatch one for no change at all.
-      if (rejoined) this.sync();
+      // only way there — but every model event needs this one now, rejoin or
+      // not: the tree that has just landed is what the comment pins hang on, so
+      // a rebuild that renumbered or moved a part moved every pin with it.
+      this.sync();
     });
   }
 
@@ -1839,10 +1866,38 @@ export default class HammerolaViewer extends React.Component {
   sync(extra) {
     const s = this.state;
     const meta = s.meta;
-    const pins = s.comments
-      .filter((c) => c.pin)
-      .map((c) => ({ id: c.id, label: c.label, p: c.pin, resolved: c.resolved,
-                     active: s.activePin === c.id }));
+    // WHERE THE QUEUE HANGS ON THE BUILD ON SCREEN. `anchorFor` reads the stored
+    // coordinate only on the build it was taken on; on any other one it follows
+    // the catalogue key to the row that draws the part, and `partPoint` asks the
+    // viewport where that row ended up after the rebuild moved it. The other
+    // three answers — the part is in this catalogue but not in this view, the
+    // key names nothing any more, the record predates the field — draw no pin at
+    // all: the rail says those in words, and a pin put somewhere plausible would
+    // be this page guessing.
+    const el = this.el();
+    const at = {
+      commit: (meta && meta.commit) || null,
+      published: (meta && meta.published) || null,
+      view: s.view,
+      keyRows: rowsByKey(s.tree),
+      parts: (meta && meta.parts) || {},
+    };
+    const pins = [];
+    s.feed.forEach((record, i) => {
+      const anchor = anchorFor(record, at);
+      let p = null;
+      if (anchor.state === 'point') p = anchor.point;
+      if (anchor.state === 'part' && el && typeof el.partPoint === 'function') {
+        p = el.partPoint(anchor.path);
+      }
+      // The label is the row's place in the queue, so the number over the model
+      // and the number in the rail are the same number.
+      if (p) {
+        pins.push({ id: record.id, label: String(i + 1), p,
+                    resolved: record.status === 'resolved',
+                    active: s.activePin === record.id });
+      }
+    });
     if (s.composer && s.composer.p) {
       pins.push({ id: 'draft', label: '+', p: s.composer.p, active: true });
     }
@@ -2287,6 +2342,57 @@ export default class HammerolaViewer extends React.Component {
   }
 
   // -- comments -------------------------------------------------------------
+  /**
+   * The project's comment queue, fetched.
+   *
+   * PER PROJECT AND NOT PER BUILD (SPEC 7A.3): the route takes a pid and answers
+   * with the whole queue, oldest first, so this is not called on a build swap —
+   * the same list describes every revision of the project, and each row finds
+   * its own place in the build on screen through `anchorFor`.
+   *
+   * NEVER THROWN OUT OF. The queue is one panel of a page whose model is already
+   * on screen: a failure leaves the rail holding what it had and says so, like
+   * every other fetch here.
+   *
+   * `quiet` IS FOR THE REFETCH THAT FOLLOWS A WRITE, and it exists because two
+   * toasts cannot stand at once — `toast()` replaces the one on screen. The
+   * write says "Sent to the agent"; a refetch that then fails would paint
+   * "Could not load the comments" over it, and the reader, whose comment landed
+   * in the queue a second ago and is not in the rail, sends it again. A
+   * duplicated item in a queue an AGENT works from costs more than a rail that
+   * is one entry stale until the next load. So the write's own verdict is the
+   * one that stays, and the refetch behind it is silent.
+   */
+  async loadFeed(quiet = false) {
+    let response = null;
+    try {
+      response = await fetch(
+        `/api/v1/comments?project=${encodeURIComponent(PAGE.pid)}`,
+        { headers: { Authorization: `Bearer ${this.state.token}` } });
+    } catch (error) {
+      console.error('feed', error);
+      if (!quiet) this.toast('Could not reach the hub');
+      return;
+    }
+    if (response.status !== 200) {
+      if (!quiet) {
+        this.toast(response.status === 401
+          ? 'The hub refused the token'
+          : 'Could not load the comments');
+      }
+      return;
+    }
+    let body = null;
+    try {
+      body = await response.json();
+    } catch (error) {
+      console.error('feed', error);
+      if (!quiet) this.toast('Could not load the comments');
+      return;
+    }
+    this.set({ feed: (body && body.comments) || [] });
+  }
+
   async sendComment() {
     const c = this.state.composer;
     const meta = this.state.meta;
@@ -2302,9 +2408,10 @@ export default class HammerolaViewer extends React.Component {
     if (!text) { this.toast('Write something first'); return; }
 
     // The hub's comment schema is closed — src/comments.py keeps `text`, `view`,
-    // `part`, `point` and `camera` and DROPS everything else without saying so —
-    // so the measurement and the drag ride in the text, where the agent will
-    // actually read them, rather than in fields discarded on the way in.
+    // `part`, `key`, `published`, `point` and `camera` and DROPS everything else
+    // without saying so — so the measurement and the drag ride in the text,
+    // where the agent will actually read them, rather than in fields discarded
+    // on the way in.
     const extra = [];
     if (c.meas) extra.push(`measured: ${c.meas}`);
     if (c.move) extra.push(`moved: ${c.move} (temporary, not in the model)`);
@@ -2314,6 +2421,15 @@ export default class HammerolaViewer extends React.Component {
       text: extra.length ? `${text}\n\n${extra.join('\n')}` : text,
       view: this.state.view,
       part: c.partId || null,
+      // THE ANCHOR THAT OUTLIVES THIS BUILD. `part` is a path in the tree of the
+      // revision being looked at and the next rebuild is free to renumber it;
+      // the catalogue key is the part's identity (issue #75), and it is what the
+      // page follows to put this pin back on a later build.
+      key: c.key || null,
+      // WHICH BUILD THE COORDINATE WAS TAKEN ON — not necessarily the build the
+      // slot holds when this request lands, since `dev` can rebuild while the
+      // reader is still typing, and only this page knows which one it is showing.
+      published: meta.published || null,
       point: c.p || null,
       camera: this.frameCamera(),
     }));
@@ -2349,24 +2465,18 @@ export default class HammerolaViewer extends React.Component {
       return;
     }
 
-    let id = `local-${Date.now()}`;
-    try {
-      const body = await response.json();
-      if (body && typeof body.id === 'string') id = body.id;
-    } catch (error) {
-      console.warn('comment id', error);
-    }
+    // THE QUEUE IS REFETCHED RATHER THAN GUESSED AT. This page used to append a
+    // row of its own making — its own id, its own label, `just now` — because it
+    // had no other copy of the queue; it has one now, so the row the rail draws
+    // is the record the hub actually stored, with the id, the stamp and the
+    // status the agent will see.
     this.set({
-      comments: this.state.comments.concat({
-        id, label: String(this.state.comments.length + 1),
-        part: c.part, partId: c.partId, pin: c.p, text,
-        time: 'just now', resolved: false, meas: c.meas || null,
-      }),
       composer: null,
       moved: c.move ? null : this.state.moved,
       rail: true,
     }, c.move ? { __resetMove: true } : null);
     this.toast('Sent to the agent — a rebuild will follow');
+    await this.loadFeed(true);
   }
 
   /**
@@ -2378,23 +2488,12 @@ export default class HammerolaViewer extends React.Component {
    * route reads an optional `note` out of one, and a note is the agent's word
    * about what it did, not the reader's.
    *
-   * `local-` is the id `sendComment` falls back to when the hub's 201 could not
-   * be parsed. The comment is really in the queue at that point and this page
-   * simply does not know its name, so the row is marked resolved LOCALLY and
-   * says as much: pretending it reached the hub would be worse than admitting
-   * this one has to be closed from the agent's side.
+   * THE QUEUE IS REFETCHED RATHER THAN PATCHED HERE: the hub stamps `resolved`
+   * and may have a note on it, and a row edited in place would be this page's
+   * idea of the record instead of the record.
    */
   async resolveComment(id) {
     if (!id || this.viewer()) return;
-    const mark = () => this.setState({
-      comments: this.state.comments.map(
-        (c) => (c.id === id ? { ...c, resolved: true } : c)),
-    });
-    if (String(id).startsWith('local-')) {
-      mark();
-      this.toast('Marked here only — this one has no id the hub answers to');
-      return;
-    }
     let response = null;
     try {
       response = await fetch(`/api/v1/comments/${encodeURIComponent(id)}/resolve`, {
@@ -2412,8 +2511,8 @@ export default class HammerolaViewer extends React.Component {
         : 'Could not mark it processed');
       return;
     }
-    mark();
     this.toast('Marked processed');
+    await this.loadFeed(true);
   }
 
   // -- helpers --------------------------------------------------------------
@@ -2852,26 +2951,84 @@ export default class HammerolaViewer extends React.Component {
     }));
     const anyDownloads = downloadGroups.length > 0;
 
-    const threads = s.comments.map((c) => ({
-      key: c.id, label: c.label, part: c.part, time: c.time, text: c.text, meas: c.meas,
-      style: 'padding:10px 12px;background:var(--card-bg);border:1px solid ' + (s.activePin === c.id ? 'var(--accent-line)' : 'var(--line)') + ';border-radius:8px;cursor:pointer;' + (c.resolved ? 'opacity:.62' : ''),
-      // RESOLVED IS A LIGHTER GREY HERE THAN ON THE CANVAS, and that is the
-      // ground rather than an inconsistency: this badge sits on a card in the
-      // rail, where the ordinary chip fill is already a visible pill, while
-      // `.hmr_pin.is_resolved` sits on the 3D MODEL, where nothing lighter than
-      // `--line-strong` keeps a silhouette against a white canvas. Same badge,
-      // two backdrops, two weights — which is why they were two literals before
-      // they were two roles.
-      pinStyle: `width:20px;height:20px;border-radius:10px 10px 10px 3px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO};` + (c.resolved ? 'background:var(--chip-bg);color:var(--text-muted)' : 'background:var(--accent);color:var(--text-on-accent)'),
-      measStyle: c.meas ? `margin-top:6px;display:inline-flex;padding:3px 7px;background:var(--warn-bg);border-radius:4px;font:500 10.5px ${MONO};color:var(--warn)` : 'display:none',
-      onOpen: stop(() => this.set({ activePin: c.id })),
-      resolved: !!c.resolved,
-      // A real request since step 0 — see resolveComment. Closing an item is
-      // still mostly the agent's move; what changed is that the person who
-      // raised it can now take it back without one.
-      onResolve: stop(() => { if (!c.resolved) this.resolveComment(c.id); }),
-    }));
-    const openCount = s.comments.filter((c) => !c.resolved).length;
+    // -- the project's comment queue, as `loadFeed` fetched it
+    //
+    // THE WHOLE QUEUE AND NOT THIS SESSION'S NOTES. The rail used to list what
+    // this page had posted since it opened, because that was the only copy of a
+    // comment it had; the hub answers with the project's queue now, oldest first
+    // (SPEC 7A.2), and the row number is the position in it — the same number
+    // `sync` writes on the pin, so the badge on the model and the badge in the
+    // rail name the same item.
+    //
+    // EVERY ROW SAYS WHERE IT HANGS, in words, because most of them cannot be
+    // pointed at: a comment left on another revision follows its catalogue key
+    // to whatever draws that part today, a comment on a part this view does not
+    // draw has no pin at all, and a comment whose part has left the catalogue is
+    // ORPHANED — a fact about the model, and the one the reader must not have to
+    // infer from a missing pin.
+    const anchoredAt = {
+      commit: (meta && meta.commit) || null,
+      published: (meta && meta.published) || null,
+      view: s.view,
+      keyRows: rowsByKey(s.tree),
+      parts: catalogue || {},
+    };
+    const threads = s.feed.map((record, i) => {
+      const anchor = anchorFor(record, anchoredAt);
+      const resolved = record.status === 'resolved';
+      // THE HEADING IS A ROW OF THE TREE ON SCREEN or it is the catalogue key,
+      // and never the stored path used as a stand-in: on another build that
+      // path is a number the tessellator was free to hand to something else.
+      const node = anchor.state === 'point'
+        ? this.node(record.part)
+        : (anchor.state === 'part' ? this.node(anchor.path) : null);
+      // TWO OF THE FIVE SENTENCES SAY LESS THAN THE OBVIOUS WORDING WOULD, and
+      // both are shorter for the same reason: they were guessing at a cause the
+      // record does not carry. `none` used to read "left before comments named
+      // a part", which is one of its causes and not the common one — `measAdd`
+      // and the place handler both send a null key TODAY, whenever nothing is
+      // selected or the selected row is a GROUP, and a group has no catalogue
+      // key at all. And `elsewhere` names the view the comment was left on,
+      // which the hub is free to store as null (`validate_payload`), so the
+      // interpolation printed the word "null" at the reader.
+      const says = {
+        point: 'left here, on this build',
+        part: 'follows the part through the rebuild',
+        elsewhere: record.view
+          ? `the part is not in this view — left on ${record.view}`
+          : 'the part is not in this view',
+        orphan: 'the part this was left on is no longer in the catalogue',
+        none: 'not tied to a part',
+      }[anchor.state];
+      return {
+        key: record.id,
+        label: String(i + 1),
+        part: (node && node.name) || record.key || '',
+        time: stamp(record.created),
+        text: record.text,
+        says,
+        style: 'padding:10px 12px;background:var(--card-bg);border:1px solid ' + (s.activePin === record.id ? 'var(--accent-line)' : 'var(--line)') + ';border-radius:8px;cursor:pointer;' + (resolved ? 'opacity:.62' : ''),
+        // RESOLVED IS A LIGHTER GREY HERE THAN ON THE CANVAS, and that is the
+        // ground rather than an inconsistency: this badge sits on a card in the
+        // rail, where the ordinary chip fill is already a visible pill, while
+        // `.hmr_pin.is_resolved` sits on the 3D MODEL, where nothing lighter than
+        // `--line-strong` keeps a silhouette against a white canvas. Same badge,
+        // two backdrops, two weights — which is why they were two literals before
+        // they were two roles.
+        pinStyle: `width:20px;height:20px;border-radius:10px 10px 10px 3px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO};` + (resolved ? 'background:var(--chip-bg);color:var(--text-muted)' : 'background:var(--accent);color:var(--text-on-accent)'),
+        // An orphan is the one anchor state that is news about the model rather
+        // than about where the pin went, so it is the one that is coloured.
+        saysStyle: `margin-top:6px;font:400 10.5px/1.5 ${MONO};color:`
+          + (anchor.state === 'orphan' ? 'var(--warn)' : 'var(--text-muted)'),
+        onOpen: stop(() => this.set({ activePin: record.id })),
+        resolved,
+        // A real request since step 0 — see resolveComment. Closing an item is
+        // still mostly the agent's move; what changed is that the person who
+        // raised it can now take it back without one.
+        onResolve: stop(() => { if (!resolved) this.resolveComment(record.id); }),
+      };
+    });
+    const openCount = s.feed.filter((c) => c.status !== 'resolved').length;
 
     // -- context menu on a tree row
     const mNode = this.node(s.menu && s.menu.id);
@@ -3194,13 +3351,19 @@ export default class HammerolaViewer extends React.Component {
         const value = s.tokenDraft.trim();
         if (!value) { this.toast('Paste the token first'); return; }
         writeToken(value);
-        this.setState({ token: value, tokenPop: false, tokenDraft: '' });
+        // The queue is behind the same token, so entering one is the moment it
+        // can be asked for — from the callback, because `this.state.token` is
+        // still the old one until the update lands.
+        this.setState({ token: value, tokenPop: false, tokenDraft: '' },
+                      () => this.loadFeed());
         this.toast('Editing is on in this browser');
       }),
       tokenClear: stop(() => {
         clearToken();
+        // The feed goes with it: it was fetched under a token this browser no
+        // longer has, and a reader without one may not read the queue at all.
         this.setState({ token: null, tokenPop: false, tokenDraft: '',
-                        composer: null, notePop: null });
+                        composer: null, notePop: null, feed: [] });
         this.set({ tool: null });
         this.toast('Token removed — back to viewing');
       }),
@@ -3573,14 +3736,21 @@ export default class HammerolaViewer extends React.Component {
       // TEXT: `moved: pin ×3 by 3 mm (temporary, not in the model)` is what the
       // hub stores and the agent reads. So the wording chosen here is a display
       // detail of `part` alone.
-      movedAttach: () => this.set({
-        composer: {
-          part: s.moved.name, partId: s.moved.id, p: null, text: '', photo: null,
-          meas: s.measure ? s.measure.full : null,
-          move: `${s.moved.name} by ${s.moved.mag} mm`,
-        },
-        tool: null,
-      }),
+      movedAttach: () => {
+        // The catalogue key of the row that was dragged: what the comment is
+        // anchored to once this build is no longer the one on screen.
+        const node = this.node(s.moved.id);
+        this.set({
+          composer: {
+            part: s.moved.name, partId: s.moved.id,
+            key: node ? node.key : null,
+            p: null, text: '', photo: null,
+            meas: s.measure ? s.measure.full : null,
+            move: `${s.moved.name} by ${s.moved.mag} mm`,
+          },
+          tool: null,
+        });
+      },
       measChipStyle: chip(!!s.measure && !s.composer, 'var(--card-bg)', 'var(--line)', 'var(--text)'),
       measText: s.measure ? s.measure.text : '',
       measNote: s.measure ? s.measure.note : '',
@@ -3605,6 +3775,7 @@ export default class HammerolaViewer extends React.Component {
           composer: {
             part: node ? node.name : (s.selName || 'model'),
             partId: s.sel || null,
+            key: node ? node.key : null,
             p: null, text: '', photo: null, meas: s.measure.full,
           },
           tool: null,
@@ -3613,7 +3784,7 @@ export default class HammerolaViewer extends React.Component {
       measClear: () => this.set({ measure: null }, { __clearMeasure: true }),
 
       composerStyle: 'position:absolute;right:16px;bottom:16px;width:400px;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px var(--shadow);z-index:16;display:' + (s.composer && !viewer ? 'block' : 'none'),
-      nextLabel: String(s.comments.length + 1),
+      nextLabel: String(s.feed.length + 1),
       composerPart: s.composer ? s.composer.part : '',
       composerText: s.composer ? s.composer.text : '',
       compType: (e) => this.setState({ composer: { ...s.composer, text: e.target.value } }),
@@ -4168,29 +4339,13 @@ export default class HammerolaViewer extends React.Component {
           <div style={css(v.railStyle)}>
             <div style={css('flex:none;display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line-soft)')}>
               <span style={css(`font:600 12.5px ${SANS}`)}>Comments</span>
-              <span style={css(`font:500 10.5px ${MONO};background:var(--chip-bg);color:var(--text-soft);padding:2px 7px;border-radius:8px`)}>{v.openCount} sent here</span>
               <span style={css('flex:1')} />
               <span onClick={v.railToggle} style={css('color:var(--text-faint);cursor:pointer;font-size:14px')}>&#10005;</span>
             </div>
-            {/* The feed still has no source ON THIS PAGE, and an empty list
-                would read as "no comments on this build" — a different
-                statement. The PERMISSION barrier is gone: step 0 put the queue
-                behind the same EDIT_TOKEN this page holds, so
-                `GET /api/v1/comments?project=<pid>` would answer right now. What
-                is left is a question nobody has decided: the queue is per
-                PROJECT and a comment carries the point it was left at, so a
-                comment raised on an older revision has coordinates that may name
-                nothing on the geometry now on screen. Fetching the list is a few
-                lines; deciding what a pin from another revision does is the
-                feature. Until that is answered the rail states what it holds
-                rather than implying the queue is empty. */}
-            <div style={css(`flex:none;margin:10px;padding:10px 12px;background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:7px;font:400 11.5px/1.6 ${SANS};color:var(--text-soft)`)}>
-              This lists what was sent from this session. The full queue for the
-              project is not shown here yet — a comment is pinned to a point on
-              the revision it was left on, and what such a pin means on a
-              different revision has not been settled.
-            </div>
-            <div style={css('flex:1;overflow:auto;padding:0 10px 10px;display:flex;flex-direction:column;gap:10px')}>
+            {/* The whole project queue since issue #33, so nothing here has to
+                explain what it is not showing. Each row says where it hangs on
+                the build in view instead — see `threads` in `computed`. */}
+            <div style={css('flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:10px')}>
               {v.threads.map((c) => (
                 <div key={c.key} onClick={c.onOpen} style={css(c.style)}>
                   <div style={css('display:flex;align-items:center;gap:8px')}>
@@ -4200,7 +4355,7 @@ export default class HammerolaViewer extends React.Component {
                     <span style={css(`font:400 10.5px ${MONO};color:var(--text-muted)`)}>{c.time}</span>
                   </div>
                   <div style={css(`font:400 12px/1.5 ${SANS};color:var(--text);margin:7px 0 8px`)}>{c.text}</div>
-                  <div style={css(c.measStyle)}>&#8596; {c.meas}</div>
+                  <div style={css(c.saysStyle)}>{c.says}</div>
                   <div style={css('display:flex;align-items:center;gap:10px;margin-top:8px')}>
                     <span onClick={c.onResolve} style={css(`font:500 10.5px ${MONO};color:var(--text-muted);` + (c.resolved ? 'cursor:default' : 'cursor:pointer'))}>
                       {c.resolved ? 'processed' : 'mark processed'}

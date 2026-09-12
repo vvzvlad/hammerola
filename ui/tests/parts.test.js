@@ -24,10 +24,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { internals } from '../src/viewport/internals.js'
 import { GHOST_OPACITY, renderOptions } from '../src/viewport/options.js'
 import {
-  applyGhost, applyHidden, applySelected, movePart, movableGroup, resetMoves,
-  statesOf, treeFromShapes,
+  applyGhost, applyHidden, applySelected, movePart, movableGroup, partCentre,
+  resetMoves, statesOf, treeFromShapes,
 } from '../src/viewport/parts.js'
-import { fakeGroup, fakeViewer, fakeViewport } from './fakes.js'
+import {
+  fakeGroup, fakeMatrix, fakeShapeSolid, fakeViewer, fakeViewport,
+} from './fakes.js'
 import assembled from './fixtures/assembled.json'
 
 /** Every leaf of a view file, with the path the LIBRARY would give it.
@@ -584,5 +586,60 @@ describe('movePart and resetMoves', () => {
     expect(movePart(vp, [], [10, 0, 0])).toBe(false)
     expect(movePart(vp, PATHS[0], [10, 0, 0])).toBe(false)
     expect(vp.moved.size).toBe(0)
+  })
+})
+
+// -- where a part IS, for a pin that has to follow it through a rebuild --------
+
+// A box that is neither a cube nor centred on the origin, so a centre cannot be
+// mistaken for `min`, for `max` or for the part's local origin.
+const BOX_POSITIONS = new Float32Array([
+  0, 0, -1, 2, 0, -1, 2, 6, -1, 0, 6, -1, // z = -1
+  0, 0, 1, 2, 0, 1, 2, 6, 1, 0, 6, 1, // z = 1
+])
+const BOX_INDEX = new Uint32Array([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7])
+const BOX_CENTRE = [1, 3, 0]
+const PIN = '/model/pin'
+
+describe('partCentre', () => {
+  /** One tessellated solid in the scene, at the matrix the build gave it. */
+  const scene = (matrix) => {
+    const solid = fakeShapeSolid(
+      PIN, { positions: BOX_POSITIONS, index: BOX_INDEX, matrix })
+    const viewer = fakeViewer({ states: statesFor([PIN]), groups: { [PIN]: solid } })
+    return { solid, viewer }
+  }
+
+  it('answers the centre of the part box, not a corner of it', () => {
+    expect(partCentre(scene().viewer, PIN)).toEqual(BOX_CENTRE)
+  })
+
+  it('carries the centre into the world through the part matrix', () => {
+    // Where the pin has to land: the box is the geometry's own, in the solid's
+    // local frame, and the scene graph is what puts the solid in the assembly.
+    const { viewer } = scene(fakeMatrix({ scale: [2, 3, 4], position: [5, 0, -3] }))
+    expect(partCentre(viewer, PIN)).toEqual([2 * 1 + 5, 3 * 3, 4 * 0 - 3])
+  })
+
+  it('asks the geometry for a box when it carries none yet', () => {
+    const { solid, viewer } = scene()
+    const { geometry } = solid.front
+    geometry.boundingBox = null
+    geometry.computeBoundingBox = vi.fn(() => {
+      geometry.boundingBox = { min: { x: 0, y: 0, z: -1 }, max: { x: 2, y: 6, z: 1 } }
+    })
+    expect(partCentre(viewer, PIN)).toEqual(BOX_CENTRE)
+    expect(geometry.computeBoundingBox).toHaveBeenCalledTimes(1)
+  })
+
+  it('answers null for a path the scene draws no solid for', () => {
+    expect(partCentre(scene().viewer, '/model/not a part')).toBeNull()
+  })
+
+  it('answers null for a group with no tessellation, and for no viewer', () => {
+    const viewer = fakeViewer({
+      states: statesFor([PIN]), groups: { [PIN]: fakeGroup() } })
+    expect(partCentre(viewer, PIN)).toBeNull()
+    expect(partCentre(null, PIN)).toBeNull()
   })
 })

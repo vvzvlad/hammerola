@@ -63,6 +63,76 @@ def test_a_comment_without_a_photo_is_accepted(hub):
     assert record["photo"] is None and record["shot"] is None
 
 
+def test_the_catalogue_key_is_stored(hub):
+    """The anchor that outlives one revision (SPEC 7A.1).
+
+    `part` is a path in the tree of the build the comment was left on, and the
+    tessellator renumbers those; `key` names the entity in the catalogue, and it
+    is what the build page follows to put the pin back on a later build.
+    """
+    pid, commit = _publish(hub)
+    r = hub.post_comment(pid, commit, comment_payload(key="bracket"))
+    assert r.status_code == 201
+    cid = r.json()["id"]
+
+    record = json.loads((hub.comment_dir(pid) / f"{cid}.json").read_text())
+    assert record["key"] == "bracket"
+
+
+def test_a_comment_with_no_key_stores_none(hub):
+    """No key sent, no key stored — the page reads that as unanchored."""
+    pid, commit = _publish(hub)
+    r = hub.post_comment(pid, commit, comment_payload())
+    assert r.status_code == 201
+    cid = r.json()["id"]
+
+    record = json.loads((hub.comment_dir(pid) / f"{cid}.json").read_text())
+    assert record["key"] is None
+
+
+def test_the_build_stamp_is_stored(hub):
+    """WHICH build the comment was left on, and not just which name (SPEC 7A.1).
+
+    `commit` does not answer that on the local slot: it is the constant `dev`
+    for every build the slot ever holds (SPEC 7.6), so a comment from a previous
+    incarnation would go on looking like one left on the geometry now on screen,
+    and the page would draw its stale coordinate.
+
+    THE STAMP THE CALLER SENT is what lands in the record, and the caller here
+    sends one that is deliberately not the one on the hub's disk: only the page
+    knows which build the coordinate was taken on, and reading the build
+    directory at POST time would answer with whatever was built LAST instead.
+    """
+    pid, commit = _publish(hub)
+    meta = json.loads(
+        (hub.project_dir(pid) / commit / "meta.json").read_text())
+    sent = "2020-01-01T00:00:00.000Z"
+    assert sent != meta["published"]
+    r = hub.post_comment(pid, commit, comment_payload(published=sent))
+    assert r.status_code == 201
+    cid = r.json()["id"]
+
+    record = json.loads((hub.comment_dir(pid) / f"{cid}.json").read_text())
+    assert record["published"] == sent
+
+
+def test_a_comment_with_no_build_stamp_stores_none(hub):
+    """No stamp sent, no stamp stored — the comment lands either way.
+
+    A record without one anchors by its catalogue key like a comment from any
+    other build, which is honest; refusing the comment, or borrowing a stamp off
+    the build directory, would not be — that directory holds the newest build
+    and not the one the caller was looking at.
+    """
+    pid, commit = _publish(hub)
+    r = hub.post_comment(pid, commit, comment_payload())
+    assert r.status_code == 201
+    cid = r.json()["id"]
+
+    record = json.loads((hub.comment_dir(pid) / f"{cid}.json").read_text())
+    assert record["published"] is None
+
+
 def test_a_comment_with_a_photo_and_a_shot_is_accepted(hub):
     pid, commit = _publish(hub)
     r = hub.post_comment(
@@ -107,11 +177,13 @@ def test_a_body_from_an_ordinary_client_encoder_is_accepted(hub):
 
 
 def test_the_reply_carries_the_id_and_nothing_else(hub):
-    """The text is never echoed back and never rendered (SPEC 7A.4).
+    """The reply is a bare id: the text is never echoed back (SPEC 7A.4).
 
-    Echoing it would put attacker-supplied text into a response the attacker can
-    make somebody else's browser fetch, which is the XSS surface this feature
-    exists without.
+    ABOUT THE REPLY AND NOT ABOUT RENDERING, which is the half of the old
+    sentence that stopped being true: since issue #33 the build page DOES draw
+    the queue, as text and never as markup, and `ui/tests/feed.test.js` is where
+    that is pinned. What stays true here is that a response nobody asked for
+    carries nothing back — the caller already has its own text.
     """
     pid, commit = _publish(hub)
     payload = comment_payload(text="<script>alert(1)</script>")
@@ -235,6 +307,36 @@ def test_a_control_character_in_the_part_name_is_422(hub):
     pid, commit = _publish(hub)
     r = hub.post_comment(pid, commit, comment_payload(part="a‮b"))
     assert r.status_code == 422
+
+
+def test_a_key_that_is_not_a_string_is_422(hub):
+    """`key` goes through the same door as `part`: one printable line, or 422."""
+    pid, commit = _publish(hub)
+    r = hub.post_comment(pid, commit, comment_payload(key=["bracket"]))
+    assert r.status_code == 422
+    assert not _records(hub)
+
+
+def test_a_multi_line_key_is_422(hub):
+    pid, commit = _publish(hub)
+    r = hub.post_comment(pid, commit, comment_payload(key="brac\nket"))
+    assert r.status_code == 422
+    assert not _records(hub)
+
+
+@pytest.mark.parametrize("stamp", [["2026-01-01T00:00:00Z"],
+                                   "2026-01-01\nT00:00:00Z"])
+def test_a_build_stamp_that_is_not_one_printable_line_is_422(hub, stamp):
+    """`published` comes from the caller now, so it goes through the same door.
+
+    One printable line or a 422, exactly like `part` and `key`: the field is
+    written into the record and read back by the page and by the agent, and a
+    list or an embedded newline is neither a stamp nor readable there.
+    """
+    pid, commit = _publish(hub)
+    r = hub.post_comment(pid, commit, comment_payload(published=stamp))
+    assert r.status_code == 422
+    assert not _records(hub)
 
 
 def test_a_malformed_multipart_body_is_422(hub):

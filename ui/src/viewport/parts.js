@@ -261,6 +261,50 @@ export function movableGroup(viewer, path) {
 }
 
 /**
+ * The world-space centre of one part's bounding box, as `[x, y, z]`, or `null`.
+ *
+ * Where a pin goes when the comment is anchored on the PART and not on a
+ * coordinate (hub.anchorFor): the point a comment stored is a place in the
+ * tessellation it was taken on, and on a later build the part's own box is the
+ * only thing that still means "on this part".
+ *
+ * THREE.JS IS NOT A DEPENDENCY OF THIS BUNDLE, so the transform is done by hand
+ * off `matrixWorld.elements` — the same column-major arithmetic `sectionSegments`
+ * does on a segment list, applied to one point. The box is the geometry's own,
+ * in the solid's local frame; the library computes it at build time, and the
+ * call below covers a geometry it has not needed one for yet.
+ */
+export function partCentre(viewer, path) {
+  const g = internals(viewer);
+  const group = g && g.nestedGroup && g.nestedGroup.groups
+    ? g.nestedGroup.groups[path] : null;
+  const front = group && group.front;
+  const geometry = front && front.geometry;
+  if (!geometry || !front.matrixWorld || !front.matrixWorld.elements) return null;
+  try {
+    if (!geometry.boundingBox
+        && typeof geometry.computeBoundingBox === "function") {
+      geometry.computeBoundingBox();
+    }
+  } catch (error) {
+    console.warn("part centre", error);
+    return null;
+  }
+  const box = geometry.boundingBox;
+  if (!box || !box.min || !box.max) return null;
+  const px = (box.min.x + box.max.x) / 2;
+  const py = (box.min.y + box.max.y) / 2;
+  const pz = (box.min.z + box.max.z) / 2;
+  const e = front.matrixWorld.elements;
+  const world = [
+    e[0] * px + e[4] * py + e[8] * pz + e[12],
+    e[1] * px + e[5] * py + e[9] * pz + e[13],
+    e[2] * px + e[6] * py + e[10] * pz + e[14],
+  ];
+  return finite3(world) ? world : null;
+}
+
+/**
  * Offset a part from where the build put it. `delta` is world units.
  *
  * NOT a change to the model, and the interface has to say so (ui-brief block 6):
