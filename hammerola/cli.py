@@ -11,6 +11,7 @@
     log [dev|<revision>]      read a build log again
     comments                  the project's comment queue
     comments resolve <id>     close one, with an optional note
+    comments files <id>       save its photo and frame to disk
     skill                     the agent instructions: this machine's, and the hub's
     skill update              write the hub's copy over the installed one
     update                    write the hub's copy of THIS TOOL over itself
@@ -240,6 +241,13 @@ def build_parser() -> argparse.ArgumentParser:
     close.add_argument(
         "-m", "--note", default=None,
         help="what was done about it; stored with the comment")
+    attachments = queue_commands.add_parser(
+        "files", help="download this comment's photo and frame")
+    attachments.add_argument(
+        "id", help="the comment id, as `hammerola comments` prints it")
+    attachments.add_argument(
+        "-o", "--output", metavar="DIR", default=None,
+        help="write here instead of into `.hammerola/comments`")
 
     # ASKED FOR BY NAME OR NOT AT ALL. Nothing else in this tool looks at the
     # agent's skills directory, and nothing else prints a word about the

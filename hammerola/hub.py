@@ -1171,6 +1171,58 @@ class Hub:
                 f"{quoted(self._payload(code, raw).get('error', ''))}")
         return self._payload(code, raw)
 
+    def comment(self, cid: str) -> dict:
+        """One comment by its id, whole. -> the record.
+
+        The listing carries every field already, so this is for the caller that
+        has an ID AND NOT A QUEUE — `comments files`, which is handed an id and
+        no project and needs to know which attachments the comment has before it
+        asks for their bytes.
+        """
+        code, raw = self._call(f"/api/v1/comments/{urllib.parse.quote(cid)}")
+        if code == 401:
+            raise HubError(UNAUTHORIZED)
+        if code == 404:
+            raise HubError(
+                f"the hub has no comment {cid}.\n"
+                f"  Ids come from `hammerola comments`; a resolved comment "
+                f"keeps its id, so this is a wrong id rather than a stale one.")
+        if code != 200:
+            raise HubError(
+                f"the hub answered HTTP {code} for comment {cid}: "
+                f"{quoted(self._payload(code, raw).get('error', ''))}")
+        return self._payload(code, raw)
+
+    def comment_attachment(self, cid: str, kind: str) -> bytes:
+        """The bytes of one attachment — the photo, or the viewer's frame.
+
+        SPELLED HERE AND NOT ROUTED THROUGH `fetch_path`, though both fetch one
+        file: that one exists for a path the HUB named, and its checks are about
+        a string this client did not write. This path is built out of an id and
+        a constant and quoted like every other route in this file, so sending it
+        through the other would make the sentence that explains those checks
+        false.
+        """
+        code, raw = self._call(
+            f"/api/v1/comments/{urllib.parse.quote(cid)}/{kind}")
+        if code == 401:
+            raise HubError(UNAUTHORIZED)
+        if code == 404:
+            # NOT "no such attachment": the only caller asks for these bytes
+            # after the record NAMED them, so a 404 here is the record and the
+            # file disagreeing. Sending the reader back to the listing — which
+            # would repeat that the photo exists — is the answer that reads
+            # like help and is a circle.
+            raise HubError(
+                f"comment {cid} names a {kind} the hub does not serve.\n"
+                f"  The record is there and the file is not: the bytes are "
+                f"gone from the hub's volume.")
+        if code != 200:
+            raise HubError(
+                f"the hub answered HTTP {code} for the {kind} of {cid}: "
+                f"{quoted(raw)}")
+        return raw
+
     # -- getting started ---------------------------------------------------
     def start(self) -> dict:
         """`GET /start` — the manifest of what a first run needs. NO TOKEN.
