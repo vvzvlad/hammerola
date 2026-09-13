@@ -37,6 +37,7 @@ from src.cadbuild.metrics import METRICS_NAME, METRICS_VERSION
 from src.cadbuild.metrics import collect_metrics as real_collect_metrics
 from src.cadbuild.metrics import write_metrics as real_write_metrics
 from src.cadbuild.modelchecks import run_checks as real_run_checks
+from src.cadbuild.parts import catalogue_colors
 
 from fakes import catalogue
 
@@ -59,23 +60,33 @@ def driven(monkeypatch):
     """Everything `build` reaches outside itself.
 
     Returns the state the tests steer and read back: `views` is which views the
-    model has (a test that gives it a plate adds one), and `rendered` collects
-    the stems `render_previews` was asked for.
+    model has (a test that gives it a plate adds one), and `rendered`, `colors`
+    and `scenes` collect what `render_previews` was asked for.
 
     `render_previews` is the one fake that answers rather than merely returns:
     it hands back a preview name per stem it was asked for, which is what the
     real one does and what makes `written` — and therefore the pictures and the
     file list — a consequence of the branch under test rather than a constant.
 
+    IT KEEPS `colors` AND `scenes` RATHER THAN DROPPING THEM, because those two
+    arguments are the whole of what the pictures are drawn FROM and `build` is
+    the only place they are assembled. Keying `scenes` by view id instead of by
+    file stem, or handing the renderer no colour at all, puts the old flat-blue
+    picture back with every test in this suite still green.
+
     `prepare_views` and `export_views` are wired to ONE list for the same
     reason: a build with a plate has a `print` view, and a fixture that let
     those two disagree would be testing a state no build can be in.
     """
     state = SimpleNamespace(rendered=[], views=[ASSEMBLED_VIEW_ID],
-                            catalogue=catalogue(base="printable"))
+                            catalogue=catalogue(base="printable"),
+                            colors=None, scenes=None)
 
-    def render_previews(out_dir, stems, mode, parts=None):
+    def render_previews(out_dir, stems, mode, parts=None, colors=None,
+                        scenes=None):
         state.rendered.extend(stems)
+        state.colors = colors
+        state.scenes = scenes
         return [f"{stem}{PREVIEW_SUFFIX}" for stem in stems]
 
     for name, value in (
@@ -448,6 +459,54 @@ def test_a_build_with_a_print_view_declares_the_plate_and_says_nothing(
     assert f"base{PREVIEW_SUFFIX}" in files
 
 
+def test_a_whole_view_is_drawn_from_the_document_the_browser_itself_loads(
+        driven, out_dir):
+    """`scenes` is what makes the assembly picture the picture of the assembly.
+
+    The view DOCUMENT carries a colour, an alpha and a placement per part where
+    the STL beside it carries none of the three, so a whole-view stem is handed
+    the file the browser loads and the renderer draws THAT. Without the map
+    reaching the renderer at all, it falls back to the mesh and the old flat
+    blue blob comes back with every test in this suite still green -- which is
+    what this holds: that `scenes` is passed, that it names the right FILE, and
+    that it carries exactly the whole-view stems and no others.
+
+    WHAT IT CANNOT TELL APART is the two keyings, and that is worth saying
+    rather than leaving to be discovered: `ASSEMBLED_STEM` and
+    `ASSEMBLED_VIEW_ID` are both "assembled" and "print" is one word doing both
+    jobs, so a map keyed by view id is the same dict as one keyed by file stem,
+    today. The two namespaces meet only because the strings happen to be equal;
+    `build`'s own `stem_of_view` is the translation, says so at length, and is
+    what stops compiling on the rename that would make them differ.
+
+    A printable is NOT in it: its own picture is drawn from its own STL, which
+    is what `colors` below is for.
+    """
+    build(out_dir)
+
+    assert driven.scenes == {ASSEMBLED_STEM: f"{ASSEMBLED_VIEW_ID}.json"}
+    # The catalogue's colour per part, so the picture of a printable and that
+    # same part inside the assembly are one colour and a reader can pair them.
+    assert driven.colors == catalogue_colors(driven.catalogue)
+    assert driven.colors["base"], "the printable reached the renderer unpainted"
+
+
+def test_the_plate_picture_is_drawn_from_the_plate_s_own_document(
+        with_a_plate, out_dir):
+    """The other side of that branch: a build WITH a plate names two documents.
+
+    `print.json` is a different arrangement of the same parts — laid out flat on
+    the bed — so a plate drawn from the assembled document would be a picture of
+    the wrong thing, and `print_preview.png` is exactly the picture somebody
+    opens to catch a part lying face down.
+    """
+    build(out_dir)
+
+    assert with_a_plate.scenes == {
+        ASSEMBLED_STEM: f"{ASSEMBLED_VIEW_ID}.json",
+        PRINT_VIEW_ID: f"{PRINT_VIEW_ID}.json"}
+
+
 def test_every_phase_of_a_build_is_timed_and_the_marks_run_end_to_end(
         driven, monkeypatch, out_dir):
     """The timing itself, held on the CALL rather than on the log text.
@@ -469,6 +528,12 @@ def test_every_phase_of_a_build_is_timed_and_the_marks_run_end_to_end(
     `total` IS THE EXCEPTION AND IS ASSERTED AS ONE: it is measured from the
     beginning of the build rather than from the phase before it, so it is the
     one call whose `since` is `build`'s own starting mark.
+
+    AND THIS IS WHERE A REORDER SURFACES, which it did: `previews` comes AFTER
+    `tessellation` rather than inside `rendering`, because a picture of a whole
+    view is drawn from the view DOCUMENT the tessellation writes. Put back the
+    other way round it would draw from files that do not exist yet, and the only
+    other thing that would notice is somebody opening the PNG.
     """
     calls = []
 
@@ -482,10 +547,10 @@ def test_every_phase_of_a_build_is_timed_and_the_marks_run_end_to_end(
 
     assert [name for name, _since in calls] == [
         "model", "geometry", "printables", "checks", "rendering",
-        "tessellation", "total"], (
+        "tessellation", "previews", "total"], (
         "a phase was dropped, renamed or reordered; the log's table is the only "
         "account of where a slow build spent its time")
-    assert [since for _name, since in calls[1:-1]] == [1, 2, 3, 4, 5], (
+    assert [since for _name, since in calls[1:-1]] == [1, 2, 3, 4, 5, 6], (
         "a phase is the gap between two marks, and one of these was measured "
         "from somewhere other than the end of the phase before it")
     assert calls[-1][1] == calls[0][1], (

@@ -148,11 +148,13 @@ trimesh==4.12.2
 
 # --- The preview picture -----------------------------------------------------------------------
 # The three below are what `src/cadbuild/preview_png.py` imports at module level to draw the
-# smoke-test PNG of a part: mplot3d does the projection and the depth ordering, numpy carries the
-# triangles and does the decimation, Pillow composes the tiles and the footer. Without any one of
-# them that module raises on import — which `assembly.render_previews` catches and turns into
-# "warning: no previews", so what breaks is not the build but the picture, silently, on every
-# build from then on.
+# smoke-test PNG of a part: numpy rasterises it — the projection, the back-face cull and the
+# z-buffer are all whole-array numpy — Pillow composes the tiles and the footer, and matplotlib
+# is there for ONE thing, the DejaVuSans it ships with, because the builder image has no system
+# font and PIL's default is an unreadable 6-pixel bitmap. Without any one of them that module
+# raises on import — which `assembly.render_previews` catches and turns into "warning: no
+# previews", so what breaks is not the build but the picture, silently, on every build from then
+# on.
 #
 # ALL THREE ARE ALREADY IN THE IMAGE and cost it nothing: cadquery-ocp requires vtk, vtk requires
 # matplotlib, and matplotlib requires numpy and pillow. They are named here anyway, and that is
