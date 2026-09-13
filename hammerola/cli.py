@@ -204,15 +204,29 @@ def build_parser() -> argparse.ArgumentParser:
                          help="the older revision, or `latest`")
     changes.add_argument("new", metavar="REVISION",
                          help="the newer revision, or `latest`")
-    # The whole output, or none of it: a document a script reads cannot have a
-    # source diff printed around it. The exit code is the same either way —
-    # `diff` returns 0 whether or not anything moved, and something reading the
-    # JSON is reading it to find that out.
-    changes.add_argument(
+    # MUTUALLY EXCLUSIVE, AND ARGPARSE IS WHAT SAYS SO. `--json` is the whole
+    # output or none of it — a document a script reads cannot have a source diff
+    # or a geometry report printed around it — and `--material` adds a section
+    # to exactly that printed output. Asking for both is a request with no
+    # answer, and it is refused before anything is sent rather than by one flag
+    # quietly winning.
+    answer = changes.add_mutually_exclusive_group()
+    # The exit code is the same either way — `diff` returns 0 whether or not
+    # anything moved, and something reading the JSON is reading it to find that
+    # out.
+    answer.add_argument(
         "--json", action="store_true",
         help="print only what moved in each PART's physical numbers — volume, "
              "bounding box, first layer, overhang — as one JSON document. The "
              "assembly's own numbers are not in it")
+    # THE HUB DOES THIS ONE, and that is why it is a flag and not the default:
+    # every other half of `diff` is arithmetic over files this command already
+    # fetches, while this fuses two solids per part in the CAD kernel and takes
+    # as long as a build does.
+    answer.add_argument(
+        "--material", action="store_true",
+        help="also ask the hub to measure how much material each part gained "
+             "and lost, which runs the CAD kernel and takes as long as a build")
 
     logs = commands.add_parser(
         "log", help="print a build log again")

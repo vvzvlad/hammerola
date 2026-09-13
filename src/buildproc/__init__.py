@@ -11,6 +11,7 @@ group, and with its output captured and capped.
     limits.py     the ceilings, and the code that puts them on a process
     wrapper.py    `python -m` entry that applies them to itself and execs the child
     child.py      `python -m` entry that arms faulthandler, caps OCCT, and builds
+    comparechild.py  `python -m` entry that compares two revisions and prints it
     runner.py     the parent: spawn, deadline, kill, capture, CHECK the result
     hardening.py  the one call that runs in the HUB: hide its /proc entry
 
@@ -78,6 +79,7 @@ from src.buildproc.runner import (
     STATUS_TIMEOUT,
     child_environment,
     run_build,
+    run_compare,
     run_isolated,
 )
 
@@ -101,5 +103,6 @@ __all__ = [
     "child_environment",
     "hide_process_from_same_uid",
     "run_build",
+    "run_compare",
     "run_isolated",
 ]

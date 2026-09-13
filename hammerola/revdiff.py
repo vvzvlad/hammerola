@@ -26,6 +26,13 @@ two kinds of request: `metrics.json` is fetched from the public build directory,
 the archives from `/api/v1/sources/<revision>` under the publishing secret. It is
 the same split `artifacts` and `source` are two verbs over.
 
+`--material` ADDS A THIRD SECTION AND IS THE ONE THING HERE THE HUB COMPUTES.
+`metrics.json` says a part's volume changed; it cannot say whether material was
+added, removed, or both at once in different places. Answering that means fusing
+the two solids, which needs the CAD kernel — so the hub is asked, the answer is a
+job, and its log is printed under the heading. It is off by default because it
+costs what a build costs, and it cannot be combined with `--json`.
+
 `--json` ANSWERS A THIRD QUESTION and prints nothing else: which of each PART's
 physical numbers moved, as one document a script can read. It is not the two
 halves above in another format — there is no source diff in it at all — and it is
@@ -39,9 +46,11 @@ same".
 
 import difflib
 import json
+import sys
 
 from hammerola import project, unpack
 from hammerola.errors import ClientError
+from hammerola.hub import HubError
 from hammerola.sources import SHORT_ID_CHARS, hub_for, resolve_revision
 from hammerola.metricsdiff import (METRICS_NAME, PHYSICAL_FIELDS, metrics_diff,
                                    moved_fields, unchanged_code_moved_geometry)
@@ -76,6 +85,12 @@ def run(args) -> int:
     before, after = _metrics(hub, pid, old), _metrics(hub, pid, new)
     print()
     _print_geometry(before, after)
+    # AFTER THE NUMBERS THE BUILD ALREADY WROTE DOWN and before the code, which
+    # is the order of the whole command: what moved, how much material moved
+    # with it, and then why.
+    if args.material:
+        print()
+        _print_material(hub, pid, old, new)
     print()
     _print_code(hub, old, new)
     return 0
@@ -126,6 +141,51 @@ def _print_json(hub, pid: str, old: str, new: str) -> int:
     after = _metrics(hub, pid, new) or {}
     print(json.dumps(moved_fields(before, after, PHYSICAL_FIELDS)))
     return 0
+
+
+def _print_material(hub, pid: str, old: str, new: str) -> None:
+    """How much material each part gained and lost, measured BY THE HUB.
+
+    THE ONLY HALF OF THIS COMMAND THAT IS NOT ARITHMETIC OVER FILES. Everything
+    else here reads a document the build already wrote; this fuses two solids
+    per part in the CAD kernel, which lives on the hub and nowhere near this
+    machine. So it is a job like a build is a job: submit, wait, and the report
+    is the job's LOG — there is nothing else to fetch, and printing it indented
+    under the heading is the whole of the presentation.
+
+    THE WAIT'S NOTICES GO TO STDERR, as they do in `build`: a line about the
+    connection to the hub is not part of the report and must not land in the
+    middle of it.
+    """
+    print("material:")
+    try:
+        payload = hub.compare(pid, old, new)
+        job_id = payload.get("job")
+        if not job_id:
+            raise HubError(
+                f"the hub accepted the comparison but named no job: {payload}")
+        record = hub.await_job(
+            job_id,
+            on_notice=lambda note: print(f"  {note}", file=sys.stderr,
+                                         flush=True))
+        log = hub.job_log(job_id)
+    except HubError as exc:
+        # THIS SECTION AND NOT THE COMMAND, on the same principle as `_metrics`
+        # one heading up. The code diff below is fetched over requests of its
+        # own and does not depend on the hub being able to run a comparison, so
+        # a connection that drops on the last poll of a long wait — or a wait
+        # that runs out — must not also swallow the answer to "why did it
+        # change", which by then is a single request away.
+        print(f"  the hub could not be asked for it: {exc}")
+        return
+    for line in log.splitlines():
+        print(f"  {line}")
+    if record.get("state") != "done":
+        # The log is printed above whatever happened, because a comparison that
+        # died halfway has already said something useful about the parts it did
+        # reach. This is the sentence that says the rest is missing.
+        print(f"  the hub could not finish the comparison: "
+              f"{record.get('error') or 'no reason given'}")
 
 
 def _print_geometry(before, after) -> None:

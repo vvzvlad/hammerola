@@ -26,11 +26,12 @@ import json
 import tarfile
 
 import pytest
-from harness import TOKEN, meta_bytes, view_bytes
+from harness import TOKEN, failing_comparer, meta_bytes, view_bytes
 from modeldir import git, git_repo, make_model
 
 from hammerola import artifacts, sources
 from hammerola.cli import main
+from hammerola.hub import Hub, HubError
 
 
 @pytest.fixture(autouse=True)
@@ -915,6 +916,112 @@ def test_diff_says_how_many_numbers_it_compared_when_none_of_them_moved(
     # areas, which is exactly the rollout case the count exists to make visible.
     assert "every measured number is the same (5 part numbers compared)." in \
         capsys.readouterr().out
+
+
+def test_diff_material_prints_what_the_hub_measured(hub, model, capsys):
+    """The one section of `diff` that is not arithmetic over fetched files.
+
+    The measurement itself runs in the hub's own child process with the CAD
+    kernel in it — the suite substitutes that runner (`harness.reading_comparer`)
+    for the same reason it substitutes the builder — so what is being pinned
+    here is the ROUND TRIP: the client submits, waits for the job, and prints
+    the job's LOG under the heading, because that log IS the report.
+
+    Its place in the output is part of the answer too: after the numbers the
+    build already wrote down and before the code that explains them.
+    """
+    first = publish(model, capsys)
+    (model / "model.py").write_text("import cadquery as cq\n\nBOX = 12\n")
+    second = publish(model, capsys)
+
+    assert run(model, "diff", "--material", first, second) == 0
+    out = capsys.readouterr().out
+
+    assert f"  comparing demo0001: {first} -> {second}" in out
+    assert (out.index("geometry:") < out.index("material:")
+            < out.index("code:"))
+
+
+def test_diff_material_that_ended_badly_costs_the_section_and_not_the_command(
+        hub_factory, monkeypatch, model, capsys):
+    """A COMPARISON THAT DIED IS ONE SECTION SHORT, not a failed command.
+
+    Two things are pinned, and the second is why this test is here rather than
+    only in `tests/test_compare.py`, which owns the hub's half. The log comes
+    out BEFORE the sentence saying the run did not finish, because a comparison
+    that died halfway has already said something useful about the parts it did
+    reach. And the CODE section still prints: it is fetched over requests of its
+    own and does not depend on the kernel having survived, so "why did it
+    change" must not be swallowed along with "by how much".
+    """
+    hub = hub_factory(compare_runner=failing_comparer())
+    monkeypatch.setenv("HUB_URL", hub.url)
+    first = publish(model, capsys)
+    (model / "model.py").write_text("import cadquery as cq\n\nBOX = 12\n")
+    second = publish(model, capsys)
+
+    assert run(model, "diff", "--material", first, second) == 0
+    out = capsys.readouterr().out
+
+    assert "  compareproc: the kernel died" in out
+    assert (out.index("compareproc: the kernel died")
+            < out.index("the hub could not finish the comparison"))
+    assert out.index("the hub could not finish the comparison") < \
+        out.index("code:")
+    assert "BOX = 12" in out
+
+
+def test_diff_material_that_loses_the_hub_mid_wait_still_prints_the_code(
+        hub, model, monkeypatch, capsys):
+    """THE SAME PROMISE AS THE TEST ABOVE, for the failure that RAISES.
+
+    Its neighbour pins a comparison that ended badly ON the hub, which comes
+    back as an ordinary `failed` record. This one pins the other half: a
+    connection that drops on the last poll of a long wait, or a wait that runs
+    out, which `await_job` reports by raising — the only path through the
+    section's `except HubError`, and the reason all three requests sit inside
+    one `try`. The code diff below is fetched over requests of its own and does
+    not depend on the comparison having happened at all, so "why did it change"
+    must survive losing "by how much".
+
+    The second assertion is the wait's NOTICES: they go to stderr, as they do in
+    `build`, because a line about the connection is not part of the report and
+    must not land in the middle of it.
+    """
+    def lost(self, job_id, *args, on_notice=None, **kw):
+        on_notice("the hub stopped answering")
+        raise HubError("the wait ran out")
+
+    first = publish(model, capsys)
+    (model / "model.py").write_text("import cadquery as cq\n\nBOX = 12\n")
+    second = publish(model, capsys)
+    # After both publishes, which wait on jobs of their own through this method.
+    monkeypatch.setattr(Hub, "await_job", lost)
+
+    assert run(model, "diff", "--material", first, second) == 0
+    captured = capsys.readouterr()
+
+    assert "  the hub could not be asked for it: the wait ran out" in captured.out
+    assert "the hub stopped answering" in captured.err
+    assert "the hub stopped answering" not in captured.out
+    assert captured.out.index("the hub could not be asked for it") < \
+        captured.out.index("code:")
+    assert "BOX = 12" in captured.out
+
+
+def test_diff_material_cannot_be_asked_for_together_with_json(hub, model,
+                                                              capsys):
+    """A request with no answer, refused before anything is sent.
+
+    `--json` is the whole output or none of it, and `--material` adds a section
+    to the printed output — so one of the two would have to be ignored. Argparse
+    says so itself, which is why this exits 2 rather than 1: it never reaches a
+    handler.
+    """
+    with pytest.raises(SystemExit) as refused:
+        run(model, "diff", "--json", "--material", "a" * 64, "b" * 64)
+    assert refused.value.code == 2
+    assert "not allowed with" in capsys.readouterr().err
 
 
 def test_diff_needs_a_project_because_metrics_live_in_a_build_directory(

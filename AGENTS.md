@@ -59,11 +59,11 @@ cp .env.example .env   # then fill in the values  (shortcut: make env)
 ## Running tests
 ```bash
 make test              # runs .venv/bin/python -m pytest
-make cad-test          # the four tests that need the CAD kernel
+make cad-test          # the five tests that need the CAD kernel
 ```
 
 CI computes no real geometry: `libgl1` is deliberately not in the test container
-(issue #27), so those four skip there. **Touching `src/cadbuild/` means running
+(issue #27), so those five skip there. **Touching `src/cadbuild/` means running
 `make cad-test` on a machine where the kernel imports** — nothing else notices when
 the payload's shape drifts away from `ui/tests/fixtures/assembled.json`.
 

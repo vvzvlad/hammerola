@@ -36,7 +36,7 @@ from types import SimpleNamespace
 import httpx
 
 from src.app import create_server
-from src.buildproc import STATUS_FAILED, STATUS_OK, BuildOutcome
+from src.buildproc import STATUS_CRASHED, STATUS_FAILED, STATUS_OK, BuildOutcome
 from src.jobs import STATE_DONE, STATE_FAILED
 
 # The one secret of the whole system (issue #26). There were two names
@@ -382,12 +382,56 @@ def failing_builder(status=STATUS_FAILED, log="build failed: no printables\n",
     return run
 
 
-def start_hub(data_dir, build_runner=None, build_workers=None,
-              build_queue_size=None, **kw):
+def reading_comparer(old_dir, new_dir, *, pid, **_kw):
+    """Stand in for `src.buildproc.run_compare`: name the two directories.
+
+    The real comparer starts a child process that imports the CAD kernel and
+    fuses two solids per part; this suite has neither the kernel nor minutes to
+    spare, and the hub's half of a comparison — the route, the queue, the job
+    record, the log — is the same whoever measured. So this reads the two
+    directories only far enough to say what it was given and reports it as the
+    log, which IS the answer a comparison produces: nothing is published.
+
+    IT REPORTS A REAL DURATION, for the reason spelled out on `copying_builder`:
+    the number reaches the job record and a stand-in must not be the thing that
+    decides what it looks like.
+    """
+    started = time.monotonic()
+    parts = sorted({path.stem for path in Path(old_dir).glob("*.step")}
+                   | {path.stem for path in Path(new_dir).glob("*.step")})
+    log = (f"comparing {Path(old_dir).name} -> {Path(new_dir).name}, "
+           f"{len(parts)} parts\n")
+    return BuildOutcome(
+        status=STATUS_OK, pid=pid, files=(), log=log, log_truncated=False,
+        exit_code=0, signal=None, duration_seconds=time.monotonic() - started)
+
+
+def failing_comparer(status=STATUS_CRASHED, log="compareproc: the kernel died\n",
+                     exit_code=4):
+    """A comparison that ends badly, the way a crashed child does. -> a runner.
+
+    CRASHED AND NOT FAILED, unlike `failing_builder` one heading up. That status
+    means "the model's build() raised", which a comparison has no equivalent of:
+    `_compare_outcome` can return ok, timeout, cpu_exhausted, killed,
+    limits_error or crashed, and nothing else. A stand-in handing out a state
+    the real runner cannot produce is a test passing against a hub that never
+    happens.
+    """
+    def run(old_dir, new_dir, *, pid, **_kw):
+        return BuildOutcome(
+            status=status, pid=pid, files=(), log=log, log_truncated=False,
+            exit_code=exit_code, signal=None, duration_seconds=0.25)
+    return run
+
+
+def start_hub(data_dir, build_runner=None, compare_runner=None,
+              build_workers=None, build_queue_size=None, **kw):
     """Bind, serve on a daemon thread, and hand back a Hub. Caller stops it."""
     server = create_server(
         settings_for(data_dir, **kw),
         build_runner=copying_builder if build_runner is None else build_runner,
+        compare_runner=(reading_comparer if compare_runner is None
+                        else compare_runner),
         build_workers=build_workers, build_queue_size=build_queue_size)
     # `shutdown()` blocks until serve_forever notices, which it only does once per
     # poll interval — the 0.5 s default would add half a second to every test that
