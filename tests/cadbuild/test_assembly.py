@@ -21,6 +21,7 @@ import types
 
 import pytest
 
+from src import cadbuild
 from src.cadbuild import assembly, printables
 from src.cadbuild.artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID,
                                     PREVIEW_SUFFIX, PRINT_VIEW_ID)
@@ -358,6 +359,57 @@ def test_a_plate_whose_export_wrote_no_file_is_a_build_error(exported, out_dir):
     # Raised before the cleanup, so nothing claims to have tidied up after a
     # mesh that was never made.
     assert dropped == []
+
+
+@pytest.fixture
+def planted_renderer(monkeypatch):
+    """`render_previews`' own `from . import preview_png`, answered by a stub.
+
+    The renderer is a SOFT dependency: a python with no numpy, no Pillow or no
+    matplotlib makes that import fail, and `render_previews` then warns and
+    returns `[]` rather than failing a build (`tests/test_template.py` pins that
+    degradation). A test about the refusals BELOW the import would otherwise be
+    a test of whether the drawing stack happens to be installed.
+
+    The stub refuses to draw, and that is the other half of what is asserted: a
+    picture whose scene is missing is refused before anything is rendered.
+    """
+    stub = types.ModuleType("src.cadbuild.preview_png")
+
+    def render(*args, **kwargs):
+        raise AssertionError("a picture was drawn after it should have been "
+                             "refused")
+
+    stub.render = render
+    monkeypatch.setattr(cadbuild, "preview_png", stub, raising=False)
+    return stub
+
+
+def test_a_picture_whose_scene_file_is_missing_is_refused(planted_renderer,
+                                                          out_dir):
+    """The twin of the missing STL, and it guards the newer half of the wiring.
+
+    A whole-view picture is drawn from the tessellated view DOCUMENT rather than
+    from the mesh -- that is where the colours, the alphas and the placements
+    are -- so the document is as load-bearing as the STL beside it. Missing, the
+    renderer would quietly draw the STL instead and the build would publish one
+    flat-blue blob under the name of a picture of the assembly, which is exactly
+    the picture this renderer replaced.
+
+    The mesh IS there, so what is refused is the scene and not the stem.
+    """
+    (out_dir / f"{ASSEMBLED_STEM}.stl").write_bytes(b"solid a\nendsolid a\n")
+
+    with pytest.raises(BuildError) as exc:
+        assembly.render_previews(
+            out_dir, [ASSEMBLED_STEM], "iso",
+            scenes={ASSEMBLED_STEM: f"{ASSEMBLED_VIEW_ID}.json"})
+
+    assert f"cannot render {ASSEMBLED_STEM}" in str(exc.value)
+    assert f"{ASSEMBLED_VIEW_ID}.json is missing" in str(exc.value)
+    # And nothing was written for it: a half-drawn picture would be declared by
+    # `build` and served by the hub.
+    assert list(out_dir.iterdir()) == [out_dir / f"{ASSEMBLED_STEM}.stl"]
 
 
 def test_a_build_with_no_print_view_writes_nothing_at_all(out_dir):

@@ -367,9 +367,17 @@ def test_a_mock_is_grey_and_hardware_is_the_dark_grey():
     assert colors["body"] in PART_PALETTE
 
 
-def test_an_explicit_colour_wins_for_every_kind():
+def test_an_explicit_colour_wins_for_every_kind_and_comes_back_as_hex():
     """A named colour is validated with the tessellator's own parser, so this
-    one test needs the CAD stack. Everything else about the catalogue does not."""
+    one test needs the CAD stack. Everything else about the catalogue does not.
+
+    WHAT COMES BACK IS THE PARSER'S SPELLING, which is why neither colour is
+    written here the way it comes out. The parser takes a CSS name and a
+    three-digit hex; the rasteriser that draws the previews reads exactly six
+    hex digits, so a catalogue that handed on the author's own string put
+    `"red"` in front of `preview_png._hex_rgb` and killed the build inside the
+    picture of a part that was perfectly fine.
+    """
     # `exc_type=ImportError` because the failure this guard is FOR is an
     # ImportError that is NOT a ModuleNotFoundError: in CI the distribution is
     # on disk and its extension refuses to load (`libGL.so.1`). pytest 9.1
@@ -377,8 +385,8 @@ def test_an_explicit_colour_wins_for_every_kind():
     # would stop skipping and CI would go red on a pytest bump.
     pytest.importorskip("ocp_tessellate", exc_type=ImportError,
                         reason="colour parsing uses the tessellator's parser")
-    read = read_catalogue(Model({"body": entry(color="#ff0000"),
-                                 "wall": entry("mock", color="#00ff00")}))
+    read = read_catalogue(Model({"body": entry(color="red"),
+                                 "wall": entry("mock", color="#0f0")}))
     colors = catalogue_colors(read)
     assert colors["body"] == "#ff0000"
     # "Do not colour a mock" is a rule of the SKILL and deliberately not of this

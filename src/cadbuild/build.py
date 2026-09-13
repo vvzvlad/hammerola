@@ -19,7 +19,7 @@ from .metrics import (METRICS_NAME, collect_metrics, read_baseline,
 from .modelchecks import (call_model, fail_site, raised_by_the_model,
                           run_checks)
 from .modeltext import MAX_MESSAGE_CHARS, shown
-from .parts import printable_keys, read_catalogue
+from .parts import catalogue_colors, printable_keys, read_catalogue
 from .paths import project_root
 from .printables import export_printables, overview_meshes, preview_files
 from .project import load_project
@@ -260,9 +260,10 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
     # is what says whether it is the product or the scenery around it.
     assembled_parts, assembled_bbox = export_assembled(prepared, out_dir,
                                                        catalogue)
-    # THE PLATE BEFORE THE PICTURES, and the order is the correctness here:
-    # render_previews renders a stem from the STL already sitting next to it and
-    # refuses one whose file is missing.
+    # THE MESHES BEFORE THE PICTURES, and the order is the correctness here:
+    # render_previews reads the STL sitting next to each stem for the footer and
+    # refuses one whose file is missing. The pictures themselves are drawn two
+    # phases down, after the view documents most of them are drawn FROM exist.
     plate = export_print_plate(prepared, out_dir)
     stems = printable_keys(catalogue) + [ASSEMBLED_STEM]
     # `parts` is what stops a picture printing a false fact: touching parts weld
@@ -289,24 +290,16 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
         plate_bodies, plate_bbox = plate
         stems.append(PRINT_VIEW_ID)
         parts[PRINT_VIEW_ID] = plate_bodies
-    # KEPT, not discarded: this is the list of pictures that were really
-    # written, and both things built out of it below -- the preview map and the
-    # file list -- are only true because it is a fact and not a plan.
-    written = render_previews(out_dir, stems, preview_mode, parts=parts)
-    overview = overview_meshes(plate is not None)
-    previews = preview_files(written)
-    # The two lines above cost nothing, so this measures what the section really
-    # spent -- and the name undersells it: `export_print_plate` above fuses the
-    # `print` view into one compound, measures it and writes an STL, so the
-    # phase carries a modelling step and not only the drawing of pictures. The
+    # This measures what the section really spent, and the name undersells it:
+    # `export_print_plate` above fuses the `print` view into one compound,
+    # measures it and writes an STL, so the phase carries a modelling step. The
     # LAYOUT itself is the author's, made in views(); this only collects it.
+    # NO PICTURE IS DRAWN IN IT ANY MORE -- see the previews phase below.
     phase = _phase("rendering", phase)
 
     print("tessellating views:")
     views = export_views(prepared, out_dir)
-    # The last phase, so its return value goes nowhere -- everything after this
-    # is writing two small JSON documents, and the total below covers it.
-    _phase("tessellation", phase)
+    phase = _phase("tessellation", phase)
 
     # EVERYTHING IS FILED UNDER WHAT OWNS IT, and that is the whole shape of
     # this document. It used to be four flat maps side by side -- `downloads`
@@ -335,8 +328,40 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
     # closes a collision the plain `vid in previews` had -- `previews` is keyed
     # by catalogue keys too, so a view id that happened to equal a part's name
     # hung that PART's picture on the view.
+    #
+    # IT IS READ TWICE NOW, which is why it stands up here rather than beside
+    # the loop it was written for: the previews phase below needs the same
+    # translation to hand each whole-view stem the view document it is drawn
+    # from, and two copies of a map that exists to make a rename fail loudly
+    # would be two places for the rename to be missed.
     stem_of_view = {ASSEMBLED_VIEW_ID: ASSEMBLED_STEM,
                     PRINT_VIEW_ID: PRINT_VIEW_ID}
+
+    print("drawing previews:")
+    # AFTER THE TESSELLATION, and that is what this phase is for. A picture of a
+    # whole view is drawn from the view DOCUMENT -- the file the browser itself
+    # loads -- because that is the only thing carrying a colour, an alpha and a
+    # placement per part; the STL beside it is one anonymous mesh. So the
+    # documents have to exist before the pictures, and drawing them in the
+    # `rendering` phase above meant drawing them before they were written.
+    #
+    # A printable's own picture is still drawn from its own STL, in the colour
+    # the catalogue gives it -- the same colour it wears inside the assembly,
+    # which is what lets a reader pair the two pictures by eye.
+    scenes = {stem_of_view[entry["id"]]: entry["file"] for entry in views
+              if entry["id"] in stem_of_view}
+    # KEPT, not discarded: this is the list of pictures that were really
+    # written, and both things built out of it below -- the preview map and the
+    # file list -- are only true because it is a fact and not a plan.
+    written = render_previews(out_dir, stems, preview_mode, parts=parts,
+                              colors=catalogue_colors(catalogue), scenes=scenes)
+    overview = overview_meshes(plate is not None)
+    previews = preview_files(written)
+    # The two lines above cost nothing, so this is the drawing. It is the last
+    # phase: everything after it is writing two small JSON documents, and the
+    # total below covers that.
+    _phase("previews", phase)
+
     for entry in views:
         stem = stem_of_view.get(entry["id"])
         if stem is None:

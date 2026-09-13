@@ -370,7 +370,7 @@ def export_print_plate(prepared, out_dir):
     return bodies, bbox
 
 
-def render_previews(out_dir, stems, mode, parts=None):
+def render_previews(out_dir, stems, mode, parts=None, colors=None, scenes=None):
     """One PNG per stem, rendered from the STL already written next to it.
 
     `mode` is "iso" (one isometric) or "multi" (the six-view sheet). A build
@@ -385,11 +385,24 @@ def render_previews(out_dir, stems, mode, parts=None):
     one about an assembly -- and the picture cannot work out which it is
     looking at, because touching parts weld into one body on load.
 
+    `colors` maps a stem to the hex colour it is DRAWN IN -- the part's own
+    catalogue colour, so the picture of a part and that part inside the assembly
+    are the same colour and a reader can pair them by eye.
+
+    `scenes` maps a stem to the name, in this same directory, of a tessellated
+    VIEW DOCUMENT to draw instead of the STL. That document is what the browser
+    loads, and it carries a colour, an alpha and a placement per part where the
+    mesh carries none of the three -- so `assembled_preview.png` shows what the
+    viewer shows rather than one blue blob. The STL is still read for the
+    footer, which describes the file somebody downloads. A stem whose named
+    scene is MISSING is a BuildError, for the reason a missing STL is: the
+    picture that would be written instead is not the picture that was asked for.
+
     A missing rendering stack is a warning, not a failure -- the geometry and
-    the gate are what a build is for, and a python without matplotlib should
-    still be able to publish one. A renderer that is there and then falls over
-    is a real failure: silently shipping a build without the pictures it says
-    it makes is how you end up looking at yesterday's.
+    the gate are what a build is for, and a python without the drawing stack
+    should still be able to publish one. A renderer that is there and then falls
+    over is a real failure: silently shipping a build without the pictures it
+    says it makes is how you end up looking at yesterday's.
     """
     # Imported here and not at the top of the module: `render` pulls in
     # matplotlib, numpy, trimesh and Pillow, and a python that has none of them
@@ -406,11 +419,18 @@ def render_previews(out_dir, stems, mode, parts=None):
         stl = out_dir / f"{stem}.stl"
         if not stl.is_file():
             raise BuildError(f"cannot render {stem}: {stl.name} is missing")
+        scene = (scenes or {}).get(stem)
+        if scene is not None:
+            scene = out_dir / scene
+            if not scene.is_file():
+                raise BuildError(f"cannot render {stem}: {scene.name} is missing")
         png = out_dir / f"{stem}{PREVIEW_SUFFIX}"
         started = time.monotonic()
         try:
             render_preview.render(str(stl), str(png), views=mode, title=stem,
-                                  parts=(parts or {}).get(stem))
+                                  parts=(parts or {}).get(stem),
+                                  color=(colors or {}).get(stem),
+                                  scene=None if scene is None else str(scene))
         except Exception as exc:
             raise BuildError(
                 f"rendering {png.name} from {stl.name} failed "
