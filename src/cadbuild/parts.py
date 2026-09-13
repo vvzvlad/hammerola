@@ -147,13 +147,27 @@ def _check_key(key):
 
 
 def _check_color(color, where):
-    """An explicit colour from the catalogue, checked before anything is built.
+    """An explicit colour from the catalogue, canonicalised to `#rrggbb`.
 
     Checked with the tessellator's own parser, imported at the point of use
     rather than at the top of the file: most catalogues name no colour at all,
     so most builds never pay for the import. A bad colour is otherwise found by
     export_views, after every part has been exported and meshed -- minutes
     spent on an answer visible now.
+
+    WHAT COMES BACK IS THE PARSER'S SPELLING AND NOT THE AUTHOR'S, and that is
+    what makes every consumer of a catalogue colour read ONE spelling. The
+    parser takes `"red"`, `"#f00"` and `"steelblue"` as happily as six hex
+    digits, and the tessellator is happy with all of them -- but the rasteriser
+    that draws the pictures (`preview_png._hex_rgb`) reads exactly six hex
+    digits, so a part the catalogue accepted as `"red"` used to pass every gate
+    and then kill the build inside the PNG of itself. Canonicalising here, in
+    the validator, is what leaves one spelling downstream of it.
+
+    AN 8-DIGIT `#rrggbbaa` LOSES ITS ALPHA HERE, and that costs nothing:
+    transparency travels separately, as the `alpha` of the reference that
+    places the part, and `views.export_views` hands the tessellator `alphas=`
+    explicitly rather than letting it read one off a colour.
     """
     color = str(color).strip()
     if not color:
@@ -164,10 +178,10 @@ def _check_color(color, where):
         )
     from ocp_tessellate.utils import Color
     try:
-        Color(color)
+        parsed = Color(color)
     except Exception as exc:
         raise BuildError(f"{where}: color {color!r} is not one ({exc})") from exc
-    return color
+    return parsed.web_color
 
 
 def _check_note(note, where):
