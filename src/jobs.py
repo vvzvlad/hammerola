@@ -14,6 +14,9 @@ JOB.
                 record in job.json and the build log beside it in log.txt
     BuildTask   what the request hands over: a job id, an unpacked tree and the
                 pushed body it came out of
+    CompareTask the other kind of work on the same pool: two PUBLISHED revisions
+                to measure against each other, owning nothing and publishing
+                nothing — its product is the log
     BuildQueue  the pool: a bounded queue and N worker threads that run the
                 build and then publish its output
 
@@ -132,6 +135,7 @@ from src.buildproc import (
     STATUS_TIMEOUT,
     Limits,
     run_build,
+    run_compare,
 )
 from src.safeio import read_regular_bytes
 from src.store import (DEV_LINK, JSON_TMP_PREFIX,
@@ -442,6 +446,29 @@ class BuildTask:
     message: str | None = None
 
 
+@dataclass(frozen=True)
+class CompareTask:
+    """One comparison of two PUBLISHED revisions, handed to a worker.
+
+    Nothing here is owned the way a `BuildTask`'s tree is: both revisions are in
+    the store, they are served over HTTP while this runs, and this task removes
+    nothing when it ends. It exists for the same reason the build task does —
+    the kernel may not be imported in the hub's own process, so the work goes to
+    a child and a worker waits for it.
+
+    `old` and `new` are revision ids the request already validated, and they are
+    what the child is pointed at. The JOB carries only `new`: `jobs.create` takes
+    one commit, and the newer revision is the one a person means when they ask
+    which build a job was about. Both of them are in the log's first line, which
+    is the report itself.
+    """
+
+    job_id: str
+    pid: str
+    old: str
+    new: str
+
+
 def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
                     baseline: Path | None):
     """The call the worker makes into `run_build`, written down ONCE.
@@ -463,6 +490,22 @@ def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
     """
     return (sources, staging), {"pid": pid, "force": force,
                                 "baseline": baseline}
+
+
+def compare_arguments(old_dir: Path, new_dir: Path, pid: str):
+    """The call the worker makes into `run_compare`, written down ONCE.
+
+    The same seam as `build_arguments` and for the same reason: every test
+    substitutes the runner, because a real comparison needs the CAD kernel, so
+    the only thing between a parameter renamed in `src.buildproc.run_compare`
+    and a hub that fails on the first real request is a test binding this
+    expression against that function's signature.
+
+    Both directories are PATHS IN THE STORE, and no copy is taken of them: the
+    child only reads, and what it reads is a published revision — immutable by
+    construction, unlike the `dev` slot `build_arguments` has to copy.
+    """
+    return (old_dir, new_dir), {"pid": pid}
 
 
 class JobStore:
@@ -1040,6 +1083,7 @@ class BuildQueue:
     # SMALLER pool: a one-worker pool with a queue of one is what makes a full
     # queue observable. Made real numbers, they belong in `Settings`.
     def __init__(self, store, jobs: JobStore, *, build_runner=None,
+                 compare_runner=None,
                  workers=MAX_CONCURRENT_BUILDS, queue_size=MAX_QUEUED_JOBS):
         self._store = store
         self._jobs = jobs
@@ -1047,6 +1091,11 @@ class BuildQueue:
         # the whole pipeline without CadQuery, a subprocess or a real model —
         # none of which this class is about.
         self._run_build = run_build if build_runner is None else build_runner
+        # The same seam for the other kind of task. Separate from the builder
+        # rather than one runner told which job it is doing: a test that
+        # substitutes both is what shows a comparison did not go to the builder.
+        self._run_compare = (run_compare if compare_runner is None
+                             else compare_runner)
         self._queue: queue.Queue = queue.Queue(maxsize=queue_size)
         self._worker_count = max(1, int(workers))
         self._workers: list[threading.Thread] = []
@@ -1066,7 +1115,7 @@ class BuildQueue:
             thread.start()
             self._workers.append(thread)
 
-    def submit(self, task: BuildTask) -> str:
+    def submit(self, task: BuildTask | CompareTask) -> str:
         """Hand a push to the pool. One of the three SUBMIT_ constants.
 
         CHECKED ON BOTH SIDES of the insertion, because a request thread runs
@@ -1259,11 +1308,14 @@ class BuildQueue:
             with self._dropped_lock:
                 self._dropped.add(task.job_id)
             try:
-                shutil.rmtree(task.sources, ignore_errors=True)
-                # And the body, for the same reason and with no exception to
-                # make: this task is never going to publish, so it is never
-                # going to be the code of a revision.
-                _discard(task.archive)
+                # A comparison owns no tree and no body: both revisions are in
+                # the store and stay there. Only the job has to be answered.
+                if not isinstance(task, CompareTask):
+                    shutil.rmtree(task.sources, ignore_errors=True)
+                    # And the body, for the same reason and with no exception to
+                    # make: this task is never going to publish, so it is never
+                    # going to be the code of a revision.
+                    _discard(task.archive)
                 self._jobs.finish(task.job_id, state=STATE_FAILED,
                                   code=RESTART_CODE, error=STOPPED_ERROR)
             finally:
@@ -1279,7 +1331,13 @@ class BuildQueue:
             except queue.Empty:
                 continue
             try:
-                self._build_and_publish(task)
+                # ON THE TYPE OF THE TASK, because the two are different work
+                # with different endings: one publishes a tree and owns it, the
+                # other reads two published ones and owns nothing.
+                if isinstance(task, CompareTask):
+                    self._compare_and_record(task)
+                else:
+                    self._build_and_publish(task)
             except Exception:
                 # Nothing below is supposed to raise — it all ends in a job
                 # record — but a worker that dies takes a build slot with it
@@ -1437,6 +1495,74 @@ class BuildQueue:
             # it is not: the build is done and may well be published.
             logger.exception(
                 f"job {task.job_id}: could not record how the build ended")
+
+    def _compare_and_record(self, task: CompareTask) -> None:
+        """Compare two published revisions and record what came back.
+
+        The sibling of `_build_and_publish`, and shorter by everything that
+        method is careful about: nothing is unpacked, nothing is published,
+        nothing is removed at the end. THE LOG IS THE WHOLE PRODUCT — the child
+        prints its report to stdout, the runner captures it, and this files it
+        under the job so `hammerola diff --material` can read it back.
+
+        THE FIRST LINE IS WRITTEN HERE and not by the child, because it has to
+        be there whatever the child did: the job record carries only the NEWER
+        revision (`jobs.create` takes one commit), so a log that did not name
+        both would leave nothing anywhere saying what this job compared — and a
+        comparison that crashed before printing a word is exactly when somebody
+        needs to know.
+        """
+        outcome = None
+        verdict = None
+        try:
+            self._jobs.start(task.job_id)
+            # Composed the way every other reader of the store composes them:
+            # `<projects>/<pid>/<revision>`. Both were validated by the request
+            # and both exist — it checked that too — and neither can change
+            # under this call, a published revision being immutable.
+            args, keywords = compare_arguments(
+                self._store.projects_dir / task.pid / task.old,
+                self._store.projects_dir / task.pid / task.new,
+                task.pid)
+            outcome = self._run_compare(*args, **keywords)
+            if outcome.ok:
+                verdict = {"state": STATE_DONE, "code": 200}
+            else:
+                # 500 FOR EVERY WAY THIS ENDS BADLY, unlike the build path. Both
+                # inputs are revisions this hub built and published itself, so
+                # there is no push to blame: a comparison that crashed, hung or
+                # ran out of its ceilings is the hub's own problem, and saying
+                # 422 would send somebody looking for a mistake in their model.
+                logger.warning(
+                    f"compare {task.pid} {task.old} -> {task.new} "
+                    f"({task.job_id}) {outcome.status}")
+                verdict = {
+                    "state": STATE_FAILED, "code": 500,
+                    "error": f"the comparison did not finish ({outcome.status})"}
+        except Exception:
+            logger.exception(
+                f"compare {task.pid} {task.old} -> {task.new} failed")
+            verdict = {"state": STATE_FAILED, "code": 500,
+                       "error": "internal error"}
+
+        log = f"comparing {task.pid}: {task.old} -> {task.new}\n"
+        if outcome is not None:
+            log += outcome.log
+        try:
+            self._jobs.finish(
+                task.job_id,
+                status=None if outcome is None else outcome.status,
+                log=log,
+                log_truncated=False if outcome is None else outcome.log_truncated,
+                duration_seconds=(None if outcome is None
+                                  else outcome.duration_seconds),
+                **verdict)
+        except Exception:
+            # The same last line as the build path has, and it is here for the
+            # same reason: a job that never reaches a terminal state is a status
+            # somebody polls for ever.
+            logger.exception(
+                f"job {task.job_id}: could not record how the comparison ended")
 
     def _keep_the_code(self, task: BuildTask, outcome) -> None:
         """Keep the pushed body and the log as the code of a published revision.

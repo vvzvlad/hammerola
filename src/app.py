@@ -28,6 +28,10 @@ Routing (SPEC 3, 7.4):
     POST /api/v1/publish/<pid>/<commit>       same, under a name the caller
                                               chose
     POST /api/v1/publish/<pid>/dev            same, into the local slot
+    POST /api/v1/compare/<pid>/<old>/<new>    measure two revisions
+                                              against each other, 202 +
+                                              a job whose LOG is the
+                                              report                   EDIT_TOKEN
     GET  /api/v1/jobs/<id>                    how that build is going  EDIT_TOKEN
     GET  /api/v1/jobs/<id>/log                what the build printed   EDIT_TOKEN
 
@@ -135,7 +139,8 @@ from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
 from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
                       QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
                       STATE_FAILED, STOPPED_ERROR, SUBMIT_ACCEPTED,
-                      SUBMIT_QUEUE_FULL, BuildQueue, BuildTask, JobStore)
+                      SUBMIT_QUEUE_FULL, BuildQueue, BuildTask, CompareTask,
+                      JobStore)
 from src.multipart import MultipartError, parse_multipart
 from src.safeio import nonblocking, read_regular_bytes, resolve_settled
 from src.store import DEV_LINK, POINTER_NAMES, PublishError, Store
@@ -1139,6 +1144,9 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     return self._handle_rename(segments[3])
                 return self._error(404, "not found", {"Connection": "close"})
 
+            if segments[:3] == ["api", "v1", "compare"]:
+                return self._handle_compare(segments[3:])
+
             if segments[:3] != ["api", "v1", "publish"] or \
                     len(segments) not in (4, 5):
                 return self._error(404, "not found", {"Connection": "close"})
@@ -1457,6 +1465,89 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
 
             status, payload, extra = reply
             return self._json(status, payload, CACHE_NONE, extra)
+
+        def _handle_compare(self, rest: list[str]):
+            """POST /api/v1/compare/<pid>/<old>/<new> — 202 and a job (issue #10).
+
+            THE GEOMETRY ENGINE IS NOT IN THIS PROCESS and this route is what
+            reaches it: the comparison runs in a child, like a build, because
+            importing the CAD kernel costs ~450 MB resident and the hub is the
+            one process that may not pay that. So the answer is a job to poll,
+            and the job's LOG is the report — there is nothing else to fetch.
+
+            Behind EDIT_TOKEN, and checked BEFORE the segments are looked at,
+            for the reason `_serve_jobs` gives: an unauthenticated caller must
+            not be able to tell "no such project" from "wrong token" and use the
+            difference to find out what this hub holds.
+
+            THREE SEGMENTS AND NO BODY. Which revisions to compare is a question
+            about WHERE, exactly like which project a push lands in, and this
+            service says where in the URL. `latest` and `dev` are not resolved
+            here and are not meant to be: the client resolves a revision before
+            it asks (`hammerola/revdiff.py`), so what arrives is two permanent
+            ids — and a comparison against a slot that is rewritten while it runs
+            would be a report about nothing in particular.
+
+            SO EVERY REPLY HERE CLOSES THE CONNECTION, refusals and 202 alike.
+            This handler never reads a request body, and `protocol_version` is
+            HTTP/1.1: bytes nobody read stay in the socket and are parsed as the
+            start of the next request on it. Our own client sends none, and that
+            is exactly the kind of thing that holds until a `curl -d` or a proxy
+            says otherwise. `publish` avoids this by reading its body; this route
+            has none to read, so it hangs up instead.
+            """
+            if not self._require_token(close=True):
+                return None
+            if len(rest) != 3:
+                return self._error(404, "not found", {"Connection": "close"})
+            pid, old, new = rest
+            # The same helpers every other route validates with, and nothing
+            # else: a second spelling of "what a safe id looks like" is a second
+            # place for the two to drift apart.
+            if not (store.valid_pid(pid) and store.valid_build_id(old)
+                    and store.valid_build_id(new)):
+                return self._error(404, "not found", {"Connection": "close"})
+            for revision in (old, new):
+                if not (store.projects_dir / pid / revision).is_dir():
+                    return self._error(404, "not found", {"Connection": "close"})
+
+            # THE JOB IS NAMED AFTER THE NEWER REVISION, because `jobs.create`
+            # takes one commit and that is the one a person means by "which
+            # build was this about". Both are in the log's first line, which the
+            # worker writes (`jobs._compare_and_record`).
+            record = jobs.create(pid, new)
+            job_id = record["id"]
+            outcome = builds.submit(
+                CompareTask(job_id=job_id, pid=pid, old=old, new=new))
+            if outcome == SUBMIT_QUEUE_FULL:
+                # The job is failed here rather than left `queued`, exactly as
+                # `_queue_build` does it: a job nothing will pick up is a status
+                # endpoint that never changes its answer.
+                jobs.finish(job_id, state=STATE_FAILED, code=503,
+                            error=QUEUE_FULL_ERROR)
+                logger.warning(
+                    f"compare {pid} {old} -> {new} refused: the build queue is "
+                    f"full")
+                return self._json(
+                    503, {"error": QUEUE_FULL_ERROR}, CACHE_NONE,
+                    {"Retry-After": str(QUEUE_FULL_RETRY_AFTER_SECONDS),
+                     "Connection": "close"})
+            if outcome != SUBMIT_ACCEPTED:
+                # The hub is stopping, and the JOB has already been answered by
+                # the drain or by `submit` itself — so nothing is written over
+                # it here.
+                logger.warning(
+                    f"compare {pid} {old} -> {new} refused: the hub is stopping")
+                return self._json(503, {"error": STOPPED_ERROR}, CACHE_NONE,
+                                  {"Connection": "close"})
+
+            status_url = f"/api/v1/jobs/{job_id}"
+            logger.info(f"compare {pid} {old} -> {new}: queued as job {job_id}")
+            return self._json(
+                202,
+                {"job": job_id, "status_url": status_url,
+                 "log_url": f"{status_url}/log"},
+                CACHE_NONE, {"Location": status_url, "Connection": "close"})
 
         def _fail_handover(self, job_id, handed_over: bool) -> None:
             """Answer a job the handover threw underneath. Never raises.
@@ -1980,7 +2071,8 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
     return HubHandler
 
 
-def create_server(settings, *, build_runner=None, build_workers=None,
+def create_server(settings, *, build_runner=None, compare_runner=None,
+                  build_workers=None,
                   build_queue_size=None) -> ThreadingHTTPServer:
     """Bind the listening socket and return the server, not yet serving.
 
@@ -1994,6 +2086,11 @@ def create_server(settings, *, build_runner=None, build_workers=None,
     subprocess or a real model — none of which the pipeline is about. Same for
     the two sizes: they have module defaults in `src.jobs` and are here so a test
     can stand up a one-worker pool with a queue of one and observe a full one.
+
+    `compare_runner` is the same seam for the other kind of task
+    (`src.buildproc.run_compare`), and it is separate from `build_runner` for
+    the reason `BuildQueue` gives: a test that substitutes both is what shows a
+    comparison went to the comparer and not to the builder.
     """
     store = Store(
         data_dir=settings.data_dir,
@@ -2017,7 +2114,8 @@ def create_server(settings, *, build_runner=None, build_workers=None,
         extra["workers"] = build_workers
     if build_queue_size is not None:
         extra["queue_size"] = build_queue_size
-    builds = BuildQueue(store, job_store, build_runner=build_runner, **extra)
+    builds = BuildQueue(store, job_store, build_runner=build_runner,
+                        compare_runner=compare_runner, **extra)
     handler = make_handler(store, comment_store, settings, job_store, builds)
 
     class Server(ThreadingHTTPServer):
