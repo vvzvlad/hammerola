@@ -8,11 +8,16 @@
   3): take a model's source, compute the geometry, gate it, export the
   artefacts and the viewer payload. Kept as a subpackage rather than spread
   through `src/` because it is a different job from serving: nothing in it
-  touches HTTP, the data volume or a credential. Two things import it, and both
-  are deliberate: `src/buildproc/child.py` does it INSIDE the build process
-  (step 4), and the root `checklib.py` shim re-exports one module of it under
-  the name every model.py imports (see the next entry). Nothing on the serving
-  side imports it, and step 6 did not change that: the gate now runs on the
+  touches HTTP, the data volume or a credential. Three things import it, and
+  all three are deliberate: `src/buildproc/child.py` does it INSIDE the build
+  process (step 4), `src/buildproc/comparechild.py` does it inside the
+  COMPARISON process for the same reason (step 8, issue #10 — the OCCT boolean
+  that measures a revision diff costs ~270 MB resident, measured, so it goes
+  where the build already goes; that is OCP alone, less than the build's ~450 MB
+  because nothing on the comparison path imports cadquery itself), and the root
+  `checklib.py` shim re-exports one module of
+  it under the name every model.py imports (see the next entry). Nothing on the
+  serving side imports it, and step 6 did not change that: the gate now runs on the
   receiving side, but it runs INSIDE the build process, so `src/render.py` still
   transcribes `cadbuild.parts.KINDS` as `PART_KINDS` rather than importing it and
   `tests/cadbuild/test_naming.py` is what holds the two equal
