@@ -626,6 +626,30 @@ class Hub:
                                  message=message)
         return status, self._payload(status, raw)
 
+    def compare(self, pid: str, old: str, new: str) -> dict:
+        """Ask the hub to measure two revisions against each other. -> payload.
+
+        THE ANSWER IS A JOB AND NOT A REPORT, for the same reason a push is one:
+        the geometry runs in a process with the CAD kernel in it, which is
+        minutes rather than milliseconds, so what comes back is an id to wait on
+        and the report is that job's LOG.
+
+        BOTH IDS ARE ALREADY RESOLVED by the caller (`revdiff.run` resolves
+        `latest` before anything is sent), so what goes on the wire is two
+        permanent revision ids — never a slot that could be rewritten while the
+        comparison is running.
+        """
+        path = (f"/api/v1/compare/{urllib.parse.quote(pid)}"
+                f"/{urllib.parse.quote(old)}/{urllib.parse.quote(new)}")
+        status, raw = self._call(path, method="POST")
+        if status == 401:
+            raise HubError(UNAUTHORIZED, status)
+        if status != 202:
+            raise HubError(
+                f"the hub answered HTTP {status} when asked to compare {old} "
+                f"with {new}: {quoted(raw)}", status)
+        return self._payload(status, raw)
+
     # BOTH OF THESE NAME A 401 THE WAY EVERY OTHER PRIVATE READ IN THIS FILE
     # DOES. They were the exception while their only caller was `build`, which
     # reaches them a moment after a push the same token was accepted for — a 401
