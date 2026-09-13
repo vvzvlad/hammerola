@@ -266,6 +266,51 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+def run_compare(old_dir, new_dir, *, pid, limits=DEFAULT_LIMITS):
+    """Compare two published revisions in a process of its own.
+
+    The sibling of `run_build` and much smaller, because everything that makes
+    the build path careful is missing from this one: nothing is written, so
+    there is no output directory to guard and no result file to check, and the
+    two directories being read were written by this hub's own builds.
+
+    THE CHILD'S LOG IS THE WHOLE ANSWER -- the report it prints is what a person
+    reads back through the job log, so this returns the `BuildOutcome` the build
+    path returns with `files` empty: the same shape the job machinery already
+    knows how to finish a job from.
+
+    The kernel is what makes this a separate process at all: importing it costs
+    ~450 MB resident, and the hub is the process that must not pay that.
+    """
+    old_dir = Path(old_dir).resolve()
+    new_dir = Path(new_dir).resolve()
+
+    # HOME and TMPDIR point in here for the reason the build path gives: the
+    # kernel and matplotlib write caches, and they may not land in the real home
+    # of the `app` account. 0700, and gone when the comparison is over.
+    scratch = Path(tempfile.mkdtemp(prefix="hammerola-compare-"))
+    try:
+        home = scratch / "home"
+        tmp = scratch / "tmp"
+        for directory in (home, tmp):
+            directory.mkdir(mode=0o700)
+
+        target = [
+            sys.executable, "-s", "-m", "src.buildproc.comparechild",
+            "--old-dir", str(old_dir),
+            "--new-dir", str(new_dir),
+            "--occt-threads", str(limits.occt_threads),
+        ]
+        process = run_isolated(
+            target, limits=limits,
+            env=child_environment(home=home, tmp=tmp,
+                                  threads=limits.occt_threads),
+            guard=None)
+        return _compare_outcome(process, pid=pid)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def run_isolated(target_argv, *, limits, env, cwd=None, guard=None):
     """Run `target_argv` behind the wrapper, under `limits`, and capture it.
 
@@ -514,6 +559,49 @@ def _read_outcome(process, result_path, *, out_dir, pid, limits):
         pid=pid,
         files=files,
         log=log,
+        log_truncated=process.log_truncated,
+        exit_code=process.exit_code,
+        signal=process.signal,
+        duration_seconds=process.duration_seconds,
+    )
+
+
+def _compare_outcome(process, *, pid):
+    """Read a `ProcessResult` as a comparison.
+
+    The exit code IS the verdict here, which it deliberately is not on the build
+    path: nothing is published from this run, so there is no claim to check and
+    no forgery to be worried about -- a comparison that ended cleanly printed its
+    report, and one that did not says why in the log.
+
+    NO `EXIT_HANG_DUMP` BRANCH, and its absence is the point. `run_compare`
+    passes no `--hang-dump-seconds` and `comparechild` arms no watchdog, so
+    nothing on this path exits 1 on purpose; 1 here is the interpreter's own
+    (the module would not import, `runpy` threw), which is a crash and is
+    reported as one. Reading it as a hang would put back exactly the defect
+    `child.py` records at length -- "THE HUB'S OWN BUG WAS THAT 1 MEANT TWO
+    THINGS" -- with the pusher told a stack is in the log and no stack in it.
+    A comparison that genuinely wedges in the kernel is still caught, by the
+    wall deadline above: `timeout`, killed with its process group.
+    """
+    status = STATUS_CRASHED
+    if process.timed_out:
+        status = STATUS_TIMEOUT
+    elif process.signal is not None:
+        xcpu = getattr(signal, "SIGXCPU", None)
+        status = (STATUS_CPU_EXHAUSTED
+                  if xcpu is not None and process.signal == int(xcpu)
+                  else STATUS_KILLED)
+    elif process.exit_code == EXIT_OK:
+        status = STATUS_OK
+    elif process.exit_code in WRAPPER_EXIT_CODES or process.exit_code == EXIT_UNCAPPED:
+        status = STATUS_LIMITS_ERROR
+
+    return BuildOutcome(
+        status=status,
+        pid=pid,
+        files=(),
+        log=process.log,
         log_truncated=process.log_truncated,
         exit_code=process.exit_code,
         signal=process.signal,
