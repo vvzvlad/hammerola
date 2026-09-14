@@ -598,7 +598,10 @@ describe('the state chips', () => {
 // -- the front page ------------------------------------------------------------
 
 describe('the project list on a narrow window', () => {
-  const PAGE_STUB = { hover: () => ({}), cardStyle: () => '' }
+  // `remover` answers nothing, which is what it answers for a reader holding no
+  // token: this describes how a card behaves on a narrow window, and the delete
+  // control adds no width of its own to the track being measured.
+  const PAGE_STUB = { hover: () => ({}), cardStyle: () => '', remover: () => null }
   const CARD = {
     pid: '0a1b2c3d4e5f', title: 'Bracket', slug: 'bracket', meta: '2 parts',
     built: '2026-08-27T18:20:00Z', first: '2026-01-01T00:00:00Z', preview: null,

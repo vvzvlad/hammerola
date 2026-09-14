@@ -3,10 +3,11 @@
 // Kept out of the components because none of it is React and all of it is the
 // hub's contract. The URL scheme is the whole of the addressing (src/app.py):
 //
-//     /index.json                       what is on this hub -- EDIT_TOKEN, the
-//                                       only one of the routes LISTED HERE that
-//                                       is guarded (the comment, job and source
-//                                       APIs are guarded too and are not here)
+//     /index.json                       what is on this hub -- EDIT_TOKEN. The
+//                                       guarded routes in this list are marked
+//                                       with the secret's name, as this one is;
+//                                       the comment, job and source APIs are
+//                                       guarded too and are simply not listed
 //     /start                            where to get the skill and the client,
 //                                       and whether anything is published here
 //                                       yet -- PUBLIC. `meta.json` and
@@ -26,8 +27,12 @@
 //                                       section further down. The PAGE at that
 //                                       address is the page of build <a>, which
 //                                       is what `pageFrom` below reads off it
+//     /api/v1/projects/<pid>            DELETE: the project and everything under
+//                                       it -- EDIT_TOKEN. The one address here
+//                                       that UNMAKES something, and the only
+//                                       write either page makes to a project
 //
-// The last of those is NOT fetched here, and that is deliberate: the viewport
+// A comparison's SCENE is NOT fetched here, and that is deliberate: the viewport
 // fetches it to render it and hands the tree back on `hmr:model`. Fetching it on
 // this side as well would double two megabytes per view switch to re-derive
 // something the other half already holds.
@@ -589,6 +594,41 @@ export async function loadJob(id, token) {
   const response = await guarded(url, { headers: bearer(token) });
   if (!response.ok) throw new Error(`${url} -> HTTP ${response.status}`);
   return response.json();
+}
+
+// -- removing a project ------------------------------------------------------
+//
+// The one request in this bundle that takes something away, and it takes the
+// project WHOLE: every build, both pointers, the comment queue, the stored code
+// of each revision and the comparison cache under it (`_handle_delete` in
+// src/app.py). There is no route that removes a single build and there is not
+// going to be one — a build's URL is permanent, so removing one would turn a
+// promise into a 404 while leaving the project standing.
+//
+// AND NOTHING BRINGS IT BACK. The hub keeps no copy, there is no retention
+// (SPEC 5.3) and no undo anywhere on this service, which is why the page that
+// calls this makes the reader type the id rather than press Yes.
+
+/**
+ * `DELETE /api/v1/projects/<pid>`, with the secret the rest of this file sends.
+ *
+ * IT RESOLVES WITH NOTHING, and that is a decision rather than laziness: the hub
+ * answers what it removed, and reading that body would mean a proxy's HTML in
+ * front of a successful 200 arriving at the reader as a failed deletion —
+ * reported over a project that IS gone, which is the one wrong answer this call
+ * can give. Nothing on the page has a number to show; the card leaving the list
+ * is the whole of the report.
+ *
+ * The failures are divided the way every guarded call here divides them: an
+ * `Unauthorized` for a token the hub refused, so a rotated secret is not
+ * reported as a hub that broke, and the hub's OWN sentence for anything else
+ * (`refusal`) — a 404 is worth reading here, since it means somebody else had
+ * already removed this project.
+ */
+export async function deleteProject(pid, token) {
+  const url = `/api/v1/projects/${encodeURIComponent(pid)}`;
+  const response = await guarded(url, { method: 'DELETE', headers: bearer(token) });
+  if (!response.ok) throw new Error(await refusal(url, response));
 }
 
 /**

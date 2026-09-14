@@ -84,7 +84,8 @@
 import React from 'react';
 
 import {
-  hubOrigin, loadIndex, loadStart, projectCard, projectUrl, stamp, Unauthorized,
+  deleteProject, hubOrigin, loadIndex, loadStart, projectCard, projectUrl,
+  stamp, Unauthorized,
 } from './hub.js';
 import {
   PROJECT_SORTS, PROJECT_VIEWS, clearToken, readProjectSort, readProjectView,
@@ -894,7 +895,8 @@ export const VIEW_ICONS = Object.freeze({
   list: 'M1 1.5h11v2H1zM1 5.5h11v2H1zM1 9.5h11v2H1z',
 });
 
-/** How each view draws the rows. `page` is the component: hover and card style. */
+/** How each view draws the rows. `page` is the component: hover, card style, and
+ *  the delete control — the one thing on a card that is not part of its link. */
 export const VIEW_BODIES = Object.freeze({
   grid: (page, rows) => (
     // `min(320px,100%)` RATHER THAN `320px`, and the difference is the whole of
@@ -929,6 +931,8 @@ export const VIEW_BODIES = Object.freeze({
             </div>
             <div style={css('display:flex;align-items:center;gap:8px')}>
               <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint)`)}>first built {monthYear(p.first)}</span>
+              <span style={css('flex:1')} />
+              {page.remover(p.pid)}
             </div>
           </div>
         </a>
@@ -959,11 +963,27 @@ export const VIEW_BODIES = Object.freeze({
           </div>
           <div title={stamp(p.built)} style={css(`width:110px;flex:none;font:400 11px ${MONO};color:var(--text-muted)`)}>{relTime(p.built)}</div>
           <div style={css(`width:150px;flex:none;font:400 10.5px ${MONO};color:var(--text-faint)`)}>first built {monthYear(p.first)}</div>
+          {page.remover(p.pid)}
         </a>
       ))}
     </div>
   ),
 });
+
+/**
+ * What the delete control says to a pointer resting on it.
+ *
+ * A TOOLTIP AND NOT A LABEL, because the control is a 13px glyph in the corner
+ * of a card: the word "Delete" beside every project would be the loudest thing
+ * on a page whose job is to show what is on the hub. The act itself is spelled
+ * out in as many words the moment it is pressed (`drawConfirm`), which is where
+ * a reader who could not guess the glyph finds out what they raised.
+ *
+ * EXPORTED for the reason the tables above are: it is how `entry.test.js` finds
+ * the control in a tree, and a copy of the string over there would let that file
+ * agree with itself about a control it never drew.
+ */
+export const REMOVE_TITLE = 'Delete this project';
 
 export class HammerolaProjects extends React.Component {
   static defaultProps = {
@@ -976,10 +996,16 @@ export class HammerolaProjects extends React.Component {
     // READ HERE: it is the door's condition, and this page draws its block
     // wherever the paths arrived, a hub with forty projects included.
     start: null,
-    // The token this browser got in with, which the footer's block prints. It
-    // is never read for anything else here: what opens the list is the fetch
-    // the page above already made.
+    // The token this browser got in with, which the footer's block prints —
+    // and which is also the whole of whether a card carries a delete control
+    // (`remover`). It is never SENT from here: the request that removes a
+    // project is the page's, above, for the same reason the list's own fetch
+    // is (`onDelete`).
     token: '',
+    // Remove one project, whole. Answers a promise that resolves once the hub
+    // has done it and REJECTS with the sentence to show — see `remove` below.
+    // Null draws no control at all, which is also what an absent token does.
+    onDelete: null,
   };
 
   // Seeded from what this browser remembered, and `null` when it remembered
@@ -993,7 +1019,22 @@ export class HammerolaProjects extends React.Component {
   constructor(props) {
     super(props);
     this.state = {
-      view: readProjectView(), sort: readProjectSort(), hover: null, copied: '',
+      view: readProjectView(),
+      sort: readProjectSort(),
+      hover: null,
+      copied: '',
+      // The four fields of the confirmation, and it is worth saying what each
+      // is for because only the first says whether the box is on screen:
+      // `doomed` is the pid being confirmed, `typed` what has been typed into
+      // it so far, `erasing` that the hub has been asked and has not answered,
+      // and `failed` the sentence it answered with instead. They are cleared
+      // together (`askRemove`, `cancelRemove`) — a stale `failed` under a box
+      // reopened on a different project would be a refusal about a project the
+      // reader is no longer looking at.
+      doomed: null,
+      typed: '',
+      erasing: false,
+      failed: '',
     };
   }
 
@@ -1085,6 +1126,193 @@ export class HammerolaProjects extends React.Component {
             : 'color:var(--text-soft)'))}
       >
         {content}
+      </div>
+    );
+  }
+
+  /* ─── removing a project ───────────────────────────────────────────────
+     Issue #92. The route has been there since issue #26 and only a terminal
+     could reach it (`hammerola rm`); this is the same act with the same
+     confirmation, on the page that already enumerates what there is to remove.
+
+     THE SECRET IS NOT SPENT HERE. `token` says whether to draw the control, and
+     the request is the page's above (`onDelete`) — the same division the list
+     already keeps for the fetch that filled it. */
+
+  /**
+   * The delete control on one card, or nothing at all.
+   *
+   * DRAWN ONLY FOR A READER HOLDING THE TOKEN, which on this page is everyone —
+   * and that is exactly why the condition is written rather than assumed: this
+   * class is exported, its `token` defaults to empty, and a control that offers
+   * to erase a project to somebody who cannot is an error message dressed as a
+   * button. `onDelete` is the other half of the same sentence: with no handler
+   * there is nothing behind the control, so there is no control.
+   *
+   * IT LIVES INSIDE AN `<a>`, which is the whole reason for the two calls on the
+   * event. The card is a real link (see VIEW_BODIES) and a click anywhere in it
+   * navigates; without `preventDefault` the confirmation would be raised on a
+   * page already on its way to the project.
+   */
+  remover(pid) {
+    if (!this.props.token || !this.props.onDelete) return null;
+    return (
+      <span
+        title={REMOVE_TITLE}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.askRemove(pid);
+        }}
+        style={css('display:flex;align-items:center;flex:none;padding:4px;border-radius:5px;'
+          + 'cursor:pointer;color:var(--text-faint)')}
+      >
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+          <path d="M2.8 4.2h10.4M6.4 4.2V2.8h3.2v1.4M4.3 4.2l.6 8.4c.03.5.44.8.9.8h4.4c.46 0 .87-.3.9-.8l.6-8.4" />
+        </svg>
+      </span>
+    );
+  }
+
+  /** Raise the confirmation over one project, with nothing carried into it. */
+  askRemove(pid) {
+    this.setState({ doomed: pid, typed: '', erasing: false, failed: '' });
+  }
+
+  cancelRemove = () => {
+    this.setState({ doomed: null, typed: '', erasing: false, failed: '' });
+  };
+
+  /**
+   * Whether what has been typed is the id of the project being removed.
+   *
+   * THE ID AND NOT A YES, for the reason `hammerola rm` asks for it on a
+   * terminal (`admin.CONFIRM_PROMPT`): this is irreversible, there is no
+   * retention and no undo (SPEC 5.3, 7.3), and a confirmation somebody can
+   * clear without reading is a confirmation that stops the wrong deletion
+   * never. It is also the string the hub is addressed by, and it is on the
+   * screen two lines above the field.
+   *
+   * TRIMMED, and only trimmed — the same `.strip()` the client does. A pasted
+   * id often carries a space or a newline; anything else typed is a different
+   * project, or a different intention.
+   */
+  get confirmed() {
+    const pid = this.state.doomed;
+    return !!pid && this.state.typed.trim() === pid;
+  }
+
+  /**
+   * Ask the page to remove the project, once the id has been typed back.
+   *
+   * THE GUARD IS HERE AND NOT ONLY ON THE BUTTON'S PAINT, because a disabled
+   * look is not a disabled control: this is also what the Enter key in the
+   * field runs, and it is a public method on an exported class.
+   *
+   * A FAILURE LEAVES THE BOX OPEN, holding the sentence the hub answered with
+   * and whatever was typed. Closing it would take the reader back to a list
+   * still showing the project with nothing said about why — and the one thing
+   * worth knowing after a refused deletion is that the project is still there.
+   */
+  remove = () => {
+    if (!this.confirmed || this.state.erasing || !this.props.onDelete) {
+      return Promise.resolve();
+    }
+    this.setState({ erasing: true, failed: '' });
+    return Promise.resolve(this.props.onDelete(this.state.doomed)).then(
+      // The card leaves the list because the PAGE dropped it, not because this
+      // box did: the projects are its state, and a list filtered here as well
+      // would be a second answer to "what is on this hub".
+      () => this.setState({ doomed: null, typed: '', erasing: false, failed: '' }),
+      (error) => this.setState({
+        erasing: false,
+        failed: String((error && error.message) || error),
+      }),
+    );
+  };
+
+  /**
+   * The confirmation, over the whole page rather than inside the card.
+   *
+   * The card is 320px of tiles in one arrangement and a 60px row in the other,
+   * and what has to be read here is three sentences and a field. One box in the
+   * middle of the page is also what makes the act feel like the act: everything
+   * else on this screen is a link.
+   *
+   * IT IS DRAWN FROM THE ROW, and falls back to the id, because a project whose
+   * `title` came back empty is still a project somebody is about to delete.
+   */
+  drawConfirm() {
+    const pid = this.state.doomed;
+    if (!pid) return null;
+    const row = this.props.projects.find((p) => p.pid === pid);
+    const { erasing, failed } = this.state;
+    const armed = this.confirmed && !erasing;
+    return (
+      <div style={css('position:fixed;inset:0;z-index:40;padding:20px;box-sizing:border-box;'
+        + 'display:flex;align-items:center;justify-content:center;background:var(--shadow)')}
+      >
+        <div style={css('width:380px;max-width:100%;box-sizing:border-box;'
+          + 'background:var(--card-bg);border:1px solid var(--line);border-radius:12px;'
+          + 'box-shadow:0 14px 44px var(--shadow);padding:22px 22px 18px;'
+          + 'display:flex;flex-direction:column;gap:10px')}
+        >
+          <div style={css(`font:700 15px ${SANS}`)}>Delete this project</div>
+          <div style={css(`font:400 12px/1.6 ${SANS};color:var(--text-muted)`)}>
+            <span style={css(`font:600 12px ${SANS};color:var(--text)`)}>{(row && row.title) || pid}</span>
+            {' '}goes whole: every build, both pointers, the comment queue and the stored
+            code of each revision. Its links stop resolving, the hub keeps no copy, and
+            nothing undoes this.
+          </div>
+          <div style={css(`font:400 12px/1.6 ${SANS};color:var(--text)`)}>
+            Type <span style={css(`font:600 12px ${MONO};color:var(--accent-text)`)}>{pid}</span> to confirm.
+          </div>
+          {/* The same three fills the sign-in field spends, and the same rule:
+              recessed at rest, the palette's red tint once the hub has refused. */}
+          <input
+            type="text"
+            placeholder="project id"
+            value={this.state.typed}
+            autoComplete="off"
+            spellCheck="false"
+            onChange={(e) => this.setState({ typed: e.target.value })}
+            onKeyDown={(e) => { if (e.key === 'Enter') this.remove(); }}
+            style={css(`width:100%;box-sizing:border-box;height:36px;padding:0 12px;border-radius:6px;font:500 13px ${MONO};color:var(--text);outline:none;`
+              + (failed ? 'border:1px solid var(--danger-line);background:var(--danger-bg)'
+                : 'border:1px solid var(--line);background:var(--sunken-bg)'))}
+          />
+          <div style={css(failed ? `font:400 11px/1.5 ${SANS};color:var(--danger)` : 'display:none')}>
+            {failed}
+          </div>
+          <div style={css('display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:2px')}>
+            <div
+              onClick={this.cancelRemove}
+              style={css('display:flex;align-items:center;height:34px;padding:0 13px;border-radius:6px;'
+                + `cursor:pointer;user-select:none;font:600 12px ${SANS};`
+                + 'border:1px solid var(--line);background:var(--card-bg);color:var(--text)')}
+            >
+              Cancel
+            </div>
+            {/* THE BUTTON IS THE STATE OF THE FIELD, drawn: until the id has
+                been typed back it is an inert neutral, and `remove` refuses on
+                its own account whatever this says. The armed fill is the
+                palette's danger tint rather than a filled red, which this
+                interface has no role for — and the tint is what the error
+                lines on both screens are already drawn on. */}
+            <div
+              onClick={this.remove}
+              style={css('display:flex;align-items:center;height:34px;padding:0 13px;border-radius:6px;'
+                + `user-select:none;font:600 12px ${SANS};`
+                + (armed
+                  ? 'border:1px solid var(--danger-line);background:var(--danger-bg);'
+                    + 'color:var(--danger);cursor:pointer'
+                  : 'border:1px solid var(--line);background:var(--sunken-bg);'
+                    + 'color:var(--text-faint);cursor:default'))}
+            >
+              {erasing ? 'Deleting…' : 'Delete'}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1274,6 +1502,12 @@ export class HammerolaProjects extends React.Component {
           </div>
           {this.drawBrief()}
         </div>
+
+        {/* OVER EVERYTHING AND OUTSIDE THE COLUMN, which is what makes it a
+            confirmation rather than a panel: the box is `position:fixed`, so a
+            list scrolled halfway down still raises it in the middle of the
+            screen, where the reader's eyes already are. */}
+        {this.drawConfirm()}
       </div>
     );
   }
@@ -1466,6 +1700,41 @@ export default class HammerolaEntry extends React.Component {
     return this.open(token);
   }
 
+  /**
+   * Remove one project from the hub, and its card from the list.
+   *
+   * THE REQUEST IS THE PAGE'S, like every other one on this screen: the token
+   * is state here, the list of projects is state here, and the list component
+   * holds the confirmation. It answers a promise so that the box can stay open
+   * on a failure with something to say (`HammerolaProjects.remove`).
+   *
+   * THE SENTENCE IS MADE HERE, not shown raw, and the two branches are the two
+   * the door already draws: a refused token is its own answer — the same words
+   * `open` uses for it — and everything else carries whatever the hub said,
+   * which for this route is worth reading (a 404 is somebody else having
+   * removed it already). What is NOT done here is what `open` does with a 401,
+   * i.e. clear the token and take the page back to the door: this reader has a
+   * list on the screen that the same token fetched a moment ago, and throwing
+   * it away over one refusal would answer a failed deletion by signing them
+   * out. They are told, and the next thing they touch says the same.
+   */
+  remove(pid) {
+    return deleteProject(pid, this.state.token).then(
+      () => {
+        this.setState({
+          projects: (this.state.projects || []).filter((p) => p.pid !== pid),
+        });
+      },
+      (error) => {
+        if (error instanceof Unauthorized) {
+          throw new Error('The hub refused that token.');
+        }
+        console.error('remove', error);
+        throw new Error(`The hub did not remove it: ${String((error && error.message) || error)}`);
+      },
+    );
+  }
+
   signOut() {
     clearToken();
     this.setState({ token: null, projects: null, refused: '' });
@@ -1496,6 +1765,7 @@ export default class HammerolaEntry extends React.Component {
         projects={s.projects}
         start={s.start}
         token={s.token}
+        onDelete={(pid) => this.remove(pid)}
         onSignOut={() => this.signOut()}
       />
     );
