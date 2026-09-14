@@ -230,9 +230,9 @@ test: install ## Run both test suites: pytest always, the JS suite when npm is p
 	$(PYTEST)
 	@$(RUN_JS_TESTS)
 
-# --- The five tests CI cannot run ---------------------------------------------
+# --- The six tests CI cannot run ----------------------------------------------
 # `libgl1` is deliberately NOT in the CI test container (issue #27, decided
-# 2026-08-31): it would buy five tests, three of which compute real geometry, at
+# 2026-08-31): it would buy six tests, four of which compute real geometry, at
 # the price of ~222 MB of OCCT mapped on import and a `--memory` ceiling that
 # would have to be measured again. The cost of that decision is named in the
 # issue and it is real — a change to `src/cadbuild/views.py` or `assembly.py`
@@ -242,7 +242,7 @@ test: install ## Run both test suites: pytest always, the JS suite when npm is p
 # and "we catch it by hand" without one means we do not catch it.
 #
 # THE TARGET FAILS WHEN A TEST SKIPS, which is the whole point: run on a machine
-# with no kernel, all five would skip and pytest would exit 0 — a green run that
+# with no kernel, all six would skip and pytest would exit 0 — a green run that
 # checked nothing, which is the same failure `make test` announces the JS skip
 # for and `ci/smoke.py` counts its own verdicts against. A rotted node id is
 # caught by pytest itself ("ERROR: not found"), loudly, for the same reason.
@@ -251,10 +251,11 @@ CAD_TESTS := \
 	tests/test_view_fixture.py::test_the_exporter_still_produces_the_committed_structure \
 	tests/buildproc/test_build_child.py::test_a_simple_model_builds_and_reports_what_it_wrote \
 	tests/buildproc/test_build_child.py::test_the_occt_pool_is_capped_before_the_model_runs \
-	tests/cadbuild/test_shapediff.py::test_two_real_step_files_measure_the_change_between_them
+	tests/cadbuild/test_shapediff.py::test_two_real_step_files_measure_the_change_between_them \
+	tests/cadbuild/test_comparescene.py::test_a_real_difference_is_drawn_in_the_part_coordinates_and_placed
 
 .PHONY: cad-test
-cad-test: install ## Run the five tests that need the CAD kernel — CI skips them (#27)
+cad-test: install ## Run the six tests that need the CAD kernel — CI skips them (#27)
 	@out=$$($(PYTEST) -q -rs $(CAD_TESTS) 2>&1); status=$$?; \
 	printf '%s\n' "$$out"; \
 	if printf '%s' "$$out" | grep -qi 'skipped'; then \

@@ -15,9 +15,9 @@
 1. **`docs/SPEC.md`, начиная с раздела 8A** — план работ. Врезка в начале файла
    объясняет, что актуально, а что описывает состояние ДО переезда. Разделы 1–7 —
    проверенные эмпирически факты и подводные камни; перепроверять их не надо.
-2. **`docs/bootstrap.md`** — состояние переезда. Восемь шагов из девяти закрыты,
-   открыт ровно один: **шаг 8 «Сравнение ревизий»** (issue #10). Пока чеклист не
-   закрыт, не считай проект готовым, даже если код формально работает.
+2. **`docs/bootstrap.md`** — состояние переезда. Все девять шагов закрыты: шаг 8
+   «Сравнение ревизий» (issue #10) — 2026-09-14. В чеклисте открыт один пункт, и
+   он про сам файл: снести bootstrap-секцию. Это решение человека, не уборка.
 3. **`docs/repo-map.md`** — что где лежит и почему. Прежде чем трогать файл,
    которого не знаешь, найди его там: почти у каждого каталога есть причина быть
    именно таким, и она записана.
@@ -59,11 +59,11 @@ cp .env.example .env   # then fill in the values  (shortcut: make env)
 ## Running tests
 ```bash
 make test              # runs .venv/bin/python -m pytest
-make cad-test          # the five tests that need the CAD kernel
+make cad-test          # the six tests that need the CAD kernel
 ```
 
 CI computes no real geometry: `libgl1` is deliberately not in the test container
-(issue #27), so those five skip there. **Touching `src/cadbuild/` means running
+(issue #27), so those six skip there. **Touching `src/cadbuild/` means running
 `make cad-test` on a machine where the kernel imports** — nothing else notices when
 the payload's shape drifts away from `ui/tests/fixtures/assembled.json`.
 

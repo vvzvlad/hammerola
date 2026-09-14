@@ -498,6 +498,50 @@ describe('load', () => {
     })
   })
 
+  describe('the token a guarded document wants', () => {
+    // One view file on this site is behind EDIT_TOKEN — the scene of a
+    // comparison (issue #10) — and this element is what fetches it, because it
+    // fetches every view file it renders and there is deliberately no second
+    // entrance. So the secret arrives in `hmr:state` like everything else, and
+    // what these two pin is that it is spent on exactly the fetch that wants it.
+    afterEach(() => {
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    })
+
+    const refusing = () => {
+      const fetching = vi.fn(async () => ({ ok: false, status: 500 }))
+      vi.stubGlobal('fetch', fetching)
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      return fetching
+    }
+
+    it('sends the header where the interface put a token in the state', async () => {
+      const fetching = refusing()
+      const vp = element({ views,
+                           view: 'a',
+                           base: '/project/p/aaa/compare/bbb/',
+                           token: 'sekrit' }, null)
+
+      await vp.load()
+
+      expect(fetching).toHaveBeenCalledWith('/project/p/aaa/compare/bbb/a.json',
+                                            { headers: { Authorization: 'Bearer sekrit' } })
+    })
+
+    it('sends none for a build\'s own view file, which is public', async () => {
+      // Sending the secret that publishes with every two-megabyte view fetch
+      // would be this element deciding on its own that a public document is a
+      // guarded one.
+      const fetching = refusing()
+      const vp = element({ views, view: 'a', base: '/project/p/dev/' }, null)
+
+      await vp.load()
+
+      expect(fetching).toHaveBeenCalledWith('/project/p/dev/a.json', undefined)
+    })
+  })
+
   describe('a failure the element remembers', () => {
     it('is not fetched a second time by an ordinary patch', async () => {
       // The storm this closes: the interface sends `hmr:state` on every `set()`

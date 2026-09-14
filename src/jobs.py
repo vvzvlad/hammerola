@@ -461,12 +461,20 @@ class CompareTask:
     one commit, and the newer revision is the one a person means when they ask
     which build a job was about. Both of them are in the log's first line, which
     is the report itself.
+
+    `view` is the one field that changes what this job PRODUCES rather than what
+    it reads: with it the comparison also builds the scene a browser opens and
+    the summary beside it, into the comparison cache. None is the ordinary
+    measurement — that is what `hammerola diff --material` asks for, and its
+    answer is the log — so the artefact is what the URL has to say out loud
+    (`/api/v1/compare/<pid>/<old>/<new>/<view>`), never a default.
     """
 
     job_id: str
     pid: str
     old: str
     new: str
+    view: str | None = None
 
 
 def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
@@ -492,7 +500,8 @@ def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
                                 "baseline": baseline}
 
 
-def compare_arguments(old_dir: Path, new_dir: Path, pid: str):
+def compare_arguments(old_dir: Path, new_dir: Path, pid: str, *,
+                      out_dir: Path | None = None, view: str | None = None):
     """The call the worker makes into `run_compare`, written down ONCE.
 
     The same seam as `build_arguments` and for the same reason: every test
@@ -504,8 +513,13 @@ def compare_arguments(old_dir: Path, new_dir: Path, pid: str):
     Both directories are PATHS IN THE STORE, and no copy is taken of them: the
     child only reads, and what it reads is a published revision — immutable by
     construction, unlike the `dev` slot `build_arguments` has to copy.
+
+    `out_dir` is the STAGING directory of a comparison that was asked for an
+    artefact, and `view` says which view the scene is of; they travel together
+    or not at all, and `run_compare` refuses a call that carries one of them.
+    Both are None for the measurement-only comparison, which writes nothing.
     """
-    return (old_dir, new_dir), {"pid": pid}
+    return (old_dir, new_dir), {"pid": pid, "out_dir": out_dir, "view": view}
 
 
 class JobStore:
@@ -1500,10 +1514,19 @@ class BuildQueue:
         """Compare two published revisions and record what came back.
 
         The sibling of `_build_and_publish`, and shorter by everything that
-        method is careful about: nothing is unpacked, nothing is published,
-        nothing is removed at the end. THE LOG IS THE WHOLE PRODUCT — the child
-        prints its report to stdout, the runner captures it, and this files it
-        under the job so `hammerola diff --material` can read it back.
+        method is careful about: nothing is unpacked and nothing is unmade at
+        the end. THE LOG IS ALWAYS THE PRODUCT — the child prints its report to
+        stdout, the runner captures it, and this files it under the job so
+        `hammerola diff --material` can read it back. The log is the same
+        whichever mode this ran in, deliberately: the artefact is an addition to
+        the report and not a replacement for it.
+
+        A TASK CARRYING A VIEW ALSO PUBLISHES, and the shape is the build path's
+        one step down: a staging directory from the store, the child writing
+        into it, and one rename once the run came back ok. A job that produced
+        no artefact must leave no cache entry at all — a half-written one is a
+        comparison page that loads a scene of nothing — so the staging directory
+        is removed on every path that did not rename it away.
 
         THE FIRST LINE IS WRITTEN HERE and not by the child, because it has to
         be there whatever the child did: the job record carries only the NEWER
@@ -1514,8 +1537,12 @@ class BuildQueue:
         """
         outcome = None
         verdict = None
+        staging = None
         try:
             self._jobs.start(task.job_id)
+            if task.view is not None:
+                staging = self._store.compare_staging(
+                    task.pid, task.old, task.new, task.view)
             # Composed the way every other reader of the store composes them:
             # `<projects>/<pid>/<revision>`. Both were validated by the request
             # and both exist — it checked that too — and neither can change
@@ -1523,9 +1550,15 @@ class BuildQueue:
             args, keywords = compare_arguments(
                 self._store.projects_dir / task.pid / task.old,
                 self._store.projects_dir / task.pid / task.new,
-                task.pid)
+                task.pid, out_dir=staging, view=task.view)
             outcome = self._run_compare(*args, **keywords)
             if outcome.ok:
+                if staging is not None:
+                    self._store.publish_compare(
+                        task.pid, task.old, task.new, task.view, staging)
+                    # Consumed by the rename, so the cleanup below has nothing
+                    # left to remove — and must not go looking for it.
+                    staging = None
                 verdict = {"state": STATE_DONE, "code": 200}
             else:
                 # 500 FOR EVERY WAY THIS ENDS BADLY, unlike the build path. Both
@@ -1544,6 +1577,12 @@ class BuildQueue:
                 f"compare {task.pid} {task.old} -> {task.new} failed")
             verdict = {"state": STATE_FAILED, "code": 500,
                        "error": "internal error"}
+        finally:
+            # Whatever the comparison did NOT publish. None on the two paths
+            # where there is nothing to remove: no artefact was asked for, or
+            # the rename already took the directory.
+            if staging is not None:
+                shutil.rmtree(staging, ignore_errors=True)
 
         log = f"comparing {task.pid}: {task.old} -> {task.new}\n"
         if outcome is not None:

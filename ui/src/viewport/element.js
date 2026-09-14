@@ -68,11 +68,25 @@ const INITIAL_STATE = {
   tool: null,
   pins: [],
   camera: null,
-  // Accepted and not yet acted on: comparing two revisions is SPEC 8A.2 step 8
-  // and needs a hub that can answer for two builds at once. Kept in the shape so
-  // the interface can be written against the finished contract.
+  // WHICH KIND OF SCENE THIS IS, told rather than acted on. Nothing in here
+  // branches on either field and nothing is meant to: comparing two revisions
+  // (ui-brief block 9) reaches this element as an ORDINARY view document with an
+  // ordinary tree, and the three ways of looking at it — both revisions, one
+  // revision, the other — are expressed in `hidden`, which is a list of paths
+  // this element already applies by prefix. The interface owns the translation
+  // because the group ids in it are the hub's contract and not the viewport's.
+  // What these two are for is the reader of a `hmr:state` in a debugger, and the
+  // day something in here does have to know.
   mode: "single",
   diffShow: "both",
+  // The secret a GUARDED document needs, or null for everything that needs
+  // none. A build's view files are public and this stays null on a build page;
+  // a comparison's `scene.json` is behind EDIT_TOKEN (hub.js), and this element
+  // is the only thing that fetches it — it fetches every view file it renders,
+  // deliberately and as the one entrance (`load` below). So the token comes down
+  // the same event the rest of the state does rather than being read here:
+  // `store.js` is the one module on this side allowed to touch localStorage.
+  token: null,
   // "trackpad" | "mouse" | null for "whatever the platform and localStorage say".
   pointingDevice: null,
 };
@@ -400,7 +414,20 @@ export class HmrViewport extends HTMLElement {
       //
       // Before anything is torn down, so a view file that 404s leaves the scene
       // that is on screen exactly where it was.
-      const response = await fetch(base + chosen.file);
+      //
+      // THE HEADER GOES ONLY WHERE THE INTERFACE PUT A TOKEN IN THE STATE, which
+      // on a build page is nowhere: those files are public, and sending the
+      // secret that publishes with every two-megabyte view fetch would be this
+      // element deciding, on its own, that a public document is a guarded one.
+      //
+      // `secret` and not `token`, which is taken: the `token` in this method is
+      // the load-ordering number at the top of it, and two different things
+      // under one name in twenty lines is how the wrong one gets read.
+      const secret = this.state.token;
+      const response = await fetch(base + chosen.file,
+                                   secret
+                                     ? { headers: { Authorization: `Bearer ${secret}` } }
+                                     : undefined);
       if (!response.ok) throw new Error(`${chosen.file} -> HTTP ${response.status}`);
       const shapes = await response.json();
       await this.show(shapes, { live, view: chosen.id, token });

@@ -21,6 +21,11 @@
 //     /project/<pid>/<slot>/meta.json   this build: title, views, part catalogue
 //     /project/<pid>/builds.json        the picker: pointers plus the history
 //     /project/<pid>/<slot>/<view file> the geometry, ~2 MB of it
+//     /project/<pid>/<a>/compare/<b>/   the two documents of one comparison --
+//                                       EDIT_TOKEN, both of them; see the
+//                                       section further down. The PAGE at that
+//                                       address is the page of build <a>, which
+//                                       is what `pageFrom` below reads off it
 //
 // The last of those is NOT fetched here, and that is deliberate: the viewport
 // fetches it to render it and hands the tree back on `hmr:model`. Fetching it on
@@ -53,18 +58,40 @@ export const POINTER_NAMES = ['latest', 'dev'];
  */
 export const ASSEMBLED_VIEW_ID = 'assembled';
 
-/** The three fields, read off one pathname. Pure, and the ONLY place that
+/** The four fields, read off one pathname. Pure, and the ONLY place that
  *  arithmetic is written — `PAGE` below and `rereadPage` after it are two
  *  moments, not two rules, and a second copy of the slicing is how they would
- *  come to disagree about what `/project/x/dev/` means. */
-function pageFrom(pathname) {
+ *  come to disagree about what `/project/x/dev/` means.
+ *
+ *  EXPORTED for the one reader that has to know what an address MEANS without
+ *  moving the page onto it: the `popstate` handler, which decides what to do
+ *  about a history entry before anything has been fetched. It used to slice
+ *  `location.pathname` itself for the slot, which is the second copy this
+ *  paragraph is about — and a copy that could not see a comparison at all. */
+export function pageFrom(pathname) {
   const parts = String(pathname).split('/');
+  // `/project/<pid>/<a>/compare/<b>/` IS THE PAGE OF BUILD `<a>`, COMPARING
+  // AGAINST `<b>`. Everything that is not the scene belongs to `<a>` —
+  // meta.json, builds.json, the picker, the downloads, the comment rail — so
+  // the base is the build's own directory and not the address bar's, which is
+  // the whole of what a shared comparison link needed: read literally, every
+  // relative fetch went to a route that serves two files and 404s on the rest.
+  // The word sits in the FOURTH segment for the reason src/app.py gives —
+  // `compare` is a legal build id, so `/project/<pid>/compare/` has to stay
+  // that build's page, and it is: there `parts[4]` is the trailing '' instead.
+  const comparing = parts[4] === 'compare';
   return {
     pid: parts[2] || '',
     // HOW the page was reached, which is not the same question as which build
     // answered: on `/latest/` the slot is `latest` and meta.commit is a hash.
     slot: parts[3] || '',
-    base: String(pathname).replace(/[^/]*$/, ''),
+    base: comparing ? `${parts.slice(0, 4).join('/')}/`
+                    : String(pathname).replace(/[^/]*$/, ''),
+    // The other end of the pair, and '' on every ordinary page. It is what the
+    // first load reads to boot straight into the comparison (`load`); nothing
+    // else on this page can say a link was a comparison link, because the
+    // address is the only thing that carries it.
+    cmp: comparing ? (parts[5] || '') : '',
   };
 }
 
@@ -365,6 +392,203 @@ export async function loadStart() {
     return null;
   }
   return startHint(manifest);
+}
+
+// -- comparing two revisions -------------------------------------------------
+//
+// Issue #10, ui-brief block 9. A comparison is a pair of documents of its own,
+// computed on request and published under an address of its own:
+//
+//     /project/<pid>/<a>/compare/<b>/scene.json?v=<view>   both revisions and
+//                                                  the difference between them,
+//                                                  in the ordinary shape of a
+//                                                  view file           EDIT_TOKEN
+//     /project/<pid>/<a>/compare/<b>/report.json?v=<view>  what happened to each
+//                                                  part, as numbers    EDIT_TOKEN
+//
+// A COMPARISON IS OF ONE VIEW AND NOT OF A BUILD, which the `?v=` is: the scene
+// is built out of the two revisions' view documents (`cadbuild/comparescene.py`),
+// so a pair has as many comparisons as the views it has in common, and each is
+// cached separately. The query is not optional — the hub cannot name a cache
+// entry without it and answers 404.
+//
+// BOTH ARE BEHIND THE TOKEN while a build's own files are not, and that one
+// difference is what shapes this side. The report is fetched here, with the same
+// header `loadIndex` sends. The SCENE is not fetched here at all: the viewport
+// fetches every view file it renders and this is one (element.js says why that
+// is the only entrance), so the token has to reach the element — it travels in
+// `hmr:state` and nowhere else.
+//
+// NOTHING IS PRECOMPUTED, and that is arithmetic rather than a policy: the pair
+// space is quadratic in the number of revisions and nothing is ever deleted
+// (SPEC 5.3), so a comparison exists only where somebody asked for one. A pair
+// nobody has asked about answers 404, and the answer to that 404 is to queue the
+// job and wait for it — the same queue a build goes through, because the
+// geometry is measured by a child process with the CAD kernel in it.
+
+/** Where one comparison's two documents live. */
+export const compareBase = (pid, a, b) =>
+  `/project/${encodeURIComponent(pid)}/${encodeURIComponent(a)}`
+  + `/compare/${encodeURIComponent(b)}/`;
+
+/**
+ * The scene of a comparison, in the shape `meta.views` carries a build's.
+ *
+ * ONE ENTRY AND NOT A LIST, because a comparison has exactly one thing to show:
+ * the two revisions with the difference between them, for the view being
+ * compared. It is handed to the viewport as a `views` array of one so that the
+ * element's load path is the path a build takes — it fetches `base + file`, and
+ * there is no second entrance to that pipeline.
+ *
+ * THE QUERY RIDES IN `file`, which is what makes that true: the hub wants `?v=`
+ * on both documents, and the element concatenates.
+ *
+ * THE ID CARRIES THE VIEW, and that is what a view tab pressed mid-comparison
+ * costs if it does not. The element tells a LIVE RELOAD (same view, new
+ * geometry — keep the camera and the tree states) from a reload (different view
+ * — fit it afresh) by the `view` field alone, so a scene whose id said plain
+ * `compare` through every tab arrived with only `buildKey` moved: a swap, with
+ * the previous view's camera and states carried onto a different arrangement in
+ * a different place. A view is a different view whether or not a comparison is
+ * up, and this is where the two halves say so.
+ *
+ * IT IS NOT ONE OF `meta.views` EITHER WAY — the prefix is what keeps it from
+ * colliding with a build's own view id, and the page never writes it into
+ * `state.view` (`onModel`).
+ */
+export const compareView = (view) => Object.freeze({
+  id: `compare:${view}`,
+  file: `scene.json?v=${encodeURIComponent(view)}`,
+});
+
+/**
+ * The four groups that scene's tree is made of.
+ *
+ * The payload arrives already coloured — both revisions neutral and translucent,
+ * the two difference groups bright and opaque — so the browser paints nothing.
+ * What it does with these ids is HIDE by them: `applyHidden` matches a hidden
+ * entry against a leaf path by prefix, so one string takes a whole revision off
+ * the screen, which is the whole of the Overlay / A-only / B-only control.
+ */
+export const COMPARE_GROUPS = Object.freeze({
+  a: '/cmp/rev a',
+  b: '/cmp/rev b',
+  removed: '/cmp/removed',
+  added: '/cmp/added',
+});
+
+/**
+ * The three colours the comparison is published in.
+ *
+ * WRITTEN DOWN HERE BECAUSE THE LEGEND HAS TO SPEND THEM. There is no industry
+ * convention for "added" and "removed" — green is added in GitHub and NX, red is
+ * added in CATIA, and in metrology red means extra material — so the brief makes
+ * a legend mandatory and the legend is worthless unless its swatches are the
+ * colours actually on the model. They are the payload's, not the interface's, so
+ * they are NOT palette roles: they do not follow the theme, because the geometry
+ * they name does not follow it either.
+ */
+export const DIFF_COLOURS = Object.freeze({
+  neutral: '#7a8fa6',
+  added: '#2a9d5c',
+  removed: '#d1495b',
+});
+
+// The two job states that end a wait. Spelled as the hub spells them
+// (`src/jobs.py`); the two before them — `queued`, `building` — are not named
+// here because nothing on this side has anything different to do about them.
+export const JOB_DONE = 'done';
+export const JOB_FAILED = 'failed';
+
+/** The header `loadIndex` sends, for the routes that want the same secret. */
+const bearer = (token) => (token ? { Authorization: `Bearer ${token}` } : {});
+
+/**
+ * One request to a guarded route, with a 401 told apart from everything else.
+ *
+ * Same division `loadIndex` makes and for the same reason: "the token is wrong"
+ * and "the hub is unreachable" lead to different sentences on the screen, and
+ * collapsing them tells somebody to fix a token that was fine. The response is
+ * handed back rather than parsed, because two of the three callers below read
+ * the STATUS first — a 404 here is an answer and not a failure.
+ */
+async function guarded(url, init) {
+  const response = await fetch(url, { ...init, cache: 'no-store' });
+  if (response.status === 401) throw new Unauthorized(`${url} -> HTTP 401`);
+  return response;
+}
+
+/**
+ * What a comparison found, or `null` where the hub has not computed one.
+ *
+ * The `null` is the whole reason this does not simply throw on a bad status: a
+ * 404 here is the ordinary state of a pair nobody has asked about yet, and the
+ * caller answers it by queueing the job rather than by telling the reader
+ * anything.
+ */
+export async function loadCompareReport(pid, a, b, view, token) {
+  const url = `${compareBase(pid, a, b)}report.json?v=${encodeURIComponent(view)}`;
+  const response = await guarded(url, { headers: bearer(token) });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`${url} -> HTTP ${response.status}`);
+  return response.json();
+}
+
+/**
+ * The hub's own words for a refusal, where it wrote any.
+ *
+ * EVERY REFUSAL ON THIS SERVICE IS `{"error": "..."}` (`app._error`), and most
+ * of them say nothing a status code does not — `not found` under a 404. But
+ * some are a SENTENCE about something the reader can act on: a view whose name
+ * cannot be a directory segment has published, drawn its tab and cannot be
+ * compared (`app.VIEW_NOT_NAMEABLE_ERROR`), and "HTTP 422" in the panel tells
+ * nobody to rename anything. So the body is read when there is one, and the
+ * status is the fallback rather than the answer.
+ *
+ * NEVER THROWS: this is already the failure path, and a body that is not JSON —
+ * a proxy's HTML, an empty 502 — must not replace the refusal with a parse
+ * error.
+ */
+async function refusal(url, response) {
+  try {
+    const body = await response.json();
+    const said = body && typeof body.error === 'string' ? body.error.trim() : '';
+    if (said) return said;
+  } catch (error) {
+    // Nothing to add: the status below is what this reply amounts to.
+  }
+  return `${url} -> HTTP ${response.status}`;
+}
+
+/**
+ * Queue one comparison. Answers the id of the job that will compute it.
+ *
+ * THE VIEW IS THE FOURTH SEGMENT AND IS WHAT ASKS FOR THE ARTEFACTS. Without it
+ * the hub measures the pair and writes the numbers into the job's log and
+ * nothing onto the volume — which is what the command-line half wants and is
+ * exactly nothing for a browser to open.
+ *
+ * A REFUSAL CARRIES THE HUB'S SENTENCE WHERE IT WROTE ONE (`refusal`), because
+ * this is the request that answers "why can this view not be compared at all" —
+ * and the panel prints whatever this throws.
+ */
+export async function startCompare(pid, a, b, view, token) {
+  const url = `/api/v1/compare/${encodeURIComponent(pid)}/${encodeURIComponent(a)}`
+    + `/${encodeURIComponent(b)}/${encodeURIComponent(view)}`;
+  const response = await guarded(url, { method: 'POST', headers: bearer(token) });
+  if (!response.ok) throw new Error(await refusal(url, response));
+  const body = await response.json();
+  const job = body && typeof body.job === 'string' ? body.job : '';
+  if (!job) throw new Error(`${url} accepted the comparison and named no job`);
+  return job;
+}
+
+/** How one queued job is going: `{state, error, ...}` as the hub records it. */
+export async function loadJob(id, token) {
+  const url = `/api/v1/jobs/${encodeURIComponent(id)}`;
+  const response = await guarded(url, { headers: bearer(token) });
+  if (!response.ok) throw new Error(`${url} -> HTTP ${response.status}`);
+  return response.json();
 }
 
 /**

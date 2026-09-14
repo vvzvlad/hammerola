@@ -27,6 +27,19 @@ because the volume would shadow them.
                                            until its build says whether to store it
     <data>/sources/<digest>/source.tar.gz  that body, kept: the code of one revision
     <data>/sources/<digest>/log.txt        what the build of that revision printed
+    <data>/compare/<pid>/<a>/<b>/<view>/   one computed comparison (issue #10)
+
+`compare/` IS OUTSIDE THE BUILD DIRECTORIES for the two reasons SPEC 8A.3 gives,
+and neither of them is survival: the pair's ends are published revisions and
+nothing deletes those. It is RIGHTS — a build directory is public and this is
+behind EDIT_TOKEN — and it is CACHING: a build URL carries a year of
+`immutable`, while a comparison whose end is a pointer moves whenever the
+pointer does. Putting it inside `<pid>/<a>/` would have given away both.
+
+It is a CACHE and it is written like a build: a staging directory beside the
+entry, then one rename. Recomputing costs about as much as a build (issue #10
+measured 1.49 s a pair) and nothing here prunes it, exactly as nothing prunes
+anything else on this volume.
 
 `sources/` IS THE CODE OF EVERY PUBLISHED REVISION, and three things about it are
 decisions rather than arrangement (issue #17).
@@ -104,6 +117,33 @@ from src.safeio import open_regular, read_regular_text
 # newline, so `^...$` accepts "proj1\n" — which would create a directory with a
 # newline in its name and put a bare LF into the `Location` header of the reply.
 SAFE_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
+
+# A VIEW ID, WHICH IS THE FOURTH SEGMENT OF A COMPARISON CACHE ENTRY and is NOT
+# an id this hub mints. `SAFE_ID` was the rule here for a while and it is the
+# wrong one: it is what a PROJECT and a BUILD are named with, while a view id is
+# the model author's own string, held at build time to
+# `cadbuild.hubspec.MEMBER_RE` -- which allows a dot and 128 characters. So a
+# model with a view called `top.v2` publishes, shows its tab, and answered a
+# comparison of that tab with a bare 404: the name was refused by a rule nobody
+# had ever told the author about, in the first place a view id becomes a path
+# segment.
+#
+# THE RULE IS "A NAME THAT MAY BE A DIRECTORY SEGMENT" and nothing narrower.
+# Written out here rather than imported from `cadbuild`: the serving half does
+# not import the build half (see COMPARE_FILES below for the same trade), and
+# `tests/test_compare.py` holds the two patterns equal so a view id a build
+# accepts and this cache refuses fails there instead of in somebody's panel.
+# It is also NOT `SAFE_COMPONENT` further down, however identical the two look
+# today: that one is the alphabet of an ARCHIVE MEMBER's path on the way IN, a
+# different door with its own suite, and `hammerola/buildnames.py` records the
+# decision to keep the doors apart.
+#
+# What the alphabet buys is the whole point: a component must START
+# alphanumeric, so `.`, `..`, `.hidden` and the empty string are out, and the
+# class holds no `/`, no backslash, no NUL and nothing outside ASCII -- so a
+# name that passes can never be a separator, a traversal hop, or a lookalike of
+# one in another script. `\Z` and not `$` for the reason `SAFE_ID` gives.
+SAFE_VIEW_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 # The two moving names of a project. Neither may ever be cached, and that is the
 # only thing they have in common — mechanically they are different objects.
@@ -522,6 +562,28 @@ SOURCE_ARCHIVE_NAME = "source.tar.gz"
 # the one half of "how did this revision come about" that would otherwise be
 # reachable only by whoever still had the id from the push.
 SOURCE_LOG_NAME = "log.txt"
+
+# The comparison cache (issue #10): `compare/<pid>/<a>/<b>/<view>/`, holding
+# exactly the two files below. Not dot-prefixed, for the reason `sources/` is
+# not: nothing serves this tree by path — `_serve_compare` in app.py composes
+# the entry's path itself, from ids it has already checked — and a name somebody
+# will one day go looking for by hand is better plainly visible.
+#
+# THE THREE IDS ARE THREE DIRECTORIES AND NOT ONE NAME, because a name needs a
+# separator and no separator is safe here. `SAFE_ID` accepts `_`, so a build may
+# legally be called `a__b`: joined with any run of underscores, `<a>="x"` with
+# `<b>="y__z"` and `<a>="x__y"` with `<b>="z"` spell the same directory, and one
+# comparison is then served the other's geometry. A directory boundary cannot be
+# spelled inside a segment `SAFE_ID` passed, so the nesting is unambiguous by
+# construction and needs no separator at all. The VIEW segment answers to
+# `SAFE_VIEW_ID` instead, and the argument survives that unchanged: no `/` is in
+# that alphabet either.
+COMPARE_DIR_NAME = "compare"
+# What one entry holds, and the only names the file server will serve out of
+# one. `src/buildproc/comparechild.py` writes them and `runner._COMPARE_ARTEFACTS`
+# checks they arrived; the hub half may not import the build half, so the tuple
+# is spelled three times and `tests/test_compare.py` holds the three equal.
+COMPARE_FILES = ("scene.json", "report.json")
 
 # The project's own title, when somebody has renamed it (`hammerola rename`).
 # PROJECT-LEVEL STATE, beside `builds.json` and for the same reason: a title is a
@@ -1163,6 +1225,9 @@ class Store:
         # failed leaves nothing behind" an observable fact rather than an empty
         # directory somebody has to interpret.
         self.sources_dir = self.root / SOURCES_DIR_NAME
+        # NOT created here either, and for the same reason: a hub nobody has
+        # asked for a comparison on has no `compare/` at all.
+        self.compare_root = self.root / COMPARE_DIR_NAME
         # Publication is serialized per project: builds.json and the `latest`
         # symlink are both derived from the full set of builds, so two concurrent
         # pushes to the SAME project could interleave into a builds.json and a
@@ -1192,10 +1257,19 @@ class Store:
         """
         cutoff = time.time() - LEFTOVER_MAX_AGE_SECONDS
         directories = [self.root]
+        # A PROJECT DIRECTORY, where a build stages. One level down from
+        # `projects/`, so walking the root does not reach it and a `.tmp-` left
+        # in one by a SIGKILL is swept by this or by nothing.
         try:
             directories += [p for p in self.projects_dir.iterdir() if p.is_dir()]
         except OSError:
             pass
+        # AND WHERE A COMPARISON STAGES, which is `compare/<pid>/<a>/<b>/` —
+        # THREE levels down, because the cache entry is the `<view>` inside it
+        # and staging sits beside the entry (`compare_staging`). The depth is the
+        # one thing this has to be told: the glob is the layout `compare_dir`
+        # builds, read from the other end.
+        directories += [p for p in self.compare_root.glob("*/*/*") if p.is_dir()]
         for directory in directories:
             try:
                 entries = list(directory.iterdir())
@@ -1235,6 +1309,24 @@ class Store:
         like any other and gets the same permanent URL.
         """
         return bool(SAFE_ID.match(name)) and name not in RESERVED_BUILD_NAMES
+
+    @staticmethod
+    def valid_view_id(name) -> bool:
+        """Can a comparison of this view be filed in the cache at all?
+
+        The one door onto `SAFE_VIEW_ID`, so the shape of a view id is decided
+        in this module and not spelled again in the route: `_handle_compare` in
+        app.py asks this to refuse a name IN WORDS rather than with a blank 404,
+        and `compare_dir` asks it to keep the path it assembles honest.
+
+        NO RESERVED NAMES ON IT, unlike `valid_build_id`. `latest` and `dev`
+        are names of BUILDS this hub answers to, and the fourth segment sits
+        under a pair of commits where nothing of ours ever writes a name of its
+        own — a model may call a view whatever `MEMBER_RE` accepts, `dev`
+        included, and refusing that would be this hub taking a word away from
+        the author for no reason it could name.
+        """
+        return isinstance(name, str) and bool(SAFE_VIEW_ID.match(name))
 
     @staticmethod
     def mint_revision(digest: str) -> str:
@@ -1747,19 +1839,103 @@ class Store:
         If the second rename fails the old slot is put back, so a failed push
         leaves the author looking at what they had rather than at a 404.
         """
-        slot = pdir / DEV_LINK
-        parked = pdir / f"{TRASH_PREFIX}{uuid.uuid4().hex}"
-        occupied = os.path.lexists(slot)
+        Store._replace_directory(pdir / DEV_LINK, source)
+
+    @staticmethod
+    def _replace_directory(target: Path, source: Path) -> None:
+        """The two renames `_swap_dev_slot` describes, with the target named.
+
+        One copy of the dance, because there are two names on this volume that
+        are REPLACED rather than only created — the `dev` slot and a comparison
+        cache entry — and the ordering above is the whole of what makes either
+        of them safe to read while it is being written.
+        """
+        parked = target.parent / f"{TRASH_PREFIX}{uuid.uuid4().hex}"
+        occupied = os.path.lexists(target)
         if occupied:
-            os.rename(slot, parked)
+            os.rename(target, parked)
         try:
-            os.rename(source, slot)
+            os.rename(source, target)
         except OSError:
             if occupied:
-                os.rename(parked, slot)
+                os.rename(parked, target)
             raise
         if occupied:
             shutil.rmtree(parked, ignore_errors=True)
+
+    # -- the comparison cache (issue #10) -----------------------------------
+    def compare_dir(self, pid: str, old: str, new: str, view: str) -> Path:
+        """Where one computed comparison lives. Raises ValueError on a bad id.
+
+        `compare/<pid>/<a>/<b>/<view>/`, and every one of the four segments has
+        to be a name this store would put in a path — the first three to
+        `SAFE_ID`, the id a project and a build are held to, and the VIEW to
+        `SAFE_VIEW_ID`, because a view id is the author's own string and not an
+        id this hub mints (see the constant). Both rules keep a `..`, a `/` and
+        a leading dot out of a path assembled here, which is the whole of what
+        either is for. RAISED rather than returned as a bool: the callers are
+        the route, which turns it into an answer, and the worker, which never
+        gets that far because the route already asked.
+
+        FOUR DIRECTORIES AND NOT ONE NAME, for the reason the constant block
+        above gives at length: `SAFE_ID` accepts `_`, so any separator a joined
+        name could use is a character a build id may itself contain, and two
+        different pairs would then name one entry.
+
+        NEITHER END IS EVER A POINTER, and that is what makes every entry here
+        immutable. An entry is filed under the names it was ASKED with, so one
+        under `latest` would go on answering for a pair that has moved on — a
+        stale file, which no cache header fixes. Both routes that name an entry
+        (`_serve_compare` and `_handle_compare` in app.py) refuse `latest` and
+        `dev` outright, and the client resolves `latest` to a commit before it
+        asks; `dev` has no commit id at all, so the slot is not comparable.
+        """
+        for segment in (pid, old, new):
+            if not isinstance(segment, str) or not SAFE_ID.match(segment):
+                raise ValueError(f"{segment!r} is not an id this store names a "
+                                 f"comparison with")
+        if not self.valid_view_id(view):
+            raise ValueError(f"{view!r} is not a name this store can file a "
+                             f"comparison under")
+        return self.compare_root / pid / old / new / view
+
+    def compare_staging(self, pid: str, old: str, new: str, view: str) -> Path:
+        """Where a comparison writes: the directory that becomes that entry.
+
+        CREATED HERE, unlike `build_staging`, and the difference is whose code
+        writes into it. A build's output directory has to arrive absent because
+        `cadbuild.build` insists on making it itself; a comparison's is written
+        by `comparechild`, which refuses an `--out-dir` that is not there — so
+        the directory existing is what says the parent meant this one.
+
+        Beside the entry it becomes, so publication is a rename inside one
+        directory: the same reason `build_staging` sits inside the project.
+        """
+        final = self.compare_dir(pid, old, new, view)
+        final.parent.mkdir(parents=True, exist_ok=True)
+        staging = final.parent / f"{STAGING_PREFIX}{final.name}-{uuid.uuid4().hex}"
+        staging.mkdir()
+        return staging
+
+    def publish_compare(self, pid: str, old: str, new: str, view: str,
+                        staging: Path) -> Path:
+        """Put a computed comparison at its cache entry. -> where it landed.
+
+        `staging` is consumed by the rename, exactly as the `dev` slot's source
+        is: the caller owns it until this returns and owns nothing afterwards.
+
+        REPLACING WHAT IS THERE IS THE ORDINARY CASE and not an error. A pair
+        recomputed is the same answer again, and there is nothing here worth a
+        409 besides: nothing in this tree is a permanent URL somebody was
+        handed. Under the project's own lock, which is what serialises two
+        workers asked for the same pair at once.
+        """
+        final = self.compare_dir(pid, old, new, view)
+        with self._lock_for(pid):
+            final.parent.mkdir(parents=True, exist_ok=True)
+            self._replace_directory(final, staging)
+        logger.info(f"compare {pid} {old} -> {new} ({view}): cached")
+        return final
 
     def _mirror_into_dev_slot(self, pid: str, pdir: Path, final: Path,
                               meta: dict, digest: str, job=None) -> None:
@@ -2884,6 +3060,15 @@ class Store:
         stored the archive either (`jobs._keep_the_code` runs after the publish)
         and stores it once we are done.
 
+        THE COMPARISONS GO WITH IT, and they are the one tree here that is
+        removed rather than reasoned about: an entry under `compare/<pid>/` is
+        derived from two of this project's revisions and is addressed by that
+        project's id, so leaving it behind would go on serving the geometry of
+        a project that no longer exists — under a URL a re-pushed project of the
+        same id would inherit. It is a cache, so losing it costs a recomputation
+        and nothing else; `ignore_errors` because a project with no comparisons
+        has no such directory at all.
+
         The comment queue is NOT removed here: it lives under `data/comments/`,
         which belongs to CommentStore, and app.py removes both.
         """
@@ -2894,6 +3079,7 @@ class Store:
             mine = self._digests_of(pid)
             builds = len(self.builds_of(pid))
             shutil.rmtree(pdir)
+            shutil.rmtree(self.compare_root / pid, ignore_errors=True)
 
         referenced = set()
         try:

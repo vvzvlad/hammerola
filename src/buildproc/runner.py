@@ -117,6 +117,15 @@ STATUS_LIMITS_ERROR = "limits_error"    # the ceilings would not go on
 STATUS_OUTPUT_LIMIT = "output_limit"    # it wrote more than one build may write
 STATUS_BAD_RESULT = "bad_result"        # it claimed something that is not true
 
+# What a comparison asked for an artefact has to leave behind, and the only
+# thing this side of it ever looks at. SPELLED AGAIN rather than imported from
+# `comparechild`, which is the module that writes them: importing that module
+# here would put `src.cadbuild` into the HUB's process, and nothing on the
+# serving side may import the build half (src/cadbuild/__init__.py says why).
+# `tests/test_compare.py` holds this equal to `comparechild.ARTEFACTS` and to
+# `store.COMPARE_FILES`.
+_COMPARE_ARTEFACTS = ("scene.json", "report.json")
+
 # Appended to the log of a build that left a straggler behind. In the log rather
 # than only in a field, because a field nobody reads is a leak nobody sees --
 # and this one costs the hub a thread and a descriptor until that process dies.
@@ -266,24 +275,40 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
         shutil.rmtree(scratch, ignore_errors=True)
 
 
-def run_compare(old_dir, new_dir, *, pid, limits=DEFAULT_LIMITS):
+def run_compare(old_dir, new_dir, *, pid, limits=DEFAULT_LIMITS, out_dir=None,
+                view=None):
     """Compare two published revisions in a process of its own.
 
     The sibling of `run_build` and much smaller, because everything that makes
-    the build path careful is missing from this one: nothing is written, so
-    there is no output directory to guard and no result file to check, and the
-    two directories being read were written by this hub's own builds.
+    the build path careful is about a process running SOMEBODY ELSE'S code. None
+    of that applies here: the child is this repository's own module, the two
+    directories it reads were written by this hub's own builds, and what it
+    writes -- when it writes anything at all -- goes into a directory the caller
+    named. So there is no output guard, no result file, and nothing to check for
+    forgery.
 
-    THE CHILD'S LOG IS THE WHOLE ANSWER -- the report it prints is what a person
-    reads back through the job log, so this returns the `BuildOutcome` the build
-    path returns with `files` empty: the same shape the job machinery already
-    knows how to finish a job from.
+    THE CHILD'S LOG IS ALWAYS THE ANSWER: the report it prints is what a person
+    reads back through the job log, and `hammerola diff --material` asks for
+    nothing else. Called with `out_dir` and `view` -- together, or the call is
+    refused -- the same run also leaves `scene.json` and `report.json` in that
+    directory, which the caller then publishes into the comparison cache. The
+    PARENT's only question about those two is whether they are there: it is the
+    difference between a job that has something to publish and one that does
+    not, and `BuildOutcome.files` reports it the way the build path does.
 
     The kernel is what makes this a separate process at all: importing it costs
     ~450 MB resident, and the hub is the process that must not pay that.
     """
+    if (out_dir is None) != (view is None):
+        # The caller is `jobs.compare_arguments`, so this is a programming error
+        # and not a request: one without the other would start a child that
+        # refuses the invocation, and the job would report a crash instead of
+        # the mistake.
+        raise ValueError("run_compare takes an output directory and a view "
+                         "together, or neither")
     old_dir = Path(old_dir).resolve()
     new_dir = Path(new_dir).resolve()
+    out_dir = None if out_dir is None else Path(out_dir).resolve()
 
     # HOME and TMPDIR point in here for the reason the build path gives: the
     # kernel and matplotlib write caches, and they may not land in the real home
@@ -301,12 +326,17 @@ def run_compare(old_dir, new_dir, *, pid, limits=DEFAULT_LIMITS):
             "--new-dir", str(new_dir),
             "--occt-threads", str(limits.occt_threads),
         ]
+        if out_dir is not None:
+            # Appended only when there is an artefact to write, unlike the
+            # build path's `--force`: here the ABSENCE of the pair is a mode of
+            # its own, and one this route takes on every `hammerola diff`.
+            target += ["--out-dir", str(out_dir), "--view", str(view)]
         process = run_isolated(
             target, limits=limits,
             env=child_environment(home=home, tmp=tmp,
                                   threads=limits.occt_threads),
             guard=None)
-        return _compare_outcome(process, pid=pid)
+        return _compare_outcome(process, pid=pid, out_dir=out_dir)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -566,13 +596,20 @@ def _read_outcome(process, result_path, *, out_dir, pid, limits):
     )
 
 
-def _compare_outcome(process, *, pid):
+def _compare_outcome(process, *, pid, out_dir=None):
     """Read a `ProcessResult` as a comparison.
 
     The exit code IS the verdict here, which it deliberately is not on the build
-    path: nothing is published from this run, so there is no claim to check and
-    no forgery to be worried about -- a comparison that ended cleanly printed its
-    report, and one that did not says why in the log.
+    path: the child is our own module rather than somebody's model, so there is
+    no claim to check and no forgery to be worried about -- a comparison that
+    ended cleanly printed its report, and one that did not says why in the log.
+
+    THE ONE THING THE PARENT LOOKS AT ON DISK is whether an artefact it asked
+    for arrived, and it is a question about this hub and not about the child's
+    honesty: a clean exit with no `scene.json` beside it is a bug here, and
+    publishing that directory would put an empty cache entry at a URL the
+    browser then 404s on. Nothing about the CONTENT of the two files is read --
+    that is the geometry half's business, on the other side of the rename.
 
     NO `EXIT_HANG_DUMP` BRANCH, and its absence is the point. `run_compare`
     passes no `--hang-dump-seconds` and `comparechild` arms no watchdog, so
@@ -584,6 +621,8 @@ def _compare_outcome(process, *, pid):
     A comparison that genuinely wedges in the kernel is still caught, by the
     wall deadline above: `timeout`, killed with its process group.
     """
+    log = process.log
+    files = ()
     status = STATUS_CRASHED
     if process.timed_out:
         status = STATUS_TIMEOUT
@@ -597,11 +636,21 @@ def _compare_outcome(process, *, pid):
     elif process.exit_code in WRAPPER_EXIT_CODES or process.exit_code == EXIT_UNCAPPED:
         status = STATUS_LIMITS_ERROR
 
+    if status == STATUS_OK and out_dir is not None:
+        missing = [name for name in _COMPARE_ARTEFACTS
+                   if not (out_dir / name).is_file()]
+        if missing:
+            status = STATUS_CRASHED
+            log += (f"\nbuildproc: the comparison exited 0 without writing "
+                    f"{', '.join(missing)}, so there is nothing to publish\n")
+        else:
+            files = _COMPARE_ARTEFACTS
+
     return BuildOutcome(
         status=status,
         pid=pid,
-        files=(),
-        log=process.log,
+        files=files,
+        log=log,
         log_truncated=process.log_truncated,
         exit_code=process.exit_code,
         signal=process.signal,

@@ -249,3 +249,26 @@ def test_a_project_with_no_builds_can_still_be_removed(hub):
     assert removed.json() == {"pid": "empty1", "builds": 0, "sources": 0,
                               "comments": 0}
     assert hub.get("/project/empty1/").status_code == 404
+
+
+def test_removing_a_project_takes_its_comparisons_with_it(hub):
+    """The comparison cache is addressed by the project id (issue #10).
+
+    It lives outside the project's own directory — `data/compare/<pid>/`, for
+    the rights and caching reasons SPEC 8A.3 gives — so `rmtree` on the project
+    does not reach it, and what would be left behind is the geometry of a
+    project that no longer exists, under a URL a re-pushed project of the same
+    id would inherit. It is a cache, so removing it costs one recomputation.
+    """
+    first = _publish(hub)
+    second = _publish(hub, body=good_build(marker="b"))
+    staging = hub.store.compare_staging("proj1", first, second, "assembled")
+    (staging / "scene.json").write_text("{}", encoding="utf-8")
+    entry = hub.store.publish_compare("proj1", first, second, "assembled",
+                                      staging)
+    assert entry.is_dir()
+
+    assert _remove(hub, "proj1").status_code == 200
+
+    assert not entry.exists()
+    assert not (hub.store.compare_root / "proj1").exists()

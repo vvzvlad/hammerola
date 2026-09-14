@@ -131,6 +131,23 @@ def test_a_sliver_is_dropped_and_the_volume_it_took_with_it_is_reported():
     assert check(filtered) is None
 
 
+def test_a_kept_shape_rides_through_the_sliver_filter_and_a_sliver_takes_its_own():
+    """`keep_shapes` puts the solid on the piece, and the filter is upstream of
+    the scene: what a sliver must not reach is the picture as much as the log.
+
+    The shapes here are sentinels rather than solids because that is all the
+    filter ever sees of one -- it reads the two floats beside it and nothing
+    else, which is exactly what the option was shaped not to disturb.
+    """
+    sliver = {"volume_mm3": 1e-9, "area_mm2": 200.0, "shape": "<sliver>"}
+    real = {"volume_mm3": 100.0, "area_mm2": 240.0, "shape": "<solid>"}
+
+    filtered = drop_slivers(_measurement(removed=[real, sliver]))
+
+    assert [piece["shape"] for piece in filtered["removed"]] == ["<solid>"]
+    assert filtered["removed_slivers_mm3"] == 1e-9
+
+
 def test_a_ten_micron_difference_survives_the_sliver_filter():
     """10 um is the smallest change this must never hide -- one layer.
 
