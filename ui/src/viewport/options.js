@@ -184,6 +184,29 @@ export const SECTION_BIAS = 1e-4;
 /** Which of the library's three clip planes this tool drives. */
 export const SECTION_INDEX = 0;
 
+/* The section plane's handle (handle.js), in CSS PIXELS — a constant size on
+ * screen, which is free for a DOM overlay and is what keeps the grip the same
+ * size on a 2 mm part and a 200 mm one. */
+
+/** The whole arrow's length. Long enough to read as a two-way arrow beside the
+ *  cut, short enough not to cover the face it is standing on. */
+export const HANDLE_PX = 56;
+
+/** Each head, as long as it is wide, so the arrow reads the same at every angle
+ *  the model can be turned to. */
+export const HANDLE_HEAD_PX = 10;
+
+/** The shaft's thickness. Twice the weight of the view cube's silhouette, which
+ *  is drawn at 0.9: the cube stands on the empty corner of the canvas and this
+ *  stands on the model, over a cut face and whatever colour the part happens to
+ *  be, so the cube's hairline would disappear into it. */
+export const HANDLE_SHAFT_PX = 2;
+
+/** The height of the box that takes the press. A hand cannot reliably hit a 2 px
+ *  shaft, so the target is fatter than the ink: this is the whole height of it,
+ *  against that shaft. */
+export const HANDLE_HIT_PX = 18;
+
 /**
  * Pixels of `deltaY` the browser emits per e-fold of PINCH SCALE. A measurement,
  * not a taste setting.

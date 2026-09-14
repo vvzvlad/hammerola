@@ -54,6 +54,38 @@ function niceStep(viewer) {
 
 const snap = (v, step) => Math.round(v / step) * step;
 
+/** Where the section plane ended up, announced once.
+ *
+ * The drag moved the library's slider, whose zero is the grid centre. What the
+ * interface's own control shows is the depth from the FACE, so it is read back
+ * and announced at the end of the gesture — and this is the only place that
+ * writes `state.cutOffset`, so the number on screen and the number the next
+ * `applySection` walks the plane by cannot come apart.
+ *
+ * Read against the scene THAT IS STILL ON SCREEN, which is what makes it safe to
+ * call from `endGesture` below: `show()` ends the gesture before it captures
+ * anything and long before it clears the viewer.
+ *
+ * MODULE-LEVEL AND EXPORTED because there are two gestures that end a section
+ * drag now — the press on the canvas below, and the press on the handle
+ * (handle.js) — and the sentence above about one writer is the whole reason this
+ * is a function at all. It closed over nothing when it lived inside
+ * `installTools`, so lifting it costs the caller one argument and buys the
+ * guarantee that the second gesture cannot grow its own copy.
+ */
+export function reportCut(vp) {
+  if (!vp.sectionSeed) return;
+  vp.state.cutOffset = sectionOffset(vp);
+  emit(vp, EVENT_FACE, {
+    id: vp.sectionSeed.id || null,
+    name: vp.sectionSeed.name || null,
+    point: vp.sectionSeed.point,
+    normal: vp.sectionSeed.normal,
+    offset: vp.state.cutOffset,
+    range: sectionRange(vp.viewer),
+  });
+}
+
 export function installTools(vp) {
   let press = null;
 
@@ -76,31 +108,6 @@ export function installTools(vp) {
     addEventListener("pointercancel", onCancel, true);
   };
 
-  /** Where the section plane ended up, announced once.
-   *
-   * The drag moved the library's slider, whose zero is the grid centre. What the
-   * interface's own control shows is the depth from the FACE, so it is read back
-   * and announced at the end of the gesture — and this is the only place that
-   * writes `state.cutOffset`, so the number on screen and the number the next
-   * `applySection` walks the plane by cannot come apart.
-   *
-   * Read against the scene THAT IS STILL ON SCREEN, which is what makes it safe
-   * to call from `endGesture` below: `show()` ends the gesture before it
-   * captures anything and long before it clears the viewer.
-   */
-  const reportCut = () => {
-    if (!vp.sectionSeed) return;
-    vp.state.cutOffset = sectionOffset(vp);
-    emit(vp, EVENT_FACE, {
-      id: vp.sectionSeed.id || null,
-      name: vp.sectionSeed.name || null,
-      point: vp.sectionSeed.point,
-      normal: vp.sectionSeed.normal,
-      offset: vp.state.cutOffset,
-      range: sectionRange(vp.viewer),
-    });
-  };
-
   // Published so the element can end a gesture the reader has not let go of,
   // which is what a scene being replaced under one is. Everything a live press
   // holds — the plane's screen axis, a part's starting offset — was measured
@@ -120,7 +127,7 @@ export function installTools(vp) {
   const endGesture = () => {
     const p = press;
     finish();
-    if (p && p.moved && p.tool === "cut") reportCut();
+    if (p && p.moved && p.tool === "cut") reportCut(vp);
   };
   vp.endGesture = endGesture;
 
@@ -281,7 +288,7 @@ export function installTools(vp) {
     const g = internals(vp.viewer);
     if (!g) return;
     if (p.moved) {
-      if (p.tool === "cut") reportCut();
+      if (p.tool === "cut") reportCut(vp);
       return;
     }
     // A press that never moved is a click, and it costs the trackball nothing:

@@ -31,6 +31,7 @@ import { installPinchGuard } from "./pinch.js";
 import { installTools } from "./tools.js";
 import { installWheel, initialPointingDevice, setPointingDevice } from "./wheel.js";
 import { createOverlay } from "./overlay.js";
+import { createHandle } from "./handle.js";
 import { createViewCube } from "./viewcube.js";
 import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
@@ -173,6 +174,13 @@ export class HmrViewport extends HTMLElement {
     this.viewcube = createViewCube(this);
     this.appendChild(this.viewcube.root);
 
+    // AND THE SECTION HANDLE LAST, by the same rule read the other way: it is on
+    // screen only while a cut stands and it is the thing under the reader's hand
+    // at that moment, so where it happens to overlap the cube's corner the grip
+    // is what the press should reach.
+    this.handle = createHandle(this);
+    this.appendChild(this.handle.root);
+
     setPointingDevice(this, initialPointingDevice(), false);
 
     this.teardown = [
@@ -254,6 +262,7 @@ export class HmrViewport extends HTMLElement {
     this.teardown = [];
     if (this.overlay) this.overlay.destroy();
     if (this.viewcube) this.viewcube.destroy();
+    if (this.handle) this.handle.destroy();
     try {
       if (this.viewer) this.viewer.dispose();
     } catch (error) {
@@ -477,6 +486,10 @@ export class HmrViewport extends HTMLElement {
       // away. The page viewer this replaced ended its own section drag at the
       // same point in its render path, for the same reason.
       if (this.endGesture) this.endGesture();
+      // The grip's drag is a SECOND gesture and needs saying so separately: its
+      // press lands on a layer that is a sibling of `this.box`, so neither the
+      // line above nor the idle clock that defers this swap ever sees it.
+      this.handle.endDrag();
 
       const keep = live ? captureLive(this) : null;
       const [w, h] = sized(this);
@@ -623,6 +636,10 @@ export class HmrViewport extends HTMLElement {
       this.applied.cutHatch = s.cutHatch;
     }
     this.overlay.setPins(s.pins);
+    // The handle's own loop stops itself whenever there is no cut, so a cut that
+    // has just appeared — this pass is where it appears — has to wake it. Every
+    // other frame it draws it asks for itself.
+    this.handle.refresh();
   }
 
   /** The library's notification channel. */

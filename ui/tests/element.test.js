@@ -108,6 +108,11 @@ function element(state = {}, viewer = fakeViewer()) {
   vp.loadToken = 0
   vp.loadFailed = null
   vp.overlay = { setPins: vi.fn(), refresh: vi.fn() }
+  // The section handle draws itself from `sectionSeed` and a rAF loop of its
+  // own; here it is a stub for the same reason the overlay is one. What
+  // `reconcile` owes it is the wake-up, and what `show` owes it is the end of a
+  // drag — both are asked about below.
+  vp.handle = { refresh: vi.fn(), endDrag: vi.fn() }
   // The up-events go through `dispatchEvent`, which is a real DOM method on a
   // real element and refuses to run on an object the DOM never built — the same
   // reason the note above `calledWithViewport` gives about `getAttributeNames`.
@@ -315,6 +320,19 @@ describe('reconcile', () => {
     vp.reconcile()
     expect(vp.overlay.setPins).toHaveBeenCalledTimes(2)
     expect(vp.overlay.setPins).toHaveBeenLastCalledWith(vp.state.pins)
+  })
+
+  it('wakes the section handle on every pass', () => {
+    // THE ONLY CALLER OF `refresh` ANYWHERE. The handle's rAF loop stops itself
+    // whenever there is no cut, so this line is what starts it again when one
+    // appears — delete it and there is no grip on any plane, ever, with the
+    // whole suite still green. Every pass, and not only when the cut changed:
+    // the loop is what draws, and re-arming an already-running one costs a
+    // boolean.
+    const vp = element({ cut: true })
+    vp.reconcile()
+    vp.reconcile()
+    expect(vp.handle.refresh).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -699,6 +717,23 @@ describe('show', () => {
       .toBeGreaterThan(viewer.render.mock.invocationCallOrder[0])
   })
 
+  it('ends a drag of the section handle before it replaces the scene', async () => {
+    // The grip's press lands on a layer that is a sibling of `vp.box`, so
+    // neither `endGesture` nor the idle clock that defers this swap ever sees
+    // it: without this call a reader holding the arrow when a build lands keeps
+    // dragging against a scene that is gone, and the depth the interface prints
+    // stops matching the plane. BEFORE `render()` is the whole of it — the
+    // gesture has to conclude against the scene it was measured on.
+    const { vp, viewer } = rendering()
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+
+    const types = vp.dispatchEvent.mock.calls.map(([event]) => event.type)
+    expect(types).toContain(EVENT_MODEL)
+    expect(vp.handle.endDrag).toHaveBeenCalledTimes(1)
+    expect(vp.handle.endDrag.mock.invocationCallOrder[0])
+      .toBeLessThan(viewer.render.mock.invocationCallOrder[0])
+  })
+
   it('renders a scene unhatched when the box is unticked', async () => {
     // The flag is the point of the wire: without it the viewport would hatch
     // every cut face whatever the section popover says.
@@ -860,6 +895,40 @@ describe('the widgets connectedCallback puts on the page', () => {
     el.destroy()
     expect(cubeIn(el)).toBeUndefined()
     expect(el.querySelector('svg')).toBeNull()
+  })
+
+  /** The section grip's layer, found by the one thing distinctive about it: it
+   *  holds the arrow, and the arrow is the only element the viewport puts on
+   *  the page offering a grab cursor. Like the cube, it carries no class name,
+   *  which is what keeps it out of the stylesheet check too. */
+  const gripIn = (el) => [...el.children].find(
+    (child) => child.firstElementChild
+      && child.firstElementChild.style.cursor === 'grab')
+
+  it('mounts the section grip, after the view cube', () => {
+    // The same hole the cube's test above was written for, and the same reason
+    // it has to be closed here: delete the two lines in `element.js` that
+    // create and append the grip and nothing anywhere else goes red — the
+    // handle simply is not on the page, and the drag it advertises goes back to
+    // being a gesture only the initiated know about.
+    const el = mount()
+    const grip = gripIn(el)
+    expect(grip).toBeTruthy()
+
+    // AFTER the cube, so the live grip wins where the two overlap: the grip's
+    // layer covers the whole canvas and the cube sits in one corner of it, and
+    // the later sibling is the one that takes the press.
+    const kids = [...el.children]
+    expect(kids.indexOf(grip)).toBeGreaterThan(kids.indexOf(cubeIn(el)))
+  })
+
+  it('takes the grip down too when the element leaves the document', () => {
+    // Its rAF loop stops itself when there is no cut, but a page that never had
+    // one still leaves the layer and its window listeners holding the element.
+    const el = mount()
+    expect(gripIn(el)).toBeTruthy()
+    el.destroy()
+    expect(gripIn(el)).toBeUndefined()
   })
 })
 
