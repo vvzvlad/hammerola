@@ -4,9 +4,15 @@
 // discipline the rest of this suite keeps. What IS assertable is everything that
 // decides whether the reader can see and use the handle at all: WHERE it is put
 // (a projection, in px, of a world point the module works out from the seed),
-// WHICH WAY it points (the screen axis of the clip normal, and nothing else),
+// WHICH WAY it points (the screen axis of the clip normal, and vertical in the
+// degenerate zone the paragraph below is about),
 // WHEN it refuses to be drawn — three cases, three different reasons — and what
 // one whole drag does to the plane and says at the end of it.
+//
+// The zone where the plane's normal points nearly AT or AWAY FROM the camera —
+// the reader turned to look straight at the cut face — is NOT one of those
+// cases any more: the grip stands there as a vertical arrow, on
+// `sectionGripAxis`'s fallback, and has its own group below.
 //
 // The angles are checked against arithmetic that does not come from the module:
 // this fake camera puts 20 px on a world unit along both screen axes (400 px per
@@ -31,7 +37,8 @@ import { EVENT_FACE } from '../src/viewport/events.js'
 import { createHandle } from '../src/viewport/handle.js'
 import { internals } from '../src/viewport/internals.js'
 import {
-  applySection, dragSection, placeSectionPlane, sectionAxis, sectionOffset,
+  applySection, dragSection, placeSectionPlane, sectionAxis, sectionGripAxis,
+  sectionOffset,
 } from '../src/viewport/section.js'
 import { fakeViewer, fakeViewport, orthoCamera } from './fakes.js'
 
@@ -157,31 +164,110 @@ describe('when there is nothing to grab', () => {
     expect(shown(arrow)).toBe(false)
   })
 
-  it('draws nothing when the plane is seen edge-on', () => {
-    // `sectionAxis` refuses there — the normal's screen projection has collapsed
-    // and px -> world runs away — and so does the DRAG itself (tools.js: `if
-    // (!press.axis) return`). A handle drawn here would promise a gesture that
-    // does nothing when it is taken up.
-    const { vp, g, handle, arrow } = scene({ normal: [0, 0, 1] })
-    expect(sectionAxis(vp.viewer, g, [0, 0, 45]),
-           'the premise: this is the case sectionAxis declines').toBeNull()
-
-    drawn(handle)
-    expect(shown(arrow)).toBe(false)
-  })
-
   it('draws nothing when the anchor is behind the reader', () => {
     // Under an ortho projection the frustum has a back and the model turns
     // through it, which is the same case the overlay's pins answer with `ndc[2]
     // > 1`. The camera sits at z = 60 and its far plane a depth of 30 beyond the
     // anchor, so a seed at z = 20 is behind it.
     const { vp, g, handle, arrow } = scene({ point: [0, 0, 20] })
-    expect(sectionAxis(vp.viewer, g, [0, 0, 20]),
+    expect(sectionGripAxis(vp.viewer, g, [0, 0, 20]),
            'the premise: the axis is fine, so only the depth can be hiding it')
       .not.toBeNull()
 
     drawn(handle)
     expect(shown(arrow)).toBe(false)
+  })
+
+  it('draws nothing when the scene cannot be measured at all', () => {
+    // The case behind `if (!axis)` that this suite can stage, now that the
+    // degenerate view is served rather than refused. `place` names three of
+    // them — no clip plane, no eye, a canvas of no size — and this is the one
+    // a fake viewer can produce: a clip plane the library cannot hand back is
+    // not a plane this can be drawn on at any angle. Both halves of the module
+    // have to agree about it — `place` takes the arrow off, and `onDown` takes
+    // no gesture — or a press would land on an arrow the next frame removes.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { vp, g, handle, arrow } = scene()
+    drawn(handle)
+    expect(shown(arrow), 'the premise: it is on screen first').toBe(true)
+
+    vp.viewer.getClipNormal = () => { throw new Error('plane gone') }
+    expect(sectionGripAxis(vp.viewer, g, [0, 0, 45]),
+           'the premise: this is a scene the axis cannot answer for').toBeNull()
+
+    // A press before the next frame: the arrow is still on screen, and the
+    // gesture still has to refuse.
+    grab(arrow, [100, 100])
+    pointerMove([140, 100])
+    expect(dragSection).not.toHaveBeenCalled()
+
+    drawn(handle)
+    expect(shown(arrow)).toBe(false)
+  })
+})
+
+describe('when the reader looks straight at the cut face', () => {
+  // The degenerate zone: the plane's normal points nearly AT the camera, its
+  // projection on the screen is a stub, and `sectionAxis` declines. The handle
+  // used to go with it — the arrow vanished exactly where the cut is squarely in
+  // view, and just outside the zone it swung to an unpredictable angle. It now
+  // stands on the vertical fallback instead.
+  //
+  // The seed's own normal is +Z and the camera looks down -Z from z = 60, so
+  // `placeSectionPlane` turns it towards the reader and the plane ends up facing
+  // the camera head-on.
+  const facing = () => scene({ normal: [0, 0, 1] })
+
+  it('keeps the arrow on screen where `sectionAxis` declines', () => {
+    const { vp, g, handle, arrow } = facing()
+    expect(sectionAxis(vp.viewer, g, [0, 0, 45]),
+           'the premise: this is the zone sectionAxis declines').toBeNull()
+
+    drawn(handle)
+    expect(shown(arrow)).toBe(true)
+    // Still over the point the plane meets the face, which is the middle of the
+    // canvas for a seed on the view axis.
+    expect(arrow.style.left).toBe('400px')
+    expect(arrow.style.top).toBe('300px')
+  })
+
+  it('draws it vertical, which is the one angle that does not swing', () => {
+    // `{sx: 0, sy: +px}` is 90 degrees, and CSS turns the way screen y runs — so
+    // the arrow points DOWN the screen, which is the direction that pushes the
+    // plane along its own normal.
+    const { handle, arrow } = facing()
+    drawn(handle)
+    expect(angleOf(arrow)).toBeCloseTo(90, 9)
+  })
+
+  it('drags on the arrow it drew: down moves the plane, across does not', () => {
+    // `onDown` has to measure with the same function `place` draws from,
+    // otherwise the press lands on a visible grip and does nothing at all. The
+    // fake camera puts 20 px on a world unit (tests/fakes.js, and the header
+    // above), so 40 px down is 2 world units along the normal.
+    const { vp, handle, arrow } = facing()
+    drawn(handle)
+
+    grab(arrow, [100, 100])
+    pointerMove([100, 140])
+    expect(dragSection).toHaveBeenCalledTimes(1)
+    const axis = dragSection.mock.calls[0][2]
+    expect(axis.sx).toBe(0)
+    expect(axis.sy).toBeCloseTo(20, 9)
+    expect(axis.s2).toBeCloseTo(400, 9)
+    // POSITIVE, i.e. down the screen pushes the plane along its own normal —
+    // the convention `sectionGripAxis` fixes, since there is no projection left
+    // to take it from.
+    expect(sectionOffset(vp)).toBeCloseTo(2, 9)
+
+    // Across the arrow is across the gesture: the least-squares projection of a
+    // purely horizontal delta onto a vertical axis is zero.
+    pointerMove([300, 140])
+    expect(sectionOffset(vp)).toBeCloseTo(2, 9)
+
+    pointerUp([300, 140])
+    expect(details(vp, EVENT_FACE)).toHaveLength(1)
+    expect(vp.state.cutOffset).toBeCloseTo(sectionOffset(vp), 9)
   })
 })
 
