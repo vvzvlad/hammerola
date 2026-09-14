@@ -21,7 +21,7 @@
 // module scope) holds the rebuild off whenever the PLANE did not move.
 
 import { cross3, unit3 } from "./math.js";
-import { OUTLINE_WIDTH_FRACTION, SECTION_INDEX } from "./options.js";
+import { SECTION_INDEX } from "./options.js";
 
 // The name the outline child carries inside its ObjectGroup — ours by
 // CONVENTION only: `renderShape` names the library's own children from the
@@ -34,9 +34,20 @@ import { OUTLINE_WIDTH_FRACTION, SECTION_INDEX } from "./options.js";
 export const OUTLINE_NAME = "sectionOutline";
 
 // The library draws its own edges one device pixel wide; a contour has to read
-// over the hatch and both cut faces, so dark. How WIDE comes off the CUT FACE
-// and not off the screen — `outlineWidth` below, and OUTLINE_WIDTH_FRACTION in
-// options.js for why it is a size on the model at all.
+// over the hatch and both cut faces, so it is darker and a little heavier.
+//
+// IN CSS PIXELS, because that is the only measure that is the same on every
+// face. A width taken off the MODEL was tried twice — a tenth of the solid's
+// smallest bounding-box dimension, then `2 * Area / Perimeter` of the cut face
+// — and both gave the same picture: a fat black rim around a wide face and no
+// line at all around a narrow one, where the width fell under a pixel.
+//
+// What a constant pixel width does NOT promise: pulled far enough back, a wall
+// only a few pixels wide still has the contours on its two sides meet, and the
+// face between them disappears. Zooming in is the answer there — which is the
+// whole difference from a width on the model, where the ratio holds however
+// close the reader leans in — and it is why the number is 2 and not 3.
+const OUTLINE_WIDTH = 2;
 const OUTLINE_COLOR = 0x303030;
 
 // What a plane that misses writes: nothing, over whatever was there.
@@ -91,91 +102,25 @@ function lineClasses(g) {
 }
 
 /**
- * One cut face's contour width: a fixed fraction of the CHARACTERISTIC WIDTH of
- * the face those segments bound, `2 * Area / Perimeter`.
- *
- * THE FACE AND NOT THE SOLID, and this is the correction issue #95 turns on.
- * What the contour must not swallow is the face the plane makes, and only a
- * solid that IS a panel has a bounding box that says how wide that is. One
- * solid with thin walls inside a fat box — a shelled body, which is what
- * `model_template/model.py` builds with `.faces(">Z").shell(-2.4)` inside a box
- * 50.8 x 33.8 x 20 — reports 20 for a wall 2.4 across, and a line sized off
- * that eats the wall whole at EVERY zoom. 2A/P is the same characteristic width
- * this project already sieves slivers by (issue #10's 2V/S) and it answers off
- * the face itself: 2.4 for a ring 2.4 across, 2.39 for a 2.4 x 600 panel in
- * section, 20.3 for the same box left solid.
- *
- * BOTH HALVES COME OFF THE SEGMENTS, before any material is built. The
- * perimeter is their total length. The area is the divergence form of the
- * shoelace rule, `A = 0.5 * |sum (a x b) . n|` over the DIRECTED chords — no
- * loop assembly and no ordering pass, because a closed loop's shoelace sum does
- * not depend on where the loop starts or where the origin is, and the loops of
- * a face with holes come out with opposite signs, so a hole subtracts itself.
- * It rests on the chords being consistently directed, which is what
- * `planeThroughTriangles` guarantees and `outline.test.js` measures.
- *
- * `n` is the plane's LOCAL normal, which need not be unit — the matrix may
- * scale — so it is normalised here; the segments are in that same local frame.
- *
- * Zero when there are no segments, when the perimeter is zero, or when the area
- * is: nothing to draw a rim around is the honest answer, and it costs nothing —
- * a fat line of zero width rasterises no pixels.
- */
-function outlineWidth(segments, n) {
-  const unit = unit3(n);
-  if (!unit || !segments) return 0;
-  let perimeter = 0;
-  let twiceArea = 0;
-  for (let at = 0; at + 5 < segments.length; at += 6) {
-    const ax = segments[at];
-    const ay = segments[at + 1];
-    const az = segments[at + 2];
-    const bx = segments[at + 3];
-    const by = segments[at + 4];
-    const bz = segments[at + 5];
-    perimeter += Math.hypot(bx - ax, by - ay, bz - az);
-    twiceArea += (ay * bz - az * by) * unit[0]
-      + (az * bx - ax * bz) * unit[1]
-      + (ax * by - ay * bx) * unit[2];
-  }
-  const area = Math.abs(twiceArea) / 2;
-  // Written as `!(x > 0)` so a NaN — which nothing here should produce, but
-  // which a single NaN coordinate would carry through both sums — answers zero
-  // rather than reaching `linewidth`.
-  if (!(perimeter > 0) || !(area > 0)) return 0;
-  return OUTLINE_WIDTH_FRACTION * 2 * area / perimeter;
-}
-
-/**
  * The outline material for one solid: the library's own edge material, dark and
- * `width` across.
+ * `OUTLINE_WIDTH` across.
  *
  * Cloned rather than built, so it keeps what the factory already got right —
  * the polygon offset toward the camera, no tone mapping, shader clipping on.
  * It must NOT be clipped by the plane it lies IN, so it carries what the cap
  * materials carry: only the OTHER two planes, in the library's own order.
  *
- * IN WORLD UNITS, which is what makes `linewidth` a size on the model instead
- * of a count of CSS pixels. Read off the bundle rather than assumed: the
- * accessor is a real one on `LineMaterial`, it flips the `WORLD_UNITS` shader
- * define and SETS `needsUpdate` ITSELF whenever the flag actually changes, so
- * nothing here has to ask for a recompile. In that mode the vertex shader
- * offsets the quad by `linewidth * 0.5` in view space and never reads
- * `resolution` — only the pixel branch divides by it. The write below stays all
- * the same: it is what the library's own edge materials carry, `onBeforeRender`
- * rewrites it from the viewport before every draw regardless, and a clone that
- * quietly dropped it would be the odd one out for no gain. Both WORLD_UNITS
- * branches of that shader put the eye at the ORIGIN OF VIEW SPACE — the vertex
- * one takes the quad's up axis from `tmpFwd = normalize(mix(start, end, 0.5))`
- * and the fragment one casts `rayEnd = normalize(worldPos.xyz) * 1e5` — while
- * this viewport is orthographic by construction and has no such eye, and
- * `Camera.DISTANCE_FACTOR = 5` bounds the width error that costs at roughly two
- * per cent.
+ * `resolution` matters again, now that the PIXEL branch of the fat-line shader
+ * is the one in use: `linewidth` counts CSS pixels unless the material is told
+ * otherwise, and that branch is where the quad's offset is divided by the
+ * canvas size. Nothing here tells it otherwise. The write below is also what
+ * the library's own edge materials carry and what `onBeforeRender` rewrites
+ * from the viewport before every draw, so a clone that quietly dropped it would
+ * be the odd one out for no gain.
  */
-function outlineMaterial(classes, g, width) {
+function outlineMaterial(classes, g) {
   const material = classes.edges.material.clone();
-  material.worldUnits = true;
-  material.linewidth = width;
+  material.linewidth = OUTLINE_WIDTH;
   material.color.setHex(OUTLINE_COLOR);
   material.clippingPlanes = g.clipping.clipPlanes.filter(
     (_, index) => index !== SECTION_INDEX);
@@ -220,29 +165,33 @@ function planeMayCut(box, n, c) {
  *
  * EACH CHORD IS DIRECTED, from the crossing where the walk LEAVES the positive
  * side to the one where it comes back — never in the order the edge walk met
- * them. `outlineWidth` sums the chords into a signed area and needs them
- * consistently directed to get one; the fat line and the parity test in
- * `insideSection` do not care either way.
+ * them. That direction is a property of THIS ROUTINE, pinned by its own tests
+ * and by nothing downstream: the fat line and the parity test in
+ * `insideSection` do not care either way, and the one reader that did care — a
+ * contour width summed off the chords as a signed area — has been withdrawn.
  *
  * WALK ORDER IS NOT THAT ORDER, and taking it for one silently halves or zeroes
- * the area. The two crossings are met at edges `(0,1) (1,2) (2,0)` in that
- * sequence, and which of them comes first depends on where corner 0 happens to
- * sit relative to the plane: with `d = (-, +, -)` the walk meets the entry
- * before the exit, with `d = (+, -, +)` the other way round. Both are the same
- * mesh with the same winding, and a tessellator has no reason to list a
- * triangle from one corner rather than another — measured on the payload
- * fixture, a cylinder's lateral chords came out reversed against its end caps'
- * and the two cancelled to an area of exactly zero. The SIGN the edge leaves on
- * is what identifies an end: an edge running `+` to `-` carries the chord's
- * start, one running `-` to `+` its end.
+ * the signed area the chords enclose — which is the quantity that reads the
+ * direction back off the buffer, and it lives in the tests (`signedArea` in
+ * outline.test.js) rather than in this module. The two crossings are met at
+ * edges `(0,1) (1,2) (2,0)` in that sequence, and which of them comes first
+ * depends on where corner 0 happens to sit relative to the plane: with
+ * `d = (-, +, -)` the walk meets the entry before the exit, with `d = (+, -, +)`
+ * the other way round. Both are the same mesh with the same winding, and a
+ * tessellator has no reason to list a triangle from one corner rather than
+ * another — measured on the payload fixture, a cylinder's lateral chords came
+ * out reversed against its end caps' and the two cancelled to an area of
+ * exactly zero. The SIGN the edge leaves on is what identifies an end: an edge
+ * running `+` to `-` carries the chord's start, one running `-` to `+` its end.
  *
  * WHAT THAT IS FREE OF IS THE LISTING ORDER — which of its three corners a
  * triangle happens to be written from — and not the winding, which it still
  * depends on entirely: reverse a triangle to `(v0, v2, v1)` and its edges are
  * walked the other way, so the `+`-to-`-` edge becomes the `-`-to-`+` one and
- * the chord turns round. A consistently wound MESH is the one thing this
- * measure needs of the tessellation, and it is a real requirement rather than a
- * formality — the suite's own cube did not satisfy it until this was written.
+ * the chord turns round. A consistently wound MESH is the one thing the
+ * direction asks of the tessellation, and it is a real requirement rather than a
+ * formality — the suite's own cube did not satisfy it until this was written,
+ * which is why outline.test.js pins the fixture's winding beside the chords.
  *
  * With exactly two crossings there is one of each, always: signs alternate
  * around a closed walk, so an odd count of one kind is impossible.
@@ -483,23 +432,18 @@ export function sectionOutline(vp, g, normal, value) {
     }
     const segments = planeThroughTriangles(
       position.array, geometry.index.array, n, c);
-    // ON EVERY REBUILD AND NOT ONLY AT CONSTRUCTION. The width is a measure of
-    // the CUT FACE, and the face changes shape as the plane slides — through a
-    // shelled body it is a ring at one height and a solid rectangle at another
-    // — so a width written once would be right for whichever plane happened to
-    // create the object.
-    const width = outlineWidth(segments, n);
     if (outline) {
-      // An update, not a rebuild: the object keeps its place in the group.
+      // An update, not a rebuild: the object keeps its place in the group, and
+      // it keeps the material it was built with — the width does not vary with
+      // the face, so a rebuild has nothing to say about it.
       outline.geometry.setPositions(segments);
-      outline.material.linewidth = width;
     } else {
       // The same construction order `_renderEdges` uses: fill the geometry,
       // then hand it to the line object.
       const lineGeometry = new classes.LineSegmentsGeometry();
       lineGeometry.setPositions(segments);
       outline = new classes.LineSegments2(
-        lineGeometry, outlineMaterial(classes, g, width));
+        lineGeometry, outlineMaterial(classes, g));
       outline.name = OUTLINE_NAME;
       // The mark `outlineChild` finds it by. Written here and nowhere else.
       outline.userData = { ...(outline.userData || {}), [OUTLINE_NAME]: true };
