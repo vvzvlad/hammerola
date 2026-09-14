@@ -21,7 +21,7 @@
 // module scope) holds the rebuild off whenever the PLANE did not move.
 
 import { cross3, unit3 } from "./math.js";
-import { SECTION_INDEX } from "./options.js";
+import { OUTLINE_WIDTH_FRACTION, SECTION_INDEX } from "./options.js";
 
 // The name the outline child carries inside its ObjectGroup — ours by
 // CONVENTION only: `renderShape` names the library's own children from the
@@ -34,8 +34,9 @@ import { SECTION_INDEX } from "./options.js";
 export const OUTLINE_NAME = "sectionOutline";
 
 // The library draws its own edges one device pixel wide; a contour has to read
-// over the hatch and both cut faces, so a few pixels and dark.
-const OUTLINE_WIDTH = 3;
+// over the hatch and both cut faces, so dark. How WIDE comes off the SOLID and
+// not off the screen — `outlineWidth` below, and OUTLINE_WIDTH_FRACTION in
+// options.js for why it is a size on the model at all.
 const OUTLINE_COLOR = 0x303030;
 
 // What a plane that misses writes: nothing, over whatever was there.
@@ -90,16 +91,50 @@ function lineClasses(g) {
 }
 
 /**
- * The outline material: the library's own edge material, thick and dark.
+ * One solid's contour width, in WORLD units: a fixed fraction of the SMALLEST
+ * dimension of that solid's own local bounding box.
+ *
+ * The smallest dimension is a wall's THICKNESS — the very dimension the contour
+ * must not swallow, and the width of the face a cut across that wall makes — so
+ * a thin part gets a proportionally thinner line than a thick one, at every
+ * zoom. The box is the one `planeMayCut` already reads, in the solid's local
+ * frame, which is the frame the segments are laid down in.
+ *
+ * A solid whose box is flat in one axis therefore gets a width of zero and no
+ * contour at all: nothing to draw a rim around is the honest answer, and it
+ * costs nothing — a fat line of zero width rasterises no pixels.
+ */
+function outlineWidth(box) {
+  const mins = read3(box.min);
+  const maxs = read3(box.max);
+  return OUTLINE_WIDTH_FRACTION
+    * Math.min(maxs[0] - mins[0], maxs[1] - mins[1], maxs[2] - mins[2]);
+}
+
+/**
+ * The outline material for one solid: the library's own edge material, dark and
+ * `width` across.
  *
  * Cloned rather than built, so it keeps what the factory already got right —
  * the polygon offset toward the camera, no tone mapping, shader clipping on.
  * It must NOT be clipped by the plane it lies IN, so it carries what the cap
  * materials carry: only the OTHER two planes, in the library's own order.
+ *
+ * IN WORLD UNITS, which is what makes `linewidth` a size on the model instead
+ * of a count of CSS pixels. Read off the bundle rather than assumed: the
+ * accessor is a real one on `LineMaterial`, it flips the `WORLD_UNITS` shader
+ * define and SETS `needsUpdate` ITSELF whenever the flag actually changes, so
+ * nothing here has to ask for a recompile. In that mode the vertex shader
+ * offsets the quad by `linewidth * 0.5` in view space and never reads
+ * `resolution` — only the pixel branch divides by it. The write below stays all
+ * the same: it is what the library's own edge materials carry, `onBeforeRender`
+ * rewrites it from the viewport before every draw regardless, and a clone that
+ * quietly dropped it would be the odd one out for no gain.
  */
-function outlineMaterial(classes, g) {
+function outlineMaterial(classes, g, width) {
   const material = classes.edges.material.clone();
-  material.linewidth = OUTLINE_WIDTH;
+  material.worldUnits = true;
+  material.linewidth = width;
   material.color.setHex(OUTLINE_COLOR);
   material.clippingPlanes = g.clipping.clipPlanes.filter(
     (_, index) => index !== SECTION_INDEX);
@@ -383,7 +418,9 @@ export function sectionOutline(vp, g, normal, value) {
       // then hand it to the line object.
       const lineGeometry = new classes.LineSegmentsGeometry();
       lineGeometry.setPositions(segments);
-      outline = new classes.LineSegments2(lineGeometry, outlineMaterial(classes, g));
+      outline = new classes.LineSegments2(
+        lineGeometry,
+        outlineMaterial(classes, g, outlineWidth(geometry.boundingBox)));
       outline.name = OUTLINE_NAME;
       // The mark `outlineChild` finds it by. Written here and nowhere else.
       outline.userData = { ...(outline.userData || {}), [OUTLINE_NAME]: true };

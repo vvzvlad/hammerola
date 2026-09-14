@@ -184,6 +184,33 @@ export const SECTION_BIAS = 1e-4;
 /** Which of the library's three clip planes this tool drives. */
 export const SECTION_INDEX = 0;
 
+/** The section contour's width (outline.js), as a fraction of the SMALLEST
+ * dimension of the solid it belongs to — a size on the MODEL, in world units,
+ * not a size on the screen.
+ *
+ * A CONSTANT PIXEL WIDTH IS WRONG AT BOTH ENDS OF THE ZOOM, and issue #95 is
+ * the end that hurts: the contour was three CSS pixels whatever it was drawn
+ * on, so on a 2 mm wall occupying three or four pixels the lines on the two
+ * sides of the cut face met in the middle and swallowed it — a cabinet full of
+ * walls, frame members and shelves came back as solid black bars, as if the
+ * model had been gone over with a marker. Far too thin at the other end, on a
+ * cut face filling the canvas. A width in world units projects correctly by
+ * itself, so it costs no per-frame update and no camera hook, and taking it
+ * from the PART means a thin wall gets a thin contour at every zoom. Pulled far
+ * enough back the line falls under a pixel and fades, which is the right answer
+ * there: a wall three pixels wide wants no contour at all.
+ *
+ * WHAT THE VALUE HAS TO SATISFY. The fat line is centred on the edge it marks,
+ * so half of its width lies inside the cut face; across a face's narrow
+ * direction there are two such edges, and together they eat 2 * (w / 2) = w of
+ * it. With `w = f * t` and `t` the solid's thinnest dimension — which is what a
+ * cut across a wall is exactly as wide as — the two contours eat the FRACTION f
+ * of the thinnest face there is. So f < 1 is the bare condition for them not to
+ * meet, and the value has to be well under it for what survives to still read
+ * as a coloured, hatched face rather than as a rim. A tenth leaves nine.
+ */
+export const OUTLINE_WIDTH_FRACTION = 0.1;
+
 /* The section plane's handle (handle.js), in CSS PIXELS — a constant size on
  * screen, which is free for a DOM overlay and is what keeps the grip the same
  * size on a 2 mm part and a 200 mm one. */

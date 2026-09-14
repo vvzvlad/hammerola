@@ -16,7 +16,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { internals } from '../src/viewport/internals.js'
-import { GHOST_OPACITY } from '../src/viewport/options.js'
+import { GHOST_OPACITY, OUTLINE_WIDTH_FRACTION } from '../src/viewport/options.js'
 import {
   OUTLINE_NAME, clearSectionOutlines, insideSection, sectionOutline,
   sectionSegments,
@@ -49,6 +49,13 @@ const CUBE_INDEX = new Uint32Array([
   0, 3, 7, 0, 7, 4, // x = 0
   1, 2, 6, 1, 6, 5, // x = 2
 ])
+
+// The same cube stretched to a box spanning [0,sx] x [0,sy] x [0,sz]: the
+// triangles and the index are the cube's, so CUBE_INDEX still describes it.
+const boxPositions = (sx, sy, sz) => {
+  const scale = [sx / 2, sy / 2, sz / 2]
+  return CUBE_POSITIONS.map((value, at) => value * scale[at % 3])
+}
 
 function solidScene({ gridSize = 100, groups = {} } = {}) {
   const camera = orthoCamera({
@@ -282,12 +289,13 @@ describe('sectionOutline', () => {
     }
   })
 
-  it('clones the edge material thick and dark, clipped by the other two planes', () => {
+  it('clones the edge material dark and part-sized, clipped by the other two planes', () => {
     const { solid, vp, g } = cubeScene()
     sectionOutline(vp, g, [1, 0, 0], -1)
     const material = outlineOf(solid).material
     expect(material.clipping).toBe(true)
-    expect(material.linewidth).toBe(3)
+    // The cube is 2 across in every axis, so its own smallest dimension is 2.
+    expect(material.linewidth).toBeCloseTo(2 * OUTLINE_WIDTH_FRACTION, 12)
     for (const channel of ['r', 'g', 'b']) {
       expect(material.color[channel]).toBeCloseTo(0x30 / 255, 12)
     }
@@ -303,6 +311,63 @@ describe('sectionOutline', () => {
     expect(material.resolution.y).toBe(RECT.height)
     // A clone: the donor's material is untouched.
     expect(solid.edges.material.linewidth).toBe(1)
+  })
+
+  it('measures that width on the MODEL and not on the screen', () => {
+    const { solid, vp, g } = cubeScene()
+    sectionOutline(vp, g, [1, 0, 0], -1)
+    const material = outlineOf(solid).material
+    expect(material.worldUnits).toBe(true)
+    // Not a field but a view onto the shader DEFINES, and the accessor raises
+    // `needsUpdate` on the flip itself — which is why outline.js asks for no
+    // recompile of its own.
+    expect(material.defines.WORLD_UNITS).toBe('')
+    expect(material.needsUpdate).toBe(true)
+    // The donor is left where the library put it: its own edges are still a
+    // count of CSS pixels, and only the clone changed units.
+    expect(solid.edges.material.worldUnits).toBe(false)
+  })
+
+  it('gives a thin part a proportionally thinner contour than a thick one', () => {
+    // THE CLAIM THE FIX IS. A 2 mm wall and a 20 mm post standing side by side,
+    // cut by one plane across the thickness of both: each contour is derived
+    // from the solid it belongs to and from nothing else, so the ratio of the
+    // two lines is the ratio of the two parts.
+    const wall = fakeShapeSolid('S|wall', {
+      positions: boxPositions(40, 30, 2), index: CUBE_INDEX,
+    })
+    const post = fakeShapeSolid('S|post', {
+      positions: boxPositions(40, 30, 20), index: CUBE_INDEX,
+    })
+    const { vp, g } = solidScene({ groups: { 'S|wall': wall, 'S|post': post } })
+    sectionOutline(vp, g, [1, 0, 0], -20) // the plane x = 20, through both
+    const thin = outlineOf(wall).material.linewidth
+    const thick = outlineOf(post).material.linewidth
+    // The SMALLEST dimension of each box, which for a wall is its thickness —
+    // the 40 and the 30 they share say nothing about either line.
+    expect(thin).toBeCloseTo(2 * OUTLINE_WIDTH_FRACTION, 12)
+    expect(thick).toBeCloseTo(20 * OUTLINE_WIDTH_FRACTION, 12)
+    expect(thick / thin).toBeCloseTo(10, 12)
+  })
+
+  it('leaves the thinnest cut face standing, which is the whole of issue #95', () => {
+    // The fat line is CENTRED on the edge it marks, so half its width lies
+    // inside the face; a cut across a wall has two such edges, and together
+    // they eat one whole width of a face exactly one thickness wide. At three
+    // CSS pixels on a wall occupying four the two met in the middle and the
+    // part came back a solid black bar.
+    const THICKNESS = 2
+    const wall = fakeShapeSolid('S|wall', {
+      positions: boxPositions(40, 30, THICKNESS), index: CUBE_INDEX,
+    })
+    const { vp, g } = solidScene({ groups: { 'S|wall': wall } })
+    sectionOutline(vp, g, [1, 0, 0], -20)
+    const eaten = outlineOf(wall).material.linewidth
+    // Not merely "they do not quite meet": most of the face has to survive AS
+    // A FACE — coloured and hatched — rather than as a sliver inside a rim.
+    expect(eaten).toBeLessThan(THICKNESS / 2)
+    expect(THICKNESS - eaten)
+      .toBeCloseTo(THICKNESS * (1 - OUTLINE_WIDTH_FRACTION), 12)
   })
 
   it('takes neither the name nor the class of a part called sectionOutline', () => {
@@ -781,6 +846,33 @@ describe('the vendored bundle still says what the outline rests on', () => {
   it('turns shader clipping on in the LineMaterial constructor, so a clone keeps it', () => {
     expect(classBody(bundle(), 'class LineMaterial')).toContain('clipping: true')
     expect(bundle()).toContain('this.clipping = source.clipping')
+  })
+
+  it('makes worldUnits a shader define whose own setter asks for the recompile', () => {
+    // Both halves of what outline.js leans on: the flag is a real accessor on
+    // LineMaterial rather than a plain field, and flipping it raises
+    // `needsUpdate` inside the setter — so nothing on our side has to.
+    const body = classBody(bundle(), 'class LineMaterial')
+    expect(body).toContain('set worldUnits( value )')
+    expect(body).toContain('this.defines.WORLD_UNITS')
+    expect(body).toContain('this.needsUpdate = true')
+    // And a clone starts from its donor's defines, not from an empty set.
+    expect(bundle()).toContain('this.defines = Object.assign( {}, source.defines )')
+  })
+
+  it('widens the world-units quad by the linewidth alone, no resolution in it', () => {
+    // Why a width in world units needs no per-frame update and no camera hook:
+    // under WORLD_UNITS the vertex shader offsets the quad in VIEW SPACE by
+    // half the linewidth, and the division by `resolution` that turns the
+    // number into a count of CSS pixels lives in the OTHER branch alone.
+    const source = bundle()
+    const from = source.indexOf('float hw = linewidth * 0.5;')
+    expect(from).toBeGreaterThanOrEqual(0)
+    const worldBranch = source.slice(
+      from, source.indexOf('vec2 offset = vec2( dir.y, - dir.x );', from))
+    expect(worldBranch).toContain('hw * worldUp')
+    expect(worldBranch).not.toContain('resolution')
+    expect(source).toContain('offset /= resolution.y;')
   })
 
   it('keeps the resolution in step with the canvas at render time', () => {
