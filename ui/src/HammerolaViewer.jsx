@@ -3829,13 +3829,18 @@ export default class HammerolaViewer extends React.Component {
       rows.push({
         key: node.id,
         rowStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px ' + (node.depth * 16) + 'px;border-radius:4px;background:' + (selected ? 'var(--accent-bg)' : 'var(--float-bg-soft)') + ';cursor:default',
-        caret: node.isNode ? (expanded ? '▾' : '▸') : '',
-        // A 20x20 target in the same weight as the expand-all and collapse-all
-        // buttons above the tree, which is what it is a per-row version of. It
-        // used to be 14 px wide, 9 px of glyph and `--text-faint` — smaller and
-        // fainter than everything beside it in the row, so it read as
-        // typographic dust rather than a control, and hitting it took aim.
-        caretStyle: 'width:20px;height:20px;flex:none;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text-soft);cursor:pointer;' + (node.isNode ? '' : 'visibility:hidden'),
+        // A STROKED PATH AND NOT A GLYPH, which is the whole of why this looks
+        // different now. The mark was `▾` at 9 px in a 14 px box, then `▾` at
+        // 11 px in a 20 px one — the TARGET grew and the ink did not, because
+        // U+25BE is a SMALL triangle whose ink is a fraction of the font size
+        // that the font, not this file, decides. A path in a 16-unit viewBox is
+        // the only form whose size this file actually sets.
+        //
+        // That it is drawn at the WEIGHT of the expand-all and collapse-all
+        // buttons above the tree — this being a per-row version of them — is
+        // pinned by ui/tests/repeats.test.js rather than claimed here.
+        caretPath: node.isNode ? (expanded ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4') : '',
+        caretStyle: 'width:20px;height:20px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-soft);cursor:pointer;' + (node.isNode ? '' : 'visibility:hidden'),
         onExpand: stop(() => node.isNode
           && this.setState({ expanded: { ...s.expanded, [node.id]: !expanded } })),
         eyeOuter: eyeOuter(eye), eyeDot: eyeDot(eye), ghostIcon: ghostIcon(ghosted),
@@ -5304,7 +5309,11 @@ export default class HammerolaViewer extends React.Component {
                 <div style={css('padding:1px 0 6px;display:flex;flex-direction:column;align-items:flex-start')}>
                   {v.rows.map((row) => (
                     <div key={row.key} onContextMenu={row.onMenu} style={css(row.rowStyle)}>
-                      <span onClick={row.onExpand} style={css(row.caretStyle)}>{row.caret}</span>
+                      <span onClick={row.onExpand} style={css(row.caretStyle)}>
+                        {row.caretPath && (
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d={row.caretPath} /></svg>
+                        )}
+                      </span>
                       <span onClick={row.onVis} title="show / hide" style={css('width:24px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
                         <span style={css(row.eyeOuter)}><span style={css(row.eyeDot)} /></span>
                       </span>

@@ -24,6 +24,12 @@
 // twice, so it holds no run of repeats to collapse, and none of its four leaves
 // (`plate`, `post`, `cap`, `reference_spacer`) is called `pin`.
 //
+// THE ROW'S OWN CHROME IS TESTED HERE TOO, past the last `describe`, and that
+// is a borrowed home rather than a subject: the caret a row expands from has
+// nothing to do with repeats, but this is the only file that already renders a
+// tree with a node and leaves under it (`component`, `rowFor`), so it is the one
+// place a row's drawn parts can be read without building a second harness.
+//
 // MOST OF IT NEVER MOUNTS: `component()` is the real prototype with the state
 // spelled out and `computed()` called on it, exactly as notes.test.js and
 // revswitch.test.js do it. Where a test needs the handler a VIEWPORT EVENT
@@ -36,7 +42,9 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { countedName, indexTree } from '../src/hub.js'
 import { FACE, MEASURE, MOVED, PICK, PLACE, STATE } from '../src/events.js'
+import { css } from '../src/style.jsx'
 import assembled from './fixtures/assembled.json'
+import { collect } from './eltree.js'
 
 /** The fixture's own leaves, as the view file spells them. */
 const REAL = assembled.parts
@@ -724,5 +732,78 @@ describe('the part the section plane says it is cut from', () => {
     window.dispatchEvent(new CustomEvent(FACE,
       { detail: { id: null, name: null, offset: 0, range: [-30, 30] } }))
     expect(c.state.secFace).toBe('face')
+  })
+})
+
+describe('the caret a row expands from', () => {
+  // A STROKED PATH AND NOT A GLYPH, and why that is a test rather than a
+  // sentence beside the render: the point of leaving `▾` behind was that a
+  // glyph's ink is a fraction of the font size which the FONT decides, so the
+  // mark now comes from three numbers this interface sets — the box it is drawn
+  // in, the viewBox it is drawn on and the stroke it is drawn with. "The same
+  // weight as the buttons above the tree" cannot be re-checked as prose.
+  //
+  // READ OFF THE RENDER and not off `computed()`, which is the failure
+  // ui/tests/eltree.js records: `computed().slotTitle` was the whole of "the
+  // digest is within reach", so deleting `title={v.slotTitle}` from the render
+  // left 378 tests green. Deleting the whole `<svg>` from the row here does
+  // exactly that — `caretPath` goes on being computed for nobody.
+  //
+  // THE WEIGHT AND THE PRESENCE, NEVER THE `d` ITSELF: the chevron may be
+  // redrawn, and a test holding its path would fail for a change that is not a
+  // regression.
+
+  /** The one `<svg>` inside an element, as everything that decides what it puts
+   *  on screen — the size AND the ink. `stroke` and `fill` are in here because
+   *  without them the failure this whole change is about walks straight through:
+   *  drop `stroke="currentColor"` and the mark is `fill="none"` over nothing, so
+   *  the caret is invisible with every element still in place. The buttons above
+   *  the tree carry the same two values, so comparing against them still holds. */
+  const markOf = (el) => {
+    const found = collect(el, (node) => (node.type === 'svg' ? node : undefined))
+    expect(found, 'the element draws no mark at all').toHaveLength(1)
+    const { width, height, viewBox, strokeWidth, stroke, fill } = found[0].props
+    return { width, height, viewBox, strokeWidth, stroke, fill }
+  }
+
+  const pathsIn = (el) =>
+    collect(el, (node) => (node.type === 'path' ? node : undefined))
+
+  it('is the same chevron as the buttons above the tree, and only on a node', () => {
+    // `css()` caches by string, so the object the render put on a caret is the
+    // very one `computed()` names for that row — which is how the element is
+    // found without a DOM (ui/tests/narrow.test.js does it this way too).
+    const c = component(THREE_PINS, { narrow: false, treeOpen: false, tabs: [] })
+    const drawn = c.render()
+    const byStyle = (style) => collect(
+      drawn, (el) => (el.props.style === css(style) ? el : undefined))
+    const titled = (title) => {
+      const found = collect(drawn, (el) => (el.props.title === title ? el : undefined))
+      expect(found, `nothing on the page is titled "${title}"`).toHaveLength(1)
+      return found[0]
+    }
+
+    // THE PAIR ABOVE THE TREE, which this is a per-row version of: same box,
+    // same viewBox, same stroke, so the row's mark reads at the same weight.
+    const carets = byStyle(rowFor(c, '/model').caretStyle)
+    expect(carets, 'no element on the page carries the node row\'s caret style')
+      .toHaveLength(1)
+    expect(markOf(carets[0])).toEqual(markOf(titled('expand all')))
+    expect(markOf(carets[0])).toEqual(markOf(titled('collapse all')))
+    expect(pathsIn(carets[0])).toHaveLength(1)
+
+    // A LEAF DRAWS NOTHING. Both leaf rows of this tree share one caret style,
+    // so both are found by it, and neither may carry a mark.
+    const leaves = byStyle(rowFor(c, '/model/pin').caretStyle)
+    expect(leaves).toHaveLength(2)
+    for (const leaf_ of leaves) expect(pathsIn(leaf_)).toHaveLength(0)
+
+    // AND STILL OCCUPIES ITS BOX, hidden rather than absent: the 20x20 is what
+    // keeps a leaf's name lined up under the names on the level above it.
+    const box = css(rowFor(c, '/model/pin').caretStyle)
+    expect(box.width).toBe('20px')
+    expect(box.height).toBe('20px')
+    expect(box.visibility).toBe('hidden')
+    expect(css(rowFor(c, '/model').caretStyle).visibility).toBeUndefined()
   })
 })

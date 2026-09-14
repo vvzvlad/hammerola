@@ -16,7 +16,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { internals } from '../src/viewport/internals.js'
-import { GHOST_OPACITY, OUTLINE_WIDTH_FRACTION } from '../src/viewport/options.js'
+import { GHOST_OPACITY } from '../src/viewport/options.js'
 import {
   OUTLINE_NAME, clearSectionOutlines, insideSection, sectionOutline,
   sectionSegments,
@@ -51,11 +51,12 @@ const CUBE_POSITIONS = new Float32Array(boxCorners([0, 0, 0], [2, 2, 2]))
 // off ui/tests/fixtures/assembled.json rather than assumed: all 1128 of its
 // triangles agree in sign with the vertex normal OCP shipped beside them.
 //
-// It matters now that the contour's width comes off a SIGNED area (2A/P), which
-// is meaningless on a solid wound half one way and half the other: three of
-// this fixture's six faces used to face inwards, and the square below came out
-// with an area of exactly zero. The diagonals are unchanged, so every segment
-// count and endpoint in this file is what it always was.
+// It matters because the chords `planeThroughTriangles` emits are directed by
+// the winding, and the measure that catches a solid wound half one way and half
+// the other is the SIGNED area those chords enclose: three of this fixture's six
+// faces used to face inwards, and the square below came out with an area of
+// exactly zero. The diagonals are unchanged, so every segment count and endpoint
+// in this file is what it always was.
 const CUBE_INDEX = new Uint32Array([
   0, 3, 2, 0, 2, 1, // z = 0, outward -z, diagonal corner 0 - corner 2
   4, 5, 6, 4, 6, 7, // z = 2, outward +z
@@ -154,14 +155,21 @@ const totalLength = (segments) => segments.reduce((total, [p, q]) => {
 const allFinite = (segments) => segments.every(([p, q]) =>
   [p, q].every((point) => point.every(Number.isFinite)))
 
-/** The AREA the contour's width was derived from, read back out of the width.
+/** The area the directed chords enclose, off the segment buffer alone: the
+ *  divergence form of the shoelace rule, `0.5 * |sum (a x b) . n|`, which a
+ *  closed loop answers wherever it starts and whatever the origin is, and which
+ *  subtracts a hole's loop by itself.
  *
- *  `outlineWidth` is private, and it need not be exported to be measured: the
- *  width it writes is `f * 2A/P`, and the perimeter P is the total length of the
- *  very segments the outline is carrying — so A comes back out of the two, and
- *  a test can compare it against a cross-section worked out by hand. */
-const measuredArea = (outline) => outline.material.linewidth
-  * totalLength(segmentsOf(outline)) / (2 * OUTLINE_WIDTH_FRACTION)
+ *  Nothing in the module computes this any more — it lives here because it is
+ *  the measure that COLLAPSES when the chords are not consistently directed,
+ *  which is what makes it the way to read that property off the buffer. `n`
+ *  must be unit. */
+const signedArea = (segments, n) => Math.abs(segments.reduce(
+  (total, [a, b]) => total
+    + (a[1] * b[2] - a[2] * b[1]) * n[0]
+    + (a[2] * b[0] - a[0] * b[2]) * n[1]
+    + (a[0] * b[1] - a[1] * b[0]) * n[2],
+  0)) / 2
 
 /** The same triangles, each listed from a different corner.
  *
@@ -370,13 +378,12 @@ describe('sectionOutline', () => {
     }
   })
 
-  it('clones the edge material dark and part-sized, clipped by the other two planes', () => {
+  it('clones the edge material dark and two pixels wide, clipped by the other two planes', () => {
     const { solid, vp, g } = cubeScene()
     sectionOutline(vp, g, [1, 0, 0], -1)
     const material = outlineOf(solid).material
     expect(material.clipping).toBe(true)
-    // The cut face is the 2 x 2 square, whose 2A/P is 2 * 4 / 8 = 1.
-    expect(material.linewidth).toBeCloseTo(OUTLINE_WIDTH_FRACTION, 12)
+    expect(material.linewidth).toBe(2)
     for (const channel of ['r', 'g', 'b']) {
       expect(material.color[channel]).toBeCloseTo(0x30 / 255, 12)
     }
@@ -394,97 +401,37 @@ describe('sectionOutline', () => {
     expect(solid.edges.material.linewidth).toBe(1)
   })
 
-  it('measures that width on the MODEL and not on the screen', () => {
-    const { solid, vp, g } = cubeScene()
-    sectionOutline(vp, g, [1, 0, 0], -1)
-    const material = outlineOf(solid).material
-    expect(material.worldUnits).toBe(true)
-    // Not a field but a view onto the shader DEFINES, and the accessor raises
-    // `needsUpdate` on the flip itself — which is why outline.js asks for no
-    // recompile of its own.
-    expect(material.defines.WORLD_UNITS).toBe('')
-    expect(material.needsUpdate).toBe(true)
-    // The donor is left where the library put it: its own edges are still a
-    // count of CSS pixels, and only the clone changed units.
-    expect(solid.edges.material.worldUnits).toBe(false)
-  })
-
-  it('gives a thin part a proportionally thinner contour than a thick one', () => {
-    // THE CLAIM THE FIX IS. A 2 mm wall and a 20 mm post standing side by side,
-    // cut by one plane across the thickness of both: each contour is derived
-    // from the FACE that plane makes in the part it belongs to and from nothing
-    // else, so the ratio of the two lines is the ratio of the two faces.
+  it('gives every cut face the same contour, whatever size the face is', () => {
+    // THE CLAIM THE WIDTH IS. A 2 mm wall, a 20 mm post and a 50.8 x 33.8 slab
+    // standing side by side, cut by one plane across all three: the faces they
+    // make differ by a factor of nearly thirty in area (60, 600, 1717 mm^2) and
+    // the contour does not differ at all. Both attempts at a width off the
+    // MODEL — a tenth of the smallest bounding-box dimension, then 2A/P of the
+    // cut face — put a fat rim on the slab and, on the wall, a line too thin to
+    // see or none at all.
     const wall = fakeShapeSolid('S|wall', {
       positions: boxPositions(40, 30, 2), index: CUBE_INDEX,
     })
     const post = fakeShapeSolid('S|post', {
       positions: boxPositions(40, 30, 20), index: CUBE_INDEX,
     })
-    const { vp, g } = solidScene({ groups: { 'S|wall': wall, 'S|post': post } })
-    sectionOutline(vp, g, [1, 0, 0], -20) // the plane x = 20, through both
-    const thin = outlineOf(wall).material.linewidth
-    const thick = outlineOf(post).material.linewidth
-    // 30 x 2 against 30 x 20: 2A/P is 120 / 64 and 1200 / 100. The 40 they
-    // share is along the plane's own normal and says nothing about either line.
-    expect(thin).toBeCloseTo((120 / 64) * OUTLINE_WIDTH_FRACTION, 12)
-    expect(thick).toBeCloseTo((1200 / 100) * OUTLINE_WIDTH_FRACTION, 12)
-    expect(thick).toBeGreaterThan(thin * 6)
-  })
-
-  it('leaves the thinnest cut face standing, which is the whole of issue #95', () => {
-    // The fat line is CENTRED on the edge it marks, so half its width lies
-    // inside the face; a cut across a wall has two such edges, and together
-    // they eat one whole width of it. At three CSS pixels on a wall occupying
-    // four the two met in the middle and the part came back a solid black bar.
-    //
-    // 2A/P is never WIDER than the face's own narrow way — for a w x L
-    // rectangle it is wL / (w + L), under w whatever L is — so the pair eat
-    // less than the fraction of the wall, and the fraction is a tenth.
-    //
-    // FOR A FACE OF ONE THICKNESS, which is the shape a cut across a wall or a
-    // shell makes and the shape both bodies below have. A face that is massive
-    // in one region and thin in another averages the two, and the thin part can
-    // still be eaten: measured, a 40 x 40 x 10 block carrying a 1 mm rib reads
-    // 16.0 and would put a 1.6 mm line on the rib. Nobody has met that shape
-    // here and nothing is built for it; it is written down so the next reader
-    // does not take this measure for a guarantee it does not give.
-    const THICKNESS = 2
-    const wall = fakeShapeSolid('S|wall', {
-      positions: boxPositions(40, 30, THICKNESS), index: CUBE_INDEX,
+    const slab = fakeShapeSolid('S|slab', {
+      positions: boxPositions(40, 33.8, 50.8), index: CUBE_INDEX,
     })
-    const { vp, g } = solidScene({ groups: { 'S|wall': wall } })
-    sectionOutline(vp, g, [1, 0, 0], -20)
-    const eaten = outlineOf(wall).material.linewidth
-    // Not merely "they do not quite meet": most of the face has to survive AS
-    // A FACE — coloured and hatched — rather than as a sliver inside a rim.
-    expect(eaten).toBeLessThan(THICKNESS * OUTLINE_WIDTH_FRACTION)
-    expect(eaten).toBeLessThan(THICKNESS / 2)
-  })
-
-  it('leaves a SHELLED body\'s wall standing too, which is where #95 came back', () => {
-    // THE CASE THAT REOPENED THE ISSUE. The test above passes on a plate,
-    // whose bounding box IS its thickness; this is the other kind of solid,
-    // and it is the kind `model_template/model.py` builds — one body, thin
-    // walls, a fat box. Sized off the box the contour was 0.1 * 20 = 2.0 mm
-    // against a cut face 2.4 mm across, so the two lines ate 2.0 of the 2.4 and
-    // the wall came back as the dark bar the issue is about — at every zoom,
-    // this time, because a world-unit width holds the ratio however close the
-    // reader leans in.
-    const WALL = 2.4
-    const shell = shelledBox([50.8, 33.8, 20], WALL)
-    const body = fakeShapeSolid('S|body', shell)
-    const { vp, g } = solidScene({ groups: { 'S|body': body } })
-    // z = 10, half way up: the cut face is the RING of the four walls.
-    sectionOutline(vp, g, [0, 0, 1], -10)
-    const eaten = outlineOf(body).material.linewidth
-    // The box says 20 and the face says 2.4 — the whole distance between the
-    // two measures, and what the old rule would have eaten.
-    const box = body.front.geometry.boundingBox
-    expect(Math.min(box.max.x - box.min.x, box.max.y - box.min.y,
-                    box.max.z - box.min.z)).toBeCloseTo(20, 9)
-    expect(eaten).toBeCloseTo(WALL * OUTLINE_WIDTH_FRACTION, 6)
-    expect(WALL - eaten).toBeCloseTo(WALL * (1 - OUTLINE_WIDTH_FRACTION), 6)
-    expect(eaten).toBeLessThan(20 * OUTLINE_WIDTH_FRACTION / 8)
+    const { vp, g } = solidScene({
+      groups: { 'S|wall': wall, 'S|post': post, 'S|slab': slab },
+    })
+    sectionOutline(vp, g, [1, 0, 0], -20) // the plane x = 20, through all three
+    for (const solid of [wall, post, slab]) {
+      const { material } = outlineOf(solid)
+      expect(material.linewidth).toBe(2)
+      // Which is a count of CSS PIXELS, because `linewidth` is one unless the
+      // material is told otherwise and nothing tells it otherwise. The flag is
+      // a view onto the shader defines rather than a field, so this reads the
+      // define too.
+      expect(material.worldUnits).toBe(false)
+      expect(material.defines.WORLD_UNITS).toBeUndefined()
+    }
   })
 
   it('takes neither the name nor the class of a part called sectionOutline', () => {
@@ -514,110 +461,38 @@ describe('sectionOutline', () => {
   })
 })
 
-describe('the contour\'s width, measured on the cut face', () => {
-  // `outlineWidth` is `OUTLINE_WIDTH_FRACTION * 2A/P` of the face the plane
-  // makes, and the two halves of that are read off the section segments before
-  // any material exists. The perimeter is the easy one — the segments' own
-  // total length. The AREA is a signed sum, so it is the one that can be wrong
-  // without anything looking wrong, and every case below compares it against a
-  // cross-section worked out by hand.
+describe('the chords, directed by the sign the edge crosses on', () => {
+  // `planeThroughTriangles` emits each chord from its `+ -> -` crossing to its
+  // `- -> +` one rather than in the order the edge walk met the two. NOTHING
+  // DOWNSTREAM READS THAT TODAY — the fat line and `insideSection` are both
+  // blind to the direction — so these two tests are the whole of what keeps it
+  // true, and they read it straight off the segment buffer.
 
   it('cuts a solid wound outward, the way a real tessellation is', () => {
-    // The whole measure rests on it: a signed area summed over a solid wound
-    // half one way and half the other is not the face's area and not anything
-    // else either. Pinned here because the fixture used to fail it, and the
-    // failure was invisible — a plausible contour of exactly the wrong width.
+    // The direction rests on it: the chords of a solid wound half one way and
+    // half the other come out reversed against each other, and the signed area
+    // below is then not the face's area and not anything else either. Pinned
+    // here because the fixture used to fail it, and the failure was invisible —
+    // every segment count and endpoint in this file held throughout.
     expect(woundOutward(CUBE_POSITIONS, CUBE_INDEX, [1, 1, 1])).toBe(true)
   })
 
-  it('measures a known area: the square a cube is cut in', () => {
-    const { solid, vp, g } = cubeScene()
-    sectionOutline(vp, g, [1, 0, 0], -1)
-    const outline = outlineOf(solid)
-    // The 2 x 2 square: A = 4, P = 8, so 2A/P = 1 — and the width a tenth of it.
-    expect(totalLength(segmentsOf(outline))).toBeCloseTo(8, 9)
-    expect(measuredArea(outline)).toBeCloseTo(4, 6)
-    expect(outline.material.linewidth).toBeCloseTo(OUTLINE_WIDTH_FRACTION, 12)
-  })
-
-  it('measures a known area on a face no axis is parallel to', () => {
-    // The corner-on hexagon, side sqrt(2): A = 3 sqrt(3), P = 6 sqrt(2), so
-    // 2A/P is sqrt(3/2). Every axis-aligned case above leaves two of the three
-    // terms of the cross product multiplied by a zero component of the normal,
-    // and this one weights all three — a sum that dropped one would still be
-    // exactly right on the square and wrong here.
-    const { solid, vp, g } = cubeScene()
-    const third = 1 / Math.sqrt(3)
-    sectionOutline(vp, g, [third, third, third], -Math.sqrt(3))
-    const outline = outlineOf(solid)
-    expect(totalLength(segmentsOf(outline))).toBeCloseTo(6 * Math.SQRT2, 9)
-    expect(measuredArea(outline)).toBeCloseTo(3 * Math.sqrt(3), 6)
-    expect(outline.material.linewidth).toBeCloseTo(
-      OUTLINE_WIDTH_FRACTION * Math.sqrt(1.5), 6)
-  })
-
-  it('normalises the local normal, which the part\'s matrix may have scaled', () => {
-    // The area is a projection onto the plane's normal, so that normal has to
-    // be UNIT — and the one the segments are measured against is the LOCAL one,
-    // which `localPlane` leaves carrying whatever the matrix scales by. Here
-    // diag(2, 1, 1) doubles it, so a sum taken against it as it stands doubles
-    // the area and the width with it, and every unscaled case above misses it.
-    //
-    // The cube spans world x in [0, 4]; the world plane x = 2 is its own local
-    // x = 1, and the face is the same 2 x 2 square as the first case, measured
-    // in the frame the segments are laid down in.
-    const { solid, vp, g } = cubeScene({
-      matrix: { elements: [2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
-    })
-    sectionOutline(vp, g, [1, 0, 0], -2)
-    const outline = outlineOf(solid)
-    expect(measuredArea(outline)).toBeCloseTo(4, 6)
-    expect(outline.material.linewidth).toBeCloseTo(OUTLINE_WIDTH_FRACTION, 12)
-  })
-
-  it('reads a ring-shaped cut face as the wall it is', () => {
-    // The measure's whole reason for being. Outer 50.8 x 33.8, wall 2.4, cut
-    // half way up: the face is the ring between 50.8 x 33.8 and 46 x 29, so
-    // A = 1717.04 - 1334 = 383.04 and P = 169.2 + 150 = 319.2 — and 2A/P comes
-    // out at the wall's own 2.4, exactly.
-    //
-    // The area is also what says the cavity is wound INTO itself the way a void
-    // is: wound the other way its loop would ADD instead of subtracting, and
-    // the face would read 3051 rather than 383.
-    const shell = shelledBox([50.8, 33.8, 20], 2.4)
-    const body = fakeShapeSolid('S|body', shell)
-    const { vp, g } = solidScene({ groups: { 'S|body': body } })
-    sectionOutline(vp, g, [0, 0, 1], -10)
-    const outline = outlineOf(body)
-    expect(totalLength(segmentsOf(outline))).toBeCloseTo(319.2, 3)
-    expect(measuredArea(outline)).toBeCloseTo(383.04, 3)
-    expect(outline.material.linewidth / OUTLINE_WIDTH_FRACTION)
-      .toBeCloseTo(2.4, 5)
-  })
-
-  it('reads the same box left solid as the chunky face it is', () => {
-    // The other half of the pair, and the number the bounding box could never
-    // tell apart from the one above: same box, no cavity, 2A/P = 20.3.
-    const plate = fakeShapeSolid('S|plate', {
-      positions: boxPositions(50.8, 33.8, 20), index: CUBE_INDEX,
-    })
-    const { vp, g } = solidScene({ groups: { 'S|plate': plate } })
-    sectionOutline(vp, g, [0, 0, 1], -10)
-    const outline = outlineOf(plate)
-    expect(measuredArea(outline)).toBeCloseTo(50.8 * 33.8, 2)
-    expect(outline.material.linewidth / OUTLINE_WIDTH_FRACTION)
-      .toBeCloseTo(2 * 50.8 * 33.8 / (2 * (50.8 + 33.8)), 4)
-  })
-
   it('directs the chords by the sign they cross on, not by the edge walk', () => {
-    // THE PREMISE THE AREA RESTS ON, measured rather than assumed. The same
-    // solid, the same winding, the same cut — only each triangle's vertex list
-    // rotated, which no tessellator promises not to do. Directed by the accident
-    // of which crossing the walk met first, half of a solid's chords come back
-    // reversed against the other half and the signed area collapses: on the
-    // payload fixture's own cylinder, cut through its axis, it collapsed to
-    // EXACTLY ZERO — a face 96 mm^2 across reported as no face at all, and a
-    // contour of width zero.
+    // MEASURED RATHER THAN ASSUMED. The same solid, the same winding, the same
+    // cut — only each triangle's vertex list rotated, which no tessellator
+    // promises not to do. Directed by the accident of which crossing the walk
+    // met first, half of a solid's chords come back reversed against the other
+    // half and the signed area they enclose collapses: on the payload fixture's
+    // own cylinder, cut through its axis, it collapsed to EXACTLY ZERO — a face
+    // 96 mm^2 across reported as no face at all, with a perfectly correct
+    // perimeter beside it.
+    //
+    // Outer 50.8 x 33.8, wall 2.4, cut half way up: the face is the ring
+    // between 50.8 x 33.8 and 46 x 29, so A = 1717.04 - 1334 = 383.04 and
+    // P = 169.2 + 150 = 319.2. The area is also what says the cavity is wound
+    // INTO itself the way a void is: wound the other way its loop would ADD
+    // instead of subtracting and the ring would read 3051.
+    const UP = [0, 0, 1]
     const shell = shelledBox([50.8, 33.8, 20], 2.4)
     const straight = fakeShapeSolid('S|straight', shell)
     const rotated = fakeShapeSolid('S|rotated', {
@@ -626,46 +501,14 @@ describe('the contour\'s width, measured on the cut face', () => {
     const { vp, g } = solidScene({
       groups: { 'S|straight': straight, 'S|rotated': rotated },
     })
-    sectionOutline(vp, g, [0, 0, 1], -10)
-    expect(measuredArea(outlineOf(rotated)))
-      .toBeCloseTo(measuredArea(outlineOf(straight)), 6)
-    expect(outlineOf(rotated).material.linewidth / OUTLINE_WIDTH_FRACTION)
-      .toBeCloseTo(2.4, 5)
-  })
-
-  it('rewrites the width when the plane slides onto a face of another shape', () => {
-    // A cut face is not a property of the solid, so the width cannot be one
-    // either: the same shelled body reads 2.4 across at half height, where the
-    // plane crosses four walls, and 20.3 down at the floor, where it crosses a
-    // solid slab. An update path that only wrote the segments would leave the
-    // floor wearing the wall's hairline.
-    const body = fakeShapeSolid('S|body', shelledBox([50.8, 33.8, 20], 2.4))
-    const { vp, g } = solidScene({ groups: { 'S|body': body } })
-    sectionOutline(vp, g, [0, 0, 1], -10)
-    const outline = outlineOf(body)
-    const material = outline.material
-    expect(material.linewidth / OUTLINE_WIDTH_FRACTION).toBeCloseTo(2.4, 5)
-    // z = 1.2, below the cavity's floor at z = 2.4.
-    sectionOutline(vp, g, [0, 0, 1], -1.2)
-    expect(outlineOf(body)).toBe(outline)
-    expect(outline.material).toBe(material)
-    expect(outline.geometry.setPositionsCalls).toBe(2)
-    expect(material.linewidth / OUTLINE_WIDTH_FRACTION)
-      .toBeCloseTo(2 * 50.8 * 33.8 / (2 * (50.8 + 33.8)), 4)
-  })
-
-  it('draws no contour at all where there is no face to rim', () => {
-    // Zero, and zero is the honest answer: a fat line of no width rasterises
-    // nothing, which is what a plane that found no closed area should leave.
-    // One triangle lying IN the plane is the case — the box test passes, so the
-    // outline is created, and no crossing reaches it to have a width measured.
-    const flat = fakeShapeSolid('S|flat', {
-      positions: new Float32Array([1, 0, 0, 1, 2, 0, 1, 0, 2]),
-      index: new Uint32Array([0, 1, 2]),
-    })
-    const { vp, g } = solidScene({ groups: { 'S|flat': flat } })
-    sectionOutline(vp, g, [1, 0, 0], -1)
-    expect(outlineOf(flat).material.linewidth).toBe(0)
+    sectionOutline(vp, g, UP, -10)
+    const asWalked = segmentsOf(outlineOf(straight))
+    expect(totalLength(asWalked)).toBeCloseTo(319.2, 3)
+    expect(signedArea(asWalked, UP)).toBeCloseTo(383.04, 3)
+    // Rotating the vertex lists moves nothing whatever: the same edges are
+    // crossed, so every chord comes back with the same two ends IN THE SAME
+    // ORDER, which is the claim itself and not a consequence of it.
+    expect(segmentsOf(outlineOf(rotated))).toEqual(asWalked)
   })
 })
 
@@ -1120,31 +963,51 @@ describe('the vendored bundle still says what the outline rests on', () => {
     expect(bundle()).toContain('this.clipping = source.clipping')
   })
 
-  it('makes worldUnits a shader define whose own setter asks for the recompile', () => {
-    // Both halves of what outline.js leans on: the flag is a real accessor on
-    // LineMaterial rather than a plain field, and flipping it raises
-    // `needsUpdate` inside the setter — so nothing on our side has to.
+  it('keeps worldUnits a shader define, which is what makes its ABSENCE readable', () => {
+    // NOT A FLAG THIS MODULE SETS — outline.js never touches it. What the
+    // outline rests on is the SHAPE of it: `worldUnits` is an accessor over
+    // `defines` rather than a plain field, so the mode a material is in IS the
+    // presence of that define, and it is a live switch — the setter raises
+    // `needsUpdate` on the flip — rather than a leftover key. That is what gives
+    // `expect(material.defines.WORLD_UNITS).toBeUndefined()` above something to
+    // mean: the clone is in the PIXEL branch, not merely missing a field.
     const body = classBody(bundle(), 'class LineMaterial')
     expect(body).toContain('set worldUnits( value )')
     expect(body).toContain('this.defines.WORLD_UNITS')
     expect(body).toContain('this.needsUpdate = true')
-    // And a clone starts from its donor's defines, not from an empty set.
+    // And a clone starts from its donor's defines, not from an empty set — so
+    // an absence on the clone is the DONOR's absence and not an artefact of
+    // cloning.
     expect(bundle()).toContain('this.defines = Object.assign( {}, source.defines )')
   })
 
-  it('widens the world-units quad by the linewidth alone, no resolution in it', () => {
-    // Why a width in world units needs no per-frame update and no camera hook:
-    // under WORLD_UNITS the vertex shader offsets the quad in VIEW SPACE by
-    // half the linewidth, and the division by `resolution` that turns the
-    // number into a count of CSS pixels lives in the OTHER branch alone.
+  it('divides the quad by the resolution in the branch the outline is drawn in', () => {
+    // WHY `resolution` IS LOAD-BEARING HERE. `linewidth` counts CSS pixels in
+    // the DEFAULT branch — the one the outline material is left in — and it is
+    // that branch which turns the number into pixels by dividing the quad's
+    // offset by the canvas size. So the `resolution` the clone carries is not
+    // decoration, and the case below is what keeps it in step with the canvas.
+    //
+    // CUT AT THE BRANCH AND NOT SEARCHED FOR IN THE WHOLE FILE, because the
+    // sentence above is about WHERE the division lives: the string occurs twice
+    // in the bundle, and a bare `toContain` would go on passing if the upgrade
+    // that moved it put it under `#ifdef WORLD_UNITS` instead.
     const source = bundle()
-    const from = source.indexOf('float hw = linewidth * 0.5;')
-    expect(from).toBeGreaterThanOrEqual(0)
-    const worldBranch = source.slice(
-      from, source.indexOf('vec2 offset = vec2( dir.y, - dir.x );', from))
-    expect(worldBranch).toContain('hw * worldUp')
-    expect(worldBranch).not.toContain('resolution')
-    expect(source).toContain('offset /= resolution.y;')
+    const at = source.indexOf('offset /= resolution.y;')
+    expect(at, 'the line shader no longer divides by the resolution').toBeGreaterThan(-1)
+    const opened = source.lastIndexOf('#ifdef WORLD_UNITS', at)
+    const otherwise = source.indexOf('#else', opened)
+    expect(opened, 'no world-units branch above it').toBeGreaterThan(-1)
+    expect(otherwise, 'the branch has no screen-space half').toBeGreaterThan(opened)
+    expect(otherwise, 'the division sits in the WORLD half').toBeLessThan(at)
+    const pixels = source.slice(otherwise, source.indexOf('#endif', at))
+    // The two together are what makes `linewidth` a pixel count: the offset is
+    // scaled by it and then divided by the canvas, in that order and in this
+    // half. The world half does neither — it is why a width in world units
+    // needed no `resolution` and why this one does.
+    expect(pixels).toContain('offset *= linewidth;')
+    expect(pixels).toContain('offset /= resolution.y;')
+    expect(source.slice(opened, otherwise)).not.toContain('offset /= resolution.y;')
   })
 
   it('keeps the resolution in step with the canvas at render time', () => {

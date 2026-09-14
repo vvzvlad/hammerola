@@ -184,50 +184,6 @@ export const SECTION_BIAS = 1e-4;
 /** Which of the library's three clip planes this tool drives. */
 export const SECTION_INDEX = 0;
 
-/** The section contour's width (outline.js), as a fraction of the
- * CHARACTERISTIC WIDTH OF THE FACE THE PLANE CUTS — a size on the MODEL, in
- * world units, not a size on the screen.
- *
- * A CONSTANT PIXEL WIDTH IS WRONG AT BOTH ENDS OF THE ZOOM, and issue #95 is
- * the end that hurts: the contour was three CSS pixels whatever it was drawn
- * on, so on a 2 mm wall occupying three or four pixels the lines on the two
- * sides of the cut face met in the middle and swallowed it — a cabinet full of
- * walls, frame members and shelves came back as solid black bars, as if the
- * model had been gone over with a marker. Far too thin at the other end, on a
- * cut face filling the canvas. A width in world units projects correctly by
- * itself, so it costs no per-frame update and no camera hook, and taking it
- * from the CUT means a thin wall gets a thin contour at every zoom. Pulled far
- * enough back the line falls under a pixel and fades, which is the right answer
- * there: a wall three pixels wide wants no contour at all.
- *
- * WHAT IT IS MEASURED AGAINST — the half that was got wrong once, in the first
- * pass at this issue. That one took the fraction of the SMALLEST DIMENSION OF
- * THE SOLID'S BOUNDING BOX, on the reasoning that a wall's thinnest dimension
- * is its thickness. It is, when the solid IS a panel. Shell a box and it is
- * not: `model_template/model.py` builds its body with `.faces(">Z").shell(-2.4)`
- * inside a box 50.8 x 33.8 x 20, so the box said 20 where the wall the plane
- * crosses is 2.4, the two contours ate 2.0 of that 2.4, and the wall came back
- * as the same dark bar the issue was filed about — and worse than the pixel
- * width it replaced in one respect, since a world-unit width holds the same bad
- * ratio at every zoom instead of coming right when you lean in. So the measure
- * comes off the FACE and not off the solid: `2 * Area / Perimeter`, the same
- * characteristic width this project already sieves slivers by (issue #10's
- * 2V/S), out of the section segments themselves. On a ring 2.4 across it is
- * 2.40; on a 2.4 x 600 panel in section, 2.39; on that box left solid, 20.3 — a
- * chunky number for a chunky face, as it should be.
- *
- * WHAT THE VALUE HAS TO SATISFY. The fat line is centred on the edge it marks,
- * so half of its width lies inside the cut face; across a face's narrow
- * direction there are two such edges, and together they eat 2 * (w / 2) = w of
- * it. With `w = f * t` and `t` the face's own characteristic width — which is a
- * cut wall's thickness exactly — the two contours eat the FRACTION f of the
- * narrowest way across the face there is. So f < 1 is the bare condition for
- * them not to meet, and the value has to be well under it for what survives to
- * still read as a coloured, hatched face rather than as a rim. A tenth leaves
- * nine.
- */
-export const OUTLINE_WIDTH_FRACTION = 0.1;
-
 /* The section plane's handle (handle.js), in CSS PIXELS — a constant size on
  * screen, which is free for a DOM overlay and is what keeps the grip the same
  * size on a 2 mm part and a 200 mm one. */
