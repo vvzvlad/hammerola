@@ -90,7 +90,7 @@ def step_digest(path):
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def measure(step_a, step_b):
+def measure(step_a, step_b, *, keep_shapes=False):
     """Fuse the two parts and split the result into common, removed and added.
 
     Returns a dict, always with a `reason`: None when the numbers below are
@@ -104,6 +104,14 @@ def measure(step_a, step_b):
     The numbers, in mm3 and mm2: `volume_a`, `volume_b`, `common_mm3`,
     `removed_mm3`, `added_mm3`, a `removed` and an `added` list of
     `{"volume_mm3", "area_mm2"}` per piece, and `bboxes_overlap`.
+
+    `keep_shapes` PUTS THE SOLID ITSELF ON EACH PIECE, as `shape`, and is off by
+    default so that what this returns stays two floats per piece and nothing
+    else. The default is what the text half reads (`buildproc.comparechild`
+    prints numbers into a job log), and it is a dict that survives `json.dumps`
+    and holds no kernel object alive after the call. The scene half needs the
+    geometry rather than its volume -- `cadbuild.comparescene` draws the pieces
+    -- and asks for it here rather than fusing the two solids a second time.
     """
     from OCP.BOPAlgo import BOPAlgo_Builder
 
@@ -150,8 +158,8 @@ def measure(step_a, step_b):
         "common_mm3": sum((_volume(piece) for piece in common), 0.0),
         "removed_mm3": sum((_volume(piece) for piece in removed), 0.0),
         "added_mm3": sum((_volume(piece) for piece in added), 0.0),
-        "removed": [_described(piece) for piece in removed],
-        "added": [_described(piece) for piece in added],
+        "removed": [_described(piece, keep_shapes) for piece in removed],
+        "added": [_described(piece, keep_shapes) for piece in added],
         "bboxes_overlap": _bboxes_overlap(solid_a, solid_b),
     }
 
@@ -306,8 +314,15 @@ def _holds(pieces, wanted):
     return any(piece.IsSame(wanted) for piece in pieces)
 
 
-def _described(piece):
-    return {"volume_mm3": _volume(piece), "area_mm2": _area(piece)}
+def _described(piece, keep_shapes=False):
+    described = {"volume_mm3": _volume(piece), "area_mm2": _area(piece)}
+    if keep_shapes:
+        # ADDED RATHER THAN REPLACING, so `drop_slivers` and `check` go on
+        # reading the same two floats they always read: the thickness a piece is
+        # filtered by is 2V/S, and a sliver has to be dropped before the scene
+        # draws it exactly as it is dropped before the log reports it.
+        described["shape"] = piece
+    return described
 
 
 def _volume(shape):
