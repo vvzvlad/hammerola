@@ -17,8 +17,17 @@
 //     program between caps that wanted different ones;
 //   * the per-part fields collapsing — every part onto one slope, the angle
 //     drifting between revisions — none of which draws a word from any console;
-//   * the pitch starting to follow the part again, which is a decision the
-//     owner has already reversed once and which no console would mention;
+//   * the pitch starting to follow the part's SIZE again, which is a decision
+//     the owner has already reversed once and which no console would mention;
+//   * the period drifting back into SCREEN pixels — the pattern painted on the
+//     glass rather than on the part, so it slides across the cut face as the
+//     model turns while every still frame looks perfect;
+//   * the levels ceasing to NEST — the phase read as a fraction of the period
+//     again, or the line centres moved off the integers — which puts that same
+//     slide back one half-period at a time, at every boundary an ordinary
+//     rotation crosses;
+//   * the ink losing the conversion that keeps it in framebuffer pixels at
+//     whatever level, which doubles or halves the hairline at a level boundary;
 //   * the pitch losing the display's density (issue #96) — eight FRAMEBUFFER
 //     pixels is four CSS ones on a retina screen, and lines four CSS pixels
 //     apart read as scanner grain rather than as a hatch — or the LINE picking
@@ -69,9 +78,9 @@ const slopeOf = (hatch) =>
  *
  *  BOTH SPLICE POINTS are in the stub source — the uniform anchor and the
  *  marker — so what comes back carries the hatch's GLSL as well as its uniform
- *  values. The pitch tests need the two together: the period is a uniform now
- *  and the width a literal in the source, and only reading them side by side
- *  says what either measures. */
+ *  values. The pitch tests need the two together: the target spacing is a
+ *  uniform and the width a literal in the source, and only reading them side by
+ *  side says what either measures. */
 const compile = (material) => {
   const shader = {
     uniforms: {},
@@ -272,7 +281,7 @@ describe('one field per part', () => {
   })
 })
 
-describe('one pitch for every cut face', () => {
+describe('one pitch for every cut face, anchored to the part', () => {
   /** What `hatchSectionCaps` stored on the first cap of a one-solid scene built
    *  the given way. Same part name throughout, so angle and phase are fixed and
    *  anything that moves moved because of the geometry. */
@@ -305,48 +314,134 @@ describe('one pitch for every cut face', () => {
       .toEqual(['dirX', 'dirY', 'on', 'phase'])
   })
 
-  it('measures the pitch on the SCREEN, off the fragment\'s own derivative', () => {
+  it('counts the period in the PLANE OF THE CUT, in power-of-two levels', () => {
     // Where the pitch went instead: into the GLSL, which no runner here can
-    // execute. What IS assertable is the step that turns a distance in the
-    // plane of the cut into a distance in FRAMEBUFFER PIXELS — dividing by the
-    // LENGTH of its own screen gradient — because that division is the whole of
-    // why the density does not follow the zoom, and because losing it costs
-    // nothing visible until somebody turns the wheel.
+    // execute. What IS assertable is the frame the period is counted in, and
+    // that is the whole of the defect this replaced. `hatchUv` is a distance in
+    // the cap quad's uv, which is the section plane in world proportions, so
+    // dividing it by a length in THOSE units anchors the stripes to the part.
+    // Dividing it by its own screen gradient instead — a period of so many
+    // FRAMEBUFFER pixels, which is what this used to do — paints the pattern on
+    // the glass: the foreshortening changes as the model turns, the same point
+    // of the part lands in a different stripe, and the field creeps. Every
+    // still frame of that looks perfect, which is why it is asserted here.
     //
-    // THE LENGTH AND NOT `fwidth`, which is why the second assertion is here:
-    // the two read alike and only one of them is a pitch. `fwidth` is
+    // THE LENGTH AND NOT `fwidth`, which is why the last assertion is here: the
+    // two read alike and only one of them is a gradient. `fwidth` is
     // `abs(dFdx) + abs(dFdy)`, which runs up to 1.41 times the gradient
-    // depending on how the stripes happen to lie on the screen — one pitch per
-    // angle, and a pattern that breathes while the model turns, instead of the
-    // one pitch everywhere the owner asked for.
+    // depending on how the stripes happen to lie on the screen — a level
+    // threshold that depends on the angle, and a face near a boundary flipping
+    // levels as the model turns, which is the creep back again.
     const shader = { fragmentShader: hatchMarker }
     hatchShader(shader)
-    expect(shader.fragmentShader)
-      .toMatch(/hatchUv\s*\/\s*max\(\s*length\(\s*vec2\(\s*dFdx\(\s*hatchUv\s*\)\s*,\s*dFdy\(\s*hatchUv\s*\)\s*\)\s*\)/)
-    expect(shader.fragmentShader).not.toMatch(/fwidth/)
-    // ...and those pixels are divided into periods by the UNIFORM and not by a
-    // literal, which is what lets the period depend on the display. Baking the
-    // number back into the source would put the module's one `HATCH` string —
-    // and so three.js's program cache key, which is
-    // `onBeforeCompile.toString()` — at the mercy of the monitor.
-    expect(shader.fragmentShader)
-      .toMatch(/float hatchS = hatchPx \/ hatchPitch \+ hatchPhase;/)
+    const source = shader.fragmentShader
+    // uv per framebuffer pixel across the stripes, floored against a zero
+    // gradient. The floor used to protect one direct division; it now also
+    // stands between `log2(0)`, which is minus infinity, and `hatchStep`, which
+    // would come out zero and take every distance below down with it.
+    expect(source)
+      .toMatch(/float hatchGrad = max\(\s*length\(\s*vec2\(\s*dFdx\(\s*hatchUv\s*\)\s*,\s*dFdy\(\s*hatchUv\s*\)\s*\)\s*\)\s*,\s*1e-8\s*\)/)
+    // THE LADDER: the smallest power of two at least the target spacing
+    // expressed in uv. `ceil` so the spacing on screen lands between one and
+    // two times the target and the lines can never be about to merge; a power
+    // of two so the step is exactly representable and the levels can nest.
+    expect(source)
+      .toMatch(/float hatchStep = exp2\(\s*ceil\(\s*log2\(\s*hatchPitch \* hatchGrad\s*\)\s*\)\s*\)/)
+    // ...and the period `hatchS` counts is that level, in uv — not a pixel
+    // count. `hatchPx`, the screen-pixel coordinate the creep came out of, is
+    // gone rather than merely unused.
+    expect(source).toMatch(/float hatchS = \(hatchUv \+ hatchPhase\) \/ hatchStep;/)
+    expect(source).not.toMatch(/hatchPx/)
+    expect(source).not.toMatch(/fwidth/)
   })
 
-  /** The three measurements one compiled shader is really cut at, IN FRAMEBUFFER
-   *  PIXELS — the units the GPU's derivatives count in — worked out of it the
-   *  way the GPU would.
+  it('NESTS the levels, so a crossing adds or removes lines and moves none', () => {
+    // THE PAIR OF LINES IS THE WHOLE MECHANISM, which is why both are pinned
+    // here and why they may only move together.
+    //
+    // `hatchS = (hatchUv + hatchPhase) / hatchStep` makes the phase an offset in
+    // the PLANE, and `hatchF = abs(fract(hatchS + 0.5) - 0.5)` is zero at the
+    // INTEGERS of `hatchS` — write `hatchS = n + d`, and that expression is
+    // `min(d, 1 - d)`, the distance to the nearest integer, which is what the
+    // smoothstep needs it to be. So the lines stand at
+    // `hatchUv = n * hatchStep - hatchPhase`, and doubling a power-of-two step
+    // leaves every even one of them exactly where it was: a level change halves
+    // or doubles the line count and shifts nothing.
+    //
+    // WHY IT IS NOT OPTIONAL, and the reason this test exists at all: the level
+    // is picked off `hatchGrad`, which is the face's own foreshortening, so
+    // tilting a face from head-on to 60 degrees doubles the gradient across the
+    // stripes and crosses one level by itself. Ordinary rotation hits boundaries
+    // constantly. Under the convention this replaced — line centres on the
+    // HALF-integers and `hatchPhase` added as a fraction of the period,
+    // `hatchUv / hatchStep + hatchPhase` — every one of those crossings slid the
+    // whole field by up to half a period, which is the jumping the levels were
+    // introduced to stop rather than a smaller helping of it.
+    const shader = { fragmentShader: hatchMarker }
+    hatchShader(shader)
+    const source = shader.fragmentShader
+    expect(source).toContain('float hatchS = (hatchUv + hatchPhase) / hatchStep;')
+    expect(source).toContain('float hatchF = abs(fract(hatchS + 0.5) - 0.5);')
+    // The phase is added to the DISTANCE and never to the period count, which is
+    // the difference between the two conventions in one line of source.
+    expect(source).not.toMatch(/hatchStep\s*\+\s*hatchPhase/)
+  })
+
+  it('and the arithmetic those two lines spell out is the arithmetic wanted', () => {
+    // The test above pins the two lines as SOURCE, which catches a drift but
+    // not a mistake: an edit that replaced both with plausible-but-wrong ones
+    // and updated the pin to match would pass it, and the derivation would be
+    // left living in a comment — the one place this project does not keep an
+    // assertion. So the expressions are transcribed and checked, scalar and
+    // without a GPU, the way `inkOf` below already transcribes the ink.
+    const fract = (x) => x - Math.floor(x)   // GLSL ES floors towards -infinity
+    const hatchF = (s) => Math.abs(fract(s + 0.5) - 0.5)
+
+    // It is the distance to the nearest INTEGER of `hatchS`, negatives
+    // included — which is where `fract` and a C `fmod` would part company, and
+    // the half of the claim a reader is most likely to take on trust.
+    for (const s of [-1234.5, -2, -1.75, -0.5, -1e-7, 0, 1e-7, 0.25, 3, 8191.75]) {
+      expect(hatchF(s)).toBeCloseTo(Math.abs(s - Math.round(s)), 12)
+    }
+    expect(hatchF(0)).toBe(0)      // on a line
+    expect(hatchF(0.5)).toBe(0.5)  // exactly between two
+
+    // And the levels nest: a line of the COARSE level is a line of the fine one
+    // at the same place on the part, for any phase — the phase translates the
+    // whole grid, so it cannot enter the answer. Within rounding rather than
+    // exactly, because this arithmetic is float64 and the shader's is float32;
+    // what the GPU gains is that a power-of-two step divides bit for bit.
+    for (const phase of [0, 0.001, 0.25, 0.5, 0.731, 0.999]) {
+      for (const step of [2 ** -6, 2 ** -3, 1]) {
+        for (let n = -8; n <= 8; n += 1) {
+          const uv = n * (2 * step) - phase
+          expect(hatchF((uv + phase) / step), `phase ${phase} step ${step} n ${n}`)
+            .toBeLessThan(1e-9)
+        }
+      }
+    }
+  })
+
+  /** The three measurements one compiled shader is really cut at — the target
+   *  spacing and, IN FRAMEBUFFER PIXELS, the ink — worked out of it the way the
+   *  GPU would.
    *
-   *  The period is the uniform the patch wrote. The line and the band are
-   *  literals the source divides by that SAME uniform, so each is a fraction of
-   *  a period whose pixel size is just the literal doubled, whatever the period
-   *  happens to be. That cancellation is the fix: it is what lets the spacing
-   *  follow the display while the ink does not. */
+   *  The target is the uniform the patch wrote. The line and the band are
+   *  literals the source multiplies by `hatchGrad / hatchStep`, and that factor
+   *  is exactly the reciprocal of one period's pixel size: `hatchS` counts
+   *  periods of `hatchStep` uv (asserted below, because the two lines only mean
+   *  pixels together), and one of those is `hatchStep / hatchGrad` framebuffer
+   *  pixels. So each literal is a pixel count outright, whatever the level, and
+   *  the width in pixels is just the literal doubled. That cancellation is what
+   *  lets the SPACING follow the display and then step between levels while the
+   *  ink does neither. */
   const inkOf = (shader) => {
     const source = shader.fragmentShader
     const cut = source.match(
-      /float hatchHalf = ([\d.]+) \/ hatchPitch;\s*float hatchAa = ([\d.]+) \/ hatchPitch;/)
+      /float hatchHalf = ([\d.]+) \* hatchGrad \/ hatchStep;\s*float hatchAa = ([\d.]+) \* hatchGrad \/ hatchStep;/)
     expect(cut).not.toBeNull()
+    // The period those two are fractions OF, which is what makes them pixels.
+    expect(source).toContain('float hatchS = (hatchUv + hatchPhase) / hatchStep;')
     // ...and the smoothstep is cut at those two and at nothing else, so the
     // numbers just read really are the ones the coverage comes out of.
     expect(source).toContain('smoothstep(hatchHalf - hatchAa,')
@@ -366,14 +461,16 @@ describe('one pitch for every cut face', () => {
     return inkOf(compile(capsOf(g)[0]))
   }
 
-  it('spaces the lines PITCH_PX CSS pixels apart on every display', () => {
-    // ISSUE #96, and the reason the period is a uniform at all. The library
+  it('targets PITCH_PX CSS pixels between lines on every display', () => {
+    // ISSUE #96, and the reason the target is a uniform at all. The library
     // renders at `setPixelRatio(window.devicePixelRatio)`, so the pixels the
-    // shader's derivatives count are FRAMEBUFFER ones: a period pinned at 8 of
+    // shader's derivatives count are FRAMEBUFFER ones: a spacing pinned at 8 of
     // those is four CSS pixels on a retina screen, and four CSS pixels between
     // lines three quarters of one wide is scanner grain rather than hatching —
     // worst on a close-up, where it fills the screen. What a reader judges the
-    // spacing in is CSS pixels, so the period follows the density.
+    // spacing in is CSS pixels, so the target follows the density — and the
+    // level ladder is picked against it, which is what carries the density all
+    // the way into what the reader sees.
     for (const ratio of [1, 2, 3]) {
       expect(inkAt(ratio).pitch).toBeCloseTo(HATCH_PITCH_PX * ratio, 12)
     }
@@ -389,11 +486,14 @@ describe('one pitch for every cut face', () => {
   })
 
   it('draws the line LINE_PX wide and softens it over about one pixel', () => {
-    // FRAMEBUFFER PIXELS, and pointedly not scaled with the period above — the
-    // half of issue #96 the fix must not overshoot. These two used to be
-    // written as fractions of a period that was itself a constant; a period
-    // that grows with the density would have carried them along, widening the
-    // hairline from 1.5 framebuffer pixels to 3 on a retina screen. A band
+    // FRAMEBUFFER PIXELS, and pointedly not scaled with the spacing above — the
+    // half of issue #96 the fix must not overshoot, and now also what has to
+    // survive a LEVEL change: `inkOf` reads these as pixel counts precisely
+    // because the source converts them through the period's own pixel size, so
+    // the same two numbers hold at every level. These two used to be written as
+    // fractions of a period that was itself a constant; a period that grows with
+    // the density — or doubles at a zoom boundary — would have carried them
+    // along, widening the hairline from 1.5 framebuffer pixels to 3. A band
     // instead of a grain is not a fix. The band matters as much as the width:
     // the two-pixel `fwidth` band this replaced is wider than the line itself,
     // and a line with no inked middle is an even grey wash, which reads as a
