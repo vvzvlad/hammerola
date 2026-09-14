@@ -34,8 +34,8 @@ import { OUTLINE_WIDTH_FRACTION, SECTION_INDEX } from "./options.js";
 export const OUTLINE_NAME = "sectionOutline";
 
 // The library draws its own edges one device pixel wide; a contour has to read
-// over the hatch and both cut faces, so dark. How WIDE comes off the SOLID and
-// not off the screen — `outlineWidth` below, and OUTLINE_WIDTH_FRACTION in
+// over the hatch and both cut faces, so dark. How WIDE comes off the CUT FACE
+// and not off the screen — `outlineWidth` below, and OUTLINE_WIDTH_FRACTION in
 // options.js for why it is a size on the model at all.
 const OUTLINE_COLOR = 0x303030;
 
@@ -91,24 +91,59 @@ function lineClasses(g) {
 }
 
 /**
- * One solid's contour width, in WORLD units: a fixed fraction of the SMALLEST
- * dimension of that solid's own local bounding box.
+ * One cut face's contour width: a fixed fraction of the CHARACTERISTIC WIDTH of
+ * the face those segments bound, `2 * Area / Perimeter`.
  *
- * The smallest dimension is a wall's THICKNESS — the very dimension the contour
- * must not swallow, and the width of the face a cut across that wall makes — so
- * a thin part gets a proportionally thinner line than a thick one, at every
- * zoom. The box is the one `planeMayCut` already reads, in the solid's local
- * frame, which is the frame the segments are laid down in.
+ * THE FACE AND NOT THE SOLID, and this is the correction issue #95 turns on.
+ * What the contour must not swallow is the face the plane makes, and only a
+ * solid that IS a panel has a bounding box that says how wide that is. One
+ * solid with thin walls inside a fat box — a shelled body, which is what
+ * `model_template/model.py` builds with `.faces(">Z").shell(-2.4)` inside a box
+ * 50.8 x 33.8 x 20 — reports 20 for a wall 2.4 across, and a line sized off
+ * that eats the wall whole at EVERY zoom. 2A/P is the same characteristic width
+ * this project already sieves slivers by (issue #10's 2V/S) and it answers off
+ * the face itself: 2.4 for a ring 2.4 across, 2.39 for a 2.4 x 600 panel in
+ * section, 20.3 for the same box left solid.
  *
- * A solid whose box is flat in one axis therefore gets a width of zero and no
- * contour at all: nothing to draw a rim around is the honest answer, and it
- * costs nothing — a fat line of zero width rasterises no pixels.
+ * BOTH HALVES COME OFF THE SEGMENTS, before any material is built. The
+ * perimeter is their total length. The area is the divergence form of the
+ * shoelace rule, `A = 0.5 * |sum (a x b) . n|` over the DIRECTED chords — no
+ * loop assembly and no ordering pass, because a closed loop's shoelace sum does
+ * not depend on where the loop starts or where the origin is, and the loops of
+ * a face with holes come out with opposite signs, so a hole subtracts itself.
+ * It rests on the chords being consistently directed, which is what
+ * `planeThroughTriangles` guarantees and `outline.test.js` measures.
+ *
+ * `n` is the plane's LOCAL normal, which need not be unit — the matrix may
+ * scale — so it is normalised here; the segments are in that same local frame.
+ *
+ * Zero when there are no segments, when the perimeter is zero, or when the area
+ * is: nothing to draw a rim around is the honest answer, and it costs nothing —
+ * a fat line of zero width rasterises no pixels.
  */
-function outlineWidth(box) {
-  const mins = read3(box.min);
-  const maxs = read3(box.max);
-  return OUTLINE_WIDTH_FRACTION
-    * Math.min(maxs[0] - mins[0], maxs[1] - mins[1], maxs[2] - mins[2]);
+function outlineWidth(segments, n) {
+  const unit = unit3(n);
+  if (!unit || !segments) return 0;
+  let perimeter = 0;
+  let twiceArea = 0;
+  for (let at = 0; at + 5 < segments.length; at += 6) {
+    const ax = segments[at];
+    const ay = segments[at + 1];
+    const az = segments[at + 2];
+    const bx = segments[at + 3];
+    const by = segments[at + 4];
+    const bz = segments[at + 5];
+    perimeter += Math.hypot(bx - ax, by - ay, bz - az);
+    twiceArea += (ay * bz - az * by) * unit[0]
+      + (az * bx - ax * bz) * unit[1]
+      + (ax * by - ay * bx) * unit[2];
+  }
+  const area = Math.abs(twiceArea) / 2;
+  // Written as `!(x > 0)` so a NaN — which nothing here should produce, but
+  // which a single NaN coordinate would carry through both sums — answers zero
+  // rather than reaching `linewidth`.
+  if (!(perimeter > 0) || !(area > 0)) return 0;
+  return OUTLINE_WIDTH_FRACTION * 2 * area / perimeter;
 }
 
 /**
@@ -129,7 +164,13 @@ function outlineWidth(box) {
  * `resolution` — only the pixel branch divides by it. The write below stays all
  * the same: it is what the library's own edge materials carry, `onBeforeRender`
  * rewrites it from the viewport before every draw regardless, and a clone that
- * quietly dropped it would be the odd one out for no gain.
+ * quietly dropped it would be the odd one out for no gain. Both WORLD_UNITS
+ * branches of that shader put the eye at the ORIGIN OF VIEW SPACE — the vertex
+ * one takes the quad's up axis from `tmpFwd = normalize(mix(start, end, 0.5))`
+ * and the fragment one casts `rayEnd = normalize(worldPos.xyz) * 1e5` — while
+ * this viewport is orthographic by construction and has no such eye, and
+ * `Camera.DISTANCE_FACTOR = 5` bounds the width error that costs at roughly two
+ * per cent.
  */
 function outlineMaterial(classes, g, width) {
   const material = classes.edges.material.clone();
@@ -176,6 +217,29 @@ function planeMayCut(box, n, c) {
  * degenerates and nothing rasterises — which is why it is left in the buffer
  * rather than special-cased out. A distance that is not finite (a degenerate
  * solid) skips the triangle, so nothing reaches the buffer as NaN.
+ *
+ * EACH CHORD IS DIRECTED, from the crossing where the walk LEAVES the positive
+ * side to the one where it comes back — never in the order the edge walk met
+ * them. `outlineWidth` sums the chords into a signed area and needs them
+ * consistently directed to get one; the fat line and the parity test in
+ * `insideSection` do not care either way.
+ *
+ * WALK ORDER IS NOT THAT ORDER, and taking it for one silently halves or zeroes
+ * the area. The two crossings are met at edges `(0,1) (1,2) (2,0)` in that
+ * sequence, and which of them comes first depends on where corner 0 happens to
+ * sit relative to the plane: with `d = (-, +, -)` the walk meets the entry
+ * before the exit, with `d = (+, -, +)` the other way round. Both are the same
+ * mesh with the same winding, and a tessellator has no reason to list a
+ * triangle from one corner rather than another — measured on the payload
+ * fixture, a cylinder's lateral chords came out reversed against its end caps'
+ * and the two cancelled to an area of exactly zero. The SIGN the edge leaves on
+ * is what identifies an end: an edge running `+` to `-` carries the chord's
+ * start, one running `-` to `+` its end. That is winding-order-free, and it is
+ * consistent for the whole solid whenever the MESH is consistently wound, which
+ * is the one thing this measure does need of the tessellation.
+ *
+ * With exactly two crossings there is one of each, always: signs alternate
+ * around a closed walk, so an odd count of one kind is impossible.
  */
 function planeThroughTriangles(positions, index, n, c) {
   const flat = [];
@@ -186,7 +250,9 @@ function planeThroughTriangles(positions, index, n, c) {
       d[corner] = n[0] * positions[at] + n[1] * positions[at + 1]
         + n[2] * positions[at + 2] + c;
     }
-    const crossings = [];
+    let crossings = 0;
+    let from = null;
+    let to = null;
     for (let corner = 0; corner < 3; corner += 1) {
       const next = (corner + 1) % 3;
       const da = d[corner];
@@ -200,15 +266,16 @@ function planeThroughTriangles(positions, index, n, c) {
       const t = da / (da - db);
       const a = index[triangle + corner] * 3;
       const b = index[triangle + next] * 3;
-      crossings.push([
+      const point = [
         positions[a] + t * (positions[b] - positions[a]),
         positions[a + 1] + t * (positions[b + 1] - positions[a + 1]),
         positions[a + 2] + t * (positions[b + 2] - positions[a + 2]),
-      ]);
+      ];
+      crossings += 1;
+      if (da > 0) from = point; else to = point;
     }
-    if (crossings.length !== 2) continue;
-    flat.push(crossings[0][0], crossings[0][1], crossings[0][2],
-              crossings[1][0], crossings[1][1], crossings[1][2]);
+    if (crossings !== 2) continue;
+    flat.push(from[0], from[1], from[2], to[0], to[1], to[2]);
   }
   return new Float32Array(flat);
 }
@@ -410,17 +477,23 @@ export function sectionOutline(vp, g, normal, value) {
     }
     const segments = planeThroughTriangles(
       position.array, geometry.index.array, n, c);
+    // ON EVERY REBUILD AND NOT ONLY AT CONSTRUCTION. The width is a measure of
+    // the CUT FACE, and the face changes shape as the plane slides — through a
+    // shelled body it is a ring at one height and a solid rectangle at another
+    // — so a width written once would be right for whichever plane happened to
+    // create the object.
+    const width = outlineWidth(segments, n);
     if (outline) {
       // An update, not a rebuild: the object keeps its place in the group.
       outline.geometry.setPositions(segments);
+      outline.material.linewidth = width;
     } else {
       // The same construction order `_renderEdges` uses: fill the geometry,
       // then hand it to the line object.
       const lineGeometry = new classes.LineSegmentsGeometry();
       lineGeometry.setPositions(segments);
       outline = new classes.LineSegments2(
-        lineGeometry,
-        outlineMaterial(classes, g, outlineWidth(geometry.boundingBox)));
+        lineGeometry, outlineMaterial(classes, g, width));
       outline.name = OUTLINE_NAME;
       // The mark `outlineChild` finds it by. Written here and nowhere else.
       outline.userData = { ...(outline.userData || {}), [OUTLINE_NAME]: true };

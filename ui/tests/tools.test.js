@@ -307,7 +307,14 @@ describe('the right button: a menu or a pan', () => {
     // WITNESS: whether it was consulted at all is what says which of the two
     // paths a press took.
 
-    // The suite's 10 mm cube, tessellated as outline.test.js has it.
+    // A 2 mm cube. It used to be the same tessellation `outline.test.js` uses
+    // and is no longer: that one was rewound outward when the contour started
+    // measuring the SIGNED area of a cut face, which three inward-facing
+    // triangles made come out as zero. Nothing here notices, and the copy is
+    // deliberately left as it was — `insideSection` counts ray crossings by
+    // parity, so which way a triangle faces cannot reach its answer, and a
+    // fixture that does not care is better evidence of that than one that was
+    // fixed to match.
     const CUBE_POSITIONS = new Float32Array([
       0, 0, 0, 2, 0, 0, 2, 2, 0, 0, 2, 0,
       0, 0, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2,
