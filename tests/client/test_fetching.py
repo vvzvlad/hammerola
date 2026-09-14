@@ -77,21 +77,29 @@ CATALOGUE = {
     # THE REPEATED POINTER, and it is here rather than in one test because the
     # dedup it exercises is a property of the walk over the WHOLE document.
     # Nothing on the hub side forbids two records naming one file, and until
-    # this record existed no fixture had two: the six pointers below made five
-    # names, so `seen` could be deleted outright with the suite green. It sorts
-    # after `lid`, so `lid` is the record that gets the file and this one is the
-    # repeat that must not be fetched, printed or counted a second time.
+    # this record existed no fixture had two: the six pointers the walk follows
+    # made five names, so `seen` could be deleted outright with the suite green.
+    # It sorts after `lid`, so `lid` is the record that gets the file and this
+    # one is the repeat that must not be fetched, printed or counted a second
+    # time.
     "shim": {"kind": "printable", "files": {"stl": LID_FILES["stl"]}},
 }
 ASSEMBLED_VIEW = {
     "id": "assembled", "name": "assembled", "file": "assembled.json",
     "parts": sorted(CATALOGUE), "overview": "assembled.stl",
-    "preview": "assembled_preview.png",
+    "preview": "assembled_preview.png", "card": "assembled_card.png",
 }
 # What a fetch of that build has to land on the disk, and nothing else. Built
 # out of LID_FILES rather than beside it: the two used to be one list written
 # twice, so a name changed in the catalogue and not here would have been fetched
 # under one spelling and expected under another.
+#
+# `assembled_card.png` IS DECLARED ABOVE AND IS DELIBERATELY ABSENT HERE — that
+# absence is the whole assertion, and line-for-line it is what keeps the walk
+# from following a pointer meant for the hub's front page. The card is the
+# view's picture with the title and the footer cut off; the author already has
+# the sheet that carries those, and the cropped twin beside it on their disk
+# would answer nothing (`hammerola/artifacts.py`, `DECLARING_FIELDS`).
 FETCHED = sorted([*LID_FILES.values(), "lid_preview.png",
                   "assembled.stl", "assembled_preview.png"])
 
@@ -99,11 +107,14 @@ FETCHED = sorted([*LID_FILES.values(), "lid_preview.png",
 def with_artifacts(root, **kw):
     """A model directory declaring a file in every field there is to declare in.
 
-    ALL FOUR deliberately — `files` and `preview` on a part, `overview` and
-    `preview` on a view — because only ONE of them is drawn on the build page
-    (a printable's `files`) and THIS COMMAND IS THE ONLY READER of the other
-    three. A walk that quietly stopped following any of them would be invisible
-    to every other test in the repository.
+    ALL FIVE deliberately — `files` and `preview` on a part, `overview`,
+    `preview` and `card` on a view — because of the five only ONE is drawn on
+    the build page (a printable's `files`) and one more is fetched by the hub's
+    front page (a view's `card`), so THIS COMMAND IS THE ONLY READER of the
+    remaining three. A walk that quietly stopped following any of those three
+    would be invisible to every other test in the repository — and the card is
+    here for the opposite reason: it must be declared and must NOT be fetched,
+    which only a fixture that declares it can pin (see `FETCHED`).
 
     The catalogue also holds a record with no files at all: a bought screw is
     exported nothing, so the walk has to step over it rather than trip on it.
@@ -114,6 +125,7 @@ def with_artifacts(root, **kw):
     (model / "lid_preview.png").write_bytes(PNG)
     (model / "assembled.stl").write_bytes(b"solid all\nendsolid all\n")
     (model / "assembled_preview.png").write_bytes(PNG)
+    (model / "assembled_card.png").write_bytes(PNG)
     (model / "meta.json").write_bytes(
         meta_bytes(views=[dict(ASSEMBLED_VIEW)], parts=CATALOGUE))
     # The view file names exactly the keys the view declares, in both

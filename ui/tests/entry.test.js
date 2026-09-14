@@ -94,6 +94,11 @@ const CARD = {
   // browser's half (`buildFileUrl`). `null` here is a build with no picture,
   // which is what an image with no rendering stack produces.
   preview: 'assembled_preview.png',
+  // The picture drawn FOR a card: the same render with none of the sheet's
+  // title band and footer, which is what a box that fits its picture rather
+  // than cropping it wants. `null` for every build published before the build
+  // side wrote one, and those are the ones the fallback below is about.
+  card: 'assembled_card.png',
 }
 
 afterEach(() => {
@@ -120,6 +125,7 @@ describe('a card of /index.json', () => {
       built: '2026-08-26T18:20:00Z',
       first: '2026-01-22T09:00:00Z',
       preview: '/project/0a1b2c3d4e5f/c0ffee1234567890abcdef/assembled_preview.png',
+      card: '/project/0a1b2c3d4e5f/c0ffee1234567890abcdef/assembled_card.png',
     })
   })
 
@@ -202,7 +208,8 @@ describe('what a card says about its draft', () => {
 // is reached by CALLING what the body left in the tree, the same move `RevLine`
 // above needs. The BODIES are rendered rather than the component on its own,
 // because half of what is under test is the two call sites handing it
-// `p.preview`: called directly, both would pass with neither of them wired up.
+// `p.card || p.preview`: called directly, both would pass with neither of them
+// wired up.
 
 describe('the picture on a card', () => {
   /** The two things a view body asks of the page, neither of them under test. */
@@ -220,17 +227,42 @@ describe('the picture on a card', () => {
     // One per view body, and the same address from both: the picture belongs to
     // the commit the card names, not to whatever `latest` points at by the time
     // somebody looks.
+    //
+    // And it is the CARD file rather than the sheet: the box fits the whole
+    // picture, so the sheet's title band and footer would be shown along with
+    // the part and the part would be drawn smaller to leave room for them.
     const drawn = imgs({}).map((el) => el.props.src)
+    expect(drawn).toEqual([
+      '/project/0a1b2c3d4e5f/c0ffee1234567890abcdef/assembled_card.png',
+      '/project/0a1b2c3d4e5f/c0ffee1234567890abcdef/assembled_card.png',
+    ])
+  })
+
+  it('falls back to the sheet for a build that never wrote a card', () => {
+    // EVERY BUILD ON THE HUB FROM BEFORE THAT FIELD EXISTED, and a published
+    // build is immutable — there is nothing to migrate. So the card keeps
+    // drawing the picture those builds do have, fitted whole, bands and all.
+    const drawn = imgs({ card: null }).map((el) => el.props.src)
     expect(drawn).toEqual([
       '/project/0a1b2c3d4e5f/c0ffee1234567890abcdef/assembled_preview.png',
       '/project/0a1b2c3d4e5f/c0ffee1234567890abcdef/assembled_preview.png',
     ])
   })
 
+  it('is fitted whole rather than cropped to the box', () => {
+    // The box has no fixed shape to crop against — its width is fluid at a fixed
+    // height — so a crop that a picture survived at one window width ate into it
+    // at another. `contain` is what makes the picture's own shape the only thing
+    // that decides what is shown.
+    expect(imgs({}).map((el) => el.props.style.objectFit))
+      .toEqual(['contain', 'contain'])
+  })
+
   it('is nothing at all for a build that has none', () => {
     // Not an empty `src` and not a hidden element: no img is drawn, so the plate
-    // underneath is the whole of what the card shows.
-    expect(imgs({ preview: null })).toEqual([])
+    // underneath is the whole of what the card shows. BOTH pictures are absent
+    // here, because a build with no rendering stack ships neither.
+    expect(imgs({ preview: null, card: null })).toEqual([])
   })
 })
 

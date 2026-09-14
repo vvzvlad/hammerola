@@ -29,7 +29,7 @@ from src.cadbuild import checklib
 from src.cadbuild import paths
 from src.cadbuild import provenance as real_provenance
 from src.cadbuild.artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID,
-                                    PREVIEW_SUFFIX, PRINT_VIEW_ID)
+                                    CARD_SUFFIX, PREVIEW_SUFFIX, PRINT_VIEW_ID)
 from src.cadbuild.build import build
 from src.cadbuild.errors import BuildError
 from src.cadbuild.geometry import load_model as real_load_model
@@ -47,7 +47,8 @@ def files_named_in(meta):
     named = set()
     for view in meta["views"]:
         named.add(view["file"])
-        named.update(view[key] for key in ("overview", "preview") if key in view)
+        named.update(view[key] for key in ("overview", "preview", "card")
+                     if key in view)
     for part in meta["parts"].values():
         named.update(part.get("files", {}).values())
         if "preview" in part:
@@ -68,6 +69,12 @@ def driven(monkeypatch):
     real one does and what makes `written` — and therefore the pictures and the
     file list — a consequence of the branch under test rather than a constant.
 
+    IT ANSWERS THE CARDS THE SAME WAY, off `scenes` rather than off a list of
+    its own: the real one writes a card for exactly the stems that name a scene,
+    because those are the whole-view ones and a card is a picture of a project.
+    A fake that handed one back for every stem would make `build` look as though
+    it filed a card on a part.
+
     IT KEEPS `colors` AND `scenes` RATHER THAN DROPPING THEM, because those two
     arguments are the whole of what the pictures are drawn FROM and `build` is
     the only place they are assembled. Keying `scenes` by view id instead of by
@@ -87,7 +94,9 @@ def driven(monkeypatch):
         state.rendered.extend(stems)
         state.colors = colors
         state.scenes = scenes
-        return [f"{stem}{PREVIEW_SUFFIX}" for stem in stems]
+        return ([f"{stem}{PREVIEW_SUFFIX}" for stem in stems],
+                {stem: f"{stem}{CARD_SUFFIX}" for stem in stems
+                 if stem in (scenes or {})})
 
     for name, value in (
         # A title in the form the hub asks for, because the test below asserts
@@ -605,6 +614,37 @@ def test_a_whole_build_mesh_is_filed_under_the_view_it_is_of(
     plate = view_named(meta, PRINT_VIEW_ID)
     assert plate["overview"] == f"{PRINT_VIEW_ID}.stl"
     assert plate["preview"] == f"{PRINT_VIEW_ID}{PREVIEW_SUFFIX}"
+
+
+def test_the_card_picture_hangs_on_the_view_and_never_on_a_part(
+        with_a_plate, out_dir):
+    """The front page's own picture, filed where `preview` is filed.
+
+    A card shows one picture of a PROJECT, so the only pictures that can be one
+    are the whole-view renders — the assembly and the plate. A part's render is
+    a picture of a part and no card ever shows it, which is why nothing writes
+    one for it and why the record must not carry the key: a part entry with a
+    `card` on it would be a file the build never wrote, and the hub refuses a
+    pointer at a name the build did not declare (422 on the push).
+
+    DECLARED AS WELL AS NAMED. `files` is what `runner._verified_files` checks
+    and `store._hash_output` hashes, and the hub answers for nothing outside it
+    — so a card named in meta.json and missing from that list publishes with a
+    201 and 404s on the front page, which is the exact failure issue #53 was.
+    """
+    _pid, meta, files = build(out_dir)
+
+    assert view_named(meta, ASSEMBLED_VIEW_ID)["card"] == \
+        f"{ASSEMBLED_STEM}{CARD_SUFFIX}"
+    assert view_named(meta, PRINT_VIEW_ID)["card"] == \
+        f"{PRINT_VIEW_ID}{CARD_SUFFIX}"
+    assert f"{ASSEMBLED_STEM}{CARD_SUFFIX}" in files
+    assert f"{PRINT_VIEW_ID}{CARD_SUFFIX}" in files
+    # The printable keeps its own picture and gains no card, and no card of its
+    # name is declared either.
+    assert meta["parts"]["base"]["preview"] == f"base{PREVIEW_SUFFIX}"
+    assert "card" not in meta["parts"]["base"]
+    assert f"base{CARD_SUFFIX}" not in files
 
 
 def test_a_view_named_after_a_part_does_not_get_that_part_s_picture(

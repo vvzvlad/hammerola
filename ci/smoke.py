@@ -333,12 +333,12 @@ REQUIRED_PATHS = [
 # `src.cadbuild.preview_png` is NOT reached by `src.cadbuild.build` and is here for that exact
 # reason. It is the only module in this repository that imports matplotlib, numpy and Pillow —
 # the three pins added below — and `assembly.render_previews` imports it LAZILY, inside the
-# function, wrapped in a bare `except` that degrades to `warning: no previews` and returns an
-# empty list. That is the right behaviour at build time (a python without a rendering stack
-# must still be able to publish geometry) and it is precisely why the failure has to be caught
-# here: in an image whose matplotlib does not load, every build would go green for ever while
-# quietly shipping no pictures at all, and nothing downstream would say so. The pin rows below
-# do not cover this — see there.
+# function, wrapped in a bare `except` that degrades to `warning: no previews` and returns
+# nothing written and no cards. That is the right behaviour at build time (a python without a
+# rendering stack must still be able to publish geometry) and it is precisely why the failure
+# has to be caught here: in an image whose matplotlib does not load, every build would go green
+# for ever while quietly shipping no pictures at all, and nothing downstream would say so. The
+# pin rows below do not cover this — see there.
 CAD_IMPORTS = (
     ("cadquery", ""),
     ("ocp_tessellate.convert", "export_three_cad_viewer_js"),

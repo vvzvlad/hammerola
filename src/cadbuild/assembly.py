@@ -7,8 +7,9 @@ the hub spawns -- and what comes back from it is the staging directory it wrote.
 
 import time
 
-from .artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID, PREVIEW_SUFFIX,
-                        PRINT_VIEW_ID, STL_ANGULAR_TOLERANCE, STL_TOLERANCE)
+from .artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID, CARD_SUFFIX,
+                        PREVIEW_SUFFIX, PRINT_VIEW_ID, STL_ANGULAR_TOLERANCE,
+                        STL_TOLERANCE)
 from .errors import BuildError
 from .geometry import as_shapes, drop_mesh
 from .parts import KIND_MOCK
@@ -373,6 +374,11 @@ def export_print_plate(prepared, out_dir):
 def render_previews(out_dir, stems, mode, parts=None, colors=None, scenes=None):
     """One PNG per stem, rendered from the STL already written next to it.
 
+    Returns `(written, cards)`. `written` is the sheets that were really
+    rendered, in order; `cards` maps a stem to the name of the SECOND picture
+    written for it -- the bare tile, with no title band and no footer, which is
+    what the front page's project card shows (`artifacts.CARD_SUFFIX`).
+
     `mode` is "iso" (one isometric) or "multi" (the six-view sheet). A build
     runs on every push, so the default is the cheap one and the sheet has to be
     asked for -- `--preview-mode multi`, carried down to the build process by
@@ -388,6 +394,13 @@ def render_previews(out_dir, stems, mode, parts=None, colors=None, scenes=None):
     `colors` maps a stem to the hex colour it is DRAWN IN -- the part's own
     catalogue colour, so the picture of a part and that part inside the assembly
     are the same colour and a reader can pair them by eye.
+
+    A CARD IS WRITTEN FOR EXACTLY THE STEMS `scenes` NAMES, and that is not a
+    coincidence worth tidying into a second list: those are the whole-view stems
+    -- the assembly and the plate -- and a card is a picture of a PROJECT, so a
+    single part's render is never one. The map is therefore asked one question
+    twice, "is this stem a whole view", and answering it a second way would be a
+    second thing to keep in step with `build`'s `stem_of_view`.
 
     `scenes` maps a stem to the name, in this same directory, of a tessellated
     VIEW DOCUMENT to draw instead of the STL. That document is what the browser
@@ -412,9 +425,10 @@ def render_previews(out_dir, stems, mode, parts=None, colors=None, scenes=None):
     except Exception as exc:
         print(f"warning: no previews -- cadbuild.preview_png will not import "
               f"({type(exc).__name__}: {exc}). The geometry is unaffected.")
-        return []
+        return [], {}
 
     written = []
+    cards = {}
     for stem in stems:
         stl = out_dir / f"{stem}.stl"
         if not stl.is_file():
@@ -425,12 +439,15 @@ def render_previews(out_dir, stems, mode, parts=None, colors=None, scenes=None):
             if not scene.is_file():
                 raise BuildError(f"cannot render {stem}: {scene.name} is missing")
         png = out_dir / f"{stem}{PREVIEW_SUFFIX}"
+        # Only a whole view gets one, which `scene` is already the answer to.
+        card = None if scene is None else out_dir / f"{stem}{CARD_SUFFIX}"
         started = time.monotonic()
         try:
             render_preview.render(str(stl), str(png), views=mode, title=stem,
                                   parts=(parts or {}).get(stem),
                                   color=(colors or {}).get(stem),
-                                  scene=None if scene is None else str(scene))
+                                  scene=None if scene is None else str(scene),
+                                  card_path=None if card is None else str(card))
         except Exception as exc:
             raise BuildError(
                 f"rendering {png.name} from {stl.name} failed "
@@ -439,4 +456,7 @@ def render_previews(out_dir, stems, mode, parts=None, colors=None, scenes=None):
         print(f"  {png.name}: {png.stat().st_size / 1000:.0f} kB, "
               f"{time.monotonic() - started:.1f}s")
         written.append(png.name)
-    return written
+        if card is not None:
+            print(f"  {card.name}: {card.stat().st_size / 1000:.0f} kB")
+            cards[stem] = card.name
+    return written, cards

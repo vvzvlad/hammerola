@@ -97,6 +97,10 @@ EXPECTED_ARTEFACTS = (
     "assembled.stl", "print.stl",
     "assembled_preview.png", "print_preview.png",
     "base_preview.png", "lid_preview.png",
+    # The band-less cut of each whole-view render, which is what the front page
+    # puts on a project card. There is no `base_card.png` or `lid_card.png` and
+    # there must not be: a card shows a project, so only a whole view has one.
+    "assembled_card.png", "print_card.png",
 )
 # THIS LIST DID NOT MOVE WHEN THE ONE MAP BECAME THREE, and that is a fact about
 # `files` rather than an omission. `outcome.files` is the VERIFICATION list — the
@@ -1562,8 +1566,8 @@ def test_the_template_builds_the_way_the_hub_builds_it(tmp_path):
         reason="the CAD kernel does not import in this interpreter, so the "
                "template cannot be built here — see the module docstring for "
                "what skipping it costs")
-    # AND THE RENDERING STACK, because this test asks for four PNGs. Without it
-    # `render_previews` returns `[]` BY DESIGN — a python that cannot draw must
+    # AND THE RENDERING STACK, because this test asks for six PNGs. Without it
+    # `render_previews` writes nothing BY DESIGN — a python that cannot draw must
     # still be able to publish geometry — and says so with a `warning:` line, so
     # an interpreter carrying the kernel and not the renderer fails this test
     # twice over (on the missing artefacts and on the warnings assertion) for a

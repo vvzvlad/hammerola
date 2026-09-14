@@ -352,9 +352,14 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
               if entry["id"] in stem_of_view}
     # KEPT, not discarded: this is the list of pictures that were really
     # written, and both things built out of it below -- the preview map and the
-    # file list -- are only true because it is a fact and not a plan.
-    written = render_previews(out_dir, stems, preview_mode, parts=parts,
-                              colors=catalogue_colors(catalogue), scenes=scenes)
+    # file list -- are only true because it is a fact and not a plan. `cards` is
+    # the same fact about the SECOND picture of a whole view, the one with no
+    # title band and no footer that the front page's card shows, and it arrives
+    # keyed by stem because that is the key everything on this side of the
+    # document is filed under.
+    written, cards = render_previews(out_dir, stems, preview_mode, parts=parts,
+                                     colors=catalogue_colors(catalogue),
+                                     scenes=scenes)
     overview = overview_meshes(plate is not None)
     previews = preview_files(written)
     # The two lines above cost nothing, so this is the drawing. It is the last
@@ -370,6 +375,8 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
             entry["overview"] = overview[stem]
         if stem in previews:
             entry["preview"] = previews[stem]
+        if stem in cards:
+            entry["card"] = cards[stem]
     # Optional keys are ABSENT rather than empty, throughout: an empty object is
     # a build SAYING it has none of something, so a reader would have two ways
     # of asking one question.
@@ -454,6 +461,10 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
     if plate is not None:
         shipped.append(f"{PRINT_VIEW_ID}.stl")
     shipped += written
+    # The cards, from the same evidence their names in meta.json come from: a
+    # file nothing declares is hashed by nothing and served by nobody, so a card
+    # left off this list is a view pointing at a name the hub refuses (422).
+    shipped += list(cards.values())
     # One entry per name, in the order they were added. NOTHING ABOVE CAN
     # PRODUCE A DUPLICATE TODAY, and writing that down is the point of this
     # comment rather than an argument for deleting the line: the part files
@@ -461,11 +472,12 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
     # keys, a view file is `<vid>.json` under an id that is unique and cannot be
     # `meta` or `metrics` (RESERVED_NAMES), both whole-build stems are refused
     # to the catalogue (RESERVED_STEMS), and the pictures are the only `.png`s
-    # here. So this collapse is defence against the NEXT writer of this
-    # function, not the folding of an overlap that exists -- and being wrong
-    # about that costs more than tidiness: a repeat costs the output hash nothing
-    # (it builds a dict) but is counted one by one against the ceiling on how
-    # many files a build may declare (`limits.output_files`).
+    # here -- a sheet and a card of one stem differ by their two suffixes, which
+    # `artifacts.py` keeps apart. So this collapse is defence against the NEXT
+    # writer of this function, not the folding of an overlap that exists -- and
+    # being wrong about that costs more than tidiness: a repeat costs the output
+    # hash nothing (it builds a dict) but is counted one by one against the
+    # ceiling on how many files a build may declare (`limits.output_files`).
     files = list(dict.fromkeys(shipped))
     # The total, and it is deliberately not the sum of the phases above: the
     # writing of meta.json and metrics.json belongs to no phase, and a total

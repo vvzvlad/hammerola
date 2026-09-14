@@ -75,9 +75,25 @@ import matplotlib
 import trimesh
 from PIL import Image, ImageDraw, ImageFont
 
-# Pixels per view. `iso` renders one at 1.5x this, `multi` a 3x2 grid at 1x.
+# Pixels ACROSS one view -- the tile's width. `iso` renders one at 1.5x this,
+# `multi` a 3x2 grid at 1x. The height follows from VIEW_ASPECT below.
 DEFAULT_VIEW_SIZE = 600
 ISO_SCALE = 1.5
+
+# The shape of one rendered tile: width over height. IT IS THE RENDER'S ASPECT
+# AND NOT THE SHEET'S -- `_compose` puts a title band above the tiles and a
+# footer under them, so the PNG that ships is always taller than this says.
+#
+# A LANDSCAPE TILE IS FOR THE WIDE CARDS THE FRONT PAGE DRAWS, and the number is
+# chosen for that rather than derived from any box's pixels. Those cards CROP
+# NOTHING now -- they fit the whole picture (`ui/src/HammerolaEntry.jsx`) -- so
+# the shape of the picture decides how much of a card it fills: in a card roughly
+# twice as wide as it is tall, a square render is letterboxed to half its width
+# and the part is drawn at half the size the card had room for. A landscape
+# render fills it. It is deliberately NOT the card's own aspect, because the card
+# has none to match: its width is fluid (`minmax(min(320px,100%),1fr)`) and its
+# ratio wanders with the window, which is exactly why fitting replaced cropping.
+VIEW_ASPECT = 16 / 9
 
 # The six views of the technical sheet, in reading order: (elev, azim, label).
 MULTI_VIEWS = [
@@ -306,7 +322,7 @@ def _shading(normals, base):
     return np.clip(base[None, :] * level[:, None], 0.0, 1.0)
 
 
-def _fragments(tris, size):
+def _fragments(tris, width, height):
     """Every pixel each triangle covers: `(pixel index, depth, triangle index)`.
 
     A scanline rasteriser done in whole-array steps rather than pixel by pixel.
@@ -322,8 +338,10 @@ def _fragments(tris, size):
     between them, all over the surface.
 
     `tris` is `(n, 3, 3)` in screen space -- x, y in pixels, z the depth the
-    caller's z-buffer compares. Yielded in chunks of about FRAGMENT_BUDGET rows;
-    see that constant for why.
+    caller's z-buffer compares. The tile is `width x height` and the two are
+    separate everywhere: rows clip against `height`, columns against `width`,
+    and a pixel's index into the caller's flat buffer is `row * width + col`.
+    Yielded in chunks of about FRAGMENT_BUDGET rows; see that constant for why.
     """
     ax, ay = tris[:, 0, 0], tris[:, 0, 1]
     bx, by = tris[:, 1, 0], tris[:, 1, 1]
@@ -333,7 +351,8 @@ def _fragments(tris, size):
     # clipped to the frame. A triangle that spans no row centre -- thinner than
     # a pixel, or entirely off the top or bottom -- covers nothing.
     top = np.maximum(np.ceil(np.minimum.reduce([ay, by, cy]) - 0.5), 0)
-    bottom = np.minimum(np.floor(np.maximum.reduce([ay, by, cy]) - 0.5), size - 1)
+    bottom = np.minimum(np.floor(np.maximum.reduce([ay, by, cy]) - 0.5),
+                        height - 1)
     rows = np.maximum((bottom - top + 1).astype(np.int64), 0)
     kept = np.flatnonzero(rows > 0)
     if not len(kept):
@@ -380,7 +399,7 @@ def _fragments(tris, size):
             xmax = np.fmax(xmax, x)
 
         first = np.maximum(np.ceil(xmin - 0.5), 0)
-        last = np.minimum(np.floor(xmax - 0.5), size - 1)
+        last = np.minimum(np.floor(xmax - 0.5), width - 1)
         cols = np.maximum(last - first + 1, 0).astype(np.int64)
         covered = cols > 0
         tri, row, first, cols = (tri[covered], row[covered], first[covered],
@@ -409,11 +428,11 @@ def _fragments(tris, size):
               + (ax[at] - cx[at]) * (cy_pixel - cy[at])) / area
         z = (wa * tris[at, 0, 2] + wb * tris[at, 1, 2]
              + (1.0 - wa - wb) * tris[at, 2, 2])
-        pixels = (row[run] * size + first[run] + offset).astype(np.int64)
+        pixels = (row[run] * width + first[run] + offset).astype(np.int64)
         yield pixels, z, at
 
 
-def _project(part, centre, scale, size, right, up, forward):
+def _project(part, centre, scale, width, height, right, up, forward):
     """One part's front-facing triangles in screen space, and their colours.
 
     Screen space is x right, y DOWN (which is how a raster is addressed) and z
@@ -429,8 +448,8 @@ def _project(part, centre, scale, size, right, up, forward):
     vertices = part["vertices"]
     faces = part["faces"]
     relative = vertices - centre
-    sx = (relative @ right) * scale + size / 2.0
-    sy = size / 2.0 - (relative @ up) * scale
+    sx = (relative @ right) * scale + width / 2.0
+    sy = height / 2.0 - (relative @ up) * scale
     sz = -(relative @ forward)
 
     normals = np.cross(vertices[faces[:, 1]] - vertices[faces[:, 0]],
@@ -447,11 +466,16 @@ def _project(part, centre, scale, size, right, up, forward):
 
 
 def framing(parts, views):
-    """Where to look and how wide: `(centre, field)` for a whole sheet of views.
+    """Where to look and how wide: `(centre, half_w, half_h)` for a sheet of views.
 
-    `field` is the half-width, in millimetres, that each picture shows either
-    way from `centre` -- so `scale = size / (2 * field)` and nothing outside it
-    is in frame.
+    `half_w` and `half_h` are the half-extents, in millimetres, that the picture
+    has to show either way from `centre` -- across the screen and up it -- so
+    `scale = min(width / (2 * half_w), height / (2 * half_h))` and nothing
+    outside them is in frame.
+
+    THE TWO AXES ARE MEASURED SEPARATELY because the frame is no longer square:
+    a tile is VIEW_ASPECT wide for its height, and one number could only be
+    right for one of the two axes. Each carries the 1.02 margin of its own.
 
     IT IS MEASURED ON THE PROJECTION, NOT ON THE BOUNDING BOX, and that is the
     whole of this function. A box of half-edge h seen corner-on is h*sqrt(3)
@@ -462,11 +486,12 @@ def framing(parts, views):
     which came to a field of h*1.313 whatever the angle. Nothing inherits that
     now, so the extent is measured.
 
-    ONE FIELD FOR EVERY VIEW, which is why the views are passed in together
+    ONE FRAME FOR EVERY VIEW, which is why the views are passed in together
     rather than each picture measuring itself: the six tiles of a sheet are read
     against each other and a part that changed size between them would say
-    something false about the part. So it is the largest extent any of them
-    projects -- the widest view fits exactly and the rest have room to spare.
+    something false about the part. So each axis is the largest extent any of
+    them projects onto it -- the widest view fits exactly and the rest have room
+    to spare.
 
     `centre` is the middle of the scene's bounding box, not of each view's own
     silhouette: it is one point for every view, for the same reason.
@@ -478,28 +503,27 @@ def framing(parts, views):
     better account of it than a build that dies inside numpy.
     """
     if not parts:
-        return np.zeros(3), 1.0
+        return np.zeros(3), 1.0, 1.0
     everything = np.vstack([part["vertices"] for part in parts])
     centre = (everything.min(0) + everything.max(0)) / 2.0
     relative = everything - centre
-    field = 0.0
+    half_w = half_h = 0.0
     for elev, azim in views:
         right, up, _forward = _basis(elev, azim)
-        field = max(field,
-                    float(np.abs(relative @ right).max()),
-                    float(np.abs(relative @ up).max()))
+        half_w = max(half_w, float(np.abs(relative @ right).max()))
+        half_h = max(half_h, float(np.abs(relative @ up).max()))
     # The 1.02 keeps the silhouette off the edge of the frame.
-    return centre, max(field, 1e-6) * 1.02
+    return centre, max(half_w, 1e-6) * 1.02, max(half_h, 1e-6) * 1.02
 
 
-def render_view(parts, elev, azim, size, frame_at=None):
-    """One camera angle of one scene, as a PIL image.
+def render_view(parts, elev, azim, width, height, frame_at=None):
+    """One camera angle of one scene, as a PIL image `width x height`.
 
     `parts` is a list of `{"vertices", "faces", "color", "alpha"}` -- what
     `load_scene` returns, or the one entry `render` builds from an STL.
 
-    `frame_at` is the `(centre, field)` of `framing`, shared with the other
-    views of the same sheet; on its own this picture measures its own.
+    `frame_at` is the `(centre, half_w, half_h)` of `framing`, shared with the
+    other views of the same sheet; on its own this picture measures its own.
 
     A LEAF AT ALPHA 0 IS NOT DRAWN AT ALL, and it is dropped before the framing
     rather than after: it is hidden in the viewer, so it is hidden here, and an
@@ -519,17 +543,23 @@ def render_view(parts, elev, azim, size, frame_at=None):
     # blends over what is behind it and not the other way round.
     clear.sort(key=lambda part: float(part["vertices"].mean(0) @ forward))
 
-    centre, field = (frame_at if frame_at is not None
-                     else framing(solid + clear, [(elev, azim)]))
-    scale = size / (2.0 * field)
+    centre, half_w, half_h = (frame_at if frame_at is not None
+                              else framing(solid + clear, [(elev, azim)]))
+    # ONE SCALE FOR BOTH AXES: pixels stay square -- a scale per axis would
+    # stretch the part to fill the tile -- and the smaller of the two is the one
+    # on which nothing runs off its own edge. Taking the per-axis MAXIMA over the
+    # sheet's views first (in `framing`) and then the smaller ratio here is
+    # exactly equal to taking the smallest scale any single view would ask for,
+    # so every tile of a sheet is still drawn at one and the same scale.
+    scale = min(width / (2.0 * half_w), height / (2.0 * half_h))
 
-    depth = np.full(size * size, np.inf)
-    frame = np.tile(_hex_rgb(BACKGROUND), (size * size, 1))
+    depth = np.full(width * height, np.inf)
+    frame = np.tile(_hex_rgb(BACKGROUND), (width * height, 1))
 
     for part in solid:
-        triangles, colors = _project(part, centre, scale, size,
+        triangles, colors = _project(part, centre, scale, width, height,
                                      right, up, forward)
-        for pixels, z, at in _fragments(triangles, size):
+        for pixels, z, at in _fragments(triangles, width, height):
             # The depth resolve, in two steps because a chunk can hold several
             # fragments for one pixel: `minimum.at` accumulates them all (plain
             # fancy indexing would keep whichever landed last), and the
@@ -540,13 +570,13 @@ def render_view(parts, elev, azim, size, frame_at=None):
             frame[pixels[won]] = colors[at[won]]
 
     for part in clear:
-        triangles, colors = _project(part, centre, scale, size,
+        triangles, colors = _project(part, centre, scale, width, height,
                                      right, up, forward)
         # This part alone, into a buffer of its own: its own near surface is
         # what gets blended, so its far wall does not show through its near one.
-        nearest = np.full(size * size, np.inf)
-        surface = np.zeros((size * size, 3))
-        for pixels, z, at in _fragments(triangles, size):
+        nearest = np.full(width * height, np.inf)
+        surface = np.zeros((width * height, 3))
+        for pixels, z, at in _fragments(triangles, width, height):
             np.minimum.at(nearest, pixels, z)
             won = z <= nearest[pixels]
             surface[pixels[won]] = colors[at[won]]
@@ -557,8 +587,8 @@ def render_view(parts, elev, azim, size, frame_at=None):
         alpha = part["alpha"]
         frame[seen] = frame[seen] * (1.0 - alpha) + surface[seen] * alpha
 
-    return Image.fromarray(
-        (np.clip(frame, 0.0, 1.0) * 255).astype(np.uint8).reshape(size, size, 3))
+    pixels = (np.clip(frame, 0.0, 1.0) * 255).astype(np.uint8)
+    return Image.fromarray(pixels.reshape(height, width, 3))
 
 
 # --------------------------------------------------------------------------
@@ -628,11 +658,13 @@ def _compose(tiles, mesh, title, subtitle, columns, parts=None):
     label_height = 24 if len(tiles) > 1 else 0
     header = 40 + (20 if subtitle else 0)
     footer = 55
-    size = tiles[0][0].width
+    # Both dimensions of a tile, separately: a tile is landscape (VIEW_ASPECT),
+    # so its width says nothing about how tall it is.
+    tile_width, tile_height = tiles[0][0].size
     rows = (len(tiles) + columns - 1) // columns
 
-    width = size * columns + gap * (columns - 1)
-    height = (size * rows + gap * (rows - 1) + header + footer
+    width = tile_width * columns + gap * (columns - 1)
+    height = (tile_height * rows + gap * (rows - 1) + header + footer
               + label_height * rows)
     canvas = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(canvas)
@@ -644,11 +676,11 @@ def _compose(tiles, mesh, title, subtitle, columns, parts=None):
 
     for index, (tile, label) in enumerate(tiles):
         column, row = index % columns, index // columns
-        x = column * (size + gap)
-        y = header + label_height + row * (size + gap + label_height)
+        x = column * (tile_width + gap)
+        y = header + label_height + row * (tile_height + gap + label_height)
         canvas.paste(tile, (x, y))
         if label:
-            draw.text((x + size // 2, y - 4), label, fill="#444444",
+            draw.text((x + tile_width // 2, y - 4), label, fill="#444444",
                       font=_font(14), anchor="mb")
 
     first, second = _info_lines(mesh, parts)
@@ -659,7 +691,8 @@ def _compose(tiles, mesh, title, subtitle, columns, parts=None):
 
 
 def render(stl_path, output_path, views="iso", title=None, subtitle=None,
-           resolution=DEFAULT_VIEW_SIZE, parts=None, color=None, scene=None):
+           resolution=DEFAULT_VIEW_SIZE, parts=None, color=None, scene=None,
+           card_path=None):
     """Render `stl_path` to `output_path`. Returns the path written.
 
     `views` is "iso" (one isometric, the build default) or "multi" (the six-view
@@ -684,6 +717,19 @@ def render(stl_path, output_path, views="iso", title=None, subtitle=None,
     merged, and every assembly then reports itself as one body that is not
     watertight. Leave it None for a file that is one part, or when there is
     genuinely nobody to ask.
+
+    `card_path` IS A SECOND PICTURE OF THE SAME RENDER and not a second render:
+    the bare tile, saved before `_compose` puts a title band above it and a
+    footer under it. The front page fits a card's picture whole rather than
+    cropping it, so the bands would be shown along with the part and the part
+    would be drawn smaller to make room for them. Nothing is redrawn for it and
+    nothing about the sheet changes.
+
+    FOR `views="multi"` IT IS THE FIRST TILE, the isometric one, so the argument
+    means something in both modes rather than being quietly ignored in one.
+    MULTI_VIEWS opens on the angle ISO_VIEW names, so a card is the same view of
+    the part whichever mode drew it -- framed for six tiles rather than for one,
+    which is the sheet's own arithmetic and not a second decision here.
     """
     mesh = load_mesh(stl_path)
     drawn = (load_scene(scene) if scene else
@@ -699,18 +745,27 @@ def render(stl_path, output_path, views="iso", title=None, subtitle=None,
     # what is DRAWN, so an alpha-0 leaf is out of it here as it is out of the
     # picture (see render_view).
     visible = [part for part in drawn if part["alpha"] > 0.0]
+    # `resolution` is the tile's WIDTH and the height is derived from it, here
+    # and nowhere else, so the two modes cannot drift into different shapes.
+    width = resolution if views == "multi" else int(resolution * ISO_SCALE)
+    height = round(width / VIEW_ASPECT)
     if views == "multi":
         frame_at = framing(visible, [(elev, azim) for elev, azim, _ in MULTI_VIEWS])
-        tiles = [(render_view(drawn, elev, azim, resolution, frame_at), label)
+        tiles = [(render_view(drawn, elev, azim, width, height, frame_at), label)
                  for elev, azim, label in MULTI_VIEWS]
         columns = 3
     else:
         elev, azim = ISO_VIEW
         frame_at = framing(visible, [ISO_VIEW])
-        tiles = [(render_view(drawn, elev, azim, int(resolution * ISO_SCALE),
-                              frame_at), "")]
+        tiles = [(render_view(drawn, elev, azim, width, height, frame_at), "")]
         columns = 1
 
+    # The tile as it was rendered, saved before anything is composed around it:
+    # `_compose` pastes onto a canvas of its own and leaves the tiles untouched,
+    # so the order of these two lines is free and this one stands first to say
+    # that the card is the render and the sheet is what is built out of it.
+    if card_path is not None:
+        tiles[0][0].save(card_path)
     _compose(tiles, mesh, title, subtitle, columns, parts).save(output_path)
     return output_path
 
@@ -725,7 +780,9 @@ def main():
     parser.add_argument("--title", default=None, help="title above the picture")
     parser.add_argument("--subtitle", default=None, help="line under the title")
     parser.add_argument("--resolution", type=int, default=DEFAULT_VIEW_SIZE,
-                        help=f"pixels per view (default: {DEFAULT_VIEW_SIZE})")
+                        help=f"WIDTH of one view in pixels; the height follows "
+                             f"from the {VIEW_ASPECT:.2f}:1 frame "
+                             f"(default: {DEFAULT_VIEW_SIZE})")
     parser.add_argument("--parts", type=int, default=None,
                         help="how many parts the file holds; the footer says "
                              "watertight or not only for a single part")

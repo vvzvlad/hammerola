@@ -276,6 +276,14 @@ export function projectCard(card) {
     preview: card.preview
       ? buildFileUrl(card.pid, card.commit, card.preview)
       : null,
+    // The picture drawn FOR a card: the same render without the title band and
+    // the footer the sheet carries, which is what a box that fits its picture
+    // rather than cropping it wants. `null` for every build published before
+    // the build side wrote one — the card falls back to `preview`, which is
+    // what those builds have always shown.
+    card: card.card
+      ? buildFileUrl(card.pid, card.commit, card.card)
+      : null,
   };
 }
 
