@@ -24,8 +24,8 @@ import { vec3 } from '../src/viewport/math.js'
 import { MIN_SINE, SECTION_BIAS, SECTION_INDEX } from '../src/viewport/options.js'
 import {
   applySection, captureSection, dragSection, keepSectionCut, placeSectionPlane,
-  restoreSection, sectionAxis, sectionLimit, sectionOffset, sectionRange,
-  sectionValueFor, suspendSectionCut,
+  restoreSection, sectionAxis, sectionGripAxis, sectionLimit, sectionOffset,
+  sectionRange, sectionValueFor, suspendSectionCut,
 } from '../src/viewport/section.js'
 import { fakeViewer, fakeViewport, orthoCamera } from './fakes.js'
 
@@ -475,6 +475,127 @@ describe('sectionAxis', () => {
     expect(typeof real.clone).toBe('function')
     g.camera.getPosition = () => { const v = real.clone(); v.y = Infinity; return v }
     expect(sectionAxis(viewer, g, [0, 0, 0])).toBeNull()
+  })
+})
+
+describe('sectionGripAxis', () => {
+  // What the HANDLE is drawn along and dragged on. The camera looks down -Z from
+  // z = 80 and puts 20 px on a world unit along both screen axes (400 px per 20
+  // halfW across, 300 px per 15 halfH up), so every number below is the camera's
+  // own arithmetic and not the module's.
+  let ctx
+  const face = [0, 0, 0]
+  /** A normal inside the zone `sectionAxis` refuses: nearly along the view. */
+  const facing = (viewer) => {
+    const shallow = Math.asin(MIN_SINE * 0.9)
+    viewer.setClipNormal(SECTION_INDEX,
+                         [Math.sin(shallow), 0, Math.cos(shallow)], null, true)
+  }
+
+  beforeEach(() => { ctx = scene() })
+
+  it('hands back the answer `sectionAxis` has, wherever it has one', () => {
+    // Outside the degenerate zone NOTHING changes, which is what lets the handle
+    // switch to this function without moving anything the reader can see.
+    const { viewer, g } = ctx
+    for (const normal of [[1, 0, 0], [0, 1, 0], [1, 1, 0.2]]) {
+      viewer.setClipNormal(SECTION_INDEX, normal, null, true)
+      const axis = sectionAxis(viewer, g, face)
+      expect(axis, 'the premise: this normal projects to something').not.toBeNull()
+      expect(sectionGripAxis(viewer, g, face)).toEqual(axis)
+    }
+  })
+
+  it('answers a VERTICAL axis where `sectionAxis` declines', () => {
+    const { viewer, g } = ctx
+    facing(viewer)
+    expect(sectionAxis(viewer, g, face),
+           'the premise: this is the zone that used to hide the handle').toBeNull()
+
+    const axis = sectionGripAxis(viewer, g, face)
+    expect(axis.sx).toBe(0)
+    expect(Number.isFinite(axis.sy)).toBe(true)
+    expect(axis.sy).toBeGreaterThan(0)
+    expect(axis.s2).toBeCloseTo(axis.sy * axis.sy, 9)
+  })
+
+  it('measures the camera in the same pixels `sectionAxis` does', () => {
+    // The two measurements have to agree about what a world unit is worth on
+    // screen, or the grip would drag at one rate and the canvas at another. The
+    // yardstick is `sectionAxis` itself, asked about a normal ACROSS the view at
+    // the same point — the length of its answer is this camera's scale.
+    const { camera, viewer, g } = ctx
+    viewer.setClipNormal(SECTION_INDEX, [1, 0, 0], null, true)
+    const across = sectionAxis(viewer, g, face)
+    const scale = Math.sqrt(across.s2)
+    expect(scale).toBeCloseTo((camera.zoom * RECT.width) / (2 * camera.halfW), 9)
+
+    facing(viewer)
+    expect(sectionGripAxis(viewer, g, face).sy).toBeCloseTo(scale, 9)
+  })
+
+  it('makes a drag DOWNWARDS move the plane along the POSITIVE normal', () => {
+    // The convention, and there is nothing to derive it from: in this zone the
+    // projected normal is a stub, so which way the arrow means is fixed here
+    // rather than measured. 40 px at 20 px per world unit is 2 world units.
+    const { viewer, vp, g } = ctx
+    placeSectionPlane(vp, g, [0, 0, 1], face)
+    expect(sectionAxis(viewer, g, face),
+           'the premise: a plane laid on a face square to the camera').toBeNull()
+    const axis = sectionGripAxis(viewer, g, face)
+    const before = distance(g, face)
+
+    const travelled = dragSection(vp, g, axis, 0, 40)
+
+    expect(travelled).toBeCloseTo(2, 9)
+    // Signed along the normal in force, exactly as `dragSection`'s own suite
+    // measures it: the plane moved 2 units the way the normal points.
+    expect(before - distance(g, face)).toBeCloseTo(travelled, 9)
+    // And a drag ACROSS the arrow still means nothing.
+    expect(dragSection(vp, g, axis, 120, 0)).toBe(0)
+  })
+
+  it('declines when the scene cannot answer at all', () => {
+    // The things `sectionAxis` refuses for once the angle is out of it: a clip
+    // normal the library cannot hand back — it throws, or it is not a direction
+    // — a camera that is nowhere, and a canvas of no size. A vertical arrow is a
+    // fallback for a DEGENERATE VIEW, not for a scene nothing can be measured
+    // against.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const gone = scene()
+    facing(gone.viewer)
+    expect(sectionGripAxis(gone.viewer, gone.g, face),
+           'the premise: this scene answers').not.toBeNull()
+    gone.viewer.getClipNormal = () => { throw new Error('normal gone') }
+    expect(sectionGripAxis(gone.viewer, gone.g, face)).toBeNull()
+
+    // AND A NORMAL THAT IS AN ARRAY BUT NOT A DIRECTION, which is the case a
+    // bare `unit3` waves through: it answers an infinite component with
+    // `[NaN, …]`, an array, and therefore truthy. `sectionAxis` refuses this one
+    // downstream — its step comes back NaN and `!(s2 > 1e-12)` catches it — but
+    // this function measures ACROSS the view, where the step is perfectly finite
+    // and nothing further on would notice.
+    const unreal = scene()
+    facing(unreal.viewer)
+    unreal.viewer.getClipNormal = () => [Infinity, 0, 0]
+    expect(sectionAxis(unreal.viewer, unreal.g, face),
+           'the premise: the old guard hid the handle here').toBeNull()
+    expect(sectionGripAxis(unreal.viewer, unreal.g, face)).toBeNull()
+
+    const nowhere = scene()
+    facing(nowhere.viewer)
+    const real = nowhere.g.camera.getPosition()
+    nowhere.g.camera.getPosition = () => {
+      const v = real.clone()
+      v.y = Infinity
+      return v
+    }
+    expect(sectionGripAxis(nowhere.viewer, nowhere.g, face)).toBeNull()
+
+    const unsized = scene()
+    facing(unsized.viewer)
+    unsized.g.canvas.getBoundingClientRect = () => ({ ...RECT, width: 0, height: 0 })
+    expect(sectionGripAxis(unsized.viewer, unsized.g, face)).toBeNull()
   })
 })
 

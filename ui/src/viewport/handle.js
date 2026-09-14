@@ -31,7 +31,7 @@
 
 import { internals } from "./internals.js";
 import { projectPoint } from "./camera.js";
-import { dragSection, sectionAxis, sectionOffset } from "./section.js";
+import { dragSection, sectionGripAxis, sectionOffset } from "./section.js";
 import { reportCut } from "./tools.js";
 import {
   HANDLE_HEAD_PX, HANDLE_HIT_PX, HANDLE_PX, HANDLE_SHAFT_PX,
@@ -133,11 +133,10 @@ export function createHandle(vp) {
 
   /** Whether there is a cut to put a handle on at all.
    *
-   * THE OTHER TWO WAYS THE HANDLE HIDES ARE NOT IN HERE, on purpose: a plane
-   * seen edge-on and an anchor behind the camera are both answers about THIS
-   * FRAME, and both come back the moment the model is turned. Stopping the loop
-   * on either would mean the handle never returned, since nothing outside calls
-   * `refresh` when the camera moves.
+   * THE OTHER WAY THE HANDLE HIDES IS NOT IN HERE, on purpose: an anchor behind
+   * the camera is an answer about THIS FRAME, and it comes back the moment the
+   * model is turned. Stopping the loop on it would mean the handle never
+   * returned, since nothing outside calls `refresh` when the camera moves.
    */
   const wanted = () => !!(vp.sectionSeed && vp.state.cut);
 
@@ -155,10 +154,20 @@ export function createHandle(vp) {
       return;
     }
     const at = anchor();
-    // The plane seen edge-on. The DRAG refuses there too (tools.js: `if
-    // (!press.axis) return`), so a handle drawn here would advertise a gesture
-    // that does nothing when it is taken up.
-    const axis = sectionAxis(vp.viewer, g, at);
+    // `sectionGripAxis` AND NOT `sectionAxis`, which is the whole of why the
+    // arrow no longer goes away under the reader. `sectionAxis` declines in the
+    // degenerate zone — the plane's normal pointing nearly AT or AWAY FROM the
+    // camera, i.e. the reader turned to look straight at the cut face — where
+    // the projected normal is a stub; the grip takes that function's vertical
+    // fallback there instead. Crossing the boundary SNAPS the arrow from its
+    // projected angle to vertical, once, and that is the whole of the trade:
+    // one snap at the boundary in place of an arrow that simply disappeared
+    // past it.
+    //
+    // Null is left, and it is no longer about the view at all: it means the
+    // scene cannot be measured — no clip plane, no eye, a canvas of no size —
+    // which is the `internals` case above arriving one function later.
+    const axis = sectionGripAxis(vp.viewer, g, at);
     if (!axis) {
       hide();
       return;
@@ -178,10 +187,12 @@ export function createHandle(vp) {
       `${(ndc[0] * 0.5 + 0.5) * rect.width + (rect.left - box.left)}px`;
     arrow.style.top =
       `${(-ndc[1] * 0.5 + 0.5) * rect.height + (rect.top - box.top)}px`;
-    // `sectionAxis` answers in canvas pixels per world unit along the clip
+    // `sectionGripAxis` answers in canvas pixels per world unit along the clip
     // normal, with `sy` counted DOWNWARDS — which is the direction CSS rotates
     // in as well, so the angle of that vector is the angle of the arrow with
-    // nothing to flip. The arrow is centred on the anchor because the plane
+    // nothing to flip. In the degenerate zone that vector is `{sx: 0, sy: +px}`,
+    // i.e. 90 degrees: a stable vertical arrow, dragged down to push the plane
+    // along its own normal. The arrow is centred on the anchor because the plane
     // moves BOTH ways from there.
     arrow.style.transform = "translate(-50%,-50%) "
       + `rotate(${(Math.atan2(axis.sy, axis.sx) * 180) / Math.PI}deg)`;
@@ -294,7 +305,12 @@ export function createHandle(vp) {
     // MEASURED ONCE AND HELD FOR THE WHOLE GESTURE, exactly as tools.js does it:
     // the camera cannot move under a press this one owns, and re-measuring per
     // frame would let the plane drift away from the hand.
-    const axis = sectionAxis(vp.viewer, g, anchor());
+    //
+    // THROUGH THE SAME FUNCTION `place` DRAWS FROM, so the arrow that is on
+    // screen is the arrow that drags: measured with `sectionAxis` instead, a
+    // press in the degenerate zone would land on a visible grip and then do
+    // nothing at all.
+    const axis = sectionGripAxis(vp.viewer, g, anchor());
     if (!axis) return;
     drag = { axis, x: event.clientX, y: event.clientY, moved: false };
     arrow.style.cursor = "grabbing";

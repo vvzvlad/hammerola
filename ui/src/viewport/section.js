@@ -8,7 +8,7 @@
 // frame of reference the slider counts in, which is the whole of the note below.
 
 import { internals } from "./internals.js";
-import { clamp, dot3, finite3, sub3, unit3, vec3 } from "./math.js";
+import { clamp, cross3, dot3, finite3, sub3, unit3, vec3 } from "./math.js";
 import { MIN_SINE, SECTION_BIAS, SECTION_INDEX } from "./options.js";
 import { clearSectionOutlines, sectionOutline } from "./outline.js";
 
@@ -323,6 +323,93 @@ export function sectionAxis(viewer, g, point) {
   const s2 = sx * sx + sy * sy;
   if (!(s2 > 1e-12)) return null;
   return { sx, sy, s2 };
+}
+
+/** The screen axis THE GRIP is drawn along and dragged on: `sectionAxis` where
+ *  that one answers, and a VERTICAL axis where it declines. Null only for a
+ *  scene that cannot answer at all.
+ *
+ * WHY THERE ARE TWO FUNCTIONS RATHER THAN A LOOSER GUARD IN ONE. `sectionAxis`
+ * refuses in the degenerate zone — the plane's normal pointing nearly AT or AWAY
+ * FROM the camera, which is the reader turning the model to look straight at the
+ * cut face — and that refusal is right for the CANVAS drag: there the direction
+ * the pointer has to be projected onto IS the projected normal, which has
+ * collapsed to a stub whose angle swings with the smallest camera move, and px
+ * -> world along it runs away. tools.js keeps refusing there, unchanged.
+ *
+ * It is the wrong answer for the HANDLE, which is a thing the reader has to be
+ * able to see and take hold of: an arrow that disappears exactly when the cut
+ * face is squarely in view is a control missing at the moment it is most wanted,
+ * and just outside the zone it was the swinging angle itself that the reader saw.
+ *
+ * SO THE FALLBACK BRINGS ITS OWN DIRECTION. Vertical, at the camera's own screen
+ * scale, so the grip becomes an arrow dragged up and down at a rate the reader
+ * can predict — `dragSection` turns `{sx: 0, sy: px}` into `1 / px` world units
+ * along the plane's normal per pixel, wherever the model is turned. Which way
+ * that goes is a CONVENTION and not a projection, because there is no projection
+ * left to take: DRAGGING DOWN MOVES THE PLANE ALONG ITS OWN NORMAL IN THE
+ * POSITIVE DIRECTION, and section.test.js pins it.
+ */
+export function sectionGripAxis(viewer, g, point) {
+  const axis = sectionAxis(viewer, g, point);
+  if (axis) return axis;
+  // Asked again, and only for WHETHER THERE IS A PLANE: `sectionAxis` declines
+  // for several reasons and does not say which, and a plane whose normal the
+  // library cannot hand back is a scene that cannot answer rather than a
+  // degenerate view. No warning here — the read that just failed inside
+  // `sectionAxis` logged this same error one call ago.
+  let n = null;
+  try {
+    n = viewer.getClipNormal(SECTION_INDEX);
+  } catch (error) {
+    return null;
+  }
+  // `finite3(unit3(n))` and NOT a bare `unit3`, which is the same shape
+  // `captureSection` and `placeSectionPlane` write and for the same reason:
+  // `unit3` answers a component that is already Infinity with `[NaN, …]` — an
+  // array, and therefore truthy — where a zero vector, a NaN one and a short
+  // array all come back null (see its docblock in math.js). `sectionAxis` used
+  // to catch that case downstream, where the projected step came back NaN and
+  // `!(s2 > 1e-12)` refused it; this function never reaches that arithmetic,
+  // because its own step is measured ACROSS the view and is perfectly finite. So
+  // without this the grip would be drawn, and dragged, on a scene whose clip
+  // plane is not a plane.
+  if (!Array.isArray(n) || !finite3(unit3(n))) return null;
+  // The rest of `sectionAxis`'s own guards, minus the angle: what is left is a
+  // scene that cannot be measured at all.
+  const view = viewDir(g, point);
+  if (!view) return null;
+  const rect = g.canvas.getBoundingClientRect();
+  if (!(rect.width > 0) || !(rect.height > 0)) return null;
+  const eye = g.camera.getPosition();
+  if (!eye || typeof eye.clone !== "function") return null;
+  // A world direction ACROSS the view, which is the only thing this camera's
+  // screen scale can honestly be measured along: the clip normal is useless here
+  // — the whole reason this branch runs is that it points along the view axis
+  // and projects to a stub. Crossed with the world axis the view leans on LEAST,
+  // whose own component is at most 1/sqrt(3), so the product is at least 0.816
+  // long before it is normalised and nothing is measured off a stub either.
+  const a0 = Math.abs(view[0]);
+  const a1 = Math.abs(view[1]);
+  const a2 = Math.abs(view[2]);
+  const world = a0 <= a1 && a0 <= a2 ? [1, 0, 0]
+    : (a1 <= a2 ? [0, 1, 0] : [0, 0, 1]);
+  const across = unit3(cross3(view, world));
+  if (!across) return null;
+  // Measured exactly as `sectionAxis` measures its own step — the same short
+  // length, the same `.project(g.cam)` on a borrowed `Vector3` — so the two
+  // cannot fall out of step about what a world unit is worth in pixels. The
+  // suite pins that: the fallback's scale equals the one `sectionAxis` reports
+  // for a normal across the view on the same camera.
+  const L = (sectionLimit(viewer) || 1) / 100;
+  const a = eye.clone().set(point[0], point[1], point[2]).project(g.cam);
+  const b = eye.clone().set(point[0] + across[0] * L, point[1] + across[1] * L,
+                            point[2] + across[2] * L).project(g.cam);
+  // A LENGTH and not a direction, so which way NDC y runs does not enter it.
+  const px = Math.hypot((b.x - a.x) * rect.width / 2,
+                        (b.y - a.y) * rect.height / 2) / L;
+  if (!Number.isFinite(px) || !(px * px > 1e-12)) return null;
+  return { sx: 0, sy: px, s2: px * px };
 }
 
 /**
