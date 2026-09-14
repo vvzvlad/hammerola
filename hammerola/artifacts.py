@@ -47,6 +47,17 @@ A view's `file` is NOT an artefact and is not fetched: it is the viewer's
 tessellation payload, megabytes of it, and nothing outside the browser has a use
 for it.
 
+A view's `card` is not fetched either, and for the opposite reason — not too big
+but too little. It is the same render as `preview` with the title and the footer
+cut off, drawn for the tile on the hub's front page, where the page supplies the
+caption itself. The author looking at a build on their own disk wants the sheet
+with the bounding box, the triangle count and the watertight verdict under it;
+the cropped twin next to it would answer nothing that picture does not. So the
+declaration carries it — the front page fetches it by name, and a name the hub
+serves has to be declared — and this command walks past it. `DECLARING_FIELDS`
+below is where that decision is enforced, and `tests/client/test_fetching.py`
+pins it.
+
 `dev` AND `latest` ARE ACCEPTED HERE, unlike in `source`. This asks a BUILD for
 its files and the hub serves those two names like any other build directory —
 which is exactly what somebody who just ran `hammerola build` wants.
@@ -75,7 +86,8 @@ ONE, MANY = False, True
 # EVERY FIELD OF `meta.json` THAT NAMES A FILE THIS COMMAND FETCHES, by the
 # owner it sits on, in the order their entries are printed. See the module
 # docstring for what each one is; what matters here is that the list is
-# CLOSED — a view's `file` is deliberately not on it.
+# CLOSED — a view's `file` and its `card` are deliberately not on it, the first
+# too big to be of use off the browser and the second too little.
 #
 # IT IS ALSO THE ONLY PLACE THOSE NAMES ARE WRITTEN, and that is a repair rather
 # than tidiness. The message in `run` below used to name the old document's

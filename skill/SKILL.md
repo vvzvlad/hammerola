@@ -652,8 +652,12 @@ picture is what answers that, and there is one of the bed.
 
 **The `print` picture is the cheapest check there is, and the only thing that
 shows the BED.** A build renders one isometric PNG per printable, one of the
-stem `assembled` and one of `print`, and nothing else — no tab you add gets a
-picture. `print_preview.png` is what a part lying face down, standing on edge or
+stem `assembled` and one of `print`, and no tab you add gets a picture. (It also
+writes a `<stem>_card.png` beside each of the last two — the same frame with the
+title and the footer cut off, drawn for the tile on the hub's front page. It
+carries none of the facts below, so it is not the picture you look at, and
+`artifacts` does not bring it down.) `print_preview.png` is what a part lying
+face down, standing on edge or
 hanging off the plate looks like, and no gate reads any of that: look at it
 after every build that moved a part or a view. (A project with no `print` view
 has no plate, so no `print.stl` and no picture of one; the build says so in a
@@ -664,9 +668,10 @@ picture is
 a footer: `Bounding box: 60.0 x 20.0 x 6.0 mm`, the triangle count, and
 `watertight` — which on a plate or an assembly reads `N parts`.
 
-**One way to a picture.** `hammerola artifacts <build>` brings every picture the
-build rendered into `.hammerola/`, the per-part `<part>_preview.png` ones
-included, along with the parts' STL/STEP/3MF and the two whole-build meshes
+**One way to a picture.** `hammerola artifacts <build>` brings every picture
+worth looking at into `.hammerola/` — the per-part `<part>_preview.png` ones
+included, the front page's cards excluded — along with the parts' STL/STEP/3MF
+and the two whole-build meshes
 (`assembled.stl` and, where the project has a `print` view, `print.stl`). It
 takes `dev` and `latest` as well as a revision, so it works straight after a
 `build`. Do not assemble a picture's URL by hand: the command asks the build

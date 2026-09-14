@@ -6,6 +6,14 @@
 ASSEMBLED_STEM = "assembled"
 PREVIEW_SUFFIX = "_preview.png"
 
+# The SECOND picture of a whole view, and the front page is the whole of why it
+# exists: a project card fits the picture it is given rather than cropping it,
+# so a sheet with a title band above it and a footer under it would be shown
+# bands and all, shrunk to fit them in. This one is the bare rendered tile --
+# the part and nothing else -- written beside the sheet under the same stem.
+# Only the whole-view stems get one, because a card never shows a single part.
+CARD_SUFFIX = "_card.png"
+
 # The two view ids the build knows the meaning of. Everything else a model
 # writes is just a tab: `print` is a bed and its parts may not overlap or be
 # anything but printable, `assembled` is the whole product -- every printable

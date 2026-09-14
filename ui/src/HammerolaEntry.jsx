@@ -729,13 +729,24 @@ const monthYear = (v) => (ts(v)
 /**
  * The preview plate, and the build's own picture over it when there is one.
  *
- * `src` is a sheet the build already rendered for one of its whole-view meshes
- * — which view it was of is not promised, see `render.index_card` — and it is
- * used AS IT IS (issue #34): the sheet is a square frame with a title band
- * above it and a two-line footer below, and `object-fit:cover` at card size
- * carries both bands off-frame by itself. No second artefact, and no cropping by
- * pixel arithmetic here — that would be this file holding an opinion about a
- * layout the build side owns.
+ * `src` is a picture the build already rendered for one of its whole-view
+ * meshes — which view it was of is not promised, see `render.index_card` — and
+ * the card FITS IT WHOLE (`object-fit:contain`) rather than cropping it. It has
+ * to: this box has no fixed shape to crop against. Its width is fluid
+ * (`minmax(min(320px,100%),1fr)` in the grid body below) at a fixed height, so
+ * its ratio moves with the window, and every crop a picture survived at one
+ * width ate into it at another.
+ *
+ * SO THE BUILD SHIPS A PICTURE FOR THIS BOX: the bare render, with none of the
+ * sheet's title band and footer (`cadbuild.artifacts.CARD_SUFFIX`), which is
+ * what the call sites hand over when the card names one. A build published
+ * before that existed names only the sheet, and the sheet is then fitted whole —
+ * bands and all, smaller, but nothing cut off.
+ *
+ * WHAT SHOWS EITHER SIDE OF A PICTURE NARROWER THAN THE BOX IS THE PLATE, which
+ * is the other half of why fitting is affordable here: `contain` leaves part of
+ * the box uncovered, and what lies under it is the same gradient a card with no
+ * picture at all draws, so the result reads as one surface rather than as a gap.
  *
  * THE PLATE STAYS UNDERNEATH rather than being swapped out, which makes it two
  * answers for the price of one: it is what shows while the picture loads, and it
@@ -775,7 +786,7 @@ const Preview = ({ radius, src }) => (
         src={src}
         alt=""
         onError={(e) => { e.currentTarget.style.display = 'none'; }}
-        style={css('position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block')}
+        style={css('position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block')}
       />
     )}
   </div>
@@ -913,7 +924,10 @@ export const VIEW_BODIES = Object.freeze({
           style={css(`${page.cardStyle(p.pid)}overflow:hidden;display:flex;flex-direction:column`)}
         >
           <div style={css('position:relative;height:190px;flex:none')}>
-            <Preview src={p.preview} />
+            {/* The band-less picture when the build wrote one, and the sheet
+                when it did not: every build older than that field has only the
+                sheet, and its card goes on drawing it. */}
+            <Preview src={p.card || p.preview} />
           </div>
           <div style={css('display:flex;flex-direction:column;gap:8px;padding:12px 14px 13px')}>
             <div style={css('display:flex;flex-direction:column;gap:2px;min-width:0')}>
@@ -946,7 +960,7 @@ export const VIEW_BODIES = Object.freeze({
           style={css(`${page.cardStyle(p.pid)}display:flex;align-items:center;gap:12px;padding:8px 12px 8px 8px`)}
         >
           <div style={css('position:relative;width:96px;height:60px;flex:none;border-radius:6px;overflow:hidden')}>
-            <Preview radius={6} src={p.preview} />
+            <Preview radius={6} src={p.card || p.preview} />
           </div>
           <div style={css('flex:1;min-width:0;display:flex;flex-direction:column;gap:2px')}>
             <span style={css(`font:600 13px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>

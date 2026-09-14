@@ -24,7 +24,7 @@ import pytest
 from src import cadbuild
 from src.cadbuild import assembly, printables
 from src.cadbuild.artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID,
-                                    PREVIEW_SUFFIX, PRINT_VIEW_ID)
+                                    CARD_SUFFIX, PREVIEW_SUFFIX, PRINT_VIEW_ID)
 from src.cadbuild.assembly import (assembled_shape, export_assembled,
                                    export_print_plate, print_plate_shape)
 from src.cadbuild.errors import BuildError
@@ -367,9 +367,9 @@ def planted_renderer(monkeypatch):
 
     The renderer is a SOFT dependency: a python with no numpy, no Pillow or no
     matplotlib makes that import fail, and `render_previews` then warns and
-    returns `[]` rather than failing a build (`tests/test_template.py` pins that
-    degradation). A test about the refusals BELOW the import would otherwise be
-    a test of whether the drawing stack happens to be installed.
+    returns nothing written rather than failing a build (`tests/test_template.py`
+    pins that degradation). A test about the refusals BELOW the import would
+    otherwise be a test of whether the drawing stack happens to be installed.
 
     The stub refuses to draw, and that is the other half of what is asserted: a
     picture whose scene is missing is refused before anything is rendered.
@@ -410,6 +410,74 @@ def test_a_picture_whose_scene_file_is_missing_is_refused(planted_renderer,
     # And nothing was written for it: a half-drawn picture would be declared by
     # `build` and served by the hub.
     assert list(out_dir.iterdir()) == [out_dir / f"{ASSEMBLED_STEM}.stl"]
+
+
+@pytest.fixture
+def drawing_renderer(monkeypatch):
+    """A `preview_png` stub that writes the files it is told to and records them.
+
+    The same planting as `planted_renderer` above with the refusal turned round:
+    that one exists to prove nothing was drawn, this one to see WHAT was. It
+    cannot be the real renderer -- numpy, Pillow and matplotlib are a soft
+    dependency of this package and this file is written to run without them --
+    and it need not be: what is under test is which pictures `render_previews`
+    ASKS for, per stem, which is its own decision and not the rasteriser's.
+
+    The bytes are a PNG magic number and nothing more; `render_previews` only
+    stats what it wrote, to print its size.
+    """
+    drawn = []
+    stub = types.ModuleType("src.cadbuild.preview_png")
+
+    def render(stl_path, output_path, card_path=None, **kwargs):
+        Path(output_path).write_bytes(b"\x89PNG\r\n\x1a\n")
+        if card_path is not None:
+            Path(card_path).write_bytes(b"\x89PNG\r\n\x1a\n")
+        drawn.append((Path(output_path).name,
+                      None if card_path is None else Path(card_path).name))
+        return output_path
+
+    stub.render = render
+    monkeypatch.setattr(cadbuild, "preview_png", stub, raising=False)
+    return drawn
+
+
+def test_a_card_is_drawn_for_a_whole_view_and_never_for_a_part(
+        drawing_renderer, out_dir):
+    """The front page's picture, and the one stem rule that decides who gets one.
+
+    A card is a picture of a PROJECT, so what it can show is a whole view -- the
+    assembly or the plate -- and never one printable out of ten. `scenes` is
+    already the answer to "is this stem a whole view": a view is drawn from the
+    tessellated document the browser loads, and a part from its own STL. So the
+    card follows that map rather than a second list, and this is what holds the
+    two together.
+
+    THE RETURN VALUE IS THE DECLARATION. `build` files these names on the view
+    entries of meta.json and puts them on the list the hub hashes, so a card
+    written and not returned is a file nobody can reach, and a card returned for
+    a part is a pointer at a file that was never written -- a 422 on the push.
+    """
+    for stem in (ASSEMBLED_STEM, "base"):
+        (out_dir / f"{stem}.stl").write_bytes(b"solid a\nendsolid a\n")
+    (out_dir / f"{ASSEMBLED_VIEW_ID}.json").write_text("{}", encoding="utf-8")
+
+    written, cards = assembly.render_previews(
+        out_dir, [ASSEMBLED_STEM, "base"], "iso",
+        scenes={ASSEMBLED_STEM: f"{ASSEMBLED_VIEW_ID}.json"})
+
+    assert written == [f"{ASSEMBLED_STEM}{PREVIEW_SUFFIX}",
+                       f"base{PREVIEW_SUFFIX}"]
+    assert cards == {ASSEMBLED_STEM: f"{ASSEMBLED_STEM}{CARD_SUFFIX}"}
+    # The renderer was ASKED for exactly that, which is the half a returned map
+    # cannot show: a card the build declares and nobody draws is a 404 under an
+    # immutable URL.
+    assert drawing_renderer == [
+        (f"{ASSEMBLED_STEM}{PREVIEW_SUFFIX}", f"{ASSEMBLED_STEM}{CARD_SUFFIX}"),
+        (f"base{PREVIEW_SUFFIX}", None)]
+    # And the files are really there, the part's card absent among them.
+    assert (out_dir / f"{ASSEMBLED_STEM}{CARD_SUFFIX}").is_file()
+    assert not (out_dir / f"base{CARD_SUFFIX}").exists()
 
 
 def test_a_build_with_no_print_view_writes_nothing_at_all(out_dir):

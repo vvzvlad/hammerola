@@ -165,9 +165,10 @@
   decides it. Three sides ask the question and they live in three different
   worlds: the file server, of every request for
   `/project/<pid>/<commit>/<name>` (`app._safe_name`); the declaration, of every
-  name a push names in `meta.json` (`render._check_declared_file`, from all five
-  of the places a pointer can sit — a view's `file`, its `overview` and its
-  `preview`, and a catalogue record's exported `files` and its own `preview`);
+  name a push names in `meta.json` (`render._check_declared_file`, from all six
+  of the places a pointer can sit — a view's `file`, its `overview`, its
+  `preview` and its `card`, and a catalogue record's exported `files` and its
+  own `preview`);
   and the client, of every name the hub hands back before it writes that name to
   the author's disk (`hammerola/artifacts.py`). Before this module the rule was
   written out inline in all three, and no two copies agreed: the server refused a

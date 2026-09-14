@@ -124,6 +124,67 @@ def test_a_card_carries_the_first_picture_any_view_of_the_build_declared(hub):
     assert cards["proj2"]["preview"] is None
 
 
+def test_a_card_carries_the_picture_that_was_drawn_for_a_card(hub):
+    """The second picture of a whole view: the render with no bands round it.
+
+    The front page FITS the picture it is given rather than cropping it, so the
+    sheet's title band and footer would be shown along with the part and the
+    part would be drawn smaller to leave room for them. The build therefore
+    writes a band-less cut of the same render and names it on the view
+    (`cadbuild.artifacts.CARD_SUFFIX`), and the hub carries the name through to
+    the card exactly as it carries `preview`: checked against what the build
+    declared, and picked off the FIRST view that has one, because a build hangs
+    pictures on the two view ids it renders while the order of the views is the
+    model's own.
+
+    BOTH FIELDS TRAVEL, and neither replaces the other: the build page shows the
+    sheet, the front page shows the card, and a reader of `index.json` can tell
+    which is which.
+    """
+    hub.publish("proj1", "abc123", good_build(
+        views=[{"id": "assembled", "name": "assembled", "file": "assembled.json",
+                "parts": ["lid", "pin"], "preview": "assembled_preview.png",
+                "card": "assembled_card.png"}],
+        extra_files={"assembled_preview.png": b"\x89PNG\r\n\x1a\n",
+                     "assembled_card.png": b"\x89PNG\r\n\x1a\n"}))
+
+    meta = json.loads(
+        (hub.project_dir("proj1") / "abc123" / "meta.json").read_text())
+    assert meta["views"][0]["card"] == "assembled_card.png"
+    assert meta["views"][0]["preview"] == "assembled_preview.png"
+    card = json.loads((hub.data / "index.json").read_text())[0]
+    assert card["card"] == "assembled_card.png"
+    assert card["preview"] == "assembled_preview.png"
+
+
+def test_a_build_that_named_no_card_still_publishes_and_still_gets_one(hub):
+    """EVERY BUILD ON THIS HUB TODAY IS ONE OF THESE, which is the whole test.
+
+    `card` arrived after builds were published, and a published build is
+    immutable — there is nothing to migrate and nothing that could be rebuilt
+    into the new shape. So a document that never heard of the field has to
+    publish exactly as it did, and its card has to keep drawing: the front page
+    falls back to the sheet (`ui/src/HammerolaEntry.jsx`), which is the picture
+    those builds have always shown.
+
+    A 422 here would take every project on the hub off the front page at once,
+    and `card: null` is what tells the browser to fall back rather than leaving
+    it to read a field that is not there.
+    """
+    r = hub.publish("proj1", "abc123", good_build(
+        views=[{"id": "assembled", "name": "assembled", "file": "assembled.json",
+                "parts": ["lid", "pin"], "preview": "assembled_preview.png"}],
+        extra_files={"assembled_preview.png": b"\x89PNG\r\n\x1a\n"}))
+    assert r.status_code == 201
+
+    meta = json.loads(
+        (hub.project_dir("proj1") / "abc123" / "meta.json").read_text())
+    assert "card" not in meta["views"][0]
+    card = json.loads((hub.data / "index.json").read_text())[0]
+    assert card["card"] is None
+    assert card["preview"] == "assembled_preview.png"
+
+
 def test_identical_retry_is_200_not_409(hub):
     body = good_build()
     assert hub.publish("proj1", "abc123", body).status_code == 201
@@ -453,18 +514,18 @@ def test_missing_meta_json_is_422(hub):
 
 
 # -- every place this document names a file ----------------------------------
-# There are FIVE and they are enumerated here once. The old document had three
+# There are SIX and they are enumerated here once. The old document had three
 # flat maps of file pointers (`downloads`, `overview`, `previews`) beside
 # `views[].file`, and issue #75 moved every pointer next to the thing it is
-# about: a view names its own file, its overview and its picture, and a part
-# names what it was exported to and its own picture.
+# about: a view names its own file, its overview, its picture and the card cut
+# of that picture, and a part names what it was exported to and its own picture.
 #
 # ONE LIST FOR EVERY TEST BELOW, rather than a parametrize per test, because a
 # pointer that quietly stops being checked is a 404 under an immutable URL a
 # year of cache is served for — and a per-test list is one that goes stale an
 # entry at a time, silently, exactly like the four inline copies of the name
 # rule that issue #53 was about.
-FILE_POINTERS = ("view file", "view overview", "view preview",
+FILE_POINTERS = ("view file", "view overview", "view preview", "view card",
                  "part files", "part preview")
 
 
@@ -479,7 +540,7 @@ PART_EXPORT_BYTES = b"solid lid\nendsolid lid\n"
 
 
 def _pointing_at(where, name):
-    """meta.json fields naming `name` in one of the five places, and nowhere else.
+    """meta.json fields naming `name` in one of the six places, and nowhere else.
 
     Returns kwargs for `meta_bytes`, so the document around the pointer is the
     ordinary one — a catalogue of one printable and a view that selects it.
@@ -493,6 +554,8 @@ def _pointing_at(where, name):
         view["overview"] = name
     elif where == "view preview":
         view["preview"] = name
+    elif where == "view card":
+        view["card"] = name
     elif where == "part files":
         part["files"] = {"stl": name}
     elif where == "part preview":
@@ -532,10 +595,10 @@ def _pointing_archive(fields, extra=None):
     return members
 
 
-def test_the_five_file_pointers_are_the_five_the_document_has():
+def test_the_six_file_pointers_are_the_six_the_document_has():
     """The list above, checked against the document rather than trusted.
 
-    `_pointing_at` refuses a name it does not know, so a sixth pointer added to
+    `_pointing_at` refuses a name it does not know, so a seventh pointer added to
     `build_meta` without a row here would be checked by nothing below and this
     would not notice — the list has to be compared against something. What it is
     compared against is the number of places `build_meta` calls the shared name
@@ -1705,7 +1768,7 @@ def test_a_pointer_at_a_generated_file_is_refused(hub, where):
     THE REFUSAL IS READ, not just counted, and that is what makes this a
     witness for `GENERATED_FILES` rather than for whatever the archive happened
     to be missing. Until the review of this change the archive carried no
-    `lid.stl`, so eight of the ten cases were refused for the catalogue's own
+    `lid.stl`, so ten of the twelve cases were refused for the catalogue's own
     export and this went green with the rule under test never reached — the
     same silence `render.py` describes on the historical `views` bug, where an
     inline copy of the check had no `GENERATED_FILES` clause at all.
@@ -1725,7 +1788,8 @@ def test_a_pointer_at_a_generated_file_is_refused(hub, where):
 
 
 @pytest.mark.parametrize("where", ("part files", "part preview",
-                                   "view overview", "view preview"))
+                                   "view overview", "view preview",
+                                   "view card"))
 @pytest.mark.parametrize("value", (0, [], ""))
 def test_an_optional_field_that_is_falsy_but_not_an_object_is_refused(
         hub, where, value):
@@ -1744,10 +1808,10 @@ def test_an_optional_field_that_is_falsy_but_not_an_object_is_refused(
     where the catalogue's own shape lives; `views` has had a non-empty list
     check since long before this.
 
-    WHAT THE REFUSAL SAYS IS ASSERTED, and it has to be: nine of these twelve
-    cases used to be refused for a `lid.stl` the archive never carried, so the
-    rule was witnessed on exactly one field of four and `if overview:` could
-    have come back with the suite green. The document below is a VALID one with
+    WHAT THE REFUSAL SAYS IS ASSERTED, and it has to be: nine of the twelve
+    cases this test then had were refused for a `lid.stl` the archive never
+    carried, so the rule was witnessed on exactly one field of four and
+    `if overview:` could have come back with the suite green. The document below is a VALID one with
     one field overwritten, so the falsy value is the only thing wrong with it.
     """
     # The name here is replaced by `value` on the very next lines — every
@@ -1779,7 +1843,8 @@ def _falsy_refusal(where, value):
         return "the files of part 'lid' must be an object"
     owner = {"part preview": "the picture of part 'lid'",
              "view overview": "the mesh of view 'assembled'",
-             "view preview": "the picture of view 'assembled'"}[where]
+             "view preview": "the picture of view 'assembled'",
+             "view card": "the card picture of view 'assembled'"}[where]
     return f"{owner} points at {value!r}"
 
 

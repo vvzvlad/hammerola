@@ -68,11 +68,37 @@ def _shows(image, color):
     return bool(((level > 0.05) & (residual < 0.02)).any())
 
 
+def _landscape(width):
+    """The `(width, height)` of a tile this many pixels across.
+
+    A tile is VIEW_ASPECT wide for its height and no longer square, and the
+    height is derived here rather than written down, for the same reason
+    `render` derives it in one place: a test carrying its own idea of the shape
+    would go on passing while the pictures changed shape around it.
+    """
+    return width, round(width / preview_png.VIEW_ASPECT)
+
+
 def _square(x, half, color):
     """A flat square of side `2 * half` standing at `x`, facing the +X camera."""
     return {
         "vertices": np.array([[x, -half, -half], [x, half, -half],
                               [x, half, half], [x, -half, half]], dtype=float),
+        "faces": np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64),
+        "color": color,
+        "alpha": 1.0,
+    }
+
+
+def _upright(half_width, half_height, color):
+    """A flat rectangle at the origin, facing the +X camera: `2 * half_height`
+    tall and `2 * half_width` across, so it is a part taller than it is wide --
+    the shape a landscape frame has the least room for."""
+    return {
+        "vertices": np.array([[0.0, -half_width, -half_height],
+                              [0.0, half_width, -half_height],
+                              [0.0, half_width, half_height],
+                              [0.0, -half_width, half_height]], dtype=float),
         "faces": np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64),
         "color": color,
         "alpha": 1.0,
@@ -154,7 +180,7 @@ def test_every_part_is_drawn_in_its_own_colour():
     the browser. One blue for everything passed every test there was.
     """
     frame = preview_png.render_view(preview_png.load_scene(FIXTURE),
-                                    *preview_png.ISO_VIEW, 200)
+                                    *preview_png.ISO_VIEW, *_landscape(200))
 
     assert _shows(frame, PLATE)
     assert _shows(frame, POST)
@@ -183,7 +209,8 @@ def test_a_colour_the_catalogue_took_by_name_is_one_this_renderer_can_draw():
     assert color == "#ff0000"
     # Drawn, and not merely hex: `_hex_rgb` is reached through `render_view`,
     # which is where the ValueError used to come from.
-    frame = preview_png.render_view([_square(0.0, 6.0, color)], 0.0, 0.0, 41)
+    frame = preview_png.render_view([_square(0.0, 6.0, color)], 0.0, 0.0,
+                                    *_landscape(41))
     assert _shows(frame, color)
 
 
@@ -196,20 +223,23 @@ def test_the_nearer_of_two_overlapping_parts_wins_the_pixel():
     centre pixel to the big square every time.
     """
     big = _square(0.0, 6.0, PLATE)
-    size = 61
-    centre = size // 2
+    # The frame is landscape, so the middle of it is not one number: a square
+    # part is fitted by the SHORTER axis and sits in the middle of a tile with
+    # room to spare on the left and the right.
+    width, height = _landscape(108)
+    row, column = height // 2, width // 2
 
     in_front = np.asarray(preview_png.render_view(
-        [_square(5.0, 2.0, POST), big], 0.0, 0.0, size))
+        [_square(5.0, 2.0, POST), big], 0.0, 0.0, width, height))
     behind = np.asarray(preview_png.render_view(
-        [_square(-5.0, 2.0, POST), big], 0.0, 0.0, size))
+        [_square(-5.0, 2.0, POST), big], 0.0, 0.0, width, height))
 
-    assert _shows(in_front[centre, centre], POST)
-    assert _shows(behind[centre, centre], PLATE)
+    assert _shows(in_front[row, column], POST)
+    assert _shows(behind[row, column], PLATE)
     # And the small square covers the middle only: the big one is still there
     # around it, so the first assertion is about depth and not about an empty
     # frame.
-    assert _shows(in_front[centre, centre + 25], PLATE)
+    assert _shows(in_front[row, column + 25], PLATE)
 
 
 def test_a_see_through_part_shows_what_is_behind_it_rather_than_hiding_it():
@@ -226,19 +256,22 @@ def test_a_see_through_part_shows_what_is_behind_it_rather_than_hiding_it():
     are, which is `_shading`'s business and not this test's.
     """
     alpha = 0.4
-    size = 61
-    centre = size // 2
+    width, height = _landscape(108)
+    row, column = height // 2, width // 2
     back = _square(0.0, 6.0, PLATE)
     front = dict(_square(5.0, 2.0, SPACER), alpha=alpha)
 
-    blended = np.asarray(preview_png.render_view([back, front], 0.0, 0.0, size))
-    opaque_back = np.asarray(preview_png.render_view([back], 0.0, 0.0, size))
+    blended = np.asarray(
+        preview_png.render_view([back, front], 0.0, 0.0, width, height))
+    opaque_back = np.asarray(
+        preview_png.render_view([back], 0.0, 0.0, width, height))
     opaque_front = np.asarray(
-        preview_png.render_view([_square(5.0, 2.0, SPACER)], 0.0, 0.0, size))
+        preview_png.render_view([_square(5.0, 2.0, SPACER)], 0.0, 0.0,
+                                width, height))
 
-    pixel = blended[centre, centre].astype(float)
-    expected = (opaque_back[centre, centre] * (1.0 - alpha)
-                + opaque_front[centre, centre] * alpha)
+    pixel = blended[row, column].astype(float)
+    expected = (opaque_back[row, column] * (1.0 - alpha)
+                + opaque_front[row, column] * alpha)
     # Within a step or two of 255: the frame is float until the very last line,
     # and the two ends are read back after that rounding while the blend
     # happened before it.
@@ -270,9 +303,10 @@ def test_a_part_is_not_cropped_by_its_own_picture():
     nothing inherited it. Asserted on the BORDER of the frame, because that is
     where the part went.
     """
-    size = 120
+    width, height = _landscape(240)
     frame = np.asarray(preview_png.render_view([_cube(10.0, PLATE)],
-                                               *preview_png.ISO_VIEW, size))
+                                               *preview_png.ISO_VIEW,
+                                               width, height))
     border = np.concatenate([frame[0], frame[-1], frame[:, 0], frame[:, -1]])
     background = np.round(preview_png._hex_rgb(preview_png.BACKGROUND) * 255)
 
@@ -281,25 +315,75 @@ def test_a_part_is_not_cropped_by_its_own_picture():
     # ...and it did not simply come out tiny: the cube is still there in the
     # middle, so the assertion above is about the framing and not about an empty
     # picture.
-    assert _shows(frame[size // 2, size // 2], PLATE)
+    assert _shows(frame[height // 2, width // 2], PLATE)
 
 
-def test_one_field_serves_every_view_of_a_sheet():
+def test_a_part_taller_than_it_is_wide_is_drawn_whole_in_a_landscape_tile():
+    """The shape of part a landscape tile has the least room for.
+
+    A tile is VIEW_ASPECT wide for its height, so the axis a taller-than-wide
+    part is fitted by is the HEIGHT, and all the room it has either side of
+    itself is the 1.02 margin `framing` keeps. That makes it the part a frame
+    which stopped containing what it draws would crop first — and it is the part
+    the landscape frame exists for, because the picture goes on a card wider
+    than it is tall and a square render would be drawn at half that card's width.
+
+    NOTHING HERE IS PINNED TO A ROW NUMBER, and that is the point of measuring
+    the picture rather than indexing it. The margin is a fixed FRACTION of the
+    tile — about one per cent of its height — so what it comes to in pixels
+    follows from VIEW_ASPECT, and a row written down here would be a second copy
+    of that constant: it was `frame[0]` against a part clearing the border by
+    0.38 px, which a change of VIEW_ASPECT would have turned red over nothing
+    this test is about. The tile is rendered large for the same reason, so that
+    one per cent is pixels rather than a fraction of one.
+
+    The card's own size is deliberately not repeated here — it belongs to the UI,
+    it is fluid (that is why the card fits the picture instead of cropping it),
+    and a build-side test asserting it would be two copies of one number.
+    """
+    width, height = _landscape(320)
+    background = np.round(preview_png._hex_rgb(preview_png.BACKGROUND) * 255)
+
+    tile = preview_png.render_view([_upright(6.0, 18.0, POST)], 0.0, 0.0,
+                                   width, height)
+
+    assert (tile.width, tile.height) == (width, height)
+    assert tile.width / tile.height == pytest.approx(preview_png.VIEW_ASPECT,
+                                                     rel=0.01)
+    frame = np.asarray(tile)
+    border = np.concatenate([frame[0], frame[-1], frame[:, 0], frame[:, -1]])
+    assert (border == background).all(), (
+        "the tall part reaches the edge of the frame, so the picture is cropped "
+        "exactly where a square frame used to crop it")
+    # ...and it FILLS the tile rather than sitting small in the middle of it,
+    # which is the half the border says nothing about: the rows it covers are
+    # all of them but the margin, so the height really is the axis it was fitted
+    # by.
+    covered = np.flatnonzero((frame != background).any(axis=(1, 2)))
+    assert covered.size, "nothing was drawn at all"
+    assert covered[-1] - covered[0] + 1 >= 0.95 * height, (
+        "the part was drawn small in the middle of the tile rather than fitted "
+        "to it")
+
+
+def test_one_framing_serves_every_view_of_a_sheet():
     """The six tiles are read against each other, so they are at one scale.
 
-    A field measured per tile would draw the same part at six different sizes,
+    A frame measured per tile would draw the same part at six different sizes,
     and a reader comparing two of them could not tell that from a part that
-    changed. So a sheet takes the LARGEST field any of its views needs: the
-    widest tile fits exactly and the others have room to spare.
+    changed. So a sheet takes the LARGEST extent any of its views needs, ON EACH
+    AXIS SEPARATELY now that the frame is not square: the widest tile fits
+    exactly and the others have room to spare.
     """
     parts = [_cube(10.0, PLATE)]
     angles = [(elev, azim) for elev, azim, _label in preview_png.MULTI_VIEWS]
-    alone = [preview_png.framing(parts, [angle])[1] for angle in angles]
+    alone = [preview_png.framing(parts, [angle])[1:] for angle in angles]
 
-    _centre, sheet = preview_png.framing(parts, angles)
+    _centre, half_w, half_h = preview_png.framing(parts, angles)
 
-    assert sheet == pytest.approx(max(alone))
-    assert sheet > min(alone), (
+    assert half_w == pytest.approx(max(w for w, _h in alone))
+    assert half_h == pytest.approx(max(h for _w, h in alone))
+    assert half_w > min(w for w, _h in alone), (
         "a cube is wider corner-on than face-on, so these cannot all come back "
         "equal — if they do, the projection is not being measured"
     )
@@ -319,7 +403,7 @@ def test_a_leaf_at_alpha_zero_is_not_drawn(tmp_path):
     hidden.write_text(json.dumps(document), encoding="utf-8")
 
     frame = preview_png.render_view(preview_png.load_scene(hidden),
-                                    *preview_png.ISO_VIEW, 200)
+                                    *preview_png.ISO_VIEW, *_landscape(200))
 
     assert not _shows(frame, POST)
     # The other two are still drawn, so what vanished is the leaf and not the
@@ -350,6 +434,70 @@ def test_a_scene_render_writes_a_png_of_the_scene(tmp_path):
     assert _shows(drawn, CAP)
 
 
+@pytest.mark.parametrize("views", ("iso", "multi"))
+def test_the_card_picture_is_the_bare_tile_and_the_sheet_still_has_its_bands(
+        tmp_path, views):
+    """Two files out of one render: the sheet, and the tile the sheet is built of.
+
+    The front page FITS a card's picture rather than cropping it, so the title
+    band above the tiles and the footer under them would be shown along with the
+    part and the part would be drawn smaller to make room for them. `card_path`
+    is that same render written out before `_compose` puts anything round it --
+    the whole of what "no title, no footer" means here is that the card is
+    EXACTLY THE TILE, which is what the sizes below say: the card is one tile,
+    and the sheet is taller than the tiles it holds because of the bands.
+
+    BOTH MODES, because a sheet has six tiles and a card wants one: the first,
+    which MULTI_VIEWS opens with and ISO_VIEW names. An argument that meant
+    nothing in one of the two modes would be one nobody could rely on from
+    `render_previews`, which passes it whatever `--preview-mode` says.
+    """
+    stl = tmp_path / "assembled.stl"
+    trimesh.creation.box(extents=(10.0, 20.0, 30.0)).export(stl)
+    png = tmp_path / "assembled_preview.png"
+    card = tmp_path / "assembled_card.png"
+
+    preview_png.render(str(stl), str(png), views=views, title="assembled",
+                       parts=4, resolution=120, scene=str(FIXTURE),
+                       card_path=str(card))
+
+    tile = _landscape(120 if views == "multi"
+                      else int(120 * preview_png.ISO_SCALE))
+    with Image.open(card) as picture:
+        assert picture.size == tile
+        drawn = picture.convert("RGB")
+    # It is the scene that was drawn on it, not an empty frame -- the same proof
+    # the sheet's own test takes, since the STL beside it shares no colour with
+    # the fixture.
+    assert _shows(drawn, PLATE)
+    with Image.open(png) as sheet:
+        # The sheet is unchanged: its tiles are that same size, and it is taller
+        # than them because the bands are still there.
+        assert sheet.height > tile[1]
+        assert sheet.width >= tile[0]
+
+
+def test_nothing_but_the_sheet_is_written_when_no_card_is_asked_for(tmp_path):
+    """The default, and the reason it is one: the picture a build already made.
+
+    `render` is also the CLI (`python -m src.cadbuild.preview_png`) and the
+    renderer a single printable's picture goes through, and neither has any use
+    for a card -- a card shows a project. So the second file is written only
+    when somebody asks for it by name.
+    """
+    stl = tmp_path / "base.stl"
+    trimesh.creation.box(extents=(10.0, 20.0, 30.0)).export(stl)
+
+    preview_png.render(str(stl), str(tmp_path / "base_preview.png"),
+                       title="base", resolution=80)
+
+    # Every picture in the directory, rather than the picture that was named:
+    # what is under test is that NOTHING ELSE was written, and a card is only a
+    # card by the name the caller gives it.
+    assert [path.name for path in sorted(tmp_path.glob("*.png"))] == [
+        "base_preview.png"]
+
+
 def test_where_a_chunk_boundary_falls_cannot_move_a_pixel(monkeypatch):
     """FRAGMENT_BUDGET is a memory ceiling and must be nothing else.
 
@@ -361,10 +509,12 @@ def test_where_a_chunk_boundary_falls_cannot_move_a_pixel(monkeypatch):
     picture nobody diffs.
     """
     parts = [_cube(10.0, PLATE)]
-    whole = preview_png.render_view(parts, *preview_png.ISO_VIEW, 120)
+    width, height = _landscape(120)
+    whole = preview_png.render_view(parts, *preview_png.ISO_VIEW, width, height)
 
     monkeypatch.setattr(preview_png, "FRAGMENT_BUDGET", 7)
-    chunked = preview_png.render_view(parts, *preview_png.ISO_VIEW, 120)
+    chunked = preview_png.render_view(parts, *preview_png.ISO_VIEW,
+                                      width, height)
 
     assert chunked.tobytes() == whole.tobytes()
     # ...and seven rows really did split this work, so the equality above is a
@@ -373,4 +523,4 @@ def test_where_a_chunk_boundary_falls_cannot_move_a_pixel(monkeypatch):
     # however wide it is — hence a band of them.
     band = np.array([[[0.0, y, 1.0], [40.0, y, 1.0], [20.0, y + 10.0, 1.0]]
                      for y in range(0, 100, 10)])
-    assert len(list(preview_png._fragments(band, 120))) > 1
+    assert len(list(preview_png._fragments(band, width, height))) > 1

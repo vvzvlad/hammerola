@@ -384,20 +384,20 @@ def _check_part_name(value, where: str) -> None:
 def _check_declared_file(name, files: dict, where: str) -> None:
     """Every file this document points at, wherever it is pointed at from.
 
-    FIVE CALLERS NOW, and they are no longer four flat maps: a view's `file`,
-    its `overview` mesh and its `preview` picture, and — on a catalogue
-    record — each of its exported `files` and its own `preview`. One helper for
-    all of them because they make the same claim about a name — "this build
-    wrote a file called that, and the hub will hand it back" — and differ only
-    in what OWNS the name, which is now stated by where the pointer sits
-    instead of being parsed out of a key (issue #75). Each of the questions
-    below is a way the push is accepted and then serves something other than
-    what was measured here, so they move together or not at all. `views` was
-    the last of the old four to arrive and it arrived through a bug: it kept an
-    inline check of its own that asked membership, `/` and `GENERATED_FILES`
-    and neither of the two clauses the shared rule had grown, so the exact
-    defect issue #53 exists to kill was still live on the one map without which
-    a build page is empty.
+    SIX CALLERS NOW, and they are no longer four flat maps: a view's `file`,
+    its `overview` mesh, its `preview` picture and the `card` cut of that
+    picture, and — on a catalogue record — each of its exported `files` and its
+    own `preview`. One helper for all of them because they make the same claim
+    about a name — "this build wrote a file called that, and the hub will hand
+    it back" — and differ only in what OWNS the name, which is now stated by
+    where the pointer sits instead of being parsed out of a key (issue #75).
+    Each of the questions below is a way the push is accepted and then serves
+    something other than what was measured here, so they move together or not
+    at all. `views` was the last of the old four to arrive and it arrived
+    through a bug: it kept an inline check of its own that asked membership, `/`
+    and `GENERATED_FILES` and neither of the two clauses the shared rule had
+    grown, so the exact defect issue #53 exists to kill was still live on the
+    one map without which a build page is empty.
     """
     # `files` is what the build DECLARED it wrote, hashed by `_hash_output`. It
     # is a real file under this build — `runner._verify_output_file` checked
@@ -540,8 +540,8 @@ def _spend_file_budget(left: int, count: int, where: str, files: dict) -> int:
     nobody). Beyond the budget, pointers are repeats of a name already spoken
     for, which is nothing a build does.
 
-    The views' own three pointers are NOT on this budget: they are bounded as
-    ENTRIES by `_check_map_size`, at three pointers per entry, which is the same
+    The views' own four pointers are NOT on this budget: they are bounded as
+    ENTRIES by `_check_map_size`, at four pointers per entry, which is the same
     order the old document allowed across its three maps.
     """
     left -= count
@@ -1213,11 +1213,12 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
             "bytes": size,
             "gzip": compressed,
         }
-        # The whole-view mesh and the whole-view picture: `assembled.stl` and
-        # `assembled_preview.png`, and the same pair for `print` where the
-        # project has that view. OPTIONAL because most views have neither — the
-        # build hangs them on the two ids it renders — and read with an explicit
-        # `is None` like every other optional field here.
+        # The whole-view mesh and the whole-view pictures: `assembled.stl`,
+        # `assembled_preview.png` and `assembled_card.png`, and the same three
+        # for `print` where the project has that view. OPTIONAL because most
+        # views have none of them — the build hangs them on the two ids it
+        # renders — and read with an explicit `is None` like every other
+        # optional field here.
         overview = view.get("overview")
         if overview is not None:
             _check_declared_file(
@@ -1228,6 +1229,18 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
             _check_declared_file(
                 preview, files, f"the picture of view {view_id!r}")
             entry["preview"] = preview
+        # The same picture without the title band and the footer, for the front
+        # page's card, which FITS what it is given rather than cropping it
+        # (`ui/src/HammerolaEntry.jsx`). Read exactly like `preview` above and
+        # OPTIONAL for one reason that is not the others': every build published
+        # before the build side learnt to write it has none, and those cards go
+        # on working — so a missing `card` is an old build and never a broken
+        # one, and nothing here may start demanding it.
+        card = view.get("card")
+        if card is not None:
+            _check_declared_file(
+                card, files, f"the card picture of view {view_id!r}")
+            entry["card"] = card
         rendered.append(entry)
 
     # Both are shown verbatim on the index and the build page. The pages render
@@ -1450,6 +1463,19 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
     # views declare none, and that card keeps drawing the neutral plate.
     preview = next((view["preview"] for view in meta["views"]
                     if view.get("preview") is not None), None)
+    # THE SAME PICK ON THE PICTURE THE CARD ACTUALLY WANTS: the sheet without its
+    # title band and its footer, which the card fits whole. Picked separately
+    # rather than off the view `preview` came from, because the two questions are
+    # answered per view and a view that declares one declares both.
+    #
+    # `None` IS AN ORDINARY ANSWER HERE TOO, and for one more reason than
+    # `preview` has: every build published before the build side started writing
+    # this file has no `card` anywhere in its meta.json, and its card keeps
+    # drawing the sheet it has always drawn. The front page falls back to
+    # `preview` (`ui/src/HammerolaEntry.jsx`), so nothing about an old build has
+    # to be rebuilt or migrated.
+    card = next((view["card"] for view in meta["views"]
+                 if view.get("card") is not None), None)
     return {
         "pid": meta["pid"],
         "project": meta["project"],
@@ -1487,4 +1513,5 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
         "views": len(meta["views"]),
         "mb": f"{total_gzip / 1e6:.1f}",
         "preview": preview,
+        "card": card,
     }
