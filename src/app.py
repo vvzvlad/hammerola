@@ -22,6 +22,10 @@ Routing (SPEC 3, 7.4):
     GET  /project/<pid>/dev/<file>            the local slot, no-cache
     GET  /project/<pid>/<commit>/<file>       one build's files, immutable forever
     GET  /project/<pid>/<commit>/             the page shell, from the template
+    GET  /project/<pid>/<a>/compare/<b>/      the comparison page, always no-cache
+    GET  /project/<pid>/<a>/compare/<b>/<name>?v=<view>
+                                              scene.json and report.json of one
+                                              computed comparison      EDIT_TOKEN
     POST /api/v1/publish/<pid>                accept a push, 202 + a job; the
                                               HUB names the revision and the
                                               reply says which name
@@ -32,6 +36,10 @@ Routing (SPEC 3, 7.4):
                                               against each other, 202 +
                                               a job whose LOG is the
                                               report                   EDIT_TOKEN
+    POST /api/v1/compare/<pid>/<old>/<new>/<view>
+                                              the same, and the job also
+                                              builds the scene of that view
+                                              for the page above       EDIT_TOKEN
     GET  /api/v1/jobs/<id>                    how that build is going  EDIT_TOKEN
     GET  /api/v1/jobs/<id>/log                what the build printed   EDIT_TOKEN
 
@@ -143,12 +151,20 @@ from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
                       JobStore)
 from src.multipart import MultipartError, parse_multipart
 from src.safeio import nonblocking, read_regular_bytes, resolve_settled
-from src.store import DEV_LINK, POINTER_NAMES, PublishError, Store
+from src.store import (COMPARE_FILES, DEV_LINK, POINTER_NAMES, PublishError,
+                       Store)
 
 # SPEC 7.4. `immutable` tells a browser not to even revalidate on reload, which is
 # only honest because a build directory can never change: republishing the same
 # commit with different content is refused with a 409 rather than overwriting.
 CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
+# THE SAME YEAR, BUT ONLY IN THE READER'S OWN BROWSER. RFC 9111 section 3.5 lets
+# a shared cache store a response to a request that carried `Authorization`
+# exactly when the response says `public`, `must-revalidate` or `s-maxage` -- so
+# `public` on an answer behind EDIT_TOKEN is the one word that would hand a proxy
+# permission to keep it for a year and serve it on to somebody with no token.
+# `private` earns the same freshness without saying that.
+CACHE_IMMUTABLE_PRIVATE = "private, max-age=31536000, immutable"
 CACHE_NONE = "no-cache"
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -272,6 +288,36 @@ PUBLISH_WAIT_SECONDS = 60
 # is what lets a message written in Russian travel on a header at all; the route
 # unquotes it. `X-`, because it is ours and nobody else's.
 MESSAGE_HEADER = "X-Hammerola-Message"
+
+# Why a comparison of one view cannot be asked for at all (issue #10). A view id
+# is the model author's own string and is held at build time to a rule of its
+# own — `cadbuild.hubspec.MEMBER_RE`, which every id below also passes — while
+# the comparison cache has to spell it as a DIRECTORY, so this is the one shape
+# a published view can carry and still have nothing to compare with. It is a
+# sentence and not a 404 because a name is a thing somebody can change: the
+# author renames the view, and the tab that never answered starts answering.
+# The rule is stated rather than the offending name echoed — see the refusal
+# itself in `_handle_compare`.
+VIEW_NOT_NAMEABLE_ERROR = (
+    "this view cannot be compared: its name has to be a plain directory "
+    "segment — letters, digits, dot, dash and underscore, starting with a "
+    "letter or a digit, at most 128 characters. Rename the view and publish "
+    "again."
+)
+
+# Why a comparison of one view cannot be built even though both revisions are
+# here (issue #10). A scene is made out of the two published view documents, so
+# a view only ONE of the pair declares has nothing to be compared against — and
+# that is an ORDINARY thing rather than a fault: the author is free to add a
+# view or drop one between two revisions. It stays a 404, because the pair of
+# documents this address names really is not there; what it stops being is the
+# bare word, which the panel printed to the reader as the whole explanation. The
+# view is not echoed back, exactly as the sentence above does not echo one — the
+# reader has the name in their own URL.
+VIEW_NOT_IN_BOTH_ERROR = (
+    "this view is not published in both revisions, so there is no pair of "
+    "documents to build a comparison from. Compare a view both of them declare."
+)
 
 # Types our OWN files are served as — templates and generated JSON only.
 CONTENT_TYPES = {
@@ -527,7 +573,7 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                     return self._serve_asset([FAVICON_ASSET], with_body)
                 if head == "project":
                     return self._serve_project(segments[1:], trailing_slash,
-                                               with_body)
+                                               with_body, query)
                 if segments[:3] == ["api", "v1", "comments"]:
                     return self._serve_comments(segments[3:], query, with_body)
                 if segments[:3] == ["api", "v1", "jobs"]:
@@ -894,8 +940,13 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                        {"Location": location}, with_body)
 
         def _serve_project(self, rest: list[str], trailing_slash: bool,
-                           with_body: bool):
-            """Everything under /project/."""
+                           with_body: bool, query: str = ""):
+            """Everything under /project/.
+
+            `query` is read by exactly one branch below — a comparison's files
+            are per VIEW, and `?v=` is how this site has always said which view
+            (SPEC 3). Every other route here ignores the query entirely.
+            """
             if not rest:
                 return self._error(404, "not found", with_body=with_body)
             pid = rest[0]
@@ -919,6 +970,21 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             if second == "builds.json" and len(rest) == 2:
                 return self._send_file(
                     store.projects_dir / pid / "builds.json", CACHE_NONE, with_body)
+
+            # A COMPARISON OF TWO REVISIONS (issue #10), and the word sits in
+            # the FOURTH position rather than the second for one reason:
+            # `compare` is a valid build id today (`SAFE_ID` accepts it), so a
+            # project may already have published a build called that and
+            # `/project/<pid>/compare/...` would take its permanent URL away.
+            # Here there is nothing to collide with — a build URL is at most
+            # three segments after the project and this shape is four or five —
+            # so `compare` stays a name a build may claim and
+            # `RESERVED_BUILD_NAMES` is left alone.
+            if len(rest) in (4, 5) and rest[2] == "compare":
+                return self._serve_compare(
+                    pid, rest[1], rest[3],
+                    rest[4] if len(rest) == 5 else None,
+                    query, trailing_slash, with_body)
 
             # The two moving names — `latest` for a commit, `dev` for the
             # author's laptop (SPEC 7.6) — are the only moving targets on the
@@ -955,6 +1021,110 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             uploaded = rest[2] not in render.GENERATED_FILES
             return self._send_file(build_dir / rest[2], cache, with_body,
                                    uploaded=uploaded)
+
+        # -- one comparison of two revisions (issue #10) ----------------
+        def _serve_compare(self, pid: str, old: str, new: str,
+                           name: str | None, query: str, trailing_slash: bool,
+                           with_body: bool):
+            """`/project/<pid>/<a>/compare/<b>/` and the two files under it.
+
+            THE PAGE IS PUBLIC AND THE FILES ARE NOT, and the split is the same
+            one the rest of this service makes rather than a new rule. The page
+            is the build page's shell — identical bytes for every build, every
+            comparison and every project, straight out of the image — so serving
+            it anonymously says nothing about what this hub holds. What it then
+            fetches is a computed answer about two revisions, which is on the
+            writing side of the token exactly as asking for the computation is
+            (`_handle_compare`).
+
+            ALWAYS `no-cache` FOR THE PAGE (SPEC 7.4): it is generated HTML and
+            it changes with the image, so a year on it would pin every reader to
+            the markup of the day they first opened one.
+
+            THE FILES GET THE YEAR, because both ends of a pair are always
+            commits. A POINTER IS REFUSED HERE exactly as it is on the POST
+            (`_handle_compare`): a comparison is cached on disk under the names
+            it was asked with, so an entry filed under `latest` is a stale file
+            the moment `latest` moves — and a response header cannot fix a file
+            that is wrong. The client resolves the pointer BEFORE it asks:
+            `builds.json` carries the commit `latest` stands for, and `dev` has
+            no commit id at all, so the local slot is not a revision anybody can
+            compare. What is left is two commits, and a comparison of two
+            immutable things is an answer that cannot change.
+            """
+            # The token first for the files, and BEFORE the ids are looked at,
+            # for the reason `_serve_jobs` gives: an unauthenticated caller must
+            # not be able to tell "no such revision" from "wrong token".
+            if name is not None and not self._require_token(with_body):
+                return None
+            for revision in (old, new):
+                # The same check the POST makes, and `latest` and `dev` fail it
+                # along with every other name a build may not have: a pair is
+                # two commits or it is not a pair this hub answers about.
+                if not store.valid_build_id(revision):
+                    return self._error(404, "not found", with_body=with_body)
+
+            if name is None:
+                return self._serve_compare_page(pid, old, new, trailing_slash,
+                                                with_body)
+            if name not in COMPARE_FILES:
+                # Nothing else is ever written into a cache entry, so this is a
+                # whitelist over a directory that already holds only these two —
+                # kept because the alternative is a route whose answer depends
+                # on what happens to be on the volume.
+                return self._error(404, "not found", with_body=with_body)
+            view = (parse_qs(query).get("v") or [None])[0]
+            try:
+                entry = store.compare_dir(pid, old, new, view)
+            except ValueError:
+                # No `?v=`, or a name no entry could be filed under
+                # (`store.valid_view_id`) — there is no comparison this could
+                # be naming. A 404 and not the sentence the POST answers with:
+                # this is a FILE fetch, its 404 already means "nobody has
+                # computed that", and the page asks the POST next — which is
+                # where the reader is told the name is the reason.
+                return self._error(404, "not found", with_body=with_body)
+            # A comparison nobody has computed is a missing file, and
+            # `_send_file` answers that with the 404 it deserves. The year is
+            # unconditional: both ends got past `valid_build_id` above, so this
+            # entry is a pair of commits and cannot come to mean anything else.
+            # PRIVATE, unlike every other year on this site, because this one is
+            # behind the token -- see the constant.
+            return self._send_file(entry / name, CACHE_IMMUTABLE_PRIVATE,
+                                   with_body)
+
+        def _serve_compare_page(self, pid: str, old: str, new: str,
+                                trailing_slash: bool, with_body: bool):
+            """The shell, once both ends of the pair are really there.
+
+            Existence is decided by each revision's meta.json, exactly as
+            `_serve_build_page` decides it: a page that then 404s on every fetch
+            is worse than a 404. It says nothing about whether the comparison
+            has been COMPUTED — that answer is behind the token, and the page is
+            what asks for it.
+
+            THE SAME BYTES AS `<a>`'s BUILD PAGE, AND THAT IS THE WHOLE MEANING
+            OF THIS ADDRESS: it is the page of build `<a>`, comparing against
+            `<b>`. Everything the shell then fetches that is not the scene —
+            meta.json, builds.json, the downloads, the comment queue — is
+            `<a>`'s, because the bundle reads this pathname that way
+            (`pageFrom` in ui/src/hub.js, which takes `<a>` as the base and
+            `<b>` as the pair's other end). Nothing here has to be told: this
+            hub serves one generated page for every build and every comparison.
+            """
+            if not trailing_slash:
+                # Load-bearing for the reason a build URL's is: the viewer
+                # derives every fetch from its own directory.
+                return self._redirect(f"/project/{pid}/{old}/compare/{new}/",
+                                      with_body)
+            for revision in (old, new):
+                try:
+                    resolved = resolve_settled(
+                        store.projects_dir / pid / revision / "meta.json")
+                    resolved.relative_to(store.root)
+                except (OSError, ValueError):
+                    return self._error(404, "not found", with_body=with_body)
+            return self._serve_page(render.build_page_html, with_body)
 
         # -- comment queue, read side ----------------------------------
         def _serve_comments(self, rest: list[str], query: str, with_body: bool):
@@ -1483,10 +1653,21 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             THREE SEGMENTS AND NO BODY. Which revisions to compare is a question
             about WHERE, exactly like which project a push lands in, and this
             service says where in the URL. `latest` and `dev` are not resolved
-            here and are not meant to be: the client resolves a revision before
-            it asks (`hammerola/revdiff.py`), so what arrives is two permanent
-            ids — and a comparison against a slot that is rewritten while it runs
-            would be a report about nothing in particular.
+            here and are not meant to be: every client resolves a revision
+            before it asks — `hammerola/revdiff.py` for the CLI, `commitOf` in
+            ui/src/HammerolaViewer.jsx for the picker — so what arrives is two
+            permanent ids. A comparison against a slot that is rewritten while
+            it runs would be a report about nothing in particular, and one
+            CACHED under a moving name would go on answering for a pair that has
+            moved on (`store.compare_dir`).
+
+            A FOURTH SEGMENT NAMES A VIEW, and it is what asks for the artefact:
+            the same job then also builds the scene a browser opens at
+            `/project/<pid>/<old>/compare/<new>/` and caches it. Optional, and
+            the absence is not a default gone missing — `hammerola diff
+            --material` wants the measurement and reads the log, and making it
+            pay for a tessellated scene it never fetches would be a minute of
+            CPU per call for nothing.
 
             SO EVERY REPLY HERE CLOSES THE CONNECTION, refusals and 202 alike.
             This handler never reads a request body, and `protocol_version` is
@@ -1498,9 +1679,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             """
             if not self._require_token(close=True):
                 return None
-            if len(rest) != 3:
+            if len(rest) not in (3, 4):
                 return self._error(404, "not found", {"Connection": "close"})
-            pid, old, new = rest
+            pid, old, new = rest[:3]
+            view = rest[3] if len(rest) == 4 else None
             # The same helpers every other route validates with, and nothing
             # else: a second spelling of "what a safe id looks like" is a second
             # place for the two to drift apart.
@@ -1510,6 +1692,52 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             for revision in (old, new):
                 if not (store.projects_dir / pid / revision).is_dir():
                     return self._error(404, "not found", {"Connection": "close"})
+            if view is not None:
+                # Asked of the STORE, which is what has to be able to name a
+                # cache entry out of these four ids — so the shape of a view id
+                # is decided in one place and not spelled again here.
+                #
+                # AND REFUSED IN WORDS, which is the one refusal on this route
+                # that is not a 404. A view id is the author's own string,
+                # published under a rule of its own (`hubspec.MEMBER_RE`), and
+                # this is the first place it ever has to be a directory
+                # segment: a name that cannot be one is a build that publishes,
+                # shows the tab and then answers a comparison of it with
+                # nothing at all. 422 and a sentence — the reader is told the
+                # NAME is the reason, and the author has something to rename.
+                # It says nothing a 404 would not: both ends of the pair are
+                # already known to exist by the lines above.
+                #
+                # THE NAME ITSELF IS NOT ECHOED BACK, for the reason
+                # `_refused_names_error` gives at length about member names:
+                # the segment is the caller's own bytes, and a message built
+                # out of them is this hub repeating whatever was sent, at
+                # whatever length the request line allowed. The rule is what
+                # the reader needs, and the name is already in their URL.
+                if not store.valid_view_id(view):
+                    return self._error(
+                        422, VIEW_NOT_NAMEABLE_ERROR, {"Connection": "close"})
+                # AND THE VIEW HAS TO BE IN BOTH REVISIONS. A scene is built out
+                # of the two published view documents, so a view one of them
+                # never had cannot produce one — and queueing a job that is
+                # certain to fail is the same mistake as queueing a comparison
+                # of a revision that is not there, two lines up.
+                #
+                # 404 AND A SENTENCE, which is a pair this route otherwise does
+                # not make. The status is right — the pair of documents this
+                # address names is not on the volume — but the BODY was the bare
+                # word, and the panel prints the body: a reader comparing two
+                # revisions across a view the author added or dropped between
+                # them was told "The comparison did not finish · not found",
+                # which reads as a hub that lost something. The 422 beside it
+                # already answers in a sentence; this one now says which of the
+                # two ordinary things happened, without echoing the name back.
+                for revision in (old, new):
+                    document = (store.projects_dir / pid / revision
+                                / f"{view}.json")
+                    if not document.is_file():
+                        return self._error(404, VIEW_NOT_IN_BOTH_ERROR,
+                                           {"Connection": "close"})
 
             # THE JOB IS NAMED AFTER THE NEWER REVISION, because `jobs.create`
             # takes one commit and that is the one a person means by "which
@@ -1518,7 +1746,8 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             record = jobs.create(pid, new)
             job_id = record["id"]
             outcome = builds.submit(
-                CompareTask(job_id=job_id, pid=pid, old=old, new=new))
+                CompareTask(job_id=job_id, pid=pid, old=old, new=new,
+                            view=view))
             if outcome == SUBMIT_QUEUE_FULL:
                 # The job is failed here rather than left `queued`, exactly as
                 # `_queue_build` does it: a job nothing will pick up is a status
