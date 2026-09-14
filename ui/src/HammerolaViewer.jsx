@@ -14,8 +14,12 @@
  *                     inside that same two-megabyte document.
  *   REVS           -> /project/<pid>/builds.json, which carries the pointers
  *                     (`has_dev`, `latest`) beside the history of commits.
- *   DIFF           -> nothing. The hub has no endpoint that compares two
- *                     builds (plan step 8), so the panel is drawn and says so.
+ *   DIFF           -> two documents of the comparison's own, computed on
+ *                     request: `scene.json`, which is an ORDINARY view payload
+ *                     and goes to the viewport that is already on the page, and
+ *                     `report.json`, which is the list of parts the panel draws.
+ *                     Both are behind EDIT_TOKEN and neither exists until
+ *                     somebody asks — see hub.js and `runCompare` below.
  *   notes          -> TWO different things that share one word, and the box on
  *                     the canvas labels them rather than stacking them. Both
  *                     hang on the CATALOGUE KEY (issue #75), which is the
@@ -93,9 +97,10 @@ import {
   VIEWPORT_TAG,
 } from './events.js';
 import {
-  PAGE, ASSEMBLED_VIEW_ID, anchorFor, isPointerPage, buildKey, countedName,
-  indexTree, loadMeta, loadBuilds, projectUrl, rereadPage, rowsByKey, shortId,
-  stamp, mb,
+  PAGE, ASSEMBLED_VIEW_ID, COMPARE_GROUPS, DIFF_COLOURS, JOB_DONE,
+  JOB_FAILED, anchorFor, compareBase, isPointerPage, buildKey, countedName,
+  compareView, indexTree, loadCompareReport, loadJob, loadMeta, loadBuilds,
+  pageFrom, projectUrl, rereadPage, rowsByKey, shortId, stamp, startCompare, mb,
 } from './hub.js';
 // `readTheme`/`writeTheme` COME FROM HERE AND NOT FROM THE VIEWPORT, which is
 // the last step of the move issue #35 made: the theme stopped being the colour
@@ -236,6 +241,56 @@ const POLL_MAX_MS = 60000;
 // jumps under a hand that is no longer there.
 const BUSY_RETRY_MS = 250;
 const BUSY_WAIT_MS = 5000;
+
+// How often the page asks whether the comparison it queued has finished, and how
+// long it goes on asking.
+//
+// A comparison is two STEP reads and one boolean per part — about a second and a
+// half on a real assembly (issue #10) — plus however long the build queue in
+// front of it is. So the answer usually arrives on the second or third poll, and
+// polling faster than that would only ask a hub that is busy computing. The
+// ceiling is what stops a job the hub lost from leaving the panel saying
+// "measuring" for the rest of the afternoon: three minutes is far longer than
+// any pair takes and short enough that somebody is still at the screen to read
+// what it says instead.
+const COMPARE_POLL_MS = 1500;
+const COMPARE_WAIT_MS = 180000;
+
+/**
+ * Which of the comparison scene's groups a tab takes off the screen.
+ *
+ * Overlay hides nothing — both revisions, ghosted, with the difference between
+ * them bright on top.
+ *
+ * A SINGLE-REVISION TAB SHOWS ONE REVISION AND ITS OWN DIFFERENCE, which is what
+ * makes it that revision at all: `A only` is revision A and the material that
+ * was REMOVED from it, `B only` is revision B and the material that was ADDED to
+ * it. The other revision's shell goes, and so does the difference that belongs
+ * to the other revision — because the bright geometry is not a neutral overlay
+ * sitting between the two. `added` is drawn where B stands and `removed` where A
+ * stands (`cadbuild/comparescene`), and a part that exists in only ONE revision
+ * is drawn WHOLE and opaque there. Keeping both groups in both tabs therefore
+ * put a part that is not in A at all, at full size and in full colour, on the
+ * tab claiming to be A — in front of A's own geometry, hiding it.
+ *
+ * IT WAS NEARLY INVISIBLE WHILE A DIFFERENCE WAS A SLIVER, which is why it stood
+ * for a round: a fused shaving that is 0.4 mm thick reads as an annotation
+ * wherever it sits. A whole part does not.
+ *
+ * A FUNCTION AND NOT A MAP, so `diffShow` — one field, three values, written in
+ * three places — cannot reach a lookup that would answer `constructor` with
+ * something off `Object.prototype`.
+ */
+const diffHidden = (show) => {
+  if (show === 'a') return [COMPARE_GROUPS.b, COMPARE_GROUPS.added];
+  if (show === 'b') return [COMPARE_GROUPS.a, COMPARE_GROUPS.removed];
+  return [];
+};
+
+/** A volume as the panel prints it: whole mm³, or two places while it is small. */
+const mm3 = (value) => (value >= 10
+  ? String(Math.round(value))
+  : String(Number(value.toFixed(2))));
 
 /** The letter the viewport holds the cut tool up on. Shown, never bound here. */
 const HOLD_KEY_LABEL = 'C';
@@ -562,6 +617,254 @@ export function notesWith(map, key, text) {
   return next;
 }
 
+/**
+ * The verdict for a part the kernel would not measure, spelled as the hub
+ * spells it (`cadbuild/comparescene.STATUSES`).
+ *
+ * A VERDICT AND NOT AN ABSENCE OF ONE, which is the whole reason it is written
+ * down here rather than folded into the two words either side of it.
+ * `shapediff.check` refuses a measurement exactly where the kernel may have
+ * lied, so this is the acceptance gate having done its job — and the reader is
+ * the only place left to put the answer, because nothing bright is drawn for
+ * such a part and the scene therefore looks like a part nobody touched.
+ *
+ * ONE SPELLING, IN ONE PLACE. The reader meets the two halves side by side — the
+ * job log and this panel, over the same pair of revisions — so the word here is
+ * the printed report's word, and a constant is what keeps the three readers of
+ * it below from drifting apart.
+ */
+const NOT_MEASURED = 'not measured';
+
+/**
+ * The verdict for a part no pair of STEP files came from, spelled as the hub
+ * spells it (`cadbuild/comparescene.STATUSES`).
+ *
+ * THE ROUTINE SILENCE, AND IT IS NOTHING LIKE THE ONE ABOVE. What is true of
+ * the whole category is that the two builds did not both export the part, so
+ * nothing was ever fused and nothing was established about it. Hardware and
+ * mocks are the everyday case — nobody compares bought screws, and a part with
+ * no geometry of ours has no STEP in either revision — but they are the example
+ * and not the definition: a part that was `printable` in one revision and
+ * hardware, or a mock, in the other lands here too, and there one build DID
+ * export a STEP. It wore the warning colour and the top of the list while both
+ * silences shared one word, and since most models carry several bought parts,
+ * that stack of rows stood between the reader and the parts that actually
+ * changed.
+ *
+ * QUIET IS NOT `unchanged`, and the one thing this word keeps from the other is
+ * the one thing that matters: it is never counted as a part that came out the
+ * same. A comparison where nothing was compared is not a comparison that found
+ * nothing — so an "identical" is said about the parts that WERE compared and
+ * says how many of these it left out (`compareSummary`).
+ */
+const NOT_COMPARED = 'not compared';
+
+/**
+ * What that word means, said once for the whole category (the legend line).
+ *
+ * THE DEFINITION IS THE FIRST HALF AND THE EXAMPLE IS THE SECOND, in that order
+ * and not the other way round, because only the first half is true of every row
+ * that wears the word. It read "hardware and mocks — no geometry of ours to
+ * compare" for a round: true of nearly all of them and false of the one that
+ * matters, a part that was `printable` in one revision and hardware or a mock in
+ * the other, where one build DID export a STEP and the fuse still had nothing to
+ * work with.
+ *
+ * A CONSTANT, so this and the hub's own sentence for the same row
+ * (`cadbuild/comparescene._uncovered_line`) can be held to saying the same thing
+ * by a test rather than by whoever edits one of them next.
+ */
+const NOT_COMPARED_WHY = 'the two builds did not both export it as STEP,'
+  + ' so nothing was fused — hardware and mocks most often';
+
+/**
+ * Whether a row is one the reader may safely meet last.
+ *
+ * TWO WORDS AND NOT A CATEGORY. `unchanged` is the comparison saying it looked
+ * and found nothing; `not compared` is it saying it never had two STEP files to
+ * look at. Neither is news, so neither belongs in front of the row somebody
+ * opened the comparison for — while `not measured`, which reads like these two
+ * on screen and is the opposite claim, stays at the top with what changed.
+ */
+function isQuiet(status) {
+  return status === 'unchanged' || status === NOT_COMPARED;
+}
+
+/**
+ * The chip a status wears in the parts list.
+ *
+ * ONE FUNCTION BECAUSE TWO PLACES DRAW IT: the row, and the legend line that
+ * says what `not compared` means. A legend showing a chip the rows do not wear
+ * explains nothing, so the two are one expression rather than two that have to
+ * be kept in step — and a test asserts they come out equal.
+ *
+ * THE REFUSAL IS ITS OWN THING AND NOT A QUIETER `unchanged`: the muted grey is
+ * for a part the comparison has nothing to say about, and a refusal is a part it
+ * could not say anything about, which is the opposite claim. The warning surface
+ * is the one this interface already spends on "read this before you trust what
+ * you are looking at" (the moved-part chip, the note box).
+ *
+ * AND `not compared` WEARS THE MUTED ONE, which is the other half of that
+ * argument rather than an exception to it. A part the two builds did not both
+ * export is not a warning about anything — with the bought screws in it, that is
+ * the state several rows of an ordinary model are always in — and spending the
+ * warning surface on it is what teaches a reader to ignore the surface.
+ */
+function statusChip(status) {
+  return `flex:none;padding:1px 5px;border-radius:4px;font:600 9.5px ${MONO};letter-spacing:.05em;`
+    + (status === NOT_MEASURED
+      ? 'background:var(--warn-bg);color:var(--warn)'
+      : 'background:var(--chip-bg);color:'
+        + (isQuiet(status) ? 'var(--text-faint)' : 'var(--text-soft)'));
+}
+
+/**
+ * The sentence a row carries under it, where it has one worth the height.
+ *
+ * A REASON THAT IS TRUE OF A CATEGORY IS NOT A ROW'S TO CARRY. `not compared`
+ * means one thing and always the same thing — no pair of STEP files came from
+ * the two builds, so nothing was fused — so the hub's sentence for it is
+ * identical on every such row, and a model with eight bought screws printed that
+ * one explanation eight times in a panel whose job is to show what CHANGED. It
+ * is in the legend now, once, where an explanation of a word belongs; the rows
+ * keep the word alone.
+ *
+ * `not measured` KEEPS ITS OWN. That sentence is about this part and about what
+ * went wrong with it — which identity failed, and by how much — and this row is
+ * the only place a reader can learn it, because nothing bright is drawn for such
+ * a part and the scene shows it exactly as it shows a part nobody touched.
+ *
+ * NAMED RATHER THAN NEGATED, so a word this side does not know keeps whatever
+ * the hub wrote under it: the panel drops a sentence only for the one status it
+ * has moved into the legend itself.
+ */
+function rowReason(row) {
+  return row.status === NOT_COMPARED ? '' : row.reason;
+}
+
+/**
+ * `report.json`'s parts, as the records the hub writes them as.
+ *
+ * A LIST, EACH ROW CARRYING ITS OWN `key` — `cadbuild/comparescene.report`
+ * writes `{parts: [{key, status, added_mm3, removed_mm3}, ...]}` and says the
+ * same thing from the other side, where a test of its own pins it. A part
+ * nobody measured carries a `reason` beside those — the two words for that,
+ * `not measured` and `not compared` — and nothing else does.
+ *
+ * ANYTHING ELSE IS NO ROWS, and that is the honest answer rather than a
+ * guess: this is a document produced by another process, and a shape this side
+ * does not know is a hub that has moved, which the panel cannot report on.
+ */
+function reportParts(report) {
+  const parts = report && typeof report === 'object' ? report.parts : null;
+  return Array.isArray(parts) ? parts : [];
+}
+
+/**
+ * `report.json`'s parts, in the order the compare panel lists them.
+ *
+ * WHAT CHANGED COMES FIRST, and that is the one thing this function decides. The
+ * hardest case in the brief is "one part of forty changed" (ui-brief block 9),
+ * and the report's own order is the catalogue's — so the single row somebody
+ * opened the comparison to see can sit thirty rows down a scrolling list. Inside
+ * each half the hub's order is KEPT: it is the assembly's own, and re-sorting by
+ * volume would answer a question nobody asked.
+ *
+ * A STATUS THIS SIDE DOES NOT KNOW IS SHOWN RATHER THAN SWALLOWED. Six words
+ * are the contract (`cadbuild/comparescene.STATUSES`: unchanged, changed, new,
+ * removed, not measured, not compared); a seventh means the hub has moved, and
+ * sorting it down would say nothing happened to a part the hub had something to
+ * say about. So only the two QUIET words sort down (`isQuiet`), and whatever
+ * else arrives is drawn as it came — `not measured` with them, at the top,
+ * because a part the gate refused to answer for is exactly what somebody
+ * opening a comparison has to see. `not compared` sorts with the quiet rows
+ * instead: a part the two builds did not both export as STEP is not news — most
+ * of them are bought screws, and there are usually several.
+ *
+ * THE REASON COMES WITH IT, and it is carried rather than reduced to a flag: a
+ * refusal without its sentence is the panel saying the kernel would not answer
+ * and refusing to say why, when the hub has already written down which of its
+ * identities failed. It is a string another process composed, so anything that
+ * is not one is no reason at all.
+ *
+ * A ROW WITH NO KEY IS DROPPED, because the key is the whole of what a row can
+ * do: it is the part's identity (issue #75), it is what the click resolves
+ * against the scene, and a row that cannot be pointed at anything is a line of
+ * text pretending to be a control.
+ */
+export function compareRows(report) {
+  const number = (value) => (typeof value === 'number' && Number.isFinite(value)
+    ? value : 0);
+  return reportParts(report)
+    .filter((line) => line && typeof line === 'object'
+      && typeof line.key === 'string' && line.key)
+    .map((line) => ({
+      key: line.key,
+      status: typeof line.status === 'string' ? line.status : '',
+      added: number(line.added_mm3),
+      removed: number(line.removed_mm3),
+      reason: typeof line.reason === 'string' ? line.reason : '',
+    }))
+    // Stable, which is what keeps "the hub's order inside each half" true.
+    .sort((one, other) => (isQuiet(one.status) ? 1 : 0)
+      - (isQuiet(other.status) ? 1 : 0));
+}
+
+/**
+ * The one line above the list: how much of the model this comparison touched.
+ *
+ * IDENTICAL IS AN ANSWER AND HAS TO BE SAID (ui-brief block 9), which is why it
+ * is a sentence of its own rather than three zeroes in a row of counts. A reader
+ * looking at a list where every row says `unchanged` cannot tell it from a list
+ * that failed to load one.
+ *
+ * AND IT IS MEASURED AGAINST THE ROWS THE COMPARISON ESTABLISHED SOMETHING
+ * ABOUT, which is the half that was wrong and made the answer unreachable. The
+ * list is the VIEW's parts, `hardware` and `mock` among them, and those read
+ * `not compared` — so on any ordinary model, which carries several bought
+ * parts, "every row is `unchanged`" is never true and two identical revisions
+ * came out as `40 parts · 0 changed · 0 new · 0 removed`. The brief names
+ * identical as a state that must be shown EXPLICITLY, so it is said about the
+ * parts that were compared, with the remainder out loud in the same line: the
+ * claim is scoped rather than swallowed, and a reader can see exactly how much
+ * of the model it covers.
+ *
+ * A SINGLE `not measured` STILL DENIES IT ENTIRELY, and that asymmetry is the
+ * point of the two words. `not compared` is the routine silence — nothing of
+ * ours was ever going to be measured for that part — while `not measured` is
+ * the gate refusing a measurement where the kernel may have lied: something may
+ * be wrong here, and "identical" is the most confident possible answer to give
+ * over it. A word this side does not know denies it too, by the same rule: it
+ * is not `unchanged`, so it is a part that did not come out the same.
+ *
+ * ONLY THE ALARMING ONE IS COUNTED IN THE ROW OF COUNTS, on the end and only
+ * when there is one: a `· 0 not measured` on every ordinary comparison would
+ * teach the reader to stop reading the tail of that line. `not compared` gets
+ * its count only in the identical sentence, where it is the qualifier ON the
+ * claim rather than one more number beside three others.
+ */
+export function compareSummary(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const count = (status) => list.filter((row) => row.status === status).length;
+  const parts = (n) => `${n} part${n === 1 ? '' : 's'}`;
+  const refused = count(NOT_MEASURED);
+  const quiet = count(NOT_COMPARED);
+  // What the comparison actually looked at: neither silence is in it, so an
+  // `identical` said over these is a claim only about parts something was
+  // established about.
+  const established = list.length - refused - quiet;
+  if (!list.length) return 'this report lists no parts';
+  if (!refused && established && count('unchanged') === established) {
+    return quiet
+      ? `identical — all ${established} compared ${established === 1 ? 'part' : 'parts'}`
+        + ` unchanged · ${quiet} not compared`
+      : `identical — all ${parts(list.length)} unchanged`;
+  }
+  return `${parts(list.length)} · ${count('changed')} changed · ${count('new')} new`
+    + ` · ${count('removed')} removed`
+    + (refused ? ` · ${refused} not measured` : '');
+}
+
 export default class HammerolaViewer extends React.Component {
   /**
    * The comment rail starts CLOSED, and the 300 px it used to take is the whole
@@ -614,6 +917,14 @@ export default class HammerolaViewer extends React.Component {
     // the page has got to (`PAGE.slot`) while a swap is on the wire. `popstate`
     // is compared against this one; see `switchBuild`.
     this._want = null;
+    // The slot the comparison on screen was ENTERED from, where that was one of
+    // the two moving names, and null everywhere else — a comparison arrived at
+    // by its own URL was never on a pointer. Written by `compareRevisions` on
+    // the way in and spent by `leaveCompare` on the way out; see there for what
+    // standing on a pointer is worth beyond the address. Not state, for the
+    // reason `this.carry` is not: nothing on the page is drawn from it, and it
+    // lives for exactly one comparison.
+    this._cmpFrom = null;
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
@@ -629,6 +940,34 @@ export default class HammerolaViewer extends React.Component {
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
       secFace: null, secPop: false,
       revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
+      // -- the comparison, and it is FIVE fields rather than one because they
+      // answer five different questions (issue #10).
+      //
+      // `cmp` above is what the picker's ticks hold and it goes on moving while
+      // a comparison is on screen — the reader can tick a third row without
+      // meaning anything by it. `cmpPair` is the pair the panel and the scene
+      // are ABOUT, snapshotted when Compare was pressed, so the two cannot come
+      // to disagree about which comparison this is while one is on the wire.
+      //
+      // `cmpView` is snapshotted beside it and for the same reason. A
+      // comparison is OF ONE VIEW — the hub builds the scene out of the two
+      // revisions' view documents and caches it per view (hub.js) — so the pair
+      // alone does not name one, and the tab the reader is on can move under a
+      // job that is already running.
+      //
+      // `cmpStage` is the only thing that says whether there is a scene to show:
+      // null before anything is asked, then `starting`/`running` while the hub
+      // computes, then `ready`, `failed`, or `locked` for a reader with no
+      // token. `sync` points the viewport at the comparison on `ready` alone —
+      // a `scene.json` that does not exist yet would take the build off the
+      // screen and put block 11's panel over the one already explaining itself.
+      cmpPair: null, cmpView: null, cmpStage: null, cmpError: null,
+      cmpReport: null,
+      // Which row of the report is picked out on the model, as a CATALOGUE KEY
+      // rather than a path: the comparison draws one part up to four times —
+      // once in each revision and once in each difference group — and selecting
+      // it means all of them.
+      cmpSel: null,
       bannerGone: false, rail: null, menu: null,
       notePop: null, noteDraft: '', notes: {},
       // The project's whole comment queue, as the hub answers it (`loadFeed`),
@@ -673,6 +1012,42 @@ export default class HammerolaViewer extends React.Component {
   /** No token, no edits. The whole of the customer/viewer split (brief). */
   viewer() { return !this.state.token; }
 
+  /**
+   * Are the three canvas tools — Measure, Comment, Move part — out of service?
+   *
+   * THEY ARE, FOR AS LONG AS THE SCENE ON SCREEN IS A COMPARISON'S, and the
+   * reason is the same one that took the file rows and Isolate out of the scene
+   * menu (`menuItems`) and stopped `onPick` writing `sel`: everything those
+   * three produce is addressed in the BUILD's terms, and a comparison's scene is
+   * not the build. What each of them did instead is worth naming, because none
+   * of the three failed loudly:
+   *
+   *   * COMMENT filed a task against build `<a>` naming `plate #1` at
+   *     `/cmp/added/plate #1` — a part that exists in no build, in no catalogue
+   *     and in no `model.py`, with a point in the comparison scene's frame. A
+   *     comment is how an agent is told to change the model, so that one is not
+   *     a wrong label but a wrong instruction;
+   *   * MEASURE hands the chip an `add to comment` whose `partId` is `sel`,
+   *     which `onPick` deliberately stops writing while a comparison is up and
+   *     nobody clears — so a measurement taken off the comparison went to the
+   *     hub attached to whatever part happened to be selected before the panel
+   *     opened;
+   *   * MOVE PART put a `/cmp/…` path in `partId` the same way.
+   *
+   * THE QUESTION IS `comparePair()` AND NOT `s.compare`, which is the same
+   * reading `sync` points the viewport with and `onPick` resolves a pick by, so
+   * the four cannot answer it differently. While the panel is up but the pair is
+   * still being measured the BUILD is what is on screen and under the cursor, so
+   * a comment, a measurement and a drag there are about the build and are
+   * honest — it is the scene that decides, not the panel.
+   *
+   * BOTH ENDS ARE CLOSED with it: the buttons draw themselves spent
+   * (`computed`), and the three handlers return early — a tool armed before the
+   * comparison was opened is still armed, and the viewport would go on reporting
+   * gestures for it otherwise.
+   */
+  toolsOff() { return !!this.comparePair(); }
+
   // -- loading --------------------------------------------------------------
   componentDidMount() {
     this.setState({ notes: readNotes(PAGE.pid) });
@@ -697,68 +1072,7 @@ export default class HammerolaViewer extends React.Component {
     if (this.state.token) this.loadFeed();
 
     this._h = {
-      [PICK]: (e) => {
-        // THE ROW, not the solid. A pick names the copy the reader hit —
-        // `/model/pin(2)` — and `sel` has always been a row id, which is what
-        // every reader that resolves it through `node()` takes it for: `selRow`
-        // in `computed`, `selectedPaths`, `selectedKey` and `measAdd`. A row
-        // standing for five copies is reached by any of its paths
-        // (hub.indexTree), so this is a lookup rather than a special case; an id
-        // arriving before the tree does keeps the path it came with.
-        //
-        // `selName` GOES THROUGH THE SAME ROW, because the pair is ONE answer
-        // about ONE thing: `sel` is what a comment is filed against and
-        // `selName` is what the reader is shown it was filed against. Left the
-        // solid's, they part company on a collapsed run — pick the third copy
-        // and `sel` is `/model/pin` while `selName` is `pin(3)`, an id naming
-        // the FIRST copy under a name no row is drawn under at all, since issue
-        // #75 collapses that run into `pin ×3`.
-        //
-        // THE TREE STANDS WHENEVER THE PICK RESOLVES — it is what resolves it —
-        // so wherever there is a row at all, the row's name is available at the
-        // moment the field is WRITTEN, and every reader of it comes later.
-        // Keeping the solid's name for the sake of those readers stores a second
-        // answer rather than a truer one. EVERY OTHER WRITER THAT PUTS A NAME
-        // HERE ALREADY DOES EXACTLY THIS, and a grep for the field is what says
-        // so rather than a count to be taken on trust: four assignments, of
-        // which one carries a name — the tree row's `onSelect`, off the row's
-        // own `name` — and two carry `''`, the initial state and `leaveBuild`.
-        // This is the fourth. The menu's Isolate was the second namer until
-        // issue #83 took the pair off it entirely: it hides everything else and
-        // writes no selection at all, because the selection shader replaces a
-        // part's colour and colour is an assertion on this page.
-        //
-        // WHAT THE DIVERGENCE COST IS NOT HYPOTHETICAL, and it is reached
-        // without ever leaving the build. `measAdd` fills a comment out of the
-        // pair — `partId` off `sel`, `part` off the row or, where the tree
-        // cannot answer, off `selName` — and the tree stops answering in a view
-        // that does not SHOW this part. Not on any view tab: a path is the
-        // assembly structure spelled out (`treeFromShapes` builds it as parent
-        // plus `/name`), so a view laying the same parts out under the same
-        // names holds the same paths and `node(s.sel)` answers there too.
-        // What carries the pair across is that `showView` touches neither half
-        // and neither does `onModel` — so a pick in one view and a measurement
-        // in another that dropped the part lands on that fallback with both
-        // halves still set. Diverged, it posts the first copy's path to the hub
-        // under the third copy's name.
-        //
-        // `onModel` DOES NOT "REPLACE ONLY THE TREE", and the precision matters
-        // to anyone walking this route: it writes `tree`, `view`, `viewError`,
-        // `expanded` and whatever `rejoin` returned, and it CLEARS `measure` and
-        // `moved`. What it leaves untouched is this pair, which is the whole of
-        // the argument. A measurement taken BEFORE the tab was changed does not
-        // survive to `measAdd` — the order that reaches it is pick, tab,
-        // measurement.
-        //
-        // THE SOLID'S NAME IS STILL THE FALLBACK, for a path no row claims — a
-        // pick that arrived before the tree did, which is the same case `sel`
-        // answers by keeping the path it came with.
-        const id = (e.detail && e.detail.id) || null;
-        const picked = (e.detail && e.detail.name) || '';
-        const node = this.node(id);
-        this.set({ sel: node ? node.id : id,
-                   selName: (node && node.name) || picked, menu: null });
-      },
+      [PICK]: (e) => this.onPick(e.detail),
       [MENU]: (e) => this.sceneMenu(e.detail),
       // The plane moved: either it was just laid on a face, or a drag of it
       // ended. Both carry the depth measured FROM THAT FACE and the range the
@@ -825,6 +1139,10 @@ export default class HammerolaViewer extends React.Component {
         });
       },
       [MEASURE]: (e) => {
+        // Not while the scene is a comparison's (`toolsOff`): the chip this
+        // would raise carries an `add to comment` that posts `sel`, and `sel` is
+        // whatever was picked on the BUILD before the panel opened.
+        if (this.toolsOff()) return;
         const answer = e.detail;
         if (!answer || !Number.isFinite(answer.value)) return;
         const measure = this.measureLabel(answer);
@@ -834,6 +1152,10 @@ export default class HammerolaViewer extends React.Component {
         }));
       },
       [MOVED]: (e) => {
+        // Not while the scene is a comparison's (`toolsOff`): the chip is the
+        // one door onto `movedAttach`, which would post a `/cmp/…` path as the
+        // part a comment is filed against.
+        if (this.toolsOff()) return;
         const d = (e.detail && e.detail.delta) || [];
         if (d.length !== 3 || !d.every(Number.isFinite)) return;
         const mag = Math.round(Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) * 10) / 10;
@@ -860,6 +1182,10 @@ export default class HammerolaViewer extends React.Component {
       [PLACE]: (e) => {
         // A comment is a task for the agent, and only the customer files one.
         if (this.viewer()) return;
+        // And it is a task about the MODEL, so not while the scene is a
+        // comparison's (`toolsOff`): the composer this opens would be headed
+        // `plate #1` and post `/cmp/added/plate #1` as the part to change.
+        if (this.toolsOff()) return;
         const d = e.detail || {};
         // THE ROW'S NAME, found by looking the picked PATH up — the door onto
         // `composer.part` that a POINT PLACED IN THE SCENE opens (the inventory
@@ -966,11 +1292,17 @@ export default class HammerolaViewer extends React.Component {
     // Back changes the address bar and leaves the previous revision on screen,
     // which is a worse lie than the reload it replaced.
     //
-    // The SLOT IS READ OFF `location`, never off `event.state`: the entry the
+    // The ENTRY IS READ OFF `location`, never off `event.state`: the entry the
     // reader lands on may be the one the server rendered, which carries no state
     // of ours at all, and the URL is the only thing every entry has.
+    //
+    // AND IT IS READ BY `pageFrom`, the page's own arithmetic, rather than by a
+    // second copy of the slicing here. This line used to be
+    // `location.pathname.split('/')[3]`, which answers the slot and nothing
+    // else — and since a comparison has an address of its own (issue #10) an
+    // entry can also name a PAIR, which that reading had no way to see.
     this._pop = () => {
-      const slot = String(location.pathname).split('/')[3] || '';
+      const at = pageFrom(location.pathname);
       // "IS THIS THE BUILD WE ARE ALREADY ON" IS NOT ASKED HERE, and it used to
       // be — against `PAGE.slot`, which during a swap still names the build
       // being left. Forward onto an entry naming it was thrown away as a no-op
@@ -978,8 +1310,13 @@ export default class HammerolaViewer extends React.Component {
       // under an address bar saying otherwise. `switchBuild` answers it now,
       // because the thing it has to be asked against — where the page is going
       // — lives there.
-      if (!slot) return;
-      this.switchBuild(PAGE.pid, slot, { push: false })
+      if (!at.slot) return;
+      // THE BUILD FIRST AND THE PANEL AFTER IT, in that order because opening a
+      // build is a fetch and the panel hangs off whichever one lands: a Back
+      // that crosses both — from a comparison of `<a>` to another build — has
+      // to leave the comparison of a build nobody is looking at any more.
+      this.switchBuild(PAGE.pid, at.slot, { push: false })
+        .then(() => this.syncCompare(at))
         .catch((error) => console.error('switch', error));
     };
     window.addEventListener('popstate', this._pop);
@@ -1033,6 +1370,12 @@ export default class HammerolaViewer extends React.Component {
     // The deferred swap goes with them: it holds `this` and would come back on a
     // component that is gone, to `setState` on it.
     clearTimeout(this._swap);
+    // And every gap between two polls of a comparison job, which would
+    // otherwise wake up and ask the hub about a job nobody is waiting for any
+    // more. ALL of them: two comparisons can be in flight at once — a view tab
+    // pressed while the first is queued starts a second — and `pause` keeps a
+    // timer per wait for exactly that reason.
+    (this._cmpWaits || new Set()).forEach(clearTimeout);
     // And so does a download chain still stepping. It touches no state, so it
     // survives an unmount perfectly happily — and goes on handing the browser
     // files of a build nobody is looking at any more.
@@ -1064,7 +1407,45 @@ export default class HammerolaViewer extends React.Component {
     // `view` is what makes the viewport fetch and render: it starts null on both
     // sides, so this first sync is also the load.
     this.setState({ meta, builds, view: opening.id, tabs: readTabs() },
-                  () => { this.sync(); this.schedulePoll(POLL_MS); });
+                  () => {
+                    this.sync();
+                    this.schedulePoll(POLL_MS);
+                    // AND A COMPARISON LINK OPENS COMPARING (issue #10). The
+                    // address is the only thing that says a link was one, and
+                    // everything above has just opened `<a>`'s page out of it —
+                    // so this is the tick in the picker that the person who sent
+                    // the link had already made, performed for the reader who
+                    // opened it. In the callback because `compareRevisions`
+                    // snapshots the view off `this.state.view`, which the line
+                    // above is what sets.
+                    //
+                    // ON THE VIEW THIS ADDRESS NAMES, exactly as a build page
+                    // opens on the view its own address names: `opening` is read
+                    // from `?v=` above, and a comparison address carries that
+                    // query like any other — `moveAddress` writes it with
+                    // `viewQuery`, the one helper every address on this page is
+                    // spelled by. So a comparison started on a non-default tab
+                    // is sent as `…/compare/<b>/?v=<tab>` and reopens on that
+                    // tab, and one started on the first view is sent bare
+                    // because `viewQuery` drops the query there.
+                    //
+                    // A TAB PRESSED LATER DOES NOT MOVE THE ADDRESS, which is
+                    // also a build page's behaviour and not a gap in this one:
+                    // the query is written where the page NAVIGATES, and
+                    // `showView` is not a navigation on either kind of page.
+                    //
+                    // THROUGH `commitOf` FOR THE TICKS TOO, because the ticks
+                    // are what the Compare button then asks with: an address
+                    // whose `<a>` is `latest` has to leave the picker showing
+                    // the commit it resolves to, which is the row that would be
+                    // ticked had the reader made this comparison here.
+                    if (PAGE.cmp) {
+                      const two = [PAGE.slot, PAGE.cmp]
+                        .map((name) => this.commitOf(name));
+                      if (two.every(Boolean)) this.setState({ cmp: two });
+                      this.compareRevisions(two);
+                    }
+                  });
   }
 
   /**
@@ -1198,18 +1579,48 @@ export default class HammerolaViewer extends React.Component {
         // already carries, kept in step by hand, in the one method whose last
         // rounds were all about state falling out of step. The divergence itself
         // is what has to be repaired, and it is right there to be read.
-        if (location.pathname !== path) {
+        //
+        // THE ADDRESS BEING REPAIRED TO IS NOT ALWAYS `path`, and that is the
+        // half a comparison added (issue #10). Nothing here changes what is on
+        // the SCREEN, so if a comparison of this build is up then the address
+        // describing this page is that comparison's, not the build's — writing
+        // `path` would take the panel's own URL away under a panel that is still
+        // open. `addressOf` is the one place that question is answered.
+        const staying = this.addressOf(
+          this.state.compare ? this.state.cmpPair : null);
+        if (location.pathname !== staying) {
           history.replaceState({ hmr: slot }, '',
-                               path + this.viewQuery(this.state.view, views));
+                               staying + this.viewQuery(this.state.view, views));
+          // The repaired address may be a comparison's, so `PAGE.cmp` has to
+          // follow it; on a plain build URL this re-derives what was there.
+          rereadPage(staying);
         }
       } else {
         // THE ONE THING THAT CAN STILL BE OUT OF STEP IS THE VIEW: an entry
         // carries its own `?v=`, and Back onto a different tab of the build on
-        // screen is a real change. It goes through `showView` — the view tab's
-        // own path, the one the reader's own click takes — because a view is not
-        // a build and this method has nothing to add to it.
+        // screen is a real change.
+        //
+        // AND IT IS WRITTEN HERE RATHER THAN THROUGH `showView`, which is where
+        // this line used to go — the view tab's own path, on the reasoning that
+        // a view is not a build and this method has nothing to add to one. A
+        // comparison gave it something to add (issue #10): `showView` restarts
+        // the comparison on the new view while one is up, `compareRevisions`
+        // MOVES THE ADDRESS, and `moveAddress` pushes. That is a `popstate` that
+        // ends in a `pushState` — the entry the reader came back to buried, the
+        // Forward they had lost, and two identical entries in its place. Both
+        // this branch and `moveAddress` state in prose that a `popstate` never
+        // pushes; this is the door that let one through.
+        //
+        // THE PANEL IS NOT THIS BRANCH'S TO PUT BACK, and that is why setting
+        // the field bare is not a half-fix: `_pop` calls `syncCompare` one line
+        // later, on the entry itself, and that is the one door that opens the
+        // comparison an entry names or closes the one it does not. Restarting a
+        // comparison HERE would answer that question a second time, off a field
+        // rather than off the address the reader just moved to.
         const wanted = this.entryView();
-        if (views.some((v) => v.id === wanted)) this.showView(wanted);
+        if (wanted !== this.state.view && views.some((v) => v.id === wanted)) {
+          this.set({ view: wanted });
+        }
       }
       return;
     }
@@ -1373,7 +1784,15 @@ export default class HammerolaViewer extends React.Component {
     // route, the download hrefs and the header's own slot. Nothing re-derives it
     // on its own, which is why a swap that forgot this line would go on fetching
     // the revision that had just left the screen, silently and forever.
-    rereadPage(path);
+    //
+    // FROM THE BAR ON A `popstate` AND FROM `path` ON A PUSH, because those are
+    // two different sources for one fact: on a push the line above IS the
+    // address, while a `popstate` was the browser moving first — onto an entry
+    // this page wrote, which may be a COMPARISON of the build being opened
+    // (issue #10). Re-deriving from `path` there would leave `PAGE.cmp` empty
+    // under an address that names a pair, and `syncCompare` reads the entry
+    // rather than the record, so nothing downstream would have noticed.
+    rereadPage(push ? path : undefined);
 
     // AND TWO THINGS ALREADY IN FLIGHT ARE NOW ABOUT A BUILD THIS PAGE HAS LEFT.
     // Both were started against the `PAGE.base` of the line above, both outlive
@@ -1585,6 +2004,16 @@ export default class HammerolaViewer extends React.Component {
         // The swap whose view never lands is handled where the failure is known
         // instead; see `onViewError`.
         sel: null, selName: '', menu: null,
+        // AND THE COMPARISON, which is on this list rather than in the callers
+        // for the same reason everything else here is: it is about the build
+        // being left. The panel stands where the tree stands and the scene on
+        // screen is the comparison's rather than this build's, so a swap that
+        // kept it would move the address, refetch a meta.json nothing was
+        // drawing from, and change nothing the reader can see. The ticks in the
+        // picker (`cmp`) are deliberately NOT cleared: they are a choice about
+        // which two revisions to look at, and the reader made it.
+        compare: false, cmpPair: null, cmpView: null, cmpStage: null,
+        cmpError: null, cmpReport: null, cmpSel: null,
         revOpen: false, dlOpen: false, secPop: false,
         tokenPop: false, tokenDraft: '', notePop: null, noteDraft: '',
         // Both describe geometry that has just left the screen; the viewport
@@ -1725,9 +2154,17 @@ export default class HammerolaViewer extends React.Component {
     // Non-null only while a revision switch is landing. Every other model event
     // — a first load, a live reload, a view tab — leaves the two lists alone.
     const rejoined = this.rejoin(tree);
+    // A COMPARISON'S SCENE IS NOT ONE OF THIS BUILD'S VIEWS, and the id it
+    // arrives under is the comparison's own (`hub.compareView`). Written into
+    // `view` it would leave the page believing the build is showing a view that
+    // is not in its `meta.views` — no tab lit, and on the way back out `sync`
+    // would ask the viewport for a view the build does not have, which the
+    // element answers by rendering the first one instead. So the field the build
+    // page keeps is left exactly where the reader left it.
+    const compared = !!this.comparePair();
     this.setState((s) => ({
       tree,
-      view: d.view || s.view,
+      view: compared ? s.view : (d.view || s.view),
       viewError: null,
       // Both belonged to the scene that has just been torn down: the
       // viewport clears its own tape and its own offsets on every load, and
@@ -1862,6 +2299,479 @@ export default class HammerolaViewer extends React.Component {
     return this.state.sel ? [this.state.sel] : [];
   }
 
+  // -- comparing two revisions ----------------------------------------------
+  //
+  // ui-brief block 9, issue #10. The reader ticks two revisions in the picker
+  // and presses Compare; the hub measures the geometry and publishes two
+  // documents; this page shows the scene in the viewport it already has and the
+  // report in the panel where the tree usually is.
+  //
+  // ONE SCENE AND ONE VIEWPORT, deliberately. A second `<hmr-viewport>` would
+  // give the two revisions a window each — which is not what was asked for and
+  // would break besides: `hmr:state` goes out on `window` with nothing on it
+  // saying which element it is for, so both would answer every patch.
+
+  /**
+   * The COMMIT a revision name stands for, or '' where there is none.
+   *
+   * A COMPARISON IS ALWAYS BETWEEN TWO COMMITS, and this is where the picker's
+   * moving names are turned into them. The hub refuses a pointer as an end of a
+   * pair (src/app.py, and SPEC 3 says why): an entry in the comparison cache is
+   * filed under the names it was asked with, so one filed under `latest` would
+   * go on answering for a pair that has moved on. So the ASKING side resolves,
+   * and it can: `builds.json` carries `latest` as the commit id it points at.
+   *
+   * `dev` RESOLVES TO NOTHING, deliberately. The slot has no commit id —
+   * `has_dev` is a flag, because the slot has no permanent address — so there
+   * is no name to ask with and no answer that would stay true. Every caller
+   * reads the '' as "this is not a revision that can be compared".
+   */
+  commitOf(name) {
+    const info = this.state.builds;
+    if (name === 'latest') return (info && info.latest) || '';
+    if (name === 'dev') return '';
+    return name || '';
+  }
+
+  /**
+   * The pair whose SCENE is on screen, or null — which is the one question
+   * `sync` asks to decide which document the viewport is pointed at.
+   *
+   * IT ANSWERS NULL WHILE THE JOB RUNS. The scene does not exist until the hub
+   * has computed it, so pointing the element at it any earlier would take the
+   * build off the screen and draw block 11's error panel over a panel that is
+   * already saying, in words, what is happening.
+   */
+  comparePair() {
+    const s = this.state;
+    return s.compare && s.cmpStage === 'ready' && s.cmpView
+      && Array.isArray(s.cmpPair) && s.cmpPair.length === 2 ? s.cmpPair : null;
+  }
+
+  /**
+   * Every solid the selected report row stands for, in the comparison's tree.
+   *
+   * BY CATALOGUE KEY AND NOT BY PATH, because the comparison draws one part up
+   * to four times — in each revision and in each difference group — and the
+   * report has one row for it. Lighting up all four is the answer: the reader
+   * asked where this part is, and it is in four places.
+   *
+   * The key is what makes that lookup possible at all, and it is there because
+   * `scene.json` is an ORDINARY view document: the hub refuses a pushed view
+   * whose leaf declares no key (`check_view_file`), and `treeFromShapes` carries
+   * it onto every leaf row. Nothing is guessed from a name — the tessellator
+   * numbers repeats apart, so a name is not an identity (issue #75).
+   */
+  comparePaths() {
+    const { cmpSel, tree } = this.state;
+    if (!cmpSel || !tree) return [];
+    return tree.leaves.filter((path) => {
+      const node = tree.nodes.get(path);
+      return !!node && node.key === cmpSel;
+    });
+  }
+
+  /**
+   * The one door into the panel: the Compare button, the Try again beside a
+   * failure, a view tab pressed while a comparison is up, a link opened cold
+   * (`load`) and a `popstate` onto one (`syncCompare`) all come here.
+   *
+   * The pair AND THE VIEW are snapshotted before anything is fetched, and every
+   * step of the fetch checks both are still the ones on screen (`onCompare`).
+   * The ticks in the picker and the view tabs go on being the reader's to change
+   * while a comparison runs, and an answer that landed against the pair or the
+   * view they moved on from would put one comparison's report beside another
+   * comparison's scene.
+   *
+   * BOTH ENDS ARE RESOLVED TO COMMITS HERE, once, because this is the one door:
+   * the reader standing on `/project/<pid>/latest/` who compares from there and
+   * the address someone typed with a pointer in it both arrive through it, and
+   * the hub answers neither `latest` nor `dev` as an end of a pair
+   * (`commitOf`). A name that resolves to nothing is not a pair this page can
+   * ask about, and the panel is not opened for it — the picker offers no tick
+   * on such a row, so the only way here is an address, and the hub 404s that
+   * address too.
+   */
+  compareRevisions(pair) {
+    const two = (Array.isArray(pair) ? pair.slice(0, 2) : [])
+      .map((name) => this.commitOf(name));
+    const view = this.state.view;
+    if (two.length !== 2 || !two.every(Boolean) || !view) return;
+    // WHERE THE READER IS STANDING, read before the line below moves them off
+    // it. A comparison opened on `/project/<pid>/latest/` is addressed as the
+    // COMMIT the pointer resolves to (`addressOf`), and standing on a commit is
+    // more than an address: `isPointerPage()` goes false with it, so the watch
+    // for new builds stops re-arming and the chip stops saying `up to date`.
+    // That is the right answer while the comparison is up — the link has to
+    // mean this pair tomorrow — and the wrong one after it, so the way out
+    // needs to know which page this was entered from (`leaveCompare`).
+    //
+    // ONLY ON THE WAY IN. Try again, a view tab pressed mid-comparison and a
+    // second pair ticked in the picker all arrive here with the panel already
+    // open, and re-reading `PAGE` for them would remember the commit this page
+    // has already been moved onto — which is the very thing being undone.
+    if (!this.state.compare) this._cmpFrom = isPointerPage() ? PAGE.slot : null;
+    // AND THE ADDRESS SAYS SO, which is the whole reason the route exists: a
+    // comparison is a thing one person sends another, and until this the only
+    // way to that URL was to type it. Measured rather than pushed blindly, so
+    // that the doors above which arrive with the address already right move
+    // nothing — `moveAddress` holds the inventory of them.
+    this.moveAddress(two);
+    // AND THE OFFER OF A NEWER BUILD IS WITHDRAWN, because it was made about a
+    // road this page has just left. `takePending` is the one door that opens
+    // another build WITHOUT moving the address — it was written for a pointer
+    // page, where `PAGE.base` already means "the newest" — so pressing Switch
+    // inside a comparison put the new build's `views` and `buildKey` in state
+    // beside the OLD commit's `base`: the view file fetches fine, since the
+    // names match, and the old geometry stays on screen under the new build's
+    // name with the download links pointing into the old directory. `poll`'s
+    // own note describes that failure from the other side.
+    //
+    // WITHDRAWN AND NOT REFUSED. Nothing here says no to the reader: the offer
+    // stopped being true when the page moved onto a commit, and the way out
+    // puts them back on the pointer (`leaveCompare`), where the next poll makes
+    // it again if it still stands. `bannerGone` is lifted rather than set, for
+    // the reason `switchBuild` lifts it: nothing has been offered on this road,
+    // so the next build to arrive gets its banner.
+    //
+    // NO `clearTimeout` HERE, unlike `dismissPending`, and that is a reading of
+    // this state rather than an omission. Later leaves the offer standing, so a
+    // deferred Switch still has a build to take and must be called off by hand;
+    // withdrawing takes the build itself away, and `takePending` returns on an
+    // empty `pending` before it touches anything. The one timer that could be in
+    // flight therefore fires once into nothing, and a `clearTimeout` beside this
+    // would be a line no test could ever see the absence of.
+    //
+    // AN ANSWER ALREADY ON THE WIRE IS CUT OFF, though, because that one CAN put
+    // the offer back: the request went out on the pointer and lands on a page
+    // that has moved. `poll` compares the generation after its await — the
+    // mechanism `switchBuild` relies on for the same reason — so moving the
+    // number here is the whole of it.
+    this._pollGen = (this._pollGen || 0) + 1;
+    this.setState({
+      compare: true, revOpen: false, cmpPair: two, cmpView: view,
+      cmpStage: null, cmpError: null, cmpReport: null, cmpSel: null,
+      pending: null, bannerGone: false,
+    }, () => this.runCompare(two, view).catch(
+      (error) => console.error('compare', error)));
+  }
+
+  /**
+   * The one way out of the panel: close it and put the build back on screen.
+   *
+   * Through `set` and not `setState`, because closing the panel is what tells
+   * the viewport to go and fetch the build's own geometry again — the event
+   * `set` sends is the whole of that.
+   *
+   * AND THE ADDRESS COMES BACK TO WHERE THE READER CAME IN.
+   * `/project/<pid>/<a>/compare/<b>/` is the page of `<a>` (hub.js,
+   * `pageFrom`), so the build now on screen is the one the reader is already
+   * standing on and nothing is fetched — but the bar would go on naming a
+   * comparison that has been closed, which is a link that reopens a panel the
+   * reader shut and, worse, `PAGE` no longer describing the address.
+   *
+   * WHICH PAGE THAT IS IS NOT ALWAYS `<a>`'s. A comparison opened on a POINTER
+   * page is addressed as the commit that pointer resolves to, deliberately
+   * (`addressOf`) — and that move takes the reader off the pointer for good:
+   * `isPointerPage()` goes false, so `schedulePoll` stops re-arming and the
+   * watch for new builds dies, and the chip reads `pinned build`. Answering the
+   * way out with `<a>` therefore left somebody who merely opened a comparison
+   * and shut it again pinned to a commit, with nothing on the screen saying so.
+   * So the way out is the way IN, remembered by `compareRevisions`.
+   *
+   * THE ADDRESS MOVES BEFORE THE STATE, which the two lines used to do the
+   * other way round. `set` is what tells the viewport where to fetch from and
+   * what makes the header draw itself again, and both read `PAGE` — so a move
+   * afterwards would send one payload and draw one header describing the page
+   * being left. Where nothing moves, which is every comparison entered on a
+   * build page, the order changes nothing at all.
+   */
+  leaveCompare() {
+    // Spent, and cleared whichever door is taken: `compareRevisions` writes it
+    // afresh on every entry, so this is belt and braces rather than the thing
+    // that keeps it honest.
+    const back = this._cmpFrom;
+    this._cmpFrom = null;
+    if (back && back !== PAGE.slot) this.standOnPointer(back);
+    else this.moveAddress(null);
+    this.set({
+      compare: false, cmpPair: null, cmpView: null, cmpStage: null,
+      cmpError: null, cmpReport: null, cmpSel: null,
+    });
+  }
+
+  /**
+   * Put the page back on one of the two moving names, whole.
+   *
+   * NOT A NAVIGATION AND NOT A SWAP. The build on screen is the one this
+   * pointer resolves to — it is the build the reader has been looking at all
+   * along — so nothing is fetched and no history entry is laid down: this
+   * REPLACES, for the reason `moveAddress` replaces on its way out of a
+   * comparison, since closing a panel is not somewhere the reader went.
+   *
+   * WHAT IT PUTS BACK IS EVERYTHING THAT HANGS OFF `PAGE.slot`, and the poll is
+   * the one piece of it that needs saying out loud: `schedulePoll` returns
+   * without arming anything on a pinned revision, so the timer that was in
+   * flight when the comparison opened fired once and never re-armed. Cleared
+   * before the re-arm exactly as `switchBuild` clears it, so a timer that is
+   * still pending does not leave two.
+   */
+  standOnPointer(slot) {
+    const to = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
+    const views = (this.state.meta && this.state.meta.views) || [];
+    history.replaceState({ hmr: slot }, '',
+                         to + this.viewQuery(this.state.view, views));
+    // IN PLACE, so `PAGE.slot` says what the bar says — which is what the watch
+    // below, the chip and every relative fetch on this page are read off.
+    rereadPage(to);
+    clearTimeout(this._poll);
+    this.schedulePoll(POLL_MS);
+  }
+
+  /**
+   * The address that describes this page: the build, or one comparison of it.
+   *
+   * A COMPARISON HAS AN ADDRESS ONLY WHERE ITS FIRST END IS THE BUILD ON
+   * SCREEN, and the picker hands over pairs where it is not: the ticks are any
+   * two rows, so a reader standing on `<a>` can compare `<b>` against `<c>`.
+   * `/project/<pid>/<b>/compare/<c>/` is the page of `<b>` — whose meta.json,
+   * downloads, picker and comment queue this page is not showing — so writing
+   * it here would move the address onto a build the page never opened, and the
+   * next `PAGE.base` fetch would go there. That comparison simply has no link,
+   * and the answer for it is the build's own address.
+   *
+   * "THE BUILD ON SCREEN" IS ASKED AS A COMMIT, which is what keeps the link
+   * working on the page most readers are standing on. `/project/<pid>/latest/`
+   * shows one particular commit, and a pair is two commits, so the pointer's
+   * own name never appears in a pair and a literal comparison of slots would
+   * find no match. Resolved, it matches — and the address written is the
+   * COMMIT's: `/project/<pid>/<commit of latest>/compare/<b>/`. The page then
+   * stands on that commit, which is the build it was already showing under its
+   * permanent name, so meta.json, the downloads, the picker's current row and
+   * the comment rail all go on describing the same thing. It is also the only
+   * link that can be SENT: `/latest/compare/<b>/` is refused by the hub, and it
+   * would name a different pair the day the pointer moves.
+   *
+   * TWO MORE THINGS FOLLOW THE ADDRESS ONTO THE COMMIT, and they are the two
+   * that do NOT go on describing the same thing — the list above read as
+   * exhaustive and was short by them. `isPointerPage()` is false on a commit,
+   * so `schedulePoll` arms nothing and the WATCH FOR NEW BUILDS is over, and
+   * the header CHIP flips from `up to date` to `pinned build`. Both are honest
+   * about where the page now stands and neither is wanted a moment longer than
+   * the comparison: the way out puts the reader back on the pointer they came
+   * in on (`leaveCompare`), which is what makes this move borrowed rather than
+   * permanent.
+   */
+  addressOf(pair) {
+    const here = this.commitOf(PAGE.slot);
+    return here && Array.isArray(pair) && pair.length === 2 && pair[0] === here
+      ? `/project/${PAGE.pid}/${encodeURIComponent(here)}`
+        + `/compare/${encodeURIComponent(pair[1])}/`
+      : `/project/${PAGE.pid}/${encodeURIComponent(PAGE.slot)}/`;
+  }
+
+  /**
+   * Move the address onto the comparison now up, or off the one that is not.
+   *
+   * PUSH INTO A COMPARISON AND REPLACE OUT OF ONE, and the asymmetry is the
+   * reader's own gesture. Opening one IS somewhere they navigated to — Back
+   * should take them out of it, and `popstate` is what then does (`syncCompare`)
+   * — while closing one leaves nowhere: the build was already on screen, so what
+   * has to move is the entry they are standing on. A push there would leave a
+   * Back that goes to a comparison the reader had just shut.
+   *
+   * MEASURED AGAINST THE BAR AND NOT AGAINST WHO CALLED, the reading
+   * `switchBuild` writes out where it repairs a cancelled swap. Four callers
+   * reach this with the address already correct — a link opened cold, Try again,
+   * a view tab pressed mid-comparison, and `popstate` itself — and an entry
+   * pushed for any of them would be a Back that goes nowhere the reader has
+   * been. A flag saying "this one is a real gesture" would be a second copy of
+   * something the address already answers.
+   *
+   * THE VIEW QUERY IS THE PAGE'S OWN, `viewQuery`: the same '' for the build's
+   * first view that every other address this page writes carries, so the
+   * comparison of a default view is a link with nothing after the path.
+   *
+   * THE ENTRY IS READ OFF THE ADDRESS BEING WRITTEN and not off `PAGE`, because
+   * on a pointer page the two differ: the bar is about to say the commit while
+   * `PAGE` still says `latest`. Nothing reads this field today, and that is
+   * exactly why it must not be left saying something false.
+   */
+  moveAddress(pair) {
+    const to = this.addressOf(pair);
+    if (location.pathname === to) return;
+    const views = (this.state.meta && this.state.meta.views) || [];
+    const address = to + this.viewQuery(this.state.view, views);
+    const entry = { hmr: pageFrom(to).slot };
+    if (to === this.addressOf(null)) history.replaceState(entry, '', address);
+    else history.pushState(entry, '', address);
+    // IN PLACE, so `PAGE.cmp` says exactly what the bar says — the same reason
+    // every other address move on this page ends with this line.
+    rereadPage(to);
+  }
+
+  /**
+   * Make the panel agree with an address the browser has moved to.
+   *
+   * THE OTHER HALF OF PUSHING ONE. Entries a reader can walk back through exist
+   * only because `compareRevisions` writes them, so this page has to answer for
+   * them: Back out of a comparison closes it, Back into one opens it. Nothing
+   * else would — a `popstate` is not a load, and `load()` is where a comparison
+   * address is read on arrival.
+   *
+   * ONLY WHERE THE PAGE IS REALLY ON THAT BUILD. A swap that failed leaves the
+   * reader on the build they were on (`swapFailed`) under an address naming the
+   * one that would not open, and a comparison entered against a build nobody is
+   * looking at would be a panel about neither.
+   *
+   * IDEMPOTENT, which is what lets `_pop` call it after every entry rather than
+   * only after the ones that changed the mode: both doors measure the bar before
+   * they write it, so a Back that moved only the BUILD asks them for nothing.
+   */
+  syncCompare(at) {
+    if (this._gone || at.slot !== PAGE.slot) return;
+    // AND THE RECORD FOLLOWS THE BAR HERE, because on the shortest of these
+    // trips nothing else does: Back between a build and a comparison OF THAT
+    // BUILD moves neither the build nor the address, so `switchBuild` returns
+    // having done nothing and both doors below find the address already
+    // correct. `PAGE.cmp` is what says this page is a comparison, and it would
+    // be the one field left describing the entry before this one.
+    rereadPage(location.pathname);
+    const s = this.state;
+    const pair = s.compare && Array.isArray(s.cmpPair) ? s.cmpPair : null;
+    if (!at.cmp) {
+      if (pair) this.leaveCompare();
+      return;
+    }
+    // MEASURED AS COMMITS, because the pair on screen is a pair of commits
+    // (`compareRevisions`). An entry whose `<a>` is `latest` names the same
+    // comparison as the commit it resolves to, and reading the two as different
+    // strings would tear the panel down and rebuild it on every trip through
+    // such an entry.
+    const two = [at.slot, at.cmp].map((name) => this.commitOf(name));
+    // AND OF ONE VIEW, which is the other half of what an entry names: a
+    // comparison is computed and cached per view (hub.js), so the same pair on
+    // another view is a DIFFERENT comparison and not the same one seen
+    // differently. `s.view` is what the entry asked for by the time this runs —
+    // both roads through `switchBuild` put the entry's `?v=` there, the one that
+    // opens another build and the one that only calls a swap off — so an
+    // agreement measured against it is an agreement with the address.
+    //
+    // WITHOUT THIS THE CANCELLING BRANCH COULD LEAVE THE TWO APART: it writes
+    // the view bare, deliberately, because going through `showView` while a
+    // comparison is up restarts one and writes an address, which a `popstate`
+    // may not do. That leaves the tab strip lit for one view and the scene built
+    // for another until somebody presses something, and the pair alone cannot
+    // see it. Restarting here costs no entry: the address is already the one
+    // being agreed with, and `moveAddress` measures the bar.
+    if (pair && pair[0] === two[0] && pair[1] === two[1]
+        && s.cmpView === s.view) return;
+    this.compareRevisions(two);
+  }
+
+  /**
+   * Get one comparison in front of the reader: ask, queue, wait, show.
+   *
+   * THE REPORT IS ASKED FOR FIRST and the job is what a 404 means. A pair
+   * somebody has already looked at is two fetches and no queue; a pair nobody
+   * has is a POST and a wait. Asking the other way round — queue first, always —
+   * would spend a CAD process on an answer that is already on the volume.
+   *
+   * NO TOKEN IS NOT A FAILURE. Both documents are behind EDIT_TOKEN, so a reader
+   * who has none cannot be shown a comparison at all — and the panel says which
+   * of the two it is rather than throwing them the 401 the hub would send.
+   */
+  async runCompare(pair, view) {
+    const [a, b] = pair;
+    const token = this.state.token;
+    if (!token) { this.setState({ cmpStage: 'locked' }); return; }
+    this.setState({ cmpStage: 'starting' });
+    try {
+      let report = await loadCompareReport(PAGE.pid, a, b, view, token);
+      if (!this.onCompare(pair, view)) return;
+      if (!report) {
+        const job = await startCompare(PAGE.pid, a, b, view, token);
+        if (!this.onCompare(pair, view)) return;
+        this.setState({ cmpStage: 'running' });
+        await this.awaitJob(job, pair, view, token);
+        if (!this.onCompare(pair, view)) return;
+        report = await loadCompareReport(PAGE.pid, a, b, view, token);
+        if (!this.onCompare(pair, view)) return;
+        // The job said it was done and the document is not there. Said out
+        // loud: silence here would leave the panel on `running` for ever.
+        if (!report) throw new Error('the hub finished the comparison and published no report');
+      }
+      // Through `set` and not `setState`, because THIS is the moment the scene
+      // exists: `comparePair` starts answering, and the event `set` sends is
+      // what points the viewport at it.
+      this.set({ cmpStage: 'ready', cmpReport: report });
+    } catch (error) {
+      if (!this.onCompare(pair, view)) return;
+      this.setState({
+        cmpStage: 'failed',
+        cmpError: String((error && error.message) || error),
+      });
+    }
+  }
+
+  /** Is this still the comparison the reader is looking at? */
+  onCompare(pair, view) {
+    const s = this.state;
+    const at = s.cmpPair;
+    return !this._gone && s.cmpView === view && Array.isArray(at)
+      && at[0] === pair[0] && at[1] === pair[1];
+  }
+
+  /**
+   * Wait for one job to finish. Returns on `done`, throws on `failed`.
+   *
+   * THE DEADLINE IS THE POINT OF THE LOOP, not the polling. A job the hub lost —
+   * a worker killed, a restart that failed it after this page had stopped
+   * counting — leaves a state that never becomes terminal, and a wait with no
+   * end is a panel that says `measuring` until somebody reloads.
+   */
+  async awaitJob(id, pair, view, token) {
+    const until = Date.now() + COMPARE_WAIT_MS;
+    for (;;) {
+      const job = await loadJob(id, token);
+      const state = job && job.state;
+      if (state === JOB_DONE) return;
+      if (state === JOB_FAILED) {
+        throw new Error((job && job.error) || 'the comparison failed');
+      }
+      if (!this.onCompare(pair, view)) return;
+      if (Date.now() >= until) {
+        throw new Error('the hub is still working on this comparison — give it a moment and try again');
+      }
+      await this.pause(COMPARE_POLL_MS);
+      if (!this.onCompare(pair, view)) return;
+    }
+  }
+
+  /**
+   * The gap between two polls, as a promise the page can take down with it.
+   *
+   * A TIMER PER WAIT, and that is the whole of this. One field held one timer,
+   * so a second `awaitJob` — a view tab pressed while the first comparison was
+   * still queued, a Try again — cancelled the first one's timeout and left that
+   * chain awaiting a promise nothing would ever settle: it hung, holding its
+   * fetch loop open, until the page went. Each wait now owns its timer and
+   * forgets it on the way out, and the set is what `componentWillUnmount`
+   * empties — a wait that outlived the page would wake up and ask the hub about
+   * a job nobody is waiting for.
+   *
+   * The displaced chain is NOT abandoned: it wakes at its own deadline and
+   * stops one line later, at the `onCompare` check that says the reader has
+   * moved on.
+   */
+  pause(ms) {
+    return new Promise((done) => {
+      const waits = this._cmpWaits || (this._cmpWaits = new Set());
+      const timer = setTimeout(() => { waits.delete(timer); done(); }, ms);
+      waits.add(timer);
+    });
+  }
+
   // -- the one place the interface writes to the viewport -------------------
   sync(extra) {
     const s = this.state;
@@ -1901,27 +2811,65 @@ export default class HammerolaViewer extends React.Component {
     if (s.composer && s.composer.p) {
       pins.push({ id: 'draft', label: '+', p: s.composer.p, active: true });
     }
+    // WHICH DOCUMENT THE VIEWPORT IS POINTED AT, and it is the whole of what
+    // comparing changes down here. A comparison is an ordinary view document at
+    // an address of its own (hub.js), so the element's load path does not learn
+    // a thing: it is handed another base, a `views` list of one, and the token
+    // that address wants. Everything below this block is the same either way.
+    //
+    // THE THREE TABS ARE `hidden` AND NOT A MODE. Overlay, A-only and B-only are
+    // a list of group ids each (`diffHidden`), matched by prefix exactly as a
+    // hidden part is — so the
+    // reader's own hidden list is what they replace rather than something they
+    // are merged with: those ids name solids of the BUILD's tree, which is not
+    // the tree on screen, and carrying them into a comparison would be a list of
+    // instructions about parts nobody can see. They come back the moment the
+    // panel is closed, because nothing here writes to `s.hidden`.
+    const pair = this.comparePair();
+    // ONE ENTRY, AND `view` IS ITS OWN ID rather than a second spelling of it:
+    // the element picks the entry it fetches by matching the two, and a view tab
+    // has to move BOTH — the id is what makes the load a reload with a fresh fit
+    // rather than a live swap under the old camera (hub.js, `compareView`).
+    const only = pair ? compareView(s.cmpView) : null;
+    const scene = pair ? {
+      base: compareBase(PAGE.pid, pair[0], pair[1]),
+      views: [only],
+      view: only.id,
+      // Not a build's key and it does not have to be: what the viewport does
+      // with this field is notice that the geometry changed, and what makes one
+      // comparison different from another is the pair AND the view. The id above
+      // moves with the view, so this one is what a comparison of ANOTHER PAIR of
+      // the same view moves — and either alone is enough to fetch again.
+      buildKey: `${pair[0]}:${pair[1]}:${s.cmpView}`,
+      mode: 'compare',
+      hidden: diffHidden(s.diffShow), ghost: [],
+      selected: this.comparePaths(),
+      token: s.token,
+    } : {
+      // Where the geometry is and which of it to show. `views` is meta.json's
+      // own list, passed through rather than reshaped: the viewport reads `id`
+      // and `file` off it, which is exactly what src/render.py writes.
+      base: PAGE.base,
+      views: (meta && meta.views) || [],
+      view: s.view,
+      // What makes one build different from the last. The viewport uses it to
+      // tell a LIVE RELOAD (same view, new geometry — keep the frame) from a
+      // first load, and this side computes it because this side reads meta.json.
+      buildKey: buildKey(meta),
+      mode: 'single',
+      hidden: s.hidden, ghost: s.ghost, selected: this.selectedPaths(),
+      // NULL ON A BUILD PAGE, and that is a decision rather than an omission: a
+      // build's view files are public, and handing the element the secret that
+      // publishes for a fetch that does not need one would make every view
+      // switch carry it for nothing.
+      token: null,
+    };
     window.dispatchEvent(new CustomEvent(STATE, {
       detail: {
-        // Where the geometry is and which of it to show. `views` is meta.json's
-        // own list, passed through rather than reshaped: the viewport reads `id`
-        // and `file` off it, which is exactly what src/render.py writes.
-        base: PAGE.base,
-        views: (meta && meta.views) || [],
-        view: s.view,
-        // What makes one build different from the last. The viewport uses it to
-        // tell a LIVE RELOAD (same view, new geometry — keep the frame) from a
-        // first load, and this side computes it because this side reads
-        // meta.json.
-        buildKey: buildKey(meta),
-
-        hidden: s.hidden, ghost: s.ghost, selected: this.selectedPaths(),
+        ...scene,
         cut: s.secOn, cutOffset: s.secOff, cutFlip: s.secFlip, cutHatch: s.hatch,
         tool: s.tool,
-        // `single` is the only mode this can be in today: `diff` asks the
-        // viewport to ghost both revisions and light up the difference, and
-        // there is no difference to light up until the hub can compute one.
-        mode: 'single', diffShow: s.diffShow, pins,
+        diffShow: s.diffShow, pins,
         ...(extra || {}),
       },
     }));
@@ -2176,6 +3124,10 @@ export default class HammerolaViewer extends React.Component {
     // that belongs to neither. `switchBuild` moves this number; a poll that wakes
     // up on the wrong side of that is thrown away whole, re-arming included,
     // because the swap armed the next one for the slot it moved to.
+    // `compareRevisions` moves it too, for the same reason read the other way
+    // round: entering a comparison takes the page off the pointer and withdraws
+    // the offer, and an answer landing a moment later would put back the very
+    // banner whose Switch is the failure above.
     const gen = this._pollGen = (this._pollGen || 0) + 1;
     let delay = POLL_MS;
     try {
@@ -2588,6 +3540,90 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
+   * A part in the scene was clicked, or the background was.
+   *
+   * A METHOD AND NOT A CLOSURE IN THE HANDLER MAP, the same move `sceneMenu`
+   * and `onModel` make and for the same reason: the map is built in
+   * `componentDidMount`, which loads a build and starts a poll, so a decision
+   * written inside it can only be reached by mounting the whole page. There
+   * are two decisions in here — which of the two selections this writes, and
+   * what it resolves the pick to — and neither was reachable through the map.
+   */
+  onPick(detail) {
+    // THE ROW, not the solid. A pick names the copy the reader hit —
+    // `/model/pin(2)` — and `sel` has always been a row id, which is what
+    // every reader that resolves it through `node()` takes it for: `selRow`
+    // in `computed`, `selectedPaths`, `selectedKey` and `measAdd`. A row
+    // standing for five copies is reached by any of its paths
+    // (hub.indexTree), so this is a lookup rather than a special case; an id
+    // arriving before the tree does keeps the path it came with.
+    //
+    // `selName` GOES THROUGH THE SAME ROW, because the pair is ONE answer
+    // about ONE thing: `sel` is what a comment is filed against and
+    // `selName` is what the reader is shown it was filed against. Left the
+    // solid's, they part company on a collapsed run — pick the third copy
+    // and `sel` is `/model/pin` while `selName` is `pin(3)`, an id naming
+    // the FIRST copy under a name no row is drawn under at all, since issue
+    // #75 collapses that run into `pin ×3`.
+    //
+    // THE TREE STANDS WHENEVER THE PICK RESOLVES — it is what resolves it —
+    // so wherever there is a row at all, the row's name is available at the
+    // moment the field is WRITTEN, and every reader of it comes later.
+    // Keeping the solid's name for the sake of those readers stores a second
+    // answer rather than a truer one. EVERY OTHER WRITER THAT PUTS A NAME
+    // HERE ALREADY DOES EXACTLY THIS, and a grep for the field is what says
+    // so rather than a count to be taken on trust: four assignments, of
+    // which one carries a name — the tree row's `onSelect`, off the row's
+    // own `name` — and two carry `''`, the initial state and `leaveBuild`.
+    // This is the fourth. The menu's Isolate was the second namer until
+    // issue #83 took the pair off it entirely: it hides everything else and
+    // writes no selection at all, because the selection shader replaces a
+    // part's colour and colour is an assertion on this page.
+    //
+    // WHAT THE DIVERGENCE COST IS NOT HYPOTHETICAL, and it is reached
+    // without ever leaving the build. `measAdd` fills a comment out of the
+    // pair — `partId` off `sel`, `part` off the row or, where the tree
+    // cannot answer, off `selName` — and the tree stops answering in a view
+    // that does not SHOW this part. Not on any view tab: a path is the
+    // assembly structure spelled out (`treeFromShapes` builds it as parent
+    // plus `/name`), so a view laying the same parts out under the same
+    // names holds the same paths and `node(s.sel)` answers there too.
+    // What carries the pair across is that `showView` touches neither half
+    // and neither does `onModel` — so a pick in one view and a measurement
+    // in another that dropped the part lands on that fallback with both
+    // halves still set. Diverged, it posts the first copy's path to the hub
+    // under the third copy's name.
+    //
+    // `onModel` DOES NOT "REPLACE ONLY THE TREE", and the precision matters
+    // to anyone walking this route: it writes `tree`, `view`, `viewError`,
+    // `expanded` and whatever `rejoin` returned, and it CLEARS `measure` and
+    // `moved`. What it leaves untouched is this pair, which is the whole of
+    // the argument. A measurement taken BEFORE the tab was changed does not
+    // survive to `measAdd` — the order that reaches it is pick, tab,
+    // measurement.
+    //
+    // THE SOLID'S NAME IS STILL THE FALLBACK, for a path no row claims — a
+    // pick that arrived before the tree did, which is the same case `sel`
+    // answers by keeping the path it came with.
+    const id = (detail && detail.id) || null;
+    const picked = (detail && detail.name) || '';
+    const node = this.node(id);
+    // A PICK IN A COMPARISON IS THE OTHER HALF OF THE PARTS LIST, and the
+    // brief asks for both directions ("по строке списка можно попасть к
+    // детали на модели, и наоборот"). The row and the solid are addressed
+    // differently there — the list is keyed by the catalogue key, because
+    // one part is drawn up to four times — so the pick is resolved to the
+    // key of the row it hit, and the pair of fields the build page keeps is
+    // left alone: none of their readers is drawn while the panel is up.
+    if (this.comparePair()) {
+      this.set({ cmpSel: (node && node.key) || null, menu: null });
+      return;
+    }
+    this.set({ sel: node ? node.id : id,
+               selName: (node && node.name) || picked, menu: null });
+  }
+
+  /**
    * A right-click in the SCENE, opening the same menu a tree row's does.
    *
    * `setState` and not `set`: the menu is a thing on the page, not a thing about
@@ -2680,6 +3716,17 @@ export default class HammerolaViewer extends React.Component {
    */
   showView(id) {
     if (id === this.state.view) return;
+    // A COMPARISON IS OF ONE VIEW, so a tab pressed while one is up asks for a
+    // different comparison rather than for a different view of this one: the
+    // hub caches a scene and a report per view (hub.js), and the pair on screen
+    // has as many of them as the two revisions have views in common. Written
+    // first, because `compareRevisions` snapshots the view it is about off
+    // exactly this field — and it takes the panel back to "measuring" while the
+    // hub answers, which is the honest thing to show.
+    if (this.state.compare) {
+      this.setState({ view: id }, () => this.compareRevisions(this.state.cmpPair));
+      return;
+    }
     this.set({ view: id });
   }
 
@@ -2869,7 +3916,12 @@ export default class HammerolaViewer extends React.Component {
 
     const revRows = revs.map((r) => {
       const current = r.id === PAGE.slot;
-      const inCmp = s.cmp.includes(r.id);
+      // THE TICK HOLDS THE COMMIT AND NOT THE ROW'S NAME. The hub refuses a
+      // pointer as an end of a pair, so `latest` has to be the commit it
+      // resolves to before anything is asked — and `dev` resolves to nothing,
+      // which is what takes the tick off that row below.
+      const commit = this.commitOf(r.id);
+      const inCmp = !!commit && s.cmp.includes(commit);
       return {
         key: r.id,
         head: r.head || '',
@@ -2893,10 +3945,17 @@ export default class HammerolaViewer extends React.Component {
         // difference away; `--accent-bg-soft` is what the row was drawn in
         // before the palette existed, said as a role.
         style: 'display:flex;align-items:center;gap:4px;padding:7px 14px 7px 10px;' + (current ? 'background:var(--accent-bg-soft);' : '') + 'cursor:default',
+        // NO TICK ON A ROW THAT NAMES NO COMMIT, which is the `dev` slot and
+        // only it. A comparison is cached under the names it was asked with, so
+        // both ends have to be permanent addresses, and the slot has none by
+        // decision — `has_dev` is a flag, not an id. Offering the tick and
+        // failing at the POST would be the same answer given later and as an
+        // error; this is it given honestly, on the row. The box keeps its space
+        // so that the rows below still line up under one another.
         cmpMark: inCmp ? '✓' : '',
-        cmpStyle: `width:16px;height:16px;border-radius:4px;flex:none;margin-right:6px;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO};cursor:pointer;` + (inCmp ? 'background:var(--accent);color:var(--text-on-accent);border:1px solid var(--accent-strong)' : 'border:1px solid var(--line-strong);background:var(--card-bg);color:transparent'),
-        onCmp: stop(() => {
-          let picked = s.cmp.includes(r.id) ? s.cmp.filter((x) => x !== r.id) : s.cmp.concat(r.id);
+        cmpStyle: `width:16px;height:16px;border-radius:4px;flex:none;margin-right:6px;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO};cursor:pointer;` + (inCmp ? 'background:var(--accent);color:var(--text-on-accent);border:1px solid var(--accent-strong)' : 'border:1px solid var(--line-strong);background:var(--card-bg);color:transparent') + (commit ? '' : ';visibility:hidden;cursor:default'),
+        onCmp: !commit ? undefined : stop(() => {
+          let picked = s.cmp.includes(commit) ? s.cmp.filter((x) => x !== commit) : s.cmp.concat(commit);
           if (picked.length > 2) picked = picked.slice(-2);
           this.setState({ cmp: picked });
         }),
@@ -2921,6 +3980,30 @@ export default class HammerolaViewer extends React.Component {
       };
     });
     const cmpReady = s.cmp.length === 2;
+
+    // -- the comparison panel, which stands where the tree stands
+    //
+    // FOUR THINGS CAN BE ON THE SCREEN HERE and only one of them is a list:
+    // waiting for the hub, a refusal because this browser has no token, a
+    // failure with the hub's own words in it, and the report. The first three
+    // are one paragraph with a heading — a panel that draws an EMPTY LIST for
+    // any of them would be saying "nothing changed", which is one of the
+    // answers this block has to be able to give truthfully.
+    const cmpPair = Array.isArray(s.cmpPair) ? s.cmpPair : [];
+    const cmpRows = compareRows(s.cmpReport);
+    const cmpDone = s.cmpStage === 'ready';
+    const cmpNote = cmpDone ? null
+      : s.cmpStage === 'locked'
+        ? { head: 'This needs the editing token',
+            body: 'A comparison is computed on request, and both of its documents'
+              + ' are read under the same token that publishes. Add the token in'
+              + ' the header, then press Compare again.' }
+        : s.cmpStage === 'failed'
+          ? { head: 'The comparison did not finish',
+              body: s.cmpError || 'the hub did not say why' }
+          : { head: 'Measuring the difference…',
+              body: 'The hub is intersecting the two revisions part by part. It'
+                + ' takes a second or two once the build queue reaches it.' };
 
     // -- the downloads, out of the part catalogue: key -> {extension -> file}
     const catalogue = (meta && meta.parts) || null;
@@ -3123,6 +4206,25 @@ export default class HammerolaViewer extends React.Component {
                                      at === 0 ? 'top' : '', fileHref(f.file)));
     };
 
+    // WHILE A COMPARISON IS UP, VISIBILITY IS THE THREE TABS AND NOTHING ELSE.
+    // `sync` sends the tabs' own hidden list and ignores `s.hidden`/`s.ghost`
+    // while the scene is a comparison's, so the three items below would do
+    // NOTHING VISIBLE and write to the reader's build lists behind their back —
+    // Isolate worst of all, which replaces `s.hidden` wholesale with `/cmp/…`
+    // paths that match nothing in the build's tree, so the parts they had hidden
+    // before comparing came back on screen when they closed the panel. The same
+    // question `sync` asks, so the two cannot answer it differently.
+    //
+    // AND THE FILES GO WITH THEM, on a stronger ground than "they would do
+    // nothing": they would do the WRONG THING quietly. The catalogue on this
+    // page is `<a>`'s (`PAGE.base`, `meta.parts`), so a right-click on a part
+    // inside `/cmp/rev b` — the geometry of the NEW revision, on screen, under
+    // the cursor — offered `<b>`'s part under `<a>`'s file, with the same file
+    // name on the row and nothing anywhere saying which revision came down.
+    // Serving `<b>`'s would take `<b>`'s meta.json, which this page never
+    // fetches; so the honest answer is to offer nothing, and the header's
+    // Downloads menu goes on being `<a>`'s where it says so.
+    const compared = !!this.comparePair();
     const menuItems = !mNode ? [] : [
       // HIDING EVERYTHING ELSE IS THE WHOLE OF IT, and the selection it used to
       // write alongside is gone (issue #83). `sel` reaches `selectSolid`, whose
@@ -3130,12 +4232,14 @@ export default class HammerolaViewer extends React.Component {
       // is an assertion in this interface, grey for a mock and the author's own
       // hue for everything else — so isolating a part destroyed the one thing
       // the reader isolated it to look at.
-      mi('Isolate', 'show only this', () => {
-        const keep = new Set(mNode.leaves);
-        this.setVisibility({ hidden: tree.leaves.filter((id) => !keep.has(id)) });
-      }),
-      mi('Hide', '', () => this.setVisibility({ hidden: this.toggle(s.hidden, mNode.leaves) })),
-      mi('Translucent', 'see through it', () => this.setVisibility({ ghost: this.toggle(s.ghost, mNode.leaves) })),
+      ...(compared ? [] : [
+        mi('Isolate', 'show only this', () => {
+          const keep = new Set(mNode.leaves);
+          this.setVisibility({ hidden: tree.leaves.filter((id) => !keep.has(id)) });
+        }),
+        mi('Hide', '', () => this.setVisibility({ hidden: this.toggle(s.hidden, mNode.leaves) })),
+        mi('Translucent', 'see through it', () => this.setVisibility({ ghost: this.toggle(s.ghost, mNode.leaves) })),
+      ]),
       // A NOTE IS FILED UNDER THE CATALOGUE KEY, so a row that has none is not
       // offered one — and the reason is the WRITE, not the catalogue. A note
       // lives in localStorage and is never looked up in `meta.parts`: a leaf
@@ -3170,11 +4274,25 @@ export default class HammerolaViewer extends React.Component {
       // page that cannot answer a prompt — an agent — and a file whose name the
       // page never chose. Those are the reasons to prefer one archive over N
       // links; "the browser refuses" is not one, because it does not.
-      ...(mNode.isNode ? [] : fileRows(mKey)),
+      ...(compared || mNode.isNode ? [] : fileRows(mKey)),
+      // WHAT IS COPIED IS THE PART, and inside a comparison the row's own label
+      // is not it. The scene numbers the pieces of one difference apart —
+      // `plate #1`, and a vent slot widened by 0.4 mm came out as twelve of them
+      // (`cadbuild/comparescene`) — so `mNode.name` on a difference leaf is an
+      // internal piece label that names nothing a reader can look up, in the
+      // catalogue, in the report beside it, or in `model.py`. The catalogue key
+      // is what all three speak, and it is what the panel's own rows print.
+      //
+      // THE ROW'S NAME REMAINS THE ANSWER EVERYWHERE ELSE, unchanged: on a build
+      // page a leaf's name IS the part as the reader is shown it, and a
+      // collapsed run copies the name bare rather than the tally (the header
+      // above). A group inside a comparison has no key, and falls back to its
+      // own name, which for `/cmp/rev a` is exactly what it says.
       mi('Copy name', '', () => {
+        const name = (compared && mKey) || mNode.name;
         try {
-          navigator.clipboard.writeText(mNode.name);
-          this.toast(`copied: ${mNode.name}`);
+          navigator.clipboard.writeText(name);
+          this.toast(`copied: ${name}`);
         } catch (error) {
           console.warn('clipboard', error);
           this.toast('Could not copy the name');
@@ -3182,9 +4300,27 @@ export default class HammerolaViewer extends React.Component {
       }, 'top'),
     ];
 
-    const btn = (active, hide) => `display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:6px;font:500 12px ${SANS};cursor:pointer;border:1px solid ` + (active ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'transparent;color:var(--text-soft)') + (hide ? ';display:none' : '');
+    // `off` is a THIRD state, beside resting and active, and it is not `hide`:
+    // the button stays where the reader left it and stops working, which is what
+    // a control that is out of service FOR NOW has to look like — the argument
+    // `bannerSwitchStyle` makes at length, and the two properties
+    // `compareBtnStyle` already spells an unpressable button with. Last in the
+    // string, so its `color` and `cursor` beat the resting pair above (`css`
+    // keeps the last spelling of a property), and `pointer-events:none` is the
+    // half that actually refuses the click.
+    const btn = (active, hide, off) => `display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:6px;font:500 12px ${SANS};cursor:pointer;border:1px solid ` + (active ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'transparent;color:var(--text-soft)') + (hide ? ';display:none' : '') + (off ? ';color:var(--text-faint);cursor:default;pointer-events:none' : '');
     const tab = (active) => `padding:5px 13px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;` + (active ? 'background:var(--card-bg);color:var(--text);box-shadow:0 1px 2px var(--shadow-soft)' : 'color:var(--text-soft)');
     const chip = (show, bg, border, color) => 'pointer-events:auto;display:' + (show ? 'flex' : 'none') + `;align-items:center;gap:8px;padding:7px 12px;background:${bg};border:1px solid ${border};border-radius:7px;font:500 11.5px ${SANS};color:${color};box-shadow:0 2px 8px var(--shadow-soft)`;
+
+    // WHICH TOOL IS REALLY IN FORCE DOWN HERE, which is not always `s.tool`:
+    // opening a comparison does not disarm one (the three handlers guard
+    // themselves instead — `toolsOff`), so the field can name a tool that cannot
+    // fire. Only the hint below reads this; the BUTTONS are drawn from
+    // `s.tool === t` on purpose, so the one that is armed still shows as armed
+    // while it is out of service and comes back armed when the panel closes.
+    // `cut` is not one of the three and is left alone: the hold key sections a
+    // comparison's scene like any other.
+    const armed = this.toolsOff() && s.tool !== 'cut' ? null : s.tool;
 
     const setTool = (t) => () => {
       this.set({ tool: s.tool === t ? null : t, revOpen: false, dlOpen: false, menu: null });
@@ -3319,9 +4455,12 @@ export default class HammerolaViewer extends React.Component {
       revMenuStyle: (narrow ? popSheet : 'position:absolute;left:0;top:40px;width:430px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);z-index:40;display:' + (s.revOpen ? 'block' : 'none'),
       revRows,
       revEmpty: revRows.length === 0,
-      cmpLabel: cmpReady ? `${s.cmp[0]} → ${s.cmp[1]}` : '',
+      // SHORTENED, like every other place this site prints a revision. A commit
+      // is the digest of its sources (SPEC 7.7), so `s.cmp` holds 64 characters
+      // per side and this label is a button in a 430px menu.
+      cmpLabel: cmpReady ? `${shortId(s.cmp[0])} → ${shortId(s.cmp[1])}` : '',
       compareBtnStyle: `padding:7px 14px;border-radius:6px;font:600 12px ${SANS};cursor:pointer;` + (cmpReady ? 'background:var(--accent);color:var(--text-on-accent)' : 'background:var(--sunken-bg);color:var(--text-faint);pointer-events:none'),
-      startCompare: stop(() => this.setState({ compare: true, revOpen: false })),
+      startCompare: stop(() => this.compareRevisions(s.cmp)),
 
       statusChipStyle: `display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:6px;font:500 11.5px ${SANS};` + status.style,
       statusText: status.text,
@@ -3535,15 +4674,29 @@ export default class HammerolaViewer extends React.Component {
       // added. `narrow.test.js` names the clamped ones and asserts it — the
       // list lives there, where it can fail.
       showTools: !narrow,
-      tMeasure: setTool('measure'), measureBtnStyle: btn(s.tool === 'measure'),
-      tMove: setTool('move'), moveBtnStyle: btn(s.tool === 'move', viewer),
-      tComment: setTool('comment'), commentBtnStyle: btn(s.tool === 'comment', viewer),
+      // AND ALL THREE ARE OUT OF SERVICE WHILE THE SCENE IS A COMPARISON'S,
+      // which is a different question from the `viewer` beside it: that one is
+      // about who the reader IS, this one about what is under the cursor. What
+      // each of the three filed against a comparison, and why the answer is
+      // `toolsOff()` rather than `s.compare`, is written out on the method. The
+      // buttons are the half a person sees; the handlers are the half that
+      // stops a tool armed before the panel opened.
+      tMeasure: setTool('measure'),
+      measureBtnStyle: btn(s.tool === 'measure', false, this.toolsOff()),
+      tMove: setTool('move'),
+      moveBtnStyle: btn(s.tool === 'move', viewer, this.toolsOff()),
+      tComment: setTool('comment'),
+      commentBtnStyle: btn(s.tool === 'comment', viewer, this.toolsOff()),
       fitView: () => this.fitView(),
       grabFrame: () => this.saveFrame(),
-      hintText: s.tool === 'comment' ? 'click the model to pin a task'
-        : s.tool === 'measure' ? 'click a part, or two, to measure'
-        : s.tool === 'move' ? 'drag a part · esc to stop'
-        : s.tool === 'cut' ? 'click a face to place the section plane'
+      // OFF `armed` AND NOT OFF `s.tool`, so the strip stops instructing the
+      // reader to click a model that will not answer: a tool armed before a
+      // comparison opened stays armed and stops firing, and this line is the
+      // only place on the page that would still have described it as live.
+      hintText: armed === 'comment' ? 'click the model to pin a task'
+        : armed === 'measure' ? 'click a part, or two, to measure'
+        : armed === 'move' ? 'drag a part · esc to stop'
+        : armed === 'cut' ? 'click a face to place the section plane'
         : `drag — orbit · wheel — zoom · hold ${HOLD_KEY_LABEL} — section`,
 
       viewError: s.viewError || '',
@@ -3638,11 +4791,86 @@ export default class HammerolaViewer extends React.Component {
       editNoteLabel: readerNote ? 'edit yours' : 'add yours',
       editNote: stop(() => this.setState({ notePop: this.selectedKey(), noteDraft: this.selectedNote() })),
 
-      cmpA: s.cmp[0] || '', cmpB: s.cmp[1] || '',
-      exitCompare: stop(() => this.setState({ compare: false })),
-      dsBothStyle: tab(s.diffShow === 'both') + ';flex:1;text-align:center;opacity:.5',
-      dsAStyle: tab(false) + ';flex:1;text-align:center;opacity:.5',
-      dsBStyle: tab(false) + ';flex:1;text-align:center;opacity:.5',
+      // -- comparing two revisions (issue #10) --------------------------------
+      cmpA: shortId(cmpPair[0] || ''), cmpB: shortId(cmpPair[1] || ''),
+      // A method rather than a closure, because closing the panel has an
+      // ADDRESS to put back when this page was opened as a comparison, and that
+      // is a paragraph of reasoning rather than a state patch (`leaveCompare`).
+      exitCompare: stop(() => this.leaveCompare()),
+      // The three ways of looking at one comparison. Each is one group hidden in
+      // the scene (`diffHidden`), so they are `set` like any other viewport
+      // state and cost no fetch.
+      dsBothStyle: tab(s.diffShow === 'both') + ';flex:1;text-align:center',
+      dsAStyle: tab(s.diffShow === 'a') + ';flex:1;text-align:center',
+      dsBStyle: tab(s.diffShow === 'b') + ';flex:1;text-align:center',
+      showBoth: stop(() => this.set({ diffShow: 'both' })),
+      showA: stop(() => this.set({ diffShow: 'a' })),
+      showB: stop(() => this.set({ diffShow: 'b' })),
+
+      cmpNoteStyle: 'display:' + (cmpNote ? 'block' : 'none'),
+      cmpNoteHead: cmpNote ? cmpNote.head : '',
+      cmpNote: cmpNote ? cmpNote.body : '',
+      cmpRetryStyle: `margin-top:9px;padding:5px 11px;border-radius:6px;font:600 11.5px ${SANS};cursor:pointer;background:var(--accent);color:var(--text-on-accent);display:`
+        + (s.cmpStage === 'failed' || s.cmpStage === 'locked' ? 'inline-block' : 'none'),
+      retryCompare: stop(() => this.compareRevisions(s.cmpPair)),
+
+      cmpSummary: cmpDone ? compareSummary(cmpRows) : '',
+      cmpSummaryStyle: `font:600 11.5px ${SANS};padding:0 2px 8px;display:`
+        + (cmpDone ? 'block' : 'none'),
+      cmpRows: cmpRows.map((row) => ({
+        key: row.key,
+        // THE CATALOGUE KEY IS WHAT IS DRAWN, and not a name looked up in the
+        // build's own catalogue: the pair being compared need not include the
+        // build this page is standing on, and a part that is `new` has no entry
+        // in the older revision's catalogue at all. The key is the identity
+        // (issue #75), it is what the author wrote, and it is what the agent
+        // will be told about.
+        name: row.key,
+        status: row.status,
+        volume: [row.added > 0 ? `+${mm3(row.added)}` : '',
+                 row.removed > 0 ? `−${mm3(row.removed)}` : '']
+          .filter(Boolean).join(' / ') + (row.added > 0 || row.removed > 0 ? ' mm³' : ''),
+        // A COLUMN, because a refused part has a second line under it. Every
+        // other row is one line and looks exactly as it did: the line itself is
+        // the flex box that used to be this element, and the sentence below it
+        // is `display:none` where there is nothing to say.
+        rowStyle: 'padding:4px 6px;border-radius:5px;cursor:pointer;background:'
+          + (s.cmpSel === row.key ? 'var(--accent-bg)' : 'transparent'),
+        nameStyle: `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 11.5px ${MONO};color:var(--text)`,
+        // The chip, and the legend's line about `not compared` wears the same
+        // one — see `statusChip`, where the argument for each colour is.
+        statusStyle: statusChip(row.status),
+        volumeStyle: `flex:none;font:400 10px ${MONO};color:var(--text-muted)`,
+        // WHY THE KERNEL WOULD NOT ANSWER FOR THIS PART, in the hub's own words
+        // and only where the words are about THIS part (`rowReason`). It wraps
+        // rather than being cut to a hint: it names which identity failed and by
+        // how much, and half of that is no use.
+        reason: rowReason(row),
+        reasonStyle: `padding:1px 1px 0;font:400 10.5px/1.45 ${SANS};color:var(--text-muted);display:`
+          + (rowReason(row) ? 'block' : 'none'),
+        // The other half of "по строке списка можно попасть к детали на модели,
+        // и наоборот": this direction writes the key and `comparePaths` turns it
+        // into every solid the scene draws it as. The `hmr:pick` handler is the
+        // other one.
+        onSelect: stop(() => this.set({ cmpSel: row.key })),
+      })),
+      // The legend's swatches are the payload's OWN colours (hub.DIFF_COLOURS)
+      // and deliberately not palette roles: they are samples of what is on the
+      // model, and a sample that followed the theme would stop being one.
+      legendAddedStyle: `width:12px;height:12px;border-radius:3px;flex:none;background:${DIFF_COLOURS.added}`,
+      legendRemovedStyle: `width:12px;height:12px;border-radius:3px;flex:none;background:${DIFF_COLOURS.removed}`,
+      legendNeutralStyle: `width:12px;height:12px;border-radius:3px;flex:none;background:${DIFF_COLOURS.neutral}`,
+      // THE WORD IS THE HUB'S AND NOT A LABEL WRITTEN AGAIN HERE: the legend
+      // explains the chip the rows wear, so it draws the same chip with the same
+      // word in it, and a spelling that drifted from the hub's would be a legend
+      // about a status nothing in the list has.
+      legendNotCompared: NOT_COMPARED,
+      legendNotComparedStyle: statusChip(NOT_COMPARED),
+      // THE SENTENCE UNDER THE WORD, out here rather than written into the
+      // markup for the reason the word is: it has to agree with what the hub
+      // writes on the row (`NOT_COMPARED_WHY`), and an assertion about that is
+      // a test rather than a note in two files.
+      legendNotComparedWhy: NOT_COMPARED_WHY,
 
       // The new build is offered, never substituted: somebody may be halfway
       // through a section with half the tree hidden, and a model that changes by
@@ -4096,34 +5324,80 @@ export default class HammerolaViewer extends React.Component {
                     <span style={css('flex:1')} />
                     <span onClick={v.exitCompare} style={css(`font:500 11px ${MONO};color:var(--accent-text);cursor:pointer`)}>exit &#10005;</span>
                   </div>
+                  {/* Three ways of looking at the SAME scene: each one hides a
+                      group of it, so none of the three costs a fetch. */}
                   <div style={css('display:flex;gap:2px;padding:3px;background:var(--chip-bg);border-radius:7px;margin-top:10px')}>
-                    <div style={css(v.dsBothStyle)}>Overlay</div>
-                    <div style={css(v.dsAStyle)}>{v.cmpA} only</div>
-                    <div style={css(v.dsBStyle)}>{v.cmpB} only</div>
+                    <div onClick={v.showBoth} style={css(v.dsBothStyle)}>Overlay</div>
+                    <div onClick={v.showA} style={css(v.dsAStyle)}>{v.cmpA} only</div>
+                    <div onClick={v.showB} style={css(v.dsBStyle)}>{v.cmpB} only</div>
                   </div>
                 </div>
-                {/* No source, and saying so beats an empty list that reads as
-                    "nothing changed" — which is itself one of the answers this
-                    block has to be able to give. */}
                 <div style={css('flex:1;overflow:auto;padding:12px 14px')}>
-                  <div style={css(`font:600 11.5px ${SANS};margin-bottom:6px`)}>Not available yet</div>
-                  <div style={css(`font:400 11.5px/1.6 ${SANS};color:var(--text-soft)`)}>
-                    The hub cannot compare two builds yet — there is no endpoint that
-                    returns the difference, so nothing can be listed here and nothing
-                    can be lit up on the model. This panel is the shape it will take.
+                  {/* Waiting, refused or failed — a sentence and not an empty
+                      list, which would read as "nothing changed" and is itself
+                      one of the answers this block has to be able to give. */}
+                  <div style={css(v.cmpNoteStyle)}>
+                    <div style={css(`font:600 11.5px ${SANS};margin-bottom:6px`)}>{v.cmpNoteHead}</div>
+                    <div style={css(`font:400 11.5px/1.6 ${SANS};color:var(--text-soft)`)}>{v.cmpNote}</div>
+                    <div onClick={v.retryCompare} style={css(v.cmpRetryStyle)}>Try again</div>
                   </div>
+                  <div style={css(v.cmpSummaryStyle)}>{v.cmpSummary}</div>
+                  {/* One row per part the report names, what happened to it, and
+                      how much material moved. Clicking one lights that part up
+                      in every group of the scene that draws it. */}
+                  {v.cmpRows.map((row) => (
+                    <div key={row.key} onClick={row.onSelect} style={css(row.rowStyle)}>
+                      <div style={css('display:flex;align-items:center;gap:7px')}>
+                        <span style={css(row.nameStyle)}>{row.name}</span>
+                        <span style={css(row.statusStyle)}>{row.status}</span>
+                        <span style={css(row.volumeStyle)}>{row.volume}</span>
+                      </div>
+                      {/* Only a part the kernel REFUSED carries one, and for
+                          that part this sentence is the whole answer — see
+                          `rowReason` in `computed`. The other silence is
+                          explained once, in the legend below. */}
+                      <div style={css(row.reasonStyle)}>{row.reason}</div>
+                    </div>
+                  ))}
                 </div>
                 <div style={css('flex:none;margin:0 14px 14px;padding:10px 12px;background:var(--card-bg);border:1px solid var(--line-soft);border-radius:7px')}>
-                  <div style={css(`font:600 10px ${MONO};color:var(--text-muted);letter-spacing:.08em;margin-bottom:7px`)}>LEGEND &mdash; WHAT THE COLOURS WILL MEAN</div>
-                  {/* THE GREY SWATCH IS `--line-strong` AND NOT THE CHIP FILL,
-                      which is a line role painting a surface on purpose. These
-                      three squares are samples of what the diff will paint on
-                      the MODEL, not chrome — and the grey one stands beside two
-                      saturated ones, where the chip fill reads as an empty
-                      square rather than as the third colour in a set. */}
-                  <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:5px')}><span style={css('width:12px;height:12px;border-radius:3px;background:var(--accent);flex:none')} /><span style={css(`font:400 11.5px ${SANS}`)}>added &mdash; material only in {v.cmpB}</span></div>
-                  <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:5px')}><span style={css('width:12px;height:12px;border-radius:3px;background:var(--warn);flex:none')} /><span style={css(`font:400 11.5px ${SANS}`)}>removed &mdash; material only in {v.cmpA}</span></div>
-                  <div style={css('display:flex;align-items:center;gap:8px')}><span style={css('width:12px;height:12px;border-radius:3px;background:var(--line-strong);flex:none')} /><span style={css(`font:400 11.5px ${SANS}`)}>unchanged (ghosted)</span></div>
+                  <div style={css(`font:600 10px ${MONO};color:var(--text-muted);letter-spacing:.08em;margin-bottom:7px`)}>LEGEND &mdash; WHAT THE COLOURS AND WORDS MEAN</div>
+                  {/* THE SWATCHES ARE THE PAYLOAD'S OWN COLOURS and not palette
+                      roles — see `legendAddedStyle` in `computed`. A legend is
+                      mandatory here rather than decorative: there is no industry
+                      convention for added and removed (green is added in GitHub
+                      and NX, red is added in CATIA, and in metrology red means
+                      extra material), so the colours have to be labelled, and
+                      the pair has to stay legible to a colourblind reader —
+                      which is what the words beside them are for. */}
+                  <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:5px')}><span style={css(v.legendAddedStyle)} /><span style={css(`font:400 11.5px ${SANS}`)}>added &mdash; material only in {v.cmpB}</span></div>
+                  <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:5px')}><span style={css(v.legendRemovedStyle)} /><span style={css(`font:400 11.5px ${SANS}`)}>removed &mdash; material only in {v.cmpA}</span></div>
+                  {/* THE COLOUR'S MEANING AND NOT A CLAIM ABOUT THE TAB. It
+                      read "both revisions, ghosted", which is true of Overlay
+                      and false of the two tabs beside it: A-only and B-only
+                      show exactly one revision, ghosted in this same colour. */}
+                  <div style={css('display:flex;align-items:center;gap:8px')}><span style={css(v.legendNeutralStyle)} /><span style={css(`font:400 11.5px ${SANS}`)}>unchanged &mdash; ghosted</span></div>
+                  {/* THE ONE EXPLANATION THAT IS TRUE OF A CATEGORY AND NOT OF A
+                      PART, so it is said once here instead of once per row. Every
+                      `not compared` row means the same thing — no pair of STEP
+                      files came from the two builds, so nothing was fused — and a
+                      model with eight bought screws printed the hub's sentence
+                      eight times, in a panel whose job is to show what CHANGED.
+                      The hub still writes the sentence on each row; the panel
+                      spends the height once.
+                      AND IT SAYS WHAT THE HUB'S SENTENCE SAYS, in the same order:
+                      the definition first, hardware and mocks as the example they
+                      are (`cadbuild/comparescene._uncovered_line`). This line
+                      named them as the definition for a round, which is false of
+                      a part that was `printable` in one revision and hardware in
+                      the other — there one build did export a STEP.
+                      ALWAYS DRAWN, not only when such a row is on screen: the
+                      legend is part of the panel rather than of the list, so
+                      there is no arrangement in which a row can appear without
+                      it. `not measured` is deliberately NOT here — that sentence
+                      is about one part and what went wrong with it, and it stays
+                      on that part's row. */}
+                  <div style={css('display:flex;align-items:center;gap:8px;margin-top:7px;padding-top:7px;border-top:1px solid var(--line-soft)')}><span style={css(v.legendNotComparedStyle)}>{v.legendNotCompared}</span><span style={css(`font:400 11.5px ${SANS}`)}>{v.legendNotComparedWhy}</span></div>
                 </div>
               </div>
             )}

@@ -545,8 +545,12 @@ describe('popstate', () => {
 
   it('restores the view the entry names while calling the swap off', async () => {
     // The one thing that CAN still be out of step when the build does not move.
-    // It goes through `showView`, the view tab's own path, rather than through a
-    // swap of its own.
+    // The field is written bare rather than through `showView` — which on a page
+    // with a comparison up is not a view switch at all but a restart of the
+    // comparison, address and all (compare.test.js, `restores an entry's view
+    // without restarting the comparison on it`). Here there is no comparison, so
+    // the two answers are the same one and this test cannot tell them apart;
+    // what it holds is that the entry's `?v=` still lands.
     const c = mounted()
     loadMeta.mockImplementation(() => new Promise(() => {}))
 

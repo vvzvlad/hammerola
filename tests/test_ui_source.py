@@ -520,6 +520,43 @@ def test_the_assembled_view_is_spelled_the_same_on_both_sides_of_the_wire():
         f"the current layout, on a page that is showing the assembly")
 
 
+def test_the_compare_legend_says_what_the_hub_says_not_compared_means():
+    """One explanation of one word, written on both sides of the wire.
+
+    The hub writes the sentence onto every `not compared` row of report.json
+    (`comparescene._uncovered_line`) and the panel does NOT draw it there: it is
+    identical on every such row, so eight bought screws printed it eight times
+    in a panel whose job is to show what changed. It is drawn once, in the
+    legend — which means the legend IS that sentence, and the two are free to
+    drift into saying different things about one word with nothing anywhere
+    noticing. This is what notices.
+
+    It cost a round already, in the direction that matters: both halves named
+    hardware and mocks as the DEFINITION, which is false of a part that was
+    `printable` in one revision and hardware in the other — one build exported a
+    STEP there and the row still says `not compared`. Fixing one half and
+    leaving the other is the failure this pins.
+
+    The em dash is the one difference allowed: the hub's strings are ASCII (its
+    reasons travel through job logs) and the interface's are not.
+    """
+    from src.cadbuild.comparescene import _uncovered_line
+
+    declared = re.search(r"const NOT_COMPARED_WHY =(.+?);",
+                         strip_comments(read(COMPONENT)), flags=re.S)
+    assert declared, (
+        "ui/src/HammerolaViewer.jsx no longer declares NOT_COMPARED_WHY. The "
+        "legend's sentence has to stay a named literal: it is the hub's "
+        "sentence said once, and this check reads it as text because the "
+        "Python side cannot be imported into the JS suite")
+    legend = "".join(re.findall(r"'([^']*)'", declared.group(1)))
+    assert legend, "NOT_COMPARED_WHY is no longer built out of string literals"
+
+    assert legend.replace("—", "--") == _uncovered_line("part")["reason"], (
+        "the legend and report.json explain `not compared` differently, so the "
+        "reader is told one thing by the panel and another by the document")
+
+
 def test_the_build_picker_reads_the_fields_builds_json_carries():
     """The picker's fallback object names exactly what builds.json has.
 
