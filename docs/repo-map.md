@@ -353,7 +353,15 @@
   directory tree with JSON alongside, no database (gitignored, mounted as a
   docker volume). Note what that last one means: `data/jobs/` is on a volume
   every build can write anywhere in, so nothing there is evidence about who
-  wrote it — see the docstring of `src/jobs.py` and SPEC §7.4
+  wrote it — see the docstring of `src/jobs.py` and SPEC §7.4.
+  `data/compare/<pid>/<a>/<b>/<view>/` is the one subtree that is neither a
+  build nor a job: the cached scene of a revision comparison (step 8, issue
+  #10). It sits OUTSIDE the build directories deliberately — a build directory
+  is public and carries a year-long `immutable`, while a comparison is served
+  behind the token and only earns that year when both ends of the pair are
+  commits. The path is nested rather than one joined name because `SAFE_ID`
+  allows `_`: `<a>__<b>` would let the pair `x` + `y__z` and the pair `x__y` +
+  `z` collide, and a collision here serves one comparison the other's geometry
 - `templates/` — page templates that ship inside the image: `index.html`,
   `build.html`, `pointer.html`, one per URL the hub serves
 - `static/` — the viewer payload that ships inside the image (`static/_v/`):
