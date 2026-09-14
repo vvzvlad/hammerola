@@ -3830,7 +3830,12 @@ export default class HammerolaViewer extends React.Component {
         key: node.id,
         rowStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px ' + (node.depth * 16) + 'px;border-radius:4px;background:' + (selected ? 'var(--accent-bg)' : 'var(--float-bg-soft)') + ';cursor:default',
         caret: node.isNode ? (expanded ? '▾' : '▸') : '',
-        caretStyle: 'width:14px;flex:none;text-align:center;font-size:9px;color:var(--text-faint);cursor:pointer;' + (node.isNode ? '' : 'visibility:hidden'),
+        // A 20x20 target in the same weight as the expand-all and collapse-all
+        // buttons above the tree, which is what it is a per-row version of. It
+        // used to be 14 px wide, 9 px of glyph and `--text-faint` — smaller and
+        // fainter than everything beside it in the row, so it read as
+        // typographic dust rather than a control, and hitting it took aim.
+        caretStyle: 'width:20px;height:20px;flex:none;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text-soft);cursor:pointer;' + (node.isNode ? '' : 'visibility:hidden'),
         onExpand: stop(() => node.isNode
           && this.setState({ expanded: { ...s.expanded, [node.id]: !expanded } })),
         eyeOuter: eyeOuter(eye), eyeDot: eyeDot(eye), ghostIcon: ghostIcon(ghosted),
@@ -4800,9 +4805,20 @@ export default class HammerolaViewer extends React.Component {
       // The three ways of looking at one comparison. Each is one group hidden in
       // the scene (`diffHidden`), so they are `set` like any other viewport
       // state and cost no fetch.
-      dsBothStyle: tab(s.diffShow === 'both') + ';flex:1;text-align:center',
-      dsAStyle: tab(s.diffShow === 'a') + ';flex:1;text-align:center',
-      dsBStyle: tab(s.diffShow === 'b') + ';flex:1;text-align:center',
+      // A FLEX BOX AND `min-width:0`, not `text-align:center`. Two of the three
+      // labels carry a revision identifier, which is a commit of seven
+      // characters or a pointer name of up to sixty-four — and a flex item does
+      // not shrink below its own content unless it is told it may, so a long
+      // one used to push the whole segmented control wider than the panel. The
+      // name inside then ellipses and the word beside it does not; `padding:0`
+      // because the box now centres its own children.
+      dsBothStyle: tab(s.diffShow === 'both') + ';flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:4px;padding-left:0;padding-right:0',
+      dsAStyle: tab(s.diffShow === 'a') + ';flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:4px;padding-left:0;padding-right:0',
+      dsBStyle: tab(s.diffShow === 'b') + ';flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:4px;padding-left:0;padding-right:0',
+      // The half of a mode label that may be too long, and the half that must
+      // never be dropped: without "only" the three tabs stop naming choices.
+      dsNameStyle: 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
+      dsWordStyle: 'flex:none',
       showBoth: stop(() => this.set({ diffShow: 'both' })),
       showA: stop(() => this.set({ diffShow: 'a' })),
       showB: stop(() => this.set({ diffShow: 'b' })),
@@ -5316,20 +5332,37 @@ export default class HammerolaViewer extends React.Component {
             {v.compare && (
               <div style={css('display:flex;flex-direction:column;min-height:0;width:288px;background:var(--float-bg);border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px var(--shadow-soft);overflow:hidden')}>
                 <div style={css('flex:none;padding:12px 14px;border-bottom:1px solid var(--line-soft)')}>
+                  {/* THE TWO CHIPS ARE THE ONLY THINGS HERE THAT MAY SHRINK, and
+                      they have to be told so twice — `min-width:0` to let a flex
+                      item go under its own content, and the ellipsis to say what
+                      happens then. They hold a revision identifier: seven
+                      characters for a commit, up to sixty-four for a pointer or
+                      a build name. Without this a name of ordinary length pushed
+                      `exit` past the panel's edge, where `overflow:hidden` cut it
+                      off, and broke the cross onto a line of its own. The full
+                      name stays reachable in the tooltip. */}
                   <div style={css('display:flex;align-items:center;gap:8px')}>
-                    <span style={css(`font:600 12.5px ${SANS}`)}>Comparing</span>
-                    <span style={css(`font:600 12px ${MONO};background:var(--chip-bg);padding:2px 7px;border-radius:4px`)}>{v.cmpA}</span>
-                    <span style={css('color:var(--text-muted)')}>&#8594;</span>
-                    <span style={css(`font:600 12px ${MONO};background:var(--chip-bg);padding:2px 7px;border-radius:4px`)}>{v.cmpB}</span>
+                    <span style={css(`font:600 12.5px ${SANS};flex:none`)}>Comparing</span>
+                    <span title={v.cmpA} style={css(`font:600 12px ${MONO};background:var(--chip-bg);padding:2px 7px;border-radius:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`)}>{v.cmpA}</span>
+                    <span style={css('color:var(--text-muted);flex:none')}>&#8594;</span>
+                    <span title={v.cmpB} style={css(`font:600 12px ${MONO};background:var(--chip-bg);padding:2px 7px;border-radius:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`)}>{v.cmpB}</span>
                     <span style={css('flex:1')} />
-                    <span onClick={v.exitCompare} style={css(`font:500 11px ${MONO};color:var(--accent-text);cursor:pointer`)}>exit &#10005;</span>
+                    <span onClick={v.exitCompare} style={css(`font:500 11px ${MONO};color:var(--accent-text);cursor:pointer;flex:none;white-space:nowrap`)}>exit &#10005;</span>
                   </div>
                   {/* Three ways of looking at the SAME scene: each one hides a
                       group of it, so none of the three costs a fetch. */}
                   <div style={css('display:flex;gap:2px;padding:3px;background:var(--chip-bg);border-radius:7px;margin-top:10px')}>
-                    <div onClick={v.showBoth} style={css(v.dsBothStyle)}>Overlay</div>
-                    <div onClick={v.showA} style={css(v.dsAStyle)}>{v.cmpA} only</div>
-                    <div onClick={v.showB} style={css(v.dsBStyle)}>{v.cmpB} only</div>
+                    <div onClick={v.showBoth} style={css(v.dsBothStyle)}>
+                      <span style={css(v.dsNameStyle)}>Overlay</span>
+                    </div>
+                    <div onClick={v.showA} title={v.cmpA} style={css(v.dsAStyle)}>
+                      <span style={css(v.dsNameStyle)}>{v.cmpA}</span>
+                      <span style={css(v.dsWordStyle)}>only</span>
+                    </div>
+                    <div onClick={v.showB} title={v.cmpB} style={css(v.dsBStyle)}>
+                      <span style={css(v.dsNameStyle)}>{v.cmpB}</span>
+                      <span style={css(v.dsWordStyle)}>only</span>
+                    </div>
                   </div>
                 </div>
                 <div style={css('flex:1;overflow:auto;padding:12px 14px')}>
