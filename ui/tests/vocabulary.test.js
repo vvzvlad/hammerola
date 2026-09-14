@@ -59,8 +59,13 @@ const ROWS = [
     built: '2026-08-01T00:00:00Z', first: '2026-07-01T00:00:00Z' },
 ]
 
-/** What a body reads off the page: a frame and a pair of hover handlers. */
-const page = { hover: () => ({}), cardStyle: () => '' }
+/**
+ * What a body reads off the page: a frame, a pair of hover handlers, and the
+ * delete control — which answers nothing here, the way it does for a reader
+ * holding no token (`remover` in HammerolaEntry.jsx). What is under test in
+ * this file is the tables, not what is drawn on a card.
+ */
+const page = { hover: () => ({}), cardStyle: () => '', remover: () => null }
 
 describe('every sort the hub will remember', () => {
   it('has a tab and a comparator, and nothing else does', () => {

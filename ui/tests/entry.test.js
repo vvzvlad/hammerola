@@ -54,14 +54,15 @@ vi.mock('../src/store.js', async (importOriginal) => ({
 }))
 
 import HammerolaEntry, {
-  agentBrief, HammerolaLogin, HammerolaProjects, relTime, RevLine, VIEW_BODIES,
+  agentBrief, HammerolaLogin, HammerolaProjects, relTime, REMOVE_TITLE, RevLine,
+  VIEW_BODIES,
 } from '../src/HammerolaEntry.jsx'
 import { loadIndex, loadStart, projectCard, projectUrl, Unauthorized } from '../src/hub.js'
 import {
   clearToken, readProjectSort, readProjectView, readToken, writeProjectSort,
   writeProjectView, writeToken,
 } from '../src/store.js'
-import { collect, texts } from './eltree.js'
+import { collect, texts, titles } from './eltree.js'
 
 /**
  * One card exactly as /index.json answers it.
@@ -212,8 +213,8 @@ describe('what a card says about its draft', () => {
 // wired up.
 
 describe('the picture on a card', () => {
-  /** The two things a view body asks of the page, neither of them under test. */
-  const PAGE = { hover: () => ({}), cardStyle: () => '' }
+  /** The three things a view body asks of the page, none of them under test. */
+  const PAGE = { hover: () => ({}), cardStyle: () => '', remover: () => null }
 
   const imgs = (card) => {
     const rows = [projectCard({ ...CARD, ...card })]
@@ -1208,6 +1209,18 @@ describe('what the page hands the list', () => {
     expect(screen.props.token).toBe('sekrit')
   })
 
+  it('hands it a way to remove one, which the list has no token to do itself', () => {
+    // The division the list's own fetch already keeps: the secret is state up
+    // here, so the request is made up here too, and what goes down is a
+    // function. `token` still goes with it, because whether a card carries the
+    // control at all is a question about the reader rather than about the
+    // handler.
+    const c = Object.create(HammerolaEntry.prototype)
+    c.state = { projects: [], token: 'sekrit', busy: false, refused: '', start: AT }
+    const screen = HammerolaEntry.prototype.render.call(c)
+    expect(typeof screen.props.onDelete).toBe('function')
+  })
+
   it.each([
     ['nothing at all', [], { ...HINT }],
     ['a project', [CARD], { ...HINT, empty: false }],
@@ -1223,5 +1236,281 @@ describe('what the page hands the list', () => {
     await vi.waitFor(() => expect(c.state.start).not.toBeNull())
     expect(c.state.projects).toHaveLength(cards.length)
     expect(c.state.start).toEqual({ origin: window.location.origin, ...answer })
+  })
+})
+
+// -- removing a project ------------------------------------------------------
+//
+// Issue #92. The route has been there since #26 (`_handle_delete` in src/app.py)
+// and until now only a terminal could reach it, so what is new is the interface
+// and every one of these is about that: who is offered the control, what the
+// confirmation demands before it will act, what goes on the wire when it does,
+// and what a refusal leaves standing.
+//
+// THE HUB CALL IS THE REAL ONE. `deleteProject` is deliberately NOT in the mock
+// factory at the top of this file — it arrives through `importOriginal` — so the
+// request asserted below is the one a browser would make, read off `fetch`. A
+// stubbed one would let this file agree with itself about a method and a header,
+// which are exactly the two things a page that never deleted anything would
+// still get wrong.
+//
+// AND THE CONFIRMATION IS DRIVEN THROUGH THE METHODS, not through the paint.
+// `remove` is what the button and the Enter key both run, and it refuses on its
+// own account: a test that only read the button's `cursor` would pass on a
+// control that looked inert and deleted the project anyway.
+
+/** One canned reply for the fetch `deleteProject` makes. */
+const answering = (response) => {
+  const fetching = vi.fn(async () => response)
+  vi.stubGlobal('fetch', fetching)
+  return fetching
+}
+const gone = () => ({ ok: true, status: 200, json: async () => ({ builds: 3, comments: 1 }) })
+const refusing = (status, said) => ({ ok: false, status, json: async () => ({ error: said }) })
+
+/** The list as the page hands it over, with a card and something to press. */
+const listing = (onDelete, props) => list({
+  token: 'sekrit', onDelete, projects: [projectCard(CARD)], ...props,
+})
+
+/** Every delete control both view bodies drew, as elements. */
+const controls = (c) => collect(
+  Object.values(VIEW_BODIES).map((body) => body(c, c.props.projects)),
+  (el) => (el.props.title === REMOVE_TITLE ? el : undefined))
+
+/** The button of the confirmation, whichever of its two words it is showing. */
+const button = (c) => collect(c.render(), (el) => (
+  el.props.children === 'Delete' || el.props.children === 'Deleting…' ? el : undefined))[0]
+
+describe('the delete control on a card', () => {
+  it('is on every card, in either arrangement', () => {
+    // Both bodies, because the control is one method called from two places and
+    // wiring up only one of them is invisible to whoever works in the other.
+    const drawn = Object.values(VIEW_BODIES).map((body) => (
+      titles(body(listing(vi.fn()), [projectCard(CARD)])).filter((t) => t === REMOVE_TITLE)))
+    expect(drawn).toEqual([[REMOVE_TITLE], [REMOVE_TITLE]])
+  })
+
+  it('is nowhere at all for a reader holding no token', () => {
+    // There is no such reader on this screen today — the list is drawn only
+    // once the hub has accepted a token — which is precisely why the condition
+    // is written down and pinned here: the class is exported, its `token`
+    // defaults to empty, and a control that offers to erase a project to
+    // somebody who cannot is a button whose only outcome is a 401.
+    expect(controls(listing(vi.fn(), { token: '' }))).toEqual([])
+  })
+
+  it('is nowhere without a handler behind it either', () => {
+    expect(controls(listing(null))).toEqual([])
+  })
+
+  it('raises the confirmation instead of following the card\'s link', () => {
+    // A card IS an `<a>` (see VIEW_BODIES), so a click anywhere inside it
+    // navigates. Without the two calls on the event the box would be raised
+    // over a page already on its way to the project.
+    const c = listing(vi.fn())
+    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn() }
+    controls(c)[0].props.onClick(event)
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(event.stopPropagation).toHaveBeenCalled()
+    expect(c.state.doomed).toBe(CARD.pid)
+  })
+
+  it('names the project in the box, and the id to type', () => {
+    const c = listing(vi.fn())
+    c.askRemove(CARD.pid)
+    const drawn = texts(c.render())
+    expect(drawn).toContain('Ventilation controller case')
+    expect(drawn).toContain(CARD.pid)
+    expect(drawn.join(' ')).toMatch(/nothing undoes this/i)
+  })
+})
+
+describe('confirming a deletion', () => {
+  it('refuses everything that is not the id, and then acts', async () => {
+    // THE WHOLE POINT OF TYPING IT. A deletion here is irreversible — no
+    // retention, no undo, no copy on the hub (SPEC 5.3, 7.3) — so the near
+    // misses are the cases: a prefix, the title that is on the card right
+    // beside it, and the same id in the wrong case.
+    const onDelete = vi.fn(async () => {})
+    const c = listing(onDelete)
+    c.askRemove(CARD.pid)
+    expect(c.confirmed).toBe(false)
+
+    for (const typed of ['', '0a1b2c3d4e5', '0a1b2c3d4e5f0', 'Ventilation controller case',
+      '0A1B2C3D4E5F', 'yes']) {
+      c.state = { ...c.state, typed }
+      expect(c.confirmed).toBe(false)
+      await c.remove()
+      expect(onDelete).not.toHaveBeenCalled()
+    }
+
+    c.state = { ...c.state, typed: CARD.pid }
+    expect(c.confirmed).toBe(true)
+    await c.remove()
+    expect(onDelete).toHaveBeenCalledWith(CARD.pid)
+  })
+
+  it('takes a pasted id with whitespace on it, the way the client does', () => {
+    // `hammerola rm` strips what is typed at its prompt, and a selection copied
+    // out of the card above carries a newline about as often as not. Trimmed and
+    // nothing else: everything in the test above is still refused.
+    const c = listing(vi.fn())
+    c.askRemove(CARD.pid)
+    c.state = { ...c.state, typed: `  ${CARD.pid}\n` }
+    expect(c.confirmed).toBe(true)
+  })
+
+  it('draws the button inert until the field matches', () => {
+    // The other half of the same refusal, on the screen: the reader has to be
+    // able to SEE that the box is not going to do anything yet.
+    const c = listing(vi.fn())
+    c.askRemove(CARD.pid)
+    expect(button(c).props.style.cursor).toBe('default')
+    c.state = { ...c.state, typed: CARD.pid }
+    expect(button(c).props.style.cursor).toBe('pointer')
+  })
+
+  it('asks nothing at all when it is cancelled', () => {
+    const onDelete = vi.fn(async () => {})
+    const c = listing(onDelete)
+    c.askRemove(CARD.pid)
+    c.state = { ...c.state, typed: CARD.pid }
+    c.cancelRemove()
+    expect(onDelete).not.toHaveBeenCalled()
+    expect(c.state.doomed).toBeNull()
+    expect(button(c)).toBeUndefined()
+  })
+
+  it('carries nothing from one project into the box raised over the next', () => {
+    // Both fields, and `failed` is the one that matters: a sentence about a
+    // refusal, left under a box now naming a different project, is a claim
+    // about something the reader never asked for.
+    const c = listing(vi.fn())
+    c.askRemove(CARD.pid)
+    c.state = { ...c.state, typed: CARD.pid, failed: 'The hub did not remove it: not found' }
+    c.askRemove('ffff00001111')
+    expect(c.state.typed).toBe('')
+    expect(c.state.failed).toBe('')
+    expect(c.confirmed).toBe(false)
+  })
+
+  it('does not ask twice while the hub is still answering', async () => {
+    let answer
+    const onDelete = vi.fn(() => new Promise((resolve) => { answer = resolve }))
+    const c = listing(onDelete)
+    c.askRemove(CARD.pid)
+    c.state = { ...c.state, typed: CARD.pid }
+    const first = c.remove()
+    expect(c.state.erasing).toBe(true)
+    expect(texts(c.render())).toContain('Deleting…')
+    await c.remove()
+    expect(onDelete).toHaveBeenCalledTimes(1)
+    answer()
+    await first
+    expect(c.state.doomed).toBeNull()
+    expect(c.state.erasing).toBe(false)
+  })
+})
+
+describe('a confirmed deletion', () => {
+  it('asks the hub to DELETE that project, under the token', async () => {
+    // The whole request, because every part of it is a way to get this wrong:
+    // the method (a GET on that path is the file server's), the path (the id is
+    // escaped, since nothing here promises what a pid may contain) and the
+    // header, which is the only reason the hub answers at all.
+    const fetching = answering(gone())
+    const c = page('sekrit')
+    c.state = { ...c.state, projects: [projectCard(CARD)] }
+    await HammerolaEntry.prototype.remove.call(c, CARD.pid)
+    expect(fetching).toHaveBeenCalledWith('/api/v1/projects/0a1b2c3d4e5f', {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer sekrit' },
+      cache: 'no-store',
+    })
+  })
+
+  it('takes that card off the list and leaves the others where they were', async () => {
+    answering(gone())
+    const other = projectCard({ ...CARD, pid: 'ffff00001111', project: 'clamp', title: 'Clamp' })
+    const c = page('sekrit')
+    c.state = { ...c.state, projects: [projectCard(CARD), other] }
+    await HammerolaEntry.prototype.remove.call(c, CARD.pid)
+    expect(c.state.projects).toEqual([other])
+  })
+
+  it('closes the box once the page has answered', async () => {
+    const c = listing(vi.fn(async () => {}))
+    c.askRemove(CARD.pid)
+    c.state = { ...c.state, typed: CARD.pid }
+    await c.remove()
+    expect(c.state.doomed).toBeNull()
+    expect(c.state.typed).toBe('')
+    expect(c.state.failed).toBe('')
+  })
+})
+
+describe('a deletion the hub refused', () => {
+  it('leaves the list exactly as it was, and carries what the hub said', async () => {
+    // The hub writes a sentence into `{"error": …}` and this route's are worth
+    // reading — a 404 is somebody else having removed it already. "HTTP 409" on
+    // its own tells the reader nothing they can act on.
+    answering(refusing(409, 'a build of this project is running'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const rows = [projectCard(CARD)]
+    const c = page('sekrit')
+    c.state = { ...c.state, projects: rows }
+    await expect(HammerolaEntry.prototype.remove.call(c, CARD.pid))
+      .rejects.toThrow(/a build of this project is running/)
+    expect(c.state.projects).toEqual(rows)
+  })
+
+  it('says the token was refused rather than that the hub broke', async () => {
+    // The division `loadIndex` makes, at the second route that makes it: "the
+    // token is wrong" and "the hub is unreachable" are different sentences.
+    answering({ ok: false, status: 401, json: async () => ({ error: 'unauthorized' }) })
+    const c = page('sekrit')
+    c.state = { ...c.state, projects: [projectCard(CARD)] }
+    await expect(HammerolaEntry.prototype.remove.call(c, CARD.pid))
+      .rejects.toThrow(/refused that token/)
+    // AND THE READER IS NOT SIGNED OUT OVER IT, which is where this path parts
+    // company with `open`'s 401. There is a list on the screen that this same
+    // token fetched, so throwing the token away would answer a failed deletion
+    // by emptying the page.
+    expect(clearToken).not.toHaveBeenCalled()
+    expect(c.state.projects).toHaveLength(1)
+    expect(c.state.token).toBe('sekrit')
+  })
+
+  it('keeps the box open with the sentence in it', async () => {
+    // Closing it would put the reader back in front of a list that still shows
+    // the project, with nothing anywhere saying why — and "it is still there"
+    // is the one thing worth knowing after a deletion that did not happen.
+    const said = 'The hub did not remove it: not found'
+    const c = listing(vi.fn(async () => { throw new Error(said) }))
+    c.askRemove(CARD.pid)
+    c.state = { ...c.state, typed: CARD.pid }
+    await c.remove()
+    expect(c.state.doomed).toBe(CARD.pid)
+    expect(c.state.erasing).toBe(false)
+    expect(texts(c.render())).toContain(said)
+  })
+
+  it('can be tried again without retyping the id', async () => {
+    const onDelete = vi.fn()
+      .mockRejectedValueOnce(new Error('The hub did not remove it: not found'))
+      .mockResolvedValueOnce(undefined)
+    const c = listing(onDelete)
+    c.askRemove(CARD.pid)
+    c.state = { ...c.state, typed: CARD.pid }
+    await c.remove()
+    expect(c.state.failed).toBeTruthy()
+    await c.remove()
+    // The verdict goes with the second press rather than surviving it, the same
+    // rule the copy button keeps: a sentence about the attempt before this one
+    // is a report about nothing the reader is looking at.
+    expect(c.state.failed).toBe('')
+    expect(c.state.doomed).toBeNull()
+    expect(onDelete).toHaveBeenCalledTimes(2)
   })
 })

@@ -335,8 +335,10 @@ export function fakeCapMaterial() {
  *  `updateMatrixWorld` scales to `0.5 * size` — so one uv unit ACROSS the cap
  *  quad is `size` world units. `size` is the clipping region's size and every
  *  cap of a scene carries the same one. Nothing in `hatch.js` reads it any
- *  more: the pitch is counted in framebuffer pixels, in which that factor
- *  cancels, and the hatch suite varies `size` exactly to prove it cancels.
+ *  more: the pitch is counted in PIXELS — CSS ones now, framebuffer ones for
+ *  the line and its band, and the difference does not matter here — and a
+ *  measure in pixels of any kind is what makes that factor cancel. The hatch
+ *  suite varies `size` exactly to prove it cancels.
  *
  *  The `plane` is the `CenteredPlane` the constructor was handed, and its
  *  `normal` is a THREE `Vector3` — read as `.x/.y/.z`, NOT as the array the
@@ -407,6 +409,12 @@ export function fakeCapUnits(solids, {
 // — and `LineMaterial` keeps `color`, `linewidth`, `resolution` and `opacity`
 // in uniforms its own accessor properties mirror, with shader clipping turned
 // on in the constructor and kept by `ShaderMaterial.copy` (:37707).
+//
+// `worldUnits` is not a field at all but a view onto the SHADER DEFINES
+// (:80460), which is why it is modelled here as one: the getter asks whether
+// `WORLD_UNITS` is in `defines`, and the setter raises `needsUpdate` when — and
+// only when — the flag actually changes. `defines` rides `ShaderMaterial.copy`
+// as its own fresh object, so a clone starts wherever its donor stood.
 
 /** A `THREE.Color` as `LineMaterial.uniforms.diffuse.value` holds one. */
 function fakeColor(hex = 0xffffff) {
@@ -446,6 +454,7 @@ function LineMaterial(parameters = {}) {
     linewidth: { value: parameters.linewidth ?? 1 },
     resolution: { value: fakeVector2(1, 1) },
   }
+  this.defines = {}
   this.clipping = true
   this.clippingPlanes = null
   this.clipIntersection = false
@@ -454,6 +463,14 @@ function LineMaterial(parameters = {}) {
   const material = this
   Object.defineProperties(material, {
     color: { get() { return material.uniforms.diffuse.value } },
+    worldUnits: {
+      get() { return "WORLD_UNITS" in material.defines },
+      set(value) {
+        if ((value === true) !== material.worldUnits) material.needsUpdate = true
+        if (value === true) material.defines.WORLD_UNITS = ""
+        else delete material.defines.WORLD_UNITS
+      },
+    },
     opacity: {
       get() { return material.uniforms.opacity.value },
       set(value) { material.uniforms.opacity.value = value },
@@ -479,6 +496,7 @@ LineMaterial.prototype.clone = function clone() {
   copy.g = source.g
   copy.b = source.b
   material.uniforms.resolution.value = this.uniforms.resolution.value.clone()
+  material.defines = Object.assign({}, this.defines)
   material.clipping = this.clipping
   material.clippingPlanes = this.clippingPlanes
   material.clipIntersection = this.clipIntersection
