@@ -234,9 +234,15 @@ function planeMayCut(box, n, c) {
  * fixture, a cylinder's lateral chords came out reversed against its end caps'
  * and the two cancelled to an area of exactly zero. The SIGN the edge leaves on
  * is what identifies an end: an edge running `+` to `-` carries the chord's
- * start, one running `-` to `+` its end. That is winding-order-free, and it is
- * consistent for the whole solid whenever the MESH is consistently wound, which
- * is the one thing this measure does need of the tessellation.
+ * start, one running `-` to `+` its end.
+ *
+ * WHAT THAT IS FREE OF IS THE LISTING ORDER — which of its three corners a
+ * triangle happens to be written from — and not the winding, which it still
+ * depends on entirely: reverse a triangle to `(v0, v2, v1)` and its edges are
+ * walked the other way, so the `+`-to-`-` edge becomes the `-`-to-`+` one and
+ * the chord turns round. A consistently wound MESH is the one thing this
+ * measure needs of the tessellation, and it is a real requirement rather than a
+ * formality — the suite's own cube did not satisfy it until this was written.
  *
  * With exactly two crossings there is one of each, always: signs alternate
  * around a closed walk, so an odd count of one kind is impossible.

@@ -71,9 +71,12 @@ const boxPositions = (sx, sy, sz) =>
   new Float32Array(boxCorners([0, 0, 0], [sx, sy, sz]))
 
 /** A box hollowed out to a wall `wall` thick — a solid whose THIN WALLS SIT
- *  INSIDE A FAT BOUNDING BOX, which is what `.faces(">Z").shell(-WALL)` builds
- *  and what no bounding box can report. The cavity is a second box wound the
- *  other way round, because the surface of a void faces into it. */
+ *  INSIDE A FAT BOUNDING BOX, which is the shape no bounding box can report and
+ *  the one `.faces(">Z").shell(-WALL)` leaves in the template model. The void
+ *  here is CLOSED where that one is open at the top; at the heights these tests
+ *  cut, halfway up and through the floor, the two are the same section, and
+ *  they part company only above the cavity's ceiling. The cavity is a second
+ *  box wound the other way round, because the surface of a void faces into it. */
 const shelledBox = ([sx, sy, sz], wall) => {
   const inward = []
   for (let at = 0; at < CUBE_INDEX.length; at += 3) {
@@ -434,9 +437,17 @@ describe('sectionOutline', () => {
     // they eat one whole width of it. At three CSS pixels on a wall occupying
     // four the two met in the middle and the part came back a solid black bar.
     //
-    // A cut face is never wider across its narrow way than 2A/P — for a w x L
-    // rectangle that is wL / (w + L), under w whatever L is — so the pair eat
-    // strictly less than the fraction of the wall, and the fraction is a tenth.
+    // 2A/P is never WIDER than the face's own narrow way — for a w x L
+    // rectangle it is wL / (w + L), under w whatever L is — so the pair eat
+    // less than the fraction of the wall, and the fraction is a tenth.
+    //
+    // FOR A FACE OF ONE THICKNESS, which is the shape a cut across a wall or a
+    // shell makes and the shape both bodies below have. A face that is massive
+    // in one region and thin in another averages the two, and the thin part can
+    // still be eaten: measured, a 40 x 40 x 10 block carrying a 1 mm rib reads
+    // 16.0 and would put a 1.6 mm line on the rib. Nobody has met that shape
+    // here and nothing is built for it; it is written down so the next reader
+    // does not take this measure for a guarantee it does not give.
     const THICKNESS = 2
     const wall = fakeShapeSolid('S|wall', {
       positions: boxPositions(40, 30, THICKNESS), index: CUBE_INDEX,
