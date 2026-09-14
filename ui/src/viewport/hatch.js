@@ -34,15 +34,18 @@
 //     particular keys can hash onto one slope; the set below is what keeps the
 //     rest of the convention, and the phase, taken from different bits of the
 //     same hash, is what separates the rare pair that collides;
-//   * ONE PITCH FOR EVERY CUT FACE IN THE SCENE, measured in FRAMEBUFFER
-//     PIXELS, with the lines very thin — Fusion's hatch, which is what the
-//     owner asked for. It replaces a pitch that followed each part's own
-//     bounding box: that gave a big part wide bands and a small one fine lines,
-//     and the two side by side read as two different drawings. Measuring on the
-//     screen is also what keeps the density off the ZOOM, the owner's other
-//     condition: `hatchUv` over the LENGTH of its own screen gradient — and
-//     pointedly not over `fwidth`, see `HATCH` — is a distance in pixels, so
-//     what is held constant is what the eye sees, not what the model measures.
+//   * ONE PITCH FOR EVERY CUT FACE IN THE SCENE, measured in CSS PIXELS — the
+//     lines themselves measured in FRAMEBUFFER pixels, which is a different
+//     unit on a retina display and deliberately so (see PITCH_PX and LINE_PX,
+//     and issue #96 for the grain that came of using one unit for both) — and
+//     very thin: Fusion's hatch, which is what the owner asked for. It replaces
+//     a pitch that followed each part's own bounding box: that gave a big part
+//     wide bands and a small one fine lines, and the two side by side read as
+//     two different drawings. Measuring on the screen is also what keeps the
+//     density off the ZOOM, the owner's other condition: `hatchUv` over the
+//     LENGTH of its own screen gradient — and pointedly not over `fwidth`, see
+//     `HATCH` — is a distance in framebuffer pixels, so what is held constant is
+//     what the eye sees, not what the model measures.
 //     The accepted cost is that the hatch is not a scale — a 5 mm boss and a
 //     500 mm plate hatch identically, and a part small on screen gets fewer
 //     lines across it rather than the same number.
@@ -72,19 +75,34 @@ const MARKER = "#include <opaque_fragment>";
  *  the vendored bundle. */
 const UNIFORM_ANCHOR = "uniform vec3 diffuse;";
 
-/** The two measurements of the hatch, BOTH IN FRAMEBUFFER PIXELS: the lines sit
- *  PITCH_PX apart and each is LINE_PX across, on every cut face in the scene and
- *  at every zoom. The shader is where they are applied — see `HATCH`.
+/** The two measurements of the hatch, IN TWO DIFFERENT PIXELS, and the split is
+ *  the whole of issue #96: the lines sit PITCH_PX CSS pixels apart and each is
+ *  LINE_PX FRAMEBUFFER pixels across, on every cut face in the scene and at
+ *  every zoom. The shader is where they are applied — see `HATCH`.
  *
- *  FRAMEBUFFER AND NOT CSS PIXELS, which is the one thing to know about the
- *  numbers: on a 2x display the hatch comes out at half the CSS size, four CSS
- *  pixels apart and three quarters of one wide. That is deliberate and not an
- *  oversight to correct by multiplying by `devicePixelRatio` — a pixel and a
- *  half OF THE FRAMEBUFFER is what reads as a drawn hairline, while the same
- *  1.5 taken as CSS pixels would be three device pixels on a retina screen and
- *  read as a band. */
+ *  WHY NOT ONE UNIT FOR BOTH, which is what this was and what made the hatch
+ *  read as scanner noise rather than as lines. The library renders at
+ *  `renderer.setPixelRatio(window.devicePixelRatio)`, so a period of 8
+ *  FRAMEBUFFER pixels is four CSS pixels on a 2x display, with a line three
+ *  quarters of a CSS pixel wide inside it — that is grain, and on a close-up it
+ *  fills the screen with it. The two numbers answer different questions:
+ *
+ *    * the DISTANCE BETWEEN LINES is legibility, and what the reader perceives
+ *      is CSS pixels, so the period is `PITCH_PX * devicePixelRatio`
+ *      framebuffer pixels (`hatchPitchPx`) and comes out 8 CSS pixels wide on
+ *      every display;
+ *    * the WIDTH is ink, and stays framebuffer: a pixel and a half OF THE
+ *      FRAMEBUFFER is what reads as a drawn hairline, while the same 1.5 taken
+ *      as CSS pixels would be three device pixels on a retina screen and read
+ *      as a band — which is the band this fix must not re-create while widening
+ *      the spacing. */
 const PITCH_PX = 8.0;
 const LINE_PX = 1.5;
+
+/** The anti-aliasing band, also IN FRAMEBUFFER PIXELS and for the same reason as
+ *  LINE_PX: a transition of about one pixel in total, half a pixel each side of
+ *  a line's edge. See `HALF_AA_PX` for what the shader is handed. */
+const AA_PX = 1.0;
 
 /** The set every part's line direction is drawn from, in DEGREES, as the
  *  direction the lines RUN in the cap quad's uv plane. Six slopes covering the
@@ -121,30 +139,45 @@ function mix(h) {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
-/** Half a line's width, IN PERIOD UNITS, which is what the shader counts in:
- *  the lines cover 2 x this. Derived from the two pixel constants rather than
- *  typed, so the line stays LINE_PX wide if the pitch is ever retuned. */
-const HALF_WIDTH = LINE_PX / 2 / PITCH_PX;
-
-/** Half the anti-aliasing band, in the same period units: a transition of about
- *  ONE PIXEL in total, half a pixel each side of the edge. One period is
- *  PITCH_PX pixels, so a pixel is `1 / PITCH_PX` of one.
+/** Half a line and half its anti-aliasing band, IN FRAMEBUFFER PIXELS, spelled
+ *  as GLSL float literals: the shader counts in PERIOD units and divides each of
+ *  these by the pitch uniform to get there.
+ *
+ *  THE DIVISION IS THE SHADER'S, and that is the point rather than a detail.
+ *  These were `LINE_PX / 2 / PITCH_PX` and `0.5 / PITCH_PX`, computed here as
+ *  fractions of the period, which was fine while the period was a constant. It
+ *  is `PITCH_PX * devicePixelRatio` now (see PITCH_PX), so a fraction taken
+ *  against the old constant would leave the line and the band at a fixed share
+ *  of a period that GREW with the ratio — the line widening from 1.5 framebuffer
+ *  pixels to 3 on a 2x display, which is exactly the band the split exists to
+ *  avoid. Dividing by the same uniform the period comes from keeps all three in
+ *  step by construction, at whatever ratio.
  *
  *  RETUNED FOR A THIN LINE, not carried over. The band this replaced was
  *  `fwidth(hatchS)` on each side — two pixels across a line that is now 1.5
  *  wide, which leaves no fully inked middle at all and washes the whole hatch
  *  into an even grey. That is the failure to watch for if these numbers move:
  *  it looks like a colour choice rather than a bug. */
-const AA_HALF = 0.5 / PITCH_PX;
+const HALF_LINE_PX = (LINE_PX / 2).toFixed(4);
+const HALF_AA_PX = (AA_PX / 2).toFixed(4);
 
-/** The hatch's four uniforms, declared at global scope just ahead of three.js's
+/** The hatch's five uniforms, declared at global scope just ahead of three.js's
  *  own — see UNIFORM_ANCHOR. Plain `float`s and nothing structured, because no
- *  THREE constructor is reachable from this module to build a Vector2 with. */
+ *  THREE constructor is reachable from this module to build a Vector2 with.
+ *
+ *  `hatchPitch` is the one that is neither per part nor constant: it is the
+ *  period in framebuffer pixels, which depends on the display the canvas is on
+ *  (see `hatchPitchPx`). A UNIFORM and not a number baked into `HATCH`, because
+ *  `HATCH` has to stay one module-level string — three.js keys its program cache
+ *  off `onBeforeCompile.toString()`, and a source that varied with the display
+ *  would mean a second compiled program, or worse, one program silently shared
+ *  by caps that wanted different ones. See `hatchShader`. */
 const HATCH_UNIFORMS = `
 uniform float hatchDirX;
 uniform float hatchDirY;
 uniform float hatchPhase;
 uniform float hatchOn;
+uniform float hatchPitch;
 `;
 
 /**
@@ -155,16 +188,25 @@ uniform float hatchOn;
  * degrees because the stripes are the LEVEL SETS of `dot(p, dir)` and so run
  * perpendicular to it — and the phase in as `hatchPhase`. Those two are per
  * part and are the only per-part numbers there are; see `capUniforms` for where
- * they come from. The pitch is not among them: it is PITCH_PX, one constant for
- * the whole scene.
+ * they come from. The pitch is not among them: `hatchPitch` is one number for
+ * the whole scene, PITCH_PX CSS pixels expressed in framebuffer ones — see
+ * `hatchPitchPx`, which is where the display's density enters.
  *
- * THE PITCH IS COUNTED IN FRAMEBUFFER PIXELS, and the screen-space gradient of
- * `hatchUv` is the whole of that measure. `hatchUv` is a distance in the plane
- * of the cut; the LENGTH of `vec2(dFdx, dFdy)` of it is how much of that
+ * EVERY DISTANCE BELOW IS IN FRAMEBUFFER PIXELS, and the screen-space gradient
+ * of `hatchUv` is the whole of that measure. `hatchUv` is a distance in the
+ * plane of the cut; the LENGTH of `vec2(dFdx, dFdy)` of it is how much of that
  * distance one pixel covers ACROSS THE STRIPES; so their ratio is that distance
  * in pixels. `cap.size`, the part's bounding box and the camera's zoom all
  * cancel out of the ratio — which is why nothing outside this shader needs to
  * know any of them, and why turning the wheel does not change the density.
+ *
+ * `hatchHalf` AND `hatchAa` ARE DIVIDED BY THE SAME UNIFORM the period is, and
+ * that is what keeps the ink at 1.5 framebuffer pixels while the SPACING follows
+ * the display: they are pixel counts here (HALF_LINE_PX, HALF_AA_PX) turned into
+ * the period units `hatchF` is measured in, so a period twice as wide makes them
+ * half the fraction of it and the same number of pixels. Writing them as
+ * literal fractions of a period, which is what this did before issue #96, would
+ * widen the line along with the spacing and trade the grain for a band.
  *
  * `length` AND NOT `fwidth`, which is the trap this spent a review on: `fwidth`
  * is `abs(dFdx) + abs(dFdy)`, the L1 sum and not the length, so it runs from
@@ -200,8 +242,8 @@ uniform float hatchOn;
  * written here is in the working (linear) space exactly like `diffuse` and goes
  * out through the same conversions as the rest of the scene.
  *
- * THE ANTI-ALIASING IS THE SMOOTHSTEP'S BAND AND NOTHING ELSE — AA_HALF, about
- * a pixel in total. There is no moire crossfade any more: a period pinned at
+ * THE ANTI-ALIASING IS THE SMOOTHSTEP'S BAND AND NOTHING ELSE — AA_PX, about a
+ * pixel in total. There is no moire crossfade any more: a period pinned at
  * PITCH_PX pixels cannot shrink towards a pixel however small the part is on
  * screen, so the case that code existed for stopped being reachable with the
  * pitch it followed.
@@ -220,10 +262,12 @@ const HATCH = `
     float hatchUv = dot(vUv - 0.5, vec2(hatchDirX, hatchDirY));
     float hatchPx = hatchUv
                     / max(length(vec2(dFdx(hatchUv), dFdy(hatchUv))), 1e-8);
-    float hatchS = hatchPx / ${PITCH_PX.toFixed(1)} + hatchPhase;
+    float hatchS = hatchPx / hatchPitch + hatchPhase;
     float hatchF = abs(fract(hatchS) - 0.5);
-    float hatchCov = (1.0 - smoothstep(${HALF_WIDTH} - ${AA_HALF},
-                                       ${HALF_WIDTH} + ${AA_HALF},
+    float hatchHalf = ${HALF_LINE_PX} / hatchPitch;
+    float hatchAa = ${HALF_AA_PX} / hatchPitch;
+    float hatchCov = (1.0 - smoothstep(hatchHalf - hatchAa,
+                                       hatchHalf + hatchAa,
                                        hatchF)) * hatchOn;
     // The ink is the part's own colour taken further, so the hatch says the
     // same thing about the material as the fill does. A part whose colour is
@@ -234,6 +278,32 @@ const HATCH = `
     gl_FragColor = vec4(mix(diffuse, hatchInk, hatchCov), diffuseColor.a);
   }
 `;
+
+/**
+ * The period, in FRAMEBUFFER pixels — PITCH_PX CSS pixels converted through the
+ * density of whatever display the canvas is on.
+ *
+ * The conversion is needed because the library renders at
+ * `renderer.setPixelRatio(window.devicePixelRatio)` (its `Viewer` constructor),
+ * so the pixels the shader's derivatives count are framebuffer ones while the
+ * spacing the reader judges is in CSS ones. See PITCH_PX for why the width does
+ * NOT go through here.
+ *
+ * DEFENSIVE ONLY ABOUT THE NUMBER: a missing or zero ratio is 1, and nothing
+ * else is read or clamped — this must track what `setPixelRatio` was actually
+ * given, so a ceiling here would silently halve the spacing on a 3x display.
+ *
+ * SAMPLED WHEN A UNIFORM IS WRITTEN, AND NOT TRACKED. A window dragged between
+ * displays of different densities keeps the old period until the next render or
+ * the next flip of the checkbox, both of which rewrite the uniform. That is
+ * accepted deliberately: a `matchMedia` listener, a resize hook or any other
+ * live-tracking machinery would be permanent apparatus for a case that corrects
+ * itself the moment the reader does anything at all.
+ */
+function hatchPitchPx() {
+  const ratio = window.devicePixelRatio;
+  return PITCH_PX * (ratio > 0 ? ratio : 1);
+}
 
 /**
  * The patch, as ONE module-level function shared by every cap material.
@@ -255,7 +325,12 @@ const HATCH = `
  * `shader` object is kept on `material.userData.hatchShader` so `setCutHatch`
  * can flip a value in place later, without a recompile.
  *
- * DECLARED, NOT JUST READ: the four identifiers exist for the GLSL compiler
+ * THE PITCH IS SET HERE TOO, and it is the one uniform that comes from neither
+ * the material nor a constant: `hatchPitchPx()` reads the display's density at
+ * compile time. Set at PATCH time and not only from `setCutHatch`, so a scene
+ * that renders once and is never toggled is already right.
+ *
+ * DECLARED, NOT JUST READ: the five identifiers exist for the GLSL compiler
  * only because `HATCH_UNIFORMS` is spliced in ahead of three.js's own uniform
  * block. Losing that splice is a shader that fails to compile — loud in the
  * console, and the suite holds the anchor to the vendored bundle for it.
@@ -267,6 +342,7 @@ export function hatchShader(shader) {
     shader.uniforms.hatchDirY = { value: p.dirY };
     shader.uniforms.hatchPhase = { value: p.phase };
     shader.uniforms.hatchOn = { value: p.on };
+    shader.uniforms.hatchPitch = { value: hatchPitchPx() };
     this.userData.hatchShader = shader;
   }
   shader.fragmentShader = shader.fragmentShader
@@ -320,11 +396,11 @@ function patchCapMaterial(material, params) {
  * The hatch parameters for every cap of the part named `key`.
  *
  * ANGLE AND PHASE, AND NOTHING ELSE — which is all that is left of the per-part
- * arithmetic now that the pitch is one constant counted in pixels by the shader
- * (see `HATCH`). Nothing here reads the cap, the clipping region's size or the
- * part's bounding box, and nothing should start to: a number derived from any
- * of those is a pitch that follows the part again, which is the decision the
- * header records the owner reversing.
+ * arithmetic now that the pitch is one number for the whole scene, counted in
+ * pixels by the shader (see `HATCH`). Nothing here reads the cap, the clipping
+ * region's size or the part's bounding box, and nothing should start to: a
+ * number derived from any of those is a pitch that follows the part again,
+ * which is the decision the header records the owner reversing.
  *
  * Both come from the part's key alone, through one mixed hash, so they are
  * stable across revisions and independent of where the part sits. The slope is
@@ -414,6 +490,13 @@ export function hatchSectionCaps(g, on = true) {
  * uniform. Caps the scene does not have, or materials not patched, are skipped
  * quietly — this runs on every state event, and a scene with no cut in it has
  * nothing to flip.
+ *
+ * THE PITCH RIDES ALONG on the same walk rather than getting a writer of its
+ * own. It is not part of the toggle and does not belong to `userData.hatch` —
+ * it is not per part — but this is the one path that already reaches every LIVE
+ * shader, and re-reading the display's density here is what lets a window moved
+ * to another display recover on the next flip of the checkbox. See
+ * `hatchPitchPx` for why nothing watches for that moment.
  */
 export function setCutHatch(g, on) {
   const units = g && g.clipping && g.clipping._capUnits;
@@ -428,10 +511,11 @@ export function setCutHatch(g, on) {
       const ud = m && m.userData;
       if (!m || m.onBeforeCompile !== hatchShader || !ud || !ud.hatch) continue;
       ud.hatch.on = flag;
-      const live = ud.hatchShader && ud.hatchShader.uniforms
-        && ud.hatchShader.uniforms.hatchOn;
+      const uniforms = ud.hatchShader && ud.hatchShader.uniforms;
+      const live = uniforms && uniforms.hatchOn;
       if (live) {
         live.value = flag;
+        if (uniforms.hatchPitch) uniforms.hatchPitch.value = hatchPitchPx();
         flipped += 1;
       }
     }
@@ -473,8 +557,10 @@ export function safeHatch(g, on) {
  *  already silently not happened, and the page renders perfectly without it. */
 export const hatchMarker = MARKER;
 
-/** The pitch and the line width, in framebuffer pixels, exported for the suite:
- *  the pitch tests read the two numbers back out of the GLSL the patch splices,
- *  which is the only place they are applied. */
+/** The three measurements, exported for the suite — the pitch in CSS pixels, the
+ *  line and its band in framebuffer ones (see PITCH_PX for why the units
+ *  differ). The pitch tests read the numbers back out of the uniform the patch
+ *  writes and the GLSL it splices, which is where all three are applied. */
 export const HATCH_PITCH_PX = PITCH_PX;
 export const HATCH_LINE_PX = LINE_PX;
+export const HATCH_AA_PX = AA_PX;

@@ -335,8 +335,10 @@ export function fakeCapMaterial() {
  *  `updateMatrixWorld` scales to `0.5 * size` — so one uv unit ACROSS the cap
  *  quad is `size` world units. `size` is the clipping region's size and every
  *  cap of a scene carries the same one. Nothing in `hatch.js` reads it any
- *  more: the pitch is counted in framebuffer pixels, in which that factor
- *  cancels, and the hatch suite varies `size` exactly to prove it cancels.
+ *  more: the pitch is counted in PIXELS — CSS ones now, framebuffer ones for
+ *  the line and its band, and the difference does not matter here — and a
+ *  measure in pixels of any kind is what makes that factor cancel. The hatch
+ *  suite varies `size` exactly to prove it cancels.
  *
  *  The `plane` is the `CenteredPlane` the constructor was handed, and its
  *  `normal` is a THREE `Vector3` — read as `.x/.y/.z`, NOT as the array the

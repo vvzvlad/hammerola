@@ -19,17 +19,22 @@
 //     drifting between revisions — none of which draws a word from any console;
 //   * the pitch starting to follow the part again, which is a decision the
 //     owner has already reversed once and which no console would mention;
+//   * the pitch losing the display's density (issue #96) — eight FRAMEBUFFER
+//     pixels is four CSS ones on a retina screen, and lines four CSS pixels
+//     apart read as scanner grain rather than as a hatch — or the LINE picking
+//     that density up along with the pitch, which widens the hairline into a
+//     band and is exactly as quiet;
 //   * the checkbox unwiring itself, so toggling `cutHatch` stops reaching the
 //     caps at all.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  HATCH_LINE_PX, HATCH_PITCH_PX, HATCH_SLOPES, hatchMarker, hatchSectionCaps,
-  hatchShader, safeHatch, setCutHatch,
+  HATCH_AA_PX, HATCH_LINE_PX, HATCH_PITCH_PX, HATCH_SLOPES, hatchMarker,
+  hatchSectionCaps, hatchShader, safeHatch, setCutHatch,
 } from '../src/viewport/hatch.js'
 import { fakeCapMaterial, fakeCapUnits, fakeMatrix, fakeSolidObject } from './fakes.js'
 
@@ -60,12 +65,26 @@ const slopeOf = (hatch) =>
 
 /** Compile one patched material the way three.js would call the patch: with
  *  the material as `this` and a fresh parameters object. Returns the shader so
- *  a test can reach the live uniforms. */
+ *  a test can reach the live uniforms.
+ *
+ *  BOTH SPLICE POINTS are in the stub source — the uniform anchor and the
+ *  marker — so what comes back carries the hatch's GLSL as well as its uniform
+ *  values. The pitch tests need the two together: the period is a uniform now
+ *  and the width a literal in the source, and only reading them side by side
+ *  says what either measures. */
 const compile = (material) => {
-  const shader = { uniforms: {}, fragmentShader: 'uniform vec3 diffuse;\n' }
+  const shader = {
+    uniforms: {},
+    fragmentShader: `uniform vec3 diffuse;\n${hatchMarker}\n`,
+  }
   hatchShader.call(material, shader)
   return shader
 }
+
+// The display's density is a GLOBAL the module reads at patch time, and the
+// pitch tests below stub it. Restored for everyone: a leaked 3x would move the
+// period under every test in this file that compiles anything.
+afterEach(() => { vi.unstubAllGlobals() })
 
 /** A file of this repository, read from `process.cwd()`.
  *
@@ -305,25 +324,112 @@ describe('one pitch for every cut face', () => {
     expect(shader.fragmentShader)
       .toMatch(/hatchUv\s*\/\s*max\(\s*length\(\s*vec2\(\s*dFdx\(\s*hatchUv\s*\)\s*,\s*dFdy\(\s*hatchUv\s*\)\s*\)\s*\)/)
     expect(shader.fragmentShader).not.toMatch(/fwidth/)
-    // ...and those pixels are counted in the exported pitch.
-    expect(shader.fragmentShader).toContain(`/ ${HATCH_PITCH_PX.toFixed(1)}`)
+    // ...and those pixels are divided into periods by the UNIFORM and not by a
+    // literal, which is what lets the period depend on the display. Baking the
+    // number back into the source would put the module's one `HATCH` string —
+    // and so three.js's program cache key, which is
+    // `onBeforeCompile.toString()` — at the mercy of the monitor.
+    expect(shader.fragmentShader)
+      .toMatch(/float hatchS = hatchPx \/ hatchPitch \+ hatchPhase;/)
+  })
+
+  /** The three measurements one compiled shader is really cut at, IN FRAMEBUFFER
+   *  PIXELS — the units the GPU's derivatives count in — worked out of it the
+   *  way the GPU would.
+   *
+   *  The period is the uniform the patch wrote. The line and the band are
+   *  literals the source divides by that SAME uniform, so each is a fraction of
+   *  a period whose pixel size is just the literal doubled, whatever the period
+   *  happens to be. That cancellation is the fix: it is what lets the spacing
+   *  follow the display while the ink does not. */
+  const inkOf = (shader) => {
+    const source = shader.fragmentShader
+    const cut = source.match(
+      /float hatchHalf = ([\d.]+) \/ hatchPitch;\s*float hatchAa = ([\d.]+) \/ hatchPitch;/)
+    expect(cut).not.toBeNull()
+    // ...and the smoothstep is cut at those two and at nothing else, so the
+    // numbers just read really are the ones the coverage comes out of.
+    expect(source).toContain('smoothstep(hatchHalf - hatchAa,')
+    expect(source).toContain('hatchHalf + hatchAa,')
+    return {
+      pitch: shader.uniforms.hatchPitch.value,
+      line: 2 * Number(cut[1]),
+      band: 2 * Number(cut[2]),
+    }
+  }
+
+  /** One cap of one part, patched and compiled on a display of that density. */
+  const inkAt = (ratio) => {
+    vi.stubGlobal('devicePixelRatio', ratio)
+    const g = fakeInternals(['|model|lid'], { planes: [[0, 0, 1]] })
+    hatchSectionCaps(g)
+    return inkOf(compile(capsOf(g)[0]))
+  }
+
+  it('spaces the lines PITCH_PX CSS pixels apart on every display', () => {
+    // ISSUE #96, and the reason the period is a uniform at all. The library
+    // renders at `setPixelRatio(window.devicePixelRatio)`, so the pixels the
+    // shader's derivatives count are FRAMEBUFFER ones: a period pinned at 8 of
+    // those is four CSS pixels on a retina screen, and four CSS pixels between
+    // lines three quarters of one wide is scanner grain rather than hatching —
+    // worst on a close-up, where it fills the screen. What a reader judges the
+    // spacing in is CSS pixels, so the period follows the density.
+    for (const ratio of [1, 2, 3]) {
+      expect(inkAt(ratio).pitch).toBeCloseTo(HATCH_PITCH_PX * ratio, 12)
+    }
+  })
+
+  it('reads a missing or zero density as 1, and nothing further', () => {
+    // The only defensiveness there is about the number. No ceiling either: the
+    // pitch has to track what `setPixelRatio` was actually handed, and clamping
+    // it at 2 would quietly halve the spacing on a 3x display.
+    for (const ratio of [undefined, 0]) {
+      expect(inkAt(ratio).pitch).toBeCloseTo(HATCH_PITCH_PX, 12)
+    }
   })
 
   it('draws the line LINE_PX wide and softens it over about one pixel', () => {
-    // The numbers the shader is cut at are in PERIOD units — one period is
-    // PITCH_PX pixels — so they are read back out of the source and returned to
-    // pixels here rather than restated. The band matters as much as the width:
+    // FRAMEBUFFER PIXELS, and pointedly not scaled with the period above — the
+    // half of issue #96 the fix must not overshoot. These two used to be
+    // written as fractions of a period that was itself a constant; a period
+    // that grows with the density would have carried them along, widening the
+    // hairline from 1.5 framebuffer pixels to 3 on a retina screen. A band
+    // instead of a grain is not a fix. The band matters as much as the width:
     // the two-pixel `fwidth` band this replaced is wider than the line itself,
     // and a line with no inked middle is an even grey wash, which reads as a
     // colour decision rather than as a bug.
-    const shader = { fragmentShader: hatchMarker }
-    hatchShader(shader)
-    const cut = shader.fragmentShader.match(/smoothstep\(([\d.]+) - ([\d.]+),/)
-    expect(cut).not.toBeNull()
-    const [halfWidth, halfBand] = [Number(cut[1]), Number(cut[2])]
-    expect(2 * halfWidth * HATCH_PITCH_PX).toBeCloseTo(HATCH_LINE_PX, 12)
-    expect(2 * halfBand * HATCH_PITCH_PX).toBeCloseTo(1, 12)
-    expect(halfBand).toBeLessThan(halfWidth)
+    for (const ratio of [1, 2, 3]) {
+      const ink = inkAt(ratio)
+      expect(ink.line).toBeCloseTo(HATCH_LINE_PX, 12)
+      expect(ink.band).toBeCloseTo(HATCH_AA_PX, 12)
+      expect(ink.band).toBeLessThan(ink.line)   // a line with an inked middle
+    }
+  })
+
+  it('keeps all three across a `setCutHatch` toggle', () => {
+    // The checkbox writes the live uniforms, so it is the one path that could
+    // leave a cap hatching at the wrong period — and the path that repairs one.
+    vi.stubGlobal('devicePixelRatio', 2)
+    const g = fakeInternals(['|model|lid'], { planes: [[0, 0, 1]] })
+    hatchSectionCaps(g)
+    const shader = compile(capsOf(g)[0])
+    expect(inkOf(shader)).toEqual({
+      pitch: HATCH_PITCH_PX * 2, line: HATCH_LINE_PX, band: HATCH_AA_PX,
+    })
+    setCutHatch(g, false)
+    setCutHatch(g, true)
+    expect(shader.uniforms.hatchOn.value).toBe(1)
+    expect(inkOf(shader)).toEqual({
+      pitch: HATCH_PITCH_PX * 2, line: HATCH_LINE_PX, band: HATCH_AA_PX,
+    })
+    // ...and a window dragged to a display of another density recovers HERE,
+    // on the next toggle or the next render, because those are what rewrite the
+    // uniform. Nothing watches for the move itself: a `matchMedia` listener
+    // would be permanent machinery for a case that corrects itself the moment
+    // the reader does anything at all.
+    vi.stubGlobal('devicePixelRatio', 1)
+    setCutHatch(g, true)
+    expect(inkOf(shader).pitch).toBeCloseTo(HATCH_PITCH_PX, 12)
   })
 })
 
@@ -448,7 +554,7 @@ describe('hatchShader', () => {
   })
 
   it('declares every uniform it reads, at global scope ahead of main', () => {
-    // The four identifiers exist for the GLSL compiler only because the
+    // The five identifiers exist for the GLSL compiler only because the
     // declarations are spliced in beside three.js's own uniform block. Losing
     // that splice is a shader that fails to compile — and a cut face that
     // renders as an error where the fill used to be.
@@ -456,7 +562,8 @@ describe('hatchShader', () => {
     material.userData.hatch = { dirX: 1, dirY: 0, phase: 0.5, on: 1 }
     const shader = { uniforms: {}, fragmentShader: 'uniform vec3 diffuse;\n' + TAIL }
     hatchShader.call(material, shader)
-    for (const name of ['hatchDirX', 'hatchDirY', 'hatchPhase', 'hatchOn']) {
+    for (const name of ['hatchDirX', 'hatchDirY', 'hatchPhase', 'hatchOn',
+                        'hatchPitch']) {
       const declaration = shader.fragmentShader.indexOf(`uniform float ${name};`)
       expect(declaration).toBeGreaterThan(-1)
       // The marker sits inside `main()`, so ahead of it is what makes these
