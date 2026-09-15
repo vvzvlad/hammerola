@@ -401,6 +401,36 @@ describe('sectionOutline', () => {
     expect(solid.edges.material.linewidth).toBe(1)
   })
 
+  it('draws above every face and edge the library orders, on every solid', () => {
+    // WHAT THIS IS FOR. The whole model lives in the transparent pass, which
+    // sorts by `renderOrder` before anything else, and the library hands out
+    // 999 to its edges always and to a part's faces whenever that part is
+    // translucent. A contour left at the default 0 draws first and the
+    // translucent faces — which write no depth — blend over it, which is how a
+    // contour came to be missing on some solids and crisp on others in the same
+    // frame. The number therefore has to sit ABOVE the library's, not level
+    // with it: inside one bucket the order is decided per object by depth and
+    // turns over as the model turns.
+    const wall = fakeShapeSolid('S|wall', {
+      positions: boxPositions(40, 30, 2), index: CUBE_INDEX,
+    })
+    const slab = fakeShapeSolid('S|slab', {
+      positions: boxPositions(40, 33.8, 50.8), index: CUBE_INDEX,
+    })
+    const { vp, g } = solidScene({
+      groups: { 'S|wall': wall, 'S|slab': slab },
+    })
+    sectionOutline(vp, g, [1, 0, 0], -20) // the plane x = 20, through both
+    for (const solid of [wall, slab]) {
+      expect(outlineOf(solid).renderOrder).toBeGreaterThan(999)
+      // THE OTHER HALF OF THAT NUMBER BEING SAFE. Drawn last, the contour is
+      // held behind an opaque part standing in front of it by the depth test
+      // and by nothing else — turn it off to make the contour "always visible"
+      // and it starts showing through the model.
+      expect(outlineOf(solid).material.depthTest).toBe(true)
+    }
+  })
+
   it('gives every cut face the same contour, whatever size the face is', () => {
     // THE CLAIM THE WIDTH IS. A 2 mm wall, a 20 mm post and a 50.8 x 33.8 slab
     // standing side by side, cut by one plane across all three: the faces they
@@ -1013,6 +1043,18 @@ describe('the vendored bundle still says what the outline rests on', () => {
   it('keeps the resolution in step with the canvas at render time', () => {
     expect(classBody(bundle(), 'class LineSegments2 extends Mesh'))
       .toContain('resolution.value.set( _viewport.z, _viewport.w )')
+  })
+
+  it('orders its own edges at 999 and a translucent part\'s faces with them', () => {
+    // The two numbers the contour's own `renderOrder` has to clear, read off
+    // the bundle rather than remembered. The faces one is CONDITIONAL — that
+    // condition is the whole per-solid mechanism: an opaque part leaves its
+    // faces at 0, a translucent one lifts them over everything ordered lower.
+    const source = bundle()
+    expect(source).toContain('edges.renderOrder = 999;')
+    const at = source.indexOf('back.renderOrder = 999;')
+    expect(at, 'the faces are no longer ordered').toBeGreaterThan(-1)
+    expect(source.slice(at - 200, at)).toContain('if (alpha < 1.0) {')
   })
 
   it('reserves the "clipping" child-name prefix for its own stencils', () => {

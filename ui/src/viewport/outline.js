@@ -445,6 +445,32 @@ export function sectionOutline(vp, g, normal, value) {
       outline = new classes.LineSegments2(
         lineGeometry, outlineMaterial(classes, g));
       outline.name = OUTLINE_NAME;
+      // LAST IN THE FRAME, above every face and every edge the library draws.
+      //
+      // Every material the library gives a SHAPE — front, back and edges — is
+      // `transparent: true`, so the model itself is sorted in the transparent
+      // pass by `renderOrder` first. (The cut's own cap is not: it is opaque,
+      // and an opaque pass is drawn before the whole transparent one, which is
+      // why the contour reads over the cap no matter what this number says.)
+      // The library puts its own edges at 999 unconditionally, and a part's
+      // FACES at 999 too — but only when the part is translucent. A contour
+      // left at the default 0 therefore draws before every translucent face in
+      // the scene, and those faces, writing no depth of their own, blend
+      // straight over it: a dark line under a half-transparent lid came out
+      // pale blue and under two layers of one came out as nothing at all. That
+      // is what "the contour is on some faces and missing on others" was — not
+      // a contour that failed to build. Measured on the owner's model: the
+      // lines this recovers are exactly the ones that ran under translucent
+      // parts, and the opaque latch beside them never lost its own.
+      //
+      // 1000 and not 999: inside one `renderOrder` bucket the order comes from
+      // the depth of each object's bounding-sphere centre, which is decided per
+      // solid and changes as the model turns — the same lottery in a narrower
+      // room. Above the bucket there is no lottery. It is also the library's own
+      // spelling of this: its highlight points carry 1000 and the comment beside
+      // them reads "after faces/edges". Depth testing still holds, so an opaque
+      // part in front hides the contour as it always did.
+      outline.renderOrder = 1000;
       // The mark `outlineChild` finds it by. Written here and nowhere else.
       outline.userData = { ...(outline.userData || {}), [OUTLINE_NAME]: true };
       // BORN MATCHING ITS PART, read off the part rather than off a list. The
