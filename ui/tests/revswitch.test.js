@@ -1446,7 +1446,8 @@ describe('what does not survive', () => {
     const c = component({
       sel: '/model/plate', selName: 'plate',
       menu: { id: '/model/plate', x: 10, y: 20 },
-      revOpen: true, dlOpen: true, secPop: true, tokenPop: true, tokenDraft: 'x',
+      revOpen: true, dlOpen: true, viewsOpen: true, secPop: true,
+      tokenPop: true, tokenDraft: 'x',
       notePop: 'plate', noteDraft: 'half a note',
       measure: { text: '3.00 mm', note: '', full: '3.00 mm' },
       moved: { id: '/model/plate', name: 'plate', mag: 2 },
@@ -1460,6 +1461,7 @@ describe('what does not survive', () => {
     expect(c.state.menu).toBeNull()
     expect(c.state.revOpen).toBe(false)
     expect(c.state.dlOpen).toBe(false)
+    expect(c.state.viewsOpen).toBe(false)
     expect(c.state.secPop).toBe(false)
     expect(c.state.tokenPop).toBe(false)
     expect(c.state.notePop).toBeNull()
@@ -1682,7 +1684,8 @@ describe('taking the banner\'s build', () => {
     const c = offered({
       sel: '/model/plate', selName: 'plate',
       menu: { id: '/model/plate', x: 10, y: 20 },
-      revOpen: true, dlOpen: true, secPop: true, tokenPop: true, tokenDraft: 'x',
+      revOpen: true, dlOpen: true, viewsOpen: true, secPop: true,
+      tokenPop: true, tokenDraft: 'x',
       notePop: 'plate', noteDraft: 'half a note',
       measure: { text: '3.00 mm', note: '', full: '3.00 mm' },
       moved: { id: '/model/plate', name: 'plate', mag: 2 },
@@ -1700,6 +1703,7 @@ describe('taking the banner\'s build', () => {
     expect(c.state.menu).toBeNull()
     expect(c.state.revOpen).toBe(false)
     expect(c.state.dlOpen).toBe(false)
+    expect(c.state.viewsOpen).toBe(false)
     expect(c.state.secPop).toBe(false)
     expect(c.state.tokenPop).toBe(false)
     expect(c.state.notePop).toBeNull()
