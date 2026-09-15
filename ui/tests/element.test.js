@@ -1003,13 +1003,15 @@ describe('the overlay laid over the model', () => {
   })
 
   it('tells its own bodies from the model\'s parts when the interface asks', async () => {
-    // WHAT THE INTERFACE CANNOT WORK OUT FOR ITSELF. It refuses the Move and
-    // Comment tools a body of the sketch — a task filed in the build's terms
-    // about a body that is in no build — and all either tool carries is a path.
-    // The group's name is minted HERE, against the model's own parts, so a model
-    // that publishes a `sketch` of its own is exactly the case a `sketch|sketch2`
-    // match over paths would answer wrongly: `/Group/sketch/post` is that
-    // model's own part, and the overlay is next door under `sketch2`.
+    // WHAT THE INTERFACE CANNOT WORK OUT FOR ITSELF. It refuses the Comment tool
+    // a body of the sketch — a task filed in the build's terms about a body that
+    // is in no build — and reads the same answer to tell a drag of a mock, which
+    // edits the panel's document, from a drag of a part, which files one. All
+    // either tool carries is a path. The group's name is minted HERE, against
+    // the model's own parts, so a model that publishes a `sketch` of its own is
+    // exactly the case a `sketch|sketch2` match over paths would answer wrongly:
+    // `/Group/sketch/post` is that model's own part, and the overlay is next
+    // door under `sketch2`.
     const { vp } = staging()
     await vp.show(model('sketch'), { view: 'a', token: 0 })
 
@@ -1023,16 +1025,69 @@ describe('the overlay laid over the model', () => {
     expect(vp.isOverlay('/Group/post')).toBe(false)
     // THE GROUP ITSELF COUNTS, and "nothing picks it in the scene" is only half
     // the doors: it is a ROW OF THE TREE, a row is selected with the mouse, and
-    // the selection the interface sends is the node's own id. Selected, it moves
-    // the whole mock assembly under one drag and heads a measurement's comment
-    // `sketch` — the same task about a body in no build that one of its children
-    // would be.
+    // the selection the interface sends is the node's own id. Selected, it heads
+    // a measurement's comment `sketch` — the same task about a body in no build
+    // that one of its children would be.
     expect(vp.isOverlay('/Group/sketch2')).toBe(true)
     // AND THE BOUNDARY IT SITS ON, because the lazy spelling of the line above
     // — `startsWith(at)`, no separator and no equality — passes every other
     // assertion in this file while claiming a model part honestly called
-    // `sketch2x` for the overlay, and refusing it the Move tool.
+    // `sketch2x` for the overlay, and dragging it as a body of the sketch.
     expect(vp.isOverlay('/Group/sketch2x')).toBe(false)
+  })
+
+  it('names the body a path is, which is what the panel can find a node by', async () => {
+    // ONE SEGMENT FURTHER IN than the question above, and the Move tool is what
+    // asks it: a drag of a mock reaches the panel as `hmr:sketchmove` naming the
+    // BODY, because the sketch document holds bodies by name and has no paths in
+    // it at all. The name is the part's own `name` in the payload the panel
+    // built, and the group it hangs under is minted here — so this is the only
+    // side that can spell the pair.
+    const { vp } = staging()
+    await vp.show(model('sketch'), { view: 'a', token: 0 })
+    await vp.setOverlay([body('result'), body('bore')])
+
+    expect(vp.overlayBody('/Group/sketch2/result')).toBe('result')
+    expect(vp.overlayBody('/Group/sketch2/bore')).toBe('bore')
+    // Nothing of the model's is a body of it, whatever it is called.
+    expect(vp.overlayBody('/Group/sketch/post')).toBeNull()
+    // AND NEITHER IS THE GROUP, which is the decision rather than the edge case:
+    // it is a row of the tree and can be selected and dragged from empty space,
+    // but it stands for no node — a report naming `sketch2` would move nothing
+    // and leave the mock displaced with the document saying otherwise. Refused
+    // at the press instead (viewport/tools.js).
+    expect(vp.overlayBody('/Group/sketch2')).toBeNull()
+  })
+
+  it('is holding the NEW document by the time a concluded gesture reports', async () => {
+    // WHAT THE DEFERRED REPORT IN `tools.js` LEANS ON, and the reason it is
+    // deferred at all. `show()` calls `endGesture()` — the way a drag the reader
+    // has not let go of is ended when a build lands under it — AFTER its only
+    // `await` and BEFORE `this.payload = shapes`, which is deliberately the last
+    // thing a successful render does. A sketch drag's report comes back in
+    // through `setOverlay` and `restage()`, and `restage()` renders
+    // `this.payload`: raised synchronously from in there it would compose the
+    // moved body into the document being REPLACED, wait on its own `await` while
+    // this render finished, and then repaint the previous build and write its
+    // payload back — under the same load token, so nothing notices, and the
+    // reader is left on the old build with no reload coming.
+    //
+    // ONE MICROTASK IS THE WHOLE FIX, and this line is what makes it one: by the
+    // time a microtask queued from `endGesture` runs, the payload is the new
+    // build's. An `await` added between those two points would take that away
+    // silently.
+    const { vp } = staging()
+    await vp.show(model('plate'), { view: 'a', token: 0 })
+    await vp.setOverlay([body('result')])
+
+    let seen = 'nothing ran at all'
+    vp.endGesture = () => queueMicrotask(() => { seen = vp.payload })
+    const next = model('plate', 'post')
+
+    await vp.show(next, { view: 'a', token: 0 })
+    await Promise.resolve()
+
+    expect(seen).toBe(next)
   })
 
   it('is still on screen after the model under it has been fetched again', async () => {

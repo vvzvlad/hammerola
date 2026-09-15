@@ -68,6 +68,26 @@ export const EVENT_MEASURE = "hmr:measure";
 /** Up: a part was dragged; `delta` is the offset from where the build put it. */
 export const EVENT_MOVED = "hmr:moved";
 
+/** Up: a body of the SKETCH was dragged; `delta` is how far it went.
+ *
+ * ONE GESTURE, TWO MEANINGS, AND THIS IS THE SECOND ONE. Dragging a MODEL part
+ * is a statement to the agent: the interface raises a chip, files `partId` in
+ * the build's terms, and nothing in the model changes (`EVENT_MOVED`). A sketch
+ * body is the reader's OWN drawing, assembled in the panel out of numbers, so
+ * dragging it is an ordinary EDIT of that document — the panel adds `delta` to
+ * the body's `at` and re-stages, no chip rises and nothing is filed against
+ * anything. A flag on the event above would have put both meanings behind the
+ * one handler whose other half raises that chip.
+ *
+ * IT NAMES THE BODY AND CARRIES NO PATH. A path is the scene's spelling
+ * (`/<root>/sketch/bore`) and the sketch document has no paths in it at all, so
+ * the panel finds the node by the NAME the body is drawn under — which is the
+ * part's own `name` in the payload the panel built (ui/src/sketchgeom.js).
+ * `result` is the fused body and therefore every node at once; any other name is
+ * the one hole drawn translucent over it.
+ */
+export const EVENT_SKETCHMOVE = "hmr:sketchmove";
+
 /** Up: a point on the model was picked as a comment anchor. */
 export const EVENT_PLACE = "hmr:place";
 
@@ -106,7 +126,8 @@ export const EVENT_TOOL = "hmr:tool";
 /** Every name this module owns, for the tests and for a quick audit. */
 export const EVENTS_UP = [
   EVENT_PICK, EVENT_MENU, EVENT_FACE, EVENT_MEASURE, EVENT_MOVED,
-  EVENT_PLACE, EVENT_PIN, EVENT_MODEL, EVENT_ERROR, EVENT_TOOL,
+  EVENT_SKETCHMOVE, EVENT_PLACE, EVENT_PIN, EVENT_MODEL, EVENT_ERROR,
+  EVENT_TOOL,
 ];
 
 /**

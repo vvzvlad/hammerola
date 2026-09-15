@@ -35,7 +35,9 @@ vi.mock('../src/viewport/picking.js', async (importOriginal) => ({
 }))
 
 import { HmrViewport } from '../src/viewport/element.js'
-import { EVENT_FACE, EVENT_MENU, EVENT_MOVED, EVENT_PICK } from '../src/viewport/events.js'
+import {
+  EVENT_FACE, EVENT_MENU, EVENT_MOVED, EVENT_PICK, EVENT_SKETCHMOVE,
+} from '../src/viewport/events.js'
 import { projectPoint } from '../src/viewport/camera.js'
 import { internals } from '../src/viewport/internals.js'
 import { CLICK_PX } from '../src/viewport/options.js'
@@ -485,6 +487,35 @@ describe('where the section drag says the plane ended up', () => {
     expect(vp.state.cutOffset).toBeCloseTo(sectionOffset(vp), 9)
   })
 
+  it('is still DROPPED by the two endings that always dropped it', () => {
+    // `onCancel` — the platform claiming the pointer — and the leading
+    // `finish()` in `onDown`, a second button or finger coming down mid-drag.
+    // Both tear the listeners down and say nothing, which does leave
+    // `state.cutOffset` at the depth from before the drag while the plane stands
+    // somewhere else — the same staleness `endGesture` prevents, reached by a
+    // right-click. Making bodies of the sketch draggable put a `conclude` within
+    // reach of these two endings, and the CUT half was deliberately left out of
+    // it: answering `hmr:face` DISARMS the armed tool, so reporting here would
+    // start turning the cut tool off on an interrupted drag — a change to a tool
+    // this work was not about. If that staleness is ever taken on, it is its own
+    // change with its own reason, and this test is the one to flip.
+    const endings = {
+      'the pointer taken away': () => window.dispatchEvent(
+        new MouseEvent('pointercancel', {})),
+      'a second press': (vp) => rightDown(vp, [300, 100]),
+    }
+    for (const [what, interrupt] of Object.entries(endings)) {
+      const vp = cutting()
+      const before = vp.state.cutOffset
+      dragFrom(vp)
+
+      interrupt(vp)
+
+      expect(emitted(vp), `${what} announced the cut`).not.toContain(EVENT_FACE)
+      expect(vp.state.cutOffset).toBe(before)
+    }
+  })
+
   it('says nothing when the gesture never moved the plane', () => {
     // A press the reader has not dragged is a click, and a click that a swap
     // interrupts placed nothing. Announcing an offset there would report a depth
@@ -662,83 +693,265 @@ describe('what a drag with the move tool takes with it', () => {
   describe('a body the sketch panel staged over the model', () => {
     // A mock of the thing the model has to fit, assembled in the panel and
     // composed into the document (`staged()` in element.js). It is an ordinary
-    // group in `nestedGroup` and an ordinary pick target, so the move tool would
-    // drag it like any part — and it must not, because the page refuses to raise
-    // a chip about a body that is in no build, the chip is the only door onto
-    // putting a part back, and `restageMoves` would carry the offset it left
-    // through every re-stage the next edit in the panel causes.
+    // group in `nestedGroup` and an ordinary pick target, so the move tool drags
+    // it like any part — and what the drag MEANS is the whole subject here. A
+    // part of the build moved is a statement to the agent: a chip, and
+    // `hmr:moved` filing the path in the build's terms. A mock moved is the
+    // reader editing their OWN drawing, so it ends in `hmr:sketchmove` naming
+    // the body, and the panel writes the number into the `at` fields it is
+    // already showing.
     //
-    // REFUSED AT THE PRESS, which is what these tests are really about: the same
-    // refusal at the `hmr:moved` end arrives after the group has been moved and
-    // the offset recorded, so the mock stays displaced with nothing on screen
-    // explaining it.
+    // NOTHING MAY BE RECORDED FOR IT, which is the half that would fail
+    // silently. `vp.moved` is re-applied after every re-stage (`restageMoves`)
+    // and the panel re-stages on the next edit, so an offset left there would be
+    // added on top of the position the document by then carries — the body walks
+    // away by twice the distance on the next keystroke — and the chip that is
+    // the only door onto taking it back is deliberately never raised.
     //
-    // THE ELEMENT'S OWN `isOverlay` ANSWERS, like `activeTool` above, off the two
-    // fields it reads. Agreeing with the group name minted against the
-    // document's own parts is the whole reason that question belongs to the
-    // viewport rather than to a regex over the path.
+    // THE ELEMENT'S OWN `isOverlay`/`overlayBody` ANSWER, like `activeTool`
+    // above, off the two fields they read. Agreeing with the group name minted
+    // against the document's own parts is the whole reason those questions
+    // belong to the viewport rather than to a regex over the path.
     const GROUP = '/Group/sketch'
-    const MOCK = `${GROUP}/motor`
+    // The two kinds of part the panel's payload holds: the fused body, always
+    // under `RESULT_NAME`, and one translucent part per hole (sketchgeom.js).
+    const RESULT = `${GROUP}/result`
+    const HOLE = `${GROUP}/bore`
 
     /** The scene above with the mock staged into it, group node and all. */
     function overlaid(selected) {
-      const groups = Object.fromEntries(
-        [...PINS, '/Group/lid', GROUP, MOCK].map((path) => [path, fakeGroup()]))
+      const groups = Object.fromEntries([...PINS, '/Group/lid', GROUP, RESULT,
+                                         HOLE].map((path) => [path, fakeGroup()]))
       const vp = toolViewport({ tool: 'move', selected }, fakeViewer({ groups }))
       vp.payload = { name: 'Group', parts: [] }
-      vp.overlayParts = [{ name: 'motor' }]
+      vp.overlayParts = [{ name: 'result' }, { name: 'bore' }]
       return { groups, vp }
     }
 
-    it('stays where it was, and leaves the press to the trackball', () => {
-      const { groups, vp } = overlaid([])
-      pickEntity.mockReturnValue({ id: MOCK, name: 'motor', point: [0, 0, 0] })
-      const event = pointerDown(vp, [100, 100])
-      pointerMove([300, 100])
+    /**
+     * One turn of the microtask queue.
+     *
+     * THE SKETCH REPORT IS DEFERRED BY ONE, and every assertion about it has to
+     * wait that long — see `reportSketchMove`, which says why: one of the two
+     * endings that raise it is `endGesture`, and `endGesture` is called from
+     * inside `show()`, where a report that comes back as a re-stage would render
+     * the document that render is in the middle of replacing.
+     */
+    const settled = () => Promise.resolve()
 
-      expect(at(groups[MOCK]), 'the mock followed the mouse').toEqual([0, 0, 0])
+    /** A press on one body, a drag, and the release that reports it. */
+    async function dragBody(vp, id, name) {
+      pickEntity.mockReturnValue({ id, name, point: [0, 0, 0] })
+      dragFrom(vp)
+      pointerUp([300, 100])
+      await settled()
+      return details(vp, EVENT_SKETCHMOVE)
+    }
+
+    it('follows the hand, and says which body it was when the hand comes off', async () => {
+      const { groups, vp } = overlaid([])
+
+      const [report] = await dragBody(vp, RESULT, 'result')
+
+      // The name and nothing else: the panel's document holds bodies by name and
+      // has no paths in it at all.
+      expect(report.name).toBe('result')
+      expect(report.delta.some((v) => v !== 0), 'it moved nowhere').toBe(true)
+      expect(at(groups[RESULT])).toEqual(report.delta)
+      // And none of what a part of the build leaves behind.
       expect(vp.moved.size, 'an offset was written for it').toBe(0)
+      expect(vp.partHome.size, 'a home was remembered for it').toBe(0)
       expect(emitted(vp)).not.toContain(EVENT_MOVED)
-      // Degraded to a plain press, exactly as a grab on anything else that
-      // cannot be moved: the drag rotates the model.
-      expect(event.preventDefault).not.toHaveBeenCalled()
     })
 
-    it('refuses the whole grab when a part of the model came with it', () => {
-      // The selection holds both. Half of it moved is the model's part standing
-      // somewhere the model does not put it, under a chip the page will not
-      // raise because the other half is a mock.
-      const { groups, vp } = overlaid(['/Group/lid', MOCK])
+    it('takes the press away from the trackball, like any other drag', () => {
+      // The press is the gesture now rather than degrading into a rotation, so
+      // it has to be stopped in the capture phase — otherwise the model turns
+      // under the body being dragged.
+      const { vp } = overlaid([])
+      pickEntity.mockReturnValue({ id: RESULT, name: 'result', point: [0, 0, 0] })
+
+      const event = pointerDown(vp, [100, 100])
+
+      expect(event.preventDefault).toHaveBeenCalled()
+      expect(event.stopPropagation).toHaveBeenCalled()
+      pointerUp([100, 100])
+    })
+
+    it('says nothing until the hand comes off', async () => {
+      // THE RELEASE IS THE ONLY REPORT, and it is not a detail: the panel
+      // answers this by editing its document, which rebuilds the bodies and has
+      // the whole scene disposed and rendered again. Per snap step, that is a
+      // re-stage every few pixels while the reader is still dragging.
+      const { groups, vp } = overlaid([])
+      pickEntity.mockReturnValue({ id: RESULT, name: 'result', point: [0, 0, 0] })
+
+      dragFrom(vp)
+      await settled()
+
+      expect(at(groups[RESULT]), 'the body did not follow the hand')
+        .not.toEqual([0, 0, 0])
+      expect(emitted(vp)).not.toContain(EVENT_SKETCHMOVE)
+
+      pointerUp([300, 100])
+      await settled()
+      expect(details(vp, EVENT_SKETCHMOVE)).toHaveLength(1)
+    })
+
+    it('names the one hole that was grabbed, and moves only it', async () => {
+      // A hole is a part of its own in the payload, so it is grabbable on its
+      // own — and a hole dragged through the body is the thing the fields make
+      // hardest to aim by hand.
+      const { groups, vp } = overlaid([])
+
+      const [report] = await dragBody(vp, HOLE, 'bore')
+
+      expect(report.name).toBe('bore')
+      expect(at(groups[HOLE])).toEqual(report.delta)
+      expect(at(groups[RESULT]), 'the whole mock went with it').toEqual([0, 0, 0])
+    })
+
+    it('is concluded when the scene is swapped — but never inside the render', async () => {
+      // TWO ASSERTIONS THAT PULL AGAINST EACH OTHER, which is why they are one
+      // test. `show()` ends a gesture the reader has not let go of, because a
+      // build can land mid-drag; abandoned, the body stands where it was dragged
+      // with the panel's numbers still describing where it was, and the panel's
+      // next edit stages it back home — the drag silently undone.
+      //
+      // AND YET IT MUST NOT GO OUT FROM INSIDE THAT RENDER. `endGesture` is
+      // called from `show()` after its only `await` and BEFORE the payload of
+      // the new build is remembered, and this report comes back as a re-stage —
+      // which reads that payload. Sent synchronously, the re-stage would compose
+      // the overlay into the document being REPLACED, sleep on its own await
+      // while the outer render finished, and then repaint the previous build
+      // under the same load token: the reader left looking at the old build with
+      // nothing coming to correct it. One microtask is the whole fix, and this
+      // is the line that holds it.
+      const { vp } = overlaid([])
+      pickEntity.mockReturnValue({ id: RESULT, name: 'result', point: [0, 0, 0] })
+      dragFrom(vp)
+
+      vp.endGesture()
+
+      expect(emitted(vp), 'the report went out inside the render')
+        .not.toContain(EVENT_SKETCHMOVE)
+
+      await settled()
+      expect(details(vp, EVENT_SKETCHMOVE)).toHaveLength(1)
+    })
+
+    it('is concluded when the pointer is taken away', async () => {
+      // `pointercancel` — the platform claiming the gesture, a touch turning
+      // into a scroll. No `pointerup` follows one, so a cancel that only tore
+      // the listeners down left the body displaced and the document holding the
+      // place it had left.
+      const { vp } = overlaid([])
+      pickEntity.mockReturnValue({ id: RESULT, name: 'result', point: [0, 0, 0] })
+      dragFrom(vp)
+
+      window.dispatchEvent(new MouseEvent('pointercancel', {}))
+      await settled()
+
+      expect(details(vp, EVENT_SKETCHMOVE)).toHaveLength(1)
+    })
+
+    it('is concluded when another press arrives with it still live', async () => {
+      // `onDown` opens by finishing whatever press is standing — a gesture whose
+      // release this page never saw, or a second button or finger coming down
+      // mid-drag. That ending is an ending like any other: the body is already
+      // standing somewhere else, and only the document can be wrong about it.
+      const { vp } = overlaid([])
+      pickEntity.mockReturnValue({ id: RESULT, name: 'result', point: [0, 0, 0] })
+      dragFrom(vp)
+
+      rightDown(vp, [300, 100])
+      await settled()
+
+      expect(details(vp, EVENT_SKETCHMOVE)).toHaveLength(1)
+      pointerUp([300, 100])
+    })
+
+    it('starts the next drag from where the document now puts it', async () => {
+      // THE HOME IS READ AT EVERY PRESS and never remembered, which is what
+      // `vp.partHome` would have done. The panel answers the first report by
+      // moving the node's `at` and staging the document again — the group is
+      // disposed and built anew, at the place the body now belongs — so a
+      // remembered home would measure the second drag from where the body stood
+      // before the first, and the body would jump back under the cursor.
+      const { groups, vp } = overlaid([])
+      const [first] = await dragBody(vp, RESULT, 'result')
+
+      // The re-stage: a NEW group, standing where the document now says.
+      groups[RESULT] = fakeGroup(first.delta)
+
+      const [, second] = await dragBody(vp, RESULT, 'result')
+
+      expect(second.delta).toEqual(first.delta)
+      expect(at(groups[RESULT]), 'the body jumped back under the hand')
+        .toEqual(first.delta.map((v) => v * 2))
+    })
+
+    it('refuses the whole grab when a part of the model came with it', async () => {
+      // The selection holds both. There is no gesture that is half a statement
+      // about the build and half an edit of the sketch, so a mixed grab is
+      // refused whole — the same all-or-nothing the copies of a row get.
+      const { groups, vp } = overlaid(['/Group/lid', RESULT])
       pickEntity.mockReturnValue({ id: '/Group/lid', name: 'lid', point: [0, 0, 0] })
       pointerDown(vp, [100, 100])
       pointerMove([300, 100])
+      await settled()
 
       expect(vp.moved.size).toBe(0)
-      for (const path of ['/Group/lid', MOCK]) {
+      for (const path of ['/Group/lid', RESULT]) {
         expect(at(groups[path]), `${path} moved anyway`).toEqual([0, 0, 0])
       }
       expect(emitted(vp)).not.toContain(EVENT_MOVED)
+      expect(emitted(vp)).not.toContain(EVENT_SKETCHMOVE)
     })
 
-    it('does not go under a press that missed, when its GROUP is selected', () => {
+    it('does not go under a press that missed, when its GROUP is selected', async () => {
       // THE GROUP ROW IS SELECTED FROM THE TREE, which is the door the scene's
       // own picking hides: nothing picks a group node under the cursor, but a
       // click on its row writes `sel` and the interface sends the node's OWN id
       // as the selection. A press that then MISSES the model hits `wanted[0]` —
       // the fallback that drags a standing selection from empty space — and the
-      // library registers the group in `nestedGroup.groups` like any other, so
-      // the whole mock assembly went with one drag under a chip reading
-      // `partId: '/Group/sketch'`.
+      // library registers the group in `nestedGroup.groups` like any other.
+      //
+      // IT STANDS FOR NO BODY (`overlayBody` answers null for it), so there is
+      // nothing for a report to name: the panel would be told `sketch` moved,
+      // no node answers to that, and the mock would be left displaced with the
+      // document saying otherwise.
       const { groups, vp } = overlaid([GROUP])
       pickEntity.mockReturnValue(null)
       const event = pointerDown(vp, [100, 100])
       pointerMove([300, 100])
+      await settled()
 
       expect(at(groups[GROUP]), 'the assembly followed the mouse')
         .toEqual([0, 0, 0])
       expect(vp.moved.size).toBe(0)
       expect(emitted(vp)).not.toContain(EVENT_MOVED)
+      expect(emitted(vp)).not.toContain(EVENT_SKETCHMOVE)
       expect(event.preventDefault).not.toHaveBeenCalled()
+    })
+
+    it('leaves a part of the model dragged under the same tool exactly as it was', async () => {
+      // The other half of one gesture with two meanings, asserted HERE as well
+      // as above because the fixture is the one with both kinds of part in it: a
+      // press on the build still files the move, chip and all, and says nothing
+      // about the sketch.
+      const { groups, vp } = overlaid([])
+      pickEntity.mockReturnValue({ id: '/Group/lid', name: 'lid', point: [0, 0, 0] })
+      dragFrom(vp)
+      pointerUp([300, 100])
+      await settled()
+
+      const [moved] = details(vp, EVENT_MOVED)
+      expect(moved.id).toBe('/Group/lid')
+      expect(moved.count).toBe(1)
+      expect(at(groups['/Group/lid'])).toEqual(moved.delta)
+      expect(vp.moved.get('/Group/lid')).toEqual(moved.delta)
+      expect(emitted(vp)).not.toContain(EVENT_SKETCHMOVE)
     })
   })
 })

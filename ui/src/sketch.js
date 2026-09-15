@@ -60,6 +60,38 @@ export function updateNode(doc, id, patch) {
   }
 }
 
+/**
+ * Those nodes moved by `delta`, in whatever units the document is in.
+ *
+ * WHAT A DRAG OF A BODY COMES TO. The viewport turns a hand across the screen
+ * into three numbers and names the body it grabbed (`hmr:sketchmove`); by the
+ * time it reaches here it is an ordinary edit of the document, indistinguishable
+ * from the same numbers typed into the `at` fields — which is exactly what it
+ * has to be, since the panel shows those fields and the projection the agent
+ * reads is rendered off them.
+ *
+ * A LIST OF IDS AND NOT A NAME, so this module still knows nothing about the
+ * geometry: which bodies a grab means — every one of them for the fused result,
+ * one for a hole — is a fact about the PAYLOAD (`RESULT_NAME` in sketchgeom.js),
+ * and answering it here would make this module import the kernel it is kept
+ * apart from.
+ *
+ * ROUNDED, and to a place no dimension in this panel reaches. `at` is drawn in a
+ * field and printed in the projection, so `42.3 + 0.1` has to read as `42.4` and
+ * not as `42.400000000000006` — a number nobody typed, in a field the reader is
+ * looking at, on the first drag of a body they had placed by hand.
+ */
+export function moveNodes(doc, ids, delta) {
+  const wanted = new Set(ids)
+  const tidy = (value) => Math.round(value * 1e6) / 1e6
+  return {
+    ...doc,
+    nodes: doc.nodes.map((node) => (wanted.has(node.id)
+      ? { ...node, at: node.at.map((value, axis) => tidy(value + delta[axis])) }
+      : node)),
+  }
+}
+
 export function addParam(doc, param) {
   return { ...doc, params: [...doc.params, param] }
 }
