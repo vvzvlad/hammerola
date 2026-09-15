@@ -459,6 +459,10 @@ function LineMaterial(parameters = {}) {
   this.clippingPlanes = null
   this.clipIntersection = false
   this.transparent = true
+  // `Material`'s own default, and load-bearing for the contour: it is ordered
+  // above every face in the scene, so the depth test is the only thing left
+  // that keeps it behind an opaque part standing in front of it.
+  this.depthTest = true
   this.needsUpdate = false
   const material = this
   Object.defineProperties(material, {
@@ -500,6 +504,7 @@ LineMaterial.prototype.clone = function clone() {
   material.clipping = this.clipping
   material.clippingPlanes = this.clippingPlanes
   material.clipIntersection = this.clipIntersection
+  material.depthTest = this.depthTest
   return material
 }
 

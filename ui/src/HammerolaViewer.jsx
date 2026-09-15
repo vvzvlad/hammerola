@@ -340,6 +340,16 @@ const sketchPanelOn = () => (
   document.documentElement.getAttribute(SKETCH_ATTRIBUTE) === SKETCH_ON
 );
 
+// HOW MANY VIEWS STILL FIT AS A STRIP OF PILLS before the switcher becomes a
+// menu. The strip is a centred flex row that does NOT wrap, inside a root that
+// is `overflow:hidden` — so a row too wide for the window is neither scrollable
+// nor shrunk to fit: it PUSHES THE FLOATING TOOLBAR PAST BOTH EDGES, where the
+// root clips its ends away, taking Fit and the tools with it, and the names
+// inside the pills break onto three lines each. A model declaring nine views with sentences for names is
+// what this was measured against; four pills plus the tools is about what a
+// laptop still holds on one line.
+export const VIEW_TABS_MAX = 4;
+
 // How many visibility gestures Ctrl+Z can walk back through. A cap rather than
 // no cap because `this.history` is a list of two id lists per entry and this
 // page is opened and left open — a reader working a tree all afternoon would
@@ -991,7 +1001,8 @@ export default class HammerolaViewer extends React.Component {
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
       secFace: null, secPop: false,
-      revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
+      revOpen: false, dlOpen: false, viewsOpen: false,
+      cmp: [], compare: false, diffShow: 'both',
       // -- the comparison, and it is FIVE fields rather than one because they
       // answer five different questions (issue #10).
       //
@@ -1403,7 +1414,7 @@ export default class HammerolaViewer extends React.Component {
       }
       if (e.key !== 'Escape') return;
       this.set({ menu: null, secPop: false, revOpen: false, dlOpen: false,
-                 notePop: null, tokenPop: false, tool: null });
+                 viewsOpen: false, notePop: null, tokenPop: false, tool: null });
     };
     window.addEventListener('keydown', this._kd);
 
@@ -2135,7 +2146,7 @@ export default class HammerolaViewer extends React.Component {
         // which two revisions to look at, and the reader made it.
         compare: false, cmpPair: null, cmpView: null, cmpStage: null,
         cmpError: null, cmpReport: null, cmpSel: null,
-        revOpen: false, dlOpen: false, secPop: false,
+        revOpen: false, dlOpen: false, viewsOpen: false, secPop: false,
         tokenPop: false, tokenDraft: '', notePop: null, noteDraft: '',
         // Both describe geometry that has just left the screen; the viewport
         // clears its own tape and offsets on every load.
@@ -4629,7 +4640,7 @@ export default class HammerolaViewer extends React.Component {
     const armed = this.toolsOff() && s.tool !== 'cut' ? null : s.tool;
 
     const setTool = (t) => () => {
-      this.set({ tool: s.tool === t ? null : t, revOpen: false, dlOpen: false, menu: null });
+      this.set({ tool: s.tool === t ? null : t, revOpen: false, dlOpen: false, viewsOpen: false, menu: null });
       if (t === 'comment' && s.tool !== 'comment') this.toast('Click a spot on the model to pin the task');
       if (t === 'measure' && s.tool !== 'measure') this.toast('Click a part for its size, or two for the gap between them');
       if (t === 'move' && s.tool !== 'move') this.toast('Drag a part — it snaps back on the next rebuild');
@@ -4690,6 +4701,13 @@ export default class HammerolaViewer extends React.Component {
     // and a field added here would otherwise take down the ones written before
     // it existed, at `.length`.
     const openTabs = s.tabs || [];
+
+    // The views this build declares, and the one on screen, read once: the
+    // switcher below asks three separate questions of them — how many there
+    // are, which is active, what it is called — and three reads of `meta.views`
+    // are three chances for the button to name a view the rows disagree with.
+    const views = (meta && meta.views) || [];
+    const shownView = views.find((v) => v.id === s.view);
 
     // Both notes on the part in front of the reader, read once: the box below
     // asks three questions of each of them (is it there, does the box open, does
@@ -4883,7 +4901,7 @@ export default class HammerolaViewer extends React.Component {
     };
 
     return {
-      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, tokenPop: false }),
+      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, tokenPop: false }),
 
       // -- the header row ------------------------------------------------------
       //
@@ -4940,7 +4958,7 @@ export default class HammerolaViewer extends React.Component {
       // whole already.
       slotTitle: shortId(PAGE.slot) === PAGE.slot ? '' : PAGE.slot,
       slotDate: meta ? stamp(meta.built) : '',
-      revToggle: stop(() => this.setState({ revOpen: !s.revOpen, dlOpen: false, tokenPop: false })),
+      revToggle: stop(() => this.setState({ revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false })),
       revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid var(--line);background:var(--card-bg);border-radius:6px;cursor:pointer',
       revMenuStyle: (narrow ? popSheet : 'position:absolute;left:0;top:40px;width:430px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);z-index:40;display:' + (s.revOpen ? 'block' : 'none'),
       revRows,
@@ -4957,7 +4975,7 @@ export default class HammerolaViewer extends React.Component {
       statusDotStyle: `width:8px;height:8px;border-radius:4px;background:${status.dot};flex:none`,
 
       downloadGroups,
-      dlToggle: stop(() => this.setState({ dlOpen: !s.dlOpen, revOpen: false, tokenPop: false })),
+      dlToggle: stop(() => this.setState({ dlOpen: !s.dlOpen, revOpen: false, viewsOpen: false, tokenPop: false })),
       dlBtnStyle: btn(s.dlOpen) + ';border:1px solid var(--line);background:var(--card-bg)',
       // CLAMPED LIKE THE OTHER TWO. This one is a HEADER button and survives
       // everything the narrow branch drops, so its menu is reachable on a phone
@@ -4970,7 +4988,7 @@ export default class HammerolaViewer extends React.Component {
       // -- the token: the whole customer/viewer split, in one control
       viewer,
       tokenToggle: stop(() => this.setState({
-        tokenPop: !s.tokenPop, tokenDraft: '', revOpen: false, dlOpen: false })),
+        tokenPop: !s.tokenPop, tokenDraft: '', revOpen: false, dlOpen: false, viewsOpen: false })),
       tokenBtnStyle: btn(false) + ';border:1px solid ' + (viewer ? 'var(--line);background:var(--card-bg)' : 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)'),
       tokenLabel: viewer ? 'View only' : 'Editing on',
       tokenPopStyle: (narrow ? popSheet : 'position:absolute;right:0;top:40px;width:320px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px var(--shadow);z-index:40;display:' + (s.tokenPop ? 'block' : 'none'),
@@ -5149,13 +5167,89 @@ export default class HammerolaViewer extends React.Component {
       })),
 
       // Views come from the model's code: as many tabs as it declares.
-      viewTabs: ((meta && meta.views) || []).map((v) => ({
+      //
+      // ONE LIST, DRAWN TWO WAYS. Each entry carries both dresses — `style` is
+      // the pill the strip draws it as, `rowStyle` the line the menu draws it
+      // as — because which of the two is on screen is a question about how MANY
+      // views there are and about nothing else. Building the rows only in the
+      // branch that shows them would put the view switcher's identity in two
+      // places, free to disagree about which view is the one you are on.
+      viewTabs: views.map((v) => ({
         key: v.id,
         label: v.name,
         hint: `${viewPartCount(v)} parts · ${mb(v.gzip)}`,
         style: tab(s.view === v.id),
-        onClick: () => this.showView(v.id),
+        // The menu's own row, shaped like the tree menu's items (`mi`) rather
+        // than like a pill: in a column it is the highlight that says which one
+        // is on, and a pill's raised card in a list reads as a stray button.
+        rowStyle: `display:flex;align-items:center;gap:10px;padding:7px 14px;font:400 12px ${SANS};cursor:pointer;`
+          + (s.view === v.id ? 'color:var(--accent-text);background:var(--accent-bg)' : 'color:var(--text)'),
+        // CLOSES THE MENU WHATEVER `showView` DOES WITH THE CLICK — it returns
+        // without touching a thing when the view asked for is the one already
+        // on screen, and a menu left standing open on the row you just pressed
+        // is a control that ignored you.
+        onClick: () => { this.showView(v.id); this.setState({ viewsOpen: false }); },
       })),
+      // PAST THE THRESHOLD THE STRIP BECOMES ONE BUTTON — see `VIEW_TABS_MAX`
+      // for what the strip does to the toolbar when it is too long for it.
+      viewMenu: views.length > VIEW_TABS_MAX,
+      // What that button says: the view on screen. Empty where none matches —
+      // `s.view` is null until the first view lands, and a switcher captioned
+      // `undefined` is worse than a bare one.
+      viewLabel: shownView ? shownView.name : '',
+      // A view's name is the model's own sentence and can be any length; the
+      // button is in a toolbar that must not grow past the window (`viewBtnStyle`
+      // caps it), so the name is cut rather than allowed to push.
+      viewLabelStyle: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
+      viewsToggle: stop(() => this.setState({
+        viewsOpen: !s.viewsOpen, revOpen: false, dlOpen: false, tokenPop: false, menu: null })),
+      viewBtnStyle: `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
+        + (s.viewsOpen ? 'background:var(--card-bg);color:var(--text);box-shadow:0 1px 2px var(--shadow-soft)' : 'color:var(--text-soft)'),
+      // OPENS UPWARDS, unlike every other popover on this page: the toolbar it
+      // hangs off floats at the BOTTOM of the model, so a menu measured from
+      // the top of its button would be drawn off the bottom edge of the window.
+      //
+      // WHICH MAKES `bottom:38px` A MEASUREMENT AND NOT A TASTE, since the
+      // offset is counted up from the button rather than down from anything:
+      // the button is about 25px tall (a 12px line box and 5px of padding
+      // either side), the toolbar adds its 4px of padding and 1px border, and
+      // the rest is the air between the two cards. It moves with
+      // `viewBtnStyle` — grow the button and this has to grow with it, or the
+      // menu comes down on top of the control that opened it.
+      //
+      // AND IT IS THE ONE POPOVER THAT TAKES NO SHEET ON A NARROW WINDOW. The
+      // toolbar carries `backdrop-filter:blur(10px)`, and a `backdrop-filter`
+      // makes the element a containing block for descendants positioned `fixed`
+      // AS WELL AS `absolute` (CSS Filter Effects 2, §2.1) — so `popSheet` would
+      // resolve its `left`/`right`/`bottom` against the TOOLBAR's box rather
+      // than the window, and the "sheet" would come up over the button that
+      // opened it. Nor does it need the clamp the header's panels need: this
+      // toolbar is always centred on the bottom edge, and on a narrow window it
+      // is this button and Fit and nothing else, so 260px measured from the
+      // button's left edge is inside a 320px window.
+      //
+      // NO `z-index`, deliberately: the toolbar is its own stacking context for
+      // the same reason, so any value here only sorts this menu against the
+      // toolbar's other children. What has to move is the CONTAINER —
+      // `toolbarStyle` below.
+      //
+      // HEIGHT CAPPED like the revision menu's list, because the count here is
+      // the model's to choose: a model may declare twenty views, and the root
+      // this page lives in is `overflow:hidden` — a menu taller than the window
+      // is not scrolled, it is cut off, with the rows past the cut unreachable.
+      viewMenuStyle: 'position:absolute;left:0;bottom:38px;width:260px;max-height:308px;overflow:auto;'
+        + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
+        + (s.viewsOpen ? 'block' : 'none'),
+      // THE LAYER THE WHOLE TOOLBAR SITS ON, raised for as long as the menu is
+      // open. While it is, the toolbar has to cover the overlays that share the
+      // model's area with it — the "This view did not render" card (14), the
+      // section panel (15) and the composer (16) — or a click on a row one of
+      // them covers lands in the overlay instead. It stays UNDER the tree rail
+      // on a narrow window (20) and under the header (30), which are the two
+      // things that are allowed to cover the toolbar. Closed, it is 12 again,
+      // so nothing else on the page ever sees a different order.
+      toolbarStyle: 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:'
+        + (s.viewsOpen ? '17' : '12'),
       // WHAT THE TOOLBAR KEEPS WHEN IT IS THE WIDTH OF A PHONE: the view tabs
       // and Fit, which are the two controls about LOOKING at the model. The
       // rest goes — Measure, Move part and Comment are gestures that want a
@@ -6216,14 +6310,41 @@ export default class HammerolaViewer extends React.Component {
               style: { position: 'absolute', inset: 0, width: '100%', height: '100%' },
             })}
 
-            {/* views and tools */}
-            <div style={css('position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:12')}>
+            {/* views and tools. THE LAYER IS A VALUE rather than a constant
+                here — see `toolbarStyle`: the view menu opens INSIDE this
+                toolbar, so it is the toolbar that has to rise above the
+                overlays sharing the model with it. */}
+            <div style={css(v.toolbarStyle)}>
               <div style={css('pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;background:var(--float-bg);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)')}>
-                <div style={css('display:flex;gap:2px;padding:2px;background:var(--chip-bg);border-radius:6px')}>
-                  {v.viewTabs.map((t) => (
-                    <div key={t.key} onClick={t.onClick} title={t.hint} style={css(t.style)}>{t.label}</div>
-                  ))}
-                </div>
+                {/* A STRIP WHILE THE VIEWS FIT, A MENU WHEN THEY DO NOT — see
+                    `VIEW_TABS_MAX`. The wrapper is `position:relative` so that
+                    the menu is anchored to the BUTTON: the toolbar carries a
+                    `backdrop-filter` and is therefore already a containing
+                    block for it (CSS Filter Effects 2, §2.1), so without the
+                    wrapper the menu would be measured from the toolbar's whole
+                    box and start at its left end rather than at the button. */}
+                {v.viewMenu ? (
+                  <div style={css('position:relative')}>
+                    <div onClick={v.viewsToggle} title={v.viewLabel} style={css(v.viewBtnStyle)}>
+                      <span style={css(v.viewLabelStyle)}>{v.viewLabel}</span>
+                      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M4 6l4 4 4-4" /></svg>
+                    </div>
+                    <div onClick={(e) => e.stopPropagation()} style={css(v.viewMenuStyle)}>
+                      {v.viewTabs.map((t) => (
+                        <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
+                          <span style={css('flex:1')}>{t.label}</span>
+                          <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint)`)}>{t.hint}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={css('display:flex;gap:2px;padding:2px;background:var(--chip-bg);border-radius:6px')}>
+                    {v.viewTabs.map((t) => (
+                      <div key={t.key} onClick={t.onClick} title={t.hint} style={css(t.style)}>{t.label}</div>
+                    ))}
+                  </div>
+                )}
                 {/* Everything between the tabs and Fit belongs to a pointer and
                     a canvas with room to aim in — see `showTools`. */}
                 {v.showTools && (
