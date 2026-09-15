@@ -973,6 +973,11 @@ export default class HammerolaViewer extends React.Component {
       // The project's whole comment queue, as the hub answers it (`loadFeed`),
       // in the records' own shape — oldest first, as SPEC 7A.2 sorts them.
       feed: [], activePin: null, composer: null,
+      // A comment is on the wire. The same idea as `swapping` above and for the
+      // same two reasons: `sendComment` refuses on it, and `compSendStyle`
+      // draws it, so the button that has stopped taking clicks stops looking
+      // like it takes them.
+      sending: false,
       measure: null, moved: null, toast: null,
       // -- who the reader is
       // No project id: the secret is one string for the whole hub since step 0,
@@ -3349,6 +3354,24 @@ export default class HammerolaViewer extends React.Component {
     const c = this.state.composer;
     const meta = this.state.meta;
     if (!c || !meta) return;
+    // ONE COMMENT AT A TIME, and this is the one refusal in the composer.
+    //
+    // The window between the press and the queue coming back is the whole of
+    // this method — the frame grab, the upload of it, the POST, the refetch —
+    // and nothing on the screen moved while it was open: the composer stayed
+    // put with its text in it, because the write is what clears it. So a reader
+    // who saw nothing happen pressed Send again, and every press started an
+    // INDEPENDENT post of the same draft. The hub has nothing to tell them
+    // apart by — no idempotency key, and comments are not deduplicated
+    // (src/comments.py) — so five presses are five rows in a queue an agent
+    // works from, which is the cost this file's own note about `loadFeed`'s
+    // quiet refetch already calls more than a stale rail.
+    //
+    // A REFUSAL RATHER THAN A QUEUE: the second press is the same draft, not a
+    // second one, so there is nothing to send later. It is lowered in the
+    // `finally` below — on the error paths too, since a comment the hub refused
+    // is one the reader must be able to press Send on again.
+    if (this.state.sending) return;
     // Refused here rather than only by the hub, since step 0 put the write
     // behind the token. Not a security check — the hub's is — but the difference
     // between "you are not signed in" and a 401 arriving after the photo has
@@ -3359,76 +3382,95 @@ export default class HammerolaViewer extends React.Component {
     const text = (c.text || '').trim();
     if (!text) { this.toast('Write something first'); return; }
 
-    // The hub's comment schema is closed — src/comments.py keeps `text`, `view`,
-    // `part`, `key`, `published`, `point` and `camera` and DROPS everything else
-    // without saying so — so the measurement and the drag ride in the text,
-    // where the agent will actually read them, rather than in fields discarded
-    // on the way in.
-    const extra = [];
-    if (c.meas) extra.push(`measured: ${c.meas}`);
-    if (c.move) extra.push(`moved: ${c.move} (temporary, not in the model)`);
-
-    const form = new FormData();
-    form.append('comment', JSON.stringify({
-      text: extra.length ? `${text}\n\n${extra.join('\n')}` : text,
-      view: this.state.view,
-      part: c.partId || null,
-      // THE ANCHOR THAT OUTLIVES THIS BUILD. `part` is a path in the tree of the
-      // revision being looked at and the next rebuild is free to renumber it;
-      // the catalogue key is the part's identity (issue #75), and it is what the
-      // page follows to put this pin back on a later build.
-      key: c.key || null,
-      // WHICH BUILD THE COORDINATE WAS TAKEN ON — not necessarily the build the
-      // slot holds when this request lands, since `dev` can rebuild while the
-      // reader is still typing, and only this page knows which one it is showing.
-      published: meta.published || null,
-      point: c.p || null,
-      camera: this.frameCamera(),
-    }));
-    if (c.photo) form.append('photo', c.photo, 'photo');
-    const shot = await this.frameBlob();
-    if (shot) form.append('shot', shot, 'shot.png');
-
-    // Required by the hub since step 0, and checked there before the body is
-    // parsed at all — so this header is what makes the request a comment rather
-    // than a 401.
-    const headers = { Authorization: `Bearer ${this.state.token}` };
-
-    let response = null;
+    // RAISED BEFORE THE FIRST AWAIT and after the refusals above, which return
+    // without sending anything: a flag raised on a press that did nothing would
+    // take the button out of service for a request that was never made.
+    this.setState({ sending: true });
     try {
-      response = await fetch(`/api/v1/comments/${PAGE.pid}/${meta.commit}`,
-                             { method: 'POST', body: form, headers });
-    } catch (error) {
-      console.error('comment', error);
-      this.toast('Could not reach the hub');
-      return;
-    }
-    if (response.status !== 201) {
-      // Fixed sentences rather than the hub's own message: nothing on this page
-      // should be in the habit of putting a response body on the screen.
-      const said = {
-        401: 'The hub refused the token',
-        404: 'This build is no longer available',
-        413: 'Too large — try a smaller photo',
-        422: 'The hub refused this comment. Is the photo a JPEG, PNG or WebP?',
-        429: 'Too many comments from here. Try again in a few minutes.',
-      }[response.status];
-      this.toast(said || 'Could not send the comment');
-      return;
-    }
+      // The hub's comment schema is closed — src/comments.py keeps `text`, `view`,
+      // `part`, `key`, `published`, `point` and `camera` and DROPS everything else
+      // without saying so — so the measurement and the drag ride in the text,
+      // where the agent will actually read them, rather than in fields discarded
+      // on the way in.
+      const extra = [];
+      if (c.meas) extra.push(`measured: ${c.meas}`);
+      if (c.move) extra.push(`moved: ${c.move} (temporary, not in the model)`);
 
-    // THE QUEUE IS REFETCHED RATHER THAN GUESSED AT. This page used to append a
-    // row of its own making — its own id, its own label, `just now` — because it
-    // had no other copy of the queue; it has one now, so the row the rail draws
-    // is the record the hub actually stored, with the id, the stamp and the
-    // status the agent will see.
-    this.set({
-      composer: null,
-      moved: c.move ? null : this.state.moved,
-      rail: true,
-    }, c.move ? { __resetMove: true } : null);
-    this.toast('Sent to the agent — a rebuild will follow');
-    await this.loadFeed(true);
+      const form = new FormData();
+      form.append('comment', JSON.stringify({
+        text: extra.length ? `${text}\n\n${extra.join('\n')}` : text,
+        view: this.state.view,
+        part: c.partId || null,
+        // THE ANCHOR THAT OUTLIVES THIS BUILD. `part` is a path in the tree of the
+        // revision being looked at and the next rebuild is free to renumber it;
+        // the catalogue key is the part's identity (issue #75), and it is what the
+        // page follows to put this pin back on a later build.
+        key: c.key || null,
+        // WHICH BUILD THE COORDINATE WAS TAKEN ON — not necessarily the build the
+        // slot holds when this request lands, since `dev` can rebuild while the
+        // reader is still typing, and only this page knows which one it is showing.
+        published: meta.published || null,
+        point: c.p || null,
+        camera: this.frameCamera(),
+      }));
+      if (c.photo) form.append('photo', c.photo, 'photo');
+      const shot = await this.frameBlob();
+      if (shot) form.append('shot', shot, 'shot.png');
+
+      // Required by the hub since step 0, and checked there before the body is
+      // parsed at all — so this header is what makes the request a comment rather
+      // than a 401.
+      const headers = { Authorization: `Bearer ${this.state.token}` };
+
+      let response = null;
+      try {
+        response = await fetch(`/api/v1/comments/${PAGE.pid}/${meta.commit}`,
+                               { method: 'POST', body: form, headers });
+      } catch (error) {
+        console.error('comment', error);
+        this.toast('Could not reach the hub');
+        return;
+      }
+      if (response.status !== 201) {
+        // Fixed sentences rather than the hub's own message: nothing on this page
+        // should be in the habit of putting a response body on the screen.
+        const said = {
+          401: 'The hub refused the token',
+          404: 'This build is no longer available',
+          413: 'Too large — try a smaller photo',
+          422: 'The hub refused this comment. Is the photo a JPEG, PNG or WebP?',
+          429: 'Too many comments from here. Try again in a few minutes.',
+        }[response.status];
+        this.toast(said || 'Could not send the comment');
+        return;
+      }
+
+      // THE QUEUE IS REFETCHED RATHER THAN GUESSED AT. This page used to append a
+      // row of its own making — its own id, its own label, `just now` — because it
+      // had no other copy of the queue; it has one now, so the row the rail draws
+      // is the record the hub actually stored, with the id, the stamp and the
+      // status the agent will see.
+      this.set({
+        composer: null,
+        moved: c.move ? null : this.state.moved,
+        rail: true,
+      }, c.move ? { __resetMove: true } : null);
+      this.toast('Sent to the agent — a rebuild will follow');
+      await this.loadFeed(true);
+    } finally {
+      // EVERY EXIT, including the throw `compSend` catches: a flag left up by a
+      // failure is a composer whose Send never works again, with the draft still
+      // in it and no way to get it out but reloading the page.
+      //
+      // WHICH PUTS IT AFTER THE SILENT REFETCH, so on the way out the flag
+      // outlives the composer it guards by one GET: a reader who places a new
+      // point in that window sees the new composer's Send already spent, for a
+      // comment that is not the one it is holding. Left alone deliberately —
+      // that GET is the cheap end of this method and the window is a fraction
+      // of the upload's, while lowering the flag earlier would put a second
+      // lowering point on the one path that has to have exactly one.
+      this.setState({ sending: false });
+    }
   }
 
   /**
@@ -5052,6 +5094,18 @@ export default class HammerolaViewer extends React.Component {
         console.error('comment', error);
         this.toast('Could not send the comment');
       }),
+      // THE PRESS HAS TO BE VISIBLE, and that is the other half of the refusal
+      // in `sendComment` — the same pairing `bannerSwitchStyle` describes at
+      // length. The window is a frame grab, an upload and two requests, and
+      // until this button changed nothing on the screen said the press had
+      // landed: the composer sits there with the draft still in it, because
+      // only the write clears it. A reader pressing again was reading a live
+      // button correctly. So the word says what is happening and the washed-out
+      // accent says the button is spent.
+      compSendLabel: s.sending ? 'Sending…' : 'Send',
+      compSendStyle: `padding:6px 14px;background:${s.sending ? 'var(--accent-muted)' : 'var(--accent)'};`
+        + `color:var(--text-on-accent);border-radius:6px;font:600 12px ${SANS};`
+        + `cursor:${s.sending ? 'default' : 'pointer'}`,
 
       menuStyle: 'position:fixed;width:230px;background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 12px 40px var(--shadow);padding:2px 0 6px;z-index:60;display:' + (s.menu ? 'block' : 'none') + ';left:' + (s.menu ? s.menu.x : 0) + 'px;top:' + (s.menu ? s.menu.y : 0) + 'px',
       menuName: mName, menuItems,
@@ -5618,7 +5672,7 @@ export default class HammerolaViewer extends React.Component {
                          onChange={v.compPhoto} style={{ display: 'none' }} />
                 </label>
                 <span style={css('flex:1')} />
-                <span onClick={v.compSend} style={css(`padding:6px 14px;background:var(--accent);color:var(--text-on-accent);border-radius:6px;font:600 12px ${SANS};cursor:pointer`)}>Send</span>
+                <span onClick={v.compSend} style={css(v.compSendStyle)}>{v.compSendLabel}</span>
               </div>
             </div>
 

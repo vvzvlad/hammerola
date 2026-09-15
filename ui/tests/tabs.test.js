@@ -111,7 +111,7 @@ function component({ tabs = [] } = {}) {
     revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
     bannerGone: false, rail: null, menu: { id: null, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null,
+    feed: [], activePin: null, composer: null, sending: false,
     measure: null, moved: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
     theme: 'light',

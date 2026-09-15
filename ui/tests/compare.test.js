@@ -187,7 +187,7 @@ function page({ watch, ...over } = {}) {
     cmpReport: null, cmpSel: null,
     bannerGone: false, rail: false, menu: null,
     notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null,
+    feed: [], activePin: null, composer: null, sending: false,
     measure: null, moved: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
     theme: 'light', tabs: [], narrow: false, treeOpen: false,

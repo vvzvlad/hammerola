@@ -104,7 +104,7 @@ function page({ feed = [], token = 'sekrit', partPoint, watch, ...over } = {}) {
     revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
     bannerGone: false, rail: true, menu: { id: null, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
-    feed, activePin: null, composer: null,
+    feed, activePin: null, composer: null, sending: false,
     measure: null, moved: null, toast: null,
     token, tokenPop: false, tokenDraft: '',
     theme: 'light', tabs: [], narrow: false, treeOpen: false,
@@ -261,6 +261,114 @@ describe('a comment that was just filed', () => {
 
     expect(fetching).toHaveBeenCalledTimes(1)
     expect(c.state.feed).toEqual([])
+  })
+})
+
+// -- and it is filed ONCE, however many times Send was pressed ----------------
+//
+// The window between the press and the queue coming back is a frame grab, an
+// upload of it and two requests, and for its whole length the composer sat
+// unchanged with the draft still in it. So a reader who saw nothing happen
+// pressed Send again — and again — and the hub, which has no idempotency key
+// and deduplicates nothing (src/comments.py), stored one comment per press:
+// five identical rows in a queue an agent works from.
+
+describe('a second press of Send', () => {
+  const draft = {
+    part: 'plate(2)', partId: '/model/plate', key: 'plate',
+    p: [1, 2, 3], text: 'too thin', photo: null,
+  }
+  const posts = (fetching) => fetching.mock.calls
+    .filter(([, init]) => init && init.method === 'POST')
+
+  it('sends nothing while the first is still on the wire', async () => {
+    const fetching = answering({ status: 201 }, served([]))
+    const c = page({ composer: draft })
+
+    const first = c.sendComment()
+    await c.sendComment()
+    await first
+
+    expect(posts(fetching)).toHaveLength(1)
+  })
+
+  it('is not raised at all by a press that sends nothing', async () => {
+    // THE ORDER IS THE POINT, and it is why this test exists rather than the
+    // sentence that used to carry it: the two refusals below — no text, no
+    // token — return BEFORE the `try`, so their `return` never reaches the
+    // `finally`. Raise the flag above them and a press on an empty draft leaves
+    // it up FOREVER: the button sits on 'Sending…' for a request that was never
+    // made, with the draft in a composer that can no longer send it.
+    const fetching = answering({ status: 201 }, served([]))
+    const c = page({ composer: { ...draft, text: '   ' } })
+
+    await c.sendComment()
+
+    expect(c.state.sending).toBe(false)
+    expect(posts(fetching)).toHaveLength(0)
+
+    c.state.composer = draft
+    c.state.token = null
+    await c.sendComment()
+
+    expect(c.state.sending).toBe(false)
+    expect(posts(fetching)).toHaveLength(0)
+  })
+
+  it('goes through once the first has landed', async () => {
+    // The refusal lasts exactly the one request: it is not a lock on the
+    // composer, and a reader who wants to file a second comment can.
+    //
+    // FOUR ANSWERS rather than two, so the second press walks the SUCCESS path
+    // as well: the queue hands the last one out for ever, so a shorter list
+    // would answer the second POST with the refetch's 200 and this test would
+    // be pinning `sendComment`'s error branch under a name that says otherwise.
+    const fetching = answering({ status: 201 }, served([]), { status: 201 }, served([]))
+    const c = page({ composer: draft })
+
+    await c.sendComment()
+    expect(c.state.sending).toBe(false)
+    c.state.composer = draft
+    await c.sendComment()
+
+    expect(posts(fetching)).toHaveLength(2)
+  })
+
+  it('goes through after the hub refused the first', async () => {
+    // THE EXPENSIVE HALF TO GET WRONG. A flag left up by a failure is a
+    // composer whose Send never works again, with the draft still in it and no
+    // way out but reloading the page — which loses the draft.
+    const fetching = answering({ status: 422 })
+    const c = page({ composer: draft })
+
+    await c.sendComment()
+    expect(c.state.sending).toBe(false)
+    await c.sendComment()
+
+    expect(posts(fetching)).toHaveLength(2)
+  })
+
+  it('comes back down when the hub could not be reached at all', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+    const c = page({ composer: draft })
+
+    await c.sendComment()
+
+    expect(c.state.sending).toBe(false)
+  })
+
+  it('leaves the button looking spent while the comment is on the wire', () => {
+    // The other half of the refusal: a button that ignores presses while still
+    // looking like a button is the failure the refusal was added to prevent,
+    // wearing the refusal's clothes (`bannerSwitchStyle` says the same).
+    const idle = page({ composer: draft }).computed()
+    const out = page({ composer: draft, sending: true }).computed()
+
+    expect(idle.compSendLabel).toBe('Send')
+    expect(idle.compSendStyle).toContain('cursor:pointer')
+    expect(out.compSendLabel).toBe('Sending…')
+    expect(out.compSendStyle).toContain('var(--accent-muted)')
+    expect(out.compSendStyle).not.toContain('cursor:pointer')
   })
 })
 
