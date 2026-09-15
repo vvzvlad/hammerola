@@ -540,6 +540,22 @@ function LineSegments2(geometry, material) {
   this.visible = true
 }
 
+// The library's own hook (bundle :81079-81090): before every draw it re-reads
+// the viewport and writes it into the material's `resolution`, which is what
+// keeps `linewidth` a count of CSS pixels as the canvas resizes. Modelled here
+// because the section contour WRAPS it rather than replacing it, and a wrapper
+// that dropped it would leave a fat line frozen at the size of the first frame.
+LineSegments2.prototype.onBeforeRender = function onBeforeRender(renderer) {
+  if (!renderer || typeof renderer.getViewport !== "function") return
+  const viewport = renderer.getViewport()
+  this.material.resolution.set(viewport.z, viewport.w)
+}
+
+/** A renderer as `onBeforeRender` reads one: a viewport and nothing else. */
+export function fakeRenderer({ width = 800, height = 600 } = {}) {
+  return { getViewport: () => ({ x: 0, y: 0, z: width, w: height }) }
+}
+
 /** A solid's `edges` overlay as `_renderEdges` (:87558) leaves it: a
  *  `LineSegments2` over a fresh geometry, under a `LineMaterial` whose
  *  resolution the factory sets from the NestedGroup's own width and height.
