@@ -526,6 +526,11 @@ describe('the popovers that become a sheet on a narrow page', () => {
   // phone has no Escape key — opened, they could only be dismissed by reloading
   // the page.
   //
+  // The sketch panel is the same case with one extra turn of the screw: its
+  // button is one of the ones narrow takes away (`showTools`), but the FLAG is
+  // not — a window dragged narrower with the panel open would leave a panel on
+  // screen with no button to close it and its own cross off the side.
+  //
   // What does not earn a place: `menuStyle`, already clamped by `menuAt`, and
   // the composer, whose ✕ and Send sit at the right end of their rows behind
   // `flex:1` spacers while the panel itself is anchored `right:16px` — so it is
@@ -533,13 +538,13 @@ describe('the popovers that become a sheet on a narrow page', () => {
   const sheets = (over) => {
     const v = component(over).computed()
     return [v.revMenuStyle, v.dlMenuStyle, v.tokenPopStyle,
-            v.secPopStyle, v.notePopStyle].map(css)
+            v.secPopStyle, v.notePopStyle, v.sketchPanelStyle].map(css)
   }
 
   it('are clamped to the window rather than to the control they hang off', () => {
     for (const wide of sheets({})) expect(wide.position).toBe('absolute')
     expect(sheets({}).map((s) => s.width))
-      .toEqual(['430px', '250px', '320px', '270px', '300px'])
+      .toEqual(['430px', '250px', '320px', '270px', '300px', '330px'])
 
     for (const narrow of sheets({ narrow: true })) {
       // `fixed` is the half that does the work: `left`/`right` resolve against
