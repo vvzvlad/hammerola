@@ -16,7 +16,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { internals } from '../src/viewport/internals.js'
-import { GHOST_OPACITY } from '../src/viewport/options.js'
+import { GHOST_OPACITY, viewerOptions } from '../src/viewport/options.js'
 import {
   OUTLINE_NAME, clearSectionOutlines, insideSection, sectionOutline,
   sectionSegments,
@@ -28,7 +28,7 @@ import {
   dragSection, placeSectionPlane, sectionAxis, suspendSectionCut,
 } from '../src/viewport/section.js'
 import {
-  fakeMatrix, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
+  fakeMatrix, fakeRenderer, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
 } from './fakes.js'
 
 const RECT = { left: 0, top: 0, width: 800, height: 600 }
@@ -128,6 +128,11 @@ function partScene() {
 // By the mark the module writes on its own object. Neither the name nor the
 // class identifies it: `renderShape` names the library's own children after the
 // shape, and one of those children is a fat line too.
+/** The one line of the vendored fat-line shader the depth patch hangs off,
+ *  in the least source that can carry it. */
+const shaderSource = () =>
+  'void main() {\n  clip.xy += offset;\n  gl_Position = clip;\n}'
+
 const outlineOf = (solid) =>
   solid.children.find((child) => child.userData && child.userData[OUTLINE_NAME])
 
@@ -399,6 +404,140 @@ describe('sectionOutline', () => {
     expect(material.resolution.y).toBe(RECT.height)
     // A clone: the donor's material is untouched.
     expect(solid.edges.material.linewidth).toBe(1)
+  })
+
+  it('puts the cut plane into the fat-line shader, on one program every contour shares', () => {
+    // WHAT THIS IS FOR. A fat line is a quad widened in SCREEN space, and the
+    // vendored shader shifts only `clip.xy` — the whole band keeps the depth of
+    // the segment's endpoint while the plane it lies in recedes across it. Half
+    // of every band therefore sinks behind the cut and the depth test gives
+    // those pixels to the cut's own cap. The patch below is what puts the
+    // widened corner back on the plane.
+    const { solid, vp, g } = cubeScene()
+    sectionOutline(vp, g, [1, 0, 0], -1)
+    const { material } = outlineOf(solid)
+    const shader = { uniforms: {}, vertexShader: shaderSource() }
+    material.onBeforeCompile(shader)
+    // The uniform the hook writes and the uniform the shader reads are ONE
+    // object — a copy would leave the correction frozen at the first frame.
+    expect(shader.uniforms.hmrCutNormal).toBe(material.userData.cutNormal)
+    expect(shader.vertexShader).toContain('uniform vec4 hmrCutNormal;')
+    expect(shader.vertexShader).toContain('clip.z += projectionMatrix[2][2]')
+    // After the shift and not before it: the correction reads `offset`.
+    expect(shader.vertexShader.indexOf('clip.z += projectionMatrix[2][2]'))
+      .toBeGreaterThan(shader.vertexShader.indexOf('clip.xy += offset;'))
+    // ONE COMPILED PROGRAM FOR EVERY CONTOUR, which is why there is no
+    // `customProgramCacheKey` here: three's default key is the patch's own
+    // source, so materials whose patch reads the same share a program — the
+    // reasoning `hatch.js` writes out for the cap patch.
+    //
+    // Compared as the shader the patch PRODUCES and not as the source that
+    // produces it, because the trap `hatch.js` warns about is exactly the one
+    // `toString()` cannot see: bake a per-material number into the GLSL through
+    // a template string and the source stays identical, the key stays
+    // identical, and every contour after the first gets the first one's shader.
+    const other = fakeShapeSolid('S|other', {
+      positions: boxPositions(4, 4, 4), index: CUBE_INDEX,
+    })
+    const second = solidScene({ groups: { 'S|other': other } })
+    sectionOutline(second.vp, second.g, [1, 0, 0], -1)
+    const mine = { uniforms: {}, vertexShader: shaderSource() }
+    const theirs = { uniforms: {}, vertexShader: shaderSource() }
+    material.onBeforeCompile(mine)
+    outlineOf(other).material.onBeforeCompile(theirs)
+    expect(theirs.vertexShader).toBe(mine.vertexShader)
+    // While the uniform each of them writes stays its own: the shared program
+    // is a program, not shared state.
+    expect(theirs.uniforms.hmrCutNormal).not.toBe(mine.uniforms.hmrCutNormal)
+    expect(material.customProgramCacheKey).toBeUndefined()
+  })
+
+  it('builds an ORTHOGRAPHIC camera, which is what makes the depth patch exact', () => {
+    // Under a perspective projection a corner's `clip.w` moves with its depth
+    // and the correction would have to move both; the shader reads the
+    // projection and does nothing there, so this option is the reason the
+    // contour is whole rather than merely better.
+    expect(viewerOptions.ortho).toBe(true)
+  })
+
+  it('says so rather than drawing on when the vendored shader moves', () => {
+    const { solid, vp, g } = cubeScene()
+    sectionOutline(vp, g, [1, 0, 0], -1)
+    const { material } = outlineOf(solid)
+    const shader = { uniforms: {}, vertexShader: 'void main() { gl_Position = clip; }' }
+    const before = shader.vertexShader
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      material.onBeforeCompile(shader)
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+    // Unchanged rather than half-patched: a source this no longer recognises is
+    // one whose `offset` may not mean what the correction assumes.
+    expect(shader.vertexShader).toBe(before)
+  })
+
+  it('writes the plane normal in VIEW space before every draw', () => {
+    const { solid, vp, g } = cubeScene()
+    sectionOutline(vp, g, [1, 0, 0], -1)
+    const outline = outlineOf(solid)
+    const { value } = outline.material.userData.cutNormal
+    // Nothing until a frame has run: the branch in the shader is off.
+    expect(value[3]).toBe(0)
+    // A camera turned a quarter turn about Z: its matrixWorld's columns are
+    // +Y, -X, +Z, so the world +X normal reads as -Y in view space.
+    const camera = { matrixWorld: { elements: [
+      0, 1, 0, 0,
+      -1, 0, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ] } }
+    outline.onBeforeRender({}, {}, camera)
+    expect(value[0]).toBeCloseTo(0, 12)
+    expect(value[1]).toBeCloseTo(-1, 12)
+    expect(value[2]).toBeCloseTo(0, 12)
+    expect(value[3]).toBe(1)
+  })
+
+  it('wraps the library hook rather than replacing it', () => {
+    // The hook the contour hangs its uniform off is the one the library uses to
+    // keep `resolution` in step with the canvas, and a fat line whose
+    // resolution stops moving stops being two pixels wide. So the wrapper has
+    // to CALL it, with the arguments it was given.
+    const { solid, vp, g } = cubeScene()
+    sectionOutline(vp, g, [1, 0, 0], -1)
+    const outline = outlineOf(solid)
+    // Read as the EFFECT and not as a spy on the prototype: the wrapper binds
+    // the inherited method when it is installed, so a spy hung on the prototype
+    // afterwards would never be reached and would report a failure that is not
+    // one. What has to stay true is that the canvas size still arrives.
+    expect(outline.material.resolution.x).toBe(RECT.width)
+    const renderer = fakeRenderer({ width: 1024, height: 768 })
+    const camera = { matrixWorld: { elements: [
+      1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+    ] } }
+    outline.onBeforeRender(renderer, {}, camera)
+    expect(outline.material.resolution.x).toBe(1024)
+    expect(outline.material.resolution.y).toBe(768)
+    // And the contour's own work still happened on the same call.
+    expect(outline.material.userData.cutNormal.value[3]).toBe(1)
+  })
+
+  it('moves the stored normal with a plane that turns', () => {
+    // The update path rebuilds the segments of an outline that already exists,
+    // and a contour left describing the plane it was born under would correct
+    // the depth toward the wrong one.
+    const { solid, vp, g } = cubeScene()
+    sectionOutline(vp, g, [1, 0, 0], -1)
+    const outline = outlineOf(solid)
+    sectionOutline(vp, g, [0, 1, 0], -1)
+    const camera = { matrixWorld: { elements: [
+      1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+    ] } }
+    outline.onBeforeRender({}, {}, camera)
+    const { value } = outline.material.userData.cutNormal
+    expect([value[0], value[1], value[2]]).toEqual([0, 1, 0])
   })
 
   it('draws above every face and edge the library orders, on every solid', () => {
@@ -1086,6 +1225,32 @@ describe('the vendored bundle still says what the outline rests on', () => {
     const at = source.indexOf('back.renderOrder = 999;')
     expect(at, 'the faces are no longer ordered').toBeGreaterThan(-1)
     expect(source.slice(at - 200, at)).toContain('if (alpha < 1.0) {')
+  })
+
+  it('still shifts a fat line in x and y alone, which is what the depth patch corrects', () => {
+    // The two facts the correction rests on, read off the bundle rather than
+    // remembered: the pixel branch widens the quad by moving `clip.xy` and
+    // NOTHING else, so the band's depth is the endpoint's across its whole
+    // width; and the line the patch hangs off is still spelled that way.
+    const source = bundle()
+    // CUT AT THE BRANCH, for the reason its neighbour above gives: the string
+    // occurs twice in the bundle — once in the visual line shader and once in
+    // the pick shader's port of it — and a slice taken from the first hit would
+    // go on passing while looking at the wrong one.
+    const at = source.indexOf('offset /= resolution.y;')
+    expect(at, 'the pixel branch of the line shader is gone').toBeGreaterThan(-1)
+    const opened = source.lastIndexOf('#ifdef WORLD_UNITS', at)
+    expect(opened, 'no world-units branch above it').toBeGreaterThan(-1)
+    const otherwise = source.indexOf('#else', opened)
+    expect(otherwise, 'the branch has no screen-space half').toBeGreaterThan(opened)
+    expect(otherwise, 'the shift sits in the WORLD half').toBeLessThan(at)
+    const branch = source.slice(otherwise, source.indexOf('#endif', at))
+    expect(branch).toContain('clip.xy += offset;')
+    // `clip.w` IS touched here — `offset *= clip.w` converts the shift back to
+    // clip space — and `clip.z` is not touched at all. That second absence is
+    // the defect: the widened corner keeps the endpoint's depth.
+    expect(branch).toContain('offset *= clip.w;')
+    expect(branch).not.toContain('clip.z')
   })
 
   it('reserves the "clipping" child-name prefix for its own stencils', () => {

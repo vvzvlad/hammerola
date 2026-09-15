@@ -33,6 +33,9 @@ import { SECTION_INDEX } from "./options.js";
 // outline with everything else.
 export const OUTLINE_NAME = "sectionOutline";
 
+/** Where an outline keeps the WORLD normal of the plane it was cut by. */
+const CUT_PLANE_KEY = "sectionOutlineNormal";
+
 // The library draws its own edges one device pixel wide; a contour has to read
 // over the hatch and both cut faces, so it is darker and a little heavier.
 //
@@ -49,6 +52,46 @@ export const OUTLINE_NAME = "sectionOutline";
 // close the reader leans in — and it is why the number is 2 and not 3.
 const OUTLINE_WIDTH = 2;
 const OUTLINE_COLOR = 0x303030;
+
+/**
+ * What the fat-line shader does NOT do, and this puts back.
+ *
+ * A fat line is a quad widened in SCREEN space: the shader shifts `clip.xy` by
+ * the half-width and leaves `clip.z` at the value the segment's endpoint had.
+ * The band's depth is therefore CONSTANT ACROSS ITS WIDTH, while the cut plane
+ * the band lies in recedes across it. Half of every band sits behind the plane,
+ * and the depth test hands those pixels to whatever is drawn there — the cut's
+ * own opaque cap on one side, the solid's faces on the other, each a hair in
+ * front. What survives is the sliver that happens to land in front, which is
+ * how one contour came out fat along one edge, hairline along the next and
+ * absent along a third. Measured on the owner's model: widening the contour to
+ * 8 px turned every gap into a continuous line of varying thickness, which is
+ * the same defect with more ink.
+ *
+ * The correction puts the shifted corner back ON the plane. The shift is known
+ * in view units, the plane's normal is known in view space, and a plane is
+ * flat, so one step is exact rather than an approximation:
+ *
+ *     n . (d + dz) = 0   ->   dz = -(n.x * d.x + n.y * d.y) / n.z
+ *
+ * ORTHOGRAPHIC ONLY, which is the camera this app builds (`options.js`,
+ * `ortho: true`). Under a perspective projection a corner's `clip.w` moves with
+ * its depth and the correction would have to move both; rather than pretend,
+ * the branch reads the projection and does nothing there.
+ */
+const CUT_DEPTH_GLSL = `
+  if ( hmrCutNormal.w > 0.5 && projectionMatrix[2][3] == 0.0
+       && abs( hmrCutNormal.z ) > 1e-3 ) {
+    vec2 dView = vec2( offset.x / ( clip.w * projectionMatrix[0][0] ),
+                       offset.y / ( clip.w * projectionMatrix[1][1] ) );
+    float dz = -( hmrCutNormal.x * dView.x + hmrCutNormal.y * dView.y )
+               / hmrCutNormal.z;
+    clip.z += projectionMatrix[2][2] * dz * clip.w;
+  }
+`;
+
+/** The line of the vendored fat-line shader the correction hangs off. */
+const CUT_DEPTH_ANCHOR = "clip.xy += offset;";
 
 // What a plane that misses writes: nothing, over whatever was there.
 const NO_SEGMENTS = new Float32Array(0);
@@ -125,7 +168,55 @@ function outlineMaterial(classes, g) {
   material.clippingPlanes = g.clipping.clipPlanes.filter(
     (_, index) => index !== SECTION_INDEX);
   material.resolution.set(g.nestedGroup.width, g.nestedGroup.height);
+  // The cut plane's normal IN VIEW SPACE, rewritten before every draw by the
+  // hook `sectionOutline` installs and read by the correction above. `w` stays
+  // 0 until that hook has run once, which keeps the branch off before anything
+  // has been measured. A plain array rather than a `Vector4`: the vendored
+  // bundle exports no THREE symbols, and three's uniform setter takes an array
+  // for a `vec4` exactly as it takes a vector.
+  const cutNormal = { value: [0, 0, 1, 0] };
+  material.userData = { ...(material.userData || {}), cutNormal };
+  // NO `customProgramCacheKey` OF OUR OWN, for the reason `hatch.js` already
+  // writes out for the cap patch: three's default returns
+  // `onBeforeCompile.toString()`, so every contour — whose patch is spelled the
+  // same — lands on ONE compiled program, and the library's own edge material,
+  // whose hook is a different function, cannot land on it.
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.hmrCutNormal = cutNormal;
+    const patched = shader.vertexShader.replace(
+      CUT_DEPTH_ANCHOR, CUT_DEPTH_ANCHOR + "\n" + CUT_DEPTH_GLSL);
+    if (patched === shader.vertexShader) {
+      // The vendored shader moved. Say so, rather than drawing a contour that
+      // is silently back to losing most of its width.
+      console.warn("section outline: the fat-line shader no longer carries the"
+        + " line the depth correction hangs off");
+      return;
+    }
+    shader.vertexShader = "uniform vec4 hmrCutNormal;\n" + patched;
+  };
   return material;
+}
+
+/**
+ * Put the cut plane's normal into the material's uniform, in VIEW space.
+ *
+ * Per frame rather than per placement: the plane stands still in the world
+ * while the reader orbits, and what the shader needs is the normal as the
+ * CAMERA sees it. The three columns of `matrixWorld` dotted with the world
+ * normal are exactly the inverse rotation applied to it, a camera's matrix
+ * carrying no scale. Which way the normal points does not matter: it cancels in
+ * the ratio the shader takes.
+ */
+function writeCutNormal(outline, camera) {
+  const uniform = outline.material && outline.material.userData
+    && outline.material.userData.cutNormal;
+  const n = outline.userData && outline.userData[CUT_PLANE_KEY];
+  if (!uniform || !n || !camera || !camera.matrixWorld) return;
+  const e = camera.matrixWorld.elements;
+  uniform.value[0] = e[0] * n[0] + e[1] * n[1] + e[2] * n[2];
+  uniform.value[1] = e[4] * n[0] + e[5] * n[1] + e[6] * n[2];
+  uniform.value[2] = e[8] * n[0] + e[9] * n[1] + e[10] * n[2];
+  uniform.value[3] = 1;
 }
 
 /**
@@ -473,6 +564,14 @@ export function sectionOutline(vp, g, normal, value) {
       outline.renderOrder = 1000;
       // The mark `outlineChild` finds it by. Written here and nowhere else.
       outline.userData = { ...(outline.userData || {}), [OUTLINE_NAME]: true };
+      // Chained, never replaced: the library's own `onBeforeRender` is what
+      // keeps `resolution` in step with the canvas, and a fat line whose
+      // resolution stops moving stops being two pixels wide.
+      const inherited = outline.onBeforeRender;
+      outline.onBeforeRender = function beforeRender(renderer, scene, camera) {
+        if (typeof inherited === "function") inherited.apply(this, arguments);
+        writeCutNormal(this, camera);
+      };
       // BORN MATCHING ITS PART, read off the part rather than off a list. The
       // two places that carry hiding and ghosting onto an outline (parts.js)
       // reach one that already exists, and an outline can be created after
@@ -496,6 +595,9 @@ export function sectionOutline(vp, g, normal, value) {
       }
       group.add(outline);
     }
+    // On both paths: a drag rebuilds the segments of an outline that already
+    // exists, and the plane they were cut by has moved with them.
+    outline.userData[CUT_PLANE_KEY] = [nx, ny, nz];
   }
   vp.sectionOutlineKey = key;
 }
