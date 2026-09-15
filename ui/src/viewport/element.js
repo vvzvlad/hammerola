@@ -124,10 +124,12 @@ function groupName(parts) {
  * Where an overlay's bodies hang over this document: the group's name, and the
  * path everything under it is spelled from.
  *
- * MINTED IN ONE PLACE BECAUSE IT IS ANSWERED IN TWO. `staged()` below lays the
- * group out, and `isOverlay()` reads a path back against it for the interface,
- * which refuses the Move and Comment tools a body of the sketch: a task filed in
- * the build's terms against a body that is in no build. That second reader is
+ * MINTED IN ONE PLACE BECAUSE IT IS ANSWERED IN THREE. `staged()` below lays the
+ * group out; `isOverlay()` reads a path back against it for the interface, which
+ * refuses the Comment tool a body of the sketch — a task filed in the build's
+ * terms against a body that is in no build; and `overlayBody()` reads the same
+ * path one segment further, for the Move tool, which does not refuse a sketch
+ * body but drags it as an edit of the panel's own document. Those readers are
  * the reason this is a function rather than two lines inside `staged()` — the
  * alternative is matching `sketch|sketch2|…` against a path, which answers yes
  * for a model that legitimately publishes a part called `sketch`, and the whole
@@ -920,18 +922,25 @@ export class HmrViewport extends HTMLElement {
    * THE QUESTION THE INTERFACE CANNOT ANSWER FOR ITSELF, and a method for the
    * reason the two above are: it is asked of the scene as it stands right now.
    * A staged body is an ordinary row in the tree and an ordinary pick target, so
-   * the Move and Comment tools would otherwise file a task in the BUILD's terms
-   * — `partId: "/<root>/sketch/motor"` — against a body that is in no build and
-   * no catalogue. The group's name is minted here, against the model's own
-   * parts, so only here can it be told apart from a model part that is honestly
-   * called `sketch`.
+   * the Comment tool would otherwise file a task in the BUILD's terms —
+   * `partId: "/<root>/sketch/motor"` — against a body that is in no build and no
+   * catalogue. The group's name is minted here, against the model's own parts,
+   * so only here can it be told apart from a model part that is honestly called
+   * `sketch`.
+   *
+   * THE MOVE TOOL ASKS THIS TOO AND DOES SOMETHING ELSE WITH THE ANSWER. It does
+   * not refuse a sketch body: a drag of one is an ordinary edit of the panel's
+   * document, so the gesture runs and ends in `hmr:sketchmove` instead of in the
+   * chip `hmr:moved` raises (tools.js, `onDown`). What the answer decides there
+   * is WHICH of the two gestures a press is — and a MIXED grab, a mock together
+   * with a part of the model, is refused whole because there is no such thing as
+   * half of either.
    *
    * THE GROUP NODE ITSELF ANSWERS YES, and it is the case that reads as an edge
    * one and is not: the group is a ROW OF THE TREE, a row is selected with the
    * mouse (`onSelect`), and `selectedPaths()` hands a node's OWN id over rather
    * than the leaves under it. So `/<root>/sketch` arrives here as an ordinary
-   * selection — the move tool drags the whole mock assembly with it when a press
-   * misses the model, and `add to comment` on a measurement heads the composer
+   * selection — `add to comment` on a measurement would head the composer
    * `sketch` — and it is the same task about a body in no build that a single
    * mock is. Nothing PICKS the group in the scene, which is what made it look
    * safe; the tree is the other door.
@@ -945,6 +954,38 @@ export class HmrViewport extends HTMLElement {
     if (typeof id !== "string") return false;
     const { at } = overlayAt(this.payload);
     return id === at || id.startsWith(`${at}/`);
+  }
+
+  /**
+   * Which BODY of the overlay this path is, by the name the panel drew it under
+   * — or null for everything else, the overlay's own group node included.
+   *
+   * `isOverlay` one segment further in, and the extra segment is what the Move
+   * tool needs: the panel's document is a list of bodies with names, so "this
+   * body moved" is a sentence about `bore` and not about `/<root>/sketch/bore`,
+   * which is a spelling of the SCENE that nothing in the document has ever seen.
+   * The name is the part's own `name` in the payload the panel built
+   * (sketchgeom.js), which is where the two halves meet: `result` is the fused
+   * body, and every other name is a hole with a node of its own.
+   *
+   * THE GROUP ANSWERS NULL, and that is the one real decision in here. It is a
+   * row of the tree like any other and it can be selected and dragged from empty
+   * space, but it stands for no body: it is the panel's whole output, named
+   * after nothing in the document. A drag of it would arrive at the panel naming
+   * `sketch`, which no node answers to — so the mock would be left displaced
+   * with the document saying otherwise, which is exactly what this feature is
+   * written to avoid. Refused at the press instead, where the gesture simply
+   * degrades into a rotation.
+   *
+   * ONE SEGMENT AND NO DEEPER, for the same reason: a path under a body's own
+   * subtree (a face, an edge) names no node either.
+   */
+  overlayBody(id) {
+    if (!this.isOverlay(id)) return null;
+    const { at } = overlayAt(this.payload);
+    if (!id.startsWith(`${at}/`)) return null;
+    const name = id.slice(at.length + 1);
+    return name && !name.includes("/") ? name : null;
   }
 
   /**

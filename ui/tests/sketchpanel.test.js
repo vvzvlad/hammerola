@@ -23,12 +23,12 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
-import { PLACE } from '../src/events.js'
+import { PLACE, SKETCHMOVE } from '../src/events.js'
 import { indexTree } from '../src/hub.js'
 import {
   addNode, addParam, DIM_OPS, emptySketch, sketchText,
 } from '../src/sketch.js'
-import { SHAPE_OPS } from '../src/sketchgeom.js'
+import { RESULT_NAME, SHAPE_OPS } from '../src/sketchgeom.js'
 import { css } from '../src/style.jsx'
 import { collect, texts } from './eltree.js'
 
@@ -817,6 +817,145 @@ describe('add to comment', () => {
   })
 })
 
+// -- a body moved with the hand instead of with the fields --------------------
+
+describe('a body dragged in the scene', () => {
+  // THE COMPLAINT THIS ANSWERS, in the reader's words: "and how am I supposed to
+  // move a sketch body — by typing a number?" The `at` fields stay what they
+  // are; the Move tool over the body itself is the second way of saying the same
+  // thing, and it ends HERE — `hmr:sketchmove`, naming the body and how far it
+  // went. Everything from this point on is an ordinary edit of the document,
+  // indistinguishable from the same numbers typed in.
+  //
+  // WHERE THE OTHER HALF IS TESTED: the gesture, what it refuses and what it
+  // must not record, is ui/tests/tools.test.js — the viewport tells a mock from
+  // a part of the build at the press, because only it knows the group's name.
+  //
+  // WHAT IS GRABBABLE comes from the payload the panel builds (sketchgeom.js):
+  // the fused result, which is the whole mock and therefore every node, and one
+  // part per hole, which is that hole alone.
+
+  /** A hole with a place of its own, so a shift reads as an addition. */
+  const BORE = {
+    id: 'n2', name: 'bore', op: 'cylinder', role: 'hole',
+    at: [5, 0, 0], rot: [0, 0, 0], d: 6, h: 40,
+  }
+
+  const fire = (name, delta) => window.dispatchEvent(
+    new CustomEvent(SKETCHMOVE, { detail: { name, delta } }))
+
+  /** Every body's place, in document order. */
+  const places = (c) => c.state.sketch.nodes.map((node) => node.at)
+
+  /** What the panel's own `at` fields are showing for one body. */
+  const atFields = (c, index = 0) => c.computed().sketchBodies[index].groups[1]
+    .fields.map((f) => f.value)
+
+  const withBore = () => addNode(withBlock(), BORE)
+
+  it('moves every node when the fused body is the one that was grabbed', () => {
+    // The mock keeps its shape and lands somewhere else, which is what dragging
+    // the result has to mean: the result IS the union, so there is no one node
+    // it belongs to.
+    const { c, el } = mounted({ sketch: withBore() })
+
+    fire(RESULT_NAME, [3, 0, -1.5])
+
+    expect(places(c)).toEqual([[3, 0, -1.5], [8, 0, -1.5]])
+    // And the body on the model is staged out of the document that says so —
+    // the group the drag moved was live feedback and nothing more.
+    expect(overlay(el)).toEqual(['result', 'bore'])
+  })
+
+  it('moves the one hole when the hole is what was grabbed', () => {
+    const { c } = mounted({ sketch: withBore() })
+
+    fire('bore', [0, 2, 0])
+
+    expect(places(c)).toEqual([[0, 0, 0], [5, 2, 0]])
+  })
+
+  it('shows the new numbers in the fields the reader types in', () => {
+    // THE TWO WAYS OF SAYING IT ARE ONE THING. A drag that moved the body
+    // without moving the fields would leave the panel describing a place the
+    // mock is not in — and the projection the agent reads is rendered off those
+    // same numbers.
+    const { c } = mounted({ sketch: withBore() })
+
+    fire(RESULT_NAME, [3, 0, -1.5])
+
+    expect(atFields(c)).toEqual(['3', '0', '-1.5'])
+    expect(atFields(c, 1)).toEqual(['8', '0', '-1.5'])
+    expect(sketchText(c.state.sketch)).toContain('at (3, 0, -1.5)')
+  })
+
+  it('keeps the numbers readable, drag after drag', () => {
+    // `42.3 + 0.1` is `42.400000000000006` in binary floating point, and the
+    // field is the reader's own: a body placed by hand and then nudged would
+    // come back with fifteen digits nobody typed. The snap step can be a tenth
+    // or a hundredth (`niceStep` in viewport/tools.js), so the rounding has to
+    // keep the digits that are real and drop only these.
+    const { c } = mounted({
+      sketch: addNode(emptySketch(), { ...BLOCK, at: [42.3, 0, 0] }),
+    })
+
+    fire(RESULT_NAME, [0.1, 0, 0])
+    expect(atFields(c)).toEqual(['42.4', '0', '0'])
+
+    // AND EACH DRAG STARTS FROM WHERE THE LAST ONE LEFT IT, because the document
+    // is where the body's place lives: the viewport reports a delta and carries
+    // none of them, so two drags of the same distance go twice as far.
+    fire(RESULT_NAME, [0.1, 0, 0])
+    expect(atFields(c)).toEqual(['42.5', '0', '0'])
+  })
+
+  it('drops a field the reader was in the middle of typing in', () => {
+    // THE FIRST DOOR INTO `setSketch` THAT A DRAFT CAN SURVIVE. A field renders
+    // from `sketchDraft` while one stands on its key, and every other door is a
+    // button — a real click blurs the field and commits it on the way in. A drag
+    // does not: the press is taken in the capture phase, so the focus never
+    // leaves. Left standing, the panel would show typed text over a body that
+    // has already moved, and the blur that came later would commit that text
+    // back over the axis the drag had just written.
+    const { c } = mounted({ sketch: withBore() })
+    const x = () => c.computed().sketchBodies[0].groups[1].fields[0]
+    x().onChange({ target: { value: '9' } })
+    expect(c.state.sketchDraft).toEqual({ key: 'n1.at.0', text: '9' })
+
+    fire(RESULT_NAME, [3, 0, 0])
+
+    expect(c.state.sketchDraft).toBeNull()
+    expect(atFields(c)).toEqual(['3', '0', '0'])
+  })
+
+  it('raises no chip, and leaves the one about a part of the build alone', () => {
+    // A mock is in no build, so there is nothing for `moved` to file it against
+    // and nothing for `__resetMove` to put back — the panel standing open is
+    // what says the body is not part of the model. A chip standing about a part
+    // of the BUILD is a different statement and is not disturbed.
+    const { c } = mounted({ sketch: withBore() })
+    c.setState({ moved: { id: '/model/plate', name: 'plate', mag: 3 } })
+
+    fire(RESULT_NAME, [3, 0, 0])
+
+    expect(c.state.moved).toEqual({ id: '/model/plate', name: 'plate', mag: 3 })
+    expect(places(c)[0]).toEqual([3, 0, 0])
+  })
+
+  it('moves nothing at all when no body answers to the name', () => {
+    // A drag that landed after the body it grabbed was deleted from the panel.
+    // Nothing is guessed at: the document is left exactly as it is, and the next
+    // stage puts the scene back in agreement with it.
+    const { c, el } = mounted({ sketch: withBore() })
+    const staged = el.setOverlay.mock.calls.length
+
+    fire('motor', [3, 0, 0])
+
+    expect(places(c)).toEqual([[0, 0, 0], [5, 0, 0]])
+    expect(el.setOverlay).toHaveBeenCalledTimes(staged)
+  })
+})
+
 // -- the doors the bodies are not for -----------------------------------------
 
 describe('a sketch body as the part a task is filed against', () => {
@@ -832,9 +971,11 @@ describe('a sketch body as the part a task is filed against', () => {
   // is what the panel is for, and the number goes to the agent unchanged. Only
   // the part it would be filed against is refused.
   //
-  // THE MOVE TOOL IS REFUSED AT THE PRESS and is therefore not here but in
-  // ui/tests/tools.test.js — a chip refused at the `hmr:moved` end arrives with
-  // the mock already dragged and its offset already written.
+  // THE MOVE TOOL IS NOT ONE OF THEM AT ALL, and it is the one that reads as
+  // though it should be. A drag of a mock is not a task filed badly: it is a
+  // DIFFERENT GESTURE, told apart at the press by the viewport and ending in
+  // `hmr:sketchmove`, which edits the panel's own document — the describe above
+  // is where that lands, and ui/tests/tools.test.js is where the press decides.
   //
   // WHICH PATHS ARE THE OVERLAY'S IS THE VIEWPORT'S ANSWER, because that is
   // where the group's name is minted — `sketch`, or `sketch2` beside a model

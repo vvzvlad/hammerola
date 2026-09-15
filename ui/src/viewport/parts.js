@@ -260,6 +260,22 @@ export function movableGroup(viewer, path) {
   return group;
 }
 
+/** Where one part's group stands RIGHT NOW, as `[x, y, z]`, or null.
+ *
+ * `home()` above with nothing remembered, and the difference is the whole of why
+ * it exists. That one memoises into `vp.partHome`, because "put it back"
+ * (ui-brief block 6) has to know where back is; this one is read by the gesture
+ * that has nothing to put back — a sketch body, whose new position is written
+ * into the SKETCH DOCUMENT and staged again out of it (`nudgePart`).
+ * Remembered, the second drag of a body would measure from where it stood before
+ * the first, and the body would jump back the whole of that delta the moment the
+ * pointer moved.
+ */
+export function groupHome(viewer, path) {
+  const group = movableGroup(viewer, path);
+  return group ? [group.position.x, group.position.y, group.position.z] : null;
+}
+
 /**
  * The world-space centre of one part's bounding box, as `[x, y, z]`, or `null`.
  *
@@ -305,6 +321,45 @@ export function partCentre(viewer, path) {
 }
 
 /**
+ * The cut contour, rebuilt for solids that have just moved under a standing
+ * plane. THE TAIL EVERY MOVE IN THIS FILE ENDS IN.
+ *
+ * A moved solid cuts differently through the plane, and no plane write follows
+ * to rebuild for it: drop the memo and redraw here. Called OUTSIDE the caller's
+ * `try` and catching its own failures, so a decoration can neither report a move
+ * that happened as refused nor throw one away.
+ *
+ * AFTER THE CALLER'S RENDER AND FOLLOWED BY ANOTHER ONE, which is the whole
+ * shape of this. The rebuild reads `matrixWorld`, and only a render refreshes
+ * it, so it cannot come first; and the library draws on demand only, so a
+ * rebuild after the last draw would sit in memory while the screen kept the
+ * contour the solid carried off the plane with it.
+ *
+ * GATED ON THE PAIR `reconcile` ITSELF USES, and on the pair rather than on the
+ * seed alone: `suspendSectionCut` parks the plane and empties the contours but
+ * deliberately KEEPS the seed, so that turning the cut back on needs no second
+ * click — which means a seed says "a cut was placed once", not "a cut is on
+ * screen". Reading a part around with the cut switched off is an ordinary thing
+ * to do, and on the seed alone every snap step of it paid for a walk over every
+ * solid and a second identical frame, to write emptiness into geometries that
+ * were already empty.
+ *
+ * ONE COPY FOR THREE CALLERS — `movePart`, `nudgePart` and `resetMoves` — and
+ * that is what it is for. A sketch body is a solid like any other and cuts like
+ * one; three hand-written copies of this tail is how one of them ends up without
+ * it, which is a contour left hanging beside the body it belongs to.
+ */
+function redrawCut(vp) {
+  if (!vp.viewer || !vp.sectionSeed || !vp.state || !vp.state.cut) return;
+  try {
+    refreshSectionOutline(vp, internals(vp.viewer));
+    vp.viewer.update(true, false);
+  } catch (error) {
+    console.warn("outline", error);
+  }
+}
+
+/**
  * Offset a part from where the build put it. `delta` is world units.
  *
  * NOT a change to the model, and the interface has to say so (ui-brief block 6):
@@ -347,36 +402,61 @@ export function movePart(vp, paths, delta) {
     console.warn("move", error);
     return false;
   }
-  // A moved part cuts differently through the standing plane, and no plane
-  // write follows to rebuild for it: drop the memo and redraw here. OUTSIDE
-  // the try — a refresh that failed must not report a move that happened as
-  // refused.
-  //
-  // AFTER the render above and followed by ANOTHER one, which is the whole
-  // shape of this. The rebuild reads `matrixWorld`, and only a render
-  // refreshes it, so it cannot come first; and the library draws on demand
-  // only, so a rebuild after the last draw would sit in memory while the
-  // screen kept the contour the part carried off the plane with it.
-  //
-  // GATED ON THE PAIR `reconcile` ITSELF USES, and on the pair rather than on
-  // the seed alone: `suspendSectionCut` parks the plane and empties the
-  // contours but deliberately KEEPS the seed, so that turning the cut back on
-  // needs no second click — which means a seed says "a cut was placed once",
-  // not "a cut is on screen". Reading a part around with the cut switched off
-  // is an ordinary thing to do, and on the seed alone every snap step of it
-  // paid for a walk over every solid and a second identical frame, to write
-  // emptiness into geometries that were already empty.
-  if (vp.sectionSeed && vp.state && vp.state.cut) {
-    try {
-      refreshSectionOutline(vp, internals(vp.viewer));
-      vp.viewer.update(true, false);
-    } catch (error) {
-      // Wrapped like every other reach into the library in this file. Outside
-      // the `try` above so a decoration cannot report a move that happened as
-      // refused — and caught, so it cannot do it by throwing either.
-      console.warn("outline", error);
-    }
+  // The contour the part carried off the plane with it. Outside the `try` and
+  // after the render above, both of which `redrawCut` argues.
+  redrawCut(vp);
+  return true;
+}
+
+/**
+ * Offset a group from a home THE CALLER HOLDS, remembering nothing at all.
+ *
+ * `movePart` for a body that is in no build — one the sketch panel staged over
+ * the model (`staged()` in element.js) — and every difference between the two is
+ * a thing this one must NOT do.
+ *
+ * NOTHING IS WRITTEN INTO `vp.moved`, and that map is the reason this function
+ * exists rather than a flag on the one above. It is re-applied after every
+ * re-stage (`restageMoves`), and the panel re-stages on the very next keystroke:
+ * a delta recorded there would be added on top of the position the sketch
+ * document now carries, and the body would walk away by twice the distance. The
+ * drag is LIVE FEEDBACK only — the release reports it to the panel, the panel
+ * moves the node's `at`, and the stage that follows is what really puts the body
+ * there.
+ *
+ * NOTHING IS WRITTEN INTO `vp.partHome` EITHER, for the same reason read from
+ * the other end: there is nothing to put back, because the document is what says
+ * where the body goes, and a home remembered across a re-stage is a home that has
+ * moved. The caller reads the home at the press (`groupHome`) and holds it for
+ * the length of the gesture, which is exactly as long as it means anything.
+ *
+ * THE CUT CONTOUR IS NOT ONE OF THE DIFFERENCES, and it is the one that looks
+ * like it might be: a staged body is an ordinary solid, the plane clips it like
+ * any other, and a contour is drawn on it. So this ends in the same `redrawCut`
+ * the two moves either side of it end in — a body dragged out from under the
+ * plane with its curve left hanging behind would be exactly the failure
+ * `outline.test.js` pins for a part of the model.
+ *
+ * ALL OR NOTHING, as far as the pre-check reaches, and not atomic past it —
+ * `movePart` says why both halves of that are what they are.
+ */
+export function nudgePart(vp, paths, homes, delta) {
+  const list = Array.isArray(paths) ? paths : [];
+  if (!list.length || !finite3(delta)) return false;
+  const groups = list.map((path) => movableGroup(vp.viewer, path));
+  if (groups.some((group) => !group)) return false;
+  try {
+    groups.forEach((group, at) => {
+      const base = homes[at];
+      group.position.set(
+        base[0] + delta[0], base[1] + delta[1], base[2] + delta[2]);
+    });
+    vp.viewer.update(true, false);
+  } catch (error) {
+    console.warn("nudge", error);
+    return false;
   }
+  redrawCut(vp);
   return true;
 }
 
@@ -427,15 +507,8 @@ export function resetMoves(vp) {
   }
   vp.moved.clear();
   if (vp.viewer) vp.viewer.update(true, false);
-  // Same shape as `movePart`, for the same reasons: after the render that
-  // refreshed the matrices, gated on a cut that is actually on screen, drawn
-  // again so the corrected contour gets there, and caught.
-  if (vp.viewer && vp.sectionSeed && vp.state && vp.state.cut) {
-    try {
-      refreshSectionOutline(vp, internals(vp.viewer));
-      vp.viewer.update(true, false);
-    } catch (error) {
-      console.warn("outline", error);
-    }
-  }
+  // The same tail every move in this file ends in, and for the same reasons:
+  // after the render that refreshed the matrices, gated on a cut that is
+  // actually on screen, drawn again so the corrected contour gets there.
+  redrawCut(vp);
 }

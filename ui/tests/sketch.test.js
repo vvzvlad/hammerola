@@ -18,8 +18,8 @@ import { describe, expect, it } from 'vitest'
 import { geometries, measurements } from '@jscad/modeling'
 
 import {
-  addNode, addParam, emptySketch, isEmpty, removeNode, removeParam, renameParam,
-  resolveValue, sketchText, updateNode, updateParam, usedBy,
+  addNode, addParam, emptySketch, isEmpty, moveNodes, removeNode, removeParam,
+  renameParam, resolveValue, sketchText, updateNode, updateParam, usedBy,
 } from '../src/sketch.js'
 import { buildSketch } from '../src/sketchgeom.js'
 
@@ -183,6 +183,7 @@ describe('the immutable helpers', () => {
     ['addNode', 'nodes', (d) => addNode(d, { ...VAL, id: 'n9', name: 'extra' })],
     ['removeNode', 'nodes', (d) => removeNode(d, 'n2')],
     ['updateNode', 'nodes', (d) => updateNode(d, 'n2', { at: [1, 2, 3] })],
+    ['moveNodes', 'nodes', (d) => moveNodes(d, ['n2'], [1, 2, 3])],
     ['addParam', 'params',
       (d) => addParam(d, { name: 'gap', type: 'number', caption: 'Gap', initial: 2 })],
     ['removeParam', 'params', (d) => removeParam(d, 'body')],
@@ -208,6 +209,18 @@ describe('the immutable helpers', () => {
     expect(removeNode(doc, 'n2').nodes.map((node) => node.id)).toEqual(['n1', 'n3'])
     expect(updateNode(doc, 'n2', { at: [1, 2, 3] }).nodes[1].at).toEqual([1, 2, 3])
     expect(updateNode(doc, 'n2', { at: [1, 2, 3] }).nodes[1].name).toBe('val')
+    // A MOVE IS RELATIVE where the write above is absolute — `val` sits at
+    // `[0, 0, 42]`, so it lands three millimetres further up and the bodies
+    // nobody grabbed stay where they are. The `at` it writes is a new array
+    // too: the same in-place edit `updateNode` is checked against, one level
+    // down, where `JSON.stringify` would not see it either.
+    expect(moveNodes(doc, ['n2'], [1, 2, 3]).nodes[1].at).toEqual([1, 2, 45])
+    expect(moveNodes(doc, ['n2'], [1, 2, 3]).nodes[0].at).toEqual(doc.nodes[0].at)
+    expect(moveNodes(doc, ['n2'], [1, 2, 3]).nodes[1].at).not.toBe(doc.nodes[1].at)
+    // EVERY NAMED NODE AND ONLY THOSE, which is what the panel spends it on:
+    // the fused result is every body at once, a hole is one.
+    expect(moveNodes(doc, ['n1', 'n2', 'n3'], [1, 0, 0]).nodes.map((n) => n.at[0]))
+      .toEqual([1, 1, 16.5])
     expect(addParam(doc, LENGTH).params).toHaveLength(3)
     expect(removeParam(doc, 'body').params.map((p) => p.name)).toEqual(['length'])
     expect(updateParam(doc, 'body', { initial: 44 }).params[0].initial).toBe(44)

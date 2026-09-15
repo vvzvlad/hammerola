@@ -22,7 +22,7 @@ import {
   sectionSegments,
 } from '../src/viewport/outline.js'
 import {
-  applyGhost, applyHidden, movePart, resetMoves,
+  applyGhost, applyHidden, movePart, nudgePart, resetMoves,
 } from '../src/viewport/parts.js'
 import {
   dragSection, placeSectionPlane, sectionAxis, suspendSectionCut,
@@ -758,6 +758,37 @@ describe('the outline under the part passes', () => {
     resetMoves(vp)
     expect(outline.geometry.setPositionsCalls).toBe(3)
     expect(outline.geometry.instanceCount).toBe(8)
+  })
+
+  it('follows a SKETCH body too, which is a solid like any other', () => {
+    // The sketch panel's mocks are staged into the scene (`staged()` in
+    // element.js), so the plane clips them and a contour is drawn on them
+    // exactly as on a part of the build — and the Move tool drags them through
+    // it. `nudgePart` differs from `movePart` in what it REMEMBERS, not in what
+    // it draws: a body dragged out from under the plane with its curve left
+    // hanging behind is the same failure the test above pins, one source of
+    // parts over.
+    const { solid, viewer, vp, g } = partScene()
+    placeSectionPlane(vp, g, [1, 0, 0], [1, 0, 1])
+    vp.state.cut = true
+    const outline = outlineOf(solid)
+    expect(outline.geometry.instanceCount).toBe(8)
+
+    solid.front.matrixWorld = fakeMatrix({ position: [2, 0, 0] })
+    const drawn = viewer.update.mock.calls.length
+    // The home is the CALLER'S — the gesture read it at the press — which is the
+    // whole difference in the signature.
+    expect(nudgePart(vp, ['S|body'], [[0, 0, 0]], [2, 0, 0])).toBe(true)
+
+    expect(outline.geometry.setPositionsCalls).toBe(2)
+    expect(outline.geometry.instanceCount).toBe(0)
+    // TWO draws, for the reason spelled out above: the rebuild reads a
+    // `matrixWorld` only a render refreshes, and the library draws on demand.
+    expect(viewer.update.mock.calls.length).toBe(drawn + 2)
+    // And still nothing recorded: the contour is redrawn, the offset is not
+    // kept. `restageMoves` walks that map on the panel's very next edit.
+    expect(vp.moved.size).toBe(0)
+    expect(vp.partHome.size).toBe(0)
   })
 })
 

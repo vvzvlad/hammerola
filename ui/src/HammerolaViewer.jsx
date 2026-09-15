@@ -93,8 +93,8 @@
 import React from 'react';
 
 import {
-  STATE, PICK, MENU, FACE, MEASURE, MOVED, PLACE, PIN, MODEL, ERROR, TOOL,
-  VIEWPORT_TAG,
+  STATE, PICK, MENU, FACE, MEASURE, MOVED, SKETCHMOVE, PLACE, PIN, MODEL, ERROR,
+  TOOL, VIEWPORT_TAG,
 } from './events.js';
 import {
   PAGE, ASSEMBLED_VIEW_ID, COMPARE_GROUPS, DIFF_COLOURS, JOB_DONE,
@@ -122,8 +122,8 @@ import {
 // rule — a part's colour is model content, like the colours the hub pushes in a
 // view file, and this file paints no part.
 import {
-  addNode, addParam, emptySketch, firstFree, isEmpty, removeNode, removeParam,
-  renameParam, sketchText, updateNode, updateParam, usedBy,
+  addNode, addParam, emptySketch, firstFree, isEmpty, moveNodes, removeNode,
+  removeParam, renameParam, sketchText, updateNode, updateParam, usedBy,
 } from './sketch.js';
 import { buildSketch, RESULT_NAME } from './sketchgeom.js';
 import {
@@ -1146,9 +1146,12 @@ export default class HammerolaViewer extends React.Component {
    * and no revision, and the agent has nothing to look the path up in.
    *
    * THE MOVE TOOL IS NOT A READER OF THIS, and it is the one that looks like it
-   * should be: a drag is refused a step earlier, with the GESTURE (`onDown` in
-   * viewport/tools.js, which asks the same `isOverlay`), because by the time
-   * `hmr:moved` is sent the mock has been dragged and its offset written.
+   * should be. A drag of a mock is not refused at all: it is a DIFFERENT
+   * GESTURE, told apart a step earlier by the viewport (`onDown` in
+   * viewport/tools.js, which asks the same `isOverlay`) and ending in
+   * `hmr:sketchmove` — an edit of the panel's own document rather than a task
+   * about a part. So nothing about a mock ever reaches the `hmr:moved` handler,
+   * and this question is never asked there.
    *
    * THE MEASUREMENT ITSELF IS NOT ONE OF THESE and is deliberately left alone: a
    * distance between two faces of a mock is the sort of thing the panel exists
@@ -1274,13 +1277,13 @@ export default class HammerolaViewer extends React.Component {
         // one door onto `movedAttach`, which would post a `/cmp/…` path as the
         // part a comment is filed against.
         if (this.toolsOff()) return;
-        // A BODY OF THE SKETCH DOES NOT REACH HERE, and the refusal deliberately
-        // is not repeated: `motor` moved 3 mm, filed against
-        // `/<root>/sketch/motor`, is a task about a part no build has — but this
-        // event is sent by `dragPart` and by nothing else, so a refusal at this
-        // end arrives with the mock already dragged and its offset already in
-        // `vp.moved`, and no chip rises to take either back. The press itself is
-        // what is refused, in `onDown` (viewport/tools.js).
+        // A BODY OF THE SKETCH DOES NOT REACH HERE, and no check on this side
+        // says so: the viewport tells the two gestures apart at the PRESS and
+        // sends a drag of a mock on `hmr:sketchmove` instead, which is the
+        // handler below. `motor` moved 3 mm, filed against
+        // `/<root>/sketch/motor`, would be a task about a part no build has —
+        // and worse, this chip is the only door onto `__resetMove`, which walks
+        // `vp.moved`, where a mock's offset is deliberately never written.
         const d = (e.detail && e.detail.delta) || [];
         if (d.length !== 3 || !d.every(Number.isFinite)) return;
         const mag = Math.round(Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) * 10) / 10;
@@ -1303,6 +1306,53 @@ export default class HammerolaViewer extends React.Component {
         const name = countedName((row && row.name) || e.detail.name,
                                  e.detail.count);
         this.setState({ moved: { id: e.detail.id, name, mag } });
+      },
+      [SKETCHMOVE]: (e) => {
+        // THE SAME GESTURE AS THE ONE ABOVE AND THE OPPOSITE MEANING. A part of
+        // the build moved is a statement TO the agent and changes nothing; a
+        // body of the sketch is the reader's own drawing, so dragging one is an
+        // ordinary edit of the document — the same edit as typing the number
+        // into the `at` fields, which is why it goes through `setSketch` like
+        // every other one and raises no chip at all. The panel standing open is
+        // what says the body is not part of the model; there is nothing here for
+        // a chip to take back.
+        //
+        // NOT GUARDED BY `toolsOff` unlike the chip above, for the reason the
+        // panel itself is not: a sketch names no part of anything, so there is
+        // no `/cmp/…` path for it to file, and a mock is as true over a
+        // comparison as over a build.
+        const d = (e.detail && e.detail.delta) || [];
+        if (d.length !== 3 || !d.every(Number.isFinite)) return;
+        const doc = this.state.sketch || emptySketch();
+        // THE RESULT IS EVERY NODE AND A HOLE IS ITS OWN, which is what the
+        // payload the panel builds offers to the hand: one part for the fused
+        // body and one translucent part per hole (sketchgeom.js). Dragging the
+        // result moves the whole mock — every node by the same delta, so it
+        // keeps its shape and lands somewhere else — and dragging a hole moves
+        // that hole through the body.
+        //
+        // BY NAME, because a name is what the two halves share: the body's name
+        // in the document is the part's `name` in the payload, and `freeName`
+        // keeps them unique and keeps `RESULT_NAME` out of the reader's reach.
+        // A name no node answers to moves nothing rather than guessing, which is
+        // a drag that landed while the document was being edited from somewhere
+        // else.
+        const ids = doc.nodes
+          .filter((node) => e.detail.name === RESULT_NAME
+            || node.name === e.detail.name)
+          .map((node) => node.id);
+        if (!ids.length) return;
+        // THE DRAFT GOES FIRST, exactly as `commitSketch` drops it and for the
+        // same reason one step further: a field renders from `sketchDraft` while
+        // one stands on its key, and this is the first door into `setSketch`
+        // that a draft can survive. Every other one is a button, and a real
+        // click blurs the field and commits it on the way. A drag does not: the
+        // press is taken in the capture phase (`onDown` calls `preventDefault`),
+        // so the focus never leaves. Left standing, the panel would show typed
+        // text over a body that has already moved — and the blur that came later
+        // would commit that text back over the axis the drag had just written.
+        this.setState({ sketchDraft: null });
+        this.setSketch(moveNodes(doc, ids, d));
       },
       [PLACE]: (e) => {
         // A comment is a task for the agent, and only the customer files one.
@@ -5284,10 +5334,12 @@ export default class HammerolaViewer extends React.Component {
       // NOT ONE OF `s.tool`, and that is the whole difference between this
       // button and the three above it. Those three ARM A GESTURE on the canvas
       // and the viewport is told which one; this one opens a panel of number
-      // fields and arms nothing — there is no dragging, no gizmo and no
-      // click-to-place, because the library's id-picker answers about the
-      // model's parts and not about bodies of our own (issue #90). So it is
-      // drawn like its neighbours and lit from its own flag.
+      // fields and arms nothing of its own. The bodies it stages CAN be dragged
+      // — under the MOVE tool, back up this same strip, because a mock is a body
+      // in the scene like any other and one tool for moving things is better
+      // than two. What that drag means is the panel's business: it ends in
+      // `hmr:sketchmove` and writes the body's `at`, raising no chip. So this
+      // button is drawn like its neighbours and lit from its own flag.
       //
       // HIDDEN WITHOUT A TOKEN, like Move part and unlike Measure: everything
       // the sketch produces leaves this page as a comment, which is behind the
@@ -6540,13 +6592,20 @@ export default class HammerolaViewer extends React.Component {
 
             {/* ── the sketch: a rough body the model has to fit, in numbers ──
 
-                NUMBERS ONLY, and the absence of anything else here is the
-                decision rather than an unfinished state: no dragging, no
-                gizmos, no clicking a spot in the scene. The library's id-picker
-                answers about the MODEL's parts (issue #90), so a handle of ours
-                would need hit-testing of its own — a separate piece of work
-                nobody has asked for, and this panel does not need it to be
-                useful. */}
+                NUMBERS AND ONE HAND. The fields are where a body is SIZED, and
+                they are the only way to say `20 x 20 x 20`; where it SITS can
+                also be dragged, with the Move tool over the body itself — the
+                gesture ends in `hmr:sketchmove` and writes the `at` fields the
+                reader is looking at, so the two ways of saying it are one thing
+                (`sketchgeom.js` for what is grabbable: the fused result, and
+                each hole on its own).
+
+                WHAT IS STILL NOT HERE is a gizmo, a handle of our own and
+                click-to-place. The library's id-picker answers about parts that
+                are IN THE SCENE (issue #90) — which a staged body is, and which
+                is why the drag needed no hit-testing of ours — while an empty
+                spot in space is not, so putting a new body where the cursor is
+                remains a separate piece of work. */}
             {v.sketchOn && (
               <div onClick={(e) => e.stopPropagation()} style={css(v.sketchPanelStyle)}>
                 <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:3px')}>
