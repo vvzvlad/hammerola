@@ -526,10 +526,18 @@ describe('the popovers that become a sheet on a narrow page', () => {
   // phone has no Escape key — opened, they could only be dismissed by reloading
   // the page.
   //
-  // What does not earn a place: `menuStyle`, already clamped by `menuAt`, and
-  // the composer, whose ✕ and Send sit at the right end of their rows behind
+  // What does not earn a place: `menuStyle`, already clamped by `menuAt`; the
+  // composer, whose ✕ and Send sit at the right end of their rows behind
   // `flex:1` spacers while the panel itself is anchored `right:16px` — so it is
-  // the composer's LEFT end that goes off screen, not its controls.
+  // the composer's LEFT end that goes off screen, not its controls; and the
+  // view menu, which COULD NOT take this sheet even if it wanted one. It opens
+  // inside the floating toolbar, and that toolbar's `backdrop-filter` makes it
+  // a containing block for `fixed` descendants as well as `absolute` ones (CSS
+  // Filter Effects 2, §2.1) — so a sheet there would clamp itself to the
+  // toolbar's box and come up over the button that opened it. It needs no clamp
+  // either: the toolbar is centred on the bottom edge and on a narrow window
+  // holds that button and Fit and nothing else, so 260px from the button's left
+  // edge is inside the window. `viewmenu.test.js` holds that one.
   const sheets = (over) => {
     const v = component(over).computed()
     return [v.revMenuStyle, v.dlMenuStyle, v.tokenPopStyle,
