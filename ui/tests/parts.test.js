@@ -25,7 +25,7 @@ import { internals } from '../src/viewport/internals.js'
 import { GHOST_OPACITY, renderOptions } from '../src/viewport/options.js'
 import {
   applyGhost, applyHidden, applySelected, movePart, movableGroup, partCentre,
-  resetMoves, statesOf, treeFromShapes,
+  resetMoves, restageMoves, statesOf, treeFromShapes,
 } from '../src/viewport/parts.js'
 import {
   fakeGroup, fakeMatrix, fakeShapeSolid, fakeViewer, fakeViewport,
@@ -586,6 +586,60 @@ describe('movePart and resetMoves', () => {
     expect(movePart(vp, [], [10, 0, 0])).toBe(false)
     expect(movePart(vp, PATHS[0], [10, 0, 0])).toBe(false)
     expect(vp.moved.size).toBe(0)
+  })
+
+  // -- and the same drag, after the scene under it was built again -------------
+
+  it('re-applies every offset onto the groups a re-stage just built', () => {
+    // WHAT A RE-STAGE IS: the sketch panel lays a body over the model, and the
+    // viewport renders the document it already had with that body composed in.
+    // The model is the same, so the drag is still a true statement about it
+    // (ui-brief block 6) and `show` keeps the map — but `clear()` disposed the
+    // ObjectGroups it was written on and `render()` built new ones at the
+    // positions the model gives them. Without this the interface's chip would
+    // say a part is displaced while it stands exactly at home.
+    const { homes, vp } = crowd()
+    movePart(vp, PATHS, [10, -5, 2])
+
+    // The scene rebuilt: fresh groups, back at their own homes, exactly as a
+    // second `render()` of one document leaves them.
+    const groups = Object.fromEntries(
+      PATHS.map((path, at) => [path, fakeGroup(homes[at])]))
+    vp.viewer = fakeViewer({ states: statesFor(PATHS), groups })
+
+    restageMoves(vp)
+
+    PATHS.forEach((path, at) => {
+      const now = groups[path].position
+      expect([now.x, now.y, now.z], `copy ${at} snapped home`)
+        .toEqual([homes[at][0] + 10, homes[at][1] - 5, homes[at][2] + 2])
+    })
+    expect([...vp.moved.values()]).toEqual(PATHS.map(() => [10, -5, 2]))
+    // THE HOMES ARE THE NEW SCENE'S, taken again rather than carried over — so
+    // "put it back" puts it back to a position read off the groups that are
+    // actually on screen.
+    expect([...vp.partHome.values()]).toEqual(homes)
+  })
+
+  it('drops a path the rebuilt scene no longer has', () => {
+    const { homes, vp } = crowd()
+    movePart(vp, PATHS, [10, 0, 0])
+
+    const kept = PATHS.slice(1)
+    const groups = Object.fromEntries(
+      kept.map((path, at) => [path, fakeGroup(homes[at + 1])]))
+    vp.viewer = fakeViewer({ states: statesFor(kept), groups })
+
+    restageMoves(vp)
+
+    expect([...vp.moved.keys()]).toEqual(kept)
+  })
+
+  it('does nothing at all when nothing was moved', () => {
+    const { vp } = crowd()
+    restageMoves(vp)
+    expect(vp.moved.size).toBe(0)
+    expect(vp.viewer.update).not.toHaveBeenCalled()
   })
 })
 

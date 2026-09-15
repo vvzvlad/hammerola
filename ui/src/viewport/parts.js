@@ -380,6 +380,37 @@ export function movePart(vp, paths, delta) {
   return true;
 }
 
+/**
+ * Put every moved part back where the READER left it, on groups just rebuilt.
+ *
+ * The other half of keeping a drag across a re-stage (viewport/element.js): the
+ * map of offsets survives one, but the ObjectGroups they were written on do not
+ * — those were disposed in `clear()` and built again by `render()`, at the
+ * positions the model gives them. Without this the interface's move chip would
+ * describe a part standing exactly where the build puts it, which is ui-brief
+ * block 6 broken in the quietest possible way: the page says something is
+ * displaced and nothing is.
+ *
+ * THE HOMES ARE FORGOTTEN AND TAKEN AGAIN rather than reused. They are positions
+ * read off groups that no longer exist; the new ones are at the same coordinates
+ * because it is the same document rendered again, and reading them off the scene
+ * in front of us is the spelling that stays true if that ever stops holding.
+ *
+ * A PATH THE SCENE NO LONGER HAS IS DROPPED, which is `movePart`'s own answer to
+ * one: it refuses a path it cannot move, and the entry is then simply not
+ * written back into `vp.moved`.
+ */
+export function restageMoves(vp) {
+  if (!vp.moved.size) return;
+  const offsets = [...vp.moved.entries()];
+  vp.moved.clear();
+  vp.partHome.clear();
+  // ONE CALL PER PATH, because one delta belongs to one path: a row standing for
+  // five copies of a part moved all five by the same offset, and every one of
+  // them is its own entry in this map.
+  for (const [path, delta] of offsets) movePart(vp, [path], delta);
+}
+
 /** Put every moved part back where the build had it. */
 export function resetMoves(vp) {
   if (!vp.moved.size) return;

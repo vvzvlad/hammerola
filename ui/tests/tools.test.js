@@ -658,4 +658,87 @@ describe('what a drag with the move tool takes with it', () => {
     expect(emitted(vp)).not.toContain(EVENT_MOVED)
     expect(event.preventDefault).not.toHaveBeenCalled()
   })
+
+  describe('a body the sketch panel staged over the model', () => {
+    // A mock of the thing the model has to fit, assembled in the panel and
+    // composed into the document (`staged()` in element.js). It is an ordinary
+    // group in `nestedGroup` and an ordinary pick target, so the move tool would
+    // drag it like any part — and it must not, because the page refuses to raise
+    // a chip about a body that is in no build, the chip is the only door onto
+    // putting a part back, and `restageMoves` would carry the offset it left
+    // through every re-stage the next edit in the panel causes.
+    //
+    // REFUSED AT THE PRESS, which is what these tests are really about: the same
+    // refusal at the `hmr:moved` end arrives after the group has been moved and
+    // the offset recorded, so the mock stays displaced with nothing on screen
+    // explaining it.
+    //
+    // THE ELEMENT'S OWN `isOverlay` ANSWERS, like `activeTool` above, off the two
+    // fields it reads. Agreeing with the group name minted against the
+    // document's own parts is the whole reason that question belongs to the
+    // viewport rather than to a regex over the path.
+    const GROUP = '/Group/sketch'
+    const MOCK = `${GROUP}/motor`
+
+    /** The scene above with the mock staged into it, group node and all. */
+    function overlaid(selected) {
+      const groups = Object.fromEntries(
+        [...PINS, '/Group/lid', GROUP, MOCK].map((path) => [path, fakeGroup()]))
+      const vp = toolViewport({ tool: 'move', selected }, fakeViewer({ groups }))
+      vp.payload = { name: 'Group', parts: [] }
+      vp.overlayParts = [{ name: 'motor' }]
+      return { groups, vp }
+    }
+
+    it('stays where it was, and leaves the press to the trackball', () => {
+      const { groups, vp } = overlaid([])
+      pickEntity.mockReturnValue({ id: MOCK, name: 'motor', point: [0, 0, 0] })
+      const event = pointerDown(vp, [100, 100])
+      pointerMove([300, 100])
+
+      expect(at(groups[MOCK]), 'the mock followed the mouse').toEqual([0, 0, 0])
+      expect(vp.moved.size, 'an offset was written for it').toBe(0)
+      expect(emitted(vp)).not.toContain(EVENT_MOVED)
+      // Degraded to a plain press, exactly as a grab on anything else that
+      // cannot be moved: the drag rotates the model.
+      expect(event.preventDefault).not.toHaveBeenCalled()
+    })
+
+    it('refuses the whole grab when a part of the model came with it', () => {
+      // The selection holds both. Half of it moved is the model's part standing
+      // somewhere the model does not put it, under a chip the page will not
+      // raise because the other half is a mock.
+      const { groups, vp } = overlaid(['/Group/lid', MOCK])
+      pickEntity.mockReturnValue({ id: '/Group/lid', name: 'lid', point: [0, 0, 0] })
+      pointerDown(vp, [100, 100])
+      pointerMove([300, 100])
+
+      expect(vp.moved.size).toBe(0)
+      for (const path of ['/Group/lid', MOCK]) {
+        expect(at(groups[path]), `${path} moved anyway`).toEqual([0, 0, 0])
+      }
+      expect(emitted(vp)).not.toContain(EVENT_MOVED)
+    })
+
+    it('does not go under a press that missed, when its GROUP is selected', () => {
+      // THE GROUP ROW IS SELECTED FROM THE TREE, which is the door the scene's
+      // own picking hides: nothing picks a group node under the cursor, but a
+      // click on its row writes `sel` and the interface sends the node's OWN id
+      // as the selection. A press that then MISSES the model hits `wanted[0]` —
+      // the fallback that drags a standing selection from empty space — and the
+      // library registers the group in `nestedGroup.groups` like any other, so
+      // the whole mock assembly went with one drag under a chip reading
+      // `partId: '/Group/sketch'`.
+      const { groups, vp } = overlaid([GROUP])
+      pickEntity.mockReturnValue(null)
+      const event = pointerDown(vp, [100, 100])
+      pointerMove([300, 100])
+
+      expect(at(groups[GROUP]), 'the assembly followed the mouse')
+        .toEqual([0, 0, 0])
+      expect(vp.moved.size).toBe(0)
+      expect(emitted(vp)).not.toContain(EVENT_MOVED)
+      expect(event.preventDefault).not.toHaveBeenCalled()
+    })
+  })
 })
