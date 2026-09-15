@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part", "CadQuery", "STL".
-version: 15
+version: 16
 ---
 
 # hammerola
@@ -325,6 +325,21 @@ general phrase written where the real measurement was lying right there in the
 file. A figure taken off one build is a property of that run, not of the kernel
 or of the process, and the sentence has to say which — write the number and
 where it came from, or write that you do not know.
+
+**A number the person hands you is their claim, not your measurement.** A
+dimension in a comment, a figure typed into the chat, a size written on a
+photograph — each arrives with somebody standing behind it and nothing at all
+saying how they got it. They may have put a caliper on the thing, read a
+datasheet, or picked what looked right, and those are `measured`, `derived` and
+`estimated`: three different statements to whoever reads the file next, and only
+the first of them earns a row in `ref/measurements.md`. Which one it is, is a
+question for them and never a guess for you, so ask it in the same turn and
+before the number reaches any geometry — what was it measured with, or where is
+it written down. Answered, a measurement goes into `ref/measurements.md` with
+the person and the date as its source, and `checklib.measured(...)` then points
+at something real. Unanswered, it is an estimate and says so, which is honest.
+What it may never become is a `measured` you assumed on their behalf — the same
+lie as the paragraph above, written by a different hand.
 
 **`ref/` is published with every build**, and two things follow. Its names obey
 rule 1 below — ASCII, no `×`, no `Ø`, no Cyrillic — and one bad name refuses the

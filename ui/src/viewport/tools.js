@@ -418,7 +418,24 @@ export function installTools(vp) {
           : sel)
         : (hit && hit.id ? [hit.id] : null);
       const ndc = wanted ? ndcAt(g.canvas, event) : null;
-      if (!wanted || !ndc || !wanted.every((path) => movableGroup(viewer, path))) {
+      // A BODY OF THE SKETCH IS NOT DRAGGABLE EITHER, and the question is the
+      // viewport's own (`isOverlay`): the panel stages its mocks into the scene,
+      // so each is an ordinary group here and an ordinary pick target, while a
+      // move filed about one is a task in the BUILD's terms about a body that is
+      // in no build. The interface refuses the chip such a drag would raise —
+      // and that chip is the only door onto putting the part back, so a refusal
+      // any later leaves the mock displaced with nothing on screen saying so,
+      // and `restageMoves` carries the offset through every re-stage the panel's
+      // next edit causes. REFUSED WITH THE GESTURE, therefore, in the same
+      // breath as a part the scene cannot move at all: here nothing has moved
+      // yet, and the press degrades into the plain one below.
+      //
+      // `every`, so a MIXED grab — a mock selected together with a part of the
+      // model — refuses whole rather than quietly moving the half it may, which
+      // is the all-or-nothing `movePart` keeps for the copies of a row.
+      const grabbable = (path) => !!movableGroup(viewer, path)
+        && !vp.isOverlay(path);
+      if (!wanted || !ndc || !wanted.every(grabbable)) {
         // Nothing here to drag. The press DEGRADES to a plain one rather than
         // being dropped: a click still selects and a drag still rotates, which
         // is how a reader reaches the part they meant to move without leaving

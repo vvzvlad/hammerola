@@ -113,6 +113,19 @@ import {
   readToken, writeToken, clearToken, readNotes, writeNotes, rememberPointer,
   readTabs, rememberTab, forgetTab, readTheme, writeTheme,
 } from './store.js';
+// The sketch: a rough body the reader assembles out of numbers so the agent has
+// something to design AGAINST — the motor the bracket has to clear, the wall it
+// bolts to. Two modules, and the split is the same one the viewport draws: the
+// document and its projection are pure text (`sketch.js`), the kernel that turns
+// one into parts is next door (`sketchgeom.js`), and the COLOURS of those parts
+// live over there with it. That is not an exemption from this file's no-literal
+// rule — a part's colour is model content, like the colours the hub pushes in a
+// view file, and this file paints no part.
+import {
+  addNode, addParam, emptySketch, firstFree, isEmpty, removeNode, removeParam,
+  renameParam, sketchText, updateNode, updateParam, usedBy,
+} from './sketch.js';
+import { buildSketch, RESULT_NAME } from './sketchgeom.js';
 import {
   css, FONTS, SANS, MONO, Mark, NARROW, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
 } from './style.jsx';
@@ -294,6 +307,38 @@ const mm3 = (value) => (value >= 10
 
 /** The letter the viewport holds the cut tool up on. Shown, never bound here. */
 const HOLD_KEY_LABEL = 'C';
+
+// -- whether this hub serves the sketch panel at all --------------------------
+//
+// THE HUB'S ANSWER, STAMPED ON `<html>` BEFORE THE PAGE IS SENT, the way the
+// theme is (`src/render.py`). The panel is part of the toolbar this file draws,
+// so the answer has to be here before a button is drawn — and it is the hub's
+// own configuration, which nothing in a browser can see. `SKETCH_PANEL` in the
+// hub's environment is where it comes from; `off` is what a hub that never set
+// it says, so a deployment that did not ask for the feature never carries it.
+//
+// SPELLED HERE AS WELL AS IN src/render.py because the two sides cannot share a
+// module; `tests/test_ui_source.py` holds the name and the values equal across
+// them, the way it already does for the theme cookie.
+const SKETCH_ATTRIBUTE = 'data-sketch-panel';
+const SKETCH_ON = 'on';
+
+/**
+ * Read where the button is drawn, and watched by nothing.
+ *
+ * NO OBSERVER, and that is the whole difference from the theme: this cannot
+ * change while the page is open — it is one setting of the hub, fixed before the
+ * document was sent — so there is nothing to notice. What that leaves is a
+ * single attribute lookup on the root element, which is cheap enough to do where
+ * the answer is spent rather than cached into state somebody could then write.
+ *
+ * ANYTHING BUT `on` IS OFF, a missing attribute included. A page carrying an
+ * answer nobody recognises is a page whose hub did not ask for this, which is
+ * the one reading that keeps the default safe.
+ */
+const sketchPanelOn = () => (
+  document.documentElement.getAttribute(SKETCH_ATTRIBUTE) === SKETCH_ON
+);
 
 // HOW MANY VIEWS STILL FIT AS A STRIP OF PILLS before the switcher becomes a
 // menu. The strip is a centred flex row that does NOT wrap, inside a root that
@@ -935,6 +980,13 @@ export default class HammerolaViewer extends React.Component {
     // reason `this.carry` is not: nothing on the page is drawn from it, and it
     // lives for exactly one comparison.
     this._cmpFrom = null;
+    // How many bodies the sketch panel has ever added, which is where a new
+    // one's id and its first name come from. A COUNTER AND NOT THE LENGTH of
+    // the list: deleting the second of two and adding another would mint `n2`
+    // twice, and two nodes under one id make `updateNode` edit both. Not state,
+    // for the reason `this.carry` is not — nothing on the page is drawn from
+    // it, so a bump must not cost a render.
+    this._sketchSeq = 0;
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
@@ -985,6 +1037,28 @@ export default class HammerolaViewer extends React.Component {
       // in the records' own shape — oldest first, as SPEC 7A.2 sorts them.
       feed: [], activePin: null, composer: null,
       measure: null, moved: null, toast: null,
+      // -- the rough body the reader is asking the model to fit around, which
+      // is ui-brief block 6 one step further on: a statement and not an edit.
+      // Nothing here is pushed, nothing is rebuilt from it, and the model on
+      // screen is untouched by it.
+      //
+      // A DOCUMENT AND A FLAG rather than one nullable field: closing the panel
+      // takes the overlay off the model, and it must not throw the sketch away
+      // — a reader who shut it to look at something underneath comes back to
+      // what they had.
+      //
+      // `sketchError` is the KERNEL saying no: its own sentence about the
+      // document as it stands. The overlay is deliberately NOT cleared while it
+      // is set; see `setSketch`. `sketchHint` is this side refusing an EDIT —
+      // `dropParam` is its only writer — and the two are apart because they gate
+      // different things: a document that does not project has no `add to
+      // comment` to offer, while an edit that was refused leaves a document that
+      // projects perfectly. One box draws whichever is set (`computed`).
+      // `sketchDraft` is the one field the reader is typing in; see `computed`,
+      // where it is spent, and `commitSketch`, where it is turned into a
+      // document.
+      sketch: emptySketch(), sketchOpen: false, sketchError: null,
+      sketchHint: null, sketchDraft: null,
       // -- who the reader is
       // No project id: the secret is one string for the whole hub since step 0,
       // so keying it per project stored N copies of it (see store.js).
@@ -1058,6 +1132,39 @@ export default class HammerolaViewer extends React.Component {
    * gestures for it otherwise.
    */
   toolsOff() { return !!this.comparePair(); }
+
+  /**
+   * Was this path a body of the sketch, rather than a part of the build?
+   *
+   * THE SAME CLASS `toolsOff` IS FOR, one source of parts further over. The
+   * sketch panel stages its bodies into the scene (`staged()` in
+   * viewport/element.js), which makes each of them an ordinary row in the tree
+   * and an ordinary pick target — so the Comment tool opens a composer headed
+   * `motor` and posts `partId: "/<root>/sketch/motor"`, and `add to comment` on
+   * the measurement chip attaches that same path to the number. Both are tasks
+   * written in the BUILD's terms about a body that is in no build, no catalogue
+   * and no revision, and the agent has nothing to look the path up in.
+   *
+   * THE MOVE TOOL IS NOT A READER OF THIS, and it is the one that looks like it
+   * should be: a drag is refused a step earlier, with the GESTURE (`onDown` in
+   * viewport/tools.js, which asks the same `isOverlay`), because by the time
+   * `hmr:moved` is sent the mock has been dragged and its offset written.
+   *
+   * THE MEASUREMENT ITSELF IS NOT ONE OF THESE and is deliberately left alone: a
+   * distance between two faces of a mock is the sort of thing the panel exists
+   * to establish, and the chip it raises is the reader's own. Only the PART the
+   * chip would file that number against is refused.
+   *
+   * THE VIEWPORT IS ASKED, because the group's name is minted there against the
+   * model's own parts — `sketch`, or `sketch2` where the model publishes a group
+   * of that name — and a path is all the event and the selection carry. A ref
+   * call like `sketchOverlay`, and false wherever there is no element yet: with
+   * nothing staged there is no sketch body to have picked.
+   */
+  sketchBody(id) {
+    const el = this.el();
+    return !!(el && typeof el.isOverlay === 'function' && el.isOverlay(id));
+  }
 
   // -- loading --------------------------------------------------------------
   componentDidMount() {
@@ -1167,6 +1274,13 @@ export default class HammerolaViewer extends React.Component {
         // one door onto `movedAttach`, which would post a `/cmp/…` path as the
         // part a comment is filed against.
         if (this.toolsOff()) return;
+        // A BODY OF THE SKETCH DOES NOT REACH HERE, and the refusal deliberately
+        // is not repeated: `motor` moved 3 mm, filed against
+        // `/<root>/sketch/motor`, is a task about a part no build has — but this
+        // event is sent by `dragPart` and by nothing else, so a refusal at this
+        // end arrives with the mock already dragged and its offset already in
+        // `vp.moved`, and no chip rises to take either back. The press itself is
+        // what is refused, in `onDown` (viewport/tools.js).
         const d = (e.detail && e.detail.delta) || [];
         if (d.length !== 3 || !d.every(Number.isFinite)) return;
         const mag = Math.round(Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) * 10) / 10;
@@ -1197,6 +1311,13 @@ export default class HammerolaViewer extends React.Component {
         // comparison's (`toolsOff`): the composer this opens would be headed
         // `plate #1` and post `/cmp/added/plate #1` as the part to change.
         if (this.toolsOff()) return;
+        // Nor about a body of the sketch (`sketchBody`), for the same reason
+        // read off the other source of parts: the composer would be headed
+        // `motor` and post `/<root>/sketch/motor` as the part to change, and the
+        // motor is the thing the model has to fit rather than anything in it.
+        // The sketch's own door is `add to comment` in the panel, which posts
+        // the projection as text and names no part at all.
+        if (this.sketchBody(e.detail && e.detail.id)) return;
         const d = e.detail || {};
         // THE ROW'S NAME, found by looking the picked PATH up — the door onto
         // `composer.part` that a POINT PLACED IN THE SCENE opens (the inventory
@@ -2180,8 +2301,16 @@ export default class HammerolaViewer extends React.Component {
       // Both belonged to the scene that has just been torn down: the
       // viewport clears its own tape and its own offsets on every load, and
       // a chip left standing here would describe a model that is gone.
-      measure: null,
-      moved: null,
+      //
+      // A RE-STAGE IS THE EXCEPTION, and it is the only one. The viewport
+      // composes the sketch panel's body over the SAME document it already
+      // had (viewport/element.js, `restage`), so no part moved, no face went
+      // anywhere, and the viewport keeps its own halves of these two for
+      // exactly that reason. Dropping the chips here would take the
+      // measurement and the drag away on the keystroke that changed a
+      // number in an unrelated panel — blocks 6 and 7 cancelled by block
+      // 6's own successor.
+      ...(d.restage ? null : { measure: null, moved: null }),
       // The reader's own collapses survive: part paths are the same across a
       // rebuild, and this is the tree they were reading a moment ago.
       expanded: { ...this.defaultExpanded(tree), ...s.expanded },
@@ -2986,6 +3115,166 @@ export default class HammerolaViewer extends React.Component {
     this.setVisibility({ hidden: step.hidden, ghost: step.ghost }, null, false);
   }
 
+  // -- the sketch -----------------------------------------------------------
+
+  /**
+   * The document the panel now holds, and the body that follows from it.
+   *
+   * THE ONE DOOR. Every edit in the panel — a digit, a role flipped, a body
+   * deleted, a param renamed — comes through here, so there is no arrangement in
+   * which the numbers in the panel and the shape over the model describe
+   * different things.
+   *
+   * A DOCUMENT THAT WILL NOT BUILD LEAVES THE LAST GOOD BODY WHERE IT IS, and
+   * that is the whole reason this is not two lines. The commonest way to reach
+   * one is halfway through typing — a dimension naming a param that has not been
+   * added yet, a size cleared on the way to a bigger number — and blanking the
+   * model at that moment would make the body flash away and back on every
+   * keystroke. The kernel's own sentence goes in the panel instead, where the
+   * reader is already looking, and the shape on screen stays the last one that
+   * meant something.
+   *
+   * NOTHING TO DRAW IS NOT AN ERROR: a document with no bodies in it — a panel
+   * just opened, the last body deleted — builds a result with no geometry, and
+   * an empty part in the tree is worse than no overlay at all.
+   */
+  setSketch(doc) {
+    let parts = null;
+    let error = null;
+    try {
+      parts = buildSketch(doc).parts;
+    } catch (failure) {
+      error = String((failure && failure.message) || failure);
+    }
+    // THE HINT GOES WITH THE EDIT THAT FOLLOWED IT. `sketchHint` is a refusal of
+    // one gesture — a param the reader tried to remove while a body still spent
+    // it — so the next edit that lands is the moment it stops describing
+    // anything on screen.
+    this.setState({ sketch: doc, sketchError: error, sketchHint: null });
+    if (parts) this.sketchOverlay(doc.nodes.length ? parts : null);
+  }
+
+  /**
+   * The viewport's second source of parts: a list to lay over the model, or
+   * `null` to take it off.
+   *
+   * A REF CALL and not an event, like `snapshot()` and `getCamera()` beside it:
+   * this answers to a person typing in a field, which is a gesture rather than a
+   * state this side holds a second copy of. The element remembers what it was
+   * given, so a rebuild landing under an open panel puts the body back by
+   * itself — see `setOverlay` in viewport/element.js.
+   */
+  sketchOverlay(parts) {
+    const el = this.el();
+    if (!el || typeof el.setOverlay !== 'function') return;
+    try {
+      if (parts) el.setOverlay(parts);
+      else el.clearOverlay();
+    } catch (error) {
+      console.error('sketch overlay', error);
+    }
+  }
+
+  /**
+   * Open the panel, or close it and take the body off the model.
+   *
+   * CLOSING CLEARS THE OVERLAY AND KEEPS THE DOCUMENT. The panel is the only
+   * thing on screen that says the body is not part of the model — there is no
+   * chip for it, because the panel it came out of is standing right there — so a
+   * closed panel with a body still over the model would be this page showing a
+   * shape nothing accounts for.
+   *
+   * ON A DOCUMENT WITH NOTHING IN IT, BOTH DIRECTIONS COST NOTHING. Opening sets
+   * an empty overlay and closing clears an empty one, and `setOverlay` in
+   * viewport/element.js answers each of those with no re-stage at all — which it
+   * has to, because a stage is a whole scene disposed and built again, and a
+   * reader opening the panel to see what it is would otherwise pay for it twice.
+   */
+  toggleSketch() {
+    const open = !this.state.sketchOpen;
+    this.setState({
+      sketchOpen: open, sketchDraft: null, menu: null, revOpen: false,
+      dlOpen: false,
+    });
+    if (open) this.setSketch(this.state.sketch);
+    else this.sketchOverlay(null);
+  }
+
+  /**
+   * One field of the panel, being typed in. THE DRAFT AND NOTHING ELSE.
+   *
+   * THE TEXT IS KEPT BESIDE THE DOCUMENT, and that is what `sketchDraft` is for.
+   * These fields show the document, and the document holds numbers: `42.` parses
+   * to `42`, so a field drawn from the document alone would rewrite the decimal
+   * point away under the cursor and land the next digit in the units column.
+   * ONE ENTRY AND NOT A MAP, because one field has the focus at a time, and the
+   * commit that ends the typing is what drops it.
+   *
+   * NO DOCUMENT IS BUILT HERE, which is the difference between this panel and a
+   * page that stutters. A keystroke that reached `setSketch` rebuilt the bodies,
+   * handed them to the viewport, and had the whole scene disposed and rendered
+   * again under a tree going back up to React — per character. `commitSketch`
+   * is where a value is settled, and the browser already says when that is.
+   */
+  typeSketch(key, text) {
+    this.setState({ sketchDraft: { key, text } });
+  }
+
+  /**
+   * That field, finished with: the text turned into the next document.
+   *
+   * `change` AND NOT `input` — a blur or an Enter — which is the event the
+   * platform defines as "this value is settled" and the one JSCAD's own
+   * parameter panel commits on. The draft carried what was on screen until now,
+   * so nothing the reader typed is lost by waiting for it.
+   *
+   * A FIELD NOBODY TYPED IN COMMITS NOTHING. A blur reaches every field the
+   * focus leaves, the ones only tabbed through included, and re-committing the
+   * text a field was already showing would be a whole scene staged for nothing —
+   * `setOverlay` would catch it as equivalent, but the document would still be
+   * rebuilt and every part of the panel drawn again. The draft is the record of
+   * having typed, so it is also the condition.
+   */
+  commitSketch(key, text, commit) {
+    const draft = this.state.sketchDraft;
+    if (!draft || draft.key !== key) return;
+    // BEFORE `setSketch`, so the field goes back to showing the document: the
+    // commit is what normalises `12.` to `12`, and a draft left standing would
+    // hold the reader's spelling over a number that has moved on.
+    this.setState({ sketchDraft: null });
+    this.setSketch(commit(text));
+  }
+
+  /**
+   * A param taken out — unless a body still names it.
+   *
+   * A DIMENSION IS A NUMBER OR THE NAME OF A PARAM, so a param removed under a
+   * size that still spends it leaves a document `resolveValue` refuses: the body
+   * on the model stops following the panel, the error box fills with a sentence
+   * about a name the reader can no longer see, and the only way back is to add a
+   * param under exactly the old name. Refusing it and SAYING WHICH BODIES is the
+   * repair the reader can actually act on.
+   *
+   * THE REFUSAL IS A HINT AND NOT AN ERROR, which is the difference between the
+   * two fields it could be written into. `sketchError` means "this document does
+   * not project", and `add to comment` is hidden while it is set; the document
+   * here is the one that was on screen a moment ago and projects perfectly —
+   * nothing was changed. Written there, pressing the × on a param in use took
+   * the feature's only exit away from a document that had nothing wrong with it.
+   */
+  dropParam(name) {
+    const doc = this.state.sketch || emptySketch();
+    const users = usedBy(doc, name);
+    if (users.length) {
+      this.setState({
+        sketchHint: `${name} is still a dimension of ${users.join(', ')}. `
+          + 'Give those a number or another param first, and it can go.',
+      });
+      return;
+    }
+    this.setSketch(removeParam(doc, name));
+  }
+
   toast(msg) {
     clearTimeout(this._tt);
     this.setState({ toast: msg });
@@ -3372,12 +3661,19 @@ export default class HammerolaViewer extends React.Component {
 
     // The hub's comment schema is closed — src/comments.py keeps `text`, `view`,
     // `part`, `key`, `published`, `point` and `camera` and DROPS everything else
-    // without saying so — so the measurement and the drag ride in the text,
-    // where the agent will actually read them, rather than in fields discarded
-    // on the way in.
+    // without saying so — so the measurement, the drag and the sketch ride in
+    // the text, where the agent will actually read them, rather than in fields
+    // discarded on the way in.
+    //
+    // THE SKETCH IS THE ONE THAT SPANS LINES, and it goes last for that reason:
+    // it is a small table (`sketchText`), and a block in the middle would split
+    // the one-line facts above it away from the sentence they belong to.
     const extra = [];
     if (c.meas) extra.push(`measured: ${c.meas}`);
     if (c.move) extra.push(`moved: ${c.move} (temporary, not in the model)`);
+    if (c.sketch) {
+      extra.push(`sketch — a rough body to design against, not in the model:\n${c.sketch}`);
+    }
 
     const form = new FormData();
     form.append('comment', JSON.stringify({
@@ -4420,6 +4716,190 @@ export default class HammerolaViewer extends React.Component {
     const authorNote = this.authorNote();
     const readerNote = this.selectedNote();
 
+    // -- the sketch: a rough body in numbers, laid over the model -------------
+    //
+    // WHETHER THIS HUB HAS THE PANEL AT ALL, asked once for the two styles that
+    // gate it below. It is not state and nothing on this page can change it —
+    // see `sketchPanelOn`, which says where the answer comes from.
+    const sketchOn = sketchPanelOn();
+
+    // `|| emptySketch()` for the reason `openTabs` above carries its `|| []`:
+    // every test file in ui/tests spells the state out by hand, and a field
+    // added here would otherwise take down the ones written before it existed,
+    // at `.nodes.length`.
+    const doc = s.sketch || emptySketch();
+
+    // A DIMENSION IS A NUMBER OR THE NAME OF A PARAM and nothing else — the
+    // whole of the language `sketch.js` defines, with no expression syntax and
+    // deliberately none coming. So the field is text, and this is the entire
+    // parser: what reads as a finite number is one, anything else is a name for
+    // `resolveValue` to find or to refuse BY NAME.
+    //
+    // AN EMPTY FIELD IS A ZERO and not an empty name, and what that decides is
+    // what the reader is shown while they are mid-edit. A zero builds: the body
+    // goes flat until the next digit lands, which is visibly about the field
+    // they are typing in. An empty NAME does not build, and the panel would say
+    // there is no param called "" — a sentence about a language they never used,
+    // over a body that stopped following them.
+    const dim = (raw) => {
+      const text = String(raw).trim();
+      if (!text) return 0;
+      const value = Number(text);
+      return Number.isFinite(value) ? value : text;
+    };
+    // A PLACEMENT IS ALWAYS A NUMBER. `at` and `rot` go to the kernel raw
+    // (sketchgeom.js, `placed`) and never through `resolveValue`, so a param
+    // name typed into one would arrive as a string in an arithmetic and come out
+    // as NaN — geometry that renders as nothing, with nothing said about it.
+    const num = (raw) => {
+      const value = Number(String(raw).trim());
+      return Number.isFinite(value) ? value : 0;
+    };
+    // A BOUND A PARAM MAY SIMPLY NOT HAVE: `paramText` prints the range only
+    // when both ends are there, so a cleared field has to come back as
+    // `undefined` rather than as a 0 that would read as a real limit.
+    const bound = (raw) => {
+      const text = String(raw).trim();
+      if (!text) return undefined;
+      const value = Number(text);
+      return Number.isFinite(value) ? value : undefined;
+    };
+    // `x,y; x,y; …`. A PAIR THAT DOES NOT READ AS TWO NUMBERS IS DROPPED rather
+    // than guessed at, and `num` is the wrong parser for it: it answers 0 for
+    // anything that is not a number, so `a,b` came through as a corner at the
+    // origin and `20,` as one on the axis — a point nobody typed, in a profile
+    // they are looking at. An empty field is not a number either, which is what
+    // makes the trailing `;` somebody types before the next point cost nothing
+    // while they think about it.
+    const coord = (text) => (text.trim() ? Number(text.trim()) : NaN);
+    const points = (raw) => String(raw).split(';')
+      .map((pair) => pair.split(',').map(coord))
+      .filter((pair) => pair.length === 2 && pair.every(Number.isFinite));
+    const pointsText = (list) => list.map((pair) => pair.join(',')).join('; ');
+    const swap = (list, index, value) => list.map((v, i) => (i === index ? value : v));
+
+    // One field of the panel: what it shows, and what typing in it does.
+    // `commit` turns the raw text into the whole NEXT DOCUMENT, because that is
+    // what `setSketch` takes — there is no partial write anywhere in here.
+    //
+    // TYPING TOUCHES THE DRAFT AND NOTHING ELSE; the document is written on
+    // `change` — a blur or an Enter — which is the browser's own event for
+    // "this field's value is settled" and what JSCAD's parameter panel commits
+    // on. Per KEYSTROKE, which is what this used to be, every character cost a
+    // whole scene: `setSketch` builds the bodies, hands them to the viewport,
+    // and `restage` tears the model down and renders it again with the tree
+    // going back up to React behind it. The CSG ALONE, measured on this
+    // repository's own kernel (@jscad/modeling 2.13.0, vitest, Apple M-series,
+    // mixed ops with every fifth body a hole): 0.3 ms at one body, 23 ms at
+    // four, 81 ms at twelve — before any of the rest of it. `-12.5` is five of
+    // those on the way to one number.
+    const field = (key, value, commit, width) => ({
+      key,
+      // The draft while this is the field being typed in, the document
+      // everywhere else. `typeSketch` says why both are needed.
+      value: s.sketchDraft && s.sketchDraft.key === key
+        ? s.sketchDraft.text
+        : String(value === undefined || value === null ? '' : value),
+      style: `width:${width};box-sizing:border-box;border:1px solid var(--line);border-radius:5px;outline:none;padding:3px 5px;font:400 11px ${MONO};color:var(--text);background:var(--card-bg)`,
+      onChange: (e) => this.typeSketch(key, e.target.value),
+      onBlur: (e) => this.commitSketch(key, e.target.value, commit),
+      // ENTER IS THE OTHER HALF OF `change`, and it is here rather than left to
+      // the blur because a reader who types a number and presses Enter has
+      // finished with that field whether or not they move off it — a panel that
+      // answered nothing until the focus left would read as one that had
+      // stopped listening.
+      onKeyDown: (e) => {
+        if (e.key === 'Enter') this.commitSketch(key, e.target.value, commit);
+      },
+    });
+
+    // HOW EACH OP SPELLS ITS OWN SIZE, keyed the way `DIMS` in sketch.js and
+    // `SHAPES` in sketchgeom.js are keyed — so an op that grows a dimension is
+    // changed in three tables and nowhere else, and an op in only two of them
+    // throws where it is looked up instead of drawing half a body.
+    const SIZES = {
+      box: (node) => ({
+        label: 'size',
+        fields: [0, 1, 2].map((axis) => field(
+          `${node.id}.size.${axis}`, node.size[axis],
+          (raw) => updateNode(doc, node.id, { size: swap(node.size, axis, dim(raw)) }),
+          '31%')),
+      }),
+      // SPELLED OUT AND NOT MAPPED OVER `['d', 'h']`, which is the shorter way
+      // and reaches for a computed key. `test_every_handled_event_is_imported_
+      // from_events_js` reads `[x]:` out of this file as a handler key, and the
+      // saving is two lines.
+      cylinder: (node) => ({
+        label: 'd · h',
+        fields: [
+          field(`${node.id}.d`, node.d,
+                (raw) => updateNode(doc, node.id, { d: dim(raw) }), '47%'),
+          field(`${node.id}.h`, node.h,
+                (raw) => updateNode(doc, node.id, { h: dim(raw) }), '47%'),
+        ],
+      }),
+      sphere: (node) => ({
+        label: 'd',
+        fields: [field(`${node.id}.d`, node.d,
+                       (raw) => updateNode(doc, node.id, { d: dim(raw) }), '47%')],
+      }),
+      extrude: (node) => ({
+        label: 'h · profile',
+        fields: [
+          field(`${node.id}.h`, node.h,
+                (raw) => updateNode(doc, node.id, { h: dim(raw) }), '24%'),
+          field(`${node.id}.profile`, pointsText(node.profile),
+                (raw) => updateNode(doc, node.id, { profile: points(raw) }), '72%'),
+        ],
+      }),
+    };
+
+    // WHAT EACH OP IS THE MOMENT IT IS ADDED: a body big enough to see, at the
+    // origin. Sizes rather than zeroes, because a zero builds perfectly well and
+    // draws nothing — so a button that added one would read as a button that did
+    // nothing at all.
+    const NEW_BODY = {
+      box: { size: [20, 20, 20] },
+      cylinder: { d: 10, h: 20 },
+      sphere: { d: 20 },
+      extrude: { h: 5, profile: [[0, 0], [20, 0], [20, 10], [0, 10]] },
+    };
+
+    // THE FIRST FREE NAME, and for a harder reason than tidiness. A body's name
+    // is its part's `name` in the payload, every hole is drawn as a part of its
+    // own under it, and the fused body is always the part called `RESULT_NAME` —
+    // so two bodies under one name are one entry in the library's groups map and
+    // one row in the tree, the second quietly standing in for the first. This has
+    // to hold for a name the reader TYPES and not only for one the + button
+    // mints: naming a mock after the thing it mocks is the whole point of the
+    // panel.
+    //
+    // THE LOOP ITSELF IS `firstFree` IN sketch.js, shared with `renameParam` —
+    // the same question asked about the other half of the document: what is this
+    // name when something already answers to it. `sketchAddParam` below does NOT
+    // share it and is not meant to: it mints `p<n>` counting from the params it
+    // has, which never hands back the bare prefix `firstFree` would.
+    const freeName = (wanted, exceptId) => {
+      const taken = new Set(doc.nodes
+        .filter((node) => node.id !== exceptId)
+        .map((node) => node.name));
+      taken.add(RESULT_NAME);
+      return firstFree(wanted, taken);
+    };
+
+    const addBody = (op) => () => {
+      this._sketchSeq += 1;
+      this.setSketch(addNode(doc, {
+        id: `n${this._sketchSeq}`,
+        name: freeName(`${op}${this._sketchSeq}`),
+        op,
+        role: 'solid',
+        at: [0, 0, 0],
+        rot: [0, 0, 0],
+        ...NEW_BODY[op],
+      }));
+    };
+
     return {
       rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, tokenPop: false }),
 
@@ -4529,8 +5009,18 @@ export default class HammerolaViewer extends React.Component {
         clearToken();
         // The feed goes with it: it was fetched under a token this browser no
         // longer has, and a reader without one may not read the queue at all.
+        //
+        // AND THE SKETCH PANEL, which is HIDDEN WITHOUT A TOKEN like Move part
+        // — everything it produces leaves this page as a comment. Left open it
+        // is a panel the button no longer offers to reopen, with `add to
+        // comment` gone from under it and a body standing over the model that
+        // nothing on screen accounts for. The overlay goes with the panel for
+        // the reason `toggleSketch` takes it off: the panel is the only thing
+        // that says the body is not part of the model.
         this.setState({ token: null, tokenPop: false, tokenDraft: '',
-                        composer: null, notePop: null, feed: [] });
+                        composer: null, notePop: null, feed: [],
+                        sketchOpen: false });
+        this.sketchOverlay(null);
         this.set({ tool: null });
         this.toast('Token removed — back to viewing');
       }),
@@ -4791,6 +5281,38 @@ export default class HammerolaViewer extends React.Component {
       moveBtnStyle: btn(s.tool === 'move', viewer, this.toolsOff()),
       tComment: setTool('comment'),
       commentBtnStyle: btn(s.tool === 'comment', viewer, this.toolsOff()),
+      // NOT ONE OF `s.tool`, and that is the whole difference between this
+      // button and the three above it. Those three ARM A GESTURE on the canvas
+      // and the viewport is told which one; this one opens a panel of number
+      // fields and arms nothing — there is no dragging, no gizmo and no
+      // click-to-place, because the library's id-picker answers about the
+      // model's parts and not about bodies of our own (issue #90). So it is
+      // drawn like its neighbours and lit from its own flag.
+      //
+      // HIDDEN WITHOUT A TOKEN, like Move part and unlike Measure: everything
+      // the sketch produces leaves this page as a comment, which is behind the
+      // token, so a reader who cannot comment has nowhere to send it.
+      //
+      // AND ABSENT — not hidden — ON A HUB THAT DID NOT ASK FOR THE PANEL. That
+      // is a DIFFERENT KIND of gate from the token above, and the difference is
+      // who is being answered: the token is about this READER, who cannot use a
+      // feature the hub does serve, and `display:none` is the right answer to
+      // it. The flag is about this HUB, which never asked for the feature at
+      // all (`sketchPanelOn`, decided before the page was sent) — and the right
+      // answer to that is no markup, so the button and the panel are wrapped in
+      // `v.sketchOn` in `render` and the styles below say nothing about it.
+      //
+      // AND NOT TAKEN OUT OF SERVICE BY A COMPARISON, unlike all three. What
+      // `toolsOff` guards is a task filed in the BUILD's terms against a scene
+      // that is not the build — a `/cmp/…` path in `partId`. A sketch names no
+      // part of anything: it posts no path, and the body it describes is the
+      // reader's own claim about a motor or a wall, which is as true over a
+      // comparison as over a build.
+      tSketch: () => this.toggleSketch(),
+      // THE FLAG ITSELF, because `render` is where it is spent: it decides
+      // whether these two nodes exist, not how they look.
+      sketchOn,
+      sketchBtnStyle: btn(s.sketchOpen, viewer, false),
       fitView: () => this.fitView(),
       grabFrame: () => this.saveFrame(),
       // OFF `armed` AND NOT OFF `s.tool`, so the strip stops instructing the
@@ -4851,6 +5373,221 @@ export default class HammerolaViewer extends React.Component {
       toggleHatch: stop(() => this.set({ hatch: !s.hatch })),
       hatchBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;' + (s.hatch ? 'background:var(--accent);color:var(--text-on-accent)' : 'border:1px solid var(--line-strong);background:var(--card-bg);color:transparent'),
       hatchMark: s.hatch ? '✓' : '',
+
+      // -- the sketch panel ---------------------------------------------------
+      //
+      // CLAMPED ON NARROW like the section panel and the note editor, for the
+      // same reason and one more of its own: it is anchored to the right-hand
+      // edge of the model area, its own close cross is at the top of it, and it
+      // is the tallest panel on this page. The button that opens it is gone at
+      // phone width (`showTools`) — but the flag is not, so a window dragged
+      // narrower with the panel open would otherwise leave a sheet nothing could
+      // take back. `narrow.test.js` holds the list.
+      //
+      // AND IT SAYS NOTHING ABOUT `sketchOn`, which is the division these two
+      // gates keep: a style answers about THIS READER — open or closed, wide or
+      // narrow, token or none — while the hub's flag is answered one level up,
+      // by leaving the markup out of the tree entirely (`v.sketchOn` in
+      // `render`). Spelling the flag here as well would be a second gate that
+      // can never fire, sitting on a node that is not there to style.
+      sketchPanelStyle: (narrow ? popSheet : 'position:absolute;right:16px;top:52px;width:330px;')
+        + 'max-height:calc(100% - 110px);overflow:auto;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 12px 40px var(--shadow);z-index:15;display:' + (s.sketchOpen ? 'block' : 'none'),
+      sketchClose: stop(() => this.toggleSketch()),
+
+      // EVERY OP `SIZES` CAN DRAW, read off that table rather than listed again
+      // beside it: a button for an op with no size row is a button that adds a
+      // body the panel cannot show, and a missing button is an op nothing can
+      // reach. The ORDER is the table's, which is the order sketch.js tables
+      // them in.
+      sketchOps: Object.keys(SIZES).map((op) => ({
+        key: op,
+        // The op's own name unless it reads badly on a button — `+ profile` is
+        // what the reader is about to type into `extrude`. Not a table anything
+        // has to be kept in step with: an op missing from it gets its own name.
+        label: `+ ${{ extrude: 'profile' }[op] || op}`,
+        onClick: addBody(op),
+      })),
+
+      sketchBodies: doc.nodes.map((node) => ({
+        key: node.id,
+        op: node.op,
+        // A NAME THAT CANNOT BE EMPTIED AND CANNOT BE TAKEN, because it is not
+        // only a label: it is the part's `name` in the payload, and a hole is
+        // drawn as a part of its own under it (sketchgeom.js). Cleared, the
+        // field shows what the reader typed — nothing — while the document keeps
+        // the last name, and the commit puts it back; typed onto a name another
+        // body already has, it comes back numbered (`freeName`).
+        name: field(`${node.id}.name`, node.name, (raw) => {
+          const wanted = raw.trim();
+          return updateNode(doc, node.id,
+                            { name: wanted ? freeName(wanted, node.id) : node.name });
+        }, '38%'),
+        role: node.role,
+        // The hole's own colour, because it is the same statement the payload
+        // makes: a hole is the subtraction tool, drawn red and translucent over
+        // the result. Neither value is written here — this is the palette's
+        // `--danger` family, and the part's is `sketchgeom.js`'s.
+        roleStyle: `padding:2px 7px;border-radius:4px;cursor:pointer;font:600 9.5px ${MONO};letter-spacing:.05em;border:1px solid `
+          + (node.role === 'hole'
+            ? 'var(--danger-line);background:var(--danger-bg);color:var(--danger)'
+            : 'var(--line);background:var(--chip-bg);color:var(--text-soft)'),
+        onRole: () => this.setSketch(updateNode(doc, node.id, {
+          role: node.role === 'hole' ? 'solid' : 'hole',
+        })),
+        onRemove: () => this.setSketch(removeNode(doc, node.id)),
+        groups: [
+          { key: 'dims', ...SIZES[node.op](node) },
+          {
+            key: 'at',
+            label: 'at',
+            fields: [0, 1, 2].map((axis) => field(
+              `${node.id}.at.${axis}`, node.at[axis],
+              (raw) => updateNode(doc, node.id, { at: swap(node.at, axis, num(raw)) }),
+              '31%')),
+          },
+          {
+            key: 'rot',
+            // DEGREES, said on the row rather than assumed: the kernel takes
+            // radians and `placed` converts, so a reader who read this as
+            // radians would turn a body two and a half times and get something
+            // that still looks like a box.
+            label: 'rot°',
+            fields: [0, 1, 2].map((axis) => field(
+              `${node.id}.rot.${axis}`, node.rot[axis],
+              (raw) => updateNode(doc, node.id, { rot: swap(node.rot, axis, num(raw)) }),
+              '31%')),
+          },
+        ],
+      })),
+
+      sketchParams: doc.params.map((param, index) => ({
+        // THE INDEX AND NOT THE NAME, which is the one thing in the row the
+        // reader is editing: a key that changes on every keystroke makes React
+        // tear the row down and build a new one, and the field loses the focus
+        // mid-word. Params are only ever appended and removed here, so the
+        // index is an identity for as long as the row exists.
+        key: String(index),
+        // A RENAME AND NOT A FIELD WRITE, which is `renameParam`'s whole
+        // reason: the name is what every dimension spends this param BY, so
+        // rewriting the record alone leaves `wall` named by three sizes that
+        // nothing answers for. The document stops building, the panel says so —
+        // and the reader cannot type their way out of it, because the name that
+        // would repair it is the one the rename took away.
+        name: field(`p${index}.name`, param.name,
+                    (raw) => renameParam(doc, param.name, raw.trim() || param.name),
+                    '32%'),
+        caption: field(`p${index}.caption`, param.caption,
+                       (raw) => updateParam(doc, param.name, { caption: raw }), '62%'),
+        type: param.type,
+        typeStyle: `padding:3px 7px;border-radius:5px;cursor:pointer;font:500 10px ${MONO};border:1px solid var(--line);background:var(--chip-bg);color:var(--text-soft)`,
+        onType: () => this.setSketch(updateParam(doc, param.name, {
+          type: param.type === 'slider' ? 'number' : 'slider',
+        })),
+        // THE KEY IS OVERWRITTEN ON PURPOSE, and the order of these two halves
+        // is what does it: `field` mints a key that has to be unique across the
+        // whole panel, because it is what `sketchDraft` is matched against —
+        // and that key is closed over inside the handlers, so replacing the one
+        // on the outside costs nothing and gives the row four names a reader of
+        // a test can ask for.
+        numbers: [
+          { ...field(`p${index}.initial`, param.initial, (raw) => updateParam(doc, param.name, { initial: num(raw) }), '100%'), key: 'initial', label: 'initial' },
+          { ...field(`p${index}.min`, param.min, (raw) => updateParam(doc, param.name, { min: bound(raw) }), '100%'), key: 'min', label: 'min' },
+          { ...field(`p${index}.max`, param.max, (raw) => updateParam(doc, param.name, { max: bound(raw) }), '100%'), key: 'max', label: 'max' },
+          { ...field(`p${index}.step`, param.step, (raw) => updateParam(doc, param.name, { step: bound(raw) }), '100%'), key: 'step', label: 'step' },
+        ],
+        onRemove: () => this.dropParam(param.name),
+      })),
+      // THE FIRST FREE `p<n>` AND NOT `params.length + 1`, which is the obvious
+      // spelling and is wrong twice over: remove `p1` of two and the count says
+      // `p2`, which is standing right there, and a reader who renamed one to
+      // `p3` collides the same way. `addParam` appends whatever it is given, and
+      // two params under one name make `updateParam` edit both and
+      // `resolveValue` answer with the first.
+      sketchAddParam: () => {
+        const taken = new Set(doc.params.map((param) => param.name));
+        let n = doc.params.length + 1;
+        while (taken.has(`p${n}`)) n += 1;
+        this.setSketch(addParam(doc, {
+          name: `p${n}`, type: 'number', caption: '', initial: 10,
+        }));
+      },
+
+      // The sentence under BODIES that says what one can be built out of, drawn
+      // only while there is nothing in the document: a panel of headings over
+      // empty space says less than one sentence does.
+      //
+      // NOT `sketchHint`, which this used to be named after and has nothing to
+      // do with: that field is the panel's refusal of an EDIT and is drawn in
+      // the `sketchSays` box below. Two unrelated things under one name, where
+      // one of them appears exactly when the other cannot.
+      sketchEmptyStyle: `font:400 10.5px/1.5 ${MONO};color:var(--text-muted);display:`
+        + (doc.nodes.length ? 'none' : 'block'),
+
+      // ONE BOX, TWO FIELDS BEHIND IT: the kernel's sentence about the document
+      // and this side's refusal of an edit. They are one box because they are
+      // one thing to the reader — the panel saying no, where the reader is
+      // already looking — and two fields because only the first of them means
+      // the document cannot be projected. The kernel's wins where both are set,
+      // which is a document that will not build and a × pressed on it: the
+      // sentence that is standing in the way of the exit is the one to say.
+      // NOT `sketchError`, which is the name of ONE of the two fields behind it:
+      // a view key called that would read in the markup as the kernel's refusal
+      // and be the panel's own half the time.
+      sketchSays: s.sketchError || s.sketchHint || '',
+      sketchSaysStyle: `margin-top:9px;padding:7px 9px;border:1px solid var(--danger-line);background:var(--danger-bg);border-radius:6px;font:400 10.5px/1.5 ${MONO};color:var(--danger);display:`
+        + (s.sketchError || s.sketchHint ? 'block' : 'none'),
+
+      // THE SAME DOOR THE MEASUREMENT AND THE DRAG USE, and the same gate: the
+      // panel is already closed to a reader with no token, and this carries the
+      // gate anyway so the link cannot open a composer `composerStyle` keeps at
+      // `display:none`. Hidden on an empty sketch too — there is nothing to say.
+      //
+      // AND ON A DOCUMENT THE PANEL HAS ALREADY FLAGGED, which is the third
+      // condition and the one that was a defect rather than a decision.
+      // `sketchText` refuses exactly what `setSketch` catches — a dimension
+      // naming a param that is not there — so on such a document the link was
+      // standing over a projection that cannot be rendered, and pressing it
+      // threw inside a React handler: nothing opened, nothing was said, and the
+      // feature's only exit did nothing at all. The message for it is already on
+      // screen in the panel's error box; what is missing is the offer.
+      //
+      // `sketchError` AND NOT WHATEVER THE BOX IS SHOWING, which is why the two
+      // are separate fields. The box also draws `sketchHint` — this side
+      // refusing an edit, `dropParam` being its only writer — and that refusal
+      // changed nothing: the document is the one that was projecting a moment
+      // ago. Gating on the box took the exit away from a sketch that had nothing
+      // wrong with it, for as long as the hint stood.
+      sketchAddStyle: 'cursor:pointer;text-decoration:underline'
+        + (viewer || isEmpty(doc) || s.sketchError ? ';display:none' : ''),
+      // THE TEXT AND NOT THE DOCUMENT, taken at the moment the link is pressed.
+      // `sketchText` is the projection the agent reads — a few aligned lines
+      // saying how big the thing is and where its features sit — and it rides in
+      // the comment's TEXT like the measurement and the drag, because the hub's
+      // schema is closed and silently drops what it does not know
+      // (`sendComment`, and tests/test_ui_source.py holds it).
+      //
+      // `part` IS EMPTY, deliberately, where the other two doors fill it: a
+      // sketch is about a body that is in no build and no catalogue, so there is
+      // no row to name and no key to anchor to. The reader can still click a
+      // part afterwards and attach it.
+      //
+      // THE FLAG IS READ HERE TOO and not only in the style above, because the
+      // two answer different questions: one is whether to OFFER the link, the
+      // other is what happens when it is pressed anyway. `sketchText` throws on
+      // the document `sketchError` is set from, and a throw in here is a React
+      // handler's throw — no composer, no message, nothing in the console the
+      // reader will ever see.
+      sketchAdd: () => {
+        if (s.sketchError) return;
+        this.set({
+          composer: {
+            part: '', partId: null, key: null,
+            p: null, text: '', photo: null,
+            sketch: sketchText(doc),
+          },
+          tool: null,
+        });
+      },
 
       // -- the two notes on the selected part ---------------------------------
       //
@@ -5053,7 +5790,9 @@ export default class HammerolaViewer extends React.Component {
       // the field that actually reaches the hub, and this inventory used to
       // compare the doors on the count alone. `hmr:place` posts the exact solid
       // the point sits on (`/model/pin(2)`); `measAdd` posts `sel`, which the
-      // pick handler resolved to the ROW, i.e. the first path of the run; and
+      // pick handler resolved to the ROW, i.e. the first path of the run — or
+      // nothing at all, where that selection is a body of the sketch panel and
+      // the number goes to the agent unattached (the note at `measAdd`); and
       // this door posts the first of the paths that actually MOVED — the row's
       // own id where the row was dragged, one copy's own path where a grab with
       // NOTHING SELECTED took that copy alone (see `count` in `tools.js`). That
@@ -5114,10 +5853,22 @@ export default class HammerolaViewer extends React.Component {
         // See `movedAttach` above for why this door words `part` without a
         // count, and for exactly how much of that wording stays on the screen.
         const node = this.node(s.sel);
+        // A BODY OF THE SKETCH IS ATTACHED TO NOTHING. `sel` is written by
+        // `onPick` for any path picked, a mock included — and in Move mode
+        // `onDown` emits that pick itself — so the reader who clicks the motor
+        // to look at it, measures a distance on it and presses `add to comment`
+        // would otherwise hand the hub a composer headed `motor` and a `partId`
+        // that resolves in no build. THE NUMBER IS WHY THE PANEL EXISTS and
+        // stays exactly as it is; it is the attribution beside it that goes.
+        // `key` needs no answer of its own here: a sketch body carries no
+        // catalogue key at all (`part()` in sketchgeom.js says why), so the
+        // row's is already null. Nothing else in this payload names the
+        // selection — the measurement text is a value and a note about the view.
+        const mock = this.sketchBody(s.sel);
         this.set({
           composer: {
-            part: node ? node.name : (s.selName || 'model'),
-            partId: s.sel || null,
+            part: mock ? '' : (node ? node.name : (s.selName || 'model')),
+            partId: mock ? null : (s.sel || null),
             key: node ? node.key : null,
             p: null, text: '', photo: null, meas: s.measure.full,
           },
@@ -5136,6 +5887,13 @@ export default class HammerolaViewer extends React.Component {
       compMeasRemove: stop(() => this.setState({ composer: { ...s.composer, meas: null } })),
       compMoveChipStyle: 'display:' + (s.composer && s.composer.move ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
       compMoveText: (s.composer && s.composer.move) || '',
+      // A CHIP AND NOT THE TEXTAREA. The measurement and the drag are one line
+      // each and could have gone either way; the sketch is a small table, and
+      // dropped into the box it would bury the sentence the reader came here to
+      // write. It says it is attached, it can be taken off, and `sendComment`
+      // is what puts it in the comment.
+      compSketchChipStyle: 'display:' + (s.composer && s.composer.sketch ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
+      compSketchRemove: stop(() => this.setState({ composer: { ...s.composer, sketch: null } })),
       compPhotoName: s.composer && s.composer.photo ? s.composer.photo.name : '',
       compPhoto: (e) => {
         const file = e.target.files && e.target.files[0];
@@ -5604,6 +6362,16 @@ export default class HammerolaViewer extends React.Component {
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /><path d="M5 5.5h6M5 8h4" /></svg>
                       Comment
                     </div>
+                    {/* A box drawn in the air beside the model — which is what
+                        this opens: a rough body in numbers, over the geometry
+                        rather than in it. Absent, not hidden, on a hub that did
+                        not ask for it: see `sketchOn` in `computed()`. */}
+                    {v.sketchOn && (
+                      <div onClick={v.tSketch} style={css(v.sketchBtnStyle)}>
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
+                        Sketch
+                      </div>
+                    )}
                     <div style={css('width:1px;height:18px;background:var(--line)')} />
                   </>
                 )}
@@ -5733,6 +6501,7 @@ export default class HammerolaViewer extends React.Component {
                 </span>
                 <span style={css(v.compMeasChipStyle)}>&#8596; {v.compMeasText} <span onClick={v.compMeasRemove} style={css('cursor:pointer;opacity:.6')}>&#10005;</span></span>
                 <span style={css(v.compMoveChipStyle)}>&#10021; {v.compMoveText}</span>
+                <span style={css(v.compSketchChipStyle)}>&#9634; sketch attached <span onClick={v.compSketchRemove} style={css('cursor:pointer;opacity:.6')}>&#10005;</span></span>
                 <label style={css(`padding:4px 8px;border:1px dashed var(--line-strong);border-radius:5px;font:400 10.5px ${MONO};color:var(--text-muted);cursor:pointer`)}>
                   {v.compPhotoName ? `photo: ${v.compPhotoName}` : '+ photo of the print'}
                   <input type="file" accept="image/jpeg,image/png,image/webp"
@@ -5768,6 +6537,112 @@ export default class HammerolaViewer extends React.Component {
                 <span style={css(`font:400 11.5px ${SANS};color:var(--text-soft)`)}>hatch the cut face</span>
               </div>
             </div>
+
+            {/* ── the sketch: a rough body the model has to fit, in numbers ──
+
+                NUMBERS ONLY, and the absence of anything else here is the
+                decision rather than an unfinished state: no dragging, no
+                gizmos, no clicking a spot in the scene. The library's id-picker
+                answers about the MODEL's parts (issue #90), so a handle of ours
+                would need hit-testing of its own — a separate piece of work
+                nobody has asked for, and this panel does not need it to be
+                useful. */}
+            {v.sketchOn && (
+              <div onClick={(e) => e.stopPropagation()} style={css(v.sketchPanelStyle)}>
+                <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:3px')}>
+                  <span style={css(`font:600 12.5px ${SANS}`)}>Sketch</span>
+                  <span style={css('flex:1')} />
+                  <span onClick={v.sketchClose} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                </div>
+                {/* Block 6's tone, one step on: a way to SHOW the agent what you
+                    want instead of describing it, and explicitly not an edit. */}
+                <div style={css(`font:400 10.5px/1.5 ${MONO};color:var(--text-muted);margin-bottom:11px`)}>
+                  a rough body for the agent to design against &mdash; a motor, a wall,
+                  a bought part. Nothing here changes the model and nothing is saved:
+                  the next rebuild forgets it.
+                </div>
+
+                <div style={css(`font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.07em;margin-bottom:5px`)}>PARAMETERS</div>
+                {v.sketchParams.map((p) => (
+                  <div key={p.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:6px 7px;margin-bottom:6px')}>
+                    <div style={css('display:flex;align-items:center;gap:5px')}>
+                      {/* `onKeyDown` on every one of these: the value is
+                          committed on `change` — a blur or an Enter — and not on
+                          the keystroke, so a field with only the blur wired would
+                          ignore the reader who types a number and presses
+                          return. */}
+                      <input value={p.name.value} onChange={p.name.onChange} onBlur={p.name.onBlur}
+                             onKeyDown={p.name.onKeyDown}
+                             placeholder="name" style={css(p.name.style)} />
+                      <input value={p.caption.value} onChange={p.caption.onChange} onBlur={p.caption.onBlur}
+                             onKeyDown={p.caption.onKeyDown}
+                             placeholder="caption" style={css(p.caption.style)} />
+                      <span onClick={p.onRemove} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                    </div>
+                    <div style={css('display:flex;align-items:flex-end;gap:5px;margin-top:5px')}>
+                      <span onClick={p.onType} title="how the agent should offer it" style={css(p.typeStyle)}>{p.type}</span>
+                      {p.numbers.map((n) => (
+                        <label key={n.key} style={css(`flex:1;min-width:0;font:400 9px ${MONO};color:var(--text-muted)`)}>
+                          {n.label}
+                          <input value={n.value} onChange={n.onChange} onBlur={n.onBlur}
+                                 onKeyDown={n.onKeyDown} style={css(n.style)} />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <div onClick={v.sketchAddParam} style={css(`display:inline-block;margin-bottom:12px;padding:4px 9px;border:1px dashed var(--line-strong);border-radius:5px;font:500 10.5px ${MONO};color:var(--text-soft);cursor:pointer`)}>+ parameter</div>
+
+                <div style={css(`font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.07em;margin-bottom:5px`)}>BODIES</div>
+                <div style={css(v.sketchEmptyStyle)}>
+                  add a box, a cylinder, a sphere or an extruded profile, then say how
+                  big it is and where it sits. A dimension is a number or the name of a
+                  parameter &mdash; there is no arithmetic.
+                </div>
+                {v.sketchBodies.map((b) => (
+                  <div key={b.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:7px 8px;margin-bottom:6px')}>
+                    <div style={css('display:flex;align-items:center;gap:6px')}>
+                      <input value={b.name.value} onChange={b.name.onChange} onBlur={b.name.onBlur}
+                             onKeyDown={b.name.onKeyDown} style={css(b.name.style)} />
+                      <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>{b.op}</span>
+                      {/* The role is a two-state switch and not a pair of radio
+                          buttons: there are two roles, `result = union(solid) -
+                          union(hole)`, and a hole is drawn as its own translucent
+                          part so the reader can see what they asked to remove. */}
+                      <span onClick={b.onRole} title="solid adds material, hole takes it away" style={css(b.roleStyle)}>{b.role}</span>
+                      <span onClick={b.onRemove} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                    </div>
+                    {b.groups.map((g) => (
+                      <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
+                        <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
+                        {g.fields.map((f) => (
+                          <input key={f.key} value={f.value} onChange={f.onChange} onBlur={f.onBlur}
+                                 onKeyDown={f.onKeyDown} style={css(f.style)} />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                <div style={css('display:flex;flex-wrap:wrap;gap:5px')}>
+                  {v.sketchOps.map((op) => (
+                    <div key={op.key} onClick={op.onClick} style={css(`padding:4px 9px;border:1px dashed var(--line-strong);border-radius:5px;font:500 10.5px ${MONO};color:var(--text-soft);cursor:pointer`)}>{op.label}</div>
+                  ))}
+                </div>
+
+                {/* ONE BOX, TWO FIELDS BEHIND IT (`sketchSays` in `computed`): the
+                    kernel's sentence about the document as it stands, and this
+                    side's refusal of an edit. Only the first of them means the
+                    document cannot be projected, and the body over the model is
+                    then the last one that BUILT — see `setSketch`; a hint from
+                    `dropParam` stands over a sketch nothing is wrong with. */}
+                <div style={css(v.sketchSaysStyle)}>{v.sketchSays}</div>
+
+                <div style={css('display:flex;align-items:center;gap:10px;margin-top:11px;padding-top:9px;border-top:1px solid var(--line-soft)')}>
+                  <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>result = union(solid) &minus; union(hole)</span>
+                  <span onClick={v.sketchAdd} style={css(v.sketchAddStyle)}>add to comment</span>
+                </div>
+              </div>
+            )}
 
             <div style={css(v.toastStyle)}>{v.toastText}</div>
           </div>

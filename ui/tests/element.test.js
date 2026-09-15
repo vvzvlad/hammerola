@@ -35,6 +35,12 @@ vi.mock('../src/viewport/parts.js', () => ({
   applyHidden: vi.fn(),
   applySelected: vi.fn(),
   resetMoves: vi.fn(),
+  // Like the four above it: what this file asks is whether a re-stage reaches
+  // it at all, because that is a decision `show` makes and nothing else can be
+  // asked about from here. What it DOES to a scene's groups — re-offsetting
+  // every moved part onto the ones `render()` just built — is parts.test.js's
+  // subject, against the real module.
+  restageMoves: vi.fn(),
   statesOf: vi.fn(() => ({})),
   treeFromShapes: vi.fn(() => ({})),
 }))
@@ -43,6 +49,14 @@ vi.mock('../src/viewport/section.js', () => ({
   applySection: vi.fn(),
   keepSectionCut: vi.fn(),
   suspendSectionCut: vi.fn(),
+  // NOT REACHED FROM element.js AT ALL — `live.js` imports these two, and
+  // `live.js` is deliberately the real thing here. A LIVE show is what
+  // `restage()` performs, so leaving them off the factory makes them
+  // `undefined`, `captureLive` throws where nothing catches it but `show`'s own
+  // `try`, and every re-stage turns into block 11's error panel. What they DO
+  // with a scene is section.test.js's subject, against the real module.
+  captureSection: vi.fn(() => null),
+  restoreSection: vi.fn(),
 }))
 
 // The hatch, mocked for ONE question this file can answer and hatch.test.js
@@ -71,7 +85,7 @@ import { EVENT_ERROR, EVENT_MODEL, TAG } from '../src/viewport/events.js'
 import { safeHatch, setCutHatch } from '../src/viewport/hatch.js'
 import { loadViewerLibrary } from '../src/viewport/library.js'
 import {
-  applyGhost, applyHidden, applySelected, resetMoves,
+  applyGhost, applyHidden, applySelected, resetMoves, restageMoves,
 } from '../src/viewport/parts.js'
 import { applySection, suspendSectionCut } from '../src/viewport/section.js'
 import { fakeViewer } from './fakes.js'
@@ -107,6 +121,12 @@ function element(state = {}, viewer = fakeViewer()) {
   vp.measureLabel = null
   vp.loadToken = 0
   vp.loadFailed = null
+  // The two sources a scene is made of, as `connectedCallback` starts them.
+  // `payload` is `null` and not `undefined` on purpose: it is the field that
+  // says whether there is anything to re-stage, and a helper that left it off
+  // would let a test assert the right thing about the wrong absence.
+  vp.payload = null
+  vp.overlayParts = []
   vp.overlay = { setPins: vi.fn(), refresh: vi.fn() }
   // The section handle draws itself from `sectionSeed` and a rAF loop of its
   // own; here it is a stub for the same reason the overlay is one. What
@@ -824,6 +844,432 @@ describe('show', () => {
   })
 })
 
+describe('the overlay laid over the model', () => {
+  // THE SECOND SOURCE OF PARTS: a rough body the sketch panel assembled in the
+  // browser (ui/src/sketchgeom.js), which belongs to no build and is fetched
+  // from nowhere. Everything here is about the one property that cannot be read
+  // off the source — that the two sources are composed in ONE place, so a
+  // rebuild landing under an open panel puts the overlay back without anybody
+  // asking it to.
+  //
+  // The whole pipeline runs, exactly as the `show` block above runs it once: the
+  // loader is given a working implementation for the length of the test, because
+  // a re-stage is a SECOND render and there is no way to ask about the second
+  // one without reaching the first.
+  const views = [{ id: 'a', file: 'a.json' }]
+
+  /** A part in the shape `buildSketch` hands over: a name, a colour, a mesh. */
+  const body = (name) => ({
+    id: `/sketch/${name}`,
+    type: 'shapes',
+    subtype: 'solid',
+    name,
+    color: '#9aa3ad',
+    alpha: 1,
+    state: [1, 1],
+    loc: [[0, 0, 0], [0, 0, 0, 1]],
+    shape: { vertices: [], triangles: [], normals: [], edges: [], obj_vertices: [] },
+  })
+
+  /** A view document in the shape the hub publishes one. */
+  const model = (...parts) => ({
+    version: 3,
+    name: 'Group',
+    id: '/Group',
+    loc: [[0, 0, 0], [0, 0, 0, 1]],
+    bb: { xmin: 0, xmax: 1, ymin: 0, ymax: 1, zmin: 0, zmax: 1 },
+    normal_len: 0,
+    parts: (parts.length ? parts : ['plate'])
+      .map((part) => ({ ...body(part), id: `/Group/${part}` })),
+  })
+
+  /**
+   * What a `render()` call was given, read at both storeys.
+   *
+   * `names` and `ids` are the ROOT's own children — where the model's parts sit
+   * and where the overlay's group sits beside them — and `sketch` is that group,
+   * `undefined` when there is no overlay at all. Two storeys because the
+   * composition now has two: the bodies hang under a group of their own so that
+   * a mock named after the part it mocks cannot take that part's path.
+   */
+  const rendered = (viewer, nth = -1) => {
+    const calls = viewer.render.mock.calls
+    const [scene] = calls.at(nth)
+    const sketch = scene.parts.find((part) => Array.isArray(part.parts))
+    return {
+      scene,
+      sketch,
+      names: scene.parts.map((part) => part.name),
+      ids: scene.parts.map((part) => part.id),
+      bodies: sketch ? sketch.parts.map((part) => part.name) : [],
+      bodyIds: sketch ? sketch.parts.map((part) => part.id) : [],
+    }
+  }
+
+  /**
+   * A viewport whose library LOADS, for as many renders as the test asks for.
+   *
+   * `rendering()` in the block above queues one implementation because one
+   * render is all it needs; here the subject is the second and the third, so the
+   * implementation stands for the test and is reset at the end of it — the same
+   * `onTestFinished` arrangement, and for the same reason: a queued loader that
+   * nothing consumed is a mine for whichever test runs next.
+   *
+   * `clear` and `getCameraLocationSettings` are added on top of `fakeViewer()`
+   * for the two things a re-stage does that a first render does not: it replaces
+   * a scene that is already there, and it carries the reader's frame across.
+   */
+  function staging() {
+    const viewer = fakeViewer()
+    viewer.render = vi.fn()
+    viewer.resizeCadView = vi.fn()
+    viewer.clear = vi.fn()
+    viewer.getCameraLocationSettings = () => ({
+      position: [1, 2, 3], quaternion: [0, 0, 0, 1], target: [0, 0, 0], zoom: 2,
+    })
+    onTestFinished(() => loadViewerLibrary.mockReset())
+    loadViewerLibrary.mockImplementation(async () => ({
+      Viewer: function Viewer() { return viewer },
+      Display: function Display() {},
+    }))
+    const vp = element({ views, view: 'a', base: '/project/p/dev/' }, null)
+    vp.box = document.createElement('div')
+    vp.chrome = [0, 0]
+    return { vp, viewer }
+  }
+
+  it('lays its parts beside the model\'s own, in one document', async () => {
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    expect(rendered(viewer).names).toEqual(['plate'])
+
+    await vp.setOverlay([body('result'), body('krepezh1')])
+
+    expect(viewer.render).toHaveBeenCalledTimes(2)
+    // UNDER A GROUP OF THEIR OWN, which is the one storey between them and the
+    // model's parts. The library descends into anything carrying `parts`
+    // (`isShapeTree`), so this is the shape a pushed view file already uses for
+    // the model's own groups — and it is what makes a name collision below
+    // impossible rather than unlikely.
+    expect(rendered(viewer).names).toEqual(['plate', 'sketch'])
+    expect(rendered(viewer).bodies).toEqual(['result', 'krepezh1'])
+    // A group answers for no catalogue record, which is the rule
+    // `treeFromShapes` keeps and the reason it puts a `key` on leaves only.
+    expect('key' in rendered(viewer).sketch).toBe(false)
+  })
+
+  it('cannot take a model part\'s path, however the bodies are named', async () => {
+    // NAMING A MOCK AFTER THE THING IT MOCKS IS THE POINT of the panel — the
+    // motor the bracket has to clear, the wall it bolts to — so a body called
+    // `post` over a model that has a `post` is the expected case and not an edge
+    // one. Flat beside the model's parts the two shared `/Group/post`: one entry
+    // in `nestedGroup.groups`, one row in the tree, one path in the measurement
+    // backend, and the real part's eye hiding the sketch body instead of it.
+    const { vp, viewer } = staging()
+    await vp.show(model('post'), { view: 'a', token: 0 })
+
+    await vp.setOverlay([body('post')])
+
+    expect(rendered(viewer).ids).toEqual(['/Group/post', '/Group/sketch'])
+    expect(rendered(viewer).bodyIds).toEqual(['/Group/sketch/post'])
+
+    // AND THE TREE SAYS THE SAME, which is the half that decides it: every path
+    // the interface sends back in `hidden`, `ghost` and `selected` is spelled by
+    // the walk and not by the id. The REAL `treeFromShapes` — this file mocks it
+    // for every other question — because agreeing with it is the whole point of
+    // the surgery, and a mock cannot disagree with anything.
+    const { treeFromShapes: walk } = await vi.importActual('../src/viewport/parts.js')
+    const tree = walk(rendered(viewer).scene, null)
+    expect(tree.children.map((row) => row.id)).toEqual(['/Group/post', '/Group/sketch'])
+    expect(tree.children[1].children.map((row) => row.id))
+      .toEqual(['/Group/sketch/post'])
+    // The group is a group to the walk as well — no `key`, and children rather
+    // than a leaf's `known`.
+    expect(tree.children[1].key).toBeUndefined()
+  })
+
+  it('steps aside for a model that has published a group of that name', async () => {
+    // A model may legitimately call one of its own groups `sketch`. The overlay
+    // takes the first free name instead of merging into it — the same "first
+    // free" the panel mints param names by — so the collision above stays
+    // impossible rather than merely unlikely.
+    const { vp, viewer } = staging()
+    await vp.show(model('sketch', 'sketch2'), { view: 'a', token: 0 })
+
+    await vp.setOverlay([body('result')])
+
+    expect(rendered(viewer).names).toEqual(['sketch', 'sketch2', 'sketch3'])
+    expect(rendered(viewer).bodyIds).toEqual(['/Group/sketch3/result'])
+  })
+
+  it('tells its own bodies from the model\'s parts when the interface asks', async () => {
+    // WHAT THE INTERFACE CANNOT WORK OUT FOR ITSELF. It refuses the Move and
+    // Comment tools a body of the sketch — a task filed in the build's terms
+    // about a body that is in no build — and all either tool carries is a path.
+    // The group's name is minted HERE, against the model's own parts, so a model
+    // that publishes a `sketch` of its own is exactly the case a `sketch|sketch2`
+    // match over paths would answer wrongly: `/Group/sketch/post` is that
+    // model's own part, and the overlay is next door under `sketch2`.
+    const { vp } = staging()
+    await vp.show(model('sketch'), { view: 'a', token: 0 })
+
+    // Nothing is staged yet, so nothing on screen is the overlay's.
+    expect(vp.isOverlay('/Group/sketch2/result')).toBe(false)
+
+    await vp.setOverlay([body('result')])
+
+    expect(vp.isOverlay('/Group/sketch2/result')).toBe(true)
+    expect(vp.isOverlay('/Group/sketch/post')).toBe(false)
+    expect(vp.isOverlay('/Group/post')).toBe(false)
+    // THE GROUP ITSELF COUNTS, and "nothing picks it in the scene" is only half
+    // the doors: it is a ROW OF THE TREE, a row is selected with the mouse, and
+    // the selection the interface sends is the node's own id. Selected, it moves
+    // the whole mock assembly under one drag and heads a measurement's comment
+    // `sketch` — the same task about a body in no build that one of its children
+    // would be.
+    expect(vp.isOverlay('/Group/sketch2')).toBe(true)
+    // AND THE BOUNDARY IT SITS ON, because the lazy spelling of the line above
+    // — `startsWith(at)`, no separator and no equality — passes every other
+    // assertion in this file while claiming a model part honestly called
+    // `sketch2x` for the overlay, and refusing it the Move tool.
+    expect(vp.isOverlay('/Group/sketch2x')).toBe(false)
+  })
+
+  it('is still on screen after the model under it has been fetched again', async () => {
+    // THE ASSERTION THE `load()` DOCSTRING'S WARNING IS ABOUT, and the reason
+    // the composition lives inside `show` rather than at its call sites. A `dev`
+    // slot rebuilds under a reader with the panel open perhaps once a minute;
+    // an overlay re-applied by the CALLER remembering to is an overlay that
+    // vanishes on the one event nobody is watching for, with nothing thrown and
+    // nothing logged. Driven through the real `load()` — a fetch and all —
+    // because that is the path a rebuild takes.
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    await vp.setOverlay([body('result')])
+    expect(rendered(viewer).bodies).toEqual(['result'])
+
+    const next = model('post')
+    const fetching = vi.fn(async () => ({ ok: true, json: async () => next }))
+    vi.stubGlobal('fetch', fetching)
+    onTestFinished(() => vi.unstubAllGlobals())
+
+    await vp.load({ live: true })
+
+    expect(fetching).toHaveBeenCalledWith('/project/p/dev/a.json', undefined)
+    expect(rendered(viewer).names).toEqual(['post', 'sketch'])
+    expect(rendered(viewer).bodies).toEqual(['result'])
+  })
+
+  it('keys each part by where it sits in the tree, not by the id it arrived with', async () => {
+    // The library keys `nestedGroup.groups` and the picker's `solidPath` by a
+    // part's own `id`; its navigation tree — and so `getStates`, and so every
+    // path the interface sends back in `hidden`, `ghost` and `selected` — by
+    // where the part sits. In a pushed view file those are the same string. An
+    // overlay built elsewhere carries `/sketch/result`, and left alone it
+    // renders perfectly while ghosting and selecting it do nothing at all.
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+
+    const part = body('result')
+    await vp.setOverlay([part])
+
+    expect(rendered(viewer).bodyIds).toEqual(['/Group/sketch/result'])
+    // ...and the caller's own object is left as it was: the interface holds the
+    // parts it built and hands the same array over on the next commit.
+    expect(part.id).toBe('/sketch/result')
+  })
+
+  it('composes from the document as it arrived, not from the last thing shown', async () => {
+    // A stage that fed its own output back in would grow the scene by one copy
+    // of the overlay per edit — the sort of defect that looks like nothing at
+    // all for the first few of them.
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+
+    await vp.setOverlay([body('result')])
+    await vp.setOverlay([body('result'), body('bore')])
+    await vp.setOverlay([body('result')])
+
+    expect(rendered(viewer).names).toEqual(['plate', 'sketch'])
+    expect(rendered(viewer).bodies).toEqual(['result'])
+    expect(vp.payload.parts.map((part) => part.name)).toEqual(['plate'])
+  })
+
+  it('does not stage an overlay that is already on the screen', async () => {
+    // A STAGE IS A WHOLE SCENE: `clear()` disposes every geometry and every
+    // material, `render()` builds them again, and the tree goes up to React
+    // behind it. The panel really does ask for this — it sets an empty overlay
+    // over an empty one every time it opens on a document nothing has been put
+    // in yet, and again every time it closes — so the answer to "the same thing
+    // you already have" has to be no work at all rather than a cheap render.
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    expect(viewer.render).toHaveBeenCalledTimes(1)
+
+    // Nothing over nothing.
+    await vp.setOverlay([])
+    await vp.clearOverlay()
+    expect(viewer.render).toHaveBeenCalledTimes(1)
+
+    await vp.setOverlay([body('result')])
+    expect(viewer.render).toHaveBeenCalledTimes(2)
+
+    // The same bodies again, rebuilt from a document that came out the same —
+    // fresh objects, so this is a comparison by VALUE and not by identity.
+    await vp.setOverlay([body('result')])
+    expect(viewer.render).toHaveBeenCalledTimes(2)
+
+    // ...and a body that really did change is not mistaken for one that did not.
+    const moved = body('result')
+    moved.loc = [[0, 0, 5], [0, 0, 0, 1]]
+    await vp.setOverlay([moved])
+    expect(viewer.render).toHaveBeenCalledTimes(3)
+  })
+
+  it('goes away again on clearOverlay, and takes nothing of the model with it', async () => {
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    await vp.setOverlay([body('result')])
+
+    await vp.clearOverlay()
+
+    expect(rendered(viewer).names).toEqual(['plate'])
+    expect(rendered(viewer).scene).toBe(vp.payload)
+  })
+
+  it('remembers nothing of a document that failed to render', async () => {
+    // Otherwise `setOverlay` would hand the same unrenderable document back to
+    // the library once per keystroke, and every one of those draws block 11's
+    // panel over a page that is already showing it. The loader here is the
+    // file's default — the one that throws — so this is the real failure path.
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    onTestFinished(() => vi.restoreAllMocks())
+    const vp = element({ views, view: 'a' }, null)
+
+    await vp.show(model(), { view: 'a', token: 0 })
+    expect(vp.payload).toBeNull()
+    const said = () => vp.dispatchEvent.mock.calls
+      .filter(([event]) => event.type === EVENT_ERROR).length
+    expect(said()).toBe(1)
+
+    await vp.setOverlay([body('result')])
+
+    expect(said()).toBe(1)
+  })
+
+  it('is remembered when it is set before any view has landed', async () => {
+    // The panel is open and the reader picks another revision: the overlay is
+    // set against a viewport with nothing in it, and the load that follows is
+    // what has to carry it.
+    const { vp, viewer } = staging()
+    await vp.setOverlay([body('result')])
+    expect(viewer.render).not.toHaveBeenCalled()
+
+    await vp.show(model(), { view: 'a', token: 0 })
+
+    expect(rendered(viewer).names).toEqual(['plate', 'sketch'])
+    expect(rendered(viewer).bodies).toEqual(['result'])
+  })
+
+  it('re-stages live, so the frame and the tree the reader set survive an edit', async () => {
+    // An edit to the sketch is not a new view: the reader is looking at one
+    // thing from one angle and changing a number. A stage that re-fitted the
+    // camera would move the model on every keystroke.
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    vi.clearAllMocks()
+
+    await vp.setOverlay([body('result')])
+
+    expect(viewer.setStates).toHaveBeenCalledTimes(1)
+    expect(viewer.locationCalls).toEqual([{
+      position: [1, 2, 3], quaternion: [0, 0, 0, 1], target: [0, 0, 0],
+      zoom: 2, notify: false,
+    }])
+    const model_ = vp.dispatchEvent.mock.calls
+      .map(([event]) => event).find((event) => event.type === EVENT_MODEL)
+    expect(model_.detail.live).toBe(true)
+    // The view it is a stage OF, so the interface is not told the reader
+    // switched tabs every time they commit a digit.
+    expect(model_.detail.view).toBe('a')
+    // AND IT SAYS IT IS A RE-STAGE, which `live` cannot: a rebuild landing
+    // under the reader's camera is live too, and the interface spends the
+    // difference — `onModel` drops the measurement and the drag on a model
+    // event and must not on this one.
+    expect(model_.detail.restage).toBe(true)
+  })
+
+  it('does not say re-stage about a load, which is where the chips are right to go', async () => {
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    const said = () => vp.dispatchEvent.mock.calls.map(([event]) => event)
+      .filter((event) => event.type === EVENT_MODEL).at(-1).detail.restage
+    expect(said()).toBe(false)
+    expect(viewer.render).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves the measurement and the moved part where the reader put them', async () => {
+    // THE DEFECT THIS BLOCK EXISTS FOR MOST. A re-stage runs the whole of
+    // `show`, and `show` clears the tape and the offsets on the way through —
+    // right for a rebuild, where every part goes back to where the model puts it
+    // (ui-brief block 6) and a distance was measured between faces that may be
+    // gone, and wrong for a scene composed out of the document already on
+    // screen. Left in, opening the sketch panel — or closing it, or committing
+    // one digit into it — snapped a dragged part home and dropped a live
+    // measurement, with `partHome` gone so the move could not even be undone.
+    const { vp } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    vp.measurePicks = [{ path: '/Group/plate/faces/face_0' }]
+    vp.measureLabel = { text: '2.4 mm', point: [0, 0, 0] }
+    vp.moved.set('/Group/plate', [0, 0, 3])
+    vp.partHome.set('/Group/plate', [0, 0, 0])
+
+    await vp.setOverlay([body('result')])
+
+    expect(vp.measurePicks).toHaveLength(1)
+    expect(vp.measureLabel.text).toBe('2.4 mm')
+    expect([...vp.moved.entries()]).toEqual([['/Group/plate', [0, 0, 3]]])
+    expect(vp.partHome.get('/Group/plate')).toEqual([0, 0, 0])
+    // AND THE OFFSETS ARE PUT BACK ON THE SCENE, which is not the same thing as
+    // keeping the map: `clear()` disposed the ObjectGroups the drag was written
+    // on and `render()` built new ones at the model's own positions, so a map
+    // that survived alone would describe a part standing exactly at home.
+    expect(restageMoves).toHaveBeenCalledTimes(1)
+    expect(restageMoves.mock.calls[0][0]).toBe(vp)
+  })
+
+  it('takes both away on a LOAD, which is a different model underneath', async () => {
+    const { vp } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    vp.measurePicks = [{ path: '/Group/plate/faces/face_0' }]
+    vp.measureLabel = { text: '2.4 mm', point: [0, 0, 0] }
+    vp.moved.set('/Group/plate', [0, 0, 3])
+    vp.partHome.set('/Group/plate', [0, 0, 0])
+
+    await vp.show(model(), { view: 'a', token: 0 })
+
+    expect(vp.measurePicks).toEqual([])
+    expect(vp.measureLabel).toBeNull()
+    expect(vp.moved.size).toBe(0)
+    expect(vp.partHome.size).toBe(0)
+    expect(restageMoves).not.toHaveBeenCalled()
+  })
+
+  it('does not take the load token off a fetch that is already on its way', async () => {
+    // A bumped token would make an overlay edit typed during a fetch cancel the
+    // build on its way to the screen — `show` refuses any token but the newest,
+    // so the arriving model would be dropped with nothing said about it.
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    vp.loadToken = 7
+
+    await vp.setOverlay([body('result')])
+
+    expect(vp.loadToken).toBe(7)
+    expect(rendered(viewer).bodies).toEqual(['result'])
+  })
+})
+
 describe('the widgets connectedCallback puts on the page', () => {
   // THE ELEMENT IS REALLY UPGRADED HERE, and this is the only block in the file
   // that does it. Nothing on this path reaches the library: `connectedCallback`
@@ -929,6 +1375,21 @@ describe('the widgets connectedCallback puts on the page', () => {
     expect(gripIn(el)).toBeTruthy()
     el.destroy()
     expect(gripIn(el)).toBeUndefined()
+  })
+
+  it('lets the remembered view document go with everything else', () => {
+    // `show` keeps the fetched document so an overlay edit needs no second
+    // fetch, which is a couple of megabytes of buffers with a field of this
+    // element pointing at them. A detached element can sit in a React tree for a
+    // while, and left standing that is a leak with no symptom short of a heap
+    // snapshot — this element's own note about the payload used to say it kept
+    // none, and that is exactly what changed.
+    const el = mount()
+    el.payload = { name: 'Group', parts: [] }
+    el.overlayParts = [{ name: 'result' }]
+    el.destroy()
+    expect(el.payload).toBeNull()
+    expect(el.overlayParts).toEqual([])
   })
 })
 

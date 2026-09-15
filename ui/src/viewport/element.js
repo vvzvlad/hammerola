@@ -37,8 +37,8 @@ import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
 import { measureChrome, refit, sized, treeWidth } from "./sizing.js";
 import { muteStatusLine } from "./statusline.js";
-import { applyGhost, applyHidden, applySelected, partCentre, resetMoves, statesOf,
-  treeFromShapes } from "./parts.js";
+import { applyGhost, applyHidden, applySelected, partCentre, resetMoves,
+  restageMoves, statesOf, treeFromShapes } from "./parts.js";
 import { applySection, keepSectionCut, suspendSectionCut } from "./section.js";
 import { displayOptions, renderOptions, viewerOptions } from "./options.js";
 
@@ -93,6 +93,127 @@ const INITIAL_STATE = {
 };
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// WHERE THE OVERLAY'S BODIES HANG, and a group of their own is the whole of the
+// answer to a collision. A sketch body is a MOCK OF A MODEL PART — the motor the
+// bracket has to clear, the wall it bolts to — so it is named after the thing it
+// mocks, and `post` over a model that already has a `post` is the expected case
+// rather than an edge one. Laid flat beside the model's parts, the two would
+// share `/<root>/post`: one entry in `nestedGroup.groups`, one row in the tree,
+// one path in the measurement backend, and the real part's eye hiding the mock.
+// Under a group nothing of ours can reach a path of theirs — every overlay path
+// starts `/<root>/<group>/`, and the group's own name is the only string that
+// has to be free.
+const OVERLAY_GROUP = "sketch";
+
+/** The first free `sketch`, `sketch2`, … among the root's own children. */
+function groupName(parts) {
+  const taken = new Set((Array.isArray(parts) ? parts : [])
+    .map((part) => (part && typeof part.name === "string" ? part.name : "")));
+  if (!taken.has(OVERLAY_GROUP)) return OVERLAY_GROUP;
+  // The same "first free" the sketch panel mints param names by, and here it is
+  // what turns "a collision is unlikely" into "a collision cannot happen": a
+  // model may legitimately publish a group called `sketch`, and one that does
+  // gets `sketch2` laid beside it rather than merged into it.
+  let n = 2;
+  while (taken.has(`${OVERLAY_GROUP}${n}`)) n += 1;
+  return `${OVERLAY_GROUP}${n}`;
+}
+
+/**
+ * Where an overlay's bodies hang over this document: the group's name, and the
+ * path everything under it is spelled from.
+ *
+ * MINTED IN ONE PLACE BECAUSE IT IS ANSWERED IN TWO. `staged()` below lays the
+ * group out, and `isOverlay()` reads a path back against it for the interface,
+ * which refuses the Move and Comment tools a body of the sketch: a task filed in
+ * the build's terms against a body that is in no build. That second reader is
+ * the reason this is a function rather than two lines inside `staged()` — the
+ * alternative is matching `sketch|sketch2|…` against a path, which answers yes
+ * for a model that legitimately publishes a part called `sketch`, and the whole
+ * point of `groupName` is that the overlay steps aside for exactly that model.
+ */
+function overlayAt(payload) {
+  // Spelled exactly as `treeFromShapes` spells the root, non-string name and
+  // all, because agreeing with it is the entire point.
+  const root = `/${typeof payload.name === "string" ? payload.name : ""}`;
+  const name = groupName(Array.isArray(payload.parts) ? payload.parts : []);
+  return { name, at: `${root}/${name}` };
+}
+
+/**
+ * The scene as it stands: the fetched view document with the overlay's parts in
+ * it. THE ONE PLACE THE TWO SOURCES MEET — `show()` is its only caller, and
+ * `show()` is reached from `load()` and from `restage()` alike, which is what
+ * makes an auto-refresh re-apply the overlay by construction.
+ *
+ * A COPY, never a write into either side: the fetched document is kept as it
+ * arrived so the next stage composes from the model and not from the model plus
+ * the overlay it was last shown with, and the parts the interface handed over
+ * are its own to hold.
+ *
+ * ONE GROUP NODE, AND THE IDS REWRITTEN UNDER IT — that is the whole of the
+ * surgery. The library keys `nestedGroup.groups` and the picking registry's
+ * `solidPath` by a part's OWN `id`, while its navigation tree — and therefore
+ * `getStates`, and therefore every path the interface sends back in `hidden`,
+ * `ghost` and `selected` — is keyed by where the part SITS, parent path plus
+ * `/<name>` (`_buildTreeData` and `TreeModel._buildTreeStructure` in the
+ * vendored library; `treeFromShapes` on this side spells it the same way). In a
+ * pushed view file the two are the same string and nothing notices they are two
+ * questions. An overlay built somewhere else carries ids of its own
+ * (`/sketch/result`), and left alone it renders perfectly while ghosting and
+ * selection quietly do nothing to it: both look the part up by the tree's
+ * spelling and miss.
+ *
+ * A GROUP IS WHAT THE DOCUMENT ALREADY HAS: the hub publishes a model's own
+ * groups as `{name, id, loc, parts}` and the library descends into anything with
+ * a `parts` field (`isShapeTree`). No `key` on it, which is the rule
+ * `treeFromShapes` keeps — a group is not a part and answers for no catalogue
+ * record.
+ */
+function staged(payload, parts) {
+  const list = Array.isArray(parts) ? parts : [];
+  if (!payload || !list.length) return payload;
+  const below = Array.isArray(payload.parts) ? payload.parts : [];
+  const { name, at } = overlayAt(payload);
+  return {
+    ...payload,
+    parts: [
+      ...below,
+      {
+        name,
+        id: at,
+        // Spelled out rather than left off: `renderLoop` writes an identity
+        // `loc` into a node that carries none, which would be this function
+        // handing the library an object for it to patch.
+        loc: [[0, 0, 0], [0, 0, 0, 1]],
+        parts: list.map((part) => ({ ...part, id: `${at}/${part.name}` })),
+      },
+    ],
+  };
+}
+
+/**
+ * Two overlays that would put the same thing on the screen.
+ *
+ * WHAT IT SAVES IS A WHOLE SCENE. A stage disposes every geometry and every
+ * material in `clear()` and builds them again in `render()`, and the tree goes
+ * up to React with them — so an overlay set to what is already staged is that
+ * price paid for no change at all. The panel really does ask for it: opening it
+ * over a document nothing has been put in yet, closing it again, committing a
+ * field whose text did not change.
+ *
+ * BY IDENTITY FIRST AND BY VALUE ONLY THEN. Identity settles the two cases that
+ * matter — the empty list against the empty list, and the same array handed back
+ * — without touching a mesh; the value comparison behind it is the honest answer
+ * for parts rebuilt from a document that came out the same, and it is bounded by
+ * the SKETCH's own bodies rather than by the model's, which is what makes it
+ * affordable at all.
+ */
+function sameParts(a, b) {
+  if (a.length !== b.length) return false;
+  return a.every((part, at) => part === b[at] || same(part, b[at]));
+}
 
 export class HmrViewport extends HTMLElement {
   connectedCallback() {
@@ -154,6 +275,18 @@ export class HmrViewport extends HTMLElement {
     this.trackpad = false;
     this.hoverText = "";
     this.loadToken = 0;
+    // THE TWO SOURCES A SCENE IS MADE OF, and both are remembered rather than
+    // passed through. `payload` is the view document the last fetch brought
+    // back, kept so the overlay can be changed without going to the hub again;
+    // `overlayParts` is the second source — a sketch the interface assembled in
+    // the browser (ui/src/sketchgeom.js), which belongs to no build, is fetched
+    // from nowhere, and has to survive every rebuild of the model under it.
+    // `staged()` composes them, and it is the only thing that does.
+    //
+    // NOT `this.overlay`, which is created a few lines down and is the pin
+    // layer — a different thing with an unfortunately similar name.
+    this.payload = null;
+    this.overlayParts = [];
     // Both of these are patches applied to something the element no longer has
     // after a `destroy()`, so a re-attached element has to start over on them.
     // `statusPatched` guards `muteStatusLine`, which patches a method on the
@@ -269,12 +402,16 @@ export class HmrViewport extends HTMLElement {
       console.warn("viewport dispose", error);
     }
     this.viewer = null;
-    // NOTHING HERE KEEPS THE PAYLOAD, and that is deliberate rather than an
-    // omission: `show` hands the parsed view file straight to the library and
-    // to `treeFromShapes` and holds no field of its own pointing at it. A
-    // detached element can sit in a React tree for a while, and a couple of
-    // megabytes of buffers would sit there with it for as long as anything held
-    // the element — a leak with no symptom short of a heap snapshot.
+    // THE PAYLOAD IS LET GO HERE, and these two lines are the whole of what
+    // makes keeping one affordable. `show` remembers the parsed view file so
+    // `setOverlay` can re-stage it without a second fetch — a couple of
+    // megabytes of buffers with a field of this element pointing at them — and a
+    // detached element can sit in a React tree for a while, so left standing
+    // that is a leak with no symptom short of a heap snapshot. This used to read
+    // "nothing here keeps the payload"; something does now, and it is dropped on
+    // the same line the viewer is.
+    this.payload = null;
+    this.overlayParts = [];
 
     // The library's own DOM goes with it. Without this a re-attached element
     // would build a SECOND widget beside the dead one — two canvases stacked,
@@ -380,7 +517,7 @@ export class HmrViewport extends HTMLElement {
     this.reconcile();
   }
 
-  /** Fetch a view file and render it. THE ONLY WAY GEOMETRY GETS IN.
+  /** Fetch a view file and render it. THE ONLY WAY A MODEL GETS IN.
    *
    * The element fetches for itself rather than being handed a payload, and that
    * is what makes a live reload atomic: capture, fetch, render, restore runs
@@ -390,9 +527,29 @@ export class HmrViewport extends HTMLElement {
    * a section that quietly moved after an auto-refresh — throws nothing and logs
    * nothing.
    *
+   * `show()` HAS A SECOND CALLER NOW, and this paragraph is what says why it is
+   * not that entrance. `restage()` — behind `setOverlay()` and `clearOverlay()`
+   * — hands `show` the very document THIS method fetched and remembered, so it
+   * brings in no geometry of its own and cannot put a scene on screen that no
+   * load asked for. What it changes is the OVERLAY, the second source `staged()`
+   * composes in, and composing happens inside `show` rather than at either call
+   * site: a rebuild landing under an open sketch panel therefore re-applies the
+   * overlay by construction instead of by the interface remembering to put it
+   * back, which is the same failure the paragraph above describes read from the
+   * other end. It re-stages LIVE, so the frame, the tree states and the cut
+   * survive it exactly as they survive a rebuild — and it says `restage`, which
+   * is what carries the things a rebuild is RIGHT to throw away: a measurement
+   * is about faces of the model, and a dragged part is an offset from where the
+   * build put it, so a new build invalidates both and a new overlay over the
+   * same build invalidates neither (ui-brief blocks 6 and 7). Both sides of that
+   * are below, in `show`.
+   *
    * `loadToken` orders the loads among THEMSELVES: a reader who clicks twice, or
    * a build that lands mid-fetch, starts a second one, and whichever was started
-   * last owns the scene.
+   * last owns the scene. A re-stage takes the CURRENT token rather than a new
+   * one, deliberately: bumping it would make an overlay edit typed during a
+   * fetch cancel the build that was on its way, and a build silently dropped is
+   * worse than the two renders landing in the order they were asked for.
    */
   async load({ live } = {}) {
     const token = ++this.loadToken;
@@ -454,8 +611,16 @@ export class HmrViewport extends HTMLElement {
     }
   }
 
-  /** Put one payload on screen. The whole pipeline, and `load` is its one caller. */
-  async show(shapes, { live, view, token }) {
+  /**
+   * Put one payload on screen. The whole pipeline.
+   *
+   * `restage` IS "THE SAME DOCUMENT, A DIFFERENT OVERLAY" and it is the one
+   * thing this method branches on beyond `live`. Everything a load brings is new
+   * geometry; a re-stage brings none — the model under it is the very document
+   * that is already on screen — so the state that is measured AGAINST that
+   * model has to survive it. `restage()` below is the only caller that sets it.
+   */
+  async show(shapes, { live, view, token, restage }) {
     // Which view this call is about, resolved ONCE. Three lines below used to
     // spell it out separately, and the moment one of them drifts the reader is
     // told a different view failed than the one the element stopped retrying.
@@ -481,6 +646,12 @@ export class HmrViewport extends HTMLElement {
       // landed mid-fetch. The newer one owns the scene.
       if (token !== this.loadToken || !this.booted) return;
 
+      // The two sources composed, once, for the render AND for the tree that
+      // goes up with it. `shapes` is left exactly as it arrived; it is what gets
+      // remembered further down, so the next stage composes the model with the
+      // overlay rather than the overlay with itself.
+      const scene = staged(shapes, this.overlayParts);
+
       // A gesture the reader has not let go of ends here, before anything is
       // torn down: what it holds was measured against the scene that is going
       // away. The page viewer this replaced ended its own section drag at the
@@ -504,14 +675,28 @@ export class HmrViewport extends HTMLElement {
       // gone with it — the rebuild memo has to be, or it would suppress the
       // first outline of the new scene (outline.js).
       this.sectionOutlineKey = null;
-      this.measurePicks = [];
-      this.measureLabel = null;
-      // The offsets belong to the geometry that is going away — a rebuild puts
-      // every part back where the model says it goes (ui-brief block 6), so
-      // carrying them would move parts of the NEW build by numbers measured
-      // against the old.
-      this.moved.clear();
-      this.partHome.clear();
+      // THE TWO THINGS A REBUILD INVALIDATES AND A RE-STAGE DOES NOT, which is
+      // why this is the one block with a condition on it.
+      //
+      // The tape and the offsets belong to the geometry that is going away — a
+      // rebuild puts every part back where the model says it goes (ui-brief
+      // block 6), so carrying them would move parts of the NEW build by numbers
+      // measured against the old, and leave a distance between two faces that
+      // may not exist any more.
+      //
+      // A RE-STAGE IS THE SAME MODEL, though: the document below is the one
+      // that is already on screen, and what changed is a body drawn OVER it.
+      // Clearing here would make opening the sketch panel — or closing it, or
+      // typing one digit into it — snap a dragged part home and drop a live
+      // measurement, with `partHome` gone so the move could not even be undone.
+      // Block 6 is the precedent this feature is modelled on and block 7 is its
+      // pair; neither survives a second statement quietly cancelling the first.
+      if (!restage) {
+        this.measurePicks = [];
+        this.measureLabel = null;
+        this.moved.clear();
+        this.partHome.clear();
+      }
 
       if (!this.viewer) {
         const opts = {
@@ -522,7 +707,7 @@ export class HmrViewport extends HTMLElement {
       } else {
         this.viewer.clear();
       }
-      this.viewer.render(shapes, renderOptions, viewerOptions);
+      this.viewer.render(scene, renderOptions, viewerOptions);
       // Only now does the widget exist to be measured; the first pass asked for
       // the whole container, so re-fit it to what is left once its own chrome is
       // accounted for. A no-op on every later call.
@@ -548,6 +733,13 @@ export class HmrViewport extends HTMLElement {
       // write whatever order the reader does things in.
       safeHatch(g, this.state.cutHatch);
       this.view = named;
+      // WHAT IS ON THE SCREEN, remembered beside the view it is of and for the
+      // same reason — both are answers to "what is the reader looking at", and
+      // `restage()` needs the pair. DOWN HERE rather than beside `staged()`
+      // above, because everything that could have gone wrong has: a document
+      // the library refused is one `setOverlay` would hand straight back to it,
+      // once per keystroke, and each failure draws block 11's panel again.
+      this.payload = shapes;
       this.lastPick = null;
       this.applied = {
         hidden: null, ghost: null, selected: undefined, camera: null,
@@ -555,6 +747,15 @@ export class HmrViewport extends HTMLElement {
       };
       this.reconcile();
       if (keep) restoreLive(this, keep);
+      // KEEPING THE OFFSETS IS NOT THE SAME AS KEEPING THE PART WHERE IT WAS,
+      // and this line is the difference. `clear()` disposed the ObjectGroups the
+      // drag was written on and `render()` built new ones, at the positions the
+      // model gives them — so the map above would describe a part standing at
+      // home while the chip in the interface said it was moved. AFTER
+      // `restoreLive`, which re-asserts the tree states, for the same reason
+      // `movePart` redraws the cut contour: the offset has to be the last thing
+      // written to a group's position.
+      if (restage) restageMoves(this);
       this.overlay.refresh();
       // The tree travels with the render rather than being asked for, because
       // this is the only moment both halves of it exist at once: the nesting and
@@ -563,8 +764,20 @@ export class HmrViewport extends HTMLElement {
       emit(this, EVENT_MODEL, {
         view: this.view,
         buildKey: this.state.buildKey,
-        tree: treeFromShapes(shapes, statesOf(this.viewer)),
+        // THE STAGED DOCUMENT and not the fetched one, so the overlay's bodies
+        // are rows in the tree like everything else on screen — able to be
+        // hidden, ghosted and selected. A tree drawn off `shapes` would list
+        // parts that are not all of what the reader is looking at.
+        tree: treeFromShapes(scene, statesOf(this.viewer)),
         live: !!live,
+        // THE SAME MODEL, A DIFFERENT OVERLAY — said out loud because the
+        // interface spends its own half of this decision on it. Its `onModel`
+        // drops the measurement chip and the move chip on every model event,
+        // which is right for geometry that has been replaced and wrong for a
+        // scene the viewport has just re-composed out of the document it
+        // already had. `live` cannot answer that question: a rebuild landing
+        // under the reader's camera is live too.
+        restage: !!restage,
       });
     } catch (error) {
       if (token !== this.loadToken) return;
@@ -667,6 +880,87 @@ export class HmrViewport extends HTMLElement {
   // comment needs the frame and a PNG of it AT THE MOMENT SEND IS PRESSED, and
   // routing that through an event round-trip would mean keeping a copy of both
   // in React, refreshed on every camera move.
+
+  /**
+   * Lay a second source of parts over the model — the sketch panel's rough body
+   * (ui-brief block 6, one step on: a statement to the agent rather than an edit
+   * of anything).
+   *
+   * A METHOD AND NOT AN EVENT, for the reason the four below are: this answers
+   * to a person typing in a field, which is a gesture and not a state the
+   * interface holds a second copy of. `snapshot()` and `getCamera()` are already
+   * reached this way.
+   *
+   * IT DOES NOT FETCH AND IT DOES NOT REPLACE THE MODEL. What it changes is one
+   * of the two lists `staged()` composes; the document under it is the one
+   * `load()` brought back, and a rebuild landing afterwards composes the overlay
+   * in again without being asked.
+   */
+  setOverlay(parts) {
+    const next = Array.isArray(parts) ? parts : [];
+    // AN OVERLAY THAT IS ALREADY ON SCREEN IS NOT A CHANGE, and answering one
+    // costs a full teardown of the scene — see `sameParts`. The panel asks for
+    // exactly that more often than it asks for anything else: it sets an empty
+    // overlay over an empty one every time it opens on a document nothing has
+    // been put in yet, and again every time it closes.
+    if (sameParts(next, this.overlayParts)) return Promise.resolve();
+    this.overlayParts = next;
+    return this.restage();
+  }
+
+  /** Take the overlay off again. The panel closing, and nothing else. */
+  clearOverlay() {
+    return this.setOverlay([]);
+  }
+
+  /**
+   * Is this path one of the overlay's own bodies rather than a part of the
+   * model?
+   *
+   * THE QUESTION THE INTERFACE CANNOT ANSWER FOR ITSELF, and a method for the
+   * reason the two above are: it is asked of the scene as it stands right now.
+   * A staged body is an ordinary row in the tree and an ordinary pick target, so
+   * the Move and Comment tools would otherwise file a task in the BUILD's terms
+   * — `partId: "/<root>/sketch/motor"` — against a body that is in no build and
+   * no catalogue. The group's name is minted here, against the model's own
+   * parts, so only here can it be told apart from a model part that is honestly
+   * called `sketch`.
+   *
+   * THE GROUP NODE ITSELF ANSWERS YES, and it is the case that reads as an edge
+   * one and is not: the group is a ROW OF THE TREE, a row is selected with the
+   * mouse (`onSelect`), and `selectedPaths()` hands a node's OWN id over rather
+   * than the leaves under it. So `/<root>/sketch` arrives here as an ordinary
+   * selection — the move tool drags the whole mock assembly with it when a press
+   * misses the model, and `add to comment` on a measurement heads the composer
+   * `sketch` — and it is the same task about a body in no build that a single
+   * mock is. Nothing PICKS the group in the scene, which is what made it look
+   * safe; the tree is the other door.
+   *
+   * NOTHING IS A BODY OF AN OVERLAY THAT IS NOT STAGED: with the panel closed
+   * `overlayParts` is empty, `staged()` hands the document straight back, and
+   * every path on screen is the model's own.
+   */
+  isOverlay(id) {
+    if (!this.payload || !this.overlayParts.length) return false;
+    if (typeof id !== "string") return false;
+    const { at } = overlayAt(this.payload);
+    return id === at || id.startsWith(`${at}/`);
+  }
+
+  /**
+   * The remembered document back on screen, composed with the overlay as it now
+   * stands.
+   *
+   * NOTHING TO STAGE IS NOT A FAILURE: an overlay set before any view has landed
+   * — the panel is open and the reader switched builds — is simply remembered,
+   * and the load that follows composes it in.
+   */
+  restage() {
+    if (!this.payload) return Promise.resolve();
+    return this.show(this.payload, {
+      live: true, view: this.view, token: this.loadToken, restage: true,
+    });
+  }
 
   /** The frame on screen, in the shape a comment stores and reopens. */
   getCamera() {

@@ -89,6 +89,21 @@ class Settings(BaseSettings):
     # makes it the ceiling that actually saves the work.
     comment_max_body_bytes: int = Field(default=20 * 1024 * 1024, ge=1)
 
+    # -- the sketch panel, which a hub serves only if it was asked to ----------
+    #
+    # NOT A SECRET, so it has a default — and the default is OFF because of what
+    # the flag is FOR. The sketch panel is a feature still being tried out, and
+    # an unset variable has to mean "no": a deployment that never heard of it
+    # must not start serving it because a release carried it. So the question
+    # this field answers is "did somebody ASK for this", and silence is not an
+    # answer in favour.
+    #
+    # ONE KNOB FOR THE WHOLE HUB and no second one. The server decides it once
+    # and stamps it on the page (`render.build_page_html`); there is no
+    # per-project setting, nothing an editor can turn on from the browser, and
+    # nothing about it changes while a page is open.
+    sketch_panel: bool = False
+
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
