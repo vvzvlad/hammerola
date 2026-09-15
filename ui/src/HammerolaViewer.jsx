@@ -308,6 +308,38 @@ const mm3 = (value) => (value >= 10
 /** The letter the viewport holds the cut tool up on. Shown, never bound here. */
 const HOLD_KEY_LABEL = 'C';
 
+// -- whether this hub serves the sketch panel at all --------------------------
+//
+// THE HUB'S ANSWER, STAMPED ON `<html>` BEFORE THE PAGE IS SENT, the way the
+// theme is (`src/render.py`). The panel is part of the toolbar this file draws,
+// so the answer has to be here before a button is drawn — and it is the hub's
+// own configuration, which nothing in a browser can see. `SKETCH_PANEL` in the
+// hub's environment is where it comes from; `off` is what a hub that never set
+// it says, so a deployment that did not ask for the feature never carries it.
+//
+// SPELLED HERE AS WELL AS IN src/render.py because the two sides cannot share a
+// module; `tests/test_ui_source.py` holds the name and the values equal across
+// them, the way it already does for the theme cookie.
+const SKETCH_ATTRIBUTE = 'data-sketch-panel';
+const SKETCH_ON = 'on';
+
+/**
+ * Read where the button is drawn, and watched by nothing.
+ *
+ * NO OBSERVER, and that is the whole difference from the theme: this cannot
+ * change while the page is open — it is one setting of the hub, fixed before the
+ * document was sent — so there is nothing to notice. What that leaves is a
+ * single attribute lookup on the root element, which is cheap enough to do where
+ * the answer is spent rather than cached into state somebody could then write.
+ *
+ * ANYTHING BUT `on` IS OFF, a missing attribute included. A page carrying an
+ * answer nobody recognises is a page whose hub did not ask for this, which is
+ * the one reading that keeps the default safe.
+ */
+const sketchPanelOn = () => (
+  document.documentElement.getAttribute(SKETCH_ATTRIBUTE) === SKETCH_ON
+);
+
 // How many visibility gestures Ctrl+Z can walk back through. A cap rather than
 // no cap because `this.history` is a list of two id lists per entry and this
 // page is opened and left open — a reader working a tree all afternoon would
@@ -4668,6 +4700,11 @@ export default class HammerolaViewer extends React.Component {
 
     // -- the sketch: a rough body in numbers, laid over the model -------------
     //
+    // WHETHER THIS HUB HAS THE PANEL AT ALL, asked once for the two styles that
+    // gate it below. It is not state and nothing on this page can change it —
+    // see `sketchPanelOn`, which says where the answer comes from.
+    const sketchOn = sketchPanelOn();
+
     // `|| emptySketch()` for the reason `openTabs` above carries its `|| []`:
     // every test file in ui/tests spells the state out by hand, and a field
     // added here would otherwise take down the ones written before it existed,
@@ -5162,6 +5199,15 @@ export default class HammerolaViewer extends React.Component {
       // the sketch produces leaves this page as a comment, which is behind the
       // token, so a reader who cannot comment has nowhere to send it.
       //
+      // AND ABSENT — not hidden — ON A HUB THAT DID NOT ASK FOR THE PANEL. That
+      // is a DIFFERENT KIND of gate from the token above, and the difference is
+      // who is being answered: the token is about this READER, who cannot use a
+      // feature the hub does serve, and `display:none` is the right answer to
+      // it. The flag is about this HUB, which never asked for the feature at
+      // all (`sketchPanelOn`, decided before the page was sent) — and the right
+      // answer to that is no markup, so the button and the panel are wrapped in
+      // `v.sketchOn` in `render` and the styles below say nothing about it.
+      //
       // AND NOT TAKEN OUT OF SERVICE BY A COMPARISON, unlike all three. What
       // `toolsOff` guards is a task filed in the BUILD's terms against a scene
       // that is not the build — a `/cmp/…` path in `partId`. A sketch names no
@@ -5169,6 +5215,9 @@ export default class HammerolaViewer extends React.Component {
       // reader's own claim about a motor or a wall, which is as true over a
       // comparison as over a build.
       tSketch: () => this.toggleSketch(),
+      // THE FLAG ITSELF, because `render` is where it is spent: it decides
+      // whether these two nodes exist, not how they look.
+      sketchOn,
       sketchBtnStyle: btn(s.sketchOpen, viewer, false),
       fitView: () => this.fitView(),
       grabFrame: () => this.saveFrame(),
@@ -5240,6 +5289,13 @@ export default class HammerolaViewer extends React.Component {
       // phone width (`showTools`) — but the flag is not, so a window dragged
       // narrower with the panel open would otherwise leave a sheet nothing could
       // take back. `narrow.test.js` holds the list.
+      //
+      // AND IT SAYS NOTHING ABOUT `sketchOn`, which is the division these two
+      // gates keep: a style answers about THIS READER — open or closed, wide or
+      // narrow, token or none — while the hub's flag is answered one level up,
+      // by leaving the markup out of the tree entirely (`v.sketchOn` in
+      // `render`). Spelling the flag here as well would be a second gate that
+      // can never fire, sitting on a node that is not there to style.
       sketchPanelStyle: (narrow ? popSheet : 'position:absolute;right:16px;top:52px;width:330px;')
         + 'max-height:calc(100% - 110px);overflow:auto;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 12px 40px var(--shadow);z-index:15;display:' + (s.sketchOpen ? 'block' : 'none'),
       sketchClose: stop(() => this.toggleSketch()),
@@ -6187,11 +6243,14 @@ export default class HammerolaViewer extends React.Component {
                     </div>
                     {/* A box drawn in the air beside the model — which is what
                         this opens: a rough body in numbers, over the geometry
-                        rather than in it. */}
-                    <div onClick={v.tSketch} style={css(v.sketchBtnStyle)}>
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
-                      Sketch
-                    </div>
+                        rather than in it. Absent, not hidden, on a hub that did
+                        not ask for it: see `sketchOn` in `computed()`. */}
+                    {v.sketchOn && (
+                      <div onClick={v.tSketch} style={css(v.sketchBtnStyle)}>
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
+                        Sketch
+                      </div>
+                    )}
                     <div style={css('width:1px;height:18px;background:var(--line)')} />
                   </>
                 )}
@@ -6367,100 +6426,102 @@ export default class HammerolaViewer extends React.Component {
                 would need hit-testing of its own — a separate piece of work
                 nobody has asked for, and this panel does not need it to be
                 useful. */}
-            <div onClick={(e) => e.stopPropagation()} style={css(v.sketchPanelStyle)}>
-              <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:3px')}>
-                <span style={css(`font:600 12.5px ${SANS}`)}>Sketch</span>
-                <span style={css('flex:1')} />
-                <span onClick={v.sketchClose} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
-              </div>
-              {/* Block 6's tone, one step on: a way to SHOW the agent what you
-                  want instead of describing it, and explicitly not an edit. */}
-              <div style={css(`font:400 10.5px/1.5 ${MONO};color:var(--text-muted);margin-bottom:11px`)}>
-                a rough body for the agent to design against &mdash; a motor, a wall,
-                a bought part. Nothing here changes the model and nothing is saved:
-                the next rebuild forgets it.
-              </div>
-
-              <div style={css(`font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.07em;margin-bottom:5px`)}>PARAMETERS</div>
-              {v.sketchParams.map((p) => (
-                <div key={p.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:6px 7px;margin-bottom:6px')}>
-                  <div style={css('display:flex;align-items:center;gap:5px')}>
-                    {/* `onKeyDown` on every one of these: the value is
-                        committed on `change` — a blur or an Enter — and not on
-                        the keystroke, so a field with only the blur wired would
-                        ignore the reader who types a number and presses
-                        return. */}
-                    <input value={p.name.value} onChange={p.name.onChange} onBlur={p.name.onBlur}
-                           onKeyDown={p.name.onKeyDown}
-                           placeholder="name" style={css(p.name.style)} />
-                    <input value={p.caption.value} onChange={p.caption.onChange} onBlur={p.caption.onBlur}
-                           onKeyDown={p.caption.onKeyDown}
-                           placeholder="caption" style={css(p.caption.style)} />
-                    <span onClick={p.onRemove} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
-                  </div>
-                  <div style={css('display:flex;align-items:flex-end;gap:5px;margin-top:5px')}>
-                    <span onClick={p.onType} title="how the agent should offer it" style={css(p.typeStyle)}>{p.type}</span>
-                    {p.numbers.map((n) => (
-                      <label key={n.key} style={css(`flex:1;min-width:0;font:400 9px ${MONO};color:var(--text-muted)`)}>
-                        {n.label}
-                        <input value={n.value} onChange={n.onChange} onBlur={n.onBlur}
-                               onKeyDown={n.onKeyDown} style={css(n.style)} />
-                      </label>
-                    ))}
-                  </div>
+            {v.sketchOn && (
+              <div onClick={(e) => e.stopPropagation()} style={css(v.sketchPanelStyle)}>
+                <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:3px')}>
+                  <span style={css(`font:600 12.5px ${SANS}`)}>Sketch</span>
+                  <span style={css('flex:1')} />
+                  <span onClick={v.sketchClose} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
                 </div>
-              ))}
-              <div onClick={v.sketchAddParam} style={css(`display:inline-block;margin-bottom:12px;padding:4px 9px;border:1px dashed var(--line-strong);border-radius:5px;font:500 10.5px ${MONO};color:var(--text-soft);cursor:pointer`)}>+ parameter</div>
+                {/* Block 6's tone, one step on: a way to SHOW the agent what you
+                    want instead of describing it, and explicitly not an edit. */}
+                <div style={css(`font:400 10.5px/1.5 ${MONO};color:var(--text-muted);margin-bottom:11px`)}>
+                  a rough body for the agent to design against &mdash; a motor, a wall,
+                  a bought part. Nothing here changes the model and nothing is saved:
+                  the next rebuild forgets it.
+                </div>
 
-              <div style={css(`font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.07em;margin-bottom:5px`)}>BODIES</div>
-              <div style={css(v.sketchEmptyStyle)}>
-                add a box, a cylinder, a sphere or an extruded profile, then say how
-                big it is and where it sits. A dimension is a number or the name of a
-                parameter &mdash; there is no arithmetic.
-              </div>
-              {v.sketchBodies.map((b) => (
-                <div key={b.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:7px 8px;margin-bottom:6px')}>
-                  <div style={css('display:flex;align-items:center;gap:6px')}>
-                    <input value={b.name.value} onChange={b.name.onChange} onBlur={b.name.onBlur}
-                           onKeyDown={b.name.onKeyDown} style={css(b.name.style)} />
-                    <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>{b.op}</span>
-                    {/* The role is a two-state switch and not a pair of radio
-                        buttons: there are two roles, `result = union(solid) -
-                        union(hole)`, and a hole is drawn as its own translucent
-                        part so the reader can see what they asked to remove. */}
-                    <span onClick={b.onRole} title="solid adds material, hole takes it away" style={css(b.roleStyle)}>{b.role}</span>
-                    <span onClick={b.onRemove} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
-                  </div>
-                  {b.groups.map((g) => (
-                    <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
-                      <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
-                      {g.fields.map((f) => (
-                        <input key={f.key} value={f.value} onChange={f.onChange} onBlur={f.onBlur}
-                               onKeyDown={f.onKeyDown} style={css(f.style)} />
+                <div style={css(`font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.07em;margin-bottom:5px`)}>PARAMETERS</div>
+                {v.sketchParams.map((p) => (
+                  <div key={p.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:6px 7px;margin-bottom:6px')}>
+                    <div style={css('display:flex;align-items:center;gap:5px')}>
+                      {/* `onKeyDown` on every one of these: the value is
+                          committed on `change` — a blur or an Enter — and not on
+                          the keystroke, so a field with only the blur wired would
+                          ignore the reader who types a number and presses
+                          return. */}
+                      <input value={p.name.value} onChange={p.name.onChange} onBlur={p.name.onBlur}
+                             onKeyDown={p.name.onKeyDown}
+                             placeholder="name" style={css(p.name.style)} />
+                      <input value={p.caption.value} onChange={p.caption.onChange} onBlur={p.caption.onBlur}
+                             onKeyDown={p.caption.onKeyDown}
+                             placeholder="caption" style={css(p.caption.style)} />
+                      <span onClick={p.onRemove} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                    </div>
+                    <div style={css('display:flex;align-items:flex-end;gap:5px;margin-top:5px')}>
+                      <span onClick={p.onType} title="how the agent should offer it" style={css(p.typeStyle)}>{p.type}</span>
+                      {p.numbers.map((n) => (
+                        <label key={n.key} style={css(`flex:1;min-width:0;font:400 9px ${MONO};color:var(--text-muted)`)}>
+                          {n.label}
+                          <input value={n.value} onChange={n.onChange} onBlur={n.onBlur}
+                                 onKeyDown={n.onKeyDown} style={css(n.style)} />
+                        </label>
                       ))}
                     </div>
+                  </div>
+                ))}
+                <div onClick={v.sketchAddParam} style={css(`display:inline-block;margin-bottom:12px;padding:4px 9px;border:1px dashed var(--line-strong);border-radius:5px;font:500 10.5px ${MONO};color:var(--text-soft);cursor:pointer`)}>+ parameter</div>
+
+                <div style={css(`font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.07em;margin-bottom:5px`)}>BODIES</div>
+                <div style={css(v.sketchEmptyStyle)}>
+                  add a box, a cylinder, a sphere or an extruded profile, then say how
+                  big it is and where it sits. A dimension is a number or the name of a
+                  parameter &mdash; there is no arithmetic.
+                </div>
+                {v.sketchBodies.map((b) => (
+                  <div key={b.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:7px 8px;margin-bottom:6px')}>
+                    <div style={css('display:flex;align-items:center;gap:6px')}>
+                      <input value={b.name.value} onChange={b.name.onChange} onBlur={b.name.onBlur}
+                             onKeyDown={b.name.onKeyDown} style={css(b.name.style)} />
+                      <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>{b.op}</span>
+                      {/* The role is a two-state switch and not a pair of radio
+                          buttons: there are two roles, `result = union(solid) -
+                          union(hole)`, and a hole is drawn as its own translucent
+                          part so the reader can see what they asked to remove. */}
+                      <span onClick={b.onRole} title="solid adds material, hole takes it away" style={css(b.roleStyle)}>{b.role}</span>
+                      <span onClick={b.onRemove} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                    </div>
+                    {b.groups.map((g) => (
+                      <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
+                        <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
+                        {g.fields.map((f) => (
+                          <input key={f.key} value={f.value} onChange={f.onChange} onBlur={f.onBlur}
+                                 onKeyDown={f.onKeyDown} style={css(f.style)} />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                <div style={css('display:flex;flex-wrap:wrap;gap:5px')}>
+                  {v.sketchOps.map((op) => (
+                    <div key={op.key} onClick={op.onClick} style={css(`padding:4px 9px;border:1px dashed var(--line-strong);border-radius:5px;font:500 10.5px ${MONO};color:var(--text-soft);cursor:pointer`)}>{op.label}</div>
                   ))}
                 </div>
-              ))}
-              <div style={css('display:flex;flex-wrap:wrap;gap:5px')}>
-                {v.sketchOps.map((op) => (
-                  <div key={op.key} onClick={op.onClick} style={css(`padding:4px 9px;border:1px dashed var(--line-strong);border-radius:5px;font:500 10.5px ${MONO};color:var(--text-soft);cursor:pointer`)}>{op.label}</div>
-                ))}
-              </div>
 
-              {/* ONE BOX, TWO FIELDS BEHIND IT (`sketchSays` in `computed`): the
-                  kernel's sentence about the document as it stands, and this
-                  side's refusal of an edit. Only the first of them means the
-                  document cannot be projected, and the body over the model is
-                  then the last one that BUILT — see `setSketch`; a hint from
-                  `dropParam` stands over a sketch nothing is wrong with. */}
-              <div style={css(v.sketchSaysStyle)}>{v.sketchSays}</div>
+                {/* ONE BOX, TWO FIELDS BEHIND IT (`sketchSays` in `computed`): the
+                    kernel's sentence about the document as it stands, and this
+                    side's refusal of an edit. Only the first of them means the
+                    document cannot be projected, and the body over the model is
+                    then the last one that BUILT — see `setSketch`; a hint from
+                    `dropParam` stands over a sketch nothing is wrong with. */}
+                <div style={css(v.sketchSaysStyle)}>{v.sketchSays}</div>
 
-              <div style={css('display:flex;align-items:center;gap:10px;margin-top:11px;padding-top:9px;border-top:1px solid var(--line-soft)')}>
-                <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>result = union(solid) &minus; union(hole)</span>
-                <span onClick={v.sketchAdd} style={css(v.sketchAddStyle)}>add to comment</span>
+                <div style={css('display:flex;align-items:center;gap:10px;margin-top:11px;padding-top:9px;border-top:1px solid var(--line-soft)')}>
+                  <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>result = union(solid) &minus; union(hole)</span>
+                  <span onClick={v.sketchAdd} style={css(v.sketchAddStyle)}>add to comment</span>
+                </div>
               </div>
-            </div>
+            )}
 
             <div style={css(v.toastStyle)}>{v.toastText}</div>
           </div>

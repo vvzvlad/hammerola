@@ -20,7 +20,7 @@
 // The VIEWPORT is a pair of spies, because what this file asks about it is
 // exactly what element.test.js answers for: was it handed the parts.
 
-import { describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { PLACE } from '../src/events.js'
@@ -35,6 +35,24 @@ import { collect, texts } from './eltree.js'
 const REV = 'e05f73ba91b263b8517147e338d23e868533c6a034a342ad5926abb6edcb7b40'
 
 const click = { stopPropagation() {}, preventDefault() {} }
+
+// WHAT THE HUB SAID ABOUT THIS FEATURE, which on a real page is an attribute the
+// server stamps on `<html>` before the bundle runs (`src/render.py`, and
+// `tests/test_ui_source.py` holds the spelling equal on both sides). Every
+// fixture below is a hub that ASKED for the panel, because that is what this
+// file is about; the one test that asks what a hub which did not looks like
+// turns it off by name.
+const SKETCH_ATTRIBUTE = 'data-sketch-panel'
+
+const stampSketch = (on) => {
+  document.documentElement.setAttribute(SKETCH_ATTRIBUTE, on ? 'on' : 'off')
+}
+
+// Back to a page nobody stamped, so a fixture that forgets to say cannot inherit
+// the last test's hub.
+afterEach(() => {
+  document.documentElement.removeAttribute(SKETCH_ATTRIBUTE)
+})
 
 /** A box with a name worth recognising in an assertion. */
 const BLOCK = {
@@ -60,7 +78,9 @@ const withBlock = () => addNode(emptySketch(), BLOCK);
  * and what the viewport DOES with the parts, `isOverlay`'s own answer included,
  * is element.test.js's subject.
  */
-function panel({ token = 'sekrit', sketch, open = true, narrow = false } = {}) {
+function panel({ token = 'sekrit', sketch, open = true, narrow = false,
+                 served = true } = {}) {
+  stampSketch(served)
   const el = {
     setOverlay: vi.fn(), clearOverlay: vi.fn(), isOverlay: vi.fn(() => false),
   }
@@ -164,6 +184,50 @@ describe('the panel', () => {
     expect(css(panel({ open: true }).c.computed().sketchPanelStyle).display).toBe('block')
     expect(css(panel().c.computed().sketchBtnStyle).display).not.toBe('none')
     expect(css(panel({ token: null }).c.computed().sketchBtnStyle).display).toBe('none')
+  })
+
+  it('is gone entirely from a hub that did not ask to serve it', () => {
+    // The SECOND gate of the same kind, and it answers about the HUB rather
+    // than about the reader: one setting, `SKETCH_PANEL`, stamped on `<html>`
+    // before the page was sent. Unset means off, so a deployment that never
+    // heard of this feature does not serve it — and neither half of it appears,
+    // with a token in hand, with the flag open and with a body already typed in.
+    const { c } = panel({ served: false, sketch: withBlock(), open: true })
+
+    expect(c.state.token).toBe('sekrit')
+    expect(c.state.sketchOpen).toBe(true)
+
+    // OUT OF THE TREE AND NOT MERELY UNPAINTED, which is the difference between
+    // this gate and the token's one line up. `display:none` is the right answer
+    // about a READER who cannot use a feature this hub serves; a hub that never
+    // asked for the feature should not be sending its markup at all. Asserted
+    // against the rendered tree, because a `display` assertion passes either way
+    // and would not notice the day the markup came back.
+    // The button by its label, and the panel by the one line that belongs to it
+    // alone — NOT by `add to comment`, which a measurement's chip says too, and
+    // which therefore answers about the wrong half of the page.
+    expect(texts(c.render())).not.toContain('Sketch')
+    expect(texts(c.render())).not.toContain('result = union(solid) − union(hole)')
+
+    // And with it the page is the page it always was: the flag takes away the
+    // sketch and nothing else.
+    expect(css(c.computed().measureBtnStyle).display).not.toBe('none')
+  })
+
+  it('is there again the moment the hub says so', () => {
+    // The other direction, which is the half that would go unnoticed: a gate
+    // spelled wrong — a wrong attribute name, a wrong value — reads as "off"
+    // for every reader and fails nothing, because off is what the page looks
+    // like when nobody asked. So the ON case is asserted too.
+    const { c } = panel({ served: true, sketch: withBlock(), open: true })
+    expect(css(c.computed().sketchBtnStyle).display).not.toBe('none')
+    expect(css(c.computed().sketchPanelStyle).display).toBe('block')
+
+    // THE SAME TWO STRINGS THE OFF CASE LOOKS FOR, and this half is what keeps
+    // that half honest: `not.toContain` passes just as well against a string
+    // that is misspelled here as against markup that is genuinely gone.
+    expect(texts(c.render())).toContain('Sketch')
+    expect(texts(c.render())).toContain('result = union(solid) − union(hole)')
   })
 
   it('is NOT taken out of service by a comparison, unlike the three tools', () => {
