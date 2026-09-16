@@ -37,7 +37,7 @@ import {
   EVENT_FACE as FACE,
   EVENT_MEASURE as MEASURE,
   EVENT_MOVED as MOVED,
-  EVENT_SKETCHMOVE as SKETCHMOVE,
+  EVENT_PROPOSALMOVE as PROPOSALMOVE,
   EVENT_PLACE as PLACE,
   EVENT_PIN as PIN,
   EVENT_MODEL as MODEL,
@@ -55,7 +55,7 @@ import {
  *   MEASURE  a resolved measurement; see `measureLabel` for the fields that matter
  *   MOVED    {id, name, count, delta: [x, y, z]}  -- a part was dragged; `count`
  *            is how many copies of it went along, `id`/`name` the first of them
- *   SKETCHMOVE {name, delta: [x, y, z]}  -- a body of the SKETCH was dragged;
+ *   PROPOSALMOVE {name, delta: [x, y, z]}  -- a body of the PROPOSAL was dragged;
  *            `name` is the body it was drawn under, `result` meaning the fused
  *            body and therefore every node of the document at once
  *   PLACE    {id, name, p: [x, y, z]}       -- a point was picked for a comment
@@ -78,12 +78,12 @@ import {
  * reader to SEE that a cut is on -- which this side can only do if it is told.
  */
 export {
-  STATE, PICK, MENU, FACE, MEASURE, MOVED, SKETCHMOVE, PLACE, PIN, MODEL, ERROR,
+  STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, PLACE, PIN, MODEL, ERROR,
   TOOL,
 };
 
 /** Every event the viewport sends us, in one list — see componentDidMount. */
-export const UP_EVENTS = [PICK, MENU, FACE, MEASURE, MOVED, SKETCHMOVE, PLACE,
+export const UP_EVENTS = [PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, PLACE,
                           PIN, MODEL, ERROR, TOOL];
 
 /** The custom element the adapter registers, under the adapter's own name for it.

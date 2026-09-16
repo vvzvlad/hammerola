@@ -265,8 +265,8 @@ export function movableGroup(viewer, path) {
  * `home()` above with nothing remembered, and the difference is the whole of why
  * it exists. That one memoises into `vp.partHome`, because "put it back"
  * (ui-brief block 6) has to know where back is; this one is read by the gesture
- * that has nothing to put back — a sketch body, whose new position is written
- * into the SKETCH DOCUMENT and staged again out of it (`nudgePart`).
+ * that has nothing to put back — a proposal body, whose new position is written
+ * into the PROPOSAL DOCUMENT and staged again out of it (`nudgePart`).
  * Remembered, the second drag of a body would measure from where it stood before
  * the first, and the body would jump back the whole of that delta the moment the
  * pointer moved.
@@ -345,7 +345,7 @@ export function partCentre(viewer, path) {
  * were already empty.
  *
  * ONE COPY FOR THREE CALLERS — `movePart`, `nudgePart` and `resetMoves` — and
- * that is what it is for. A sketch body is a solid like any other and cuts like
+ * that is what it is for. A proposal body is a solid like any other and cuts like
  * one; three hand-written copies of this tail is how one of them ends up without
  * it, which is a contour left hanging beside the body it belongs to.
  */
@@ -411,14 +411,14 @@ export function movePart(vp, paths, delta) {
 /**
  * Offset a group from a home THE CALLER HOLDS, remembering nothing at all.
  *
- * `movePart` for a body that is in no build — one the sketch panel staged over
+ * `movePart` for a body that is in no build — one the proposal panel staged over
  * the model (`staged()` in element.js) — and every difference between the two is
  * a thing this one must NOT do.
  *
  * NOTHING IS WRITTEN INTO `vp.moved`, and that map is the reason this function
  * exists rather than a flag on the one above. It is re-applied after every
  * re-stage (`restageMoves`), and the panel re-stages on the very next keystroke:
- * a delta recorded there would be added on top of the position the sketch
+ * a delta recorded there would be added on top of the position the proposal
  * document now carries, and the body would walk away by twice the distance. The
  * drag is LIVE FEEDBACK only — the release reports it to the panel, the panel
  * moves the node's `at`, and the stage that follows is what really puts the body

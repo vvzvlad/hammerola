@@ -1,8 +1,9 @@
-// ui/src/sketchgeom.js — the sketch document turned into something show() takes.
+// ui/src/proposalgeom.js — the proposal document turned into something show()
+// takes.
 //
-// The kernel half of the sketch panel, kept away from sketch.js so the document
-// stays testable with no geometry computed. Everything here is pure: a document
-// in, one payload out, no state between calls.
+// The kernel half of the proposal panel, kept away from proposal.js so the
+// document stays testable with no geometry computed. Everything here is pure: a
+// document in, one payload out, no state between calls.
 //
 // THE PAYLOAD CARRIES TWO THINGS, and that is the whole point of the display.
 // One part is `result` — every solid fused and every hole cut out of it — which
@@ -22,8 +23,6 @@ import {
   booleans, extrusions, geometries, measurements, primitives, transforms,
 } from '@jscad/modeling'
 
-import { resolveValue } from './sketch.js'
-
 // The body the person is claiming: a neutral grey that is nobody's real part.
 const RESULT_COLOR = '#9aa3ad'
 // The subtraction tool, in the colour and the transparency OpenSCAD's `#` uses.
@@ -35,7 +34,7 @@ const HOLE_ALPHA = 0.25
 // in viewport/element.js), because the ids the library keys `nestedGroup.groups`
 // and its picking registry by have to agree with the tree it builds out of
 // wherever a part SITS — and that is under the model's root, not this one.
-const ROOT = 'sketch'
+const ROOT = 'proposal'
 
 // THE NAME THE PAYLOAD KEEPS FOR ITSELF. The fused body is always a part called
 // this, so a body the reader names `result` would be a second part under one id:
@@ -48,37 +47,36 @@ const DEGREES = Math.PI / 180
 /** A fresh identity placement — position and quaternion, the shape a part's `loc` is. */
 const origin = () => [[0, 0, 0], [0, 0, 0, 1]]
 
-// ONE ENTRY PER OP, keyed the way `DIMS` in sketch.js is keyed. Each builds the
-// op at the origin in its own natural orientation; `placed` below does the
+// ONE ENTRY PER OP, keyed the way `DIMS` in proposal.js is keyed. Each builds
+// the op at the origin in its own natural orientation; `placed` below does the
 // rotation and the move. A box, a cylinder and a sphere come back CENTRED on the
 // origin, so `at` is their centre — an extrusion does not, because its profile
 // already says where it sits in the plane, so `at` is the corner of its own
 // coordinate system and the extrusion runs up from there.
 const SHAPES = {
-  box: (dim, node) => primitives.cuboid({ size: node.size.map(dim) }),
-  cylinder: (dim, node) => primitives.cylinder({
-    radius: dim(node.d) / 2, height: dim(node.h),
+  box: (node) => primitives.cuboid({ size: node.size }),
+  cylinder: (node) => primitives.cylinder({
+    radius: node.d / 2, height: node.h,
   }),
-  sphere: (dim, node) => primitives.sphere({ radius: dim(node.d) / 2 }),
-  extrude: (dim, node) => extrusions.extrudeLinear(
-    { height: dim(node.h) }, primitives.polygon({ points: node.profile }),
+  sphere: (node) => primitives.sphere({ radius: node.d / 2 }),
+  extrude: (node) => extrusions.extrudeLinear(
+    { height: node.h }, primitives.polygon({ points: node.profile }),
   ),
 }
 
 // The ops this table answers for — the other half of the pair `DIM_OPS` in
-// sketch.js explains, and derived the same way so neither list can go stale
+// proposal.js explains, and derived the same way so neither list can go stale
 // without the table it is taken from going with it.
 export const SHAPE_OPS = Object.freeze(Object.keys(SHAPES))
 
 /** One node as geometry, rotated and moved to where the document puts it. */
-function placed(doc, node) {
-  const dim = (value) => resolveValue(doc, value)
-  const shape = SHAPES[node.op](dim, node)
+function placed(node) {
+  const shape = SHAPES[node.op](node)
   const turned = transforms.rotate(node.rot.map((angle) => angle * DEGREES), shape)
   return transforms.translate(node.at, turned)
 }
 
-// Fusing a list that may be EMPTY, which every sketch is at least once: a
+// Fusing a list that may be EMPTY, which every proposal is at least once: a
 // document with no holes, and a panel the moment it opens. `booleans.union`
 // refuses to be called with nothing, so the fold starts from an empty geometry
 // instead — and `subtract(x, empty)` is `x`, so the result expression below needs
@@ -141,7 +139,7 @@ function mesh(geom) {
 // NO `key`, and that absence is the decision. `key` is the CATALOGUE key — the
 // entry in `meta.parts` a row looks its files, its note and its kind up by
 // (`treeFromShapes` in viewport/parts.js says why a row has two names) — and a
-// sketch body is in no catalogue at all. Filled in with the name, it made the
+// proposal body is in no catalogue at all. Filled in with the name, it made the
 // row offer a reader's note, stored under whatever real catalogue key the name
 // happened to collide with.
 function part(name, geom, color, alpha) {
@@ -159,12 +157,12 @@ function part(name, geom, color, alpha) {
 }
 
 /** The whole document as one payload the viewport's `show()` accepts. */
-export function buildSketch(doc) {
+export function buildProposal(doc) {
   const solids = doc.nodes.filter((node) => node.role === 'solid')
   const holes = doc.nodes.filter((node) => node.role === 'hole')
-  const holeGeoms = holes.map((node) => placed(doc, node))
+  const holeGeoms = holes.map(placed)
   const result = booleans.subtract(
-    fuse(solids.map((node) => placed(doc, node))), fuse(holeGeoms),
+    fuse(solids.map(placed)), fuse(holeGeoms),
   )
   const [min, max] = measurements.measureBoundingBox(result)
 

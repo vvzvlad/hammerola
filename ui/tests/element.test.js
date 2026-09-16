@@ -845,8 +845,8 @@ describe('show', () => {
 })
 
 describe('the overlay laid over the model', () => {
-  // THE SECOND SOURCE OF PARTS: a rough body the sketch panel assembled in the
-  // browser (ui/src/sketchgeom.js), which belongs to no build and is fetched
+  // THE SECOND SOURCE OF PARTS: a rough body the proposal panel assembled in the
+  // browser (ui/src/proposalgeom.js), which belongs to no build and is fetched
   // from nowhere. Everything here is about the one property that cannot be read
   // off the source — that the two sources are composed in ONE place, so a
   // rebuild landing under an open panel puts the overlay back without anybody
@@ -858,9 +858,9 @@ describe('the overlay laid over the model', () => {
   // one without reaching the first.
   const views = [{ id: 'a', file: 'a.json' }]
 
-  /** A part in the shape `buildSketch` hands over: a name, a colour, a mesh. */
+  /** A part in the shape `buildProposal` hands over: a name, a colour, a mesh. */
   const body = (name) => ({
-    id: `/sketch/${name}`,
+    id: `/proposal/${name}`,
     type: 'shapes',
     subtype: 'solid',
     name,
@@ -887,22 +887,22 @@ describe('the overlay laid over the model', () => {
    * What a `render()` call was given, read at both storeys.
    *
    * `names` and `ids` are the ROOT's own children — where the model's parts sit
-   * and where the overlay's group sits beside them — and `sketch` is that group,
+   * and where the overlay's group sits beside them — and `proposal` is that group,
    * `undefined` when there is no overlay at all. Two storeys because the
    * composition now has two: the bodies hang under a group of their own so that
-   * a mock named after the part it mocks cannot take that part's path.
+   * a proposal body named after a real part cannot take that part's path.
    */
   const rendered = (viewer, nth = -1) => {
     const calls = viewer.render.mock.calls
     const [scene] = calls.at(nth)
-    const sketch = scene.parts.find((part) => Array.isArray(part.parts))
+    const proposal = scene.parts.find((part) => Array.isArray(part.parts))
     return {
       scene,
-      sketch,
+      proposal,
       names: scene.parts.map((part) => part.name),
       ids: scene.parts.map((part) => part.id),
-      bodies: sketch ? sketch.parts.map((part) => part.name) : [],
-      bodyIds: sketch ? sketch.parts.map((part) => part.id) : [],
+      bodies: proposal ? proposal.parts.map((part) => part.name) : [],
+      bodyIds: proposal ? proposal.parts.map((part) => part.id) : [],
     }
   }
 
@@ -951,11 +951,11 @@ describe('the overlay laid over the model', () => {
     // (`isShapeTree`), so this is the shape a pushed view file already uses for
     // the model's own groups — and it is what makes a name collision below
     // impossible rather than unlikely.
-    expect(rendered(viewer).names).toEqual(['plate', 'sketch'])
+    expect(rendered(viewer).names).toEqual(['plate', 'proposal'])
     expect(rendered(viewer).bodies).toEqual(['result', 'krepezh1'])
     // A group answers for no catalogue record, which is the rule
     // `treeFromShapes` keeps and the reason it puts a `key` on leaves only.
-    expect('key' in rendered(viewer).sketch).toBe(false)
+    expect('key' in rendered(viewer).proposal).toBe(false)
   })
 
   it('cannot take a model part\'s path, however the bodies are named', async () => {
@@ -964,14 +964,14 @@ describe('the overlay laid over the model', () => {
     // `post` over a model that has a `post` is the expected case and not an edge
     // one. Flat beside the model's parts the two shared `/Group/post`: one entry
     // in `nestedGroup.groups`, one row in the tree, one path in the measurement
-    // backend, and the real part's eye hiding the sketch body instead of it.
+    // backend, and the real part's eye hiding the proposal body instead of it.
     const { vp, viewer } = staging()
     await vp.show(model('post'), { view: 'a', token: 0 })
 
     await vp.setOverlay([body('post')])
 
-    expect(rendered(viewer).ids).toEqual(['/Group/post', '/Group/sketch'])
-    expect(rendered(viewer).bodyIds).toEqual(['/Group/sketch/post'])
+    expect(rendered(viewer).ids).toEqual(['/Group/post', '/Group/proposal'])
+    expect(rendered(viewer).bodyIds).toEqual(['/Group/proposal/post'])
 
     // AND THE TREE SAYS THE SAME, which is the half that decides it: every path
     // the interface sends back in `hidden`, `ghost` and `selected` is spelled by
@@ -980,83 +980,83 @@ describe('the overlay laid over the model', () => {
     // the surgery, and a mock cannot disagree with anything.
     const { treeFromShapes: walk } = await vi.importActual('../src/viewport/parts.js')
     const tree = walk(rendered(viewer).scene, null)
-    expect(tree.children.map((row) => row.id)).toEqual(['/Group/post', '/Group/sketch'])
+    expect(tree.children.map((row) => row.id)).toEqual(['/Group/post', '/Group/proposal'])
     expect(tree.children[1].children.map((row) => row.id))
-      .toEqual(['/Group/sketch/post'])
+      .toEqual(['/Group/proposal/post'])
     // The group is a group to the walk as well — no `key`, and children rather
     // than a leaf's `known`.
     expect(tree.children[1].key).toBeUndefined()
   })
 
   it('steps aside for a model that has published a group of that name', async () => {
-    // A model may legitimately call one of its own groups `sketch`. The overlay
+    // A model may legitimately call one of its own groups `proposal`. The overlay
     // takes the first free name instead of merging into it — the same "first
-    // free" the panel mints param names by — so the collision above stays
+    // free" the panel mints body names by — so the collision above stays
     // impossible rather than merely unlikely.
     const { vp, viewer } = staging()
-    await vp.show(model('sketch', 'sketch2'), { view: 'a', token: 0 })
+    await vp.show(model('proposal', 'proposal2'), { view: 'a', token: 0 })
 
     await vp.setOverlay([body('result')])
 
-    expect(rendered(viewer).names).toEqual(['sketch', 'sketch2', 'sketch3'])
-    expect(rendered(viewer).bodyIds).toEqual(['/Group/sketch3/result'])
+    expect(rendered(viewer).names).toEqual(['proposal', 'proposal2', 'proposal3'])
+    expect(rendered(viewer).bodyIds).toEqual(['/Group/proposal3/result'])
   })
 
   it('tells its own bodies from the model\'s parts when the interface asks', async () => {
     // WHAT THE INTERFACE CANNOT WORK OUT FOR ITSELF. It refuses the Comment tool
-    // a body of the sketch — a task filed in the build's terms about a body that
-    // is in no build — and reads the same answer to tell a drag of a mock, which
-    // edits the panel's document, from a drag of a part, which files one. All
-    // either tool carries is a path. The group's name is minted HERE, against
-    // the model's own parts, so a model that publishes a `sketch` of its own is
-    // exactly the case a `sketch|sketch2` match over paths would answer wrongly:
-    // `/Group/sketch/post` is that model's own part, and the overlay is next
-    // door under `sketch2`.
+    // a body of the proposal — a task filed in the build's terms about a body
+    // that is in no build — and reads the same answer to tell a drag of such a
+    // body, which edits the panel's document, from a drag of a part, which files
+    // one. All either tool carries is a path. The group's name is minted HERE,
+    // against the model's own parts, so a model that publishes a `proposal` of
+    // its own is exactly the case a `proposal|proposal2` match over paths would
+    // answer wrongly: `/Group/proposal/post` is that model's own part, and the
+    // overlay is next door under `proposal2`.
     const { vp } = staging()
-    await vp.show(model('sketch'), { view: 'a', token: 0 })
+    await vp.show(model('proposal'), { view: 'a', token: 0 })
 
     // Nothing is staged yet, so nothing on screen is the overlay's.
-    expect(vp.isOverlay('/Group/sketch2/result')).toBe(false)
+    expect(vp.isOverlay('/Group/proposal2/result')).toBe(false)
 
     await vp.setOverlay([body('result')])
 
-    expect(vp.isOverlay('/Group/sketch2/result')).toBe(true)
-    expect(vp.isOverlay('/Group/sketch/post')).toBe(false)
+    expect(vp.isOverlay('/Group/proposal2/result')).toBe(true)
+    expect(vp.isOverlay('/Group/proposal/post')).toBe(false)
     expect(vp.isOverlay('/Group/post')).toBe(false)
     // THE GROUP ITSELF COUNTS, and "nothing picks it in the scene" is only half
     // the doors: it is a ROW OF THE TREE, a row is selected with the mouse, and
     // the selection the interface sends is the node's own id. Selected, it heads
-    // a measurement's comment `sketch` — the same task about a body in no build
+    // a measurement's comment `proposal` — the same task about a body in no build
     // that one of its children would be.
-    expect(vp.isOverlay('/Group/sketch2')).toBe(true)
+    expect(vp.isOverlay('/Group/proposal2')).toBe(true)
     // AND THE BOUNDARY IT SITS ON, because the lazy spelling of the line above
     // — `startsWith(at)`, no separator and no equality — passes every other
     // assertion in this file while claiming a model part honestly called
-    // `sketch2x` for the overlay, and dragging it as a body of the sketch.
-    expect(vp.isOverlay('/Group/sketch2x')).toBe(false)
+    // `proposal2x` for the overlay, and dragging it as a body of the proposal.
+    expect(vp.isOverlay('/Group/proposal2x')).toBe(false)
   })
 
   it('names the body a path is, which is what the panel can find a node by', async () => {
     // ONE SEGMENT FURTHER IN than the question above, and the Move tool is what
-    // asks it: a drag of a mock reaches the panel as `hmr:sketchmove` naming the
-    // BODY, because the sketch document holds bodies by name and has no paths in
+    // asks it: a drag of one reaches the panel as `hmr:proposalmove` naming the
+    // BODY, because the proposal document holds bodies by name and has no paths in
     // it at all. The name is the part's own `name` in the payload the panel
     // built, and the group it hangs under is minted here — so this is the only
     // side that can spell the pair.
     const { vp } = staging()
-    await vp.show(model('sketch'), { view: 'a', token: 0 })
+    await vp.show(model('proposal'), { view: 'a', token: 0 })
     await vp.setOverlay([body('result'), body('bore')])
 
-    expect(vp.overlayBody('/Group/sketch2/result')).toBe('result')
-    expect(vp.overlayBody('/Group/sketch2/bore')).toBe('bore')
+    expect(vp.overlayBody('/Group/proposal2/result')).toBe('result')
+    expect(vp.overlayBody('/Group/proposal2/bore')).toBe('bore')
     // Nothing of the model's is a body of it, whatever it is called.
-    expect(vp.overlayBody('/Group/sketch/post')).toBeNull()
+    expect(vp.overlayBody('/Group/proposal/post')).toBeNull()
     // AND NEITHER IS THE GROUP, which is the decision rather than the edge case:
     // it is a row of the tree and can be selected and dragged from empty space,
-    // but it stands for no node — a report naming `sketch2` would move nothing
-    // and leave the mock displaced with the document saying otherwise. Refused
+    // but it stands for no node — a report naming `proposal2` would move nothing
+    // and leave the body displaced with the document saying otherwise. Refused
     // at the press instead (viewport/tools.js).
-    expect(vp.overlayBody('/Group/sketch2')).toBeNull()
+    expect(vp.overlayBody('/Group/proposal2')).toBeNull()
   })
 
   it('is holding the NEW document by the time a concluded gesture reports', async () => {
@@ -1064,7 +1064,7 @@ describe('the overlay laid over the model', () => {
     // deferred at all. `show()` calls `endGesture()` — the way a drag the reader
     // has not let go of is ended when a build lands under it — AFTER its only
     // `await` and BEFORE `this.payload = shapes`, which is deliberately the last
-    // thing a successful render does. A sketch drag's report comes back in
+    // thing a successful render does. A proposal drag's report comes back in
     // through `setOverlay` and `restage()`, and `restage()` renders
     // `this.payload`: raised synchronously from in there it would compose the
     // moved body into the document being REPLACED, wait on its own `await` while
@@ -1111,7 +1111,7 @@ describe('the overlay laid over the model', () => {
     await vp.load({ live: true })
 
     expect(fetching).toHaveBeenCalledWith('/project/p/dev/a.json', undefined)
-    expect(rendered(viewer).names).toEqual(['post', 'sketch'])
+    expect(rendered(viewer).names).toEqual(['post', 'proposal'])
     expect(rendered(viewer).bodies).toEqual(['result'])
   })
 
@@ -1120,7 +1120,7 @@ describe('the overlay laid over the model', () => {
     // part's own `id`; its navigation tree — and so `getStates`, and so every
     // path the interface sends back in `hidden`, `ghost` and `selected` — by
     // where the part sits. In a pushed view file those are the same string. An
-    // overlay built elsewhere carries `/sketch/result`, and left alone it
+    // overlay built elsewhere carries `/proposal/result`, and left alone it
     // renders perfectly while ghosting and selecting it do nothing at all.
     const { vp, viewer } = staging()
     await vp.show(model(), { view: 'a', token: 0 })
@@ -1128,10 +1128,10 @@ describe('the overlay laid over the model', () => {
     const part = body('result')
     await vp.setOverlay([part])
 
-    expect(rendered(viewer).bodyIds).toEqual(['/Group/sketch/result'])
+    expect(rendered(viewer).bodyIds).toEqual(['/Group/proposal/result'])
     // ...and the caller's own object is left as it was: the interface holds the
     // parts it built and hands the same array over on the next commit.
-    expect(part.id).toBe('/sketch/result')
+    expect(part.id).toBe('/proposal/result')
   })
 
   it('composes from the document as it arrived, not from the last thing shown', async () => {
@@ -1145,7 +1145,7 @@ describe('the overlay laid over the model', () => {
     await vp.setOverlay([body('result'), body('bore')])
     await vp.setOverlay([body('result')])
 
-    expect(rendered(viewer).names).toEqual(['plate', 'sketch'])
+    expect(rendered(viewer).names).toEqual(['plate', 'proposal'])
     expect(rendered(viewer).bodies).toEqual(['result'])
     expect(vp.payload.parts.map((part) => part.name)).toEqual(['plate'])
   })
@@ -1222,12 +1222,12 @@ describe('the overlay laid over the model', () => {
 
     await vp.show(model(), { view: 'a', token: 0 })
 
-    expect(rendered(viewer).names).toEqual(['plate', 'sketch'])
+    expect(rendered(viewer).names).toEqual(['plate', 'proposal'])
     expect(rendered(viewer).bodies).toEqual(['result'])
   })
 
   it('re-stages live, so the frame and the tree the reader set survive an edit', async () => {
-    // An edit to the sketch is not a new view: the reader is looking at one
+    // An edit to the proposal is not a new view: the reader is looking at one
     // thing from one angle and changing a number. A stage that re-fitted the
     // camera would move the model on every keystroke.
     const { vp, viewer } = staging()
@@ -1269,7 +1269,7 @@ describe('the overlay laid over the model', () => {
     // right for a rebuild, where every part goes back to where the model puts it
     // (ui-brief block 6) and a distance was measured between faces that may be
     // gone, and wrong for a scene composed out of the document already on
-    // screen. Left in, opening the sketch panel — or closing it, or committing
+    // screen. Left in, opening the proposal panel — or closing it, or committing
     // one digit into it — snapped a dragged part home and dropped a live
     // measurement, with `partHome` gone so the move could not even be undone.
     const { vp } = staging()

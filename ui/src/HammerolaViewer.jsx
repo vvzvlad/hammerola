@@ -93,7 +93,7 @@
 import React from 'react';
 
 import {
-  STATE, PICK, MENU, FACE, MEASURE, MOVED, SKETCHMOVE, PLACE, PIN, MODEL, ERROR,
+  STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, PLACE, PIN, MODEL, ERROR,
   TOOL, VIEWPORT_TAG,
 } from './events.js';
 import {
@@ -113,19 +113,20 @@ import {
   readToken, writeToken, clearToken, readNotes, writeNotes, rememberPointer,
   readTabs, rememberTab, forgetTab, readTheme, writeTheme,
 } from './store.js';
-// The sketch: a rough body the reader assembles out of numbers so the agent has
-// something to design AGAINST — the motor the bracket has to clear, the wall it
-// bolts to. Two modules, and the split is the same one the viewport draws: the
-// document and its projection are pure text (`sketch.js`), the kernel that turns
-// one into parts is next door (`sketchgeom.js`), and the COLOURS of those parts
-// live over there with it. That is not an exemption from this file's no-literal
-// rule — a part's colour is model content, like the colours the hub pushes in a
-// view file, and this file paints no part.
+// The proposal: a rough body the reader assembles out of numbers so the agent
+// has something to design AGAINST or to copy — the motor the bracket has to
+// clear, the wall it bolts to, or an example of the layout they want. Two
+// modules, and the split is the same one the viewport draws: the document and
+// its projection are pure text (`proposal.js`), the kernel that turns one into
+// parts is next door (`proposalgeom.js`), and the COLOURS of those parts live
+// over there with it. That is not an exemption from this file's no-literal rule
+// — a part's colour is model content, like the colours the hub pushes in a view
+// file, and this file paints no part.
 import {
-  addNode, addParam, emptySketch, firstFree, isEmpty, moveNodes, removeNode,
-  removeParam, renameParam, sketchText, updateNode, updateParam, usedBy,
-} from './sketch.js';
-import { buildSketch, RESULT_NAME } from './sketchgeom.js';
+  addNode, emptyProposal, firstFree, isEmpty, moveNodes, removeNode, proposalText,
+  updateNode,
+} from './proposal.js';
+import { buildProposal, RESULT_NAME } from './proposalgeom.js';
 import {
   css, FONTS, SANS, MONO, Mark, NARROW, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
 } from './style.jsx';
@@ -308,20 +309,27 @@ const mm3 = (value) => (value >= 10
 /** The letter the viewport holds the cut tool up on. Shown, never bound here. */
 const HOLD_KEY_LABEL = 'C';
 
-// -- whether this hub serves the sketch panel at all --------------------------
+// HOW LONG A RUN OF NUDGES HAS TO STOP FOR before the proposal is written.
+// Longer than the ~30 ms a browser repeats a held arrow or a held spinner button
+// at, so a hold of any length is one document at the end of it; short enough
+// that a single click of an arrow reads as an immediate answer. `nudgeProposal`
+// says what this buys and what it costs.
+const NUDGE_QUIET_MS = 100;
+
+// -- whether this hub serves the proposal panel at all ------------------------
 //
 // THE HUB'S ANSWER, STAMPED ON `<html>` BEFORE THE PAGE IS SENT, the way the
 // theme is (`src/render.py`). The panel is part of the toolbar this file draws,
 // so the answer has to be here before a button is drawn — and it is the hub's
-// own configuration, which nothing in a browser can see. `SKETCH_PANEL` in the
+// own configuration, which nothing in a browser can see. `PROPOSAL_PANEL` in the
 // hub's environment is where it comes from; `off` is what a hub that never set
 // it says, so a deployment that did not ask for the feature never carries it.
 //
 // SPELLED HERE AS WELL AS IN src/render.py because the two sides cannot share a
 // module; `tests/test_ui_source.py` holds the name and the values equal across
 // them, the way it already does for the theme cookie.
-const SKETCH_ATTRIBUTE = 'data-sketch-panel';
-const SKETCH_ON = 'on';
+const PROPOSAL_ATTRIBUTE = 'data-proposal-panel';
+const PROPOSAL_ON = 'on';
 
 /**
  * Read where the button is drawn, and watched by nothing.
@@ -336,8 +344,8 @@ const SKETCH_ON = 'on';
  * answer nobody recognises is a page whose hub did not ask for this, which is
  * the one reading that keeps the default safe.
  */
-const sketchPanelOn = () => (
-  document.documentElement.getAttribute(SKETCH_ATTRIBUTE) === SKETCH_ON
+const proposalPanelOn = () => (
+  document.documentElement.getAttribute(PROPOSAL_ATTRIBUTE) === PROPOSAL_ON
 );
 
 // HOW MANY VIEWS STILL FIT AS A STRIP OF PILLS before the switcher becomes a
@@ -980,13 +988,13 @@ export default class HammerolaViewer extends React.Component {
     // reason `this.carry` is not: nothing on the page is drawn from it, and it
     // lives for exactly one comparison.
     this._cmpFrom = null;
-    // How many bodies the sketch panel has ever added, which is where a new
+    // How many bodies the proposal panel has ever added, which is where a new
     // one's id and its first name come from. A COUNTER AND NOT THE LENGTH of
     // the list: deleting the second of two and adding another would mint `n2`
     // twice, and two nodes under one id make `updateNode` edit both. Not state,
     // for the reason `this.carry` is not — nothing on the page is drawn from
     // it, so a bump must not cost a render.
-    this._sketchSeq = 0;
+    this._proposalSeq = 0;
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
@@ -1043,22 +1051,18 @@ export default class HammerolaViewer extends React.Component {
       // screen is untouched by it.
       //
       // A DOCUMENT AND A FLAG rather than one nullable field: closing the panel
-      // takes the overlay off the model, and it must not throw the sketch away
+      // takes the overlay off the model, and it must not throw the proposal away
       // — a reader who shut it to look at something underneath comes back to
       // what they had.
       //
-      // `sketchError` is the KERNEL saying no: its own sentence about the
-      // document as it stands. The overlay is deliberately NOT cleared while it
-      // is set; see `setSketch`. `sketchHint` is this side refusing an EDIT —
-      // `dropParam` is its only writer — and the two are apart because they gate
-      // different things: a document that does not project has no `add to
-      // comment` to offer, while an edit that was refused leaves a document that
-      // projects perfectly. One box draws whichever is set (`computed`).
-      // `sketchDraft` is the one field the reader is typing in; see `computed`,
-      // where it is spent, and `commitSketch`, where it is turned into a
-      // document.
-      sketch: emptySketch(), sketchOpen: false, sketchError: null,
-      sketchHint: null, sketchDraft: null,
+      // `proposalError` is the KERNEL saying no: its own sentence about the
+      // document as it stands, drawn in the panel where the reader is already
+      // looking. The overlay is deliberately NOT cleared while it is set; see
+      // `setProposal`. `proposalDraft` is the one field the reader is typing
+      // in; see `computed`, where it is spent, and `commitProposal`, where it is
+      // turned into a document.
+      proposal: emptyProposal(), proposalOpen: false, proposalError: null,
+      proposalDraft: null,
       // -- who the reader is
       // No project id: the secret is one string for the whole hub since step 0,
       // so keying it per project stored N copies of it (see store.js).
@@ -1134,37 +1138,37 @@ export default class HammerolaViewer extends React.Component {
   toolsOff() { return !!this.comparePair(); }
 
   /**
-   * Was this path a body of the sketch, rather than a part of the build?
+   * Was this path a body of the proposal, rather than a part of the build?
    *
    * THE SAME CLASS `toolsOff` IS FOR, one source of parts further over. The
-   * sketch panel stages its bodies into the scene (`staged()` in
+   * proposal panel stages its bodies into the scene (`staged()` in
    * viewport/element.js), which makes each of them an ordinary row in the tree
    * and an ordinary pick target — so the Comment tool opens a composer headed
-   * `motor` and posts `partId: "/<root>/sketch/motor"`, and `add to comment` on
+   * `motor` and posts `partId: "/<root>/proposal/motor"`, and `add to comment` on
    * the measurement chip attaches that same path to the number. Both are tasks
    * written in the BUILD's terms about a body that is in no build, no catalogue
    * and no revision, and the agent has nothing to look the path up in.
    *
    * THE MOVE TOOL IS NOT A READER OF THIS, and it is the one that looks like it
-   * should be. A drag of a mock is not refused at all: it is a DIFFERENT
-   * GESTURE, told apart a step earlier by the viewport (`onDown` in
+   * should be. A drag of a proposal body is not refused at all: it is a
+   * DIFFERENT GESTURE, told apart a step earlier by the viewport (`onDown` in
    * viewport/tools.js, which asks the same `isOverlay`) and ending in
-   * `hmr:sketchmove` — an edit of the panel's own document rather than a task
-   * about a part. So nothing about a mock ever reaches the `hmr:moved` handler,
-   * and this question is never asked there.
+   * `hmr:proposalmove` — an edit of the panel's own document rather than a task
+   * about a part. So nothing about such a body ever reaches the `hmr:moved`
+   * handler, and this question is never asked there.
    *
-   * THE MEASUREMENT ITSELF IS NOT ONE OF THESE and is deliberately left alone: a
-   * distance between two faces of a mock is the sort of thing the panel exists
-   * to establish, and the chip it raises is the reader's own. Only the PART the
-   * chip would file that number against is refused.
+   * THE MEASUREMENT ITSELF IS NOT ONE OF THESE and is deliberately left alone:
+   * a distance between two faces of a proposal body is the sort of thing the
+   * panel exists to establish, and the chip it raises is the reader's own. Only
+   * the PART the chip would file that number against is refused.
    *
    * THE VIEWPORT IS ASKED, because the group's name is minted there against the
-   * model's own parts — `sketch`, or `sketch2` where the model publishes a group
-   * of that name — and a path is all the event and the selection carry. A ref
-   * call like `sketchOverlay`, and false wherever there is no element yet: with
-   * nothing staged there is no sketch body to have picked.
+   * model's own parts — `proposal`, or `proposal2` where the model publishes a
+   * group of that name — and a path is all the event and the selection carry. A
+   * ref call like `proposalOverlay`, and false wherever there is no element yet:
+   * with nothing staged there is no proposal body to have picked.
    */
-  sketchBody(id) {
+  proposalBody(id) {
     const el = this.el();
     return !!(el && typeof el.isOverlay === 'function' && el.isOverlay(id));
   }
@@ -1277,13 +1281,13 @@ export default class HammerolaViewer extends React.Component {
         // one door onto `movedAttach`, which would post a `/cmp/…` path as the
         // part a comment is filed against.
         if (this.toolsOff()) return;
-        // A BODY OF THE SKETCH DOES NOT REACH HERE, and no check on this side
+        // A BODY OF THE PROPOSAL DOES NOT REACH HERE, and no check on this side
         // says so: the viewport tells the two gestures apart at the PRESS and
-        // sends a drag of a mock on `hmr:sketchmove` instead, which is the
-        // handler below. `motor` moved 3 mm, filed against
-        // `/<root>/sketch/motor`, would be a task about a part no build has —
+        // sends a drag of a proposal body on `hmr:proposalmove` instead, which
+        // is the handler below. `motor` moved 3 mm, filed against
+        // `/<root>/proposal/motor`, would be a task about a part no build has —
         // and worse, this chip is the only door onto `__resetMove`, which walks
-        // `vp.moved`, where a mock's offset is deliberately never written.
+        // `vp.moved`, where such a body's offset is deliberately never written.
         const d = (e.detail && e.detail.delta) || [];
         if (d.length !== 3 || !d.every(Number.isFinite)) return;
         const mag = Math.round(Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) * 10) / 10;
@@ -1307,27 +1311,27 @@ export default class HammerolaViewer extends React.Component {
                                  e.detail.count);
         this.setState({ moved: { id: e.detail.id, name, mag } });
       },
-      [SKETCHMOVE]: (e) => {
+      [PROPOSALMOVE]: (e) => {
         // THE SAME GESTURE AS THE ONE ABOVE AND THE OPPOSITE MEANING. A part of
         // the build moved is a statement TO the agent and changes nothing; a
-        // body of the sketch is the reader's own drawing, so dragging one is an
+        // body of the proposal is the reader's own drawing, so dragging one is an
         // ordinary edit of the document — the same edit as typing the number
-        // into the `at` fields, which is why it goes through `setSketch` like
+        // into the `at` fields, which is why it goes through `setProposal` like
         // every other one and raises no chip at all. The panel standing open is
         // what says the body is not part of the model; there is nothing here for
         // a chip to take back.
         //
         // NOT GUARDED BY `toolsOff` unlike the chip above, for the reason the
-        // panel itself is not: a sketch names no part of anything, so there is
-        // no `/cmp/…` path for it to file, and a mock is as true over a
+        // panel itself is not: a proposal names no part of anything, so there is
+        // no `/cmp/…` path for it to file, and what it claims is as true over a
         // comparison as over a build.
         const d = (e.detail && e.detail.delta) || [];
         if (d.length !== 3 || !d.every(Number.isFinite)) return;
-        const doc = this.state.sketch || emptySketch();
+        const doc = this.state.proposal || emptyProposal();
         // THE RESULT IS EVERY NODE AND A HOLE IS ITS OWN, which is what the
         // payload the panel builds offers to the hand: one part for the fused
-        // body and one translucent part per hole (sketchgeom.js). Dragging the
-        // result moves the whole mock — every node by the same delta, so it
+        // body and one translucent part per hole (proposalgeom.js). Dragging the
+        // result moves the whole proposal — every node by the same delta, so it
         // keeps its shape and lands somewhere else — and dragging a hole moves
         // that hole through the body.
         //
@@ -1342,17 +1346,17 @@ export default class HammerolaViewer extends React.Component {
             || node.name === e.detail.name)
           .map((node) => node.id);
         if (!ids.length) return;
-        // THE DRAFT GOES FIRST, exactly as `commitSketch` drops it and for the
-        // same reason one step further: a field renders from `sketchDraft` while
-        // one stands on its key, and this is the first door into `setSketch`
+        // THE DRAFT GOES FIRST, exactly as `commitProposal` drops it and for the
+        // same reason one step further: a field renders from `proposalDraft` while
+        // one stands on its key, and this is the first door into `setProposal`
         // that a draft can survive. Every other one is a button, and a real
         // click blurs the field and commits it on the way. A drag does not: the
         // press is taken in the capture phase (`onDown` calls `preventDefault`),
         // so the focus never leaves. Left standing, the panel would show typed
         // text over a body that has already moved — and the blur that came later
         // would commit that text back over the axis the drag had just written.
-        this.setState({ sketchDraft: null });
-        this.setSketch(moveNodes(doc, ids, d));
+        this.setState({ proposalDraft: null });
+        this.setProposal(moveNodes(doc, ids, d));
       },
       [PLACE]: (e) => {
         // A comment is a task for the agent, and only the customer files one.
@@ -1361,13 +1365,13 @@ export default class HammerolaViewer extends React.Component {
         // comparison's (`toolsOff`): the composer this opens would be headed
         // `plate #1` and post `/cmp/added/plate #1` as the part to change.
         if (this.toolsOff()) return;
-        // Nor about a body of the sketch (`sketchBody`), for the same reason
+        // Nor about a body of the proposal (`proposalBody`), for the same reason
         // read off the other source of parts: the composer would be headed
-        // `motor` and post `/<root>/sketch/motor` as the part to change, and the
+        // `motor` and post `/<root>/proposal/motor` as the part to change, and the
         // motor is the thing the model has to fit rather than anything in it.
-        // The sketch's own door is `add to comment` in the panel, which posts
+        // The proposal's own door is `add to comment` in the panel, which posts
         // the projection as text and names no part at all.
-        if (this.sketchBody(e.detail && e.detail.id)) return;
+        if (this.proposalBody(e.detail && e.detail.id)) return;
         const d = e.detail || {};
         // THE ROW'S NAME, found by looking the picked PATH up — the door onto
         // `composer.part` that a POINT PLACED IN THE SCENE opens (the inventory
@@ -1549,6 +1553,9 @@ export default class HammerolaViewer extends React.Component {
     if (this._mq) this._mq.removeEventListener('change', this._narrow);
     clearTimeout(this._tt);
     clearTimeout(this._poll);
+    // And the nudge still waiting for the arrows to stop, which would otherwise
+    // wake up and commit a number into a panel that is gone.
+    clearTimeout(this._nudge);
     // The deferred swap goes with them: it holds `this` and would come back on a
     // component that is gone, to `setState` on it.
     clearTimeout(this._swap);
@@ -2353,7 +2360,7 @@ export default class HammerolaViewer extends React.Component {
       // a chip left standing here would describe a model that is gone.
       //
       // A RE-STAGE IS THE EXCEPTION, and it is the only one. The viewport
-      // composes the sketch panel's body over the SAME document it already
+      // composes the proposal panel's body over the SAME document it already
       // had (viewport/element.js, `restage`), so no part moved, no face went
       // anywhere, and the viewport keeps its own halves of these two for
       // exactly that reason. Dropping the chips here would take the
@@ -3165,43 +3172,39 @@ export default class HammerolaViewer extends React.Component {
     this.setVisibility({ hidden: step.hidden, ghost: step.ghost }, null, false);
   }
 
-  // -- the sketch -----------------------------------------------------------
+  // -- the proposal -----------------------------------------------------------
 
   /**
    * The document the panel now holds, and the body that follows from it.
    *
    * THE ONE DOOR. Every edit in the panel — a digit, a role flipped, a body
-   * deleted, a param renamed — comes through here, so there is no arrangement in
+   * deleted, a body renamed — comes through here, so there is no arrangement in
    * which the numbers in the panel and the shape over the model describe
    * different things.
    *
    * A DOCUMENT THAT WILL NOT BUILD LEAVES THE LAST GOOD BODY WHERE IT IS, and
    * that is the whole reason this is not two lines. The commonest way to reach
-   * one is halfway through typing — a dimension naming a param that has not been
-   * added yet, a size cleared on the way to a bigger number — and blanking the
-   * model at that moment would make the body flash away and back on every
-   * keystroke. The kernel's own sentence goes in the panel instead, where the
-   * reader is already looking, and the shape on screen stays the last one that
-   * meant something.
+   * one is halfway through saying something — an extrusion committed with two
+   * points of its profile typed, which the kernel refuses as no polygon at all —
+   * and blanking the model at that moment would make the body flash away and
+   * back on the way to a shape that is perfectly fine. The kernel's own sentence
+   * goes in the panel instead, where the reader is already looking, and the
+   * shape on screen stays the last one that meant something.
    *
    * NOTHING TO DRAW IS NOT AN ERROR: a document with no bodies in it — a panel
    * just opened, the last body deleted — builds a result with no geometry, and
    * an empty part in the tree is worse than no overlay at all.
    */
-  setSketch(doc) {
+  setProposal(doc) {
     let parts = null;
     let error = null;
     try {
-      parts = buildSketch(doc).parts;
+      parts = buildProposal(doc).parts;
     } catch (failure) {
       error = String((failure && failure.message) || failure);
     }
-    // THE HINT GOES WITH THE EDIT THAT FOLLOWED IT. `sketchHint` is a refusal of
-    // one gesture — a param the reader tried to remove while a body still spent
-    // it — so the next edit that lands is the moment it stops describing
-    // anything on screen.
-    this.setState({ sketch: doc, sketchError: error, sketchHint: null });
-    if (parts) this.sketchOverlay(doc.nodes.length ? parts : null);
+    this.setState({ proposal: doc, proposalError: error });
+    if (parts) this.proposalOverlay(doc.nodes.length ? parts : null);
   }
 
   /**
@@ -3214,14 +3217,14 @@ export default class HammerolaViewer extends React.Component {
    * given, so a rebuild landing under an open panel puts the body back by
    * itself — see `setOverlay` in viewport/element.js.
    */
-  sketchOverlay(parts) {
+  proposalOverlay(parts) {
     const el = this.el();
     if (!el || typeof el.setOverlay !== 'function') return;
     try {
       if (parts) el.setOverlay(parts);
       else el.clearOverlay();
     } catch (error) {
-      console.error('sketch overlay', error);
+      console.error('proposal overlay', error);
     }
   }
 
@@ -3240,43 +3243,57 @@ export default class HammerolaViewer extends React.Component {
    * has to, because a stage is a whole scene disposed and built again, and a
    * reader opening the panel to see what it is would otherwise pay for it twice.
    */
-  toggleSketch() {
-    const open = !this.state.sketchOpen;
+  toggleProposal() {
+    const open = !this.state.proposalOpen;
     this.setState({
-      sketchOpen: open, sketchDraft: null, menu: null, revOpen: false,
+      proposalOpen: open, proposalDraft: null, menu: null, revOpen: false,
       dlOpen: false,
     });
-    if (open) this.setSketch(this.state.sketch);
-    else this.sketchOverlay(null);
+    if (open) this.setProposal(this.state.proposal);
+    else this.proposalOverlay(null);
   }
 
   /**
    * One field of the panel, being typed in. THE DRAFT AND NOTHING ELSE.
    *
-   * THE TEXT IS KEPT BESIDE THE DOCUMENT, and that is what `sketchDraft` is for.
-   * These fields show the document, and the document holds numbers: `42.` parses
-   * to `42`, so a field drawn from the document alone would rewrite the decimal
-   * point away under the cursor and land the next digit in the units column.
-   * ONE ENTRY AND NOT A MAP, because one field has the focus at a time, and the
-   * commit that ends the typing is what drops it.
+   * THE TEXT IS KEPT BESIDE THE DOCUMENT, and that is what `proposalDraft` is
+   * for. These fields show the document, and the document holds numbers: a field
+   * emptied on the way to another number — which is also what a half-typed `42.`
+   * reads as, since a number field reports nothing for a value that is not one
+   * yet — would be drawn back from the document between one keystroke and the
+   * next, putting the old number under the cursor. ONE ENTRY AND NOT A MAP,
+   * because one field has the focus at a time, and the commit that ends the
+   * typing is what drops it.
    *
    * NO DOCUMENT IS BUILT HERE, which is the difference between this panel and a
-   * page that stutters. A keystroke that reached `setSketch` rebuilt the bodies,
+   * page that stutters. A keystroke that reached `setProposal` rebuilt the bodies,
    * handed them to the viewport, and had the whole scene disposed and rendered
-   * again under a tree going back up to React — per character. `commitSketch`
+   * again under a tree going back up to React — per character. `commitProposal`
    * is where a value is settled, and the browser already says when that is.
    */
-  typeSketch(key, text) {
-    this.setState({ sketchDraft: { key, text } });
+  typeProposal(key, text) {
+    // AND A KEYSTROKE TAKES A NUDGE THAT HAS NOT LANDED WITH IT. The arrows
+    // commit on the trailing edge of a run (`nudgeProposal`), holding the text
+    // they were handed rather than reading the field later — so a reader who
+    // clicks the spinner and then types, which is two gestures in the same field
+    // with the focus already there, would have the waiting number written over
+    // what they are typing. THE RUN OF A HELD ARROW IS UNHARMED: every tick is an
+    // `input` and then a `change`, so each one clears the last timer here and
+    // sets its own immediately after.
+    clearTimeout(this._nudge);
+    this.setState({ proposalDraft: { key, text } });
   }
 
   /**
    * That field, finished with: the text turned into the next document.
    *
-   * `change` AND NOT `input` — a blur or an Enter — which is the event the
-   * platform defines as "this value is settled" and the one JSCAD's own
-   * parameter panel commits on. The draft carried what was on screen until now,
-   * so nothing the reader typed is lost by waiting for it.
+   * `change` AND NOT `input` — a blur, an Enter, or a nudge of a number field's
+   * arrows — which is the event the platform defines as "this value is settled"
+   * and the one JSCAD's own parameter panel commits on. The draft carried what
+   * was on screen until now, so nothing the reader typed is lost by waiting for
+   * it. The three doors in are `onBlur`, `onKeyDown` and the node's own `change`
+   * handler through `nudgeProposal`; `field` in `computed()` says why the last of
+   * those cannot be React's `onChange`, and `nudgeProposal` why it waits.
    *
    * A FIELD NOBODY TYPED IN COMMITS NOTHING. A blur reaches every field the
    * focus leaves, the ones only tabbed through included, and re-committing the
@@ -3284,45 +3301,58 @@ export default class HammerolaViewer extends React.Component {
    * `setOverlay` would catch it as equivalent, but the document would still be
    * rebuilt and every part of the panel drawn again. The draft is the record of
    * having typed, so it is also the condition.
+   *
+   * AND TEXT THAT IS NOT A NUMBER LEAVES THE DOCUMENT AS IT WAS. `unread` is the
+   * number field's own `badInput` — a lone `-` or `.` and, measured, nothing
+   * else — which is the one case where an empty-looking field is not an empty
+   * one; `num` in `computed()` says why the two cannot be answered the same way
+   * and carries the measurement. The draft still goes, so the field drops the
+   * half-typed text and shows the number that is in the document, which is the
+   * number this kept.
    */
-  commitSketch(key, text, commit) {
-    const draft = this.state.sketchDraft;
+  commitProposal(key, text, commit, unread) {
+    const draft = this.state.proposalDraft;
     if (!draft || draft.key !== key) return;
-    // BEFORE `setSketch`, so the field goes back to showing the document: the
-    // commit is what normalises `12.` to `12`, and a draft left standing would
-    // hold the reader's spelling over a number that has moved on.
-    this.setState({ sketchDraft: null });
-    this.setSketch(commit(text));
+    // THE DRAFT GOES, so the field is drawn from the document again rather than
+    // from the reader's spelling: the commit is what normalises `5.0` to `5`,
+    // and a draft left standing would hold that spelling over a number which has
+    // moved on. `hands the field back to the document when the typing ends` is
+    // where that is pinned.
+    this.setState({ proposalDraft: null });
+    if (unread) return;
+    this.setProposal(commit(text));
   }
 
   /**
-   * A param taken out — unless a body still names it.
+   * The arrows: ONE DOCUMENT FOR A RUN OF THEM, written when the run stops.
    *
-   * A DIMENSION IS A NUMBER OR THE NAME OF A PARAM, so a param removed under a
-   * size that still spends it leaves a document `resolveValue` refuses: the body
-   * on the model stops following the panel, the error box fills with a sentence
-   * about a name the reader can no longer see, and the only way back is to add a
-   * param under exactly the old name. Refusing it and SAYING WHICH BODIES is the
-   * repair the reader can actually act on.
+   * A HELD ARROW IS NOT ONE EDIT. Chromium repeats a held key and a held spinner
+   * button at about 30 ms a tick, firing `input` and `change` on every one, and
+   * each `change` straight into `commitProposal` was a whole document, a whole
+   * overlay and a whole scene staged again — the CSG alone is 23 ms at four
+   * bodies and 81 ms at twelve (`field` in `computed()` carries the
+   * measurements), so a second of holding the up arrow asked for more work than
+   * a second has. The draft/commit split exists to keep a keystroke off that
+   * road, and this is the same road by another door.
    *
-   * THE REFUSAL IS A HINT AND NOT AN ERROR, which is the difference between the
-   * two fields it could be written into. `sketchError` means "this document does
-   * not project", and `add to comment` is hidden while it is set; the document
-   * here is the one that was on screen a moment ago and projects perfectly —
-   * nothing was changed. Written there, pressing the × on a param in use took
-   * the feature's only exit away from a document that had nothing wrong with it.
+   * THE TRAILING EDGE AND NOT THE LEADING ONE, because the number the reader
+   * stops on is the one they mean; the ones on the way past are not worth a
+   * scene. The field itself is not waiting for anything — every tick lands in
+   * the draft through React's `onChange`, so the number under the cursor moves
+   * with the arrow and only the model comes in behind it. A SINGLE CLICK IS A
+   * RUN OF ONE and commits `NUDGE_QUIET_MS` later, which is why that number is
+   * small enough to read as "at once".
+   *
+   * `text` is taken here rather than read off the node when the timer fires: the
+   * last nudge of a run is the one that survives, and what it committed should
+   * be what the field said at that moment and not whatever it holds later.
    */
-  dropParam(name) {
-    const doc = this.state.sketch || emptySketch();
-    const users = usedBy(doc, name);
-    if (users.length) {
-      this.setState({
-        sketchHint: `${name} is still a dimension of ${users.join(', ')}. `
-          + 'Give those a number or another param first, and it can go.',
-      });
-      return;
-    }
-    this.setSketch(removeParam(doc, name));
+  nudgeProposal(key, text, commit, unread) {
+    clearTimeout(this._nudge);
+    this._nudge = setTimeout(
+      () => this.commitProposal(key, text, commit, unread),
+      NUDGE_QUIET_MS,
+    );
   }
 
   toast(msg) {
@@ -3711,18 +3741,19 @@ export default class HammerolaViewer extends React.Component {
 
     // The hub's comment schema is closed — src/comments.py keeps `text`, `view`,
     // `part`, `key`, `published`, `point` and `camera` and DROPS everything else
-    // without saying so — so the measurement, the drag and the sketch ride in
+    // without saying so — so the measurement, the drag and the proposal ride in
     // the text, where the agent will actually read them, rather than in fields
     // discarded on the way in.
     //
-    // THE SKETCH IS THE ONE THAT SPANS LINES, and it goes last for that reason:
-    // it is a small table (`sketchText`), and a block in the middle would split
+    // THE PROPOSAL IS THE ONE THAT SPANS LINES, and it goes last for that reason:
+    // it is a small table (`proposalText`), and a block in the middle would split
     // the one-line facts above it away from the sentence they belong to.
     const extra = [];
     if (c.meas) extra.push(`measured: ${c.meas}`);
     if (c.move) extra.push(`moved: ${c.move} (temporary, not in the model)`);
-    if (c.sketch) {
-      extra.push(`sketch — a rough body to design against, not in the model:\n${c.sketch}`);
+    if (c.proposal) {
+      extra.push('proposal — a rough body to design against or to follow, '
+                 + `not in the model:\n${c.proposal}`);
     }
 
     const form = new FormData();
@@ -4766,54 +4797,53 @@ export default class HammerolaViewer extends React.Component {
     const authorNote = this.authorNote();
     const readerNote = this.selectedNote();
 
-    // -- the sketch: a rough body in numbers, laid over the model -------------
+    // -- the proposal: a rough body in numbers, laid over the model -----------
     //
     // WHETHER THIS HUB HAS THE PANEL AT ALL, asked once for the two styles that
     // gate it below. It is not state and nothing on this page can change it —
-    // see `sketchPanelOn`, which says where the answer comes from.
-    const sketchOn = sketchPanelOn();
+    // see `proposalPanelOn`, which says where the answer comes from.
+    const proposalOn = proposalPanelOn();
 
-    // `|| emptySketch()` for the reason `openTabs` above carries its `|| []`:
+    // `|| emptyProposal()` for the reason `openTabs` above carries its `|| []`:
     // every test file in ui/tests spells the state out by hand, and a field
     // added here would otherwise take down the ones written before it existed,
     // at `.nodes.length`.
-    const doc = s.sketch || emptySketch();
+    const doc = s.proposal || emptyProposal();
 
-    // A DIMENSION IS A NUMBER OR THE NAME OF A PARAM and nothing else — the
-    // whole of the language `sketch.js` defines, with no expression syntax and
-    // deliberately none coming. So the field is text, and this is the entire
-    // parser: what reads as a finite number is one, anything else is a name for
-    // `resolveValue` to find or to refuse BY NAME.
+    // EVERY DIMENSION AND EVERY PLACEMENT IS A NUMBER and nothing else — the
+    // whole of the language `proposal.js` defines, with no expression syntax and
+    // deliberately none coming. So this is the entire parser, and it is the same
+    // one for a size, a place and an angle: they all reach the kernel raw
+    // (proposalgeom.js, `placed`), where anything that is not a number arrives in
+    // an arithmetic and comes out as NaN — geometry that renders as nothing,
+    // with nothing said about it.
     //
-    // AN EMPTY FIELD IS A ZERO and not an empty name, and what that decides is
-    // what the reader is shown while they are mid-edit. A zero builds: the body
-    // goes flat until the next digit lands, which is visibly about the field
-    // they are typing in. An empty NAME does not build, and the panel would say
-    // there is no param called "" — a sentence about a language they never used,
-    // over a body that stopped following them.
-    const dim = (raw) => {
-      const text = String(raw).trim();
-      if (!text) return 0;
-      const value = Number(text);
-      return Number.isFinite(value) ? value : text;
-    };
-    // A PLACEMENT IS ALWAYS A NUMBER. `at` and `rot` go to the kernel raw
-    // (sketchgeom.js, `placed`) and never through `resolveValue`, so a param
-    // name typed into one would arrive as a string in an arithmetic and come out
-    // as NaN — geometry that renders as nothing, with nothing said about it.
+    // AN EMPTY FIELD IS A ZERO, and what that decides is what the reader is
+    // shown while they are mid-edit: a zero builds, so the body goes flat until
+    // the next digit lands, which is visibly about the field they are typing in.
     const num = (raw) => {
       const value = Number(String(raw).trim());
       return Number.isFinite(value) ? value : 0;
     };
-    // A BOUND A PARAM MAY SIMPLY NOT HAVE: `paramText` prints the range only
-    // when both ends are there, so a cleared field has to come back as
-    // `undefined` rather than as a 0 that would read as a real limit.
-    const bound = (raw) => {
-      const text = String(raw).trim();
-      if (!text) return undefined;
-      const value = Number(text);
-      return Number.isFinite(value) ? value : undefined;
-    };
+    // AND A FIELD THE BROWSER COULD NOT READ IS NOT AN EMPTY ONE. A number input
+    // reports `""` for text it cannot parse, and `num` answers 0 for that, so a
+    // field in that state committed a zero and flattened the body.
+    //
+    // WHICH TEXT actually reaches it was measured rather than reasoned about —
+    // Chrome 153, a real `<input type="number">`, one keystroke at a time,
+    // reading `value` on every `input` event. A lone `-` and a lone `.` do:
+    // `""` with `badInput` set. NOTHING ELSE DOES — `.5` reads back as `.5`, and
+    // a trailing dot is dropped rather than emptying the field, so `12.` reads
+    // back as `12`. So the case this is here for is a sign or a point typed as
+    // the first character of a number and then abandoned, the focus leaving on a
+    // click elsewhere: without this, a dimension the reader never finished
+    // typing goes to zero and the body goes flat.
+    //
+    // `badInput` is the platform's own answer to "there is text in here and I
+    // could not read it", and it is the only thing that tells that apart from
+    // the genuinely empty field the rule above is about. It is `false` on a text
+    // input, so the name and the profile pass through it unchanged.
+    const unread = (target) => !!(target && target.validity && target.validity.badInput);
     // `x,y; x,y; …`. A PAIR THAT DOES NOT READ AS TWO NUMBERS IS DROPPED rather
     // than guessed at, and `num` is the wrong parser for it: it answers 0 for
     // anything that is not a number, so `a,b` came through as a corner at the
@@ -4828,43 +4858,105 @@ export default class HammerolaViewer extends React.Component {
     const pointsText = (list) => list.map((pair) => pair.join(',')).join('; ');
     const swap = (list, index, value) => list.map((v, i) => (i === index ? value : v));
 
+    // HOW FAR ONE NUDGE OF A NUMBER GOES. Every number of a body is an
+    // `<input type="number">` with a step, so the arrows, the up/down keys and
+    // the press-and-hold repeat are all the browser's own and none of them is
+    // drawn here. TWO ANSWERS BECAUSE THERE ARE TWO KINDS OF NUMBER: a size and
+    // a place are read in millimetres, where one is the unit somebody means by
+    // "a bit bigger", while a turn is read in degrees, where the angles a body
+    // is actually set to are the corners — a quarter turn, 45 at a diagonal —
+    // and a degree a click would be two dozen clicks to reach any of them.
+    const STEP_MM = 1;
+    const STEP_DEG = 15;
+
     // One field of the panel: what it shows, and what typing in it does.
     // `commit` turns the raw text into the whole NEXT DOCUMENT, because that is
-    // what `setSketch` takes — there is no partial write anywhere in here.
+    // what `setProposal` takes — there is no partial write anywhere in here.
+    // A `step` makes it one of the NUMBER fields; the name and the profile are
+    // text and pass none.
     //
     // TYPING TOUCHES THE DRAFT AND NOTHING ELSE; the document is written on
-    // `change` — a blur or an Enter — which is the browser's own event for
-    // "this field's value is settled" and what JSCAD's parameter panel commits
-    // on. Per KEYSTROKE, which is what this used to be, every character cost a
-    // whole scene: `setSketch` builds the bodies, hands them to the viewport,
-    // and `restage` tears the model down and renders it again with the tree
-    // going back up to React behind it. The CSG ALONE, measured on this
-    // repository's own kernel (@jscad/modeling 2.13.0, vitest, Apple M-series,
-    // mixed ops with every fifth body a hole): 0.3 ms at one body, 23 ms at
-    // four, 81 ms at twelve — before any of the rest of it. `-12.5` is five of
-    // those on the way to one number.
-    const field = (key, value, commit, width) => ({
+    // `change` — a blur, an Enter, or a nudge of the arrows — which is the
+    // browser's own event for "this field's value is settled" and what JSCAD's
+    // parameter panel commits on. Per KEYSTROKE, which is what this used to be,
+    // every character cost a whole scene: `setProposal` builds the bodies, hands
+    // them to the viewport, and `restage` tears the model down and renders it
+    // again with the tree going back up to React behind it. The CSG ALONE,
+    // measured on this repository's own kernel (@jscad/modeling 2.13.0, vitest,
+    // Apple M-series, mixed ops with every fifth body a hole): 0.3 ms at one
+    // body, 23 ms at four, 81 ms at twelve — before any of the rest of it.
+    // `-12.5` is five of those on the way to one number.
+    const field = (key, value, commit, width, step) => ({
       key,
+      // `number` IS WHAT BRINGS THE ARROWS, and it is the only thing that does:
+      // the spinner, the up/down keys and the repeat on a held key are the
+      // platform's, sized by `step`.
+      type: step ? 'number' : 'text',
+      step,
       // The draft while this is the field being typed in, the document
-      // everywhere else. `typeSketch` says why both are needed.
-      value: s.sketchDraft && s.sketchDraft.key === key
-        ? s.sketchDraft.text
+      // everywhere else. `typeProposal` says why both are needed.
+      value: s.proposalDraft && s.proposalDraft.key === key
+        ? s.proposalDraft.text
         : String(value === undefined || value === null ? '' : value),
       style: `width:${width};box-sizing:border-box;border:1px solid var(--line);border-radius:5px;outline:none;padding:3px 5px;font:400 11px ${MONO};color:var(--text);background:var(--card-bg)`,
-      onChange: (e) => this.typeSketch(key, e.target.value),
-      onBlur: (e) => this.commitSketch(key, e.target.value, commit),
+      onChange: (e) => this.typeProposal(key, e.target.value),
+      onBlur: (e) => this.commitProposal(key, e.target.value, commit, unread(e.target)),
       // ENTER IS THE OTHER HALF OF `change`, and it is here rather than left to
       // the blur because a reader who types a number and presses Enter has
       // finished with that field whether or not they move off it — a panel that
       // answered nothing until the focus left would read as one that had
       // stopped listening.
       onKeyDown: (e) => {
-        if (e.key === 'Enter') this.commitSketch(key, e.target.value, commit);
+        if (e.key === 'Enter') this.commitProposal(key, e.target.value, commit, unread(e.target));
       },
+      // THE WHEEL SCROLLS THE SHEET AND DOES NOT EDIT THE BODY. Over a FOCUSED
+      // number input the wheel is a step of the value in both Chrome and
+      // Firefox — `input`, `change` and all — and this panel is a tall sheet
+      // somebody scrolls through: the ordinary way to reach the body below the
+      // one just typed in is a wheel click with the cursor still standing on its
+      // size field. That was ±1 mm per click of the wheel, ±15° in a `rot` row,
+      // on a body nobody meant to touch; a text field had no such road.
+      //
+      // DROPPING THE FOCUS IS THE ONLY MECHANISM THERE IS, and it is enough: the
+      // platform steps only a field that HAS the focus, and taking it away
+      // leaves the scrolling untouched. Not `preventDefault` — React registers
+      // the root's `wheel` listener as PASSIVE (react-dom 18.3.1), so a
+      // `preventDefault` from here is ignored outright and would stop neither
+      // the step nor the scroll. ON THE FIELD and not on the sheet, because a
+      // wheel over anything else in here was never an edit. The blur it causes
+      // is the ordinary one: a number typed and not yet committed commits,
+      // exactly as it would have when the focus left any other way.
+      onWheel: step ? (e) => e.target.blur() : undefined,
+      // A NUDGE TAKES THE SAME ROAD AS A TYPED NUMBER — `commitProposal` — AND IT
+      // NEEDS A REAL `change` LISTENER TO GET THERE. React's `onChange` is the
+      // DOM's `input` event, which is the keystroke and lands in the draft; the
+      // `change` the platform fires after a step of the spinner arrives at the
+      // same handler and is then DROPPED by React's own value tracker, which
+      // sees a value it has already reported. Measured against react-dom 18.3.1
+      // rather than assumed. Wired to `onChange` alone, a nudge would move the
+      // number in the field and leave the body on the model where it was.
+      //
+      // THE NODE'S OWN `onchange` PROPERTY and not `addEventListener`: a
+      // property is replaced by the next render rather than stacked on top of
+      // the last one, so there is nothing to remove and no way to end up
+      // committing twice. A blur after typing fires `change` too, and what that
+      // schedules wakes up behind the blur above, which has already committed the
+      // same text: it finds no draft and does nothing.
+      //
+      // THROUGH `nudgeProposal` and not straight into `commitProposal`, because
+      // an arrow held down is a run of `change` events and not one; that method
+      // says what happens to the run.
+      ref: step ? (el) => {
+        if (el) {
+          el.onchange = (e) => this.nudgeProposal(
+            key, e.target.value, commit, unread(e.target),
+          );
+        }
+      } : undefined,
     });
 
-    // HOW EACH OP SPELLS ITS OWN SIZE, keyed the way `DIMS` in sketch.js and
-    // `SHAPES` in sketchgeom.js are keyed — so an op that grows a dimension is
+    // HOW EACH OP SPELLS ITS OWN SIZE, keyed the way `DIMS` in proposal.js and
+    // `SHAPES` in proposalgeom.js are keyed — so an op that grows a dimension is
     // changed in three tables and nowhere else, and an op in only two of them
     // throws where it is looked up instead of drawing half a body.
     const SIZES = {
@@ -4872,8 +4964,8 @@ export default class HammerolaViewer extends React.Component {
         label: 'size',
         fields: [0, 1, 2].map((axis) => field(
           `${node.id}.size.${axis}`, node.size[axis],
-          (raw) => updateNode(doc, node.id, { size: swap(node.size, axis, dim(raw)) }),
-          '31%')),
+          (raw) => updateNode(doc, node.id, { size: swap(node.size, axis, num(raw)) }),
+          '31%', STEP_MM)),
       }),
       // SPELLED OUT AND NOT MAPPED OVER `['d', 'h']`, which is the shorter way
       // and reaches for a computed key. `test_every_handled_event_is_imported_
@@ -4883,21 +4975,22 @@ export default class HammerolaViewer extends React.Component {
         label: 'd · h',
         fields: [
           field(`${node.id}.d`, node.d,
-                (raw) => updateNode(doc, node.id, { d: dim(raw) }), '47%'),
+                (raw) => updateNode(doc, node.id, { d: num(raw) }), '47%', STEP_MM),
           field(`${node.id}.h`, node.h,
-                (raw) => updateNode(doc, node.id, { h: dim(raw) }), '47%'),
+                (raw) => updateNode(doc, node.id, { h: num(raw) }), '47%', STEP_MM),
         ],
       }),
       sphere: (node) => ({
         label: 'd',
         fields: [field(`${node.id}.d`, node.d,
-                       (raw) => updateNode(doc, node.id, { d: dim(raw) }), '47%')],
+                       (raw) => updateNode(doc, node.id, { d: num(raw) }),
+                       '47%', STEP_MM)],
       }),
       extrude: (node) => ({
         label: 'h · profile',
         fields: [
           field(`${node.id}.h`, node.h,
-                (raw) => updateNode(doc, node.id, { h: dim(raw) }), '24%'),
+                (raw) => updateNode(doc, node.id, { h: num(raw) }), '24%', STEP_MM),
           field(`${node.id}.profile`, pointsText(node.profile),
                 (raw) => updateNode(doc, node.id, { profile: points(raw) }), '72%'),
         ],
@@ -4921,14 +5014,13 @@ export default class HammerolaViewer extends React.Component {
     // so two bodies under one name are one entry in the library's groups map and
     // one row in the tree, the second quietly standing in for the first. This has
     // to hold for a name the reader TYPES and not only for one the + button
-    // mints: naming a mock after the thing it mocks is the whole point of the
-    // panel.
+    // mints: naming a body after the thing it stands for — `motor`, `wall` — is
+    // most of what the panel is for.
     //
-    // THE LOOP ITSELF IS `firstFree` IN sketch.js, shared with `renameParam` —
-    // the same question asked about the other half of the document: what is this
-    // name when something already answers to it. `sketchAddParam` below does NOT
-    // share it and is not meant to: it mints `p<n>` counting from the params it
-    // has, which never hands back the bare prefix `firstFree` would.
+    // THE LOOP ITSELF IS `firstFree` IN proposal.js, beside the document it is a
+    // fact about rather than here: what a name is when something already answers
+    // to it is settled once, for a name the + button mints and for one the
+    // reader types.
     const freeName = (wanted, exceptId) => {
       const taken = new Set(doc.nodes
         .filter((node) => node.id !== exceptId)
@@ -4938,10 +5030,10 @@ export default class HammerolaViewer extends React.Component {
     };
 
     const addBody = (op) => () => {
-      this._sketchSeq += 1;
-      this.setSketch(addNode(doc, {
-        id: `n${this._sketchSeq}`,
-        name: freeName(`${op}${this._sketchSeq}`),
+      this._proposalSeq += 1;
+      this.setProposal(addNode(doc, {
+        id: `n${this._proposalSeq}`,
+        name: freeName(`${op}${this._proposalSeq}`),
         op,
         role: 'solid',
         at: [0, 0, 0],
@@ -5060,17 +5152,17 @@ export default class HammerolaViewer extends React.Component {
         // The feed goes with it: it was fetched under a token this browser no
         // longer has, and a reader without one may not read the queue at all.
         //
-        // AND THE SKETCH PANEL, which is HIDDEN WITHOUT A TOKEN like Move part
+        // AND THE PROPOSAL PANEL, which is HIDDEN WITHOUT A TOKEN like Move part
         // — everything it produces leaves this page as a comment. Left open it
         // is a panel the button no longer offers to reopen, with `add to
         // comment` gone from under it and a body standing over the model that
         // nothing on screen accounts for. The overlay goes with the panel for
-        // the reason `toggleSketch` takes it off: the panel is the only thing
+        // the reason `toggleProposal` takes it off: the panel is the only thing
         // that says the body is not part of the model.
         this.setState({ token: null, tokenPop: false, tokenDraft: '',
                         composer: null, notePop: null, feed: [],
-                        sketchOpen: false });
-        this.sketchOverlay(null);
+                        proposalOpen: false });
+        this.proposalOverlay(null);
         this.set({ tool: null });
         this.toast('Token removed — back to viewing');
       }),
@@ -5335,14 +5427,14 @@ export default class HammerolaViewer extends React.Component {
       // button and the three above it. Those three ARM A GESTURE on the canvas
       // and the viewport is told which one; this one opens a panel of number
       // fields and arms nothing of its own. The bodies it stages CAN be dragged
-      // — under the MOVE tool, back up this same strip, because a mock is a body
-      // in the scene like any other and one tool for moving things is better
-      // than two. What that drag means is the panel's business: it ends in
-      // `hmr:sketchmove` and writes the body's `at`, raising no chip. So this
+      // — under the MOVE tool, back up this same strip, because a staged body is
+      // a body in the scene like any other and one tool for moving things is
+      // better than two. What that drag means is the panel's business: it ends in
+      // `hmr:proposalmove` and writes the body's `at`, raising no chip. So this
       // button is drawn like its neighbours and lit from its own flag.
       //
       // HIDDEN WITHOUT A TOKEN, like Move part and unlike Measure: everything
-      // the sketch produces leaves this page as a comment, which is behind the
+      // the proposal produces leaves this page as a comment, which is behind the
       // token, so a reader who cannot comment has nowhere to send it.
       //
       // AND ABSENT — not hidden — ON A HUB THAT DID NOT ASK FOR THE PANEL. That
@@ -5350,21 +5442,21 @@ export default class HammerolaViewer extends React.Component {
       // who is being answered: the token is about this READER, who cannot use a
       // feature the hub does serve, and `display:none` is the right answer to
       // it. The flag is about this HUB, which never asked for the feature at
-      // all (`sketchPanelOn`, decided before the page was sent) — and the right
+      // all (`proposalPanelOn`, decided before the page was sent) — and the right
       // answer to that is no markup, so the button and the panel are wrapped in
-      // `v.sketchOn` in `render` and the styles below say nothing about it.
+      // `v.proposalOn` in `render` and the styles below say nothing about it.
       //
       // AND NOT TAKEN OUT OF SERVICE BY A COMPARISON, unlike all three. What
       // `toolsOff` guards is a task filed in the BUILD's terms against a scene
-      // that is not the build — a `/cmp/…` path in `partId`. A sketch names no
+      // that is not the build — a `/cmp/…` path in `partId`. A proposal names no
       // part of anything: it posts no path, and the body it describes is the
       // reader's own claim about a motor or a wall, which is as true over a
       // comparison as over a build.
-      tSketch: () => this.toggleSketch(),
+      tProposal: () => this.toggleProposal(),
       // THE FLAG ITSELF, because `render` is where it is spent: it decides
       // whether these two nodes exist, not how they look.
-      sketchOn,
-      sketchBtnStyle: btn(s.sketchOpen, viewer, false),
+      proposalOn,
+      proposalBtnStyle: btn(s.proposalOpen, viewer, false),
       fitView: () => this.fitView(),
       grabFrame: () => this.saveFrame(),
       // OFF `armed` AND NOT OFF `s.tool`, so the strip stops instructing the
@@ -5426,7 +5518,7 @@ export default class HammerolaViewer extends React.Component {
       hatchBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;' + (s.hatch ? 'background:var(--accent);color:var(--text-on-accent)' : 'border:1px solid var(--line-strong);background:var(--card-bg);color:transparent'),
       hatchMark: s.hatch ? '✓' : '',
 
-      // -- the sketch panel ---------------------------------------------------
+      // -- the proposal panel ---------------------------------------------------
       //
       // CLAMPED ON NARROW like the section panel and the note editor, for the
       // same reason and one more of its own: it is anchored to the right-hand
@@ -5436,22 +5528,22 @@ export default class HammerolaViewer extends React.Component {
       // narrower with the panel open would otherwise leave a sheet nothing could
       // take back. `narrow.test.js` holds the list.
       //
-      // AND IT SAYS NOTHING ABOUT `sketchOn`, which is the division these two
+      // AND IT SAYS NOTHING ABOUT `proposalOn`, which is the division these two
       // gates keep: a style answers about THIS READER — open or closed, wide or
       // narrow, token or none — while the hub's flag is answered one level up,
-      // by leaving the markup out of the tree entirely (`v.sketchOn` in
+      // by leaving the markup out of the tree entirely (`v.proposalOn` in
       // `render`). Spelling the flag here as well would be a second gate that
       // can never fire, sitting on a node that is not there to style.
-      sketchPanelStyle: (narrow ? popSheet : 'position:absolute;right:16px;top:52px;width:330px;')
-        + 'max-height:calc(100% - 110px);overflow:auto;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 12px 40px var(--shadow);z-index:15;display:' + (s.sketchOpen ? 'block' : 'none'),
-      sketchClose: stop(() => this.toggleSketch()),
+      proposalPanelStyle: (narrow ? popSheet : 'position:absolute;right:16px;top:52px;width:330px;')
+        + 'max-height:calc(100% - 110px);overflow:auto;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 12px 40px var(--shadow);z-index:15;display:' + (s.proposalOpen ? 'block' : 'none'),
+      proposalClose: stop(() => this.toggleProposal()),
 
       // EVERY OP `SIZES` CAN DRAW, read off that table rather than listed again
       // beside it: a button for an op with no size row is a button that adds a
       // body the panel cannot show, and a missing button is an op nothing can
-      // reach. The ORDER is the table's, which is the order sketch.js tables
+      // reach. The ORDER is the table's, which is the order proposal.js tables
       // them in.
-      sketchOps: Object.keys(SIZES).map((op) => ({
+      proposalOps: Object.keys(SIZES).map((op) => ({
         key: op,
         // The op's own name unless it reads badly on a button — `+ profile` is
         // what the reader is about to type into `extrude`. Not a table anything
@@ -5460,12 +5552,12 @@ export default class HammerolaViewer extends React.Component {
         onClick: addBody(op),
       })),
 
-      sketchBodies: doc.nodes.map((node) => ({
+      proposalBodies: doc.nodes.map((node) => ({
         key: node.id,
         op: node.op,
         // A NAME THAT CANNOT BE EMPTIED AND CANNOT BE TAKEN, because it is not
         // only a label: it is the part's `name` in the payload, and a hole is
-        // drawn as a part of its own under it (sketchgeom.js). Cleared, the
+        // drawn as a part of its own under it (proposalgeom.js). Cleared, the
         // field shows what the reader typed — nothing — while the document keeps
         // the last name, and the commit puts it back; typed onto a name another
         // body already has, it comes back numbered (`freeName`).
@@ -5478,15 +5570,15 @@ export default class HammerolaViewer extends React.Component {
         // The hole's own colour, because it is the same statement the payload
         // makes: a hole is the subtraction tool, drawn red and translucent over
         // the result. Neither value is written here — this is the palette's
-        // `--danger` family, and the part's is `sketchgeom.js`'s.
+        // `--danger` family, and the part's is `proposalgeom.js`'s.
         roleStyle: `padding:2px 7px;border-radius:4px;cursor:pointer;font:600 9.5px ${MONO};letter-spacing:.05em;border:1px solid `
           + (node.role === 'hole'
             ? 'var(--danger-line);background:var(--danger-bg);color:var(--danger)'
             : 'var(--line);background:var(--chip-bg);color:var(--text-soft)'),
-        onRole: () => this.setSketch(updateNode(doc, node.id, {
+        onRole: () => this.setProposal(updateNode(doc, node.id, {
           role: node.role === 'hole' ? 'solid' : 'hole',
         })),
-        onRemove: () => this.setSketch(removeNode(doc, node.id)),
+        onRemove: () => this.setProposal(removeNode(doc, node.id)),
         groups: [
           { key: 'dims', ...SIZES[node.op](node) },
           {
@@ -5495,147 +5587,80 @@ export default class HammerolaViewer extends React.Component {
             fields: [0, 1, 2].map((axis) => field(
               `${node.id}.at.${axis}`, node.at[axis],
               (raw) => updateNode(doc, node.id, { at: swap(node.at, axis, num(raw)) }),
-              '31%')),
+              '31%', STEP_MM)),
           },
           {
             key: 'rot',
             // DEGREES, said on the row rather than assumed: the kernel takes
             // radians and `placed` converts, so a reader who read this as
             // radians would turn a body two and a half times and get something
-            // that still looks like a box.
+            // that still looks like a box. It is also what the arrows step by —
+            // `STEP_DEG` and not `STEP_MM`, because this is the one row of the
+            // three whose numbers are not millimetres.
             label: 'rot°',
             fields: [0, 1, 2].map((axis) => field(
               `${node.id}.rot.${axis}`, node.rot[axis],
               (raw) => updateNode(doc, node.id, { rot: swap(node.rot, axis, num(raw)) }),
-              '31%')),
+              '31%', STEP_DEG)),
           },
         ],
       })),
 
-      sketchParams: doc.params.map((param, index) => ({
-        // THE INDEX AND NOT THE NAME, which is the one thing in the row the
-        // reader is editing: a key that changes on every keystroke makes React
-        // tear the row down and build a new one, and the field loses the focus
-        // mid-word. Params are only ever appended and removed here, so the
-        // index is an identity for as long as the row exists.
-        key: String(index),
-        // A RENAME AND NOT A FIELD WRITE, which is `renameParam`'s whole
-        // reason: the name is what every dimension spends this param BY, so
-        // rewriting the record alone leaves `wall` named by three sizes that
-        // nothing answers for. The document stops building, the panel says so —
-        // and the reader cannot type their way out of it, because the name that
-        // would repair it is the one the rename took away.
-        name: field(`p${index}.name`, param.name,
-                    (raw) => renameParam(doc, param.name, raw.trim() || param.name),
-                    '32%'),
-        caption: field(`p${index}.caption`, param.caption,
-                       (raw) => updateParam(doc, param.name, { caption: raw }), '62%'),
-        type: param.type,
-        typeStyle: `padding:3px 7px;border-radius:5px;cursor:pointer;font:500 10px ${MONO};border:1px solid var(--line);background:var(--chip-bg);color:var(--text-soft)`,
-        onType: () => this.setSketch(updateParam(doc, param.name, {
-          type: param.type === 'slider' ? 'number' : 'slider',
-        })),
-        // THE KEY IS OVERWRITTEN ON PURPOSE, and the order of these two halves
-        // is what does it: `field` mints a key that has to be unique across the
-        // whole panel, because it is what `sketchDraft` is matched against —
-        // and that key is closed over inside the handlers, so replacing the one
-        // on the outside costs nothing and gives the row four names a reader of
-        // a test can ask for.
-        numbers: [
-          { ...field(`p${index}.initial`, param.initial, (raw) => updateParam(doc, param.name, { initial: num(raw) }), '100%'), key: 'initial', label: 'initial' },
-          { ...field(`p${index}.min`, param.min, (raw) => updateParam(doc, param.name, { min: bound(raw) }), '100%'), key: 'min', label: 'min' },
-          { ...field(`p${index}.max`, param.max, (raw) => updateParam(doc, param.name, { max: bound(raw) }), '100%'), key: 'max', label: 'max' },
-          { ...field(`p${index}.step`, param.step, (raw) => updateParam(doc, param.name, { step: bound(raw) }), '100%'), key: 'step', label: 'step' },
-        ],
-        onRemove: () => this.dropParam(param.name),
-      })),
-      // THE FIRST FREE `p<n>` AND NOT `params.length + 1`, which is the obvious
-      // spelling and is wrong twice over: remove `p1` of two and the count says
-      // `p2`, which is standing right there, and a reader who renamed one to
-      // `p3` collides the same way. `addParam` appends whatever it is given, and
-      // two params under one name make `updateParam` edit both and
-      // `resolveValue` answer with the first.
-      sketchAddParam: () => {
-        const taken = new Set(doc.params.map((param) => param.name));
-        let n = doc.params.length + 1;
-        while (taken.has(`p${n}`)) n += 1;
-        this.setSketch(addParam(doc, {
-          name: `p${n}`, type: 'number', caption: '', initial: 10,
-        }));
-      },
-
       // The sentence under BODIES that says what one can be built out of, drawn
       // only while there is nothing in the document: a panel of headings over
       // empty space says less than one sentence does.
-      //
-      // NOT `sketchHint`, which this used to be named after and has nothing to
-      // do with: that field is the panel's refusal of an EDIT and is drawn in
-      // the `sketchSays` box below. Two unrelated things under one name, where
-      // one of them appears exactly when the other cannot.
-      sketchEmptyStyle: `font:400 10.5px/1.5 ${MONO};color:var(--text-muted);display:`
+      proposalEmptyStyle: `font:400 10.5px/1.5 ${MONO};color:var(--text-muted);display:`
         + (doc.nodes.length ? 'none' : 'block'),
 
-      // ONE BOX, TWO FIELDS BEHIND IT: the kernel's sentence about the document
-      // and this side's refusal of an edit. They are one box because they are
-      // one thing to the reader — the panel saying no, where the reader is
-      // already looking — and two fields because only the first of them means
-      // the document cannot be projected. The kernel's wins where both are set,
-      // which is a document that will not build and a × pressed on it: the
-      // sentence that is standing in the way of the exit is the one to say.
-      // NOT `sketchError`, which is the name of ONE of the two fields behind it:
-      // a view key called that would read in the markup as the kernel's refusal
-      // and be the panel's own half the time.
-      sketchSays: s.sketchError || s.sketchHint || '',
-      sketchSaysStyle: `margin-top:9px;padding:7px 9px;border:1px solid var(--danger-line);background:var(--danger-bg);border-radius:6px;font:400 10.5px/1.5 ${MONO};color:var(--danger);display:`
-        + (s.sketchError || s.sketchHint ? 'block' : 'none'),
+      // THE KERNEL'S OWN SENTENCE ABOUT THE DOCUMENT AS IT STANDS, in a box in
+      // the panel, where the reader is already looking. Drawn from `proposalError`
+      // through a key of its own rather than from the field directly, so the
+      // markup asks the panel what it has to say instead of naming the one
+      // source it comes from today.
+      proposalSays: s.proposalError || '',
+      proposalSaysStyle: `margin-top:9px;padding:7px 9px;border:1px solid var(--danger-line);background:var(--danger-bg);border-radius:6px;font:400 10.5px/1.5 ${MONO};color:var(--danger);display:`
+        + (s.proposalError ? 'block' : 'none'),
 
       // THE SAME DOOR THE MEASUREMENT AND THE DRAG USE, and the same gate: the
       // panel is already closed to a reader with no token, and this carries the
       // gate anyway so the link cannot open a composer `composerStyle` keeps at
-      // `display:none`. Hidden on an empty sketch too — there is nothing to say.
+      // `display:none`. Hidden on an empty proposal too — there is nothing to say.
       //
       // AND ON A DOCUMENT THE PANEL HAS ALREADY FLAGGED, which is the third
-      // condition and the one that was a defect rather than a decision.
-      // `sketchText` refuses exactly what `setSketch` catches — a dimension
-      // naming a param that is not there — so on such a document the link was
-      // standing over a projection that cannot be rendered, and pressing it
-      // threw inside a React handler: nothing opened, nothing was said, and the
+      // condition and the one that was a defect rather than a decision. A
+      // document `setProposal` could not build is one the projection cannot be
+      // rendered off either, so the link stood over something that would throw
+      // inside a React handler: nothing opened, nothing was said, and the
       // feature's only exit did nothing at all. The message for it is already on
       // screen in the panel's error box; what is missing is the offer.
-      //
-      // `sketchError` AND NOT WHATEVER THE BOX IS SHOWING, which is why the two
-      // are separate fields. The box also draws `sketchHint` — this side
-      // refusing an edit, `dropParam` being its only writer — and that refusal
-      // changed nothing: the document is the one that was projecting a moment
-      // ago. Gating on the box took the exit away from a sketch that had nothing
-      // wrong with it, for as long as the hint stood.
-      sketchAddStyle: 'cursor:pointer;text-decoration:underline'
-        + (viewer || isEmpty(doc) || s.sketchError ? ';display:none' : ''),
+      proposalAddStyle: 'cursor:pointer;text-decoration:underline'
+        + (viewer || isEmpty(doc) || s.proposalError ? ';display:none' : ''),
       // THE TEXT AND NOT THE DOCUMENT, taken at the moment the link is pressed.
-      // `sketchText` is the projection the agent reads — a few aligned lines
+      // `proposalText` is the projection the agent reads — a few aligned lines
       // saying how big the thing is and where its features sit — and it rides in
       // the comment's TEXT like the measurement and the drag, because the hub's
       // schema is closed and silently drops what it does not know
       // (`sendComment`, and tests/test_ui_source.py holds it).
       //
       // `part` IS EMPTY, deliberately, where the other two doors fill it: a
-      // sketch is about a body that is in no build and no catalogue, so there is
+      // proposal is about a body that is in no build and no catalogue, so there is
       // no row to name and no key to anchor to. The reader can still click a
       // part afterwards and attach it.
       //
       // THE FLAG IS READ HERE TOO and not only in the style above, because the
       // two answer different questions: one is whether to OFFER the link, the
-      // other is what happens when it is pressed anyway. `sketchText` throws on
-      // the document `sketchError` is set from, and a throw in here is a React
-      // handler's throw — no composer, no message, nothing in the console the
-      // reader will ever see.
-      sketchAdd: () => {
-        if (s.sketchError) return;
+      // other is what happens when it is pressed anyway. A document the kernel
+      // would not build is not one to send an agent to design against — and
+      // where what it refused was an op no table knows, `proposalText` looks the
+      // same op up and throws, which in here is a React handler's throw: no
+      // composer, no message, nothing in the console the reader will ever see.
+      proposalAdd: () => {
+        if (s.proposalError) return;
         this.set({
           composer: {
             part: '', partId: null, key: null,
             p: null, text: '', photo: null,
-            sketch: sketchText(doc),
+            proposal: proposalText(doc),
           },
           tool: null,
         });
@@ -5843,7 +5868,7 @@ export default class HammerolaViewer extends React.Component {
       // compare the doors on the count alone. `hmr:place` posts the exact solid
       // the point sits on (`/model/pin(2)`); `measAdd` posts `sel`, which the
       // pick handler resolved to the ROW, i.e. the first path of the run — or
-      // nothing at all, where that selection is a body of the sketch panel and
+      // nothing at all, where that selection is a body of the proposal panel and
       // the number goes to the agent unattached (the note at `measAdd`); and
       // this door posts the first of the paths that actually MOVED — the row's
       // own id where the row was dragged, one copy's own path where a grab with
@@ -5905,22 +5930,23 @@ export default class HammerolaViewer extends React.Component {
         // See `movedAttach` above for why this door words `part` without a
         // count, and for exactly how much of that wording stays on the screen.
         const node = this.node(s.sel);
-        // A BODY OF THE SKETCH IS ATTACHED TO NOTHING. `sel` is written by
-        // `onPick` for any path picked, a mock included — and in Move mode
-        // `onDown` emits that pick itself — so the reader who clicks the motor
-        // to look at it, measures a distance on it and presses `add to comment`
-        // would otherwise hand the hub a composer headed `motor` and a `partId`
-        // that resolves in no build. THE NUMBER IS WHY THE PANEL EXISTS and
-        // stays exactly as it is; it is the attribution beside it that goes.
-        // `key` needs no answer of its own here: a sketch body carries no
-        // catalogue key at all (`part()` in sketchgeom.js says why), so the
+        // A BODY OF THE PROPOSAL IS ATTACHED TO NOTHING. `sel` is written by
+        // `onPick` for any path picked, a proposal body included — and in Move
+        // mode `onDown` emits that pick itself — so the reader who clicks the
+        // motor to look at it, measures a distance on it and presses `add to
+        // comment` would otherwise hand the hub a composer headed `motor` and a
+        // `partId` that resolves in no build. THE NUMBER IS WHY THE PANEL
+        // EXISTS and stays exactly as it is; it is the attribution beside it
+        // that goes.
+        // `key` needs no answer of its own here: a proposal body carries no
+        // catalogue key at all (`part()` in proposalgeom.js says why), so the
         // row's is already null. Nothing else in this payload names the
         // selection — the measurement text is a value and a note about the view.
-        const mock = this.sketchBody(s.sel);
+        const proposed = this.proposalBody(s.sel);
         this.set({
           composer: {
-            part: mock ? '' : (node ? node.name : (s.selName || 'model')),
-            partId: mock ? null : (s.sel || null),
+            part: proposed ? '' : (node ? node.name : (s.selName || 'model')),
+            partId: proposed ? null : (s.sel || null),
             key: node ? node.key : null,
             p: null, text: '', photo: null, meas: s.measure.full,
           },
@@ -5940,12 +5966,12 @@ export default class HammerolaViewer extends React.Component {
       compMoveChipStyle: 'display:' + (s.composer && s.composer.move ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
       compMoveText: (s.composer && s.composer.move) || '',
       // A CHIP AND NOT THE TEXTAREA. The measurement and the drag are one line
-      // each and could have gone either way; the sketch is a small table, and
+      // each and could have gone either way; the proposal is a small table, and
       // dropped into the box it would bury the sentence the reader came here to
       // write. It says it is attached, it can be taken off, and `sendComment`
       // is what puts it in the comment.
-      compSketchChipStyle: 'display:' + (s.composer && s.composer.sketch ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
-      compSketchRemove: stop(() => this.setState({ composer: { ...s.composer, sketch: null } })),
+      compProposalChipStyle: 'display:' + (s.composer && s.composer.proposal ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
+      compProposalRemove: stop(() => this.setState({ composer: { ...s.composer, proposal: null } })),
       compPhotoName: s.composer && s.composer.photo ? s.composer.photo.name : '',
       compPhoto: (e) => {
         const file = e.target.files && e.target.files[0];
@@ -6417,11 +6443,11 @@ export default class HammerolaViewer extends React.Component {
                     {/* A box drawn in the air beside the model — which is what
                         this opens: a rough body in numbers, over the geometry
                         rather than in it. Absent, not hidden, on a hub that did
-                        not ask for it: see `sketchOn` in `computed()`. */}
-                    {v.sketchOn && (
-                      <div onClick={v.tSketch} style={css(v.sketchBtnStyle)}>
+                        not ask for it: see `proposalOn` in `computed()`. */}
+                    {v.proposalOn && (
+                      <div onClick={v.tProposal} style={css(v.proposalBtnStyle)}>
                         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
-                        Sketch
+                        Proposal
                       </div>
                     )}
                     <div style={css('width:1px;height:18px;background:var(--line)')} />
@@ -6553,7 +6579,7 @@ export default class HammerolaViewer extends React.Component {
                 </span>
                 <span style={css(v.compMeasChipStyle)}>&#8596; {v.compMeasText} <span onClick={v.compMeasRemove} style={css('cursor:pointer;opacity:.6')}>&#10005;</span></span>
                 <span style={css(v.compMoveChipStyle)}>&#10021; {v.compMoveText}</span>
-                <span style={css(v.compSketchChipStyle)}>&#9634; sketch attached <span onClick={v.compSketchRemove} style={css('cursor:pointer;opacity:.6')}>&#10005;</span></span>
+                <span style={css(v.compProposalChipStyle)}>&#9634; proposal attached <span onClick={v.compProposalRemove} style={css('cursor:pointer;opacity:.6')}>&#10005;</span></span>
                 <label style={css(`padding:4px 8px;border:1px dashed var(--line-strong);border-radius:5px;font:400 10.5px ${MONO};color:var(--text-muted);cursor:pointer`)}>
                   {v.compPhotoName ? `photo: ${v.compPhotoName}` : '+ photo of the print'}
                   <input type="file" accept="image/jpeg,image/png,image/webp"
@@ -6590,14 +6616,14 @@ export default class HammerolaViewer extends React.Component {
               </div>
             </div>
 
-            {/* ── the sketch: a rough body the model has to fit, in numbers ──
+            {/* ── the proposal: a rough body the model has to fit, in numbers ──
 
                 NUMBERS AND ONE HAND. The fields are where a body is SIZED, and
                 they are the only way to say `20 x 20 x 20`; where it SITS can
                 also be dragged, with the Move tool over the body itself — the
-                gesture ends in `hmr:sketchmove` and writes the `at` fields the
+                gesture ends in `hmr:proposalmove` and writes the `at` fields the
                 reader is looking at, so the two ways of saying it are one thing
-                (`sketchgeom.js` for what is grabbable: the fused result, and
+                (`proposalgeom.js` for what is grabbable: the fused result, and
                 each hole on its own).
 
                 WHAT IS STILL NOT HERE is a gizmo, a handle of our own and
@@ -6606,62 +6632,38 @@ export default class HammerolaViewer extends React.Component {
                 is why the drag needed no hit-testing of ours — while an empty
                 spot in space is not, so putting a new body where the cursor is
                 remains a separate piece of work. */}
-            {v.sketchOn && (
-              <div onClick={(e) => e.stopPropagation()} style={css(v.sketchPanelStyle)}>
+            {v.proposalOn && (
+              <div onClick={(e) => e.stopPropagation()} style={css(v.proposalPanelStyle)}>
                 <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:3px')}>
-                  <span style={css(`font:600 12.5px ${SANS}`)}>Sketch</span>
+                  <span style={css(`font:600 12.5px ${SANS}`)}>Proposal</span>
                   <span style={css('flex:1')} />
-                  <span onClick={v.sketchClose} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                  <span onClick={v.proposalClose} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
                 </div>
                 {/* Block 6's tone, one step on: a way to SHOW the agent what you
                     want instead of describing it, and explicitly not an edit. */}
                 <div style={css(`font:400 10.5px/1.5 ${MONO};color:var(--text-muted);margin-bottom:11px`)}>
-                  a rough body for the agent to design against &mdash; a motor, a wall,
-                  a bought part. Nothing here changes the model and nothing is saved:
+                  a rough body for the agent to design against, or to follow &mdash; a
+                  motor to clear, a wall to bolt to, a bought part, an example of the
+                  layout you want. Nothing here changes the model and nothing is saved:
                   the next rebuild forgets it.
                 </div>
 
-                <div style={css(`font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.07em;margin-bottom:5px`)}>PARAMETERS</div>
-                {v.sketchParams.map((p) => (
-                  <div key={p.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:6px 7px;margin-bottom:6px')}>
-                    <div style={css('display:flex;align-items:center;gap:5px')}>
-                      {/* `onKeyDown` on every one of these: the value is
-                          committed on `change` — a blur or an Enter — and not on
-                          the keystroke, so a field with only the blur wired would
-                          ignore the reader who types a number and presses
-                          return. */}
-                      <input value={p.name.value} onChange={p.name.onChange} onBlur={p.name.onBlur}
-                             onKeyDown={p.name.onKeyDown}
-                             placeholder="name" style={css(p.name.style)} />
-                      <input value={p.caption.value} onChange={p.caption.onChange} onBlur={p.caption.onBlur}
-                             onKeyDown={p.caption.onKeyDown}
-                             placeholder="caption" style={css(p.caption.style)} />
-                      <span onClick={p.onRemove} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
-                    </div>
-                    <div style={css('display:flex;align-items:flex-end;gap:5px;margin-top:5px')}>
-                      <span onClick={p.onType} title="how the agent should offer it" style={css(p.typeStyle)}>{p.type}</span>
-                      {p.numbers.map((n) => (
-                        <label key={n.key} style={css(`flex:1;min-width:0;font:400 9px ${MONO};color:var(--text-muted)`)}>
-                          {n.label}
-                          <input value={n.value} onChange={n.onChange} onBlur={n.onBlur}
-                                 onKeyDown={n.onKeyDown} style={css(n.style)} />
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                <div onClick={v.sketchAddParam} style={css(`display:inline-block;margin-bottom:12px;padding:4px 9px;border:1px dashed var(--line-strong);border-radius:5px;font:500 10.5px ${MONO};color:var(--text-soft);cursor:pointer`)}>+ parameter</div>
-
                 <div style={css(`font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.07em;margin-bottom:5px`)}>BODIES</div>
-                <div style={css(v.sketchEmptyStyle)}>
+                <div style={css(v.proposalEmptyStyle)}>
                   add a box, a cylinder, a sphere or an extruded profile, then say how
-                  big it is and where it sits. A dimension is a number or the name of a
-                  parameter &mdash; there is no arithmetic.
+                  big it is and where it sits. Every measurement is a plain number
+                  &mdash; there is no arithmetic.
                 </div>
-                {v.sketchBodies.map((b) => (
+                {v.proposalBodies.map((b) => (
                   <div key={b.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:7px 8px;margin-bottom:6px')}>
                     <div style={css('display:flex;align-items:center;gap:6px')}>
-                      <input value={b.name.value} onChange={b.name.onChange} onBlur={b.name.onBlur}
+                      {/* `onKeyDown` on every field of this panel: the value is
+                          committed on `change` — a blur, an Enter, or a nudge of
+                          the arrows — and not on the keystroke, so a field with
+                          only the blur wired would ignore the reader who types a
+                          number and presses return. */}
+                      <input type={b.name.type} value={b.name.value}
+                             onChange={b.name.onChange} onBlur={b.name.onBlur}
                              onKeyDown={b.name.onKeyDown} style={css(b.name.style)} />
                       <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>{b.op}</span>
                       {/* The role is a two-state switch and not a pair of radio
@@ -6674,31 +6676,36 @@ export default class HammerolaViewer extends React.Component {
                     {b.groups.map((g) => (
                       <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
                         <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
+                        {/* `type` AND `step` COME OFF THE FIELD, so a number gets
+                            the browser's own arrows and an extrusion's profile —
+                            `x,y; x,y; …`, which is no kind of number — does not.
+                            `ref` is how a nudge of those arrows reaches the
+                            document; `field` in `computed()` says why React
+                            leaves it no other way, and what `onWheel` is for. */}
                         {g.fields.map((f) => (
-                          <input key={f.key} value={f.value} onChange={f.onChange} onBlur={f.onBlur}
-                                 onKeyDown={f.onKeyDown} style={css(f.style)} />
+                          <input key={f.key} type={f.type} step={f.step} ref={f.ref}
+                                 value={f.value} onChange={f.onChange} onBlur={f.onBlur}
+                                 onKeyDown={f.onKeyDown} onWheel={f.onWheel} style={css(f.style)} />
                         ))}
                       </div>
                     ))}
                   </div>
                 ))}
                 <div style={css('display:flex;flex-wrap:wrap;gap:5px')}>
-                  {v.sketchOps.map((op) => (
+                  {v.proposalOps.map((op) => (
                     <div key={op.key} onClick={op.onClick} style={css(`padding:4px 9px;border:1px dashed var(--line-strong);border-radius:5px;font:500 10.5px ${MONO};color:var(--text-soft);cursor:pointer`)}>{op.label}</div>
                   ))}
                 </div>
 
-                {/* ONE BOX, TWO FIELDS BEHIND IT (`sketchSays` in `computed`): the
-                    kernel's sentence about the document as it stands, and this
-                    side's refusal of an edit. Only the first of them means the
-                    document cannot be projected, and the body over the model is
-                    then the last one that BUILT — see `setSketch`; a hint from
-                    `dropParam` stands over a sketch nothing is wrong with. */}
-                <div style={css(v.sketchSaysStyle)}>{v.sketchSays}</div>
+                {/* WHAT THE PANEL HAS TO SAY (`proposalSays` in `computed`): the
+                    kernel's own sentence about the document as it stands. While
+                    it is there the body over the model is the last one that
+                    BUILT rather than nothing at all — see `setProposal`. */}
+                <div style={css(v.proposalSaysStyle)}>{v.proposalSays}</div>
 
                 <div style={css('display:flex;align-items:center;gap:10px;margin-top:11px;padding-top:9px;border-top:1px solid var(--line-soft)')}>
                   <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>result = union(solid) &minus; union(hole)</span>
-                  <span onClick={v.sketchAdd} style={css(v.sketchAddStyle)}>add to comment</span>
+                  <span onClick={v.proposalAdd} style={css(v.proposalAddStyle)}>add to comment</span>
                 </div>
               </div>
             )}

@@ -68,11 +68,11 @@ export const EVENT_MEASURE = "hmr:measure";
 /** Up: a part was dragged; `delta` is the offset from where the build put it. */
 export const EVENT_MOVED = "hmr:moved";
 
-/** Up: a body of the SKETCH was dragged; `delta` is how far it went.
+/** Up: a body of the PROPOSAL was dragged; `delta` is how far it went.
  *
  * ONE GESTURE, TWO MEANINGS, AND THIS IS THE SECOND ONE. Dragging a MODEL part
  * is a statement to the agent: the interface raises a chip, files `partId` in
- * the build's terms, and nothing in the model changes (`EVENT_MOVED`). A sketch
+ * the build's terms, and nothing in the model changes (`EVENT_MOVED`). A proposal
  * body is the reader's OWN drawing, assembled in the panel out of numbers, so
  * dragging it is an ordinary EDIT of that document — the panel adds `delta` to
  * the body's `at` and re-stages, no chip rises and nothing is filed against
@@ -80,13 +80,14 @@ export const EVENT_MOVED = "hmr:moved";
  * one handler whose other half raises that chip.
  *
  * IT NAMES THE BODY AND CARRIES NO PATH. A path is the scene's spelling
- * (`/<root>/sketch/bore`) and the sketch document has no paths in it at all, so
- * the panel finds the node by the NAME the body is drawn under — which is the
- * part's own `name` in the payload the panel built (ui/src/sketchgeom.js).
+ * (`/<root>/proposal/bore`) and the proposal document has no paths in it at
+ * all, so the panel finds the node by the NAME the body is drawn under — which
+ * is the part's own `name` in the payload the panel built
+ * (ui/src/proposalgeom.js).
  * `result` is the fused body and therefore every node at once; any other name is
  * the one hole drawn translucent over it.
  */
-export const EVENT_SKETCHMOVE = "hmr:sketchmove";
+export const EVENT_PROPOSALMOVE = "hmr:proposalmove";
 
 /** Up: a point on the model was picked as a comment anchor. */
 export const EVENT_PLACE = "hmr:place";
@@ -126,7 +127,7 @@ export const EVENT_TOOL = "hmr:tool";
 /** Every name this module owns, for the tests and for a quick audit. */
 export const EVENTS_UP = [
   EVENT_PICK, EVENT_MENU, EVENT_FACE, EVENT_MEASURE, EVENT_MOVED,
-  EVENT_SKETCHMOVE, EVENT_PLACE, EVENT_PIN, EVENT_MODEL, EVENT_ERROR,
+  EVENT_PROPOSALMOVE, EVENT_PLACE, EVENT_PIN, EVENT_MODEL, EVENT_ERROR,
   EVENT_TOOL,
 ];
 

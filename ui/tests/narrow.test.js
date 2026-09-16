@@ -526,7 +526,7 @@ describe('the popovers that become a sheet on a narrow page', () => {
   // phone has no Escape key — opened, they could only be dismissed by reloading
   // the page.
   //
-  // The sketch panel is the same case with one extra turn of the screw: its
+  // The proposal panel is the same case with one extra turn of the screw: its
   // button is one of the ones narrow takes away (`showTools`), but the FLAG is
   // not — a window dragged narrower with the panel open would leave a panel on
   // screen with no button to close it and its own cross off the side.
@@ -546,7 +546,7 @@ describe('the popovers that become a sheet on a narrow page', () => {
   const sheets = (over) => {
     const v = component(over).computed()
     return [v.revMenuStyle, v.dlMenuStyle, v.tokenPopStyle,
-            v.secPopStyle, v.notePopStyle, v.sketchPanelStyle].map(css)
+            v.secPopStyle, v.notePopStyle, v.proposalPanelStyle].map(css)
   }
 
   it('are clamped to the window rather than to the control they hang off', () => {

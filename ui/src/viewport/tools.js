@@ -22,7 +22,7 @@
 
 import {
   EVENT_FACE, EVENT_MEASURE, EVENT_MENU, EVENT_MOVED, EVENT_PICK, EVENT_PLACE,
-  EVENT_SKETCHMOVE, emit,
+  EVENT_PROPOSALMOVE, emit,
 } from "./events.js";
 import { cameraBasis, canvasXY, ndcAt, ndcOffset } from "./camera.js";
 import { gestureInternals, internals } from "./internals.js";
@@ -108,15 +108,15 @@ export function installTools(vp) {
     addEventListener("pointercancel", onCancel, true);
   };
 
-  /** Where a dragged SKETCH body ended up, announced once.
+  /** Where a dragged PROPOSAL body ended up, announced once.
    *
    * THE RELEASE IS THE ONLY REPORT, which is the opposite of the model part this
    * gesture is shared with: that one sends `hmr:moved` on every snap step,
    * because the interface draws the number on a chip while the hand is still
-   * down. This one ends in an EDIT of the sketch document, and an edit per snap
+   * down. This one ends in an EDIT of the proposal document, and an edit per snap
    * step would rebuild the bodies, hand them to the viewport, and have the whole
    * scene disposed and rendered again — while the reader is still dragging.
-   * `typeSketch`/`commitSketch` on the other side make exactly this decision
+   * `typeProposal`/`commitProposal` on the other side make exactly this decision
    * about a field being typed in, for exactly this reason.
    *
    * A GESTURE THAT WENT NOWHERE SAYS NOTHING. `last` is the SNAPPED delta and it
@@ -143,10 +143,10 @@ export function installTools(vp) {
    * `reportCut` beside it stays synchronous and must: it READS BACK off the
    * scene that is still on screen, so a microtask would measure the next one.
    */
-  const reportSketchMove = (move) => {
+  const reportProposalMove = (move) => {
     const d = move.last;
     if (!d[0] && !d[1] && !d[2]) return;
-    queueMicrotask(() => emit(vp, EVENT_SKETCHMOVE, {
+    queueMicrotask(() => emit(vp, EVENT_PROPOSALMOVE, {
       name: move.body, delta: d,
     }));
   };
@@ -157,8 +157,8 @@ export function installTools(vp) {
    *
    * THERE ARE FIVE ENDINGS IN THIS FILE, not two and not four. Besides those:
    * the platform taking the pointer away (`onCancel`), a second press arriving
-   * with one still live (`onDown`) — both of which conclude the SKETCH half
-   * alone, see `concludeSketch` — and the teardown in `installTools`, which
+   * with one still live (`onDown`) — both of which conclude the PROPOSAL half
+   * alone, see `concludeProposal` — and the teardown in `installTools`, which
    * calls a bare `finish()` and reports nothing, because a gesture cannot
    * outlive the element it was made on.
    *
@@ -169,10 +169,10 @@ export function installTools(vp) {
   const conclude = (p) => {
     if (!p || !p.moved) return;
     if (p.tool === "cut") reportCut(vp);
-    else if (p.move && p.move.body) reportSketchMove(p.move);
+    else if (p.move && p.move.body) reportProposalMove(p.move);
   };
 
-  /** The same end, for a gesture that was moving a body of the SKETCH.
+  /** The same end, for a gesture that was moving a body of the PROPOSAL.
    *
    * WHY THE CUT IS NOT REPORTED FROM HERE, though the staleness is real and the
    * readback would fix it: these two endings dropped every gesture before this
@@ -180,12 +180,12 @@ export function installTools(vp) {
    * `reportCut` is not a bare readback — the interface answers `hmr:face` by
    * DISARMING the armed tool, so an interrupted plane drag would start turning
    * the cut tool off, which no reader asked for and no test describes. The
-   * sketch half has no such reach: it edits the document the reader is drawing
+   * proposal half has no such reach: it edits the document the reader is drawing
    * and nothing else.
    *
    * THE ASYMMETRY IS THE POINT rather than an oversight. An unreported cut
    * leaves the interface printing a depth the plane has not been at — a wrong
-   * NUMBER beside a plane that is standing correctly. An unreported sketch move
+   * NUMBER beside a plane that is standing correctly. An unreported proposal move
    * leaves the body where the hand dragged it while the document still says
    * otherwise, and the panel's next edit stages it home: the drag silently
    * undone, which for a body whose POSITION IS THE DATA is the whole of it.
@@ -194,9 +194,9 @@ export function installTools(vp) {
    * on the `move` branch of `onDown`, so a cut gesture reaches the line below
    * with no `move` at all. A test for it would be a branch nothing can enter.
    */
-  const concludeSketch = (p) => {
+  const concludeProposal = (p) => {
     if (!p || !p.moved) return;
-    if (p.move && p.move.body) reportSketchMove(p.move);
+    if (p.move && p.move.body) reportProposalMove(p.move);
   };
 
   // Published so the element can end a gesture the reader has not let go of,
@@ -322,7 +322,7 @@ export function installTools(vp) {
     if (delta[0] === d.last[0] && delta[1] === d.last[1]
         && delta[2] === d.last[2]) return;
     d.last = delta;
-    // A BODY OF THE SKETCH GOES NO FURTHER THAN THE SCREEN while the hand is
+    // A BODY OF THE PROPOSAL GOES NO FURTHER THAN THE SCREEN while the hand is
     // down. It is moved so the reader can see where they are putting it, and
     // NOTHING IS RECORDED for it: `vp.moved` is re-applied after every re-stage
     // (`restageMoves`) and the panel re-stages on the next edit, so a delta left
@@ -330,7 +330,7 @@ export function installTools(vp) {
     // carry, and the body would walk away by twice the distance. No chip either
     // — `hmr:moved` is the interface's statement about a part of the BUILD, and
     // this body is in no build. The release is what reaches the panel
-    // (`reportSketchMove`), and the stage that follows is what really puts the
+    // (`reportProposalMove`), and the stage that follows is what really puts the
     // body where it now stands.
     if (d.body) {
       nudgePart(vp, d.paths, d.homes, delta);
@@ -459,7 +459,7 @@ export function installTools(vp) {
   /** The pointer was taken away — the platform scrolling, a gesture the browser
    *  decided was its own. No `pointerup` follows one of these.
    *
-   * THE SKETCH HALF IS CONCLUDED HERE AND THE CUT IS NOT — `concludeSketch`
+   * THE PROPOSAL HALF IS CONCLUDED HERE AND THE CUT IS NOT — `concludeProposal`
    * carries the reason, and this is deliberately not "concluded like every other
    * ending". What a cancel interrupts, for a body, is something already standing
    * somewhere else on screen: abandoned, the document keeps the place the body
@@ -472,17 +472,17 @@ export function installTools(vp) {
   function onCancel() {
     const p = press;
     finish();
-    concludeSketch(p);
+    concludeProposal(p);
   }
 
   const onDown = (event) => {
     // A PRESS ARRIVING WITH ONE STILL LIVE, which is either a gesture whose
     // release this page never saw or a second button — or finger — coming down
-    // mid-drag. Either way the old one ends HERE. A body of the sketch is
+    // mid-drag. Either way the old one ends HERE. A body of the proposal is
     // concluded for the reason `onCancel` gives: it is standing where the reader
     // dragged it and only the document can be wrong about that. A cut is
     // dropped, exactly as it was before bodies could be dragged at all —
-    // `concludeSketch` says why that asymmetry is deliberate.
+    // `concludeProposal` says why that asymmetry is deliberate.
     //
     // WHAT CONCLUDING COSTS, said out loud because it is a real cost: a report
     // leads to a re-stage, and a re-stage ends whatever gesture is live by then
@@ -493,7 +493,7 @@ export function installTools(vp) {
     // and the alternative is losing the drag itself.
     const live = press;
     finish();
-    concludeSketch(live);
+    concludeProposal(live);
     // Two buttons mean something here and the rest mean nothing: the left is
     // every tool and the plain pick, the right is the part menu.
     if (event.button !== 0 && event.button !== 2) return;
@@ -556,32 +556,33 @@ export function installTools(vp) {
         : (hit && hit.id ? [hit.id] : null);
       const ndc = wanted ? ndcAt(g.canvas, event) : null;
       // WHICH OF TWO GESTURES THIS IS, and the question is the viewport's own
-      // (`isOverlay`). The sketch panel stages its mocks into the scene, so each
-      // is an ordinary group here and an ordinary pick target — but a mock is
-      // the READER'S OWN DRAWING and not a part of the build, so dragging one
-      // means something else entirely. A part of the model moves as a STATEMENT
-      // to the agent: the chip goes up, `hmr:moved` files the path in the
-      // build's terms, and the model itself is untouched. A mock moves as an
-      // EDIT of the panel's document: `hmr:sketchmove` names the body, the panel
-      // adds the delta to its `at`, and nothing is filed about anything. Same
-      // hand, same snapping, two MEANINGS — "ending" is this file's word for a
-      // place a gesture can stop, and there are five of those. They part in
-      // three places: `dragPart`, `conclude`, and `concludeSketch`.
+      // (`isOverlay`). The proposal panel stages its bodies into the scene, so
+      // each is an ordinary group here and an ordinary pick target — but such a
+      // body is the READER'S OWN DRAWING and not a part of the build, so dragging
+      // one means something else entirely. A part of the model moves as a
+      // STATEMENT to the agent: the chip goes up, `hmr:moved` files the path in
+      // the build's terms, and the model itself is untouched. A proposal body
+      // moves as an EDIT of the panel's document: `hmr:proposalmove` names the
+      // body, the panel adds the delta to its `at`, and nothing is filed about
+      // anything. Same hand, same snapping, two MEANINGS — "ending" is this
+      // file's word for a place a gesture can stop, and there are five of those.
+      // They part in three places: `dragPart`, `conclude`, and
+      // `concludeProposal`.
       //
-      // `some` AND THEN `every`, which is what refuses a MIXED grab — a mock
-      // selected together with a part of the model — whole rather than quietly
-      // moving the half it may: one overlay path makes this a sketch drag, and
-      // then a model path has no body name and is not grabbable into it. The
-      // same all-or-nothing `movePart` keeps for the copies of a row, and the
-      // group node the mocks hang under is refused by the same line (see
+      // `some` AND THEN `every`, which is what refuses a MIXED grab — a proposal
+      // body selected together with a part of the model — whole rather than
+      // quietly moving the half it may: one overlay path makes this a proposal
+      // drag, and then a model path has no body name and is not grabbable into
+      // it. The same all-or-nothing `movePart` keeps for the copies of a row, and
+      // the group node the bodies hang under is refused by the same line (see
       // `overlayBody`, which answers null for it).
       //
       // REFUSED WITH THE GESTURE and not later, in the same breath as a part the
       // scene cannot move at all: here nothing has moved yet, and the press
       // degrades into the plain one below.
-      const sketch = wanted ? wanted.some((path) => vp.isOverlay(path)) : false;
+      const proposal = wanted ? wanted.some((path) => vp.isOverlay(path)) : false;
       const grabbable = (path) => !!movableGroup(viewer, path)
-        && (!sketch || !!vp.overlayBody(path));
+        && (!proposal || !!vp.overlayBody(path));
       if (!wanted || !ndc || !wanted.every(grabbable)) {
         // Nothing here to drag. The press DEGRADES to a plain one rather than
         // being dropped: a click still selects and a drag still rotates, which
@@ -618,24 +619,24 @@ export function installTools(vp) {
       // `wanted[0]` is the fallback for a gesture with no hit at all — a press
       // on empty space while a selection stands, which drags the selection.
       const anchor = hit && wanted.includes(hit.id) ? hit.id : wanted[0];
-      // WHAT THE SKETCH DRAG CARRIES INSTEAD OF `vp.moved`, and both fields are
-      // the gesture's own and die with it. `body` is the name the panel drew the
-      // grabbed mock under, which is the only thing the panel can find a node
+      // WHAT THE PROPOSAL DRAG CARRIES INSTEAD OF `vp.moved`, and both fields
+      // are the gesture's own and die with it. `body` is the name the panel drew
+      // the grabbed body under, which is the only thing the panel can find a node
       // by, and it is also the FLAG the two endings are told apart by — a part
       // of the model has none. `homes` is where the groups stand at the press,
       // read straight off the scene rather than remembered in `vp.partHome`:
       // this body's home is whatever the document last said, so a home kept
       // across the re-stage the last drag caused would be a home that has moved.
       //
-      // `base` STAYS THE OFFSET ALREADY STANDING, which for a mock is always
-      // zero — nothing writes one for it — and that is the point rather than a
-      // coincidence: each drag of a body starts from where the document now puts
-      // it, because the previous one is already in the document.
+      // `base` STAYS THE OFFSET ALREADY STANDING, which for a proposal body is
+      // always zero — nothing writes one for it — and that is the point rather
+      // than a coincidence: each drag of a body starts from where the document
+      // now puts it, because the previous one is already in the document.
       const base = vp.moved.get(anchor) || [0, 0, 0];
       press.move = {
         paths: wanted, ndc, base, last: base,
-        body: sketch ? vp.overlayBody(anchor) : null,
-        homes: sketch ? wanted.map((path) => groupHome(viewer, path)) : null,
+        body: proposal ? vp.overlayBody(anchor) : null,
+        homes: proposal ? wanted.map((path) => groupHome(viewer, path)) : null,
       };
     }
     // Take the press away from the trackball. A capture-phase listener on the
@@ -669,7 +670,7 @@ export function installTools(vp) {
     vp.box.removeEventListener("contextmenu", onContextMenu);
     // `finish` and NOT `endGesture` — the FIFTH ending, and the one that reports
     // nothing. This is the viewport going away: for a cut there is no scene left
-    // to read the plane off, and for a body of the sketch there is no gesture
+    // to read the plane off, and for a body of the proposal there is no gesture
     // that can outlive the element it was made on — the body goes with the
     // viewport, and whatever comes next stages it from the document. Nothing on
     // screen is left disagreeing with anything. Only the listeners have to go.
