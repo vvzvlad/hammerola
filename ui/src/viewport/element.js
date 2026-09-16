@@ -95,26 +95,27 @@ const INITIAL_STATE = {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // WHERE THE OVERLAY'S BODIES HANG, and a group of their own is the whole of the
-// answer to a collision. A sketch body is a MOCK OF A MODEL PART — the motor the
-// bracket has to clear, the wall it bolts to — so it is named after the thing it
-// mocks, and `post` over a model that already has a `post` is the expected case
-// rather than an edge one. Laid flat beside the model's parts, the two would
-// share `/<root>/post`: one entry in `nestedGroup.groups`, one row in the tree,
-// one path in the measurement backend, and the real part's eye hiding the mock.
+// answer to a collision. A proposal body STANDS FOR SOMETHING THE MODEL HAS TO
+// LIVE WITH — the motor it must clear, the wall it bolts to, a part laid out
+// where the author wants it — so it is named after that thing, and `post` over a
+// model that already has a `post` is the expected case rather than an edge one.
+// Laid flat beside the model's parts, the two would share `/<root>/post`: one
+// entry in `nestedGroup.groups`, one row in the tree, one path in the
+// measurement backend, and the real part's eye hiding the proposal's.
 // Under a group nothing of ours can reach a path of theirs — every overlay path
 // starts `/<root>/<group>/`, and the group's own name is the only string that
 // has to be free.
-const OVERLAY_GROUP = "sketch";
+const OVERLAY_GROUP = "proposal";
 
-/** The first free `sketch`, `sketch2`, … among the root's own children. */
+/** The first free `proposal`, `proposal2`, … among the root's children. */
 function groupName(parts) {
   const taken = new Set((Array.isArray(parts) ? parts : [])
     .map((part) => (part && typeof part.name === "string" ? part.name : "")));
   if (!taken.has(OVERLAY_GROUP)) return OVERLAY_GROUP;
-  // The same "first free" the sketch panel mints param names by, and here it is
+  // The same "first free" the proposal panel mints body names by, and here it is
   // what turns "a collision is unlikely" into "a collision cannot happen": a
-  // model may legitimately publish a group called `sketch`, and one that does
-  // gets `sketch2` laid beside it rather than merged into it.
+  // model may legitimately publish a group called `proposal`, and one that does
+  // gets `proposal2` laid beside it rather than merged into it.
   let n = 2;
   while (taken.has(`${OVERLAY_GROUP}${n}`)) n += 1;
   return `${OVERLAY_GROUP}${n}`;
@@ -126,14 +127,15 @@ function groupName(parts) {
  *
  * MINTED IN ONE PLACE BECAUSE IT IS ANSWERED IN THREE. `staged()` below lays the
  * group out; `isOverlay()` reads a path back against it for the interface, which
- * refuses the Comment tool a body of the sketch — a task filed in the build's
+ * refuses the Comment tool a body of the proposal — a task filed in the build's
  * terms against a body that is in no build; and `overlayBody()` reads the same
- * path one segment further, for the Move tool, which does not refuse a sketch
+ * path one segment further, for the Move tool, which does not refuse a proposal
  * body but drags it as an edit of the panel's own document. Those readers are
  * the reason this is a function rather than two lines inside `staged()` — the
- * alternative is matching `sketch|sketch2|…` against a path, which answers yes
- * for a model that legitimately publishes a part called `sketch`, and the whole
- * point of `groupName` is that the overlay steps aside for exactly that model.
+ * alternative is matching `proposal|proposal2|…` against a path, which answers
+ * yes for a model that legitimately publishes a part called `proposal`, and the
+ * whole point of `groupName` is that the overlay steps aside for exactly that
+ * model.
  */
 function overlayAt(payload) {
   // Spelled exactly as `treeFromShapes` spells the root, non-string name and
@@ -163,7 +165,7 @@ function overlayAt(payload) {
  * vendored library; `treeFromShapes` on this side spells it the same way). In a
  * pushed view file the two are the same string and nothing notices they are two
  * questions. An overlay built somewhere else carries ids of its own
- * (`/sketch/result`), and left alone it renders perfectly while ghosting and
+ * (`/proposal/result`), and left alone it renders perfectly while ghosting and
  * selection quietly do nothing to it: both look the part up by the tree's
  * spelling and miss.
  *
@@ -209,7 +211,7 @@ function staged(payload, parts) {
  * matter — the empty list against the empty list, and the same array handed back
  * — without touching a mesh; the value comparison behind it is the honest answer
  * for parts rebuilt from a document that came out the same, and it is bounded by
- * the SKETCH's own bodies rather than by the model's, which is what makes it
+ * the PROPOSAL's own bodies rather than by the model's, which is what makes it
  * affordable at all.
  */
 function sameParts(a, b) {
@@ -280,8 +282,8 @@ export class HmrViewport extends HTMLElement {
     // THE TWO SOURCES A SCENE IS MADE OF, and both are remembered rather than
     // passed through. `payload` is the view document the last fetch brought
     // back, kept so the overlay can be changed without going to the hub again;
-    // `overlayParts` is the second source — a sketch the interface assembled in
-    // the browser (ui/src/sketchgeom.js), which belongs to no build, is fetched
+    // `overlayParts` is the second source — a proposal the interface assembled in
+    // the browser (ui/src/proposalgeom.js), which belongs to no build, is fetched
     // from nowhere, and has to survive every rebuild of the model under it.
     // `staged()` composes them, and it is the only thing that does.
     //
@@ -535,7 +537,7 @@ export class HmrViewport extends HTMLElement {
    * brings in no geometry of its own and cannot put a scene on screen that no
    * load asked for. What it changes is the OVERLAY, the second source `staged()`
    * composes in, and composing happens inside `show` rather than at either call
-   * site: a rebuild landing under an open sketch panel therefore re-applies the
+   * site: a rebuild landing under an open proposal panel therefore re-applies the
    * overlay by construction instead of by the interface remembering to put it
    * back, which is the same failure the paragraph above describes read from the
    * other end. It re-stages LIVE, so the frame, the tree states and the cut
@@ -688,7 +690,7 @@ export class HmrViewport extends HTMLElement {
       //
       // A RE-STAGE IS THE SAME MODEL, though: the document below is the one
       // that is already on screen, and what changed is a body drawn OVER it.
-      // Clearing here would make opening the sketch panel — or closing it, or
+      // Clearing here would make opening the proposal panel — or closing it, or
       // typing one digit into it — snap a dragged part home and drop a live
       // measurement, with `partHome` gone so the move could not even be undone.
       // Block 6 is the precedent this feature is modelled on and block 7 is its
@@ -884,7 +886,7 @@ export class HmrViewport extends HTMLElement {
   // in React, refreshed on every camera move.
 
   /**
-   * Lay a second source of parts over the model — the sketch panel's rough body
+   * Lay a second source of parts over the model — the proposal panel's rough body
    * (ui-brief block 6, one step on: a statement to the agent rather than an edit
    * of anything).
    *
@@ -923,27 +925,27 @@ export class HmrViewport extends HTMLElement {
    * reason the two above are: it is asked of the scene as it stands right now.
    * A staged body is an ordinary row in the tree and an ordinary pick target, so
    * the Comment tool would otherwise file a task in the BUILD's terms —
-   * `partId: "/<root>/sketch/motor"` — against a body that is in no build and no
-   * catalogue. The group's name is minted here, against the model's own parts,
+   * `partId: "/<root>/proposal/motor"` — against a body that is in no build and
+   * no catalogue. The group's name is minted here, against the model's own parts,
    * so only here can it be told apart from a model part that is honestly called
-   * `sketch`.
+   * `proposal`.
    *
    * THE MOVE TOOL ASKS THIS TOO AND DOES SOMETHING ELSE WITH THE ANSWER. It does
-   * not refuse a sketch body: a drag of one is an ordinary edit of the panel's
-   * document, so the gesture runs and ends in `hmr:sketchmove` instead of in the
-   * chip `hmr:moved` raises (tools.js, `onDown`). What the answer decides there
-   * is WHICH of the two gestures a press is — and a MIXED grab, a mock together
-   * with a part of the model, is refused whole because there is no such thing as
-   * half of either.
+   * not refuse a proposal body: a drag of one is an ordinary edit of the panel's
+   * document, so the gesture runs and ends in `hmr:proposalmove` instead of in
+   * the chip `hmr:moved` raises (tools.js, `onDown`). What the answer decides
+   * there is WHICH of the two gestures a press is — and a MIXED grab, a proposal
+   * body together with a part of the model, is refused whole because there is no
+   * such thing as half of either.
    *
    * THE GROUP NODE ITSELF ANSWERS YES, and it is the case that reads as an edge
    * one and is not: the group is a ROW OF THE TREE, a row is selected with the
    * mouse (`onSelect`), and `selectedPaths()` hands a node's OWN id over rather
-   * than the leaves under it. So `/<root>/sketch` arrives here as an ordinary
+   * than the leaves under it. So `/<root>/proposal` arrives here as an ordinary
    * selection — `add to comment` on a measurement would head the composer
-   * `sketch` — and it is the same task about a body in no build that a single
-   * mock is. Nothing PICKS the group in the scene, which is what made it look
-   * safe; the tree is the other door.
+   * `proposal` — and it is the same task about a body in no build that one of
+   * the bodies under it is. Nothing PICKS the group in the scene, which is what
+   * made it look safe; the tree is the other door.
    *
    * NOTHING IS A BODY OF AN OVERLAY THAT IS NOT STAGED: with the panel closed
    * `overlayParts` is empty, `staged()` hands the document straight back, and
@@ -962,17 +964,18 @@ export class HmrViewport extends HTMLElement {
    *
    * `isOverlay` one segment further in, and the extra segment is what the Move
    * tool needs: the panel's document is a list of bodies with names, so "this
-   * body moved" is a sentence about `bore` and not about `/<root>/sketch/bore`,
-   * which is a spelling of the SCENE that nothing in the document has ever seen.
+   * body moved" is a sentence about `bore` and not about
+   * `/<root>/proposal/bore`, which is a spelling of the SCENE that nothing in
+   * the document has ever seen.
    * The name is the part's own `name` in the payload the panel built
-   * (sketchgeom.js), which is where the two halves meet: `result` is the fused
+   * (proposalgeom.js), which is where the two halves meet: `result` is the fused
    * body, and every other name is a hole with a node of its own.
    *
    * THE GROUP ANSWERS NULL, and that is the one real decision in here. It is a
    * row of the tree like any other and it can be selected and dragged from empty
    * space, but it stands for no body: it is the panel's whole output, named
    * after nothing in the document. A drag of it would arrive at the panel naming
-   * `sketch`, which no node answers to — so the mock would be left displaced
+   * `proposal`, which no node answers to — so the body would be left displaced
    * with the document saying otherwise, which is exactly what this feature is
    * written to avoid. Refused at the press instead, where the gesture simply
    * degrades into a rotation.

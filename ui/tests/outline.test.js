@@ -899,8 +899,8 @@ describe('the outline under the part passes', () => {
     expect(outline.geometry.instanceCount).toBe(8)
   })
 
-  it('follows a SKETCH body too, which is a solid like any other', () => {
-    // The sketch panel's mocks are staged into the scene (`staged()` in
+  it('follows a PROPOSAL body too, which is a solid like any other', () => {
+    // The proposal panel's bodies are staged into the scene (`staged()` in
     // element.js), so the plane clips them and a contour is drawn on them
     // exactly as on a part of the build — and the Move tool drags them through
     // it. `nudgePart` differs from `movePart` in what it REMEMBERS, not in what

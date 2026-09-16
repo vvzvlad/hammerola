@@ -807,12 +807,12 @@ def test_the_browser_and_the_hub_spell_the_theme_the_same_way():
         f"sends {DEFAULT_THEME!r}")
 
 
-def test_the_browser_and_the_hub_spell_the_sketch_flag_the_same_way():
+def test_the_browser_and_the_hub_spell_the_proposal_flag_the_same_way():
     """One attribute, two languages, and a drift that fails in ONE direction.
 
-    The hub stamps `data-sketch-panel` on `<html>` from its own setting before
+    The hub stamps `data-proposal-panel` on `<html>` from its own setting before
     the page is sent, and the interface reads it there to decide whether the
-    Sketch button and its panel exist. They cannot share a module, so the name
+    Proposal button and its panel exist. They cannot share a module, so the name
     and the value that means yes are spelled on both sides.
 
     AND THE DRIFT IS SILENT IN THE DIRECTION THAT MATTERS. Anything the browser
@@ -825,30 +825,30 @@ def test_the_browser_and_the_hub_spell_the_sketch_flag_the_same_way():
     The Python side is IMPORTED and the JavaScript side is read as text, which is
     this file's division: the values that can be executed are executed.
     """
-    from src.render import SKETCH_ATTRIBUTE, SKETCH_OFF, SKETCH_ON
+    from src.render import PROPOSAL_ATTRIBUTE, PROPOSAL_OFF, PROPOSAL_ON
 
     source = strip_comments(read(COMPONENT))
-    attribute = re.search(r"const SKETCH_ATTRIBUTE = '([^']+)'", source)
+    attribute = re.search(r"const PROPOSAL_ATTRIBUTE = '([^']+)'", source)
     assert attribute, (
         "ui/src/HammerolaViewer.jsx no longer declares the attribute it reads "
-        "the hub's answer about the sketch panel from")
-    on = re.search(r"const SKETCH_ON = '([^']+)'", source)
+        "the hub's answer about the proposal panel from")
+    on = re.search(r"const PROPOSAL_ON = '([^']+)'", source)
     assert on, "ui/src/HammerolaViewer.jsx no longer declares the value for yes"
 
     # The whole stamp, rebuilt from the browser's two halves: the interface asks
     # for `<name>` to equal `<on>`, and the hub writes the pair.
-    assert SKETCH_ATTRIBUTE.format(SKETCH_ON) == (
+    assert PROPOSAL_ATTRIBUTE.format(PROPOSAL_ON) == (
         f'{attribute.group(1)}="{on.group(1)}"'), (
         f"the interface looks for {attribute.group(1)}=\"{on.group(1)}\" and "
-        f"src/render.py stamps {SKETCH_ATTRIBUTE.format(SKETCH_ON)} — a hub "
+        f"src/render.py stamps {PROPOSAL_ATTRIBUTE.format(PROPOSAL_ON)} — a hub "
         f"that turned the panel on would serve a page without one")
 
     # And the hub's OFF has to read as off over there, which it does by not
     # being the one value the interface accepts. A hub spelling both the same
     # way would serve the panel to everybody, including every deployment that
     # never asked for it.
-    assert SKETCH_OFF != on.group(1), (
-        f"src/render.py writes {SKETCH_OFF!r} for off, which is the value the "
+    assert PROPOSAL_OFF != on.group(1), (
+        f"src/render.py writes {PROPOSAL_OFF!r} for off, which is the value the "
         f"interface reads as ON")
 
 

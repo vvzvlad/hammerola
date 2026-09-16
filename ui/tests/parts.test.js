@@ -591,7 +591,7 @@ describe('movePart and resetMoves', () => {
   // -- and the same drag, after the scene under it was built again -------------
 
   it('re-applies every offset onto the groups a re-stage just built', () => {
-    // WHAT A RE-STAGE IS: the sketch panel lays a body over the model, and the
+    // WHAT A RE-STAGE IS: the proposal panel lays a body over the model, and the
     // viewport renders the document it already had with that body composed in.
     // The model is the same, so the drag is still a true statement about it
     // (ui-brief block 6) and `show` keeps the map — but `clear()` disposed the

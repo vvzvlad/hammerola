@@ -569,17 +569,17 @@ def test_every_template_carries_the_stamp_the_server_replaces():
             f"takes the stamp and the page stops being themeable")
 
     # AND THE SECOND STAMP IS ON THE BUILD PAGE ALONE, which two docstrings in
-    # `render.py` assert in prose and nothing checked. The sketch panel lives on
-    # the build page, so that is the only template with a flag to carry: the
+    # `render.py` assert in prose and nothing checked. The proposal panel lives
+    # on the build page, so that is the only template with a flag to carry: the
     # index and the pointer page must come out of this change byte for byte as
     # they were, and a stamp appearing on one of them would say a feature had
     # been offered somewhere it does not exist.
     build = (render.TEMPLATES_DIR / "build.html").read_text(encoding="utf-8")
     assert render.HTML_TAG.search(build).group(0).count(
-        render.DEFAULT_SKETCH_STAMP) == 1
+        render.DEFAULT_PROPOSAL_STAMP) == 1
     for name in ("index.html", "pointer.html"):
         text = (render.TEMPLATES_DIR / name).read_text(encoding="utf-8")
-        assert render.SKETCH_ATTRIBUTE not in text, name
+        assert render.PROPOSAL_ATTRIBUTE not in text, name
 
 
 def test_the_cookie_reader_answers_one_of_the_two_themes(hub):
@@ -620,19 +620,19 @@ def test_a_page_asked_for_a_theme_that_does_not_exist_is_still_a_page():
     assert render._template.cache_info().currsize <= before + len(render.THEMES)
 
 
-# -- the sketch panel, which the HUB decides ---------------------------------
+# -- the proposal panel, which the HUB decides -------------------------------
 #
 # The same mechanism as the theme above, answering a different question and from
-# a different source: whether this hub serves the sketch panel at all. It is one
-# setting, `SKETCH_PANEL`, read at startup and the same for everybody — so unlike
-# the theme it does not travel on the request, and unlike the theme it cannot
-# change while the page is open. It has to reach the browser the same way all the
-# same: the panel is part of the toolbar the bundle draws, so the answer must be
-# in the document, and the hub's own configuration is not something a page can
-# find out for itself.
+# a different source: whether this hub serves the proposal panel at all. It is
+# one setting, `PROPOSAL_PANEL`, read at startup and the same for everybody — so
+# unlike the theme it does not travel on the request, and unlike the theme it
+# cannot change while the page is open. It has to reach the browser the same way
+# all the same: the panel is part of the toolbar the bundle draws, so the answer
+# must be in the document, and the hub's own configuration is not something a
+# page can find out for itself.
 
 
-def _sketch_of(text):
+def _proposal_of(text):
     """The hub's answer about the panel, off the document's `<html>` element.
 
     READ OFF THE OPENING TAG for the reason `_theme_of` above is: a template
@@ -641,9 +641,9 @@ def _sketch_of(text):
     """
     tags = re.findall(r"<html\b[^>]*>", text)
     assert len(tags) == 1, f"expected one <html> element, found {tags}"
-    found = re.findall(r'data-sketch-panel="([^"]*)"', tags[0])
+    found = re.findall(r'data-proposal-panel="([^"]*)"', tags[0])
     assert len(found) == 1, (
-        f"expected one data-sketch-panel on <html>, found {found}")
+        f"expected one data-proposal-panel on <html>, found {found}")
     return found[0]
 
 
@@ -663,13 +663,13 @@ def test_the_hub_stamps_its_own_answer_about_the_panel(hub_factory):
     one that does not stamp at all.
     """
     for served, expected in ((False, "off"), (True, "on")):
-        instance = hub_factory(sketch_panel=served)
+        instance = hub_factory(proposal_panel=served)
         instance.publish("proj1", "abc123", good_build())
         for theme in ("light", "dark"):
             r = instance.get("/project/proj1/abc123/",
                              headers={"Cookie": f"hammerola.theme={theme}"})
             assert r.status_code == 200, (served, theme)
-            assert _sketch_of(r.text) == expected, (served, theme)
+            assert _proposal_of(r.text) == expected, (served, theme)
             assert _theme_of(r.text) == theme, (served, theme)
 
 

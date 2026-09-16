@@ -1,11 +1,11 @@
-// ui/src/sketch.js and ui/src/sketchgeom.js — the sketch panel's pure core.
+// ui/src/proposal.js and ui/src/proposalgeom.js — the panel's pure core.
 //
 // Everything the panel is made of that a browser is not needed for: the
 // document, the text an agent reads off it, and the payload the viewport gets.
 // The two halves are tested together because they only mean anything together —
-// a document whose dimensions resolve is worth nothing if the body they describe
-// comes out the wrong size, and the volume checks below are what says it does
-// not.
+// a document that holds the numbers somebody typed is worth nothing if the body
+// they describe comes out the wrong size, and the volume checks below are what
+// says it does not.
 //
 // THE PAYLOAD IS MEASURED RATHER THAN INSPECTED wherever a number is the point.
 // `volumeOf` rebuilds a geometry out of the flat arrays a part actually carries
@@ -18,21 +18,13 @@ import { describe, expect, it } from 'vitest'
 import { geometries, measurements } from '@jscad/modeling'
 
 import {
-  addNode, addParam, emptySketch, isEmpty, moveNodes, removeNode, removeParam,
-  renameParam, resolveValue, sketchText, updateNode, updateParam, usedBy,
-} from '../src/sketch.js'
-import { buildSketch } from '../src/sketchgeom.js'
-
-const BODY = {
-  name: 'body', type: 'slider', caption: 'Body', initial: 42.3, min: 40, max: 45, step: 0.1,
-}
-const LENGTH = {
-  name: 'length', type: 'number', caption: 'Length', initial: 40, min: 20, max: 60, step: 1,
-}
+  addNode, emptyProposal, isEmpty, moveNodes, removeNode, proposalText, updateNode,
+} from '../src/proposal.js'
+import { buildProposal } from '../src/proposalgeom.js'
 
 const KORPUS = {
   id: 'n1', name: 'korpus', op: 'box', role: 'solid',
-  at: [0, 0, 0], rot: [0, 0, 0], size: ['body', 'body', 'length'],
+  at: [0, 0, 0], rot: [0, 0, 0], size: [42.3, 42.3, 40],
 }
 const VAL = {
   id: 'n2', name: 'val', op: 'cylinder', role: 'solid',
@@ -43,14 +35,13 @@ const KREPEZH = {
   at: [15.5, 15.5, 36], rot: [0, 45, 0], d: 3, h: 10,
 }
 
-/** The document the text projection is pinned against: params, a hole, a rotation. */
-function motorMock() {
-  return addNode(addNode(addNode(
-    addParam(addParam(emptySketch(), BODY), LENGTH), KORPUS), VAL), KREPEZH)
+/** The document the text projection is pinned against: three bodies, a hole, a rotation. */
+function motor() {
+  return addNode(addNode(addNode(emptyProposal(), KORPUS), VAL), KREPEZH)
 }
 
 /** A document with one node in it, whatever that node is. */
-const just = (node) => addNode(emptySketch(), node)
+const just = (node) => addNode(emptyProposal(), node)
 
 /** The volume of a part, measured off the flat arrays the payload actually carries. */
 function volumeOf(part) {
@@ -96,7 +87,7 @@ function expectWellFormed(payload) {
     expect(part.subtype).toBe('solid')
     expect(part.state).toEqual([1, 1])
     // NO CATALOGUE KEY, and its absence is the assertion. `key` is the entry in
-    // `meta.parts` a row looks its files, its note and its kind up by; a sketch
+    // `meta.parts` a row looks its files, its note and its kind up by; a proposal
     // body is in no catalogue at all, so a `key` here made the row offer a
     // reader's note and store it under whatever real key the name collided with.
     expect('key' in part).toBe(false)
@@ -128,48 +119,12 @@ function expectWellFormed(payload) {
 
 describe('the document', () => {
   it('starts empty and says so', () => {
-    expect(emptySketch()).toEqual({ version: 1, units: 'mm', params: [], nodes: [] })
-    expect(isEmpty(emptySketch())).toBe(true)
+    expect(emptyProposal()).toEqual({ version: 1, units: 'mm', nodes: [] })
+    expect(isEmpty(emptyProposal())).toBe(true)
   })
 
-  it('is no longer empty once anything has been put in it', () => {
+  it('is no longer empty once a body has been put in it', () => {
     expect(isEmpty(just(VAL))).toBe(false)
-    expect(isEmpty(addParam(emptySketch(), BODY))).toBe(false)
-  })
-})
-
-describe('resolveValue', () => {
-  it('hands a number straight back', () => {
-    expect(resolveValue(emptySketch(), 12.5)).toBe(12.5)
-  })
-
-  it('resolves the name of a param into that param\'s value', () => {
-    expect(resolveValue(addParam(emptySketch(), BODY), 'body')).toBe(42.3)
-  })
-
-  it('refuses a name no param carries, and says what it wanted', () => {
-    const doc = addParam(emptySketch(), BODY)
-    expect(() => resolveValue(doc, 'width')).toThrow(/no param named "width"/)
-    // The refusal is the whole of the language: there is no expression syntax
-    // for it to have tried instead, and the message has to say so or the next
-    // person writes `body * 2` and reads the error as a typo.
-    expect(() => resolveValue(doc, 'body * 2')).toThrow(/expressions are not supported/)
-  })
-
-  it('reaches a dimension: a named param drives the geometry it is spent on', () => {
-    // 20 x 20 x 20 through the param, against the same box written out.
-    const side = { name: 'side', type: 'number', caption: 'Side', initial: 20 }
-    const named = addNode(addParam(emptySketch(), side), {
-      id: 'b', name: 'cube', op: 'box', role: 'solid',
-      at: [0, 0, 0], rot: [0, 0, 0], size: ['side', 'side', 'side'],
-    })
-    const spelled = just({
-      id: 'b', name: 'cube', op: 'box', role: 'solid',
-      at: [0, 0, 0], rot: [0, 0, 0], size: [20, 20, 20],
-    })
-    expect(volumeOf(buildSketch(named).parts[0]))
-      .toBeCloseTo(volumeOf(buildSketch(spelled).parts[0]), 9)
-    expect(volumeOf(buildSketch(named).parts[0])).toBeCloseTo(8000, 6)
   })
 })
 
@@ -178,17 +133,12 @@ describe('the immutable helpers', () => {
   // document still there afterwards. The panel keeps the previous state to undo
   // to, so a helper that edited in place would make undo a no-op — which is
   // invisible until somebody tries it.
-  const doc = motorMock()
+  const doc = motor()
   const cases = [
     ['addNode', 'nodes', (d) => addNode(d, { ...VAL, id: 'n9', name: 'extra' })],
     ['removeNode', 'nodes', (d) => removeNode(d, 'n2')],
     ['updateNode', 'nodes', (d) => updateNode(d, 'n2', { at: [1, 2, 3] })],
     ['moveNodes', 'nodes', (d) => moveNodes(d, ['n2'], [1, 2, 3])],
-    ['addParam', 'params',
-      (d) => addParam(d, { name: 'gap', type: 'number', caption: 'Gap', initial: 2 })],
-    ['removeParam', 'params', (d) => removeParam(d, 'body')],
-    ['updateParam', 'params', (d) => updateParam(d, 'body', { initial: 44 })],
-    ['renameParam', 'params', (d) => renameParam(d, 'body', 'body_w')],
   ]
 
   for (const [name, touched, apply] of cases) {
@@ -221,95 +171,24 @@ describe('the immutable helpers', () => {
     // the fused result is every body at once, a hole is one.
     expect(moveNodes(doc, ['n1', 'n2', 'n3'], [1, 0, 0]).nodes.map((n) => n.at[0]))
       .toEqual([1, 1, 16.5])
-    expect(addParam(doc, LENGTH).params).toHaveLength(3)
-    expect(removeParam(doc, 'body').params.map((p) => p.name)).toEqual(['length'])
-    expect(updateParam(doc, 'body', { initial: 44 }).params[0].initial).toBe(44)
-    expect(updateParam(doc, 'body', { initial: 44 }).params[0].max).toBe(45)
   })
 })
 
-describe('renaming a param', () => {
-  it('carries every dimension that named it, so the document still builds', () => {
-    // THE ASSERTION THIS HELPER EXISTS FOR. `wall` -> `wall_t` is typed one
-    // character at a time, and a rename that rewrote the record alone left
-    // `korpus` asking for a param nobody has — a document `resolveValue`
-    // refuses, on the FIRST character, with no way back from the panel: the name
-    // that would repair it is the one that was just taken away.
-    const doc = renameParam(motorMock(), 'body', 'body_w')
-
-    expect(doc.params.map((param) => param.name)).toEqual(['body_w', 'length'])
-    expect(doc.nodes[0].size).toEqual(['body_w', 'body_w', 'length'])
-    expect(() => buildSketch(doc)).not.toThrow()
-    expect(sketchText(doc)).toContain('42.3 (body_w)')
-  })
-
-  it('touches nothing that merely reads like the name', () => {
-    // A BODY MAY BE CALLED AFTER THE PARAM THAT SIZES IT — `body` is the
-    // likeliest name for both — so the walk has to know a node's structure from
-    // its geometry. `name`, `id`, `op` and `role` are the four it leaves alone.
-    const doc = renameParam(addNode(addParam(emptySketch(), BODY), {
-      id: 'body', name: 'body', op: 'box', role: 'solid',
-      at: [0, 0, 0], rot: [0, 0, 0], size: ['body', 10, 10],
-    }), 'body', 'width')
-
-    expect(doc.nodes[0]).toMatchObject({ id: 'body', name: 'body', op: 'box' })
-    expect(doc.nodes[0].size).toEqual(['width', 10, 10])
-  })
-
-  it('is a no-op on a name no param carries, and on a rename to itself', () => {
-    const doc = motorMock()
-    expect(renameParam(doc, 'nope', 'other')).toBe(doc)
-    expect(renameParam(doc, 'body', 'body')).toBe(doc)
-  })
-})
-
-describe('usedBy', () => {
-  it('names the bodies whose dimensions spend a param, and only those', () => {
-    // What a refusal is written out of: removing `body` while `korpus` is sized
-    // from it leaves a document that will not build, and the panel has to say
-    // which body to see to rather than which error to read.
-    expect(usedBy(motorMock(), 'body')).toEqual(['korpus'])
-    expect(usedBy(motorMock(), 'length')).toEqual(['korpus'])
-    expect(usedBy(motorMock(), 'body_w')).toEqual([])
-    // `val` is sized in numbers, so nothing it carries is a claim on any param.
-    expect(usedBy(motorMock(), 'val')).toEqual([])
-  })
-
-  it('reaches as deep into a node as a rename does, because the two are a pair', () => {
-    // `renameParam` walks all the way into an extrusion's profile and rewrites
-    // the mention it finds there. A `usedBy` that looked one level deep answered
-    // "nobody" about that same param — so `dropParam`, which asks this before it
-    // refuses, offered to remove a param the body was still spending, and the
-    // document stopped building the moment it went.
-    const doc = addNode(addParam(emptySketch(), BODY), {
-      id: 'n4', name: 'plate', op: 'extrude', role: 'solid',
-      at: [0, 0, 0], rot: [0, 0, 0], h: 3,
-      profile: [[0, 0], ['body', 0], ['body', 10]],
-    })
-
-    expect(usedBy(doc, 'body')).toEqual(['plate'])
-    expect(renameParam(doc, 'body', 'width').nodes[0].profile)
-      .toEqual([[0, 0], ['width', 0], ['width', 10]])
-  })
-})
-
-describe('sketchText', () => {
+describe('proposalText', () => {
   it('renders the projection byte for byte', () => {
-    expect(sketchText(motorMock())).toBe([
+    expect(proposalText(motor())).toBe([
       'units: mm',
-      'params: body = 42.3 (40..45 step 0.1) slider "Body", '
-        + 'length = 40 (20..60 step 1) "Length"',
       '',
-      'solid  box       "korpus"    42.3 (body) x 42.3 (body) x 40 (length)  at (0, 0, 0)',
-      'solid  cylinder  "val"       d5 h24                                   at (0, 0, 42)',
-      'hole   cylinder  "krepezh1"  d3 h10                                   at (15.5, 15.5, 36)  rot (0, 45, 0)',
+      'solid  box       "korpus"    42.3 x 42.3 x 40  at (0, 0, 0)',
+      'solid  cylinder  "val"       d5 h24            at (0, 0, 42)',
+      'hole   cylinder  "krepezh1"  d3 h10            at (15.5, 15.5, 36)  rot (0, 45, 0)',
       '',
       'result = union(solid) - union(hole)',
     ].join('\n'))
   })
 
-  it('omits the params line when the sketch has none', () => {
-    expect(sketchText(just(VAL))).toBe([
+  it('is one body and the units where that is all there is', () => {
+    expect(proposalText(just(VAL))).toBe([
       'units: mm',
       '',
       'solid  cylinder  "val"  d5 h24  at (0, 0, 42)',
@@ -319,7 +198,7 @@ describe('sketchText', () => {
   })
 
   it('prints a rotation only where there is one', () => {
-    const lines = sketchText(motorMock()).split('\n')
+    const lines = proposalText(motor()).split('\n')
     expect(lines.filter((line) => line.includes('rot (')))
       .toEqual([lines.find((line) => line.startsWith('hole'))])
     // ...and the line that has none ends at its placement rather than trailing
@@ -328,7 +207,7 @@ describe('sketchText', () => {
   })
 
   it('spells the sphere and the extrusion the way the other two are spelled', () => {
-    expect(sketchText(addNode(just({
+    expect(proposalText(addNode(just({
       id: 'a', name: 'ball', op: 'sphere', role: 'solid',
       at: [0, 0, 0], rot: [0, 0, 0], d: 10,
     }), {
@@ -349,30 +228,8 @@ describe('sketchText', () => {
     ].join('\n'))
   })
 
-  it('spells a param with everything the panel lets one be typed with', () => {
-    // THE THREE FIELDS THAT HAD NO READER. The panel has a caption field, a step
-    // field and a type toggle whose tooltip says the type is how the agent
-    // should OFFER the param — and nothing on this page renders a slider, so
-    // this line is the only place any of the three can mean anything. Every
-    // piece is omitted where the param does not carry it, and `number` is the
-    // default: printed, it would say only that nobody pressed the toggle.
-    const params = (param) => sketchText(addParam(emptySketch(), param)).split('\n')[1]
-
-    expect(params({
-      name: 'wall', type: 'slider', caption: 'wall thickness',
-      initial: 2.4, min: 1, max: 5, step: 0.2,
-    })).toBe('params: wall = 2.4 (1..5 step 0.2) slider "wall thickness"')
-
-    expect(params({ name: 'gap', type: 'number', caption: '', initial: 2 }))
-      .toBe('params: gap = 2')
-    expect(params({ name: 'gap', type: 'number', caption: 'Gap', initial: 2, step: 0.5 }))
-      .toBe('params: gap = 2 (step 0.5) "Gap"')
-    expect(params({ name: 'gap', type: 'slider', caption: '', initial: 2, min: 1, max: 4 }))
-      .toBe('params: gap = 2 (1..4) slider')
-  })
-
   it('says what an empty document is, rather than nothing at all', () => {
-    expect(sketchText(emptySketch())).toBe([
+    expect(proposalText(emptyProposal())).toBe([
       'units: mm',
       '',
       'result = union(solid) - union(hole)',
@@ -380,9 +237,9 @@ describe('sketchText', () => {
   })
 })
 
-describe('buildSketch', () => {
+describe('buildProposal', () => {
   it('builds a payload for a box, and the box is the size it was asked for', () => {
-    const payload = buildSketch(just({
+    const payload = buildProposal(just({
       id: 'b', name: 'block', op: 'box', role: 'solid',
       at: [1, 2, 3], rot: [0, 0, 0], size: [10, 4, 2],
     }))
@@ -394,7 +251,7 @@ describe('buildSketch', () => {
   })
 
   it('builds a payload for a cylinder', () => {
-    const payload = buildSketch(just(VAL))
+    const payload = buildProposal(just(VAL))
     expectWellFormed(payload)
     // Tessellated, so short of the ideal by the chord error and never over it.
     const ideal = Math.PI * 2.5 * 2.5 * 24
@@ -405,7 +262,7 @@ describe('buildSketch', () => {
   })
 
   it('builds a payload for a sphere', () => {
-    const payload = buildSketch(just({
+    const payload = buildProposal(just({
       id: 's', name: 'ball', op: 'sphere', role: 'solid',
       at: [0, 0, 0], rot: [0, 0, 0], d: 10,
     }))
@@ -416,7 +273,7 @@ describe('buildSketch', () => {
   })
 
   it('builds a payload for an extrusion, whose profile places itself', () => {
-    const payload = buildSketch(just({
+    const payload = buildProposal(just({
       id: 'e', name: 'plate', op: 'extrude', role: 'solid',
       at: [0, 0, -10], rot: [0, 0, 0], h: 3,
       profile: [[0, 0], [20, 0], [20, 10], [0, 10]],
@@ -429,7 +286,7 @@ describe('buildSketch', () => {
   })
 
   it('turns a node by the rotation the document gives it, in degrees', () => {
-    const payload = buildSketch(just({
+    const payload = buildProposal(just({
       id: 'b', name: 'block', op: 'box', role: 'solid',
       at: [0, 0, 0], rot: [0, 0, 45], size: [10, 10, 2],
     }))
@@ -449,8 +306,8 @@ describe('buildSketch', () => {
       id: 'h', name: 'bore', op: 'cylinder', role: 'hole',
       at: [0, 0, 0], rot: [0, 0, 0], d: 6, h: 20,
     }
-    const whole = volumeOf(buildSketch(just(plate)).parts[0])
-    const drilled = volumeOf(buildSketch(addNode(just(plate), bore)).parts[0])
+    const whole = volumeOf(buildProposal(just(plate)).parts[0])
+    const drilled = volumeOf(buildProposal(addNode(just(plate), bore)).parts[0])
     expect(whole).toBeCloseTo(4000, 6)
     // The bore goes right through, so what left is its full length inside the
     // plate — a tessellated cylinder, so just under the ideal.
@@ -461,7 +318,7 @@ describe('buildSketch', () => {
   })
 
   it('shows every hole as a part of its own, translucent, beside the result', () => {
-    const payload = buildSketch(motorMock())
+    const payload = buildProposal(motor())
     expectWellFormed(payload)
     expect(payload.parts.map((part) => part.name)).toEqual(['result', 'krepezh1'])
     expect(payload.parts[0].alpha).toBe(1)
@@ -477,7 +334,7 @@ describe('buildSketch', () => {
   })
 
   it('answers for a document with nothing in it', () => {
-    const payload = buildSketch(emptySketch())
+    const payload = buildProposal(emptyProposal())
     expectWellFormed(payload)
     expect(payload.parts.map((part) => part.name)).toEqual(['result'])
     expect(payload.parts[0].shape.vertices).toEqual([])
@@ -487,8 +344,8 @@ describe('buildSketch', () => {
   it('answers for a document that is nothing but holes', () => {
     // Nothing to cut them out of, so the result is empty and the tools are all
     // that is left to look at — which is what somebody halfway through building
-    // a sketch has.
-    const payload = buildSketch(just(KREPEZH))
+    // a proposal has.
+    const payload = buildProposal(just(KREPEZH))
     expectWellFormed(payload)
     expect(payload.parts.map((part) => part.name)).toEqual(['result', 'krepezh1'])
     expect(payload.parts[0].shape.triangles).toEqual([])
@@ -500,7 +357,7 @@ describe('buildSketch', () => {
     // library's readers are guarded, so leaving them out is a supported shape
     // rather than a gap — this pins that we leave them out DELIBERATELY, since
     // half-filling them would be worse than not filling them.
-    const shape = buildSketch(just(VAL)).parts[0].shape
+    const shape = buildProposal(just(VAL)).parts[0].shape
     for (const field of
       ['face_types', 'edge_types', 'triangles_per_face', 'segments_per_edge']) {
       expect(shape[field]).toBeUndefined()
@@ -518,7 +375,7 @@ describe('buildSketch', () => {
     // line is worse here than drawing none: the person is looking at this to
     // judge a shape. See the comment on `mesh` for the three rules measured
     // before this one was chosen.
-    const shape = buildSketch(just({
+    const shape = buildProposal(just({
       id: 'c', name: 'cube', op: 'box', role: 'solid',
       at: [0, 0, 0], rot: [0, 0, 0], size: [2, 2, 2],
     })).parts[0].shape
@@ -540,7 +397,7 @@ describe('buildSketch', () => {
       { id: 's', name: 'ball', op: 'sphere', role: 'solid', d: 16 },
       { id: 'c', name: 'barrel', op: 'cylinder', role: 'solid', d: 12, h: 20 },
     ]) {
-      const shape = buildSketch(just({
+      const shape = buildProposal(just({
         at: [0, 0, 0], rot: [0, 0, 0], ...node,
       })).parts[0].shape
       expect(shape.edges).toEqual([])

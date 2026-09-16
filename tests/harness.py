@@ -77,8 +77,8 @@ def settings_for(data_dir, max_build_bytes=8 * 1024 * 1024, **overrides):
         comment_max_body_bytes=4 * 1024 * 1024,
         # OFF, like the real default: a hub in a test is a hub nobody configured,
         # and the whole point of the flag is that such a hub does not serve the
-        # sketch panel. A test about the panel overrides it by name.
-        sketch_panel=False,
+        # proposal panel. A test about the panel overrides it by name.
+        proposal_panel=False,
         log_level="INFO",
     )
     unknown = set(overrides) - set(values)
