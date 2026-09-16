@@ -167,8 +167,8 @@ describe('the immutable helpers', () => {
     expect(moveNodes(doc, ['n2'], [1, 2, 3]).nodes[1].at).toEqual([1, 2, 45])
     expect(moveNodes(doc, ['n2'], [1, 2, 3]).nodes[0].at).toEqual(doc.nodes[0].at)
     expect(moveNodes(doc, ['n2'], [1, 2, 3]).nodes[1].at).not.toBe(doc.nodes[1].at)
-    // EVERY NAMED NODE AND ONLY THOSE, which is what the panel spends it on:
-    // the fused result is every body at once, a hole is one.
+    // EVERY NAMED NODE AND ONLY THOSE, which is the rule a grab lands on: the
+    // panel names the one body that was dragged, and nothing else may shift.
     expect(moveNodes(doc, ['n1', 'n2', 'n3'], [1, 0, 0]).nodes.map((n) => n.at[0]))
       .toEqual([1, 1, 16.5])
   })
@@ -297,7 +297,7 @@ describe('buildProposal', () => {
     expect(payload.bb.zmax).toBeCloseTo(1, 9)
   })
 
-  it('cuts a hole out of the result, and the volume says so', () => {
+  it('cuts a hole out of the body, and the volume says so', () => {
     const plate = {
       id: 'p', name: 'plate', op: 'box', role: 'solid',
       at: [0, 0, 0], rot: [0, 0, 0], size: [20, 20, 10],
@@ -317,10 +317,41 @@ describe('buildProposal', () => {
     expect(removed).toBeGreaterThan(ideal * 0.97)
   })
 
-  it('shows every hole as a part of its own, translucent, beside the result', () => {
+  it('gives every solid a part of its own, each one already cut by the holes', () => {
+    // WHAT THE HAND NEEDS. A part is what the Move tool grabs, so two solids
+    // fused into one part could only ever move together — which is the thing
+    // this payload used to do and the reason it no longer does. Each body is
+    // cut by every hole all the same: a hole belongs to the proposal, not to
+    // whichever body it happens to sit inside.
+    const plate = (id, name, x) => ({
+      id, name, op: 'box', role: 'solid',
+      at: [x, 0, 0], rot: [0, 0, 0], size: [10, 10, 10],
+    })
+    const payload = buildProposal(addNode(addNode(
+      just(plate('a', 'left', -10)), plate('b', 'right', 10),
+    ), {
+      // One bore, lying along x and long enough to reach both plates.
+      id: 'h', name: 'bore', op: 'cylinder', role: 'hole',
+      at: [0, 0, 0], rot: [0, 90, 0], d: 4, h: 60,
+    }))
+    expectWellFormed(payload)
+    expect(payload.parts.map((part) => part.name)).toEqual(['left', 'right', 'bore'])
+
+    for (const name of ['left', 'right']) {
+      const [body] = payload.parts.filter((part) => part.name === name)
+      // A 10 mm cube is 1000, and the bore crosses the whole of it: what is
+      // gone is the cylinder's own volume, tessellated and so just under ideal.
+      const removed = 1000 - volumeOf(body)
+      const ideal = Math.PI * 4 * 10
+      expect(removed, name).toBeLessThan(ideal)
+      expect(removed, name).toBeGreaterThan(ideal * 0.97)
+    }
+  })
+
+  it('shows every hole as a part of its own, translucent, beside the bodies', () => {
     const payload = buildProposal(motor())
     expectWellFormed(payload)
-    expect(payload.parts.map((part) => part.name)).toEqual(['result', 'krepezh1'])
+    expect(payload.parts.map((part) => part.name)).toEqual(['korpus', 'val', 'krepezh1'])
     expect(payload.parts[0].alpha).toBe(1)
 
     const [hole] = payload.parts.filter((part) => part.name === 'krepezh1')
@@ -334,21 +365,22 @@ describe('buildProposal', () => {
   })
 
   it('answers for a document with nothing in it', () => {
+    // No bodies, so no parts — and no envelope either, since there is nothing to
+    // measure. The frame falls back to the origin rather than being asked of the
+    // kernel, which is where the first body will arrive anyway.
     const payload = buildProposal(emptyProposal())
     expectWellFormed(payload)
-    expect(payload.parts.map((part) => part.name)).toEqual(['result'])
-    expect(payload.parts[0].shape.vertices).toEqual([])
+    expect(payload.parts).toEqual([])
     expectBox(payload.bb, { xmin: 0, xmax: 0, ymin: 0, ymax: 0, zmin: 0, zmax: 0 })
   })
 
   it('answers for a document that is nothing but holes', () => {
-    // Nothing to cut them out of, so the result is empty and the tools are all
-    // that is left to look at — which is what somebody halfway through building
-    // a proposal has.
+    // Nothing to cut them out of, so the tools are all that is left to look at —
+    // which is what somebody halfway through building a proposal has.
     const payload = buildProposal(just(KREPEZH))
     expectWellFormed(payload)
-    expect(payload.parts.map((part) => part.name)).toEqual(['result', 'krepezh1'])
-    expect(payload.parts[0].shape.triangles).toEqual([])
+    expect(payload.parts.map((part) => part.name)).toEqual(['krepezh1'])
+    expectBox(payload.bb, { xmin: 0, xmax: 0, ymin: 0, ymax: 0, zmin: 0, zmax: 0 })
   })
 
   it('names the optional tessellation fields nowhere, and the viewer guards them', () => {

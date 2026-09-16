@@ -126,7 +126,7 @@ import {
   addNode, emptyProposal, firstFree, isEmpty, moveNodes, removeNode, proposalText,
   updateNode,
 } from './proposal.js';
-import { buildProposal, RESULT_NAME } from './proposalgeom.js';
+import { buildProposal } from './proposalgeom.js';
 import {
   css, FONTS, SANS, MONO, Mark, NARROW, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
 } from './style.jsx';
@@ -1328,22 +1328,20 @@ export default class HammerolaViewer extends React.Component {
         const d = (e.detail && e.detail.delta) || [];
         if (d.length !== 3 || !d.every(Number.isFinite)) return;
         const doc = this.state.proposal || emptyProposal();
-        // THE RESULT IS EVERY NODE AND A HOLE IS ITS OWN, which is what the
-        // payload the panel builds offers to the hand: one part for the fused
-        // body and one translucent part per hole (proposalgeom.js). Dragging the
-        // result moves the whole proposal — every node by the same delta, so it
-        // keeps its shape and lands somewhere else — and dragging a hole moves
-        // that hole through the body.
+        // ONE BODY MOVES, AND IT IS THE ONE UNDER THE CURSOR. The payload the
+        // panel builds offers the hand a part per body — every solid its own,
+        // every hole its own (proposalgeom.js) — so a drag is about the single
+        // node that part was built from, and the bodies beside it stay where the
+        // document put them. That is the point of dragging at all: a proposal is
+        // assembled by shifting its pieces against each other.
         //
         // BY NAME, because a name is what the two halves share: the body's name
         // in the document is the part's `name` in the payload, and `freeName`
-        // keeps them unique and keeps `RESULT_NAME` out of the reader's reach.
-        // A name no node answers to moves nothing rather than guessing, which is
-        // a drag that landed while the document was being edited from somewhere
-        // else.
+        // keeps them unique. A name no node answers to moves nothing rather than
+        // guessing, which is a drag that landed while the document was being
+        // edited from somewhere else.
         const ids = doc.nodes
-          .filter((node) => e.detail.name === RESULT_NAME
-            || node.name === e.detail.name)
+          .filter((node) => node.name === e.detail.name)
           .map((node) => node.id);
         if (!ids.length) return;
         // THE DRAFT GOES FIRST, exactly as `commitProposal` drops it and for the
@@ -3192,8 +3190,8 @@ export default class HammerolaViewer extends React.Component {
    * shape on screen stays the last one that meant something.
    *
    * NOTHING TO DRAW IS NOT AN ERROR: a document with no bodies in it — a panel
-   * just opened, the last body deleted — builds a result with no geometry, and
-   * an empty part in the tree is worse than no overlay at all.
+   * just opened, the last body deleted — builds a payload with no parts in it,
+   * and an empty overlay in the tree is worse than no overlay at all.
    */
   setProposal(doc) {
     let parts = null;
@@ -5009,13 +5007,12 @@ export default class HammerolaViewer extends React.Component {
     };
 
     // THE FIRST FREE NAME, and for a harder reason than tidiness. A body's name
-    // is its part's `name` in the payload, every hole is drawn as a part of its
-    // own under it, and the fused body is always the part called `RESULT_NAME` —
-    // so two bodies under one name are one entry in the library's groups map and
-    // one row in the tree, the second quietly standing in for the first. This has
-    // to hold for a name the reader TYPES and not only for one the + button
-    // mints: naming a body after the thing it stands for — `motor`, `wall` — is
-    // most of what the panel is for.
+    // is its part's `name` in the payload and every body is drawn as a part of
+    // its own — so two bodies under one name are one entry in the library's
+    // groups map and one row in the tree, the second quietly standing in for the
+    // first. This has to hold for a name the reader TYPES and not only for one
+    // the + button mints: naming a body after the thing it stands for —
+    // `motor`, `wall` — is most of what the panel is for.
     //
     // THE LOOP ITSELF IS `firstFree` IN proposal.js, beside the document it is a
     // fact about rather than here: what a name is when something already answers
@@ -5025,7 +5022,6 @@ export default class HammerolaViewer extends React.Component {
       const taken = new Set(doc.nodes
         .filter((node) => node.id !== exceptId)
         .map((node) => node.name));
-      taken.add(RESULT_NAME);
       return firstFree(wanted, taken);
     };
 
@@ -6623,8 +6619,9 @@ export default class HammerolaViewer extends React.Component {
                 also be dragged, with the Move tool over the body itself — the
                 gesture ends in `hmr:proposalmove` and writes the `at` fields the
                 reader is looking at, so the two ways of saying it are one thing
-                (`proposalgeom.js` for what is grabbable: the fused result, and
-                each hole on its own).
+                (`proposalgeom.js` for what is grabbable: every body on its own,
+                solids and holes alike, so a drag moves the one under the
+                cursor).
 
                 WHAT IS STILL NOT HERE is a gizmo, a handle of our own and
                 click-to-place. The library's id-picker answers about parts that

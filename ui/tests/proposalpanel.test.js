@@ -28,7 +28,7 @@ import { indexTree } from '../src/hub.js'
 import {
   addNode, DIM_OPS, emptyProposal, proposalText,
 } from '../src/proposal.js'
-import { RESULT_NAME, SHAPE_OPS } from '../src/proposalgeom.js'
+import { SHAPE_OPS } from '../src/proposalgeom.js'
 import { css } from '../src/style.jsx'
 import { collect, texts } from './eltree.js'
 
@@ -307,8 +307,8 @@ describe('the panel', () => {
   })
 
   it('draws nothing over the model until there is a body in it', () => {
-    // An empty document builds a result with no geometry, and a part with no
-    // vertices in the tree says less than no overlay at all.
+    // An empty document builds a payload with no parts in it, and an empty
+    // overlay in the tree says less than no overlay at all.
     const { c, el } = panel({ open: false })
     c.computed().tProposal()
     expect(c.state.proposalOpen).toBe(true)
@@ -330,7 +330,7 @@ describe('the panel', () => {
     expect(c.state.proposal.nodes).toHaveLength(1)
 
     c.computed().tProposal()
-    expect(overlay(el)).toEqual(['result'])
+    expect(overlay(el)).toEqual(['korpus'])
   })
 
   it('goes when the token does, and takes its body off the model with it', () => {
@@ -368,7 +368,7 @@ describe('a body', () => {
       // It is a body big enough to see rather than a zero the kernel refuses —
       // a button that added an invisible thing would read as a button that did
       // nothing.
-      expect(overlay(el)).toEqual(['result'])
+      expect(overlay(el)).toEqual([`${op}1`])
       expect(el.setOverlay.mock.calls.at(-1)[0][0].shape.vertices.length)
         .toBeGreaterThan(0)
     }
@@ -414,25 +414,26 @@ describe('a body', () => {
     expect(c.state.proposal.nodes[0].name).toBe('motor')
   })
 
-  it('cannot be given a name another body or the payload already has', () => {
+  it('cannot be given a name another body already has', () => {
     // TWO PARTS UNDER ONE NAME ARE ONE ROW AND ONE GROUPS ENTRY: the second
     // stands in for the first, and the eye belongs to whichever arrived last.
-    // `result` is the payload's own name for the fused body, so it is taken
-    // before the reader starts — `firstFree` in proposal.js is the rule.
+    // The bodies are the whole of it — `firstFree` in proposal.js is the rule.
     const { c } = panel({ proposal: withBlock() })
     c.computed().proposalOps[1].onClick()
     type(c.computed().proposalBodies[1].name, 'korpus')
     expect(c.state.proposal.nodes.map((node) => node.name)).toEqual(['korpus', 'korpus2'])
 
+    // AND THE PAYLOAD KEEPS NO NAME FOR ITSELF any more: it is one part per
+    // body and nothing else, so `result` is a name like any other.
     type(c.computed().proposalBodies[1].name, 'result')
-    expect(c.state.proposal.nodes[1].name).toBe('result2')
+    expect(c.state.proposal.nodes[1].name).toBe('result')
 
     // ...and a body may still be renamed to the name it already has.
     type(c.computed().proposalBodies[0].name, 'korpus')
     expect(c.state.proposal.nodes[0].name).toBe('korpus')
   })
 
-  it('flips between solid and hole, and a hole is drawn beside the result', () => {
+  it('flips between solid and hole, and a hole is drawn beside the bodies', () => {
     // The whole reason the subtraction tool is in the payload: a hole inside the
     // body is invisible the moment it is inside it, so the person cannot see
     // what they asked for or tell a hole that missed from one never added.
@@ -447,7 +448,7 @@ describe('a body', () => {
     c.computed().proposalBodies[1].onRole()
 
     expect(c.state.proposal.nodes[1].role).toBe('hole')
-    expect(overlay(el)).toEqual(['result', 'bore'])
+    expect(overlay(el)).toEqual(['korpus', 'bore'])
   })
 
   it('goes away on the cross, and the last one takes the overlay with it', () => {
@@ -529,7 +530,7 @@ describe('a document the kernel refuses', () => {
     type(lastSize(c)[1], '0,0; 20,0; 20,10')
 
     expect(c.state.proposalError).toBeNull()
-    expect(overlay(el)).toEqual(['result'])
+    expect(overlay(el)).toEqual(['korpus', 'extrude2'])
   })
 
   it('is not what an emptied field makes — that is a zero, and a zero builds', () => {
@@ -541,7 +542,7 @@ describe('a document the kernel refuses', () => {
 
     expect(c.state.proposal.nodes[0].size).toEqual([0, 20, 20])
     expect(c.state.proposalError).toBeNull()
-    expect(overlay(el)).toEqual(['result'])
+    expect(overlay(el)).toEqual(['korpus'])
   })
 })
 
@@ -698,7 +699,7 @@ describe('a number field', () => {
     expect(nudge(sizeFields(c)[0])).toBe('21')
 
     expect(c.state.proposal.nodes[0].size).toEqual([21, 20, 20])
-    expect(overlay(el)).toEqual(['result'])
+    expect(overlay(el)).toEqual(['korpus'])
     expect(el.setOverlay).toHaveBeenCalledTimes(1)
 
     // Down as well as up, on the row whose step is its own.
@@ -1054,8 +1055,8 @@ describe('a body dragged in the scene', () => {
   // name.
   //
   // WHAT IS GRABBABLE comes from the payload the panel builds (proposalgeom.js):
-  // the fused result, which is the whole proposal and therefore every node, and
-  // one part per hole, which is that hole alone.
+  // one part per body, solids and holes alike, so a grab is about the one node
+  // that part was built from and the bodies beside it do not move.
 
   /** A hole with a place of its own, so a shift reads as an addition. */
   const BORE = {
@@ -1075,18 +1076,19 @@ describe('a body dragged in the scene', () => {
 
   const withBore = () => addNode(withBlock(), BORE)
 
-  it('moves every node when the fused body is the one that was grabbed', () => {
-    // The proposal keeps its shape and lands somewhere else, which is what dragging
-    // the result has to mean: the result IS the union, so there is no one node
-    // it belongs to.
+  it('moves the one body that was grabbed, and leaves the others alone', () => {
+    // THE COMPLAINT THIS ANSWERS IN ITS TURN: "they all move together". Every
+    // body is a part of its own in the payload, so a grab reaches one node —
+    // which is what makes a proposal something you assemble by shifting its
+    // pieces against each other rather than one block you slide about.
     const { c, el } = mounted({ proposal: withBore() })
 
-    fire(RESULT_NAME, [3, 0, -1.5])
+    fire('korpus', [3, 0, -1.5])
 
-    expect(places(c)).toEqual([[3, 0, -1.5], [8, 0, -1.5]])
+    expect(places(c)).toEqual([[3, 0, -1.5], [5, 0, 0]])
     // And the body on the model is staged out of the document that says so —
     // the group the drag moved was live feedback and nothing more.
-    expect(overlay(el)).toEqual(['result', 'bore'])
+    expect(overlay(el)).toEqual(['korpus', 'bore'])
   })
 
   it('moves the one hole when the hole is what was grabbed', () => {
@@ -1104,10 +1106,10 @@ describe('a body dragged in the scene', () => {
     // same numbers.
     const { c } = mounted({ proposal: withBore() })
 
-    fire(RESULT_NAME, [3, 0, -1.5])
+    fire('korpus', [3, 0, -1.5])
 
     expect(atFields(c)).toEqual(['3', '0', '-1.5'])
-    expect(atFields(c, 1)).toEqual(['8', '0', '-1.5'])
+    expect(atFields(c, 1)).toEqual(['5', '0', '0'])
     expect(proposalText(c.state.proposal)).toContain('at (3, 0, -1.5)')
   })
 
@@ -1121,13 +1123,13 @@ describe('a body dragged in the scene', () => {
       proposal: addNode(emptyProposal(), { ...BLOCK, at: [42.3, 0, 0] }),
     })
 
-    fire(RESULT_NAME, [0.1, 0, 0])
+    fire('korpus', [0.1, 0, 0])
     expect(atFields(c)).toEqual(['42.4', '0', '0'])
 
     // AND EACH DRAG STARTS FROM WHERE THE LAST ONE LEFT IT, because the document
     // is where the body's place lives: the viewport reports a delta and carries
     // none of them, so two drags of the same distance go twice as far.
-    fire(RESULT_NAME, [0.1, 0, 0])
+    fire('korpus', [0.1, 0, 0])
     expect(atFields(c)).toEqual(['42.5', '0', '0'])
   })
 
@@ -1144,7 +1146,7 @@ describe('a body dragged in the scene', () => {
     x().onChange({ target: { value: '9' } })
     expect(c.state.proposalDraft).toEqual({ key: 'n1.at.0', text: '9' })
 
-    fire(RESULT_NAME, [3, 0, 0])
+    fire('korpus', [3, 0, 0])
 
     expect(c.state.proposalDraft).toBeNull()
     expect(atFields(c)).toEqual(['3', '0', '0'])
@@ -1158,7 +1160,7 @@ describe('a body dragged in the scene', () => {
     const { c } = mounted({ proposal: withBore() })
     c.setState({ moved: { id: '/model/plate', name: 'plate', mag: 3 } })
 
-    fire(RESULT_NAME, [3, 0, 0])
+    fire('korpus', [3, 0, 0])
 
     expect(c.state.moved).toEqual({ id: '/model/plate', name: 'plate', mag: 3 })
     expect(places(c)[0]).toEqual([3, 0, 0])
