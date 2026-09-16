@@ -222,7 +222,7 @@ const nudge = (f, way = 'up') => {
 
 describe('the panel', () => {
   it('is drawn only when it is open, and is gone from a reader with no token', () => {
-    // The gate Move part carries and Measure does not: everything the proposal
+    // The gate Move carries and Measure does not: everything the proposal
     // produces leaves this page as a comment, which is behind the token, so a
     // reader who cannot comment has nowhere to send it.
     expect(css(panel({ open: false }).c.computed().proposalPanelStyle).display).toBe('none')
@@ -334,7 +334,7 @@ describe('the panel', () => {
   })
 
   it('goes when the token does, and takes its body off the model with it', () => {
-    // The panel is HIDDEN WITHOUT A TOKEN, like Move part, because everything it
+    // The panel is HIDDEN WITHOUT A TOKEN, like Move, because everything it
     // produces leaves this page as a comment. `tokenClear` cleared the other two
     // surfaces the token gates and left this one standing: the header's button
     // was gone, so nothing could reopen it, `add to comment` was gone from under
@@ -1195,11 +1195,16 @@ describe('a proposal body as the part a task is filed against', () => {
   // proposal body is what the panel is for, and the number goes to the agent
   // unchanged. Only the part it would be filed against is refused.
   //
-  // THE MOVE TOOL IS NOT ONE OF THEM AT ALL, and it is the one that reads as
+  // THE MOVE GESTURE IS NOT ONE OF THEM AT ALL, and it is the one that reads as
   // though it should be. A drag of one is not a task filed badly: it is a
   // DIFFERENT GESTURE, told apart at the press by the viewport and ending in
   // `hmr:proposalmove`, which edits the panel's own document — the describe above
   // is where that lands, and ui/tests/tools.test.js is where the press decides.
+  // Its ROW IS OFFERED for that very reason: a body needs the same armed tool a
+  // part does, the row is the only door onto it now, and the row sets a
+  // selection — so withholding it would arm the tool holding something else and
+  // freeze the bodies. Only the SENTENCE the row raises differs, because the two
+  // moves mean different things. Both are asserted at the end of this describe.
   //
   // WHICH PATHS ARE THE OVERLAY'S IS THE VIEWPORT'S ANSWER, because that is
   // where the group's name is minted — `proposal`, or `proposal2` beside a model
@@ -1295,6 +1300,59 @@ describe('a proposal body as the part a task is filed against', () => {
     expect(c.state.composer).toMatchObject({
       part: 'plate', partId: '/model/plate', key: 'plate', meas: '12.00 mm',
     })
+  })
+
+  it('is offered a Move row of its own, since without it a body costs a click first', () => {
+    // THIS ROW IS THE ONLY DOOR ONTO THE TOOL, now that the toolbar has no
+    // button, and a body needs the tool exactly as a part does — `onDown`
+    // returns on no tool at all. The selection the row sets is what makes its
+    // absence cost something: an armed tool drags what is SELECTED, and a press
+    // outside a standing selection is refused whole (tools.test.js, 'moves
+    // nothing when the grab lands on a part outside the selection'). So a menu
+    // offering Move on the build's parts and withholding it from the bodies
+    // would arm the tool holding a PART every time, and the first grab on a body
+    // would be refused — recoverable with a separate click, which selects it,
+    // but not by trying to drag again, which only orbits.
+    const labelsOn = (id) => {
+      const { c, el } = panel({ proposal: withBlock() })
+      staging(el)
+      c.state = { ...c.state, tree: indexTree(STAGED), menu: { id, x: 0, y: 0 } }
+      return c.computed().menuItems.map((m) => m.label)
+    }
+
+    expect(labelsOn('/model/proposal/korpus')).toContain('Move')
+    expect(labelsOn('/model/plate')).toContain('Move')
+    // THE GROUP THE BODIES HANG UNDER IS STILL REFUSED, but for the reason every
+    // group is and not for being the proposal's: a group's selection is the
+    // node's own path, which no press can hit. Here it would be worse than
+    // elsewhere — `overlayBody` answers null for that node, so even a press that
+    // missed the model would move nothing at all.
+    expect(labelsOn('/model/proposal')).not.toContain('Move')
+  })
+
+  it('is told apart from a build part by the sentence the row raises', () => {
+    // The two drags MEAN different things and the toast is where the reader is
+    // told which one they are in. A part of the build moves as a statement to
+    // the agent and snaps back on the next rebuild; a body moves as an edit of
+    // the panel's document and stays where it is put. A single sentence would be
+    // false on one of them.
+    const armOn = (id) => {
+      const { c, el } = panel({ proposal: withBlock() })
+      staging(el)
+      c.state = { ...c.state, tree: indexTree(STAGED), menu: { id, x: 0, y: 0 } }
+      c.computed().menuItems.find((m) => m.label === 'Move')
+        .onClick({ stopPropagation() {}, preventDefault() {} })
+      return { c, said: c.toast.mock.calls.map(([text]) => text).join('') }
+    }
+
+    const body = armOn('/model/proposal/korpus')
+    expect(body.said).toContain('proposal')
+    expect(body.said).not.toContain('snaps back')
+    // And the selection is the body itself, which is what the drag needs.
+    expect(body.c.state.sel).toBe('/model/proposal/korpus')
+    expect(body.c.state.tool).toBe('move')
+
+    expect(armOn('/model/plate').said).toContain('snaps back')
   })
 })
 

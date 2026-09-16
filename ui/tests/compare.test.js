@@ -1069,12 +1069,13 @@ describe('a pick in the scene', () => {
 //     which `onPick` deliberately stops writing while a comparison is up, so
 //     the measurement went to the hub attached to whatever had been selected
 //     before the panel opened;
-//   * MOVE PART put a `/cmp/…` path in `partId` the same way.
+//   * MOVE put a `/cmp/…` path in `partId` the same way.
 //
-// BOTH HALVES ARE ASSERTED, because either alone leaves the door ajar: the
-// BUTTONS are what a person is stopped by, and the HANDLERS are what stops a
-// tool armed before the comparison was opened — nothing disarms one, and the
-// viewport goes on reporting the gestures it is armed for.
+// BOTH HALVES ARE ASSERTED, because either alone leaves the door ajar: what is
+// OFFERED is what a person is stopped by — two buttons drawn spent and, for
+// Move, a row of the object's menu that is not drawn at all — and the HANDLERS
+// are what stops a tool armed before the comparison was opened, since nothing
+// disarms one and the viewport goes on reporting the gestures it is armed for.
 
 describe('the canvas tools while a comparison is up', () => {
   /** A comparison on screen, with the page's real listeners on the window. */
@@ -1083,14 +1084,28 @@ describe('the canvas tools while a comparison is up', () => {
     cmpStage: 'ready', cmpReport: REPORT, tree: indexTree(CMP_TREE), ...over,
   })
 
-  it('draws all three out of service, and leaves them live on a build page', () => {
+  it('draws the two buttons out of service, and leaves them live on a build page',
+     () => {
     const off = comparing().computed()
     const on = page().computed()
 
-    for (const style of ['measureBtnStyle', 'moveBtnStyle', 'commentBtnStyle']) {
+    for (const style of ['measureBtnStyle', 'commentBtnStyle']) {
       expect(off[style], style).toContain('pointer-events:none')
       expect(on[style], style).not.toContain('pointer-events:none')
     }
+  })
+
+  it('offers Move on no row at all, which is its half of the same rule', () => {
+    // Move has no button to draw spent: it is a row of the object's own menu,
+    // and a row is either there or it is not. Asked over the COMPARISON'S OWN
+    // SOLID, which is the scene a drag would file a `/cmp/…` path out of, and
+    // then over the build's own part on a build page, so this is a claim about
+    // the comparison rather than about the row having gone missing altogether.
+    const menu = { id: `${COMPARE_GROUPS.b}/plate`, x: 10, y: 10 }
+    expect(comparing({ menu }).computed().menuItems.map((m) => m.label))
+      .not.toContain('Move')
+    expect(page({ watch: true, menu: { id: '/model/plate', x: 10, y: 10 } })
+      .computed().menuItems.map((m) => m.label)).toContain('Move')
   })
 
   it('keeps the one that is armed looking armed, so it comes back armed', () => {
