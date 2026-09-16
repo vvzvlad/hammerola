@@ -713,18 +713,18 @@ describe('what a drag with the move tool takes with it', () => {
     // against the document's own parts is the whole reason those questions
     // belong to the viewport rather than to a regex over the path.
     const GROUP = '/Group/proposal'
-    // The two kinds of part the panel's payload holds: the fused body, always
-    // under `RESULT_NAME`, and one translucent part per hole (proposalgeom.js).
-    const RESULT = `${GROUP}/result`
+    // One part per body of the document, under the body's own name: the solids
+    // and, translucent, the holes (proposalgeom.js).
+    const BODY = `${GROUP}/plate`
     const HOLE = `${GROUP}/bore`
 
     /** The scene above with the body staged into it, group node and all. */
     function overlaid(selected) {
-      const groups = Object.fromEntries([...PINS, '/Group/lid', GROUP, RESULT,
+      const groups = Object.fromEntries([...PINS, '/Group/lid', GROUP, BODY,
                                          HOLE].map((path) => [path, fakeGroup()]))
       const vp = toolViewport({ tool: 'move', selected }, fakeViewer({ groups }))
       vp.payload = { name: 'Group', parts: [] }
-      vp.overlayParts = [{ name: 'result' }, { name: 'bore' }]
+      vp.overlayParts = [{ name: 'plate' }, { name: 'bore' }]
       return { groups, vp }
     }
 
@@ -751,13 +751,13 @@ describe('what a drag with the move tool takes with it', () => {
     it('follows the hand, and says which body it was when the hand comes off', async () => {
       const { groups, vp } = overlaid([])
 
-      const [report] = await dragBody(vp, RESULT, 'result')
+      const [report] = await dragBody(vp, BODY, 'plate')
 
       // The name and nothing else: the panel's document holds bodies by name and
       // has no paths in it at all.
-      expect(report.name).toBe('result')
+      expect(report.name).toBe('plate')
       expect(report.delta.some((v) => v !== 0), 'it moved nowhere').toBe(true)
-      expect(at(groups[RESULT])).toEqual(report.delta)
+      expect(at(groups[BODY])).toEqual(report.delta)
       // And none of what a part of the build leaves behind.
       expect(vp.moved.size, 'an offset was written for it').toBe(0)
       expect(vp.partHome.size, 'a home was remembered for it').toBe(0)
@@ -769,7 +769,7 @@ describe('what a drag with the move tool takes with it', () => {
       // it has to be stopped in the capture phase — otherwise the model turns
       // under the body being dragged.
       const { vp } = overlaid([])
-      pickEntity.mockReturnValue({ id: RESULT, name: 'result', point: [0, 0, 0] })
+      pickEntity.mockReturnValue({ id: BODY, name: 'plate', point: [0, 0, 0] })
 
       const event = pointerDown(vp, [100, 100])
 
@@ -784,12 +784,12 @@ describe('what a drag with the move tool takes with it', () => {
       // the whole scene disposed and rendered again. Per snap step, that is a
       // re-stage every few pixels while the reader is still dragging.
       const { groups, vp } = overlaid([])
-      pickEntity.mockReturnValue({ id: RESULT, name: 'result', point: [0, 0, 0] })
+      pickEntity.mockReturnValue({ id: BODY, name: 'plate', point: [0, 0, 0] })
 
       dragFrom(vp)
       await settled()
 
-      expect(at(groups[RESULT]), 'the body did not follow the hand')
+      expect(at(groups[BODY]), 'the body did not follow the hand')
         .not.toEqual([0, 0, 0])
       expect(emitted(vp)).not.toContain(EVENT_PROPOSALMOVE)
 
@@ -808,7 +808,7 @@ describe('what a drag with the move tool takes with it', () => {
 
       expect(report.name).toBe('bore')
       expect(at(groups[HOLE])).toEqual(report.delta)
-      expect(at(groups[RESULT]), 'the whole proposal went with it').toEqual([0, 0, 0])
+      expect(at(groups[BODY]), 'the other body went with it').toEqual([0, 0, 0])
     })
 
     it('is concluded when the scene is swapped — but never inside the render', async () => {
@@ -828,7 +828,7 @@ describe('what a drag with the move tool takes with it', () => {
       // nothing coming to correct it. One microtask is the whole fix, and this
       // is the line that holds it.
       const { vp } = overlaid([])
-      pickEntity.mockReturnValue({ id: RESULT, name: 'result', point: [0, 0, 0] })
+      pickEntity.mockReturnValue({ id: BODY, name: 'plate', point: [0, 0, 0] })
       dragFrom(vp)
 
       vp.endGesture()
@@ -846,7 +846,7 @@ describe('what a drag with the move tool takes with it', () => {
       // the listeners down left the body displaced and the document holding the
       // place it had left.
       const { vp } = overlaid([])
-      pickEntity.mockReturnValue({ id: RESULT, name: 'result', point: [0, 0, 0] })
+      pickEntity.mockReturnValue({ id: BODY, name: 'plate', point: [0, 0, 0] })
       dragFrom(vp)
 
       window.dispatchEvent(new MouseEvent('pointercancel', {}))
@@ -861,7 +861,7 @@ describe('what a drag with the move tool takes with it', () => {
       // mid-drag. That ending is an ending like any other: the body is already
       // standing somewhere else, and only the document can be wrong about it.
       const { vp } = overlaid([])
-      pickEntity.mockReturnValue({ id: RESULT, name: 'result', point: [0, 0, 0] })
+      pickEntity.mockReturnValue({ id: BODY, name: 'plate', point: [0, 0, 0] })
       dragFrom(vp)
 
       rightDown(vp, [300, 100])
@@ -879,15 +879,15 @@ describe('what a drag with the move tool takes with it', () => {
       // remembered home would measure the second drag from where the body stood
       // before the first, and the body would jump back under the cursor.
       const { groups, vp } = overlaid([])
-      const [first] = await dragBody(vp, RESULT, 'result')
+      const [first] = await dragBody(vp, BODY, 'plate')
 
       // The re-stage: a NEW group, standing where the document now says.
-      groups[RESULT] = fakeGroup(first.delta)
+      groups[BODY] = fakeGroup(first.delta)
 
-      const [, second] = await dragBody(vp, RESULT, 'result')
+      const [, second] = await dragBody(vp, BODY, 'plate')
 
       expect(second.delta).toEqual(first.delta)
-      expect(at(groups[RESULT]), 'the body jumped back under the hand')
+      expect(at(groups[BODY]), 'the body jumped back under the hand')
         .toEqual(first.delta.map((v) => v * 2))
     })
 
@@ -895,14 +895,14 @@ describe('what a drag with the move tool takes with it', () => {
       // The selection holds both. There is no gesture that is half a statement
       // about the build and half an edit of the proposal, so a mixed grab is
       // refused whole — the same all-or-nothing the copies of a row get.
-      const { groups, vp } = overlaid(['/Group/lid', RESULT])
+      const { groups, vp } = overlaid(['/Group/lid', BODY])
       pickEntity.mockReturnValue({ id: '/Group/lid', name: 'lid', point: [0, 0, 0] })
       pointerDown(vp, [100, 100])
       pointerMove([300, 100])
       await settled()
 
       expect(vp.moved.size).toBe(0)
-      for (const path of ['/Group/lid', RESULT]) {
+      for (const path of ['/Group/lid', BODY]) {
         expect(at(groups[path]), `${path} moved anyway`).toEqual([0, 0, 0])
       }
       expect(emitted(vp)).not.toContain(EVENT_MOVED)

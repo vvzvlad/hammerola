@@ -83,9 +83,8 @@ export const EVENT_MOVED = "hmr:moved";
  * (`/<root>/proposal/bore`) and the proposal document has no paths in it at
  * all, so the panel finds the node by the NAME the body is drawn under — which
  * is the part's own `name` in the payload the panel built
- * (ui/src/proposalgeom.js).
- * `result` is the fused body and therefore every node at once; any other name is
- * the one hole drawn translucent over it.
+ * (ui/src/proposalgeom.js), where every body of the document — solid or hole —
+ * is a part of its own, so the name that goes up names the one node that moves.
  */
 export const EVENT_PROPOSALMOVE = "hmr:proposalmove";
 

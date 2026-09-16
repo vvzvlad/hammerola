@@ -5,14 +5,21 @@
 // document stays testable with no geometry computed. Everything here is pure: a
 // document in, one payload out, no state between calls.
 //
-// THE PAYLOAD CARRIES TWO THINGS, and that is the whole point of the display.
-// One part is `result` — every solid fused and every hole cut out of it — which
-// is the body the person is claiming. The others are the HOLES THEMSELVES, one
-// part each, drawn at low alpha on top of it. A hole that is only ever
-// subtracted is invisible the moment it is inside the body, so the person cannot
-// see what they have asked for, cannot point at it and cannot tell a hole that
-// missed from a hole that was never added. Showing the subtraction tool beside
-// the result is OpenSCAD's `#` modifier idiom and it is here for its reason.
+// ONE PART PER BODY, and that is the whole point of the display. Every SOLID is
+// a part of its own — the body as the document places it, with every hole cut
+// out of it — because the scene is something the reader takes hold of: the Move
+// tool over a body names the part under the cursor, so a body that is its own
+// part is a body that can be dragged away from the others. Fused into one, they
+// could only ever move together. The price is that two solids which overlap are
+// now two surfaces in the same place rather than one welded body, and that is
+// accepted: moving them apart is what the hand is for.
+//
+// THE HOLES ARE PARTS TOO, one each, drawn at low alpha over the solids. A hole
+// that is only ever subtracted is invisible the moment it is inside the body, so
+// the person cannot see what they have asked for, cannot point at it and cannot
+// tell a hole that missed from a hole that was never added. Showing the
+// subtraction tool beside the body is OpenSCAD's `#` modifier idiom and it is
+// here for its reason.
 //
 // THE HEX VALUES LIVE HERE. They are the colours of MODEL parts — the same kind
 // of value as the part colours the hub pushes in a view file — rather than
@@ -23,7 +30,7 @@ import {
   booleans, extrusions, geometries, measurements, primitives, transforms,
 } from '@jscad/modeling'
 
-// The body the person is claiming: a neutral grey that is nobody's real part.
+// The bodies the person is claiming: a neutral grey that is nobody's real part.
 const RESULT_COLOR = '#9aa3ad'
 // The subtraction tool, in the colour and the transparency OpenSCAD's `#` uses.
 const HOLE_COLOR = '#d64545'
@@ -35,12 +42,6 @@ const HOLE_ALPHA = 0.25
 // and its picking registry by have to agree with the tree it builds out of
 // wherever a part SITS — and that is under the model's root, not this one.
 const ROOT = 'proposal'
-
-// THE NAME THE PAYLOAD KEEPS FOR ITSELF. The fused body is always a part called
-// this, so a body the reader names `result` would be a second part under one id:
-// one entry in the library's groups map, one row in the tree, and no way to tell
-// which of the two the eye belongs to. The panel mints names around it.
-export const RESULT_NAME = 'result'
 
 const DEGREES = Math.PI / 180
 
@@ -79,9 +80,30 @@ function placed(node) {
 // Fusing a list that may be EMPTY, which every proposal is at least once: a
 // document with no holes, and a panel the moment it opens. `booleans.union`
 // refuses to be called with nothing, so the fold starts from an empty geometry
-// instead — and `subtract(x, empty)` is `x`, so the result expression below needs
-// no case of its own either.
+// instead — and `subtract(x, empty)` is `x`, so the subtraction below needs no
+// case of its own either.
 const fuse = (geoms) => booleans.union(geometries.geom3.create(), ...geoms)
+
+// THE ENVELOPE ROUND THE BODIES — a field of the FORMAT, and not anything on
+// screen. `bb` belongs to the shape `show()` accepts, so a payload assembled
+// here carries one; but only `parts` ever leaves this module — `setProposal`
+// takes `buildProposal(doc).parts` — and the viewport sews those into the
+// model's own document, which is the payload the viewer actually frames by.
+// Nothing in `ui/src` reads this field.
+//
+// A DOCUMENT WITH NO SOLIDS HAS NO ENVELOPE, and that is the ordinary state of a
+// panel that has just opened rather than a corner case. It is answered here
+// instead of being handed to the kernel, which refuses an empty list in the same
+// way `booleans.union` refuses one above.
+function envelope(geoms) {
+  if (!geoms.length) return [[0, 0, 0], [0, 0, 0]]
+  const boxes = geoms.map((geom) => measurements.measureBoundingBox(geom))
+  const axes = [0, 1, 2]
+  return [
+    axes.map((axis) => Math.min(...boxes.map(([min]) => min[axis]))),
+    axes.map((axis) => Math.max(...boxes.map(([, max]) => max[axis]))),
+  ]
+}
 
 /**
  * A jscad geometry as the flat arrays the viewer's `shape` is made of.
@@ -161,10 +183,12 @@ export function buildProposal(doc) {
   const solids = doc.nodes.filter((node) => node.role === 'solid')
   const holes = doc.nodes.filter((node) => node.role === 'hole')
   const holeGeoms = holes.map(placed)
-  const result = booleans.subtract(
-    fuse(solids.map(placed)), fuse(holeGeoms),
-  )
-  const [min, max] = measurements.measureBoundingBox(result)
+  // EVERY HOLE IS CUT OUT OF EVERY SOLID, since a hole belongs to the proposal
+  // and not to the body it happens to sit inside: the reader drills a bore
+  // through a plate and expects it through whatever else is in its way.
+  const cutter = fuse(holeGeoms)
+  const solidGeoms = solids.map((node) => booleans.subtract(placed(node), cutter))
+  const [min, max] = envelope(solidGeoms)
 
   return {
     version: 3,
@@ -178,7 +202,9 @@ export function buildProposal(doc) {
     },
     normal_len: 0,
     parts: [
-      part(RESULT_NAME, result, RESULT_COLOR, 1),
+      ...solids.map((node, index) => part(
+        node.name, solidGeoms[index], RESULT_COLOR, 1,
+      )),
       ...holes.map((node, index) => part(
         node.name, holeGeoms[index], HOLE_COLOR, HOLE_ALPHA,
       )),

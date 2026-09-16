@@ -188,11 +188,12 @@ describe('which layout the page comes up in', () => {
   })
 
   it('disarms the tool on the way in, since nothing narrow can disarm it', () => {
-    // A tool is armed from the toolbar and put away from the same buttons or
-    // from Escape — and the narrow branch takes those buttons away, while a
-    // phone has no Escape key. Measure armed in landscape would turn every
-    // touch after a rotation into a measurement point; Move part would drag a
-    // part where an orbit was meant.
+    // A tool is armed from the toolbar — or, for Move, from an object's row
+    // menu — and put away from the toolbar buttons or from Escape. The narrow
+    // branch takes those buttons away and the row menu with them, while a phone
+    // has no Escape key. Measure armed in landscape would turn every touch after
+    // a rotation into a measurement point; Move would drag a part where an orbit
+    // was meant.
     const { change } = fakeMatchMedia(false)
     const c = mounted({ tool: 'measure' })
 
@@ -426,10 +427,16 @@ describe('the toolbar on a narrow window', () => {
 
     // Gestures that want a pointer and a canvas with room to aim in, and a PNG
     // a phone has nowhere to put.
-    for (const gone of ['Measure', 'Move part', 'Comment', 'Frame']) {
+    //
+    // MOVE IS NOT ON THIS LIST because it is not on this strip: it is a row of
+    // each object's own menu, and the width takes it away there instead — the
+    // group below is where that half is asserted. The button it used to be was
+    // spelled `Move part`, and nothing on the page says those two words now.
+    for (const gone of ['Measure', 'Comment', 'Frame']) {
       expect(wide).toContain(gone)
       expect(narrow).not.toContain(gone)
     }
+    expect(wide).not.toContain('Move part')
 
     // AND THE THEME IS NO LONGER ONE OF THEM. It stood in this list while it
     // was a canvas setting living in this strip, which left the one preference
@@ -446,6 +453,38 @@ describe('the toolbar on a narrow window', () => {
     const rules = (over) => drawn(over).filter((s) => s.width === '1px' && s.height === '18px')
     expect(rules({})).toHaveLength(2)
     expect(rules({ narrow: true })).toHaveLength(0)
+  })
+})
+
+// -- the tool that is armed from somewhere else -------------------------------
+
+describe('the Move row of an object\'s menu on a narrow window', () => {
+  /** The row menu open on one part, at a chosen width. */
+  const labelsOn = (over) => {
+    const c = component(over)
+    c.state.tree = indexTree({ id: '/model',
+                               name: 'model',
+                               children: [{ id: '/model/lid', name: 'lid', key: 'lid' }] })
+    c.state.menu = { id: '/model/lid', x: 0, y: 0 }
+    return c.computed().menuItems.map((m) => m.label)
+  }
+
+  it('goes with the toolbar, because it is the same gesture wanting the same room',
+     () => {
+    // Move left the strip above and the width has to keep taking it away, or
+    // the narrow branch would hand back through a menu exactly the tool it
+    // drops the buttons for. BOTH SIDES, like everything in this file: a row
+    // that had gone missing at every width would pass a one-sided check.
+    expect(labelsOn({})).toContain('Move')
+    expect(labelsOn({ narrow: true })).not.toContain('Move')
+  })
+
+  it('leaves the rest of the menu exactly where it was', () => {
+    // The width is about aiming a gesture at the model, and nothing else on this
+    // menu is a gesture: what a reader can still do to a part on a phone is
+    // hide it, isolate it, read its files and copy its name.
+    expect(labelsOn({ narrow: true }))
+      .toEqual(['Isolate', 'Hide', 'Translucent', 'Note', 'STL', 'Copy name'])
   })
 })
 

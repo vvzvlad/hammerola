@@ -566,6 +566,109 @@ describe('a hidden row carried onto the next build', () => {
   })
 })
 
+// -- the row that arms that drag ----------------------------------------------
+//
+// Move used to be a button in the toolbar: it armed a gesture and left the
+// reader to find the part afterwards. It is a row of each object's own menu now,
+// which means the object is already named when the tool is armed — and a row
+// standing for three copies names all three, which is why this is the file that
+// holds it.
+
+describe('the Move row of the part menu', () => {
+  /** The menu open on one row, and the row that arms the tool from it. */
+  const moveOn = (id, over = {}) => {
+    const c = component(THREE_PINS, { menu: { id, x: 0, y: 0 }, ...over })
+    return { c, row: c.computed().menuItems.find((m) => m.label === 'Move') }
+  }
+
+  it('selects the object it was opened on before it arms the tool', () => {
+    // ONE WRITE, and the selection is the half that makes the row mean what it
+    // says: the armed tool drags what is SELECTED and only falls back to the
+    // part under the cursor when nothing is (`onDown` in viewport/tools.js).
+    // Neither door into this menu writes `sel` — a right-click selects nothing,
+    // from the tree or from the scene — so Move chosen on the pins while the LID
+    // stood selected would have dragged the lid.
+    const { c, row } = moveOn('/model/pin', { sel: '/model/lid', selName: 'lid' })
+
+    row.onClick(click)
+
+    expect(c.state.sel).toBe('/model/pin')
+    expect(c.state.selName).toBe('pin')
+    expect(c.state.tool).toBe('move')
+    // AND THE VIEWPORT IS TOLD, which is what `set` buys over `setState`: it is
+    // holding both the tool and the selection, and a page that only wrote them
+    // on this side would arm a drag the library never heard about.
+    expect(c.sync).toHaveBeenCalled()
+  })
+
+  it('is not offered on a group, whose selection no press can ever hit', () => {
+    // A LEAF IS SPREAD INTO ITS COPIES AND A GROUP IS NOT: `selectedPaths`
+    // answers a group with the node's OWN path, which is not the path of
+    // anything the reader can put a cursor on. The armed tool then refuses every
+    // grab on a part inside that group, because a press outside the standing
+    // selection is refused whole — see 'moves nothing when the grab lands on a
+    // part outside the selection' in tools.test.js. The only press that would
+    // move anything is one that MISSES the model, which takes the entire
+    // sub-assembly: not what a row promising to move THIS object means.
+    const { c, row } = moveOn('/model')
+
+    expect(row).toBeUndefined()
+    // And the rest of the group's menu is untouched by that.
+    expect(c.computed().menuItems.map((m) => m.label)).toContain('Isolate')
+  })
+
+  it('arms the drag for every copy the row stands for', () => {
+    // `selectedPaths` expands a leaf row to its whole run, which is what the
+    // viewport is given and what `movePart` then moves. The row says `pin ×3`
+    // and three is what goes.
+    const { c, row } = moveOn('/model/pin')
+
+    row.onClick(click)
+
+    expect(c.selectedPaths()).toEqual(PIN_PATHS)
+  })
+
+  it('says the move is temporary, because that is the surprising half', () => {
+    // The sentence the button used to raise. A drag is a STATEMENT to the agent
+    // and the model is untouched, so the part is back where the build put it on
+    // the next rebuild — which nothing else on the screen says.
+    const { c, row } = moveOn('/model/pin')
+
+    row.onClick(click)
+
+    expect(c.toast).toHaveBeenCalledWith(
+      'Drag a part — it snaps back on the next rebuild')
+  })
+
+  it('arms rather than toggles, unlike the button it replaced', () => {
+    // A row of a menu that closes behind it is not something a reader presses a
+    // second time to undo, so pressing it with the tool already in hand leaves
+    // it in hand. Escape is still what puts it away.
+    const { c, row } = moveOn('/model/pin', { tool: 'move' })
+
+    row.onClick(click)
+
+    expect(c.state.tool).toBe('move')
+  })
+
+  it('is not offered to a reader with no token', () => {
+    // The gate the button carried, spelled as absence: a drag's only outcome is
+    // the chip, whose one door is `movedAttach` — a composer, and a comment is
+    // behind the token. Both sides, so this is a claim about the token rather
+    // than about the row having gone missing altogether.
+    expect(moveOn('/model/pin', { token: null }).row).toBeUndefined()
+    expect(moveOn('/model/pin').row).toBeDefined()
+  })
+
+  it('closes the menu behind it, like every other row that acts', () => {
+    const { c, row } = moveOn('/model/pin')
+
+    row.onClick(click)
+
+    expect(c.state.menu).toBeNull()
+  })
+})
+
 // -- the moved chip -----------------------------------------------------------
 
 describe('the chip that reports a drag', () => {

@@ -58,11 +58,11 @@ export function updateNode(doc, id, patch) {
  * has to be, since the panel shows those fields and the projection the agent
  * reads is rendered off them.
  *
- * A LIST OF IDS AND NOT A NAME, so this module still knows nothing about the
- * geometry: which bodies a grab means — every one of them for the fused result,
- * one for a hole — is a fact about the PAYLOAD (`RESULT_NAME` in
- * proposalgeom.js), and answering it here would make this module import the
- * kernel it is kept apart from.
+ * IDS AND NOT A NAME, so this module still knows nothing about the geometry:
+ * which body a grab means — the one it was drawn under, since the payload gives
+ * every body a part of its own (proposalgeom.js) — is a fact about the PAYLOAD,
+ * and answering it here would make this module import the kernel it is kept
+ * apart from.
  *
  * ROUNDED, and to a place no dimension in this panel reaches. `at` is drawn in a
  * field and printed in the projection, so `42.3 + 0.1` has to read as `42.4` and
@@ -84,10 +84,10 @@ export function moveNodes(doc, ids, delta) {
  * The first of `wanted`, `wanted2`, `wanted3`, … that nothing has taken.
  *
  * WHAT THE BODIES MINT THEIR NAMES BY — `freeName` in HammerolaViewer.jsx,
- * which builds the set of taken names and adds the result part's name to it. It
- * lives here rather than beside that caller because a name is a fact about the
- * DOCUMENT: two bodies under one name are one part in the payload and one row in
- * the tree, whichever field the name was typed into.
+ * which builds the set of names the document has already taken. It lives here
+ * rather than beside that caller because a name is a fact about the DOCUMENT:
+ * two bodies under one name are one part in the payload and one row in the tree,
+ * whichever field the name was typed into.
  */
 export function firstFree(wanted, taken) {
   if (!taken.has(wanted)) return wanted

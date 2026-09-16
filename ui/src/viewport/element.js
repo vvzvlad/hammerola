@@ -165,7 +165,7 @@ function overlayAt(payload) {
  * vendored library; `treeFromShapes` on this side spells it the same way). In a
  * pushed view file the two are the same string and nothing notices they are two
  * questions. An overlay built somewhere else carries ids of its own
- * (`/proposal/result`), and left alone it renders perfectly while ghosting and
+ * (`/proposal/motor`), and left alone it renders perfectly while ghosting and
  * selection quietly do nothing to it: both look the part up by the tree's
  * spelling and miss.
  *
@@ -968,8 +968,8 @@ export class HmrViewport extends HTMLElement {
    * `/<root>/proposal/bore`, which is a spelling of the SCENE that nothing in
    * the document has ever seen.
    * The name is the part's own `name` in the payload the panel built
-   * (proposalgeom.js), which is where the two halves meet: `result` is the fused
-   * body, and every other name is a hole with a node of its own.
+   * (proposalgeom.js), which is where the two halves meet: every part there is
+   * one body of the document, solid or hole, under that body's own name.
    *
    * THE GROUP ANSWERS NULL, and that is the one real decision in here. It is a
    * row of the tree like any other and it can be selected and dragged from empty

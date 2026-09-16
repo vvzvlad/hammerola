@@ -56,8 +56,8 @@ import {
  *   MOVED    {id, name, count, delta: [x, y, z]}  -- a part was dragged; `count`
  *            is how many copies of it went along, `id`/`name` the first of them
  *   PROPOSALMOVE {name, delta: [x, y, z]}  -- a body of the PROPOSAL was dragged;
- *            `name` is the body it was drawn under, `result` meaning the fused
- *            body and therefore every node of the document at once
+ *            `name` is the body it was drawn under, and it names the one node of
+ *            the document that moves
  *   PLACE    {id, name, p: [x, y, z]}       -- a point was picked for a comment
  *   PIN      {id}                           -- a comment pin was clicked
  *   MODEL    {view, buildKey, tree, live}   -- a view finished rendering

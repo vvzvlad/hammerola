@@ -126,7 +126,7 @@ import {
   addNode, emptyProposal, firstFree, isEmpty, moveNodes, removeNode, proposalText,
   updateNode,
 } from './proposal.js';
-import { buildProposal, RESULT_NAME } from './proposalgeom.js';
+import { buildProposal } from './proposalgeom.js';
 import {
   css, FONTS, SANS, MONO, Mark, NARROW, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
 } from './style.jsx';
@@ -1102,7 +1102,7 @@ export default class HammerolaViewer extends React.Component {
   viewer() { return !this.state.token; }
 
   /**
-   * Are the three canvas tools — Measure, Comment, Move part — out of service?
+   * Are the three canvas tools — Measure, Comment, Move — out of service?
    *
    * THEY ARE, FOR AS LONG AS THE SCENE ON SCREEN IS A COMPARISON'S, and the
    * reason is the same one that took the file rows and Isolate out of the scene
@@ -1121,7 +1121,7 @@ export default class HammerolaViewer extends React.Component {
    *     nobody clears — so a measurement taken off the comparison went to the
    *     hub attached to whatever part happened to be selected before the panel
    *     opened;
-   *   * MOVE PART put a `/cmp/…` path in `partId` the same way.
+   *   * MOVE put a `/cmp/…` path in `partId` the same way.
    *
    * THE QUESTION IS `comparePair()` AND NOT `s.compare`, which is the same
    * reading `sync` points the viewport with and `onPick` resolves a pick by, so
@@ -1130,10 +1130,10 @@ export default class HammerolaViewer extends React.Component {
    * a comment, a measurement and a drag there are about the build and are
    * honest — it is the scene that decides, not the panel.
    *
-   * BOTH ENDS ARE CLOSED with it: the buttons draw themselves spent
-   * (`computed`), and the three handlers return early — a tool armed before the
-   * comparison was opened is still armed, and the viewport would go on reporting
-   * gestures for it otherwise.
+   * BOTH ENDS ARE CLOSED with it: the two buttons draw themselves spent and
+   * Move's row is not offered at all (`computed`), and the three handlers return
+   * early — a tool armed before the comparison was opened is still armed, and
+   * the viewport would go on reporting gestures for it otherwise.
    */
   toolsOff() { return !!this.comparePair(); }
 
@@ -1149,13 +1149,15 @@ export default class HammerolaViewer extends React.Component {
    * written in the BUILD's terms about a body that is in no build, no catalogue
    * and no revision, and the agent has nothing to look the path up in.
    *
-   * THE MOVE TOOL IS NOT A READER OF THIS, and it is the one that looks like it
-   * should be. A drag of a proposal body is not refused at all: it is a
+   * THE MOVE GESTURE IS NOT REFUSED BY THIS. A drag of a proposal body is a
    * DIFFERENT GESTURE, told apart a step earlier by the viewport (`onDown` in
    * viewport/tools.js, which asks the same `isOverlay`) and ending in
    * `hmr:proposalmove` — an edit of the panel's own document rather than a task
    * about a part. So nothing about such a body ever reaches the `hmr:moved`
-   * handler, and this question is never asked there.
+   * handler, and this question is never asked there. The row menu offers Move on
+   * a body exactly as it does on a part, since a body needs the same armed tool;
+   * what this answer decides there is only WHICH SENTENCE the row raises, the
+   * two moves meaning different things.
    *
    * THE MEASUREMENT ITSELF IS NOT ONE OF THESE and is deliberately left alone:
    * a distance between two faces of a proposal body is the sort of thing the
@@ -1328,22 +1330,20 @@ export default class HammerolaViewer extends React.Component {
         const d = (e.detail && e.detail.delta) || [];
         if (d.length !== 3 || !d.every(Number.isFinite)) return;
         const doc = this.state.proposal || emptyProposal();
-        // THE RESULT IS EVERY NODE AND A HOLE IS ITS OWN, which is what the
-        // payload the panel builds offers to the hand: one part for the fused
-        // body and one translucent part per hole (proposalgeom.js). Dragging the
-        // result moves the whole proposal — every node by the same delta, so it
-        // keeps its shape and lands somewhere else — and dragging a hole moves
-        // that hole through the body.
+        // ONE BODY MOVES, AND IT IS THE ONE UNDER THE CURSOR. The payload the
+        // panel builds offers the hand a part per body — every solid its own,
+        // every hole its own (proposalgeom.js) — so a drag is about the single
+        // node that part was built from, and the bodies beside it stay where the
+        // document put them. That is the point of dragging at all: a proposal is
+        // assembled by shifting its pieces against each other.
         //
         // BY NAME, because a name is what the two halves share: the body's name
         // in the document is the part's `name` in the payload, and `freeName`
-        // keeps them unique and keeps `RESULT_NAME` out of the reader's reach.
-        // A name no node answers to moves nothing rather than guessing, which is
-        // a drag that landed while the document was being edited from somewhere
-        // else.
+        // keeps them unique. A name no node answers to moves nothing rather than
+        // guessing, which is a drag that landed while the document was being
+        // edited from somewhere else.
         const ids = doc.nodes
-          .filter((node) => e.detail.name === RESULT_NAME
-            || node.name === e.detail.name)
+          .filter((node) => node.name === e.detail.name)
           .map((node) => node.id);
         if (!ids.length) return;
         // THE DRAFT GOES FIRST, exactly as `commitProposal` drops it and for the
@@ -1518,11 +1518,12 @@ export default class HammerolaViewer extends React.Component {
     // this component would `setState` on one that is gone.
     //
     // AND AN ARMED TOOL DOES NOT SURVIVE THE CROSSING. `tool` is armed from the
-    // toolbar and disarmed from the same buttons or from Escape — and the
-    // narrow branch drops those buttons, while a phone has no Escape key. So
+    // toolbar, or for Move from an object's row menu; it is put away from the
+    // toolbar buttons or from Escape — the menu row only ever arms — and the
+    // narrow branch drops the buttons, while a phone has no Escape key. So
     // Measure armed in landscape would turn every touch on the model into a
-    // measurement point after a rotation, and Move part, for somebody with a
-    // token, would drag a part where an orbit was meant. Through `this.set`
+    // measurement point after a rotation, and Move, for somebody with a token,
+    // would drag a part where an orbit was meant. Through `this.set`
     // rather than `setState`, because the VIEWPORT is holding that tool too and
     // has to be told it is over; the wide direction is a plain `setState`, since
     // nothing there is being taken away.
@@ -3192,8 +3193,8 @@ export default class HammerolaViewer extends React.Component {
    * shape on screen stays the last one that meant something.
    *
    * NOTHING TO DRAW IS NOT AN ERROR: a document with no bodies in it — a panel
-   * just opened, the last body deleted — builds a result with no geometry, and
-   * an empty part in the tree is worse than no overlay at all.
+   * just opened, the last body deleted — builds a payload with no parts in it,
+   * and an empty overlay in the tree is worse than no overlay at all.
    */
   setProposal(doc) {
     let parts = null;
@@ -3960,13 +3961,13 @@ export default class HammerolaViewer extends React.Component {
     // Keeping the solid's name for the sake of those readers stores a second
     // answer rather than a truer one. EVERY OTHER WRITER THAT PUTS A NAME
     // HERE ALREADY DOES EXACTLY THIS, and a grep for the field is what says
-    // so rather than a count to be taken on trust: four assignments, of
-    // which one carries a name — the tree row's `onSelect`, off the row's
-    // own `name` — and two carry `''`, the initial state and `leaveBuild`.
-    // This is the fourth. The menu's Isolate was the second namer until
-    // issue #83 took the pair off it entirely: it hides everything else and
-    // writes no selection at all, because the selection shader replaces a
-    // part's colour and colour is an assertion on this page.
+    // so rather than a count to be taken on trust: five assignments, this one
+    // included. Of the other four, two carry a name — the tree row's `onSelect`
+    // and the row menu's `Move`, each off the row's own `name` — and two carry
+    // `''`, the initial state and `leaveBuild`. The menu's Isolate was a namer
+    // too until issue #83 took the pair off it entirely: it hides everything
+    // else and writes no selection at all, because the selection shader replaces
+    // a part's colour and colour is an assertion on this page.
     //
     // WHAT THE DIVERGENCE COST IS NOT HYPOTHETICAL, and it is reached
     // without ever leaving the build. `measAdd` fills a comment out of the
@@ -4021,7 +4022,9 @@ export default class HammerolaViewer extends React.Component {
    * here: a tree row's menu leaves the selection alone, and a menu that meant
    * "look at this" from one door and "select this and look at it" from the other
    * is worse than either. So the part under the cursor gets a menu and the
-   * reader's selection stays where they put it.
+   * reader's selection stays where they put it. OPENING the menu, that is — one
+   * row inside it, `Move`, writes the selection deliberately, and says on itself
+   * why the tool it arms would otherwise take hold of the wrong thing.
    *
    * NO ID IS EMPTY SPACE, and it CLOSES the menu rather than opening one about
    * the view: there are no view-level items to put in it today, and a menu with
@@ -4604,14 +4607,31 @@ export default class HammerolaViewer extends React.Component {
                                      at === 0 ? 'top' : '', fileHref(f.file)));
     };
 
+    // THE ONLY QUESTION THE NARROW LAYOUT IS ASKED, and every answer that
+    // depends on it is baked into a style string below rather than branched on
+    // in `render()` — except where the change is which ELEMENTS exist, which no
+    // string can express. `!!` because a state written by hand — which is how
+    // every test in ui/tests builds one — need not carry the field at all, and
+    // "not there" is the wide layout.
+    //
+    // ASKED THIS EARLY BECAUSE THE ROW MENU ASKS IT TOO, and it is the one asker
+    // that sits above `computed`'s style strings rather than below them.
+    const narrow = !!s.narrow;
+
     // WHILE A COMPARISON IS UP, VISIBILITY IS THE THREE TABS AND NOTHING ELSE.
     // `sync` sends the tabs' own hidden list and ignores `s.hidden`/`s.ghost`
-    // while the scene is a comparison's, so the three items below would do
-    // NOTHING VISIBLE and write to the reader's build lists behind their back —
-    // Isolate worst of all, which replaces `s.hidden` wholesale with `/cmp/…`
-    // paths that match nothing in the build's tree, so the parts they had hidden
-    // before comparing came back on screen when they closed the panel. The same
-    // question `sync` asks, so the two cannot answer it differently.
+    // while the scene is a comparison's, so the three visibility items below
+    // would do NOTHING VISIBLE and write to the reader's build lists behind
+    // their back — Isolate worst of all, which replaces `s.hidden` wholesale
+    // with `/cmp/…` paths that match nothing in the build's tree, so the parts
+    // they had hidden before comparing came back on screen when they closed the
+    // panel. The same question `sync` asks, so the two cannot answer it
+    // differently.
+    //
+    // MOVE RIDES IN THE SAME EXCLUSION ON ITS OWN GROUND, which is `toolsOff`'s:
+    // a drag inside a comparison files a `/cmp/…` path as the part a comment is
+    // about. Its row says so where it stands; it is in this block because the
+    // block is where a row that must not be offered over a comparison goes.
     //
     // AND THE FILES GO WITH THEM, on a stronger ground than "they would do
     // nothing": they would do the WRONG THING quietly. The catalogue on this
@@ -4637,6 +4657,78 @@ export default class HammerolaViewer extends React.Component {
         }),
         mi('Hide', '', () => this.setVisibility({ hidden: this.toggle(s.hidden, mNode.leaves) })),
         mi('Translucent', 'see through it', () => this.setVisibility({ ghost: this.toggle(s.ghost, mNode.leaves) })),
+        // THE MOVE TOOL, ARMED ON THIS OBJECT. It used to be a button in the
+        // toolbar, which armed a gesture and left the reader to find the part
+        // afterwards; here the object is already named, so the row can do both.
+        //
+        // AND IT SELECTS BEFORE IT ARMS, in one write, which is the half that
+        // makes the row mean what it says. The armed tool drags what is
+        // SELECTED and only falls back to the part under the cursor when
+        // nothing is (`onDown` in viewport/tools.js) — and neither door into
+        // this menu writes `sel`: a right-click on a tree row does not select,
+        // and neither does one on the part in the scene. So Move chosen here
+        // while another object stood selected would have dragged that other
+        // one, or refused the press.
+        //
+        // ARMED AND NOT TOGGLED, unlike the toolbar buttons `setTool` draws: a
+        // row of a menu that closes behind it is not something a reader presses
+        // a second time to undo. Escape still disarms, as it always did.
+        //
+        // AND THE SELECTION IS WHY THE ROW IS OFFERED ON A PROPOSAL BODY TOO,
+        // rather than being the one kind of object this is kept off. Such a body
+        // needs the same armed tool as any part (`onDown` returns on no tool at
+        // all), and an armed tool drags what is SELECTED: a press outside a
+        // standing selection is refused whole. So a row offered on the parts and
+        // withheld from the bodies would arm the tool holding a PART every time,
+        // and the first grab on a body would be refused.
+        //
+        // NOT UNREACHABLE — ONE GESTURE MORE, AND AN OBSCURE ONE. The refused
+        // press degrades to a plain one, so a CLICK on the body selects it and
+        // the drag after that takes it. A drag is not a click, though: a press
+        // that travels goes to `conclude` instead (`onUp` in viewport/tools.js)
+        // and rotates the view, selecting nothing. So a reader who simply tries
+        // to drag the body gets an orbit, and the step that would have worked is
+        // one they had no reason to try.
+        //
+        // THE SENTENCE IS NOT THE SAME FOR THE TWO, because the surprising half
+        // differs. A part of the MODEL moves as a statement to the agent and the
+        // model is untouched, so it goes back where the build put it. A body of
+        // the PROPOSAL moves as an edit of the panel's own document, which is
+        // the thing the reader is authoring — it stays where it is put, and the
+        // numbers in the panel follow it.
+        //
+        // AND A GROUP IS REFUSED BY THE SAME ARITHMETIC THE BODIES ALMOST WERE.
+        // `selectedPaths` spreads a LEAF into the copies of its part, but a group
+        // it leaves as the node's own path — so arming from a group row puts one
+        // path in the selection that no press will ever hit, and every grab on a
+        // part inside that group is then outside the selection and refused. The
+        // only press that moves anything is one that MISSES the model, which
+        // takes the whole sub-assembly. A row promising to move this object,
+        // which then turns every grab on it into an orbit, is worse than no row:
+        // `Note` and the file rows already stand off a group for reasons of
+        // their own, and this is a third.
+        //
+        // TWO MORE THINGS TAKE IT AWAY, each answering a different question.
+        // `viewer` is about who the reader IS: a model drag's only outcome is
+        // the chip, whose one door is `movedAttach`, which opens a composer that
+        // is itself behind the token — and the proposal panel is behind it too,
+        // so a reader without one has neither kind of object to move. `narrow`
+        // is about the WINDOW: the toolbar drops every tool at that width and
+        // the crossing disarms the one in hand (`componentDidMount`), because
+        // there is no room to aim on a phone, and a row that armed one anyway
+        // would hand back exactly what narrow takes away.
+        //
+        // The comparison is the fourth, and it is the block above rather than a
+        // condition here: a drag inside one puts a `/cmp/…` path in `partId`,
+        // which is what `toolsOff` refuses everywhere else.
+        ...(viewer || narrow || mNode.isNode ? [] : [
+          mi('Move', '', () => {
+            this.set({ sel: mNode.id, selName: mNode.name, tool: 'move' });
+            this.toast(this.proposalBody(mNode.id)
+              ? 'Drag the body — the proposal keeps it where you put it'
+              : 'Drag a part — it snaps back on the next rebuild');
+          }),
+        ]),
       ]),
       // A NOTE IS FILED UNDER THE CATALOGUE KEY, so a row that has none is not
       // offered one — and the reason is the WRITE, not the catalogue. A note
@@ -4724,7 +4816,6 @@ export default class HammerolaViewer extends React.Component {
       this.set({ tool: s.tool === t ? null : t, revOpen: false, dlOpen: false, viewsOpen: false, menu: null });
       if (t === 'comment' && s.tool !== 'comment') this.toast('Click a spot on the model to pin the task');
       if (t === 'measure' && s.tool !== 'measure') this.toast('Click a part for its size, or two for the gap between them');
-      if (t === 'move' && s.tool !== 'move') this.toast('Drag a part — it snaps back on the next rebuild');
     };
 
     // Two of these are reachable today. `building` and `failed` need a job id
@@ -4739,14 +4830,6 @@ export default class HammerolaViewer extends React.Component {
 
     const railOpen = s.rail === null ? this.props.commentsOpen : s.rail;
     const cutOn = s.secOn || s.held;
-
-    // THE ONLY QUESTION THE NARROW LAYOUT IS ASKED, and every answer that
-    // depends on it is baked into a style string below rather than branched on
-    // in `render()` — except where the change is which ELEMENTS exist, which no
-    // string can express. `!!` because a state written by hand — which is how
-    // every test in ui/tests builds one — need not carry the field at all, and
-    // "not there" is the wide layout.
-    const narrow = !!s.narrow;
 
     // A POPOVER AS ONE SHEET ALONG THE BOTTOM EDGE. Panels on this page are
     // placed from the CONTROL that opens them, which at phone width puts them
@@ -5009,13 +5092,12 @@ export default class HammerolaViewer extends React.Component {
     };
 
     // THE FIRST FREE NAME, and for a harder reason than tidiness. A body's name
-    // is its part's `name` in the payload, every hole is drawn as a part of its
-    // own under it, and the fused body is always the part called `RESULT_NAME` —
-    // so two bodies under one name are one entry in the library's groups map and
-    // one row in the tree, the second quietly standing in for the first. This has
-    // to hold for a name the reader TYPES and not only for one the + button
-    // mints: naming a body after the thing it stands for — `motor`, `wall` — is
-    // most of what the panel is for.
+    // is its part's `name` in the payload and every body is drawn as a part of
+    // its own — so two bodies under one name are one entry in the library's
+    // groups map and one row in the tree, the second quietly standing in for the
+    // first. This has to hold for a name the reader TYPES and not only for one
+    // the + button mints: naming a body after the thing it stands for —
+    // `motor`, `wall` — is most of what the panel is for.
     //
     // THE LOOP ITSELF IS `firstFree` IN proposal.js, beside the document it is a
     // fact about rather than here: what a name is when something already answers
@@ -5025,7 +5107,6 @@ export default class HammerolaViewer extends React.Component {
       const taken = new Set(doc.nodes
         .filter((node) => node.id !== exceptId)
         .map((node) => node.name));
-      taken.add(RESULT_NAME);
       return firstFree(wanted, taken);
     };
 
@@ -5152,7 +5233,7 @@ export default class HammerolaViewer extends React.Component {
         // The feed goes with it: it was fetched under a token this browser no
         // longer has, and a reader without one may not read the queue at all.
         //
-        // AND THE PROPOSAL PANEL, which is HIDDEN WITHOUT A TOKEN like Move part
+        // AND THE PROPOSAL PANEL, which is HIDDEN WITHOUT A TOKEN like Move
         // — everything it produces leaves this page as a comment. Left open it
         // is a panel the button no longer offers to reopen, with `add to
         // comment` gone from under it and a body standing over the model that
@@ -5394,10 +5475,14 @@ export default class HammerolaViewer extends React.Component {
         + (s.viewsOpen ? '17' : '12'),
       // WHAT THE TOOLBAR KEEPS WHEN IT IS THE WIDTH OF A PHONE: the view tabs
       // and Fit, which are the two controls about LOOKING at the model. The
-      // rest goes — Measure, Move part and Comment are gestures that want a
-      // pointer and a canvas with room to aim in, Frame saves a PNG a phone has
-      // nowhere to put, and the theme toggle is a preference rather than a step.
-      // The dividers go with them: three rules with nothing left between them.
+      // rest goes — Measure and Comment are gestures that want a pointer and a
+      // canvas with room to aim in, Frame saves a PNG a phone has nowhere to
+      // put, and the theme toggle is a preference rather than a step. The
+      // dividers go with them: three rules with nothing left between them.
+      //
+      // MOVE IS NOT ON THIS STRIP and goes narrow all the same, out of its own
+      // row in `menuItems`: it is the same gesture wanting the same room, and
+      // the flag it reads is this one.
       //
       // IT TAKES AWAY NO POPOVER, and this once said the opposite — it read as
       // the reason some of this page's popovers needed clamping and others did
@@ -5410,31 +5495,35 @@ export default class HammerolaViewer extends React.Component {
       // added. `narrow.test.js` names the clamped ones and asserts it — the
       // list lives there, where it can fail.
       showTools: !narrow,
-      // AND ALL THREE ARE OUT OF SERVICE WHILE THE SCENE IS A COMPARISON'S,
-      // which is a different question from the `viewer` beside it: that one is
-      // about who the reader IS, this one about what is under the cursor. What
-      // each of the three filed against a comparison, and why the answer is
-      // `toolsOff()` rather than `s.compare`, is written out on the method. The
-      // buttons are the half a person sees; the handlers are the half that
-      // stops a tool armed before the panel opened.
+      // AND BOTH ARE OUT OF SERVICE WHILE THE SCENE IS A COMPARISON'S, which is
+      // a different question from the `viewer` beside it: that one is about who
+      // the reader IS, this one about what is under the cursor. What each tool
+      // filed against a comparison, and why the answer is `toolsOff()` rather
+      // than `s.compare`, is written out on the method. The buttons are the half
+      // a person sees; the handlers are the half that stops a tool armed before
+      // the panel opened.
+      //
+      // MOVE IS NOT A BUTTON HERE ANY MORE: it is armed from the object's own
+      // row menu (`menuItems`), which is where the reader has already said WHICH
+      // object the drag is about. Its share of `toolsOff` is the `compared`
+      // exclusion that row sits inside.
       tMeasure: setTool('measure'),
       measureBtnStyle: btn(s.tool === 'measure', false, this.toolsOff()),
-      tMove: setTool('move'),
-      moveBtnStyle: btn(s.tool === 'move', viewer, this.toolsOff()),
       tComment: setTool('comment'),
       commentBtnStyle: btn(s.tool === 'comment', viewer, this.toolsOff()),
       // NOT ONE OF `s.tool`, and that is the whole difference between this
-      // button and the three above it. Those three ARM A GESTURE on the canvas
+      // button and the two above it. Those two ARM A GESTURE on the canvas
       // and the viewport is told which one; this one opens a panel of number
       // fields and arms nothing of its own. The bodies it stages CAN be dragged
-      // — under the MOVE tool, back up this same strip, because a staged body is
-      // a body in the scene like any other and one tool for moving things is
-      // better than two. What that drag means is the panel's business: it ends in
-      // `hmr:proposalmove` and writes the body's `at`, raising no chip. So this
-      // button is drawn like its neighbours and lit from its own flag.
+      // — under the MOVE tool, armed from any part's row menu, because a staged
+      // body is a body in the scene like any other and one tool for moving
+      // things is better than two. What that drag means is the panel's business:
+      // it ends in `hmr:proposalmove` and writes the body's `at`, raising no
+      // chip. So this button is drawn like its neighbours and lit from its own
+      // flag.
       //
-      // HIDDEN WITHOUT A TOKEN, like Move part and unlike Measure: everything
-      // the proposal produces leaves this page as a comment, which is behind the
+      // HIDDEN WITHOUT A TOKEN, like Move and unlike Measure: everything the
+      // proposal produces leaves this page as a comment, which is behind the
       // token, so a reader who cannot comment has nowhere to send it.
       //
       // AND ABSENT — not hidden — ON A HUB THAT DID NOT ASK FOR THE PANEL. That
@@ -5465,7 +5554,10 @@ export default class HammerolaViewer extends React.Component {
       // only place on the page that would still have described it as live.
       hintText: armed === 'comment' ? 'click the model to pin a task'
         : armed === 'measure' ? 'click a part, or two, to measure'
-        : armed === 'move' ? 'drag a part · esc to stop'
+        // `it` and not `a part`: this tool is armed on a body of the proposal
+        // just as readily as on a part of the build, and the row that arms it
+        // already says which of the two the reader is in.
+        : armed === 'move' ? 'drag it · esc to stop'
         : armed === 'cut' ? 'click a face to place the section plane'
         : `drag — orbit · wheel — zoom · hold ${HOLD_KEY_LABEL} — section`,
 
@@ -6432,10 +6524,6 @@ export default class HammerolaViewer extends React.Component {
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 14L14 2M2 14l2.2-.55M14 2l-.55 2.2M6.2 9.8l1.4 1.4M9 7l1.4 1.4" /></svg>
                       Measure
                     </div>
-                    <div onClick={v.tMove} style={css(v.moveBtnStyle)}>
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M8 1.5v13M1.5 8h13M8 1.5L6.2 3.3M8 1.5l1.8 1.8M8 14.5l-1.8-1.8M8 14.5l1.8-1.8M1.5 8l1.8-1.8M1.5 8l1.8 1.8M14.5 8l-1.8-1.8M14.5 8l-1.8 1.8" /></svg>
-                      Move part
-                    </div>
                     <div onClick={v.tComment} style={css(v.commentBtnStyle)}>
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /><path d="M5 5.5h6M5 8h4" /></svg>
                       Comment
@@ -6623,8 +6711,9 @@ export default class HammerolaViewer extends React.Component {
                 also be dragged, with the Move tool over the body itself — the
                 gesture ends in `hmr:proposalmove` and writes the `at` fields the
                 reader is looking at, so the two ways of saying it are one thing
-                (`proposalgeom.js` for what is grabbable: the fused result, and
-                each hole on its own).
+                (`proposalgeom.js` for what is grabbable: every body on its own,
+                solids and holes alike, so a drag moves the one under the
+                cursor).
 
                 WHAT IS STILL NOT HERE is a gizmo, a handle of our own and
                 click-to-place. The library's id-picker answers about parts that
