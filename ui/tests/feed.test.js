@@ -27,8 +27,24 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { STATE } from '../src/events.js'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { indexTree } from '../src/hub.js'
+import {
+  shrink, SHOT_MAX_SIDE, SHOT_QUALITY, PHOTO_MAX_SIDE, PHOTO_QUALITY,
+} from '../src/shrink.js'
 import { texts } from './eltree.js'
 import { guardPage } from './pageguard.js'
+
+// THE RE-ENCODE IS SPIED HERE RATHER THAN RUN, and the constants beside it are
+// the real ones. What the module DOES is pinned in ui/tests/shrink.test.js; what
+// is pinned in this file is the wiring — that `sendComment` goes through it at
+// all, and with which ceiling for which picture. Nothing else can pin that:
+// jsdom has no image decoder, so the real `shrink` hands every blob straight
+// back, and a `sendComment` that had lost both calls would go on passing every
+// other test here. The spy is a pass-through for exactly that reason — it
+// behaves like the runner's own answer, so no other test in this file moves.
+vi.mock('../src/shrink.js', async (importActual) => {
+  const actual = await importActual()
+  return { ...actual, shrink: vi.fn(async (blob) => blob) }
+})
 
 const REV = 'e05f73ba91b263b8517147e338d23e868533c6a034a342ad5926abb6edcb7b40'
 const OLDER = '1f2e3d4c5b6a7988776655443322110099887766554433221100998877665544'
@@ -369,6 +385,64 @@ describe('a second press of Send', () => {
     expect(out.compSendLabel).toBe('Sending…')
     expect(out.compSendStyle).toContain('var(--accent-muted)')
     expect(out.compSendStyle).not.toContain('cursor:pointer')
+  })
+})
+
+// -- the two pictures, shrunk on the way into the request ---------------------
+//
+// The body going up is where the fifteen seconds were, and the attachments are
+// the body: a lossless PNG of the frame in DEVICE pixels, and the phone's own
+// file for the photo. Each goes through `shrink` with its own ceiling, and the
+// two ceilings are different on purpose — which is the part a refactor can drop
+// silently, since sending the originals still works.
+
+describe('the pictures a comment carries', () => {
+  const draft = {
+    part: 'plate(2)', partId: '/model/plate', key: 'plate',
+    p: [1, 2, 3], text: 'too thin', photo: null,
+  }
+  const picture = (type) => new Blob([new Uint8Array(9)], { type })
+
+  it('takes the photo down to the photo ceiling', async () => {
+    shrink.mockClear()
+    answering({ status: 201 }, served([]))
+    const photo = picture('image/jpeg')
+    const c = page({ composer: { ...draft, photo } })
+
+    await c.sendComment()
+
+    expect(shrink).toHaveBeenCalledWith(
+      photo, { maxSide: PHOTO_MAX_SIDE, quality: PHOTO_QUALITY })
+  })
+
+  it('takes the frame down to the frame ceiling', async () => {
+    shrink.mockClear()
+    answering({ status: 201 }, served([]))
+    const frame = picture('image/png')
+    const c = page({ composer: draft })
+    // The viewport as `frameBlob` asks it: the library's own render of the frame
+    // (`el.snapshot()`), which is the picture that rides along by itself.
+    c.host = { current: { snapshot: async () => frame } }
+
+    await c.sendComment()
+
+    expect(shrink).toHaveBeenCalledWith(
+      frame, { maxSide: SHOT_MAX_SIDE, quality: SHOT_QUALITY })
+  })
+
+  it('names each part after what the blob actually turned out to be', async () => {
+    // Cosmetic to the hub, which reads the magic bytes and never this name — but
+    // `shot.png` on a re-encoded WebP is a request lying about itself to
+    // whoever has to read one in a network panel.
+    const fetching = answering({ status: 201 }, served([]))
+    const c = page({ composer: { ...draft, photo: picture('image/webp') } })
+    c.host = { current: { snapshot: async () => picture('image/png') } }
+
+    await c.sendComment()
+
+    const sent = fetching.mock.calls[0][1].body
+    expect(sent.get('photo').name).toBe('photo.webp')
+    expect(sent.get('shot').name).toBe('shot.png')
   })
 })
 

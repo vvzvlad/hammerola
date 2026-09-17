@@ -113,6 +113,12 @@ import {
   readToken, writeToken, clearToken, readNotes, writeNotes, rememberPointer,
   readTabs, rememberTab, forgetTab, readTheme, writeTheme,
 } from './store.js';
+// The two attachments a comment carries, made small enough to send. Imported
+// only for `sendComment`: the frame grab itself (`frameBlob`) stays lossless,
+// because `saveFrame` writes its answer to the reader's disk.
+import {
+  shrink, SHOT_MAX_SIDE, SHOT_QUALITY, PHOTO_MAX_SIDE, PHOTO_QUALITY,
+} from './shrink.js';
 import {
   css, FONTS, SANS, MONO, Mark, NARROW, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
 } from './style.jsx';
@@ -3413,9 +3419,32 @@ export default class HammerolaViewer extends React.Component {
         point: c.p || null,
         camera: this.frameCamera(),
       }));
-      if (c.photo) form.append('photo', c.photo, 'photo');
-      const shot = await this.frameBlob();
-      if (shot) form.append('shot', shot, 'shot.png');
+      // THE TWO ATTACHMENTS, AND THE ONLY PLACE EITHER IS SHRUNK (shrink.js).
+      // Both used to leave untouched — the frame as a lossless PNG in device
+      // pixels, the photo as whatever the phone wrote — and the fifteen seconds
+      // a reader waited on Send were the request body going up, not the
+      // encoding (7–90 ms) and not the hub (5–45 ms).
+      //
+      // THE NAME IS BUILT FROM THE BLOB'S OWN TYPE. The hub identifies an
+      // upload by its magic bytes and never reads this name (`sniff_image`,
+      // src/comments.py), so it is cosmetic — but `shot.png` on a re-encoded
+      // WebP is a request that lies about itself to whoever debugs one next. A
+      // blob the browser gave no type gets the bare stem rather than a guess.
+      const named = (stem, blob) => {
+        const kind = /^image\/([a-z0-9+.-]+)$/i.exec(blob.type || '');
+        return kind ? `${stem}.${kind[1].toLowerCase()}` : stem;
+      };
+      if (c.photo) {
+        const photo = await shrink(c.photo,
+                                   { maxSide: PHOTO_MAX_SIDE, quality: PHOTO_QUALITY });
+        form.append('photo', photo, named('photo', photo));
+      }
+      const frame = await this.frameBlob();
+      if (frame) {
+        const shot = await shrink(frame,
+                                  { maxSide: SHOT_MAX_SIDE, quality: SHOT_QUALITY });
+        form.append('shot', shot, named('shot', shot));
+      }
 
       // Required by the hub since step 0, and checked there before the body is
       // parsed at all — so this header is what makes the request a comment rather
