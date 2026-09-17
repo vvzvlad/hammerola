@@ -32,7 +32,8 @@
 // and no case below asserts anything about them — this is about what fits on
 // the screen, not about what is comfortable to aim at.
 
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi }
+  from 'vitest'
 
 // `vi.hoisted` and ONE MUTABLE OBJECT, exactly as ui/tests/header.test.js does
 // it: `PAGE` is read at the moment `computed()` runs, so the address is a field
@@ -126,7 +127,7 @@ function component({ narrow = false, treeOpen = false, rail = null, tool = null,
     bannerGone: false, rail, menu: { id: null, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
     feed: [], activePin: null, composer: null, sending: false,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     // A token by default, because half of what the header draws is hidden from
     // a viewer for a reason that has nothing to do with the width — and a
     // parameter, because one control in that row is drawn for BOTH readers and
@@ -188,11 +189,12 @@ describe('which layout the page comes up in', () => {
   })
 
   it('disarms the tool on the way in, since nothing narrow can disarm it', () => {
-    // A tool is armed from the toolbar and put away from the same buttons or
-    // from Escape — and the narrow branch takes those buttons away, while a
-    // phone has no Escape key. Measure armed in landscape would turn every
-    // touch after a rotation into a measurement point; Move part would drag a
-    // part where an orbit was meant.
+    // A tool is armed from the toolbar — or, for Move, from an object's row
+    // menu — and put away from the toolbar buttons or from Escape. The narrow
+    // branch takes those buttons away and the row menu with them, while a phone
+    // has no Escape key. Measure armed in landscape would turn every touch after
+    // a rotation into a measurement point; Move would drag a part where an orbit
+    // was meant.
     const { change } = fakeMatchMedia(false)
     const c = mounted({ tool: 'measure' })
 
@@ -426,10 +428,16 @@ describe('the toolbar on a narrow window', () => {
 
     // Gestures that want a pointer and a canvas with room to aim in, and a PNG
     // a phone has nowhere to put.
-    for (const gone of ['Measure', 'Move part', 'Comment', 'Frame']) {
+    //
+    // MOVE IS NOT ON THIS LIST because it is not on this strip: it is a row of
+    // each object's own menu, and the width takes it away there instead — the
+    // group below is where that half is asserted. The button it used to be was
+    // spelled `Move part`, and nothing on the page says those two words now.
+    for (const gone of ['Measure', 'Comment', 'Frame']) {
       expect(wide).toContain(gone)
       expect(narrow).not.toContain(gone)
     }
+    expect(wide).not.toContain('Move part')
 
     // AND THE THEME IS NO LONGER ONE OF THEM. It stood in this list while it
     // was a canvas setting living in this strip, which left the one preference
@@ -446,6 +454,50 @@ describe('the toolbar on a narrow window', () => {
     const rules = (over) => drawn(over).filter((s) => s.width === '1px' && s.height === '18px')
     expect(rules({})).toHaveLength(2)
     expect(rules({ narrow: true })).toHaveLength(0)
+  })
+})
+
+// -- the tool that is armed from somewhere else -------------------------------
+
+describe('the Move row of an object\'s menu on a narrow window', () => {
+
+  // THE HUB HAS TO HAVE ASKED FOR THE PANEL, because the Move row is gated on it
+  // now: a displacement is a node of the proposal, so where there is no panel
+  // there is no row saying a part is out of place and no `×` to put it back.
+  // `proposal_panel` is off by default (src/settings.py), and a fixture that
+  // said nothing would be testing a hub that never offers the tool at all.
+  beforeEach(() => {
+    document.documentElement.setAttribute('data-proposal-panel', 'on')
+  })
+  afterEach(() => {
+    document.documentElement.removeAttribute('data-proposal-panel')
+  })
+  /** The row menu open on one part, at a chosen width. */
+  const labelsOn = (over) => {
+    const c = component(over)
+    c.state.tree = indexTree({ id: '/model',
+                               name: 'model',
+                               children: [{ id: '/model/lid', name: 'lid', key: 'lid' }] })
+    c.state.menu = { id: '/model/lid', x: 0, y: 0 }
+    return c.computed().menuItems.map((m) => m.label)
+  }
+
+  it('goes with the toolbar, because it is the same gesture wanting the same room',
+     () => {
+    // Move left the strip above and the width has to keep taking it away, or
+    // the narrow branch would hand back through a menu exactly the tool it
+    // drops the buttons for. BOTH SIDES, like everything in this file: a row
+    // that had gone missing at every width would pass a one-sided check.
+    expect(labelsOn({})).toContain('Move')
+    expect(labelsOn({ narrow: true })).not.toContain('Move')
+  })
+
+  it('leaves the rest of the menu exactly where it was', () => {
+    // The width is about aiming a gesture at the model, and nothing else on this
+    // menu is a gesture: what a reader can still do to a part on a phone is
+    // hide it, isolate it, read its files and copy its name.
+    expect(labelsOn({ narrow: true }))
+      .toEqual(['Isolate', 'Hide', 'Translucent', 'Note', 'STL', 'Copy name'])
   })
 })
 
@@ -526,20 +578,33 @@ describe('the popovers that become a sheet on a narrow page', () => {
   // phone has no Escape key — opened, they could only be dismissed by reloading
   // the page.
   //
-  // What does not earn a place: `menuStyle`, already clamped by `menuAt`, and
-  // the composer, whose ✕ and Send sit at the right end of their rows behind
+  // The proposal panel is the same case with one extra turn of the screw: its
+  // button is one of the ones narrow takes away (`showTools`), but the FLAG is
+  // not — a window dragged narrower with the panel open would leave a panel on
+  // screen with no button to close it and its own cross off the side.
+  //
+  // What does not earn a place: `menuStyle`, already clamped by `menuAt`; the
+  // composer, whose ✕ and Send sit at the right end of their rows behind
   // `flex:1` spacers while the panel itself is anchored `right:16px` — so it is
-  // the composer's LEFT end that goes off screen, not its controls.
+  // the composer's LEFT end that goes off screen, not its controls; and the
+  // view menu, which COULD NOT take this sheet even if it wanted one. It opens
+  // inside the floating toolbar, and that toolbar's `backdrop-filter` makes it
+  // a containing block for `fixed` descendants as well as `absolute` ones (CSS
+  // Filter Effects 2, §2.1) — so a sheet there would clamp itself to the
+  // toolbar's box and come up over the button that opened it. It needs no clamp
+  // either: the toolbar is centred on the bottom edge and on a narrow window
+  // holds that button and Fit and nothing else, so 260px from the button's left
+  // edge is inside the window. `viewmenu.test.js` holds that one.
   const sheets = (over) => {
     const v = component(over).computed()
     return [v.revMenuStyle, v.dlMenuStyle, v.tokenPopStyle,
-            v.secPopStyle, v.notePopStyle].map(css)
+            v.secPopStyle, v.notePopStyle, v.proposalPanelStyle].map(css)
   }
 
   it('are clamped to the window rather than to the control they hang off', () => {
     for (const wide of sheets({})) expect(wide.position).toBe('absolute')
     expect(sheets({}).map((s) => s.width))
-      .toEqual(['430px', '250px', '320px', '270px', '300px'])
+      .toEqual(['430px', '250px', '320px', '270px', '300px', '330px'])
 
     for (const narrow of sheets({ narrow: true })) {
       // `fixed` is the half that does the work: `left`/`right` resolve against

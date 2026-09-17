@@ -155,7 +155,7 @@ function component(over = {}) {
     bannerGone: false, rail: false, menu: null, swapping: false,
     notePop: null, noteDraft: '', notes: {},
     feed: [], activePin: null, composer: null, sending: false,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
     theme: 'light',
     ...over,
@@ -1446,7 +1446,8 @@ describe('what does not survive', () => {
     const c = component({
       sel: '/model/plate', selName: 'plate',
       menu: { id: '/model/plate', x: 10, y: 20 },
-      revOpen: true, dlOpen: true, secPop: true, tokenPop: true, tokenDraft: 'x',
+      revOpen: true, dlOpen: true, viewsOpen: true, secPop: true,
+      tokenPop: true, tokenDraft: 'x',
       notePop: 'plate', noteDraft: 'half a note',
       measure: { text: '3.00 mm', note: '', full: '3.00 mm' },
       moved: { id: '/model/plate', name: 'plate', mag: 2 },
@@ -1460,12 +1461,12 @@ describe('what does not survive', () => {
     expect(c.state.menu).toBeNull()
     expect(c.state.revOpen).toBe(false)
     expect(c.state.dlOpen).toBe(false)
+    expect(c.state.viewsOpen).toBe(false)
     expect(c.state.secPop).toBe(false)
     expect(c.state.tokenPop).toBe(false)
     expect(c.state.notePop).toBeNull()
     expect(c.state.noteDraft).toBe('')
     expect(c.state.measure).toBeNull()
-    expect(c.state.moved).toBeNull()
   })
 
   it('takes the poll\'s offer down with the slot it belonged to', async () => {
@@ -1515,7 +1516,7 @@ describe('what does not survive', () => {
       composer: {
         part: 'plate', partId: '/model/plate', key: 'plate', p: [1, 2, 3],
         text: 'this hole is', photo: null,
-        meas: '3.00 mm', move: 'plate by 2 mm',
+        meas: '3.00 mm',
       },
     })
     loadMeta.mockResolvedValue(build())
@@ -1528,7 +1529,6 @@ describe('what does not survive', () => {
     expect(c.state.composer.key).toBeNull()
     expect(c.state.composer.p).toBeNull()
     expect(c.state.composer.meas).toBeNull()
-    expect(c.state.composer.move).toBeNull()
   })
 
   it('shows no part on the draft afterwards, with the text still in it', async () => {
@@ -1660,7 +1660,7 @@ describe('taking the banner\'s build', () => {
     const c = offered({
       composer: {
         part: 'plate', partId: '/model/plate', key: 'plate', p: [1, 2, 3],
-        text: 'this hole is', photo: null, meas: '3.00 mm', move: 'plate by 2 mm',
+        text: 'this hole is', photo: null, meas: '3.00 mm',
       },
     })
 
@@ -1672,7 +1672,6 @@ describe('taking the banner\'s build', () => {
     expect(c.state.composer.key).toBeNull()
     expect(c.state.composer.p).toBeNull()
     expect(c.state.composer.meas).toBeNull()
-    expect(c.state.composer.move).toBeNull()
   })
 
   it('drops the selection, the menu and every popover', () => {
@@ -1682,7 +1681,8 @@ describe('taking the banner\'s build', () => {
     const c = offered({
       sel: '/model/plate', selName: 'plate',
       menu: { id: '/model/plate', x: 10, y: 20 },
-      revOpen: true, dlOpen: true, secPop: true, tokenPop: true, tokenDraft: 'x',
+      revOpen: true, dlOpen: true, viewsOpen: true, secPop: true,
+      tokenPop: true, tokenDraft: 'x',
       notePop: 'plate', noteDraft: 'half a note',
       measure: { text: '3.00 mm', note: '', full: '3.00 mm' },
       moved: { id: '/model/plate', name: 'plate', mag: 2 },
@@ -1700,12 +1700,12 @@ describe('taking the banner\'s build', () => {
     expect(c.state.menu).toBeNull()
     expect(c.state.revOpen).toBe(false)
     expect(c.state.dlOpen).toBe(false)
+    expect(c.state.viewsOpen).toBe(false)
     expect(c.state.secPop).toBe(false)
     expect(c.state.tokenPop).toBe(false)
     expect(c.state.notePop).toBeNull()
     expect(c.state.noteDraft).toBe('')
     expect(c.state.measure).toBeNull()
-    expect(c.state.moved).toBeNull()
     // And the viewport is told, since a selection is its state too. An EMPTY
     // LIST and not a null: a selection is the paths of a row since issue #75,
     // because a row may stand for several copies of one part.

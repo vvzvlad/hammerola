@@ -10,8 +10,17 @@
      `var()` resolved against an ancestor -- and the root is the one ancestor that
      exists in the first byte the browser parses. The body is also where the
      vendored viewer writes a `data-theme` of its OWN (`Display.setTheme`), so
-     putting ours there would be two writers on one attribute. -->
-<html lang="en" data-theme="light"><head>
+     putting ours there would be two writers on one attribute.
+
+     `data-proposal-panel` IS WRITTEN THE SAME WAY AND ANSWERS A DIFFERENT
+     QUESTION: whether this hub serves the proposal panel at all (`PROPOSAL_PANEL`
+     in .env, stamped by `render.build_page_html`). It is the HUB's answer and
+     not the reader's — one value for everybody, and it cannot change while the
+     page is open, so the interface reads it once and watches nothing. `off` in
+     the file is what a hub that never set the variable answers, which keeps
+     this template a working page WITHOUT the panel: a feature still being tried
+     out does not reach anybody who did not ask for it. -->
+<html lang="en" data-theme="light" data-proposal-panel="off"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>hammerola</title>
 <!-- A browser handed this link stops asking for /favicon.ico, which is what

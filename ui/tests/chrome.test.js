@@ -1460,7 +1460,7 @@ function buildPage({ feed = COMMENTS } = {}) {
     notePop: null, noteDraft: '', notes: { lid: 'mine' },
     feed,
     activePin: null, composer: null, sending: false,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
     theme: 'light', tabs: [], narrow: false, treeOpen: false,
   }

@@ -291,7 +291,7 @@ function component({ theme = 'light', viewer = {} } = {}) {
     bannerGone: false, rail: false, menu: { id: null, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
     feed: [], activePin: null, composer: null, sending: false,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     token: null, tokenPop: false, tokenDraft: '',
     theme,
   }

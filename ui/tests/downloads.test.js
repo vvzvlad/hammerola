@@ -176,6 +176,12 @@ function component({ node, parts = PARTS, token = null, expanded = {},
   const c = Object.create(HammerolaViewer.prototype)
   c.props = { commentsOpen: false }
   c.home = null
+  // The arrangement every other file in this directory uses. Building the menu
+  // does not reach the element: the Move row asks the viewport which kind of
+  // object it is from INSIDE its own `onClick`, and its gate asks only `viewer`,
+  // `narrow` and `isNode` — so the ref is touched only by a test that clicks
+  // that row, and no case here does.
+  c.host = { current: null }
   c.setState = vi.fn((patch) => { Object.assign(c.state, patch) })
   c.state = {
     meta: {
@@ -224,7 +230,7 @@ function component({ node, parts = PARTS, token = null, expanded = {},
     bannerGone: false, rail: false, menu: { id: node, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
     feed: [], activePin: null, composer: null, sending: false,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     token, tokenPop: false, tokenDraft: '',
     theme: 'light',
   }

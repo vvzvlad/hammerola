@@ -459,6 +459,10 @@ function LineMaterial(parameters = {}) {
   this.clippingPlanes = null
   this.clipIntersection = false
   this.transparent = true
+  // `Material`'s own default, and load-bearing for the contour: it is ordered
+  // above every face in the scene, so the depth test is the only thing left
+  // that keeps it behind an opaque part standing in front of it.
+  this.depthTest = true
   this.needsUpdate = false
   const material = this
   Object.defineProperties(material, {
@@ -500,6 +504,7 @@ LineMaterial.prototype.clone = function clone() {
   material.clipping = this.clipping
   material.clippingPlanes = this.clippingPlanes
   material.clipIntersection = this.clipIntersection
+  material.depthTest = this.depthTest
   return material
 }
 
@@ -533,6 +538,22 @@ function LineSegments2(geometry, material) {
   this.name = ""
   this.renderOrder = 0
   this.visible = true
+}
+
+// The library's own hook (bundle :81079-81090): before every draw it re-reads
+// the viewport and writes it into the material's `resolution`, which is what
+// keeps `linewidth` a count of CSS pixels as the canvas resizes. Modelled here
+// because the section contour WRAPS it rather than replacing it, and a wrapper
+// that dropped it would leave a fat line frozen at the size of the first frame.
+LineSegments2.prototype.onBeforeRender = function onBeforeRender(renderer) {
+  if (!renderer || typeof renderer.getViewport !== "function") return
+  const viewport = renderer.getViewport()
+  this.material.resolution.set(viewport.z, viewport.w)
+}
+
+/** A renderer as `onBeforeRender` reads one: a viewport and nothing else. */
+export function fakeRenderer({ width = 800, height = 600 } = {}) {
+  return { getViewport: () => ({ x: 0, y: 0, z: width, w: height }) }
 }
 
 /** A solid's `edges` overlay as `_renderEdges` (:87558) leaves it: a

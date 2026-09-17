@@ -1290,6 +1290,7 @@ HTML — `Content-Security-Policy: default-src 'self'; img-src 'self' data:`. О
 | `DATA_DIR` | нет | по умолчанию `data` |
 | `MAX_BUILD_BYTES` | нет | по умолчанию 64 MiB |
 | `COMMENT_MAX_TEXT_CHARS`, `COMMENT_MAX_PHOTO_BYTES`, `COMMENT_MAX_BODY_BYTES` | нет | потолки на РАЗМЕР комментария, §7A.4. Других нет: ни `COMMENT_MAX_PER_BUILD`, ни `COMMENT_MAX_TOTAL`, ни `COMMENT_RATE_*` больше не существует — решение 2026-08-27, §7A.4 |
+| `PROPOSAL_PANEL` | нет | по умолчанию выключено. Панель Proposal на странице сборки: хаб, который её не просил, не отдаёт её разметку вовсе |
 | `LOG_LEVEL` | нет | `INFO` |
 
 **Секрет ровно один, и имя у него не `PUBLISH_TOKEN`.** До шага 0 переменных было

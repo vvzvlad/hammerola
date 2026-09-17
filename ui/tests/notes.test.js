@@ -129,7 +129,7 @@ function component({ sel = '/model/lid', notes, mine = {}, token = 'sekrit',
     bannerGone: false, rail: false, menu: null,
     notePop: null, noteDraft: '', notes: mine,
     feed: [], activePin: null, composer: null, sending: false,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     token, tokenPop: false, tokenDraft: '',
     theme: 'light',
   }

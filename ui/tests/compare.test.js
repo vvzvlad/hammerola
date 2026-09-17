@@ -61,6 +61,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 
 import HammerolaViewer, { compareRows, compareSummary } from '../src/HammerolaViewer.jsx'
 import { MEASURE, MOVED, PLACE, STATE } from '../src/events.js'
+import { emptyProposal, moves } from '../src/proposal.js'
 // The element itself, for the one claim below that is about what the VIEWPORT
 // makes of a comparison's state: its rule for reload-or-live-swap is the thing
 // under test, so it is the real one that runs (`viewport` further down).
@@ -188,7 +189,7 @@ function page({ watch, ...over } = {}) {
     bannerGone: false, rail: false, menu: null,
     notePop: null, noteDraft: '', notes: {},
     feed: [], activePin: null, composer: null, sending: false,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
     theme: 'light', tabs: [], narrow: false, treeOpen: false,
     ...over,
@@ -1069,12 +1070,13 @@ describe('a pick in the scene', () => {
 //     which `onPick` deliberately stops writing while a comparison is up, so
 //     the measurement went to the hub attached to whatever had been selected
 //     before the panel opened;
-//   * MOVE PART put a `/cmp/…` path in `partId` the same way.
+//   * MOVE put a `/cmp/…` path in `partId` the same way.
 //
-// BOTH HALVES ARE ASSERTED, because either alone leaves the door ajar: the
-// BUTTONS are what a person is stopped by, and the HANDLERS are what stops a
-// tool armed before the comparison was opened — nothing disarms one, and the
-// viewport goes on reporting the gestures it is armed for.
+// BOTH HALVES ARE ASSERTED, because either alone leaves the door ajar: what is
+// OFFERED is what a person is stopped by — two buttons drawn spent and, for
+// Move, a row of the object's menu that is not drawn at all — and the HANDLERS
+// are what stops a tool armed before the comparison was opened, since nothing
+// disarms one and the viewport goes on reporting the gestures it is armed for.
 
 describe('the canvas tools while a comparison is up', () => {
   /** A comparison on screen, with the page's real listeners on the window. */
@@ -1083,14 +1085,35 @@ describe('the canvas tools while a comparison is up', () => {
     cmpStage: 'ready', cmpReport: REPORT, tree: indexTree(CMP_TREE), ...over,
   })
 
-  it('draws all three out of service, and leaves them live on a build page', () => {
+  it('draws the two buttons out of service, and leaves them live on a build page',
+     () => {
     const off = comparing().computed()
     const on = page().computed()
 
-    for (const style of ['measureBtnStyle', 'moveBtnStyle', 'commentBtnStyle']) {
+    for (const style of ['measureBtnStyle', 'commentBtnStyle']) {
       expect(off[style], style).toContain('pointer-events:none')
       expect(on[style], style).not.toContain('pointer-events:none')
     }
+  })
+
+  it('offers Move on no row at all, which is its half of the same rule', () => {
+    // Move has no button to draw spent: it is a row of the object's own menu,
+    // and a row is either there or it is not. Asked over the COMPARISON'S OWN
+    // SOLID, which is the scene a drag would file a `/cmp/…` path out of, and
+    // then over the build's own part on a build page, so this is a claim about
+    // the comparison rather than about the row having gone missing altogether.
+    //
+    // THE HUB HAS TO HAVE ASKED FOR THE PANEL for the second half to mean
+    // anything: the row is gated on that flag too, since a displacement is a
+    // node of the proposal and there is nowhere for one to go without it.
+    document.documentElement.setAttribute('data-proposal-panel', 'on')
+    onTestFinished(() =>
+      document.documentElement.removeAttribute('data-proposal-panel'))
+    const menu = { id: `${COMPARE_GROUPS.b}/plate`, x: 10, y: 10 }
+    expect(comparing({ menu }).computed().menuItems.map((m) => m.label))
+      .not.toContain('Move')
+    expect(page({ watch: true, menu: { id: '/model/plate', x: 10, y: 10 } })
+      .computed().menuItems.map((m) => m.label)).toContain('Move')
   })
 
   it('keeps the one that is armed looking armed, so it comes back armed', () => {
@@ -1133,14 +1156,18 @@ describe('the canvas tools while a comparison is up', () => {
     expect(c.state.sel).toBe('/model/plate')
   })
 
-  it('reports no drag, so no /cmp path can reach `partId`', () => {
+  it('records no drag, so no /cmp path can reach the proposal', () => {
+    // A move is a node of the proposal document now, naming the path in the
+    // BUILD's terms — and a comparison's paths are `/cmp/…`, a part no revision
+    // has, in a document the agent reads as a statement about this one.
     const c = comparingLive()
 
     window.dispatchEvent(new CustomEvent(MOVED, {
-      detail: { id: `${COMPARE_GROUPS.b}/plate`, name: 'plate', count: 1,
+      detail: { id: `${COMPARE_GROUPS.b}/plate`, name: 'plate',
+                paths: [`${COMPARE_GROUPS.b}/plate`], count: 1,
                 delta: [3, 0, 0] } }))
 
-    expect(c.state.moved).toBe(null)
+    expect(moves(c.state.proposal || emptyProposal())).toEqual([])
   })
 
   it('leaves them working while the panel is up and the BUILD is on screen', () => {

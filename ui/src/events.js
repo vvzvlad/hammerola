@@ -37,6 +37,7 @@ import {
   EVENT_FACE as FACE,
   EVENT_MEASURE as MEASURE,
   EVENT_MOVED as MOVED,
+  EVENT_PROPOSALMOVE as PROPOSALMOVE,
   EVENT_PLACE as PLACE,
   EVENT_PIN as PIN,
   EVENT_MODEL as MODEL,
@@ -52,8 +53,13 @@ import {
  *   MENU     {id, name, x, y}    -- a part was right-clicked; x/y are the cursor
  *   FACE     {id, name, point, normal, offset, range}  -- the section plane moved
  *   MEASURE  a resolved measurement; see `measureLabel` for the fields that matter
- *   MOVED    {id, name, count, delta: [x, y, z]}  -- a part was dragged; `count`
- *            is how many copies of it went along, `id`/`name` the first of them
+ *   MOVED    {id, name, paths, count, delta: [x, y, z]}  -- a part was dragged;
+ *            sent once, on the RELEASE, `paths` is every path that moved,
+ *            `id`/`name` the first of them and `count` how many there were
+ *   PROPOSALMOVE {name, delta: [x, y, z]}  -- a body of the PROPOSAL was dragged;
+ *            sent once, on the release, like the one above; `name` is the body
+ *            it was drawn under, and it names the one node of the document that
+ *            moves
  *   PLACE    {id, name, p: [x, y, z]}       -- a point was picked for a comment
  *   PIN      {id}                           -- a comment pin was clicked
  *   MODEL    {view, buildKey, tree, live}   -- a view finished rendering
@@ -74,12 +80,13 @@ import {
  * reader to SEE that a cut is on -- which this side can only do if it is told.
  */
 export {
-  STATE, PICK, MENU, FACE, MEASURE, MOVED, PLACE, PIN, MODEL, ERROR, TOOL,
+  STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, PLACE, PIN, MODEL, ERROR,
+  TOOL,
 };
 
 /** Every event the viewport sends us, in one list — see componentDidMount. */
-export const UP_EVENTS = [PICK, MENU, FACE, MEASURE, MOVED, PLACE, PIN, MODEL,
-                          ERROR, TOOL];
+export const UP_EVENTS = [PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, PLACE,
+                          PIN, MODEL, ERROR, TOOL];
 
 /** The custom element the adapter registers, under the adapter's own name for it.
  *

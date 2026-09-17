@@ -259,6 +259,34 @@ DEFAULT_STAMP = THEME_ATTRIBUTE.format(DEFAULT_THEME)
 HTML_TAG = re.compile(r"<html\b[^>]*>")
 
 
+# -- the proposal panel, which the HUB decides -------------------------------
+#
+# THE THEME'S MECHANISM, ON A SETTING INSTEAD OF A COOKIE. The panel is part of
+# the toolbar the bundle draws, so the page has to know before it draws one; and
+# it cannot ask, because the answer is the hub's own configuration and nothing
+# the browser can see. So it travels the one way an answer can arrive with the
+# document: an attribute on `<html>`, which the interface reads once
+# (`HammerolaViewer.jsx`) and never watches — unlike the theme, this cannot
+# change while the page is open.
+#
+# WHAT DIFFERS FROM THE THEME is WHOSE answer it is. `data-theme` is the
+# READER's, arriving on their own cookie with the request; this is the HUB's,
+# one value for everybody, read out of `PROPOSAL_PANEL` at startup. Nothing here
+# reads settings: the flag is handed in per call, because a test stands up
+# several hubs in one process (`tests/harness.start_hub`) and a module-level
+# answer would be shared between them.
+PROPOSAL_ATTRIBUTE = 'data-proposal-panel="{}"'
+PROPOSAL_ON = "on"
+PROPOSAL_OFF = "off"
+
+# Written INTO the template exactly as the theme's default is, for the same
+# reason and one of its own: the file on disk stays a working page, and the page
+# it is is the one WITHOUT the panel — which is also the answer a hub that never
+# set the variable gives. A substitution that stops happening leaves the feature
+# off rather than on.
+DEFAULT_PROPOSAL_STAMP = PROPOSAL_ATTRIBUTE.format(PROPOSAL_OFF)
+
+
 def cookie_theme(header: str) -> str:
     """The theme this request asks for: one of THEMES, always.
 
@@ -285,8 +313,9 @@ def cookie_theme(header: str) -> str:
 
 
 @lru_cache(maxsize=None)
-def _template(name: str, theme: str) -> str:
-    """One page template, read once per process and stamped with one theme.
+def _template(name: str, theme: str, proposal: bool) -> str:
+    """One page template, read once per process and stamped with what the server
+    decided about it.
 
     Cached because these are immutable inside the image: a template edit ships as
     a new image, so re-reading per request would buy nothing and cost a syscall on
@@ -300,26 +329,44 @@ def _template(name: str, theme: str) -> str:
     page functions are public and annotated `str`, so "nobody passes anything
     else" is a claim about today's callers, while `maxsize=None` keyed on
     something a request could choose is a way to fill memory from outside.
+    `proposal` is narrowed in the same place and for the same reason: `_page`
+    hands it over as a `bool`, so the key set is two however it was spelled —
+    the identical `maxsize=None` argument, made about the other argument.
+
+    TWO SUBSTITUTIONS, ONE TAG, AND THEY COMPOSE rather than racing: both run on
+    the string the regex matched — the second on what the first returned — so
+    neither can put back the tag the other had already rewritten. Each replaces
+    the DEFAULT it expects to find, at most once, which is also why a template
+    that carries no proposal attribute is simply left alone: `build.html` is
+    the only page that has a panel to gate, and the other two come out
+    unchanged.
     """
     html = (TEMPLATES_DIR / name).read_text(encoding="utf-8")
+    stamp = PROPOSAL_ATTRIBUTE.format(PROPOSAL_ON if proposal else PROPOSAL_OFF)
     return HTML_TAG.sub(
-        lambda tag: tag.group(0).replace(
-            DEFAULT_STAMP, THEME_ATTRIBUTE.format(theme), 1),
+        lambda tag: tag.group(0)
+        .replace(DEFAULT_STAMP, THEME_ATTRIBUTE.format(theme), 1)
+        .replace(DEFAULT_PROPOSAL_STAMP, stamp, 1),
         html, count=1)
 
 
-def _page(name: str, theme: str) -> str:
+def _page(name: str, theme: str, proposal: bool) -> str:
     """One page, in a theme this module recognises — whatever it was handed.
 
     THE NORMALIZATION HAPPENS HERE AND NOT INSIDE `_template`, and the difference
     is the whole point of the helper: a correction behind the cache would still
     mint a cache entry per distinct string, so the memory half of the invariant
     would be exactly as open as before while the document came out right.
+
+    BOTH ARGUMENTS ARE NARROWED, and `proposal` is the cheaper half of the same
+    rule: two keys whatever it was spelled as, and a document that can only come
+    out saying `on` or `off`.
     """
-    return _template(name, theme if theme in THEMES else DEFAULT_THEME)
+    return _template(name, theme if theme in THEMES else DEFAULT_THEME,
+                     bool(proposal))
 
 
-def build_page_html(theme: str) -> str:
+def build_page_html(theme: str, proposal: bool) -> str:
     """The shell of ONE build's page, served from the image on every request.
 
     NOT written into the build directory, which this docstring used to say and
@@ -327,16 +374,25 @@ def build_page_html(theme: str) -> str:
     shell is identical for every build and CHANGES with the image, so a copy
     written at publish time and served under the year of `immutable` a commit URL
     carries would freeze each build on the markup of the day it was pushed.
+
+    `proposal` is this hub's own answer about the proposal panel
+    (`PROPOSAL_PANEL`), and this is the one page that has one to gate.
     """
-    return _page("build.html", theme)
+    return _page("build.html", theme, proposal)
 
 
-def index_page_html(theme: str) -> str:
-    """The public index at `/`. Served from the image, not from data/."""
-    return _page("index.html", theme)
+def index_page_html(theme: str, proposal: bool) -> str:
+    """The public index at `/`. Served from the image, not from data/.
+
+    It takes the hub's proposal answer because `app._serve_page` hands every
+    page the same two things and there is to be one place that decides them — this
+    template carries no such attribute, so the stamp finds nothing and the
+    document comes out exactly as it would have.
+    """
+    return _page("index.html", theme, proposal)
 
 
-def pointer_page_html(theme: str) -> str:
+def pointer_page_html(theme: str, proposal: bool) -> str:
     """`/project/<pid>/` — the URL that names no pointer (SPEC 9).
 
     A page and not a 302, because what decides the destination is a localStorage
@@ -347,8 +403,12 @@ def pointer_page_html(theme: str) -> str:
     The THEME is the one thing about this page the browser cannot work out for
     itself — it loads no bundle and reads no storage — so the stamp above is the
     only reason it can be dark at all.
+
+    `proposal` reaches it for the reason `index_page_html` gives: one place
+    decides what every page is stamped with, and this template has no such
+    attribute to stamp.
     """
-    return _page("pointer.html", theme)
+    return _page("pointer.html", theme, proposal)
 
 
 def _view_fields(pairs):

@@ -978,10 +978,10 @@ export function anchorFor(record, { commit, published, view, keyRows, parts }) {
  * CATION SIGN and not the letter `x`.
  *
  * THE COUNT IS ALWAYS PASSED IN, never stored beside a name: on a tree row and
- * on that row's context menu it is `leaves.length` off the row, and on the
- * moved chip it is what the viewport reported it actually moved. A `qty`
- * written down anywhere is a number that can disagree with the assembly, which
- * is the whole reason this is derived (issue #75).
+ * on that row's context menu it is `leaves.length` off the row, and on a move
+ * recorded in the proposal it is what the viewport reported it actually moved.
+ * A `qty` written down anywhere is a number that can disagree with the
+ * assembly, which is the whole reason this is derived (issue #75).
  */
 export const countedName = (name, count) =>
   (count > 1 ? `${name} ×${count}` : String(name));

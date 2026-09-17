@@ -98,7 +98,7 @@ function component({ builds = null, rail = null, props = {} } = {}) {
     bannerGone: false, rail, menu: { id: null, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
     feed: [], activePin: null, composer: null, sending: false,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     // A token, because the rail is drawn for the customer and hidden from the
     // viewer entirely — without one, "closed" would be true for the wrong
     // reason and the test would pass with the default flipped back.

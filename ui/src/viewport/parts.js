@@ -260,6 +260,22 @@ export function movableGroup(viewer, path) {
   return group;
 }
 
+/** Where one part's group stands RIGHT NOW, as `[x, y, z]`, or null.
+ *
+ * `home()` above with nothing remembered, and the difference is the whole of why
+ * it exists. That one memoises into `vp.partHome`, because "put it back"
+ * (ui-brief block 6) has to know where back is; this one is read by the gesture
+ * that has nothing to put back — a proposal body, whose new position is written
+ * into the PROPOSAL DOCUMENT and staged again out of it (`nudgePart`).
+ * Remembered, the second drag of a body would measure from where it stood before
+ * the first, and the body would jump back the whole of that delta the moment the
+ * pointer moved.
+ */
+export function groupHome(viewer, path) {
+  const group = movableGroup(viewer, path);
+  return group ? [group.position.x, group.position.y, group.position.z] : null;
+}
+
 /**
  * The world-space centre of one part's bounding box, as `[x, y, z]`, or `null`.
  *
@@ -305,6 +321,45 @@ export function partCentre(viewer, path) {
 }
 
 /**
+ * The cut contour, rebuilt for solids that have just moved under a standing
+ * plane. THE TAIL EVERY MOVE IN THIS FILE ENDS IN.
+ *
+ * A moved solid cuts differently through the plane, and no plane write follows
+ * to rebuild for it: drop the memo and redraw here. Called OUTSIDE the caller's
+ * `try` and catching its own failures, so a decoration can neither report a move
+ * that happened as refused nor throw one away.
+ *
+ * AFTER THE CALLER'S RENDER AND FOLLOWED BY ANOTHER ONE, which is the whole
+ * shape of this. The rebuild reads `matrixWorld`, and only a render refreshes
+ * it, so it cannot come first; and the library draws on demand only, so a
+ * rebuild after the last draw would sit in memory while the screen kept the
+ * contour the solid carried off the plane with it.
+ *
+ * GATED ON THE PAIR `reconcile` ITSELF USES, and on the pair rather than on the
+ * seed alone: `suspendSectionCut` parks the plane and empties the contours but
+ * deliberately KEEPS the seed, so that turning the cut back on needs no second
+ * click — which means a seed says "a cut was placed once", not "a cut is on
+ * screen". Reading a part around with the cut switched off is an ordinary thing
+ * to do, and on the seed alone every snap step of it paid for a walk over every
+ * solid and a second identical frame, to write emptiness into geometries that
+ * were already empty.
+ *
+ * ONE COPY FOR THREE CALLERS — `movePart`, `nudgePart` and `reconcileMoves` —
+ * and that is what it is for. A proposal body is a solid like any other and cuts
+ * like one; three hand-written copies of this tail is how one of them ends up
+ * without it, which is a contour left hanging beside the body it belongs to.
+ */
+function redrawCut(vp) {
+  if (!vp.viewer || !vp.sectionSeed || !vp.state || !vp.state.cut) return;
+  try {
+    refreshSectionOutline(vp, internals(vp.viewer));
+    vp.viewer.update(true, false);
+  } catch (error) {
+    console.warn("outline", error);
+  }
+}
+
+/**
  * Offset a part from where the build put it. `delta` is world units.
  *
  * NOT a change to the model, and the interface has to say so (ui-brief block 6):
@@ -318,17 +373,18 @@ export function partCentre(viewer, path) {
  *
  * ALL OR NOTHING, AS FAR AS THE PRE-CHECK REACHES. One path that cannot be
  * moved refuses the whole gesture before anything has moved, because half a row
- * moved is two copies of one part standing in different places while the chip
- * calls it a move of `pin ×5`. On a single path that is exactly what this always
- * did.
+ * moved is two copies of one part standing in different places under a single
+ * node that calls it a move of `pin ×5`. On a single path that is exactly what
+ * this always did.
  *
  * PAST THAT CHECK IT IS NOT ATOMIC, and the limit is worth naming rather than
  * implying: the loop below writes one group at a time, so a `position.set` that
  * throws on the third path leaves the first two displaced and recorded in
  * `vp.moved`. The answer is `false` and no unwinding. What that leaves is a
- * scene out of step with the row, not a scene nothing can fix — `resetMoves`
- * walks exactly the paths `vp.moved` holds and puts every one of them back from
- * `partHome`, and that recovery is what this leans on instead.
+ * scene out of step with the row, not a scene nothing can fix —
+ * `reconcileMoves` walks exactly the paths `vp.moved` holds and puts back every
+ * one the document does not claim, from `partHome`, and that recovery is what
+ * this leans on instead.
  */
 export function movePart(vp, paths, delta) {
   const list = Array.isArray(paths) ? paths : [];
@@ -347,64 +403,170 @@ export function movePart(vp, paths, delta) {
     console.warn("move", error);
     return false;
   }
-  // A moved part cuts differently through the standing plane, and no plane
-  // write follows to rebuild for it: drop the memo and redraw here. OUTSIDE
-  // the try — a refresh that failed must not report a move that happened as
-  // refused.
-  //
-  // AFTER the render above and followed by ANOTHER one, which is the whole
-  // shape of this. The rebuild reads `matrixWorld`, and only a render
-  // refreshes it, so it cannot come first; and the library draws on demand
-  // only, so a rebuild after the last draw would sit in memory while the
-  // screen kept the contour the part carried off the plane with it.
-  //
-  // GATED ON THE PAIR `reconcile` ITSELF USES, and on the pair rather than on
-  // the seed alone: `suspendSectionCut` parks the plane and empties the
-  // contours but deliberately KEEPS the seed, so that turning the cut back on
-  // needs no second click — which means a seed says "a cut was placed once",
-  // not "a cut is on screen". Reading a part around with the cut switched off
-  // is an ordinary thing to do, and on the seed alone every snap step of it
-  // paid for a walk over every solid and a second identical frame, to write
-  // emptiness into geometries that were already empty.
-  if (vp.sectionSeed && vp.state && vp.state.cut) {
-    try {
-      refreshSectionOutline(vp, internals(vp.viewer));
-      vp.viewer.update(true, false);
-    } catch (error) {
-      // Wrapped like every other reach into the library in this file. Outside
-      // the `try` above so a decoration cannot report a move that happened as
-      // refused — and caught, so it cannot do it by throwing either.
-      console.warn("outline", error);
-    }
-  }
+  // The contour the part carried off the plane with it. Outside the `try` and
+  // after the render above, both of which `redrawCut` argues.
+  redrawCut(vp);
   return true;
 }
 
-/** Put every moved part back where the build had it. */
-export function resetMoves(vp) {
+/**
+ * Offset a group from a home THE CALLER HOLDS, remembering nothing at all.
+ *
+ * `movePart` for a body that is in no build — one the proposal panel staged over
+ * the model (`staged()` in element.js) — and every difference between the two is
+ * a thing this one must NOT do.
+ *
+ * NOTHING IS WRITTEN INTO `vp.moved`, and that map is the reason this function
+ * exists rather than a flag on the one above. It is re-applied after every
+ * re-stage (`restageMoves`), and the panel re-stages on the very next keystroke:
+ * a delta recorded there would be added on top of the position the proposal
+ * document now carries, and the body would walk away by twice the distance. The
+ * drag is LIVE FEEDBACK only — the release reports it to the panel, the panel
+ * moves the node's `at`, and the stage that follows is what really puts the body
+ * there.
+ *
+ * NOTHING IS WRITTEN INTO `vp.partHome` EITHER, for the same reason read from
+ * the other end: there is nothing to put back, because the document is what says
+ * where the body goes, and a home remembered across a re-stage is a home that has
+ * moved. The caller reads the home at the press (`groupHome`) and holds it for
+ * the length of the gesture, which is exactly as long as it means anything.
+ *
+ * THE CUT CONTOUR IS NOT ONE OF THE DIFFERENCES, and it is the one that looks
+ * like it might be: a staged body is an ordinary solid, the plane clips it like
+ * any other, and a contour is drawn on it. So this ends in the same `redrawCut`
+ * the two moves either side of it end in — a body dragged out from under the
+ * plane with its curve left hanging behind would be exactly the failure
+ * `outline.test.js` pins for a part of the model.
+ *
+ * ALL OR NOTHING, as far as the pre-check reaches, and not atomic past it —
+ * `movePart` says why both halves of that are what they are.
+ */
+export function nudgePart(vp, paths, homes, delta) {
+  const list = Array.isArray(paths) ? paths : [];
+  if (!list.length || !finite3(delta)) return false;
+  const groups = list.map((path) => movableGroup(vp.viewer, path));
+  if (groups.some((group) => !group)) return false;
+  try {
+    groups.forEach((group, at) => {
+      const base = homes[at];
+      group.position.set(
+        base[0] + delta[0], base[1] + delta[1], base[2] + delta[2]);
+    });
+    vp.viewer.update(true, false);
+  } catch (error) {
+    console.warn("nudge", error);
+    return false;
+  }
+  redrawCut(vp);
+  return true;
+}
+
+/**
+ * Put every moved part back where the READER left it, on groups just rebuilt.
+ *
+ * The other half of keeping a drag across a re-stage (viewport/element.js): the
+ * map of offsets survives one, but the ObjectGroups they were written on do not
+ * — those were disposed in `clear()` and built again by `render()`, at the
+ * positions the model gives them. Without this the move the proposal document
+ * holds would describe a part standing exactly where the build puts it, which is
+ * ui-brief block 6 broken in the quietest possible way: the page says something
+ * is displaced and nothing is.
+ *
+ * THE HOMES ARE FORGOTTEN AND TAKEN AGAIN rather than reused. They are positions
+ * read off groups that no longer exist; the new ones are at the same coordinates
+ * because it is the same document rendered again, and reading them off the scene
+ * in front of us is the spelling that stays true if that ever stops holding.
+ *
+ * A PATH THE SCENE NO LONGER HAS IS DROPPED, which is `movePart`'s own answer to
+ * one: it refuses a path it cannot move, and the entry is then simply not
+ * written back into `vp.moved`.
+ */
+export function restageMoves(vp) {
   if (!vp.moved.size) return;
+  const offsets = [...vp.moved.entries()];
+  vp.moved.clear();
+  vp.partHome.clear();
+  // ONE CALL PER PATH, because one delta belongs to one path: a row standing for
+  // five copies of a part moved all five by the same offset, and every one of
+  // them is its own entry in this map.
+  for (const [path, delta] of offsets) movePart(vp, [path], delta);
+}
+
+/**
+ * Make the scene's offsets say what the DOCUMENT says: `wanted` is the whole of
+ * it, as `{paths, delta}` entries.
+ *
+ * THE DOCUMENT IS THE SOURCE OF TRUTH and this is the one function that acts on
+ * that. A drag is recorded as a node of the proposal (ui/src/proposal.js), the
+ * interface hands the whole set back here, and a part goes home because its
+ * entry was DELETED — there is nothing else to press. That is why this takes the
+ * set rather than one move: "which parts are displaced" is a question only the
+ * whole list answers, and a per-entry door would leave this side deciding, out of
+ * two calls, which of them meant "and nothing else".
+ *
+ * `keep` IS WHAT PROTECTS A DELTA THAT CHANGED, and it is worth being exact
+ * about which mechanism does that: an entry whose delta moved is a path in
+ * `vp.moved` AND in `wanted`, so the put-back loop would send it home on its way
+ * past — `keep` is the set of everything the list still claims, and it skips
+ * exactly those. The two loops are then independent, and the order they are
+ * written in is only the order that reads well.
+ *
+ * A DELTA THAT IS ALREADY STANDING IS SKIPPED ENTIRELY, and that is what makes
+ * the interface safe to push the document on every change of it. The drag's own
+ * echo is the case this is for: the release reports the move (`reportModelMove`
+ * in tools.js), the interface records it and hands the whole document straight
+ * back to the viewport the part was dragged in — where every path it names is
+ * already exactly where it asks for. A second `position.set`, a second render
+ * and a second rebuild of the cut contour would all be spent on a scene that is
+ * already right.
+ *
+ * WHICH IS SAFE BECAUSE `vp.moved` IS WHAT WAS WRITTEN, never what was asked
+ * for: `movePart` records a path only after setting its group, and a re-stage
+ * re-applies the map onto the groups it just built (`restageMoves`). So an entry
+ * equal to the delta wanted means the group is already there.
+ */
+export function reconcileMoves(vp, wanted) {
+  const list = Array.isArray(wanted) ? wanted : [];
+  const keep = new Set();
+  for (const move of list) for (const path of move.paths) keep.add(path);
+  const standing = (path, delta) => {
+    const now = vp.moved.get(path);
+    return !!now && delta.every((value, axis) => value === now[axis]);
+  };
+
+  let home = false;
   for (const path of [...vp.moved.keys()]) {
+    if (keep.has(path)) continue;
     const group = movableGroup(vp.viewer, path);
     const base = vp.partHome.get(path);
-    if (group && base) {
-      try {
-        group.position.set(base[0], base[1], base[2]);
-      } catch (error) {
-        console.warn("move reset", error);
-      }
-    }
-  }
-  vp.moved.clear();
-  if (vp.viewer) vp.viewer.update(true, false);
-  // Same shape as `movePart`, for the same reasons: after the render that
-  // refreshed the matrices, gated on a cut that is actually on screen, drawn
-  // again so the corrected contour gets there, and caught.
-  if (vp.viewer && vp.sectionSeed && vp.state && vp.state.cut) {
+    // OFF THE MAP BEFORE THE ATTEMPT, so it goes whether or not the attempt
+    // gets anywhere — a path the scene no longer has, and a `position.set` that
+    // throws, leave it recorded just the same. What that would cost is a map
+    // describing offsets nothing is standing at: `measure.js` goes on calling
+    // the view laid out, and every later reconcile tries the same failing write
+    // again.
+    vp.moved.delete(path);
+    if (!group || !base) continue;
     try {
-      refreshSectionOutline(vp, internals(vp.viewer));
-      vp.viewer.update(true, false);
+      group.position.set(base[0], base[1], base[2]);
+      home = true;
     } catch (error) {
-      console.warn("outline", error);
+      console.warn("move reset", error);
     }
   }
+  if (home && vp.viewer) vp.viewer.update(true, false);
+
+  // ONE CALL PER ENTRY, because one delta belongs to one gesture: a row standing
+  // for five copies of a part moved all five by the same offset, and `movePart`
+  // takes exactly that shape — every path from its own home.
+  for (const move of list) {
+    if (move.paths.every((path) => standing(path, move.delta))) continue;
+    movePart(vp, move.paths, move.delta);
+  }
+
+  // The contours the parts that went home carried off the plane with them.
+  // `movePart` ends in this itself, so the loop above is covered; what is not is
+  // a reconcile that only put things back. After the render, like every other
+  // caller, and gated inside on a cut that is actually on screen.
+  if (home) redrawCut(vp);
 }
