@@ -18,7 +18,8 @@ import { describe, expect, it } from 'vitest'
 import { geometries, measurements } from '@jscad/modeling'
 
 import {
-  addNode, emptyProposal, isEmpty, moveNodes, removeNode, proposalText, updateNode,
+  addNode, bodies, dropMoves, emptyProposal, isEmpty, moveNodes, moves,
+  removeNode, proposalText, tidy, updateNode,
 } from '../src/proposal.js'
 import { buildProposal } from '../src/proposalgeom.js'
 
@@ -33,6 +34,18 @@ const VAL = {
 const KREPEZH = {
   id: 'n3', name: 'krepezh1', op: 'cylinder', role: 'hole',
   at: [15.5, 15.5, 36], rot: [0, 45, 0], d: 3, h: 10,
+}
+// A PART OF THE BUILD, DRAGGED — the other kind of node. No op and no size: the
+// part is already in the model and nothing here draws it. `paths` is the scene's
+// own, `name` is the row as it read at the moment of the drag, and the second
+// one carries a counted name because that is what a row of copies reads as.
+const MOVE = {
+  id: 'm4', role: 'move', paths: ['/model/plate'], name: 'plate',
+  delta: [3.2, 0, -1],
+}
+const OTHER_MOVE = {
+  id: 'm5', role: 'move', name: 'pin ×3', delta: [0, 0, 5],
+  paths: ['/model/pin', '/model/pin(2)', '/model/pin(3)'],
 }
 
 /** The document the text projection is pinned against: three bodies, a hole, a rotation. */
@@ -235,6 +248,81 @@ describe('proposalText', () => {
       'result = union(solid) - union(hole)',
     ].join('\n'))
   })
+
+  it('prints the moves in a block of their own, after the bodies', () => {
+    // A MOVE IS THE OTHER STATEMENT THIS DOCUMENT HOLDS: the bodies say what the
+    // model has to fit, and a move says where a part the build already has
+    // should be instead. Its own block because it shares no column with a body —
+    // folded into that table, every body's columns would be padded out to make
+    // room for a sentence that is not in them.
+    expect(proposalText(addNode(addNode(just(VAL), MOVE), OTHER_MOVE))).toBe([
+      'units: mm',
+      '',
+      'solid  cylinder  "val"  d5 h24  at (0, 0, 42)',
+      '',
+      // ALIGNED AMONG THEMSELVES, on the name, so the offsets read down the
+      // page — and with one space between the halves, so a single move reads
+      // exactly as the sentence it is.
+      'move "plate"  by (3.2, 0, -1)',
+      'move "pin ×3" by (0, 0, 5)',
+      '',
+      'result = union(solid) - union(hole)',
+    ].join('\n'))
+  })
+
+  it('is the units, one move and the result where that is all there is', () => {
+    expect(proposalText(just(MOVE))).toBe([
+      'units: mm',
+      '',
+      'move "plate" by (3.2, 0, -1)',
+      '',
+      'result = union(solid) - union(hole)',
+    ].join('\n'))
+  })
+
+  it('leaves the bodies\' own columns exactly as they were', () => {
+    // The two blocks are measured apart, so the longest move in the document
+    // cannot push a body's `at (…)` sideways.
+    expect(proposalText(motor()).split('\n\n')[1])
+      .toBe(proposalText(addNode(motor(), MOVE)).split('\n\n')[1])
+  })
+})
+
+describe('the moves a document holds', () => {
+  const doc = addNode(addNode(just(VAL), MOVE), KREPEZH)
+
+  it('are told from the bodies by their role, both ways round', () => {
+    expect(moves(doc)).toEqual([MOVE])
+    expect(bodies(doc).map((node) => node.id)).toEqual(['n2', 'n3'])
+  })
+
+  it('go away on their own, and leave every body where it was', () => {
+    // WHAT A BUILD LANDING COSTS THE DOCUMENT: a delta is measured against where
+    // one build put one part, and the bodies are about no build at all.
+    expect(dropMoves(doc).nodes).toEqual([VAL, KREPEZH])
+    expect(dropMoves(doc)).not.toBe(doc)
+    expect(doc.nodes).toHaveLength(3)
+  })
+
+  it('are rounded by the same rule a dragged body is', () => {
+    // ONE RULE FOR BOTH WRITERS, which is why `tidy` is the document's and not
+    // a line inside either of them: a drag arrives snapped to a step (`snap` in
+    // viewport/tools.js) and binary floating point puts the result at places no
+    // field in this panel has. Both numbers below are what that arithmetic
+    // really produces.
+    expect(tidy(Math.round(0.6 / 0.1) * 0.1)).toBe(0.6)
+    expect(tidy(42.3 + 0.1)).toBe(42.4)
+    // ...and a digit somebody could have typed is not touched.
+    expect(tidy(-12.5)).toBe(-12.5)
+    expect(tidy(0.000002)).toBe(0.000002)
+  })
+
+  it('are removed one at a time by the helper every node is', () => {
+    // `removeNode` keys on `id`, so deleting a move — which is how a part is put
+    // back — needs nothing of its own.
+    expect(moves(removeNode(doc, MOVE.id))).toEqual([])
+    expect(removeNode(doc, MOVE.id).nodes).toHaveLength(2)
+  })
 })
 
 describe('buildProposal', () => {
@@ -381,6 +469,25 @@ describe('buildProposal', () => {
     expectWellFormed(payload)
     expect(payload.parts.map((part) => part.name)).toEqual(['krepezh1'])
     expectBox(payload.bb, { xmin: 0, xmax: 0, ymin: 0, ymax: 0, zmin: 0, zmax: 0 })
+  })
+
+  it('draws nothing at all for a move, and is not thrown by a document of them', () => {
+    // A MOVE IS NOT GEOMETRY. The part it names is already in the model and the
+    // viewport shifts the one that is there, so a second copy drawn over it
+    // would be the proposal claiming a body the reader never asked for. A
+    // document with nothing but moves therefore builds no parts — the same
+    // answer as an empty one, which is what the panel does with it.
+    const payload = buildProposal(addNode(just(MOVE), OTHER_MOVE))
+    expectWellFormed(payload)
+    expect(payload.parts).toEqual([])
+    expectBox(payload.bb, { xmin: 0, xmax: 0, ymin: 0, ymax: 0, zmin: 0, zmax: 0 })
+
+    // And beside a body it changes neither the parts nor the frame around them.
+    const alone = buildProposal(just(VAL))
+    const beside = buildProposal(addNode(just(VAL), MOVE))
+    expect(beside.parts.map((part) => part.name))
+      .toEqual(alone.parts.map((part) => part.name))
+    expect(beside.bb).toEqual(alone.bb)
   })
 
   it('names the optional tessellation fields nowhere, and the viewer guards them', () => {

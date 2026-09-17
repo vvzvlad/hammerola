@@ -545,6 +545,12 @@ describe('what a drag with the move tool takes with it', () => {
       [...PINS, '/Group/lid'].map((path) => [path, fakeGroup()]))
     const viewer = fakeViewer({ groups })
     const vp = toolViewport({ tool: 'move', selected }, viewer)
+    // WHICH BUILD THE GEOMETRY IS OF, which on a real element is written in
+    // `show()` beside the payload and is deliberately NOT `state.buildKey` —
+    // that one moves when a swap is ANNOUNCED and the scene arrives later. A
+    // fixture that left this null would test a viewport that has rendered
+    // nothing.
+    vp.drawnKey = 'build-1'
     return { groups, vp }
   }
 
@@ -555,6 +561,24 @@ describe('what a drag with the move tool takes with it', () => {
   const dragFrom = (vp) => {
     pointerDown(vp, [100, 100])
     pointerMove([300, 100])
+  }
+
+  /**
+   * One turn of the microtask queue.
+   *
+   * BOTH REPORTS ARE DEFERRED BY ONE, and every assertion about either has to
+   * wait that long — see `reportProposalMove` and `reportModelMove`, which say
+   * why: one of the endings that raise them is `endGesture`, and `endGesture` is
+   * called from inside `show()`, where a report that comes back as a stage would
+   * render the document that render is in the middle of replacing.
+   */
+  const settled = () => Promise.resolve()
+
+  /** The same drag, released — which is the only thing that reports it. */
+  const dragAndDrop = async (vp) => {
+    dragFrom(vp)
+    pointerUp([300, 100])
+    await settled()
   }
 
   it('takes every path of the selected row, from one grab on one of them', () => {
@@ -569,23 +593,290 @@ describe('what a drag with the move tool takes with it', () => {
       .toEqual([0, 0, 0])
   })
 
-  it('reports how many went, so the chip does not claim the whole row', () => {
+  it('reports every path that went, and how many they were', async () => {
+    // `count` is what the NAME is written with — `pin ×2` and not `pin` — and
+    // `paths` is what the interface records the displacement under. Both are
+    // reported rather than looked up on the other side, because the viewport is
+    // the only half that knows what this gesture actually took hold of.
     const { vp } = moving(PINS)
     pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
-    dragFrom(vp)
+    await dragAndDrop(vp)
 
     const [first] = details(vp, EVENT_MOVED)
     expect(first.count).toBe(2)
     expect(first.id).toBe(PINS[0])
+    expect(first.paths).toEqual(PINS)
   })
 
-  it('takes the one part that was grabbed when nothing is selected', () => {
+  it('says nothing until the hand comes off, so the drag survives the answer', async () => {
+    // THE RELEASE IS THE ONLY REPORT, and this is the line that holds it. The
+    // interface answers a recorded move by OPENING THE PANEL, which changes the
+    // overlay — and a changed overlay reaches `restage()`, `restage()` calls
+    // `show()`, and `show()` ends the gesture the reader has not let go of
+    // (`endGesture`, element.js). Reported per snap step, that tore the press
+    // and its window listeners down one step into the drag: the part travelled
+    // a few millimetres and froze under the cursor.
+    const { groups, vp } = moving(PINS)
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+
+    dragFrom(vp)
+    await settled()
+
+    expect(at(groups[PINS[0]]), 'the part did not follow the hand')
+      .not.toEqual([0, 0, 0])
+    expect(emitted(vp)).not.toContain(EVENT_MOVED)
+
+    pointerUp([300, 100])
+    await settled()
+    expect(details(vp, EVENT_MOVED)).toHaveLength(1)
+  })
+
+  it('is concluded when the scene is swapped — but never inside the render', async () => {
+    // TWO ASSERTIONS THAT PULL AGAINST EACH OTHER, which is why they are one
+    // test, and the same pair the proposal body carries below. `show()` ends a
+    // gesture the reader has not let go of, because a build can land mid-drag;
+    // abandoned, the part stands displaced in `vp.moved` with no node in the
+    // document claiming it, and the next `reconcileMoves` sends it home.
+    //
+    // AND YET IT MUST NOT GO OUT FROM INSIDE THAT RENDER. `endGesture` is called
+    // from `show()` after its only `await` and BEFORE the payload of the new
+    // build is remembered, and the interface answers this report by writing the
+    // document and pushing it back — which for a document holding bodies is a
+    // stage, and a stage reads that payload. One microtask is the whole fix.
+    const { vp } = moving(PINS)
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+    dragFrom(vp)
+
+    vp.endGesture()
+
+    expect(emitted(vp), 'the report went out inside the render')
+      .not.toContain(EVENT_MOVED)
+
+    await settled()
+    expect(details(vp, EVENT_MOVED)).toHaveLength(1)
+  })
+
+  it('is concluded when the pointer is taken away', async () => {
+    // `pointercancel` — the platform claiming the gesture, a touch turning into
+    // a scroll. No `pointerup` follows one, so a cancel that only tore the
+    // listeners down would leave the part displaced with nothing in the document
+    // claiming it: the next push sends it home and the drag is silently undone.
+    const { vp } = moving(PINS)
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+    dragFrom(vp)
+
+    window.dispatchEvent(new MouseEvent('pointercancel', {}))
+    await settled()
+
+    expect(details(vp, EVENT_MOVED)).toHaveLength(1)
+  })
+
+  it('is concluded when another press arrives with it still live', async () => {
+    // `onDown` opens by finishing whatever press is standing — a gesture whose
+    // release this page never saw, or a second button or finger coming down
+    // mid-drag. That ending is an ending like any other: the part is already
+    // standing somewhere else, and only the document can be wrong about it.
+    const { vp } = moving(PINS)
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+    dragFrom(vp)
+
+    rightDown(vp, [300, 100])
+    await settled()
+
+    expect(details(vp, EVENT_MOVED)).toHaveLength(1)
+    pointerUp([300, 100])
+  })
+
+  it('reports a number somebody could have typed, not the arithmetic', async () => {
+    // WHAT `snap` ACTUALLY PRODUCES. The step comes off the grid in 1-2-5
+    // decades, and a 20 mm assembly lands on 0.1 — where `Math.round(v / step) *
+    // step` is exact on paper and binary here: six steps of a tenth come out of
+    // that as `0.6000000000000001`. The drag below is six of them.
+    //
+    // WHERE THAT NUMBER GOES IF IT IS NOT ROUNDED HERE: into `vp.moved`, out on
+    // this event, and from there into the proposal document — which `reconcile
+    // Moves` then compares against the map element by element, so a document
+    // rounded anywhere else disagrees with the map about a part nobody touched
+    // and every push re-applies a move that is already standing. The panel draws
+    // it and the agent reads it, too, and nobody dragged anything to fifteen
+    // decimal places.
+    const groups = { '/Group/pin': fakeGroup() }
+    const vp = toolViewport({ tool: 'move', selected: [] },
+                            fakeViewer({ groups, gridSize: 20 }))
+    pickEntity.mockReturnValue({ id: '/Group/pin', name: 'pin', point: [0, 0, 0] })
+
+    pointerDown(vp, [100, 100])
+    pointerMove([112, 100])
+    pointerUp([112, 100])
+    await settled()
+
+    const [report] = details(vp, EVENT_MOVED)
+    expect(report.delta).toEqual([0.6, 0, 0])
+    // And the scene and the map carry that same one, which is the whole point of
+    // rounding at the source rather than on the way out.
+    expect(vp.moved.get('/Group/pin')).toEqual([0.6, 0, 0])
+    expect(at(groups['/Group/pin'])).toEqual([0.6, 0, 0])
+  })
+
+  it('says nothing for a gesture that left the part where it already was', async () => {
+    // A drag past CLICK_PX that never crossed a snap step — or that came back to
+    // the one it started on — moved nothing. Announced, it would write a node
+    // the document already has and open the panel to show the reader nothing
+    // new.
+    const { vp } = moving(PINS)
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+
+    pointerDown(vp, [100, 100])
+    pointerMove([300, 100])
+    pointerMove([100, 100])
+    pointerUp([100, 100])
+    await settled()
+
+    expect(emitted(vp)).not.toContain(EVENT_MOVED)
+  })
+
+  it('says which build the numbers were measured on, as of the PRESS', async () => {
+    // WITHOUT THIS THE WHOLE FEATURE CAN DIE SILENTLY. The interface drops a
+    // report whose stamp is not the build it is showing, so a report that
+    // carries no stamp at all is one every drag on the real page throws away —
+    // and every test on that side fakes the field into its own dispatches, so
+    // none of them would notice. This is the only place the field is asserted to
+    // exist.
+    //
+    // AS OF THE PRESS AND NOT THE RELEASE, which is what makes it a stamp: the
+    // scene can be replaced under a hand that has not come off the model, and
+    // what these paths and this offset describe is the assembly that was on
+    // screen when the grab was made.
+    const { vp } = moving(PINS)
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+
+    pointerDown(vp, [100, 100])
+    pointerMove([300, 100])
+    vp.drawnKey = 'build-2'
+    pointerUp([300, 100])
+    await settled()
+
+    expect(details(vp, EVENT_MOVED)[0].build).toBe('build-1')
+  })
+
+  it('takes the build off the SCENE, not off the announcement', async () => {
+    // THE DOWNLOAD WINDOW. `state.buildKey` moves in `setState()` the moment the
+    // interface announces a swap — both `takePending` and `switchBuild` commit
+    // their `meta` before that — and the geometry arrives later, after the
+    // `await fetch` in `load()`. Nothing disarms the Move tool across it. So a
+    // press begun in that window, stamped off the announcement, would carry the
+    // NEW key, match on arrival, and file paths read off the assembly that was
+    // still being looked at — and across a revision the same path can be a
+    // different part altogether.
+    //
+    // `drawnKey` is written in `show()` beside the payload, which is the line
+    // that means the new scene is really up, so the press below is stamped with
+    // the build it was actually made on and the report is thrown away.
+    const { vp } = moving(PINS)
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+
+    // The announcement, with the geometry still the old build's.
+    vp.state = { ...vp.state, buildKey: 'build-2' }
+    pointerDown(vp, [100, 100])
+    pointerMove([300, 100])
+    // ...and now the scene really swaps, which is what ends the gesture.
+    vp.drawnKey = 'build-2'
+    vp.endGesture()
+    await settled()
+
+    expect(details(vp, EVENT_MOVED)[0].build).toBe('build-1')
+  })
+
+  it('speaks up when the ANCHOR came back but its siblings did not', async () => {
+    // THE GUARD IS ASKED OF EVERY PATH, and this is the gesture that made it
+    // have to be. One copy is dragged out alone, so the row stands apart: one at
+    // the offset, one at home. The row is then selected and the DISPLACED copy
+    // grabbed — the anchor, so the drag starts from its offset — carried out and
+    // brought back to exactly where it began. Nothing happened to the anchor.
+    // Everything happened to its sibling, which one delta applied to every path
+    // (`movePart`) has carried the whole way across.
+    //
+    // Asked about the anchor alone this reads as a gesture that went nowhere,
+    // and the sibling is left standing at an offset no node in the document
+    // claims — until the next push jerks it home under the reader's hand.
+    const { groups, vp } = moving([])
+    pickEntity.mockReturnValue({ id: PINS[1], name: 'pin', point: [0, 0, 0] })
+    await dragAndDrop(vp)
+    const [first] = details(vp, EVENT_MOVED)
+    expect(at(groups[PINS[0]]), 'the sibling came along on the first drag')
+      .toEqual([0, 0, 0])
+    vp.state = { ...vp.state, selected: PINS }
+
+    pointerDown(vp, [100, 100])
+    pointerMove([300, 100])
+    pointerMove([100, 100])
+    pointerUp([100, 100])
+    await settled()
+
+    expect(details(vp, EVENT_MOVED)).toHaveLength(2)
+    const [, second] = details(vp, EVENT_MOVED)
+    expect(second.delta).toEqual(first.delta)
+    expect(second.paths).toEqual(PINS)
+    expect(at(groups[PINS[0]]), 'the sibling did not come to the anchor')
+      .toEqual(first.delta)
+  })
+
+  it('announces the retraction when a part is dragged back home', async () => {
+    // A ZERO IS NOT SILENCE. The guard above asks whether the gesture CHANGED
+    // anything, not whether the delta is nothing: a part standing displaced and
+    // dragged back to where the build puts it has changed a great deal, and the
+    // interface answers this by deleting the node rather than by writing a move
+    // of (0, 0, 0) into the projection.
+    const { groups, vp } = moving([])
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+    await dragAndDrop(vp)
+
+    // From where the part now stands, the same travel back the way it came.
+    pointerDown(vp, [300, 100])
+    pointerMove([100, 100])
+    pointerUp([100, 100])
+    await settled()
+
+    const [, back] = details(vp, EVENT_MOVED)
+    expect(back.delta).toEqual([0, 0, 0])
+    expect(at(groups[PINS[0]])).toEqual([0, 0, 0])
+  })
+
+  it('announces the delta that LANDED, not the one that was refused', async () => {
+    // `stood` EXISTS FOR THIS AND ONLY THIS. Past its pre-check `movePart` is not
+    // atomic: a `position.set` that throws part way down a row leaves the paths
+    // before it displaced and answers `false` without unwinding (parts.js says
+    // why). The snapped delta has to advance whatever happens, or a step that
+    // fails is retried on every pointermove for the rest of the gesture — so the
+    // two are separate fields, and what the release announces is the last offset
+    // the whole gesture is known to have reached.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { groups, vp } = moving(PINS)
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+
+    pointerDown(vp, [100, 100])
+    pointerMove([300, 100])
+    const landed = [...vp.moved.get(PINS[0])]
+    groups[PINS[1]].position.set = () => { throw new Error('gone') }
+    pointerMove([500, 100])
+    pointerUp([500, 100])
+    await settled()
+
+    const [report] = details(vp, EVENT_MOVED)
+    expect(report.delta).toEqual(landed)
+    // The scene really is out of step — the first path took the refused step
+    // before the throw — and settling that is `reconcileMoves`'s job, off the
+    // document this delta is about to be written into.
+    expect(at(groups[PINS[0]])).toEqual(landed.map((v) => v * 2))
+  })
+
+  it('takes the one part that was grabbed when nothing is selected', async () => {
     // The viewport is told which paths are selected and knows nothing about the
     // rest, so a grab out of the blue moves what was grabbed. The pick this
     // press emits is what puts the whole row under the next drag.
     const { groups, vp } = moving([])
     pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
-    dragFrom(vp)
+    await dragAndDrop(vp)
 
     expect(vp.moved.size).toBe(1)
     expect(at(groups[PINS[1]])).toEqual([0, 0, 0])
@@ -620,11 +911,10 @@ describe('what a drag with the move tool takes with it', () => {
     // arrives at the meeting point by jumping.
 
     /** The first gesture: one copy, dragged alone out of an empty selection. */
-    function droveOneCopy(grabbed) {
+    async function droveOneCopy(grabbed) {
       const { groups, vp } = moving([])
       pickEntity.mockReturnValue({ id: grabbed, name: 'pin', point: [0, 0, 0] })
-      dragFrom(vp)
-      pointerUp([300, 100])
+      await dragAndDrop(vp)
 
       const [first] = details(vp, EVENT_MOVED)
       expect(first.count, 'the first gesture took more than the grabbed copy')
@@ -639,16 +929,16 @@ describe('what a drag with the move tool takes with it', () => {
     /** The delta of the last `hmr:moved` that went out. */
     const lastDelta = (vp) => details(vp, EVENT_MOVED).pop().delta
 
-    it('leaves the grabbed copy where it was and brings the row to it', () => {
+    it('leaves the grabbed copy where it was and brings the row to it', async () => {
       // The reader keeps hold of the SECOND copy — the one carrying the offset
       // — so it must not snap back towards home under the cursor. The same
       // travel a second time therefore lands it at twice the first delta, which
       // is exactly what a jump home would not do.
-      const { groups, vp, first } = droveOneCopy(PINS[1])
+      const { groups, vp, first } = await droveOneCopy(PINS[1])
       expect(at(groups[PINS[0]]), 'the sibling came along on the first drag')
         .toEqual([0, 0, 0])
 
-      dragFrom(vp)
+      await dragAndDrop(vp)
 
       const delta = lastDelta(vp)
       expect(delta).toEqual(first.delta.map((v) => v * 2))
@@ -656,16 +946,16 @@ describe('what a drag with the move tool takes with it', () => {
       expect(at(groups[PINS[0]]), 'the row did not close up').toEqual(delta)
     })
 
-    it('does the same when the grabbed copy is the row\'s first', () => {
+    it('does the same when the grabbed copy is the row\'s first', async () => {
       // The other side of the rule, and the case where the anchor and the
       // `wanted[0]` it falls back to are the same path — so this one cannot
       // fail on that regression, and the test above is what does. It is here
       // because "the copy under the hand" has to hold whichever copy that is:
       // an anchor read off the END of the list passes the test above — where
       // the end and the grabbed copy are the same path — and fails this one.
-      const { groups, vp, first } = droveOneCopy(PINS[0])
+      const { groups, vp, first } = await droveOneCopy(PINS[0])
 
-      dragFrom(vp)
+      await dragAndDrop(vp)
 
       const delta = lastDelta(vp)
       expect(delta).toEqual(first.delta.map((v) => v * 2))
@@ -676,7 +966,7 @@ describe('what a drag with the move tool takes with it', () => {
 
   it('refuses the whole row when one copy of it is not in the scene', () => {
     // All or nothing: half a row moved is two copies of one part standing in
-    // different places under a chip that calls it a move of the row. Refused at
+    // different places under one node that calls it a move of the row. Refused at
     // the PRESS, which is what leaves the gesture to the trackball — refusing it
     // in `movePart` alone would arm a drag that then quietly does nothing.
     const { groups, vp } = moving([...PINS, '/Group/pin(3)'])
@@ -695,8 +985,9 @@ describe('what a drag with the move tool takes with it', () => {
     // composed into the document (`staged()` in element.js). It is an ordinary
     // group in `nestedGroup` and an ordinary pick target, so the move tool drags
     // it like any part — and what the drag MEANS is the whole subject here. A
-    // part of the build moved is a statement to the agent: a chip, and
-    // `hmr:moved` filing the path in the build's terms. A proposal body moved is
+    // part of the build moved is a statement to the agent: a move node in the
+    // proposal, and `hmr:moved` filing the paths in the build's terms. A
+    // proposal body moved is
     // the reader editing their OWN drawing, so it ends in `hmr:proposalmove`
     // naming the body, and the panel writes the number into the `at` fields it
     // is already showing.
@@ -705,8 +996,8 @@ describe('what a drag with the move tool takes with it', () => {
     // silently. `vp.moved` is re-applied after every re-stage (`restageMoves`)
     // and the panel re-stages on the next edit, so an offset left there would be
     // added on top of the position the document by then carries — the body walks
-    // away by twice the distance on the next keystroke — and the chip that is
-    // the only door onto taking it back is deliberately never raised.
+    // away by twice the distance on the next keystroke — and the move node that
+    // is the only door onto taking it back is deliberately never written.
     //
     // THE ELEMENT'S OWN `isOverlay`/`overlayBody` ANSWER, like `activeTool`
     // above, off the two fields they read. Agreeing with the group name minted
@@ -727,17 +1018,6 @@ describe('what a drag with the move tool takes with it', () => {
       vp.overlayParts = [{ name: 'plate' }, { name: 'bore' }]
       return { groups, vp }
     }
-
-    /**
-     * One turn of the microtask queue.
-     *
-     * THE PROPOSAL REPORT IS DEFERRED BY ONE, and every assertion about it has to
-     * wait that long — see `reportProposalMove`, which says why: one of the two
-     * endings that raise it is `endGesture`, and `endGesture` is called from
-     * inside `show()`, where a report that comes back as a re-stage would render
-     * the document that render is in the middle of replacing.
-     */
-    const settled = () => Promise.resolve()
 
     /** A press on one body, a drag, and the release that reports it. */
     async function dragBody(vp, id, name) {
@@ -938,8 +1218,8 @@ describe('what a drag with the move tool takes with it', () => {
     it('leaves a part of the model dragged under the same tool exactly as it was', async () => {
       // The other half of one gesture with two meanings, asserted HERE as well
       // as above because the fixture is the one with both kinds of part in it: a
-      // press on the build still files the move, chip and all, and says nothing
-      // about the proposal.
+      // press on the build still files the move, paths and count and all, and
+      // says nothing about the proposal.
       const { groups, vp } = overlaid([])
       pickEntity.mockReturnValue({ id: '/Group/lid', name: 'lid', point: [0, 0, 0] })
       dragFrom(vp)
@@ -948,6 +1228,7 @@ describe('what a drag with the move tool takes with it', () => {
 
       const [moved] = details(vp, EVENT_MOVED)
       expect(moved.id).toBe('/Group/lid')
+      expect(moved.paths).toEqual(['/Group/lid'])
       expect(moved.count).toBe(1)
       expect(at(groups['/Group/lid'])).toEqual(moved.delta)
       expect(vp.moved.get('/Group/lid')).toEqual(moved.delta)

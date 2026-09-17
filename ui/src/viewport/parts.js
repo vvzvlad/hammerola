@@ -344,10 +344,10 @@ export function partCentre(viewer, path) {
  * solid and a second identical frame, to write emptiness into geometries that
  * were already empty.
  *
- * ONE COPY FOR THREE CALLERS — `movePart`, `nudgePart` and `resetMoves` — and
- * that is what it is for. A proposal body is a solid like any other and cuts like
- * one; three hand-written copies of this tail is how one of them ends up without
- * it, which is a contour left hanging beside the body it belongs to.
+ * ONE COPY FOR THREE CALLERS — `movePart`, `nudgePart` and `reconcileMoves` —
+ * and that is what it is for. A proposal body is a solid like any other and cuts
+ * like one; three hand-written copies of this tail is how one of them ends up
+ * without it, which is a contour left hanging beside the body it belongs to.
  */
 function redrawCut(vp) {
   if (!vp.viewer || !vp.sectionSeed || !vp.state || !vp.state.cut) return;
@@ -373,17 +373,18 @@ function redrawCut(vp) {
  *
  * ALL OR NOTHING, AS FAR AS THE PRE-CHECK REACHES. One path that cannot be
  * moved refuses the whole gesture before anything has moved, because half a row
- * moved is two copies of one part standing in different places while the chip
- * calls it a move of `pin ×5`. On a single path that is exactly what this always
- * did.
+ * moved is two copies of one part standing in different places under a single
+ * node that calls it a move of `pin ×5`. On a single path that is exactly what
+ * this always did.
  *
  * PAST THAT CHECK IT IS NOT ATOMIC, and the limit is worth naming rather than
  * implying: the loop below writes one group at a time, so a `position.set` that
  * throws on the third path leaves the first two displaced and recorded in
  * `vp.moved`. The answer is `false` and no unwinding. What that leaves is a
- * scene out of step with the row, not a scene nothing can fix — `resetMoves`
- * walks exactly the paths `vp.moved` holds and puts every one of them back from
- * `partHome`, and that recovery is what this leans on instead.
+ * scene out of step with the row, not a scene nothing can fix —
+ * `reconcileMoves` walks exactly the paths `vp.moved` holds and puts back every
+ * one the document does not claim, from `partHome`, and that recovery is what
+ * this leans on instead.
  */
 export function movePart(vp, paths, delta) {
   const list = Array.isArray(paths) ? paths : [];
@@ -466,10 +467,10 @@ export function nudgePart(vp, paths, homes, delta) {
  * The other half of keeping a drag across a re-stage (viewport/element.js): the
  * map of offsets survives one, but the ObjectGroups they were written on do not
  * — those were disposed in `clear()` and built again by `render()`, at the
- * positions the model gives them. Without this the interface's move chip would
- * describe a part standing exactly where the build puts it, which is ui-brief
- * block 6 broken in the quietest possible way: the page says something is
- * displaced and nothing is.
+ * positions the model gives them. Without this the move the proposal document
+ * holds would describe a part standing exactly where the build puts it, which is
+ * ui-brief block 6 broken in the quietest possible way: the page says something
+ * is displaced and nothing is.
  *
  * THE HOMES ARE FORGOTTEN AND TAKEN AGAIN rather than reused. They are positions
  * read off groups that no longer exist; the new ones are at the same coordinates
@@ -491,24 +492,81 @@ export function restageMoves(vp) {
   for (const [path, delta] of offsets) movePart(vp, [path], delta);
 }
 
-/** Put every moved part back where the build had it. */
-export function resetMoves(vp) {
-  if (!vp.moved.size) return;
+/**
+ * Make the scene's offsets say what the DOCUMENT says: `wanted` is the whole of
+ * it, as `{paths, delta}` entries.
+ *
+ * THE DOCUMENT IS THE SOURCE OF TRUTH and this is the one function that acts on
+ * that. A drag is recorded as a node of the proposal (ui/src/proposal.js), the
+ * interface hands the whole set back here, and a part goes home because its
+ * entry was DELETED — there is nothing else to press. That is why this takes the
+ * set rather than one move: "which parts are displaced" is a question only the
+ * whole list answers, and a per-entry door would leave this side deciding, out of
+ * two calls, which of them meant "and nothing else".
+ *
+ * `keep` IS WHAT PROTECTS A DELTA THAT CHANGED, and it is worth being exact
+ * about which mechanism does that: an entry whose delta moved is a path in
+ * `vp.moved` AND in `wanted`, so the put-back loop would send it home on its way
+ * past — `keep` is the set of everything the list still claims, and it skips
+ * exactly those. The two loops are then independent, and the order they are
+ * written in is only the order that reads well.
+ *
+ * A DELTA THAT IS ALREADY STANDING IS SKIPPED ENTIRELY, and that is what makes
+ * the interface safe to push the document on every change of it. The drag's own
+ * echo is the case this is for: the release reports the move (`reportModelMove`
+ * in tools.js), the interface records it and hands the whole document straight
+ * back to the viewport the part was dragged in — where every path it names is
+ * already exactly where it asks for. A second `position.set`, a second render
+ * and a second rebuild of the cut contour would all be spent on a scene that is
+ * already right.
+ *
+ * WHICH IS SAFE BECAUSE `vp.moved` IS WHAT WAS WRITTEN, never what was asked
+ * for: `movePart` records a path only after setting its group, and a re-stage
+ * re-applies the map onto the groups it just built (`restageMoves`). So an entry
+ * equal to the delta wanted means the group is already there.
+ */
+export function reconcileMoves(vp, wanted) {
+  const list = Array.isArray(wanted) ? wanted : [];
+  const keep = new Set();
+  for (const move of list) for (const path of move.paths) keep.add(path);
+  const standing = (path, delta) => {
+    const now = vp.moved.get(path);
+    return !!now && delta.every((value, axis) => value === now[axis]);
+  };
+
+  let home = false;
   for (const path of [...vp.moved.keys()]) {
+    if (keep.has(path)) continue;
     const group = movableGroup(vp.viewer, path);
     const base = vp.partHome.get(path);
-    if (group && base) {
-      try {
-        group.position.set(base[0], base[1], base[2]);
-      } catch (error) {
-        console.warn("move reset", error);
-      }
+    // OFF THE MAP BEFORE THE ATTEMPT, so it goes whether or not the attempt
+    // gets anywhere — a path the scene no longer has, and a `position.set` that
+    // throws, leave it recorded just the same. What that would cost is a map
+    // describing offsets nothing is standing at: `measure.js` goes on calling
+    // the view laid out, and every later reconcile tries the same failing write
+    // again.
+    vp.moved.delete(path);
+    if (!group || !base) continue;
+    try {
+      group.position.set(base[0], base[1], base[2]);
+      home = true;
+    } catch (error) {
+      console.warn("move reset", error);
     }
   }
-  vp.moved.clear();
-  if (vp.viewer) vp.viewer.update(true, false);
-  // The same tail every move in this file ends in, and for the same reasons:
-  // after the render that refreshed the matrices, gated on a cut that is
-  // actually on screen, drawn again so the corrected contour gets there.
-  redrawCut(vp);
+  if (home && vp.viewer) vp.viewer.update(true, false);
+
+  // ONE CALL PER ENTRY, because one delta belongs to one gesture: a row standing
+  // for five copies of a part moved all five by the same offset, and `movePart`
+  // takes exactly that shape — every path from its own home.
+  for (const move of list) {
+    if (move.paths.every((path) => standing(path, move.delta))) continue;
+    movePart(vp, move.paths, move.delta);
+  }
+
+  // The contours the parts that went home carried off the plane with them.
+  // `movePart` ends in this itself, so the loop above is covered; what is not is
+  // a reconcile that only put things back. After the render, like every other
+  // caller, and gated inside on a cut that is actually on screen.
+  if (home) redrawCut(vp);
 }

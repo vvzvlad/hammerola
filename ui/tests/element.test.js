@@ -34,13 +34,17 @@ vi.mock('../src/viewport/parts.js', () => ({
   applyGhost: vi.fn(),
   applyHidden: vi.fn(),
   applySelected: vi.fn(),
-  resetMoves: vi.fn(),
-  // Like the four above it: what this file asks is whether a re-stage reaches
+  // Like the three above it: what this file asks is whether a re-stage reaches
   // it at all, because that is a decision `show` makes and nothing else can be
   // asked about from here. What it DOES to a scene's groups — re-offsetting
   // every moved part onto the ones `render()` just built — is parts.test.js's
   // subject, against the real module.
   restageMoves: vi.fn(),
+  // The same answer for the same reason: what this file asks of `setMoves` is
+  // whether the door reaches the module at all and with what. Putting the
+  // offsets on real groups — and taking back the ones the document stopped
+  // claiming — is parts.test.js's subject.
+  reconcileMoves: vi.fn(),
   statesOf: vi.fn(() => ({})),
   treeFromShapes: vi.fn(() => ({})),
 }))
@@ -85,7 +89,7 @@ import { EVENT_ERROR, EVENT_MODEL, TAG } from '../src/viewport/events.js'
 import { safeHatch, setCutHatch } from '../src/viewport/hatch.js'
 import { loadViewerLibrary } from '../src/viewport/library.js'
 import {
-  applyGhost, applyHidden, applySelected, resetMoves, restageMoves,
+  applyGhost, applyHidden, applySelected, reconcileMoves, restageMoves,
 } from '../src/viewport/parts.js'
 import { applySection, suspendSectionCut } from '../src/viewport/section.js'
 import { fakeViewer } from './fakes.js'
@@ -371,14 +375,7 @@ describe('setState', () => {
     expect(vp.state.ghost).toEqual(['/Group/b'])
   })
 
-  describe('the three imperative flags', () => {
-    it('acts on __resetMove and does not leave it in state', () => {
-      const vp = element()
-      vp.setState({ __resetMove: true })
-      calledWithViewport(resetMoves, vp)
-      expect('__resetMove' in vp.state).toBe(false)
-    })
-
+  describe('the imperative flags', () => {
     it('drops the plane and the offset on __resetCut', () => {
       const vp = element({ cutOffset: 12 })
       vp.sectionSeed = { normal: [0, 0, -1], point: [0, 0, 0], placed: true }
@@ -406,12 +403,13 @@ describe('setState', () => {
     })
 
     it('leaves the flag out even when it is false', () => {
-      // Otherwise `state` carries a permanent `__resetMove: false`, which is
+      // Otherwise `state` carries a permanent `__clearMeasure: false`, which is
       // exactly the sort of field somebody later writes a condition against.
       const vp = element()
-      vp.setState({ __resetMove: false })
-      expect(resetMoves).not.toHaveBeenCalled()
-      expect('__resetMove' in vp.state).toBe(false)
+      vp.measurePicks = [{ point: [0, 0, 0] }]
+      vp.setState({ __clearMeasure: false })
+      expect(vp.measurePicks).toHaveLength(1)
+      expect('__clearMeasure' in vp.state).toBe(false)
     })
   })
 
@@ -1179,6 +1177,37 @@ describe('the overlay laid over the model', () => {
     moved.loc = [[0, 0, 5], [0, 0, 0, 1]]
     await vp.setOverlay([moved])
     expect(viewer.render).toHaveBeenCalledTimes(3)
+  })
+
+  it('hands the whole set of moves to the reconcile, and nothing else', async () => {
+    // THE DOOR THE PROPOSAL'S OTHER HALF COMES THROUGH. Where `setOverlay` lays
+    // bodies the reader drew over the model, this shifts parts the model already
+    // has — and it takes the WHOLE list every time, because a part goes home by
+    // having its entry deleted and this call is the only thing that can say so.
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    const staged = viewer.render.mock.calls.length
+
+    vp.setMoves([{ paths: ['/Group/plate'], delta: [0, 0, 3] }])
+
+    calledWithViewport(reconcileMoves, vp)
+    expect(reconcileMoves.mock.calls[0][1])
+      .toEqual([{ paths: ['/Group/plate'], delta: [0, 0, 3] }])
+    // NOT A RE-STAGE: nothing is composed and no scene is built again, which is
+    // what makes this safe to push on every edit of the document.
+    expect(viewer.render).toHaveBeenCalledTimes(staged)
+  })
+
+  it('takes a sender that has nothing to say as an empty list', async () => {
+    // Which is the state a document with no moves in it pushes, and it has to
+    // reach the reconcile rather than being skipped: an empty list is what puts
+    // the last displaced part back.
+    const { vp } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+
+    vp.setMoves(null)
+
+    expect(reconcileMoves.mock.calls[0][1]).toEqual([])
   })
 
   it('goes away again on clearOverlay, and takes nothing of the model with it', async () => {

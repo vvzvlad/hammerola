@@ -178,7 +178,17 @@ function part(name, geom, color, alpha) {
   }
 }
 
-/** The whole document as one payload the viewport's `show()` accepts. */
+/**
+ * The whole document as one payload the viewport's `show()` accepts.
+ *
+ * A MOVE IS NOT GEOMETRY AND THESE TWO FILTERS ARE THE WHOLE OF SAYING SO. The
+ * document holds displaced parts of the build beside the bodies (proposal.js),
+ * and such a node has no op and no size because the part it names is already in
+ * the model: the viewport shifts the one that is there rather than drawing a
+ * second copy of it. Naming the roles that ARE drawn — instead of excluding the
+ * one that is not — is what makes that hold for whatever the document grows
+ * next.
+ */
 export function buildProposal(doc) {
   const solids = doc.nodes.filter((node) => node.role === 'solid')
   const holes = doc.nodes.filter((node) => node.role === 'hole')

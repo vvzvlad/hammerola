@@ -61,6 +61,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 
 import HammerolaViewer, { compareRows, compareSummary } from '../src/HammerolaViewer.jsx'
 import { MEASURE, MOVED, PLACE, STATE } from '../src/events.js'
+import { emptyProposal, moves } from '../src/proposal.js'
 // The element itself, for the one claim below that is about what the VIEWPORT
 // makes of a comparison's state: its rule for reload-or-live-swap is the thing
 // under test, so it is the real one that runs (`viewport` further down).
@@ -188,7 +189,7 @@ function page({ watch, ...over } = {}) {
     bannerGone: false, rail: false, menu: null,
     notePop: null, noteDraft: '', notes: {},
     feed: [], activePin: null, composer: null,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
     theme: 'light', tabs: [], narrow: false, treeOpen: false,
     ...over,
@@ -1101,6 +1102,13 @@ describe('the canvas tools while a comparison is up', () => {
     // SOLID, which is the scene a drag would file a `/cmp/…` path out of, and
     // then over the build's own part on a build page, so this is a claim about
     // the comparison rather than about the row having gone missing altogether.
+    //
+    // THE HUB HAS TO HAVE ASKED FOR THE PANEL for the second half to mean
+    // anything: the row is gated on that flag too, since a displacement is a
+    // node of the proposal and there is nowhere for one to go without it.
+    document.documentElement.setAttribute('data-proposal-panel', 'on')
+    onTestFinished(() =>
+      document.documentElement.removeAttribute('data-proposal-panel'))
     const menu = { id: `${COMPARE_GROUPS.b}/plate`, x: 10, y: 10 }
     expect(comparing({ menu }).computed().menuItems.map((m) => m.label))
       .not.toContain('Move')
@@ -1148,14 +1156,18 @@ describe('the canvas tools while a comparison is up', () => {
     expect(c.state.sel).toBe('/model/plate')
   })
 
-  it('reports no drag, so no /cmp path can reach `partId`', () => {
+  it('records no drag, so no /cmp path can reach the proposal', () => {
+    // A move is a node of the proposal document now, naming the path in the
+    // BUILD's terms — and a comparison's paths are `/cmp/…`, a part no revision
+    // has, in a document the agent reads as a statement about this one.
     const c = comparingLive()
 
     window.dispatchEvent(new CustomEvent(MOVED, {
-      detail: { id: `${COMPARE_GROUPS.b}/plate`, name: 'plate', count: 1,
+      detail: { id: `${COMPARE_GROUPS.b}/plate`, name: 'plate',
+                paths: [`${COMPARE_GROUPS.b}/plate`], count: 1,
                 delta: [3, 0, 0] } }))
 
-    expect(c.state.moved).toBe(null)
+    expect(moves(c.state.proposal || emptyProposal())).toEqual([])
   })
 
   it('leaves them working while the panel is up and the BUILD is on screen', () => {

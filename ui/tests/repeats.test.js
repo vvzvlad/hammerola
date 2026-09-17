@@ -37,11 +37,13 @@
 // listeners go on the window — the same helper, under the same name, as
 // revswitch.test.js's.
 
-import { describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi }
+  from 'vitest'
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { countedName, indexTree } from '../src/hub.js'
 import { FACE, MEASURE, MOVED, PICK, PLACE, STATE } from '../src/events.js'
+import { moves } from '../src/proposal.js'
 import { css } from '../src/style.jsx'
 import assembled from './fixtures/assembled.json'
 import { collect } from './eltree.js'
@@ -274,7 +276,7 @@ function component(tree, over = {}) {
     bannerGone: false, rail: false, menu: null, swapping: false,
     notePop: null, noteDraft: '', notes: {},
     feed: [], activePin: null, composer: null,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
     theme: 'light',
     ...over,
@@ -575,6 +577,18 @@ describe('a hidden row carried onto the next build', () => {
 // holds it.
 
 describe('the Move row of the part menu', () => {
+
+  // THE HUB HAS TO HAVE ASKED FOR THE PANEL, because the Move row is gated on it
+  // now: a displacement is a node of the proposal, so where there is no panel
+  // there is no row saying a part is out of place and no `×` to put it back.
+  // `proposal_panel` is off by default (src/settings.py), and a fixture that
+  // said nothing would be testing a hub that never offers the tool at all.
+  beforeEach(() => {
+    document.documentElement.setAttribute('data-proposal-panel', 'on')
+  })
+  afterEach(() => {
+    document.documentElement.removeAttribute('data-proposal-panel')
+  })
   /** The menu open on one row, and the row that arms the tool from it. */
   const moveOn = (id, over = {}) => {
     const c = component(THREE_PINS, { menu: { id, x: 0, y: 0 }, ...over })
@@ -653,8 +667,8 @@ describe('the Move row of the part menu', () => {
 
   it('is not offered to a reader with no token', () => {
     // The gate the button carried, spelled as absence: a drag's only outcome is
-    // the chip, whose one door is `movedAttach` — a composer, and a comment is
-    // behind the token. Both sides, so this is a claim about the token rather
+    // a node of the proposal, which reaches the agent as a comment and is behind
+    // the token. Both sides, so this is a claim about the token rather
     // than about the row having gone missing altogether.
     expect(moveOn('/model/pin', { token: null }).row).toBeUndefined()
     expect(moveOn('/model/pin').row).toBeDefined()
@@ -669,9 +683,25 @@ describe('the Move row of the part menu', () => {
   })
 })
 
-// -- the moved chip -----------------------------------------------------------
+// -- the name a drag is recorded under ----------------------------------------
 
-describe('the chip that reports a drag', () => {
+describe('the move node a drag writes', () => {
+  /** The names the moves of the document carry, in order. */
+  const named = (c) => moves(c.state.proposal).map((node) => node.name)
+
+  /**
+   * A drag reported by the viewport, with the fixture's own build stamped on it.
+   *
+   * `build` IS ON EVERY REAL REPORT: the viewport stamps the press with the key
+   * the interface handed it, and the handler drops one whose stamp is not the
+   * build now on screen — so a helper that left it off would test the drop and
+   * nothing else. `'abc1234'` is `component()`'s `meta.commit`, which is what
+   * `buildKey` answers with for a fixture that is not a dev slot.
+   */
+  const dragged = (over) => window.dispatchEvent(new CustomEvent(MOVED, {
+    detail: { build: 'abc1234', ...over },
+  }))
+
   it('says how many copies WENT, which is not how many the row holds', () => {
     // The two differ, and that is why `hmr:moved` reports a count instead of
     // this side looking one up: a grab made with NOTHING SELECTED drags the one
@@ -679,17 +709,48 @@ describe('the chip that reports a drag', () => {
     // that actually looks like on the wire — the viewport names the solid it
     // grabbed (`tools.js` takes the name off the dragged path), so the drag of
     // one copy arrives as `pin(2)`, a name no row is drawn under once the run
-    // has collapsed into one — which it has here. The chip answers with the
+    // has collapsed into one — which it has here. The node answers with the
     // row's.
+    // THE PATHS ARE THE ONES THE VIEWPORT WOULD SEND: a drag of the row moves
+    // every copy in it, so `count` and `paths.length` are the same number on the
+    // wire — a detail with one path and a count of three is a shape `dragPart`
+    // cannot produce.
     const c = mounted(THREE_PINS)
-    window.dispatchEvent(new CustomEvent(MOVED,
-      { detail: { id: '/model/pin', name: 'pin', count: 3, delta: [3, 0, 0] } }))
-    expect(c.computed().movedText).toBe('pin ×3 moved 3 mm')
+    const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
+    dragged({ id: row[0], name: 'pin', paths: row, count: row.length,
+              delta: [3, 0, 0] })
+    expect(named(c)).toEqual(['pin ×3'])
 
-    window.dispatchEvent(new CustomEvent(MOVED,
-      { detail: { id: '/model/pin(2)', name: 'pin(2)', count: 1,
-                  delta: [3, 0, 0] } }))
-    expect(c.computed().movedText).toBe('pin moved 3 mm')
+    // ...and the copy dragged alone out of that row is SUBTRACTED from the
+    // node that held it rather than replacing it: two copies are still where
+    // the first gesture put them, and only the third has a new offset. The
+    // count on the shrunk node has to follow it down — `pin ×3` on a node now
+    // holding two paths is a line the projection would print and the row would
+    // draw about a part-set that does not exist.
+    dragged({ id: '/model/pin(2)', name: 'pin(2)', paths: ['/model/pin(2)'],
+              count: 1, delta: [3, 0, 0] })
+    expect(named(c)).toEqual(['pin ×2', 'pin'])
+    expect(moves(c.state.proposal).map((node) => node.paths))
+      .toEqual([['/model/pin', '/model/pin(3)'], ['/model/pin(2)']])
+  })
+
+  it('keeps the shrunk node its name where no row is left to re-read it', () => {
+    // The name is re-resolved off the paths that REMAIN, and that lookup can
+    // come back empty: the tree behind it is the build's and moves on. What the
+    // node had is then the last true thing anybody knows about it — invented
+    // out of the path string it would read `pin(3)`, a name the reader never
+    // saw and no row was ever drawn under.
+    const c = mounted(THREE_PINS)
+    dragged({ id: PIN_PATHS[0], name: 'pin', paths: PIN_PATHS, count: 3,
+              delta: [3, 0, 0] })
+
+    c.setState({ tree: indexTree(model([leaf('lid', 'lid')])) })
+    dragged({ id: '/model/pin', name: 'pin', paths: ['/model/pin'],
+              count: 1, delta: [9, 0, 0] })
+
+    expect(named(c)).toEqual(['pin ×3', 'pin'])
+    expect(moves(c.state.proposal)[0].paths)
+      .toEqual(['/model/pin(2)', '/model/pin(3)'])
   })
 
   it('falls back to the name for a path no row claims', () => {
@@ -697,31 +758,33 @@ describe('the chip that reports a drag', () => {
     // nothing to resolve against — the same case the pick handler answers by
     // keeping the path it came with.
     const c = mounted(THREE_PINS)
-    window.dispatchEvent(new CustomEvent(MOVED,
-      { detail: { id: '/elsewhere/x', name: 'x', count: 1, delta: [3, 0, 0] } }))
-    expect(c.computed().movedText).toBe('x moved 3 mm')
+    dragged({ id: '/elsewhere/x', name: 'x', paths: ['/elsewhere/x'],
+              count: 1, delta: [3, 0, 0] })
+    expect(named(c)).toEqual(['x'])
   })
 
-  it('carries that name into the comment it offers to attach', () => {
-    // The chip is a sentence the reader hands to the agent; `pin moved` about
-    // three of them is a task written against the wrong part count.
+  it('keeps the name it read, because the tree it read it off moves on', () => {
+    // RESOLVED ONCE, AT RECORD TIME. The document outlives the tree the name
+    // came from: a later build can collapse the run differently, or drop the row
+    // altogether, and a projection that looked the name up at print time would
+    // then print nothing for a drag the reader has already made. What is on the
+    // node is what the reader saw when they made it.
     const c = mounted(THREE_PINS)
-    window.dispatchEvent(new CustomEvent(MOVED,
-      { detail: { id: '/model/pin', name: 'pin', count: 3, delta: [3, 0, 0] } }))
-    c.computed().movedAttach()
-    expect(c.state.composer.part).toBe('pin ×3')
-    expect(c.state.composer.move).toBe('pin ×3 by 3 mm')
-    // The counted name is for the reader; the KEY is what the comment hangs on
-    // once this build is gone, and it is the row's bare one either way.
-    expect(c.state.composer.key).toBe('pin')
+    dragged({ id: '/model/pin', name: 'pin', count: 3, delta: [3, 0, 0],
+              paths: ['/model/pin', '/model/pin(2)', '/model/pin(3)'] })
+
+    c.setState({ tree: indexTree(model([leaf('lid', 'lid')])) })
+
+    expect(named(c)).toEqual(['pin ×3'])
   })
 })
 
-// -- the other two doors onto `composer.part` ---------------------------------
+// -- the two doors onto `composer.part` ---------------------------------------
 //
-// `movedAttach` above is the door a DRAG opens, and the two below are the ones
-// the row lookup reached last. All three word the field for a person to read,
-// and none of them may word it with a name the tree does not draw.
+// The describe above is the row lookup a DRAG goes through, which no longer
+// opens a composer at all — what it names is a node of the proposal. These two
+// are the ones that still fill `composer.part`. All of them word a name for a
+// person to read, and none may word it with one the tree does not draw.
 
 describe('the part a comment is opened against', () => {
   it('is the ROW where a point was placed on a later copy', () => {

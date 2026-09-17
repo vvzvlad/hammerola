@@ -15,7 +15,7 @@
 // read exactly as stored and only the PLANE is transformed — which saves
 // transforming every triangle into world coordinates. It does NOT save a
 // rebuild when the part moves: the plane stands in the WORLD, so a moved part
-// cuts differently through it, and the move path (`movePart`/`resetMoves`)
+// cuts differently through it, and the move path (`movePart`/`reconcileMoves`)
 // drops the memo and calls `refreshSectionOutline` since no plane write is
 // coming to rebuild for it. The memo below (on the viewport object, never at
 // module scope) holds the rebuild off whenever the PLANE did not move.

@@ -22,7 +22,7 @@ import {
   sectionSegments,
 } from '../src/viewport/outline.js'
 import {
-  applyGhost, applyHidden, movePart, nudgePart, resetMoves,
+  applyGhost, applyHidden, movePart, nudgePart, reconcileMoves,
 } from '../src/viewport/parts.js'
 import {
   dragSection, placeSectionPlane, sectionAxis, suspendSectionCut,
@@ -892,9 +892,10 @@ describe('the outline under the part passes', () => {
     // corrected contour never reaches the screen and the reader keeps looking
     // at a curve carried off the plane with the part.
     expect(viewer.update.mock.calls.length).toBe(drawn + 2)
-    // Put it back: the plane cuts the cube again.
+    // Put it back — which is the document dropping the entry, so the reconcile
+    // is handed nothing at all: the plane cuts the cube again.
     solid.front.matrixWorld = fakeMatrix()
-    resetMoves(vp)
+    reconcileMoves(vp, [])
     expect(outline.geometry.setPositionsCalls).toBe(3)
     expect(outline.geometry.instanceCount).toBe(8)
   })
