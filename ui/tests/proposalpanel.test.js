@@ -23,10 +23,10 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
-import { PLACE, PROPOSALMOVE } from '../src/events.js'
+import { MOVED, PLACE, PROPOSALMOVE } from '../src/events.js'
 import { indexTree } from '../src/hub.js'
 import {
-  addNode, DIM_OPS, emptyProposal, proposalText,
+  addNode, DIM_OPS, dropMoves, emptyProposal, moves, proposalText, removeNode,
 } from '../src/proposal.js'
 import { SHAPE_OPS } from '../src/proposalgeom.js'
 import { css } from '../src/style.jsx'
@@ -54,6 +54,27 @@ afterEach(() => {
   document.documentElement.removeAttribute(PROPOSAL_ATTRIBUTE)
 })
 
+/**
+ * A part of the BUILD dragged in the scene, exactly as the viewport reports one:
+ * every path that moved, the solid's own name, the offset from where the build
+ * puts it, and the build it was measured on.
+ *
+ * `build` IS THE FIXTURE'S OWN KEY and is on every one of these because it is on
+ * every real report: the viewport stamps the press with the key the interface
+ * handed it, and the handler drops a report whose stamp is not the build now on
+ * screen. A helper that left it off would be testing the drop and nothing else.
+ *
+ * Reaches the page's real listener, so `mounted()` is what a caller needs — the
+ * handler this lands in is the one `componentDidMount` built.
+ */
+const drag = (path, delta, over = {}) => window.dispatchEvent(
+  new CustomEvent(MOVED, {
+    detail: {
+      id: path, name: path.split('/').filter(Boolean).pop(), paths: [path],
+      count: 1, build: REV, delta, ...over,
+    },
+  }))
+
 /** A box with a name worth recognising in an assertion. */
 const BLOCK = {
   id: 'n1', name: 'korpus', op: 'box', role: 'solid',
@@ -76,7 +97,8 @@ function panel({ token = 'sekrit', proposal, open = true, narrow = false,
                  served = true } = {}) {
   stampProposal(served)
   const el = {
-    setOverlay: vi.fn(), clearOverlay: vi.fn(), isOverlay: vi.fn(() => false),
+    setOverlay: vi.fn(), clearOverlay: vi.fn(), setMoves: vi.fn(),
+    isOverlay: vi.fn(() => false),
   }
   const c = Object.create(HammerolaViewer.prototype)
   c.props = { ...HammerolaViewer.defaultProps }
@@ -114,7 +136,7 @@ function panel({ token = 'sekrit', proposal, open = true, narrow = false,
     bannerGone: false, rail: false, menu: null,
     notePop: null, noteDraft: '', notes: {},
     feed: [], activePin: null, composer: null,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     proposal: proposal || emptyProposal(), proposalOpen: open, proposalError: null,
     proposalDraft: null,
     token, tokenPop: false, tokenDraft: '',
@@ -146,6 +168,9 @@ function mounted(over = {}) {
 
 /** The names of the parts the viewport was last handed. */
 const overlay = (el) => el.setOverlay.mock.calls.at(-1)[0].map((part) => part.name)
+
+/** The moves the viewport was last handed, in the shape the door takes them. */
+const pushed = (el) => el.setMoves.mock.calls.at(-1)[0]
 
 /** The four ops, in the order the panel offers them. */
 const ops = (c) => c.computed().proposalOps.map((op) => op.key)
@@ -254,8 +279,38 @@ describe('the panel', () => {
     expect(texts(c.render())).not.toContain('Proposal')
     expect(texts(c.render())).not.toContain('result = union(solid) − union(hole)')
 
-    // And with it the page is the page it always was: the flag takes away the
-    // proposal and nothing else.
+    // AND THE MOVE ROW GOES WITH IT, which is not a second feature being taken
+    // away but the same one: a displacement is a NODE of the proposal, so where
+    // there is no proposal there is nowhere for one to be. Left offered, the
+    // tool would arm, the part would follow the hand, and the release would
+    // reach a page with no row saying the part is out of place, no `×` to put it
+    // back and no projection to send it in — ui-brief block 6 unanswered in all
+    // three of its parts, with the part standing displaced until the next
+    // rebuild.
+    //
+    // A REAL LEAF ROW UNDER THE MENU, and the same menu on a hub that DID ask,
+    // because every other reason the row can be absent — no row at all, a group,
+    // no token, a narrow window — reads identically from here. Without the pair
+    // this would pass on a page whose tree simply has nothing in it.
+    // The flag is read where the answer is spent (`proposalPanelOn`) rather than
+    // held in state, so it is stamped either side of the pair rather than at the
+    // fixtures: whichever component is asked LAST would otherwise decide for
+    // both, and the order these two lines are written in is not a thing the next
+    // reader should have to notice.
+    const menu = { id: '/model/plate', x: 10, y: 10 }
+    const tree = indexTree({ id: '/model', name: 'model', children: [
+      { id: '/model/plate', name: 'plate', key: 'plate' }] })
+    c.state = { ...c.state, tree, menu }
+
+    stampProposal(false)
+    expect(c.computed().menuItems.map((m) => m.label)).not.toContain('Move')
+    stampProposal(true)
+    expect(c.computed().menuItems.map((m) => m.label)).toContain('Move')
+    stampProposal(false)
+
+    // What the flag does NOT take away: everything that was never the
+    // proposal's. Measure is the one next door in the toolbar and files its
+    // answer through the composer, which this hub still serves.
     expect(css(c.computed().measureBtnStyle).display).not.toBe('none')
   })
 
@@ -431,6 +486,21 @@ describe('a body', () => {
     // ...and a body may still be renamed to the name it already has.
     type(c.computed().proposalBodies[0].name, 'korpus')
     expect(c.state.proposal.nodes[0].name).toBe('korpus')
+  })
+
+  it('is not held off a name a MOVE happens to carry', () => {
+    // The two names are in different namespaces: a body's is its part's name in
+    // the payload this panel builds, a move's is a row of the BUILD's, which the
+    // reader never chose and cannot edit. Counted together, dragging a part
+    // called `plate` in the scene would rename the reader's own `plate` to
+    // `plate2` under their hands — for a collision that is about nothing.
+    const { c } = mounted({ proposal: withBlock() })
+    drag('/model/motor', [3, 0, 0])
+
+    type(c.computed().proposalBodies[0].name, 'motor')
+
+    expect(c.state.proposal.nodes[0].name).toBe('motor')
+    expect(moves(c.state.proposal)[0].name).toBe('motor')
   })
 
   it('flips between solid and hole, and a hole is drawn beside the bodies', () => {
@@ -1152,18 +1222,34 @@ describe('a body dragged in the scene', () => {
     expect(atFields(c)).toEqual(['3', '0', '0'])
   })
 
-  it('raises no chip, and leaves the one about a part of the build alone', () => {
-    // A proposal body is in no build, so there is nothing for `moved` to file it
-    // against and nothing for `__resetMove` to put back — the panel standing
-    // open is what says the body is not part of the model. A chip standing about
-    // a part of the BUILD is a different statement and is not disturbed.
+  it('records no move of its own, and leaves a move of the BUILD alone', () => {
+    // A proposal body is in no build, so there is no path to record it under and
+    // nothing to put back — the panel standing open is what says the body is not
+    // part of the model, and the body's own `at` is where it went. A part of the
+    // BUILD dragged is a node of this same document and a different statement,
+    // and it is not disturbed by a body moving beside it.
     const { c } = mounted({ proposal: withBore() })
-    c.setState({ moved: { id: '/model/plate', name: 'plate', mag: 3 } })
+    drag('/model/plate', [3, 0, 0])
+    const recorded = moves(c.state.proposal)
+    expect(recorded).toHaveLength(1)
 
     fire('korpus', [3, 0, 0])
 
-    expect(c.state.moved).toEqual({ id: '/model/plate', name: 'plate', mag: 3 })
+    expect(moves(c.state.proposal)).toEqual(recorded)
     expect(places(c)[0]).toEqual([3, 0, 0])
+  })
+
+  it('moves the body and not a move node that answers to the same name', () => {
+    // A MOVE CARRIES A NAME TOO — a row of the build's, which the reader never
+    // chose — and this gesture finds the body it grabbed BY NAME. Run together,
+    // the drag would reach a node that has no `at` at all.
+    const { c } = mounted({ proposal: withBlock() })
+    drag('/model/korpus', [9, 0, 0])
+
+    fire('korpus', [3, 0, 0])
+
+    expect(places(c)[0]).toEqual([3, 0, 0])
+    expect(moves(c.state.proposal)[0].delta).toEqual([9, 0, 0])
   })
 
   it('moves nothing at all when no body answers to the name', () => {
@@ -1177,6 +1263,443 @@ describe('a body dragged in the scene', () => {
 
     expect(places(c)).toEqual([[0, 0, 0], [5, 0, 0]])
     expect(el.setOverlay).toHaveBeenCalledTimes(staged)
+  })
+})
+
+// -- a part of the BUILD moved with the same hand ------------------------------
+
+describe('a part of the build dragged in the scene', () => {
+  // THE SAME GESTURE ON THE OTHER SOURCE OF PARTS, and the opposite meaning: a
+  // body of the proposal is the reader's own drawing and its `at` is edited,
+  // while a part of the build belongs to the model and is not touched at all —
+  // what is recorded is that it should BE somewhere else. Both end in this one
+  // document, so both travel to the agent in one projection, and putting the
+  // part back is deleting the entry rather than pressing anything.
+  //
+  // WHERE THE OTHER HALF IS TESTED: that the offsets actually land on the
+  // scene's groups is ui/tests/parts.test.js, and that the door reaches them is
+  // ui/tests/element.test.js. What is HERE is what the document records and what
+  // it hands over.
+
+  it('records the drag beside the bodies, and prints it in the projection', () => {
+    const { c } = mounted({ proposal: withBlock() })
+
+    drag('/model/plate', [3.2, 0, -1])
+
+    expect(moves(c.state.proposal)).toEqual([{
+      id: 'm2', role: 'move', paths: ['/model/plate'], name: 'plate',
+      delta: [3.2, 0, -1],
+    }])
+    expect(proposalText(c.state.proposal))
+      .toContain('move "plate" by (3.2, 0, -1)')
+  })
+
+  it('carries every path the gesture moved, not just the one it named', () => {
+    // A row standing for five copies of a part moves all five, and the viewport
+    // reports the first of them as `id` while `paths` is the lot. Recorded off
+    // `id` alone, the other four would be displaced with nothing claiming them —
+    // and the very next push of this document would send them home.
+    const { c, el } = mounted({ proposal: withBlock() })
+    const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
+
+    drag('/model/pin', [3, 0, 0], { paths: row, count: 3 })
+
+    expect(moves(c.state.proposal)[0].paths).toEqual(row)
+    expect(pushed(el)).toEqual([{ paths: row, delta: [3, 0, 0] }])
+  })
+
+  it('writes the number the viewport sent, and does not round it again', () => {
+    // WHERE THE ROUNDING IS, said here because it used to be here. A drag is
+    // snapped to a 1-2-5 step and `Math.round(v / step) * step` lands on numbers
+    // like `0.6000000000000001`, which nobody dragged anything to — so `snap` in
+    // viewport/tools.js rounds its own arithmetic by the document's rule
+    // (`tidy`) and the delta arrives already at a place somebody could have
+    // typed. That is pinned where it happens, in ui/tests/tools.test.js.
+    //
+    // WHAT IS PINNED HERE is that this side adds nothing: the number in the node
+    // is the number on the wire, and the row and the projection print that one.
+    // A second rounding would be two places having to agree about a value
+    // neither of them computed.
+    const { c } = mounted({})
+
+    drag('/model/plate', [0.6, 0, 0])
+
+    expect(moves(c.state.proposal)[0].delta).toEqual([0.6, 0, 0])
+    expect(proposalText(c.state.proposal)).toContain('by (0.6, 0, 0)')
+    expect(c.computed().proposalMoveRows[0].delta).toBe('moved by (0.6, 0, 0)')
+  })
+
+  it('replaces the move of the same grab rather than adding it up', () => {
+    // The delta the viewport reports is CUMULATIVE from where the build puts the
+    // part: each press starts from the offset already standing, so the second
+    // drag describes the whole displacement again. Added, the part would end up
+    // twice as far out as the scene has it.
+    const { c } = mounted({ proposal: withBlock() })
+
+    drag('/model/plate', [3, 0, 0])
+    drag('/model/plate', [5, 0, 0])
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(moves(c.state.proposal)[0].delta).toEqual([5, 0, 0])
+  })
+
+  it('replaces the move that shares a path, whatever the gesture came in as', () => {
+    // THE SEQUENCE THAT MADE THIS NECESSARY, and every step of it is ordinary:
+    // Move is armed from a collapsed row's menu, so the selection is all three
+    // copies; a press on empty space degrades to a pick and CLEARS the
+    // selection while the tool stays armed; the next drag therefore takes the
+    // one copy it hit — arriving under that copy's own path — and the pick it
+    // emits puts the whole row back under the hand, so the drag after it arrives
+    // under the row's first path. Matched on the first path, those two gestures
+    // wrote two nodes both claiming `pin(3)`: two contradictory `move` lines in
+    // the projection, and two rows of which one `×` looked broken.
+    const { c, el } = mounted({})
+    const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
+
+    drag('/model/pin(3)', [3, 0, 0])
+    drag('/model/pin', [5, 0, 0], { paths: row, count: 3 })
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(moves(c.state.proposal)[0].paths).toEqual(row)
+    expect(moves(c.state.proposal)[0].delta).toEqual([5, 0, 0])
+    expect(pushed(el)).toEqual([{ paths: row, delta: [5, 0, 0] }])
+  })
+
+  it('drops every move the new gesture touches, where more than one does', () => {
+    // Two copies dragged apart one at a time, and then the row that holds both:
+    // one gesture has superseded whatever either node said about them, and
+    // keeping either would leave the document claiming an offset the scene does
+    // not have.
+    const { c, el } = mounted({})
+    const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
+
+    drag('/model/pin', [3, 0, 0])
+    drag('/model/pin(2)', [0, 3, 0])
+    expect(moves(c.state.proposal)).toHaveLength(2)
+
+    drag('/model/pin', [5, 0, 0], { paths: row, count: 3 })
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(moves(c.state.proposal)[0].paths).toEqual(row)
+    expect(pushed(el)).toEqual([{ paths: row, delta: [5, 0, 0] }])
+  })
+
+  it('subtracts the grabbed copy and leaves the rest of the row displaced', () => {
+    // A ROW MOVED, THEN ONE COPY OUT OF IT NUDGED FURTHER. Three copies at +3
+    // and then one dragged to +8 means two are at +3 and one is at +8 — the
+    // second gesture says nothing whatever about the other two. Dropping the
+    // node they were in would send them home on the very next push: two moves
+    // the reader made, undone by a nudge of a third, with two parts jumping
+    // across the scene for no reason shown anywhere.
+    const { c, el } = mounted({})
+    const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
+
+    drag('/model/pin', [3, 0, 0], { paths: row, count: 3 })
+    drag('/model/pin(2)', [8, 0, 0])
+
+    expect(moves(c.state.proposal).map((m) => [m.paths, m.delta])).toEqual([
+      [['/model/pin', '/model/pin(3)'], [3, 0, 0]],
+      [['/model/pin(2)'], [8, 0, 0]],
+    ])
+    // AND THE VIEWPORT IS TOLD ALL OF IT, which is where "still displaced"
+    // stops being a claim about a document and becomes one about the scene.
+    expect(pushed(el)).toEqual([
+      { paths: ['/model/pin', '/model/pin(3)'], delta: [3, 0, 0] },
+      { paths: ['/model/pin(2)'], delta: [8, 0, 0] },
+    ])
+  })
+
+  it('pushes the document that was COMMITTED, not the one it computed', () => {
+    // WHAT A COMPLETION CALLBACK IS FOR. The handler writes its document in a
+    // functional updater, and the updater's own result is what this edit WOULD
+    // have committed — not necessarily what did. React batches, so another
+    // functional patch can be applied behind it before the callback runs, and
+    // the one that matters is `onModel`'s `dropMoves`: a build landing while the
+    // report is in flight. Pushing the updater's result at `setMoves` after that
+    // displaces a part of the NEW build by a node the committed document no
+    // longer holds — no row, no `×`, and nothing staging after it to correct the
+    // scene.
+    //
+    // THE BATCH IS STAGED BY HAND because this harness commits synchronously and
+    // React does not: the second updater below is what the real one interleaves
+    // on its own, and without it there is no arrangement in which the two
+    // documents differ.
+    const { c, el } = mounted({ proposal: withBlock() })
+    const commit = c.setState
+    c.setState = vi.fn((patch, done) => {
+      commit(patch)
+      commit((s) => ({ proposal: dropMoves(s.proposal || emptyProposal()) }))
+      if (done) done()
+    })
+
+    drag('/model/plate', [3, 0, 0])
+
+    expect(moves(c.state.proposal)).toEqual([])
+    expect(pushed(el)).toEqual([])
+  })
+
+  it('hands the viewport the whole set, so the drag it echoes is a no-op', () => {
+    // The document is pushed straight back at the viewport the part was just
+    // dragged in, and that push must leave it exactly where the hand left it:
+    // the entry says the offset the drag already applied.
+    const { c, el } = mounted({ proposal: withBlock() })
+
+    drag('/model/plate', [3, 0, 0])
+
+    expect(pushed(el)).toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0] }])
+    expect(moves(c.state.proposal)[0].delta).toEqual([3, 0, 0])
+  })
+
+  it('sends the part home by having its entry deleted', () => {
+    // WHAT PUTTING IT BACK IS, now that there is no button for it: the node goes
+    // and the viewport is told what is left, which for the last one is nothing
+    // at all.
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+
+    c.setProposal(removeNode(c.state.proposal, moves(c.state.proposal)[0].id))
+
+    expect(moves(c.state.proposal)).toEqual([])
+    expect(pushed(el)).toEqual([])
+    // The bodies are untouched by any of it: a move draws nothing.
+    expect(overlay(el)).toEqual(['korpus'])
+  })
+
+  it('takes the entry away when the part is dragged back where it belongs', () => {
+    // A ZERO IS A RETRACTION, not a move of nothing. The viewport reports a
+    // delta of (0, 0, 0) only when something WAS standing displaced, so this is
+    // the reader putting the part back by hand — the plainest way anybody says
+    // "never mind". Written down as a node it would be a `move "plate" by
+    // (0, 0, 0)` line in the projection for an agent to puzzle over and a row in
+    // the panel to be closed by a second gesture.
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    expect(moves(c.state.proposal)).toHaveLength(1)
+
+    drag('/model/plate', [0, 0, 0])
+
+    expect(moves(c.state.proposal)).toEqual([])
+    expect(proposalText(c.state.proposal)).not.toContain('move "plate"')
+    // And the viewport hears the whole set, which for the last one is nothing:
+    // that push is what forgets the path and puts `measure.js` back to
+    // describing an assembly nothing is displaced in.
+    expect(pushed(el)).toEqual([])
+  })
+
+  it('takes only the copies the retraction names out of a row\'s entry', () => {
+    // The same subtraction the other direction: a row of three at one offset,
+    // one copy dragged home. That copy loses its claim and the other two keep
+    // theirs, so the node shrinks and is renamed rather than being dropped.
+    const { c, el } = mounted({})
+    const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
+    drag('/model/pin', [3, 0, 0], { paths: row, count: 3 })
+
+    drag('/model/pin(2)', [0, 0, 0])
+
+    expect(moves(c.state.proposal).map((m) => m.paths))
+      .toEqual([['/model/pin', '/model/pin(3)']])
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/pin', '/model/pin(3)'], delta: [3, 0, 0] }])
+  })
+
+  it('leaves the panel shut for a retraction, having nothing to show', () => {
+    // The panel comes up to SHOW a displacement and the row that undoes it. A
+    // drag home is the undoing, so opening the panel to announce it would be
+    // answering "never mind" with a demand to look.
+    const { c } = mounted({ proposal: withBlock(), open: false })
+    drag('/model/plate', [3, 0, 0])
+    c.setState({ proposalOpen: false })
+
+    drag('/model/plate', [0, 0, 0])
+
+    expect(c.state.proposalOpen).toBe(false)
+    expect(moves(c.state.proposal)).toEqual([])
+  })
+
+  it('touches the bodies over the model not at all, panel already open', () => {
+    // A move changes no body, so the bodies standing over the model are already
+    // the ones a rebuild would produce — and while the panel is open it writes
+    // the document and pushes the offsets, leaving the geometry neither rebuilt
+    // nor re-staged. What that buys is the measurement at `field` in `computed`:
+    // rebuilding them here would cost 23 ms at four bodies and 81 ms at twelve,
+    // spent on nothing.
+    const { c, el } = mounted({ proposal: withBlock() })
+    el.setOverlay.mockClear()
+    el.clearOverlay.mockClear()
+
+    drag('/model/plate', [3, 0, 0])
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(el.setOverlay).not.toHaveBeenCalled()
+    expect(el.clearOverlay).not.toHaveBeenCalled()
+    expect(pushed(el)).toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0] }])
+  })
+
+  it('opens the panel it was recorded in, if the reader had it shut', () => {
+    // UI-BRIEF BLOCK 6: a displaced part has to be visibly displaced, visibly
+    // temporary, and have a way back. The way back is the row's `×` and the row
+    // is in the panel — and the Move tool is armed from a part's own menu, with
+    // no panel needed — so a drag with it shut would otherwise leave the model
+    // quietly out of shape with nothing on screen saying so.
+    const { c, el } = mounted({ proposal: withBlock(), open: false })
+
+    drag('/model/plate', [3, 0, 0])
+
+    expect(c.state.proposalOpen).toBe(true)
+    expect(c.computed().proposalMoveRows).toHaveLength(1)
+    expect(css(c.computed().proposalPanelStyle).display).toBe('block')
+    // AND THE BODIES GO BACK OVER THE MODEL WITH IT, because that is what an
+    // open panel means — closing it is what took them off (`toggleProposal`),
+    // and a panel listing bodies the model does not show is the same
+    // disagreement read the other way.
+    expect(overlay(el)).toEqual(['korpus'])
+    expect(pushed(el)).toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0] }])
+  })
+
+  it('records nothing while the scene on screen is a comparison\'s', () => {
+    // `toolsOff`: the paths of a comparison's scene are `/cmp/…`, which name a
+    // part no revision has — a displacement of one, in a document the agent
+    // reads as a statement about this build.
+    const { c } = mounted({ proposal: withBlock() })
+    c.setState({ compare: true, cmpPair: ['a', 'b'], cmpView: 'assembled',
+                 cmpStage: 'ready' })
+
+    drag('/cmp/added/plate', [3, 0, 0])
+
+    expect(moves(c.state.proposal)).toEqual([])
+  })
+
+  it('records nothing for a delta that is not three finite numbers', () => {
+    const { c } = mounted({ proposal: withBlock() })
+
+    drag('/model/plate', [3, NaN, 0])
+    drag('/model/plate', [3, 0])
+
+    expect(moves(c.state.proposal)).toEqual([])
+  })
+})
+
+// -- and the row it gets in the panel -----------------------------------------
+
+describe('the row a move is drawn as', () => {
+  // WHY THERE HAS TO BE ONE AT ALL: a dragged part goes home by having its entry
+  // DELETED, and a row nobody can see is an entry nobody can delete. It is in the
+  // same list as the bodies because it is the same kind of statement — the
+  // reader's own words for it were "you have new parts in that tree, just add
+  // `shift of an existing part` to it".
+
+  /** The rows the panel draws for the moves, as `computed()` hands them over. */
+  const rows = (c) => c.computed().proposalMoveRows
+
+  it('shows the part and how far it went, and nothing to type', () => {
+    const { c } = mounted({ proposal: withBlock() })
+
+    drag('/model/plate', [3.2, 0, -1], { count: 3, name: 'plate' })
+
+    expect(rows(c)).toHaveLength(1)
+    // The name the node was recorded under, count and all: what the row says and
+    // what the projection prints are the same string, resolved once at the drag.
+    expect(rows(c)[0].name).toBe('plate ×3')
+    // The same numbers the projection prints, in the same spelling: a reader
+    // comparing the panel with what they are about to send should not have to
+    // translate between the two.
+    expect(rows(c)[0].delta).toBe('moved by (3.2, 0, -1)')
+    expect(proposalText(c.state.proposal)).toContain('by (3.2, 0, -1)')
+    // No fields and no groups: a body's numbers are the reader's own, a move's
+    // came from the gesture.
+    expect(rows(c)[0].groups).toBeUndefined()
+  })
+
+  it('is drawn on the page, in the list the bodies are in and after them', () => {
+    // `computed()` answering with a row is not the same as the page drawing one
+    // — the lesson eltree.js is written around — and a row nobody draws is a
+    // part that cannot be put back.
+    const { c } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+
+    const said = texts(c.render())
+    expect(said).toContain('moved by (3, 0, 0)')
+    expect(said).toContain('plate')
+    // AFTER THE BODIES AND BEFORE THE BUTTONS THAT ADD ONE, which is what puts
+    // it in the same list rather than in a section of its own.
+    expect(said.indexOf('moved by (3, 0, 0)'))
+      .toBeGreaterThan(said.indexOf('rot°'))
+    expect(said.indexOf('moved by (3, 0, 0)')).toBeLessThan(said.indexOf('+ box'))
+  })
+
+  it('leaves the bodies their own rows, and takes none of them', () => {
+    const { c } = mounted({ proposal: withBlock() })
+
+    drag('/model/plate', [3, 0, 0])
+
+    expect(c.computed().proposalBodies.map((b) => b.name.value)).toEqual(['korpus'])
+  })
+
+  it('puts the part back when the row is closed', () => {
+    // THE WHOLE FEATURE, END TO END: the `×` deletes the node, the document is
+    // pushed back at the viewport without that path in it, and the reconcile on
+    // the other side is what walks `vp.moved` and sends the part home
+    // (ui/tests/parts.test.js holds that half).
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    expect(pushed(el)).toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0] }])
+
+    rows(c)[0].onRemove()
+
+    expect(rows(c)).toEqual([])
+    expect(pushed(el)).toEqual([])
+    // The body beside it is untouched, and so is the overlay it is staged as.
+    expect(c.computed().proposalBodies).toHaveLength(1)
+    expect(overlay(el)).toEqual(['korpus'])
+  })
+
+  it('leaves the other moves alone when one of them is closed', () => {
+    const { c, el } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    drag('/model/lid', [0, 4, 0])
+
+    rows(c)[0].onRemove()
+
+    expect(rows(c).map((row) => row.name)).toEqual(['lid'])
+    expect(pushed(el)).toEqual([{ paths: ['/model/lid'], delta: [0, 4, 0] }])
+  })
+})
+
+// -- a proposal that is nothing but moves -------------------------------------
+
+describe('a document holding moves and no bodies', () => {
+  // It is not an empty document: a part the reader dragged is a statement to the
+  // agent on its own, and the panel has to treat it as one — there is something
+  // to send, and nothing to explain.
+
+  it('draws its rows and offers the projection', () => {
+    const { c } = mounted({})
+
+    drag('/model/plate', [3, 0, 0])
+
+    expect(c.computed().proposalBodies).toEqual([])
+    expect(c.computed().proposalMoveRows).toHaveLength(1)
+    expect(css(c.computed().proposalAddStyle).display).not.toBe('none')
+    expect(texts(c.render())).toContain('moved by (3, 0, 0)')
+  })
+
+  it('stops explaining what a body is, because something has been put in it', () => {
+    const { c } = mounted({})
+    expect(css(c.computed().proposalEmptyStyle).display).toBe('block')
+
+    drag('/model/plate', [3, 0, 0])
+
+    expect(css(c.computed().proposalEmptyStyle).display).toBe('none')
+  })
+
+  it('sends the projection with the move in it and no bodies at all', () => {
+    const { c } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+
+    c.computed().proposalAdd()
+
+    expect(c.state.composer.proposal).toBe(proposalText(c.state.proposal))
+    expect(c.state.composer.proposal).toContain('move "plate" by (3, 0, 0)')
   })
 })
 
@@ -1408,24 +1931,26 @@ describe('the model event a re-stage sends back', () => {
     ],
   }
 
+  /** The document with a body in it and a part of the build dragged. */
+  const withMove = () => addNode(withBlock(), {
+    id: 'm2', role: 'move', paths: ['/model/plate'], name: 'plate',
+    delta: [3, 0, 0],
+  })
+
   it('leaves the measurement and the moved part exactly where they were', () => {
     // BLOCKS 6 AND 7, AND BLOCK 6 IS WHAT THIS FEATURE IS MODELLED ON. Both
-    // chips describe the model, and a re-stage does not touch the model: it is
-    // the same document with a body drawn over it. Dropped here, they went on
-    // the keystroke that committed a number in a panel that has nothing to do
-    // with either — and the viewport's own halves of them survive, so the page
-    // would also have been disagreeing with the scene.
-    const { c } = panel({ proposal: withBlock() })
-    c.state = {
-      ...c.state,
-      measure: { text: '2.4 mm' },
-      moved: { text: 'plate by 3 mm' },
-    }
+    // describe the model, and a re-stage does not touch the model: it is the
+    // same document with a body drawn over it. Dropped here, they went on the
+    // keystroke that committed a number in a panel that has nothing to do with
+    // either — and the viewport's own halves of them survive, so the page would
+    // also have been disagreeing with the scene.
+    const { c } = panel({ proposal: withMove() })
+    c.state = { ...c.state, measure: { text: '2.4 mm' } }
 
     c.onModel({ tree: TREE, view: 'assembled', live: true, restage: true })
 
     expect(c.state.measure).toEqual({ text: '2.4 mm' })
-    expect(c.state.moved).toEqual({ text: 'plate by 3 mm' })
+    expect(moves(c.state.proposal)).toHaveLength(1)
     // The tree still lands: it is what the proposal's own rows arrive in.
     expect([...c.state.tree.nodes.keys()]).toContain('/model/proposal/result')
   })
@@ -1433,18 +1958,51 @@ describe('the model event a re-stage sends back', () => {
   it('still drops both when the model itself was replaced', () => {
     // The default, and the reason the flag had to be added rather than the
     // clearing simply removed: on a rebuild every part goes back where the model
-    // puts it and the faces a distance was measured between may be gone.
-    const { c } = panel({ proposal: withBlock() })
-    c.state = {
-      ...c.state,
-      measure: { text: '2.4 mm' },
-      moved: { text: 'plate by 3 mm' },
-    }
+    // puts it — the viewport clears its own map on the way through — and the
+    // faces a distance was measured between may be gone. A delta against a
+    // build that has left describes nothing, so it goes with them.
+    const { c } = panel({ proposal: withMove() })
+    c.state = { ...c.state, measure: { text: '2.4 mm' } }
 
     c.onModel({ tree: TREE, view: 'assembled', live: true })
 
     expect(c.state.measure).toBeNull()
-    expect(c.state.moved).toBeNull()
+    expect(moves(c.state.proposal)).toEqual([])
+  })
+
+  it('refuses a report measured on the build that has just left', async () => {
+    // THE ORDER THIS HAPPENS IN, which is the whole bug. The viewport defers its
+    // report by a microtask so it cannot be raised from inside a render, and
+    // `show()` runs `endGesture` — which queues it — and then dispatches
+    // `hmr:model` with no `await` between the two. So an ordinary live rebuild
+    // landing mid-drag delivers the model event FIRST, `dropMoves` clears the
+    // moves, and the report arrives afterwards holding paths and an offset
+    // measured against an assembly that is no longer on screen. Taken, it would
+    // displace a part of the NEW build by a number nobody measured against it —
+    // and `proposalMoves` would push that straight at the scene.
+    const { c } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    expect(moves(c.state.proposal)).toHaveLength(1)
+
+    queueMicrotask(() => drag('/model/pin', [5, 0, 0]))
+    c.setState({ meta: { ...c.state.meta, commit: `${REV.slice(0, 63)}f` } })
+    c.onModel({ tree: TREE, view: 'assembled', live: true })
+    await Promise.resolve()
+
+    // NOT ONE AND NOT THE OLD ONE: the move the build that left carried is gone
+    // with it, and the late report wrote nothing in its place.
+    expect(moves(c.state.proposal)).toEqual([])
+  })
+
+  it('keeps the BODIES through that, because they are in no build', () => {
+    // The other half of the same line, and the reason it is `dropMoves` rather
+    // than a fresh document: a motor the model has to clear is as true of the
+    // build arriving as of the one that left, and the reader typed it.
+    const { c } = panel({ proposal: withMove() })
+
+    c.onModel({ tree: TREE, view: 'assembled', live: true })
+
+    expect(c.state.proposal.nodes.map((node) => node.name)).toEqual(['korpus'])
   })
 })
 
@@ -1454,7 +2012,7 @@ describe('another revision opening', () => {
   it('leaves the proposal and its attachment alone', () => {
     // Everything `leaveBuild` clears is a coordinate this page took off geometry
     // that has left: which solid was picked, where in space, a measurement
-    // between two faces, a part dragged out of the assembly. A proposal is none of
+    // between two faces, a part dragged out of the assembly. A BODY is none of
     // those — it is the reader's own claim about a motor or a wall, and it is as
     // true of the revision arriving as of the one leaving.
     const { c } = panel({ proposal: withBlock() })
@@ -1468,5 +2026,50 @@ describe('another revision opening', () => {
     // ...while the fields that DID describe the build that left are emptied.
     expect(state.composer.part).toBe('')
     expect(state.composer.meas).toBeNull()
+  })
+
+  it('takes the moves out of an attachment already captured', () => {
+    // THE ATTACHMENT IS TEXT, taken when `add to comment` was pressed, and a
+    // move line in it is a delta measured against where THIS build put a part.
+    // `dropMoves` takes those out of the document when the new build lands, and
+    // an attachment left as captured would hand the agent exactly the sentences
+    // the document has just stopped making.
+    const { c } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    c.computed().proposalAdd()
+    expect(c.state.composer.proposal).toContain('move "plate"')
+
+    const { state } = c.leaveBuild(true)
+
+    expect(state.composer.proposal).not.toContain('move "plate"')
+    expect(state.composer.proposal).toContain('"korpus"')
+    expect(state.composer.proposal)
+      .toBe(proposalText(dropMoves(c.state.proposal)))
+  })
+
+  it('drops the attachment where the moves were all there was', () => {
+    // A MOVE-ONLY PROPOSAL HAS NOTHING LEFT once the moves go, and what would
+    // otherwise ride along is a `proposal` block with no statement in it — the
+    // agent handed a heading and a `result =` line and asked to design against
+    // them. `proposalAddStyle` refuses exactly that document at the front door,
+    // so the swap must not post what the link would not have offered.
+    const { c } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    c.computed().proposalAdd()
+    expect(c.state.composer.proposal).toContain('move "plate"')
+
+    const { state } = c.leaveBuild(true)
+
+    expect(state.composer.proposal).toBeNull()
+  })
+
+  it('attaches nothing to a draft that had no projection on it', () => {
+    const { c } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    c.setState({ composer: { part: 'plate', text: 'too thin' } })
+
+    const { state } = c.leaveBuild(true)
+
+    expect('proposal' in state.composer).toBe(false)
   })
 })

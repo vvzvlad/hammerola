@@ -25,7 +25,7 @@ import { internals } from '../src/viewport/internals.js'
 import { GHOST_OPACITY, renderOptions } from '../src/viewport/options.js'
 import {
   applyGhost, applyHidden, applySelected, movePart, movableGroup, partCentre,
-  resetMoves, restageMoves, statesOf, treeFromShapes,
+  reconcileMoves, restageMoves, statesOf, treeFromShapes,
 } from '../src/viewport/parts.js'
 import {
   fakeGroup, fakeMatrix, fakeShapeSolid, fakeViewer, fakeViewport,
@@ -478,7 +478,7 @@ describe('applySelected', () => {
   })
 })
 
-describe('movePart and resetMoves', () => {
+describe('movePart and reconcileMoves', () => {
   function scene() {
     const home = [1, 2, 3]
     const groups = { [PATHS[0]]: fakeGroup(home) }
@@ -515,9 +515,13 @@ describe('movePart and resetMoves', () => {
   })
 
   it('puts everything back exactly where the build had it', () => {
+    // WHICH IS THE DOCUMENT NO LONGER CLAIMING IT. The proposal holds the moves
+    // (ui/src/proposal.js) and deleting the entry is the only way a part goes
+    // home, so "put it back" reaches here as a reconcile against a list without
+    // it in.
     const { home, groups, vp } = scene()
     movePart(vp, [PATHS[0]], [10, -5, 2])
-    resetMoves(vp)
+    reconcileMoves(vp, [])
 
     const at = groups[PATHS[0]].position
     expect([at.x, at.y, at.z]).toEqual(home)
@@ -551,11 +555,11 @@ describe('movePart and resetMoves', () => {
     expect(vp.viewer.update).toHaveBeenCalledTimes(1)
   })
 
-  it('puts every copy back, because reset walks what was moved', () => {
+  it('puts every copy back, because the reconcile walks what was moved', () => {
     const { homes, groups, vp } = crowd()
     movePart(vp, PATHS, [10, -5, 2])
     expect(vp.moved.size).toBe(PATHS.length)
-    resetMoves(vp)
+    reconcileMoves(vp, [])
 
     PATHS.forEach((path, at) => {
       const now = groups[path].position
@@ -565,9 +569,79 @@ describe('movePart and resetMoves', () => {
     expect(vp.moved.size).toBe(0)
   })
 
+  it('keeps what the list still claims and puts back only the rest', () => {
+    // THE THREE ANSWERS THE RECONCILE OWES, in one scene: a part the document
+    // still names stays where it stands, a part it stopped naming goes home and
+    // leaves the map, and a part whose delta CHANGED ends at the new offset
+    // rather than at home — the third being the one the `keep` set is for, since
+    // that path is in `vp.moved` and in the list at once and the put-back walks
+    // the map.
+    const { homes, groups, vp } = crowd()
+    const [kept, dropped, changed] = PATHS
+    movePart(vp, [kept], [10, 0, 0])
+    movePart(vp, [dropped], [0, 10, 0])
+    movePart(vp, [changed], [0, 0, 10])
+
+    reconcileMoves(vp, [
+      { paths: [kept], delta: [10, 0, 0] },
+      { paths: [changed], delta: [0, 0, 4] },
+    ])
+
+    const at = (path) => [groups[path].position.x, groups[path].position.y,
+                          groups[path].position.z]
+    expect(at(kept)).toEqual([homes[0][0] + 10, homes[0][1], homes[0][2]])
+    expect(at(dropped)).toEqual(homes[1])
+    expect(at(changed)).toEqual([homes[2][0], homes[2][1], homes[2][2] + 4])
+    expect([...vp.moved.keys()]).toEqual([kept, changed])
+    expect(vp.moved.get(changed)).toEqual([0, 0, 4])
+  })
+
+  it('writes nothing at all for a move that is already standing', () => {
+    // THE DRAG'S OWN ECHO. The release reports the move, the panel records it
+    // and hands the whole document straight back to the viewport the part was
+    // just dragged in: the part is already at this offset, and a second
+    // `position.set`, a second render and a second rebuild of the cut contour
+    // would all be spent on a scene that is already right.
+    //
+    // A FRACTIONAL DELTA AND NOT A WHOLE ONE, because what decides this is an
+    // element-wise `===` between two floats and a whole number passes it whether
+    // the arithmetic is sound or not. This is the number a real drag produces:
+    // `snap` in viewport/tools.js is `Math.round(v / step) * step` over a 1-2-5
+    // step, and six steps of 0.1 come out of that as `0.6000000000000001`. Both
+    // sides of the comparison have to carry the SAME one — which is why `snap`
+    // rounds at the source now, so the map, the event and the document cannot
+    // end up holding three spellings of one offset.
+    const { groups, vp } = crowd()
+    const delta = [Math.round(0.6 / 0.1) * 0.1, 0, 0]
+    movePart(vp, [PATHS[0]], delta)
+    const drawn = vp.viewer.update.mock.calls.length
+    const at = () => [groups[PATHS[0]].position.x, groups[PATHS[0]].position.y,
+                      groups[PATHS[0]].position.z]
+    const stood = at()
+
+    reconcileMoves(vp, [{ paths: [PATHS[0]], delta: [...delta] }])
+
+    expect(vp.viewer.update).toHaveBeenCalledTimes(drawn)
+    expect(at()).toEqual(stood)
+    expect(vp.moved.get(PATHS[0])).toEqual(delta)
+  })
+
+  it('forgets a path it cannot put back, rather than trying again forever', () => {
+    // A path the scene no longer has: `movePart`'s own answer to one is to
+    // refuse it, and an entry left in the map would keep `measure.js` calling
+    // the view laid out over a part that is not there.
+    const { vp } = crowd()
+    movePart(vp, [PATHS[0]], [10, 0, 0])
+    vp.moved.set('/Group/not a part', [1, 0, 0])
+
+    reconcileMoves(vp, [])
+
+    expect(vp.moved.size).toBe(0)
+  })
+
   it('moves NOTHING when one path of the row cannot be moved', () => {
     // Half a row moved is two copies of one part standing in different places
-    // while the chip calls it a move of the row.
+    // while the document calls it a move of the row.
     const { homes, groups, vp } = crowd()
     const stranger = '/Group/not a part'
     expect(movePart(vp, [PATHS[0], stranger, PATHS[1]], [10, 0, 0])).toBe(false)
@@ -596,8 +670,8 @@ describe('movePart and resetMoves', () => {
     // The model is the same, so the drag is still a true statement about it
     // (ui-brief block 6) and `show` keeps the map — but `clear()` disposed the
     // ObjectGroups it was written on and `render()` built new ones at the
-    // positions the model gives them. Without this the interface's chip would
-    // say a part is displaced while it stands exactly at home.
+    // positions the model gives them. Without this the document's move node
+    // would say a part is displaced while it stands exactly at home.
     const { homes, vp } = crowd()
     movePart(vp, PATHS, [10, -5, 2])
 

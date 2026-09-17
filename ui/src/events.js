@@ -53,11 +53,13 @@ import {
  *   MENU     {id, name, x, y}    -- a part was right-clicked; x/y are the cursor
  *   FACE     {id, name, point, normal, offset, range}  -- the section plane moved
  *   MEASURE  a resolved measurement; see `measureLabel` for the fields that matter
- *   MOVED    {id, name, count, delta: [x, y, z]}  -- a part was dragged; `count`
- *            is how many copies of it went along, `id`/`name` the first of them
+ *   MOVED    {id, name, paths, count, delta: [x, y, z]}  -- a part was dragged;
+ *            sent once, on the RELEASE, `paths` is every path that moved,
+ *            `id`/`name` the first of them and `count` how many there were
  *   PROPOSALMOVE {name, delta: [x, y, z]}  -- a body of the PROPOSAL was dragged;
- *            `name` is the body it was drawn under, and it names the one node of
- *            the document that moves
+ *            sent once, on the release, like the one above; `name` is the body
+ *            it was drawn under, and it names the one node of the document that
+ *            moves
  *   PLACE    {id, name, p: [x, y, z]}       -- a point was picked for a comment
  *   PIN      {id}                           -- a comment pin was clicked
  *   MODEL    {view, buildKey, tree, live}   -- a view finished rendering

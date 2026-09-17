@@ -32,7 +32,8 @@
 // and no case below asserts anything about them — this is about what fits on
 // the screen, not about what is comfortable to aim at.
 
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi }
+  from 'vitest'
 
 // `vi.hoisted` and ONE MUTABLE OBJECT, exactly as ui/tests/header.test.js does
 // it: `PAGE` is read at the moment `computed()` runs, so the address is a field
@@ -126,7 +127,7 @@ function component({ narrow = false, treeOpen = false, rail = null, tool = null,
     bannerGone: false, rail, menu: { id: null, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
     feed: [], activePin: null, composer: null,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     // A token by default, because half of what the header draws is hidden from
     // a viewer for a reason that has nothing to do with the width — and a
     // parameter, because one control in that row is drawn for BOTH readers and
@@ -459,6 +460,18 @@ describe('the toolbar on a narrow window', () => {
 // -- the tool that is armed from somewhere else -------------------------------
 
 describe('the Move row of an object\'s menu on a narrow window', () => {
+
+  // THE HUB HAS TO HAVE ASKED FOR THE PANEL, because the Move row is gated on it
+  // now: a displacement is a node of the proposal, so where there is no panel
+  // there is no row saying a part is out of place and no `×` to put it back.
+  // `proposal_panel` is off by default (src/settings.py), and a fixture that
+  // said nothing would be testing a hub that never offers the tool at all.
+  beforeEach(() => {
+    document.documentElement.setAttribute('data-proposal-panel', 'on')
+  })
+  afterEach(() => {
+    document.documentElement.removeAttribute('data-proposal-panel')
+  })
   /** The row menu open on one part, at a chosen width. */
   const labelsOn = (over) => {
     const c = component(over)

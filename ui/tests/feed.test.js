@@ -105,7 +105,7 @@ function page({ feed = [], token = 'sekrit', partPoint, watch, ...over } = {}) {
     bannerGone: false, rail: true, menu: { id: null, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
     feed, activePin: null, composer: null,
-    measure: null, moved: null, toast: null,
+    measure: null, toast: null,
     token, tokenPop: false, tokenDraft: '',
     theme: 'light', tabs: [], narrow: false, treeOpen: false,
     ...over,
@@ -250,7 +250,7 @@ describe('a comment that was just filed', () => {
     expect(c.state.feed).toEqual([stored])
   })
 
-  it('carries the measurement, the drag and the proposal in the TEXT', async () => {
+  it('carries the measurement and the proposal in the TEXT', async () => {
     // The hub's comment schema is CLOSED — `validate_payload` keeps seven keys
     // and drops everything else without a word, which is the quietest failure on
     // this page: the field reaches the hub, is discarded, and the sender sees a
@@ -261,8 +261,9 @@ describe('a comment that was just filed', () => {
       composer: {
         part: 'plate(2)', partId: '/model/plate', key: 'plate', p: null,
         text: 'must clear this', photo: null,
-        meas: '2.4 mm', move: 'plate by 3 mm',
-        proposal: 'units: mm\n\nsolid  box  "motor"  20 x 20 x 40  at (0, 0, 0)',
+        meas: '2.4 mm',
+        proposal: 'units: mm\n\nsolid  box  "motor"  20 x 20 x 40  at (0, 0, 0)'
+          + '\n\nmove "plate" by (3, 0, 0)',
       },
     })
 
@@ -271,13 +272,16 @@ describe('a comment that was just filed', () => {
     const sent = JSON.parse(fetching.mock.calls[0][1].body.get('comment'))
     expect(sent.text).toContain('must clear this')
     expect(sent.text).toContain('measured: 2.4 mm')
-    expect(sent.text).toContain('moved: plate by 3 mm (temporary, not in the model)')
     expect(sent.text).toContain('solid  box  "motor"  20 x 20 x 40  at (0, 0, 0)')
+    // A PART THE READER DRAGGED IS NOT AN ATTACHMENT OF ITS OWN any more: it is
+    // a line of the projection, and it travels in the block below with the rest
+    // of the proposal.
+    expect(sent.text).toContain('move "plate" by (3, 0, 0)')
     expect(sent.proposal).toBeUndefined()
     // LAST, because it is the only one that spans lines: a block in the middle
     // would split the one-line facts above it away from the sentence they
     // belong to.
-    expect(sent.text.indexOf('proposal')).toBeGreaterThan(sent.text.indexOf('moved:'))
+    expect(sent.text.indexOf('proposal')).toBeGreaterThan(sent.text.indexOf('measured:'))
   })
 
   it('leaves the queue alone when the hub refused it', async () => {

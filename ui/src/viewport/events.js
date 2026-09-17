@@ -71,13 +71,14 @@ export const EVENT_MOVED = "hmr:moved";
 /** Up: a body of the PROPOSAL was dragged; `delta` is how far it went.
  *
  * ONE GESTURE, TWO MEANINGS, AND THIS IS THE SECOND ONE. Dragging a MODEL part
- * is a statement to the agent: the interface raises a chip, files `partId` in
- * the build's terms, and nothing in the model changes (`EVENT_MOVED`). A proposal
- * body is the reader's OWN drawing, assembled in the panel out of numbers, so
- * dragging it is an ordinary EDIT of that document — the panel adds `delta` to
- * the body's `at` and re-stages, no chip rises and nothing is filed against
- * anything. A flag on the event above would have put both meanings behind the
- * one handler whose other half raises that chip.
+ * is a statement to the agent: the interface writes a MOVE NODE beside the
+ * proposal's bodies, naming the paths in the build's terms, and nothing in the
+ * model changes (`EVENT_MOVED`). A proposal body is the reader's OWN drawing,
+ * assembled in the panel out of numbers, so dragging it is an ordinary EDIT of
+ * that document — the panel adds `delta` to the body's `at` and re-stages, and
+ * nothing is filed against anything. A flag on the event above would have put
+ * both meanings behind one handler, and they answer to different halves of the
+ * document.
  *
  * IT NAMES THE BODY AND CARRIES NO PATH. A path is the scene's spelling
  * (`/<root>/proposal/bore`) and the proposal document has no paths in it at

@@ -37,7 +37,7 @@ import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
 import { measureChrome, refit, sized, treeWidth } from "./sizing.js";
 import { muteStatusLine } from "./statusline.js";
-import { applyGhost, applyHidden, applySelected, partCentre, resetMoves,
+import { applyGhost, applyHidden, applySelected, partCentre, reconcileMoves,
   restageMoves, statesOf, treeFromShapes } from "./parts.js";
 import { applySection, keepSectionCut, suspendSectionCut } from "./section.js";
 import { displayOptions, renderOptions, viewerOptions } from "./options.js";
@@ -290,6 +290,10 @@ export class HmrViewport extends HTMLElement {
     // NOT `this.overlay`, which is created a few lines down and is the pin
     // layer — a different thing with an unfortunately similar name.
     this.payload = null;
+    // Beside the payload because it describes the same thing: which build the
+    // geometry standing on screen is of. `show()` says why it is not read off
+    // `state.buildKey`.
+    this.drawnKey = null;
     this.overlayParts = [];
     // Both of these are patches applied to something the element no longer has
     // after a `destroy()`, so a re-attached element has to start over on them.
@@ -415,6 +419,7 @@ export class HmrViewport extends HTMLElement {
     // "nothing here keeps the payload"; something does now, and it is dropped on
     // the same line the viewer is.
     this.payload = null;
+    this.drawnKey = null;
     this.overlayParts = [];
 
     // The library's own DOM goes with it. Without this a re-attached element
@@ -433,18 +438,21 @@ export class HmrViewport extends HTMLElement {
     const before = this.state;
     this.state = { ...before, ...patch };
 
-    // The imperative flags. They are commands rather than state — "forget the
-    // moves", "drop the plane", "clear the tape", "try that view again" — so they
-    // are acted on and then taken back out of `state`. Left in, they would sit
-    // there reading like a viewport permanently in the middle of a reset, which
-    // is the sort of thing somebody later writes a condition against.
+    // The imperative flags. They are commands rather than state — "drop the
+    // plane", "clear the tape", "try that view again" — so they are acted on and
+    // then taken back out of `state`. Left in, they would sit there reading like
+    // a viewport permanently in the middle of a reset, which is the sort of thing
+    // somebody later writes a condition against.
     //
-    // `__retry` is the fourth and is acted on further down, where the decision
-    // to load lives; the mock-up's three are here because they are self-contained.
-    for (const flag of ["__resetMove", "__resetCut", "__clearMeasure", "__retry"]) {
+    // `__retry` is the third and is acted on further down, where the decision to
+    // load lives; the other two are here because they are self-contained. WHAT
+    // IS NOT ON THIS LIST ANY MORE is "forget the moves": which parts stand
+    // displaced is a fact the proposal document holds, and `setMoves` below is
+    // how it is asserted — a command to forget them would be a second way of
+    // saying it, with nothing to say which of the two was right.
+    for (const flag of ["__resetCut", "__clearMeasure", "__retry"]) {
       delete this.state[flag];
     }
-    if (patch.__resetMove) resetMoves(this);
     if (patch.__resetCut) {
       this.sectionSeed = null;
       this.state.cutOffset = 0;
@@ -686,7 +694,9 @@ export class HmrViewport extends HTMLElement {
       // rebuild puts every part back where the model says it goes (ui-brief
       // block 6), so carrying them would move parts of the NEW build by numbers
       // measured against the old, and leave a distance between two faces that
-      // may not exist any more.
+      // may not exist any more. The interface drops its own half of the offsets
+      // — the move nodes of the proposal document — off the model event this
+      // render ends in, which is where the `restage` flag below goes.
       //
       // A RE-STAGE IS THE SAME MODEL, though: the document below is the one
       // that is already on screen, and what changed is a body drawn OVER it.
@@ -744,6 +754,18 @@ export class HmrViewport extends HTMLElement {
       // the library refused is one `setOverlay` would hand straight back to it,
       // once per keystroke, and each failure draws block 11's panel again.
       this.payload = shapes;
+      // WHICH BUILD THE GEOMETRY ON SCREEN IS OF, which is NOT the same question
+      // as `state.buildKey` and only looks like it. That field moves the moment
+      // the interface announces a swap, and the geometry arrives later — after
+      // the `await fetch` in `load()`. Both doors onto a revision change commit
+      // their `meta` before that announcement and neither disarms the Move tool,
+      // so a press begun inside the download window would be stamped with a key
+      // the scene has not caught up to: it matches on arrival and the
+      // displacement is written against paths of the assembly that was still
+      // being looked at. Across a revision the same path can be a different part
+      // altogether. Recorded HERE, beside the payload and for the same reason it
+      // is: this is the line that means the new scene is really up.
+      this.drawnKey = this.state.buildKey;
       this.lastPick = null;
       this.applied = {
         hidden: null, ghost: null, selected: undefined, camera: null,
@@ -755,7 +777,7 @@ export class HmrViewport extends HTMLElement {
       // and this line is the difference. `clear()` disposed the ObjectGroups the
       // drag was written on and `render()` built new ones, at the positions the
       // model gives them — so the map above would describe a part standing at
-      // home while the chip in the interface said it was moved. AFTER
+      // home while the interface's document said it was moved. AFTER
       // `restoreLive`, which re-asserts the tree states, for the same reason
       // `movePart` redraws the cut contour: the offset has to be the last thing
       // written to a group's position.
@@ -776,9 +798,9 @@ export class HmrViewport extends HTMLElement {
         live: !!live,
         // THE SAME MODEL, A DIFFERENT OVERLAY — said out loud because the
         // interface spends its own half of this decision on it. Its `onModel`
-        // drops the measurement chip and the move chip on every model event,
-        // which is right for geometry that has been replaced and wrong for a
-        // scene the viewport has just re-composed out of the document it
+        // drops the measurement chip and the document's moves on every model
+        // event, which is right for geometry that has been replaced and wrong
+        // for a scene the viewport has just re-composed out of the document it
         // already had. `live` cannot answer that question: a rebuild landing
         // under the reader's camera is live too.
         restage: !!restage,
@@ -918,6 +940,31 @@ export class HmrViewport extends HTMLElement {
   }
 
   /**
+   * Which parts of the BUILD stand displaced, as the whole list of them:
+   * `{paths, delta}` per entry, in world units.
+   *
+   * THE SECOND HALF OF THE PROPOSAL, and the counterpart of `setOverlay` above:
+   * that one lays bodies the reader DREW over the model, this one shifts parts
+   * the model already has. Both read off the same document — a drag of a
+   * published part is a node of it (ui/src/proposal.js) — and both are pushed by
+   * the interface whenever that document changes, which is what makes the
+   * document the thing that decides where a part stands.
+   *
+   * THE WHOLE LIST AND NOT ONE ENTRY, because putting a part back is DELETING
+   * its entry: there is no other gesture for it, so this call has to be able to
+   * say "and nothing else is moved" — see `reconcileMoves`, which puts back
+   * exactly the paths this list stopped claiming.
+   *
+   * NOT A RE-STAGE, unlike `setOverlay`: nothing is composed and no scene is
+   * rebuilt, so this is synchronous where that one hands back a promise. The
+   * offsets it writes survive the next re-stage through `restageMoves`, which
+   * works off `vp.moved` — the map this keeps in step.
+   */
+  setMoves(list) {
+    reconcileMoves(this, Array.isArray(list) ? list : []);
+  }
+
+  /**
    * Is this path one of the overlay's own bodies rather than a part of the
    * model?
    *
@@ -933,10 +980,10 @@ export class HmrViewport extends HTMLElement {
    * THE MOVE TOOL ASKS THIS TOO AND DOES SOMETHING ELSE WITH THE ANSWER. It does
    * not refuse a proposal body: a drag of one is an ordinary edit of the panel's
    * document, so the gesture runs and ends in `hmr:proposalmove` instead of in
-   * the chip `hmr:moved` raises (tools.js, `onDown`). What the answer decides
-   * there is WHICH of the two gestures a press is — and a MIXED grab, a proposal
-   * body together with a part of the model, is refused whole because there is no
-   * such thing as half of either.
+   * the move node `hmr:moved` records (tools.js, `onDown`). What the answer
+   * decides there is WHICH of the two gestures a press is — and a MIXED grab, a
+   * proposal body together with a part of the model, is refused whole because
+   * there is no such thing as half of either.
    *
    * THE GROUP NODE ITSELF ANSWERS YES, and it is the case that reads as an edge
    * one and is not: the group is a ROW OF THE TREE, a row is selected with the
