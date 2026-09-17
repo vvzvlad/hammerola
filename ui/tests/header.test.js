@@ -97,7 +97,7 @@ function component({ builds = null, rail = null, props = {} } = {}) {
     revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
     bannerGone: false, rail, menu: { id: null, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null,
+    feed: [], activePin: null, composer: null, sending: false,
     measure: null, toast: null,
     // A token, because the rail is drawn for the customer and hidden from the
     // viewer entirely — without one, "closed" would be true for the wrong

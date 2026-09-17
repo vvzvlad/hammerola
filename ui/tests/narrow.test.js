@@ -126,7 +126,7 @@ function component({ narrow = false, treeOpen = false, rail = null, tool = null,
     revOpen: false, dlOpen: false, cmp: [], compare, diffShow: 'both',
     bannerGone: false, rail, menu: { id: null, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null,
+    feed: [], activePin: null, composer: null, sending: false,
     measure: null, toast: null,
     // A token by default, because half of what the header draws is hidden from
     // a viewer for a reason that has nothing to do with the width — and a

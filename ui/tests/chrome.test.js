@@ -1459,7 +1459,7 @@ function buildPage({ feed = COMMENTS } = {}) {
     // A note of each kind, so the amber box is drawn with both of its levels.
     notePop: null, noteDraft: '', notes: { lid: 'mine' },
     feed,
-    activePin: null, composer: null,
+    activePin: null, composer: null, sending: false,
     measure: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
     theme: 'light', tabs: [], narrow: false, treeOpen: false,
