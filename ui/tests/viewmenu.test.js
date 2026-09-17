@@ -83,7 +83,7 @@ function component({ views = someViews(2), view = 'v0', narrow = false } = {}) {
     cmp: [], compare: false, diffShow: 'both',
     bannerGone: false, rail: null, menu: { id: null, x: 0, y: 0 },
     notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null,
+    feed: [], activePin: null, composer: null, sending: false,
     measure: null, toast: null,
     token: 'sekrit', tokenPop: false, tokenDraft: '',
     theme: 'light',
