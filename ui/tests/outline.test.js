@@ -269,35 +269,82 @@ describe('sectionOutline', () => {
   it('empties a solid\'s outline when the plane moves back out of it', () => {
     const { solid, vp, g } = cubeScene()
     sectionOutline(vp, g, [1, 0, 0], -1)
+    const outline = outlineOf(solid)
+    const first = outline.geometry
     sectionOutline(vp, g, [1, 0, 0], -5)
     // The outline object stays — an update, not a rebuild — but it now writes
     // nothing: nothing of the contour cut where the plane USED to be may
     // linger.
-    const outline = outlineOf(solid)
-    expect(outline).toBeDefined()
-    expect(outline.geometry.setPositionsCalls).toBe(2)
+    expect(outlineOf(solid)).toBe(outline)
     expect(outline.geometry.instanceCount).toBe(0)
+    // A NEW geometry under that same object, and the old one disposed. This is
+    // the fill contract `writeSegments` states: three caches the instance count
+    // it may draw on the geometry at its first bind and nothing recomputes it
+    // while that geometry lives, so a geometry refilled in place goes on drawing
+    // the count it had at birth.
+    expect(outline.geometry).not.toBe(first)
+    expect(first.disposed).toBe(1)
+    // ONE fill and not two: the fresh geometry carries its own counter, so this
+    // is the same assertion the count on a reused geometry used to make.
+    expect(outline.geometry.setPositionsCalls).toBe(1)
   })
 
   it('builds one outline per solid and updates it instead of stacking', () => {
     const { solid, vp, g } = cubeScene()
     sectionOutline(vp, g, [1, 0, 0], -1)
+    const outline = outlineOf(solid)
+    const first = outline.geometry
     sectionOutline(vp, g, [1, 0, 0], -1.5)
     expect(solid.children).toHaveLength(1)
-    expect(outlineOf(solid).geometry.setPositionsCalls).toBe(2)
+    expect(outlineOf(solid)).toBe(outline)
+    expect(outline.geometry).not.toBe(first)
+    expect(first.disposed).toBe(1)
+    expect(outline.geometry.setPositionsCalls).toBe(1)
+  })
+
+  it('gives every fill a geometry the renderer has not bound, so a cut that grows is drawn whole', () => {
+    // WHAT THIS PINS, and it was measured in a browser on the owner's own
+    // model rather than reasoned about: three caches on an
+    // InstancedBufferGeometry how many instances it may draw
+    // (`_maxInstanceCount`, written at the FIRST bind and never recomputed), so
+    // an outline whose geometry is refilled in place goes on drawing the
+    // segment count it had when it was born. A cut laid on an outer face and
+    // then dragged in through a spherical cavity stood at 185 segments with 48
+    // drawn — a few straight edges inked, the whole curve of the cavity
+    // missing. Replacing the geometry is what makes the renderer count again.
+    const { solid, vp, g } = cubeScene()
+    // Square first (8 chords), then the same cube corner-on (12): the fill has
+    // to GROW, which is the direction the cached count cannot follow.
+    sectionOutline(vp, g, [1, 0, 0], -1)
+    const outline = outlineOf(solid)
+    const square = outline.geometry
+    expect(square.instanceCount).toBe(8)
+    const third = 1 / Math.sqrt(3)
+    sectionOutline(vp, g, [third, third, third], -Math.sqrt(3))
+    expect(outlineOf(solid)).toBe(outline)
+    expect(outline.geometry).not.toBe(square)
+    expect(outline.geometry.instanceCount).toBe(12)
+    // And the geometry it replaced is disposed rather than left holding a GPU
+    // buffer and a vertex-array object nothing points at.
+    expect(square.disposed).toBe(1)
   })
 
   it('holds the rebuild off while the plane stands still', () => {
     const { solid, vp, g } = cubeScene()
     sectionOutline(vp, g, [1, 0, 0], -1)
+    const outline = outlineOf(solid)
+    const first = outline.geometry
     sectionOutline(vp, g, [1, 0, 0], -1)
-    expect(outlineOf(solid).geometry.setPositionsCalls).toBe(1)
+    // Nothing was written at all: a fill replaces the geometry, so the one
+    // standing being the first is what says the memo held the rebuild off.
+    expect(outline.geometry).toBe(first)
+    expect(first.disposed).toBe(0)
     // `show()` invalidates by clearing the key — the outline objects died with
     // the scene they hung on, so the next plane has to rebuild even if the
     // numbers repeat the old ones.
     vp.sectionOutlineKey = null
     sectionOutline(vp, g, [1, 0, 0], -1)
-    expect(outlineOf(solid).geometry.setPositionsCalls).toBe(2)
+    expect(outline.geometry).not.toBe(first)
   })
 
   it('works in the solid\'s own frame, not the world\'s', () => {
@@ -383,12 +430,14 @@ describe('sectionOutline', () => {
     }
   })
 
-  it('clones the edge material dark and two pixels wide, clipped by the other two planes', () => {
+  it('clones the edge material dark and one pixel wide, clipped by the other two planes', () => {
     const { solid, vp, g } = cubeScene()
     sectionOutline(vp, g, [1, 0, 0], -1)
     const material = outlineOf(solid).material
     expect(material.clipping).toBe(true)
-    expect(material.linewidth).toBe(2)
+    // An edge's own width: the cut carries no edge of the library's, so this
+    // line IS the edge a section opens up rather than a heavier mark over one.
+    expect(material.linewidth).toBe(1)
     for (const channel of ['r', 'g', 'b']) {
       expect(material.color[channel]).toBeCloseTo(0x30 / 255, 12)
     }
@@ -402,8 +451,11 @@ describe('sectionOutline', () => {
     // its own edge materials.
     expect(material.resolution.x).toBe(RECT.width)
     expect(material.resolution.y).toBe(RECT.height)
-    // A clone: the donor's material is untouched.
-    expect(solid.edges.material.linewidth).toBe(1)
+    // A clone: the donor's material is untouched. Read off the COLOUR now that
+    // the contour is an edge's width — the widths agreeing says nothing about
+    // cloning, the donor still being white says it.
+    expect(solid.edges.material).not.toBe(material)
+    expect(solid.edges.material.color.r).toBe(1)
   })
 
   it('puts the cut plane into the fat-line shader, on one program every contour shares', () => {
@@ -503,8 +555,8 @@ describe('sectionOutline', () => {
   it('wraps the library hook rather than replacing it', () => {
     // The hook the contour hangs its uniform off is the one the library uses to
     // keep `resolution` in step with the canvas, and a fat line whose
-    // resolution stops moving stops being two pixels wide. So the wrapper has
-    // to CALL it, with the arguments it was given.
+    // resolution stops moving stops being the width it was asked for. So the
+    // wrapper has to CALL it, with the arguments it was given.
     const { solid, vp, g } = cubeScene()
     sectionOutline(vp, g, [1, 0, 0], -1)
     const outline = outlineOf(solid)
@@ -593,10 +645,10 @@ describe('sectionOutline', () => {
     sectionOutline(vp, g, [1, 0, 0], -20) // the plane x = 20, through all three
     for (const solid of [wall, post, slab]) {
       const { material } = outlineOf(solid)
-      expect(material.linewidth).toBe(2)
-      // Which is a count of CSS PIXELS, because `linewidth` is one unless the
-      // material is told otherwise and nothing tells it otherwise. The flag is
-      // a view onto the shader defines rather than a field, so this reads the
+      expect(material.linewidth).toBe(1)
+      // Which is a count of CSS PIXELS, because `linewidth` counts those unless
+      // the material is told otherwise and nothing tells it otherwise. The flag
+      // is a view onto the shader defines rather than a field, so this reads the
       // define too.
       expect(material.worldUnits).toBe(false)
       expect(material.defines.WORLD_UNITS).toBeUndefined()
@@ -758,11 +810,12 @@ describe('the outline through the section\'s own call sites', () => {
     placeSectionPlane(vp, g, [1, 0, 0], [1, 0, 1])
     const outline = outlineOf(solid)
     expect(outline).toBeDefined()
-    expect(outline.geometry.setPositionsCalls).toBe(1)
+    const placed = outline.geometry
+    expect(placed.setPositionsCalls).toBe(1)
     const axis = sectionAxis(viewer, g, [0, 0, 0])
     expect(dragSection(vp, g, axis, 40, 0)).toBeGreaterThan(0)
     expect(outlineOf(solid)).toBe(outline)
-    expect(outline.geometry.setPositionsCalls).toBe(2)
+    expect(outline.geometry).not.toBe(placed)
     // This drag carries the plane out of the cube (x = 1.005 to x = 3.005),
     // so the second write is the empty one — the walk to the sites is also
     // what keeps a contour from outliving its plane.
@@ -781,8 +834,9 @@ describe('clearing the outlines when the cut is suspended', () => {
     expect(vp.sectionOutlineKey).toBeNull()
     // The same plane again: a stale key would have suppressed this write, and
     // the empty geometry would have been the last word.
+    const emptied = outline.geometry
     sectionOutline(vp, g, [1, 0, 0], -1)
-    expect(outline.geometry.setPositionsCalls).toBe(3)
+    expect(outline.geometry).not.toBe(emptied)
     expect(outline.geometry.instanceCount).toBe(8)
   })
 
@@ -883,8 +937,9 @@ describe('the outline under the part passes', () => {
     // only `position`.
     solid.front.matrixWorld = fakeMatrix({ position: [2, 0, 0] })
     const drawn = viewer.update.mock.calls.length
+    const before = outline.geometry
     expect(movePart(vp, ['S|body'], [2, 0, 0])).toBe(true)
-    expect(outline.geometry.setPositionsCalls).toBe(2)
+    expect(outline.geometry).not.toBe(before)
     expect(outline.geometry.instanceCount).toBe(0)
     // TWO draws, and the second one is the point. The library renders on
     // demand, the move's own render happens BEFORE the rebuild (which reads
@@ -895,8 +950,9 @@ describe('the outline under the part passes', () => {
     // Put it back — which is the document dropping the entry, so the reconcile
     // is handed nothing at all: the plane cuts the cube again.
     solid.front.matrixWorld = fakeMatrix()
+    const emptied = outline.geometry
     reconcileMoves(vp, [])
-    expect(outline.geometry.setPositionsCalls).toBe(3)
+    expect(outline.geometry).not.toBe(emptied)
     expect(outline.geometry.instanceCount).toBe(8)
   })
 
@@ -918,9 +974,10 @@ describe('the outline under the part passes', () => {
     const drawn = viewer.update.mock.calls.length
     // The home is the CALLER'S — the gesture read it at the press — which is the
     // whole difference in the signature.
+    const before = outline.geometry
     expect(nudgePart(vp, ['S|body'], [[0, 0, 0]], [2, 0, 0])).toBe(true)
 
-    expect(outline.geometry.setPositionsCalls).toBe(2)
+    expect(outline.geometry).not.toBe(before)
     expect(outline.geometry.instanceCount).toBe(0)
     // TWO draws, for the reason spelled out above: the rebuild reads a
     // `matrixWorld` only a render refreshes, and the library draws on demand.
@@ -1275,5 +1332,33 @@ describe('the vendored bundle still says what the outline rests on', () => {
     const at = source.indexOf('createEdgeMaterial(')
     const body = source.slice(at, source.indexOf('createSimpleEdgeMaterial(', at))
     expect(body).toContain('transparent: true')
+  })
+
+  it('still draws a solid\'s own edges one pixel wide, which is the width the contour takes', () => {
+    // WHAT THE CONSTANT CLAIMS, held to the bundle. The cut carries no edge of
+    // the library's — hiding every contour leaves the boundary of a cut face
+    // with no line at all — so the contour IS that edge, and it is drawn at the
+    // width the library gives the edges it does draw. A re-vendoring that
+    // changed that number would leave the claim beside OUTLINE_WIDTH false with
+    // nothing failing.
+    expect(bundle(), "the library no longer draws a solid's own edges one pixel wide")
+      .toContain('this._renderEdges(edgeList, 1, null, states[1], path)')
+  })
+
+  it('still caches the instance count on the geometry, which is why a fill replaces it', () => {
+    // THE REASON `writeSegments` EXISTS, held to the bundle so that a
+    // re-vendoring which removes the cache says so instead of leaving a
+    // geometry swap nobody can explain — and so that the swap is not
+    // "simplified" back into a refill in place.
+    //
+    // Two lines, and the pair is the mechanism: the count is written ONLY while
+    // it is undefined, so it never follows a buffer that grew; and the draw
+    // takes the smaller of it and the geometry's own count, so what the cache
+    // holds is a CEILING on the segments that reach the screen.
+    const source = bundle()
+    expect(source, 'three no longer caches _maxInstanceCount on the geometry')
+      .toContain('geometry._maxInstanceCount === undefined')
+    expect(source, 'the draw no longer clamps the instance count')
+      .toContain('Math.min( geometry.instanceCount, maxInstanceCount )')
   })
 })
