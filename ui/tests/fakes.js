@@ -513,6 +513,16 @@ function LineSegmentsGeometry() {
   this.type = "LineSegmentsGeometry"
   this.instanceCount = 0
   this.setPositionsCalls = 0
+  // `BufferGeometry.dispose` (:19540) — it fires the event `onGeometryDispose`
+  // (:63928) answers, which is what releases the GPU buffer and the
+  // vertex-array object of a geometry nothing refers to any more. Recorded
+  // rather than ignored, because the contour hands its old geometry over to it
+  // on every refill and a leak there is silent.
+  this.disposed = 0
+}
+
+LineSegmentsGeometry.prototype.dispose = function dispose() {
+  this.disposed += 1
 }
 
 // The bundle wraps a plain array in a Float32Array and stores everything in

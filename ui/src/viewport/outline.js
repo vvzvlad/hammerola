@@ -4,7 +4,7 @@
 // bare coloured silhouette: nothing marks WHERE the solid was cut open. The
 // hatch (hatch.js) fills the face; this draws its edge. For every solid the
 // section plane is intersected with the solid's own triangles and the
-// resulting segments are laid down as a thick dark line in the plane, on the
+// resulting segments are laid down as a dark line in the plane, on the
 // library's fat-line stack — `LineSegments2` over a `LineSegmentsGeometry`
 // under a `LineMaterial`, harvested off a live solid's edge overlay because
 // the vendored bundle exports none of the three.
@@ -36,8 +36,12 @@ export const OUTLINE_NAME = "sectionOutline";
 /** Where an outline keeps the WORLD normal of the plane it was cut by. */
 const CUT_PLANE_KEY = "sectionOutlineNormal";
 
-// The library draws its own edges one device pixel wide; a contour has to read
-// over the hatch and both cut faces, so it is darker and a little heavier.
+// THE SAME WIDTH THE LIBRARY GIVES A MODEL'S OWN EDGE, and that is the owner's
+// decision of 2026-09-18: the cut has no edge of its own — measured, by hiding
+// every contour in the browser, which leaves the boundary of a cut face with no
+// line on it at all — so what this draws is the edge that a section opens up,
+// and an edge is what it should look like. It was 2 before, which read as a
+// heavier line than anything else in the picture.
 //
 // IN CSS PIXELS, because that is the only measure that is the same on every
 // face. A width taken off the MODEL was tried twice — a tenth of the solid's
@@ -49,8 +53,8 @@ const CUT_PLANE_KEY = "sectionOutlineNormal";
 // only a few pixels wide still has the contours on its two sides meet, and the
 // face between them disappears. Zooming in is the answer there — which is the
 // whole difference from a width on the model, where the ratio holds however
-// close the reader leans in — and it is why the number is 2 and not 3.
-const OUTLINE_WIDTH = 2;
+// close the reader leans in.
+const OUTLINE_WIDTH = 1;
 const OUTLINE_COLOR = 0x303030;
 
 /**
@@ -217,6 +221,40 @@ function writeCutNormal(outline, camera) {
   uniform.value[1] = e[4] * n[0] + e[5] * n[1] + e[6] * n[2];
   uniform.value[2] = e[8] * n[0] + e[9] * n[1] + e[10] * n[2];
   uniform.value[3] = 1;
+}
+
+/**
+ * Put a new set of segments into an outline that already exists.
+ *
+ * A FRESH GEOMETRY EVERY TIME, and that is the whole of this function rather
+ * than a tidiness. `setPositions` does replace the instanced buffer on the
+ * geometry it is called on — and three caches HOW MANY INSTANCES IT MAY DRAW on
+ * that same geometry, in `_maxInstanceCount`: `WebGLBindingStates
+ * .setupVertexAttributes` (:61673) writes the field only while it
+ * `=== undefined`, and `renderBufferDirect` (:76970) then draws
+ * `min(instanceCount, _maxInstanceCount)`. Nothing recomputes it while the
+ * geometry lives — the one thing that clears it is `dispose` (:63961) — so an
+ * outline built at one plane position and refilled at another goes on drawing
+ * the number of segments it had AT BIRTH, silently, with the rest of the buffer
+ * correct and never rasterised.
+ *
+ * Measured in the browser on the owner's own model (xmas-ball), a cut laid on
+ * the outer face and then dragged in through the spherical cavity: the carrier's
+ * contour held 185 segments with 48 drawn, the insert's 86 with 17 — a few
+ * straight edges inked and the whole curve of the cavity missing, which is what
+ * "the contour disappears in places" was. Nothing else draws there: hiding every
+ * contour leaves the boundary of a cut face with no line on it at all.
+ *
+ * A geometry object that the renderer has never seen carries no such cache, so
+ * it is drawn whole. The old one owns a GPU buffer and a vertex-array object and
+ * nothing else refers to it, so it is disposed here.
+ */
+function writeSegments(outline, segments) {
+  const previous = outline.geometry;
+  const geometry = new previous.constructor();
+  geometry.setPositions(segments);
+  outline.geometry = geometry;
+  previous.dispose();
 }
 
 /**
@@ -518,7 +556,7 @@ export function sectionOutline(vp, g, normal, value) {
       // WRITTEN, because a solid it just left must not keep the contour cut
       // where the plane used to be. A miss with nothing to overwrite creates
       // nothing.
-      if (outline) outline.geometry.setPositions(NO_SEGMENTS);
+      if (outline) writeSegments(outline, NO_SEGMENTS);
       continue;
     }
     const segments = planeThroughTriangles(
@@ -526,8 +564,9 @@ export function sectionOutline(vp, g, normal, value) {
     if (outline) {
       // An update, not a rebuild: the object keeps its place in the group, and
       // it keeps the material it was built with — the width does not vary with
-      // the face, so a rebuild has nothing to say about it.
-      outline.geometry.setPositions(segments);
+      // the face, so a rebuild has nothing to say about it. Its GEOMETRY is
+      // replaced rather than refilled, for the reason `writeSegments` gives.
+      writeSegments(outline, segments);
     } else {
       // The same construction order `_renderEdges` uses: fill the geometry,
       // then hand it to the line object.
@@ -566,7 +605,7 @@ export function sectionOutline(vp, g, normal, value) {
       outline.userData = { ...(outline.userData || {}), [OUTLINE_NAME]: true };
       // Chained, never replaced: the library's own `onBeforeRender` is what
       // keeps `resolution` in step with the canvas, and a fat line whose
-      // resolution stops moving stops being two pixels wide.
+      // resolution stops moving stops being OUTLINE_WIDTH pixels wide.
       const inherited = outline.onBeforeRender;
       outline.onBeforeRender = function beforeRender(renderer, scene, camera) {
         if (typeof inherited === "function") inherited.apply(this, arguments);
@@ -615,7 +654,7 @@ export function clearSectionOutlines(vp, g) {
   if (groups) {
     for (const group of Object.values(groups)) {
       const outline = outlineChild(group);
-      if (outline) outline.geometry.setPositions(NO_SEGMENTS);
+      if (outline) writeSegments(outline, NO_SEGMENTS);
     }
   }
   vp.sectionOutlineKey = null;
