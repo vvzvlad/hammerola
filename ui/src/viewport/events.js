@@ -74,9 +74,10 @@ export const EVENT_MOVED = "hmr:moved";
  * is a statement to the agent: the interface writes a MOVE NODE beside the
  * proposal's bodies, naming the paths in the build's terms, and nothing in the
  * model changes (`EVENT_MOVED`). A proposal body is the reader's OWN drawing,
- * assembled in the panel out of numbers, so dragging it is an ordinary EDIT of
- * that document — the panel adds `delta` to the body's `at` and re-stages, and
- * nothing is filed against anything. A flag on the event above would have put
+ * assembled out of numbers typed into the proposal branch of the tree, so
+ * dragging it is an ordinary EDIT of that document — the panel adds `delta` to
+ * the body's `at` and re-stages, and nothing is filed against anything. A flag
+ * on the event above would have put
  * both meanings behind one handler, and they answer to different halves of the
  * document.
  *

@@ -354,6 +354,79 @@ const proposalPanelOn = () => (
   document.documentElement.getAttribute(PROPOSAL_ATTRIBUTE) === PROPOSAL_ON
 );
 
+// WHAT THE PROPOSAL'S BRANCH IS EXPANDED AND COLLAPSED UNDER, in the same
+// `expanded` map the parts tree keys by node id. It cannot collide with one of
+// those: every id `indexTree` mints is a PATH and begins with `/`, while this is
+// a bare word. Read as OPEN unless the map says `false`, because the branch is
+// drawn only when the reader has put something in the document — a row that
+// arrives already folded away is a row they have to go and find.
+export const PROPOSAL_BRANCH = 'proposal';
+
+/**
+ * The selection, moved from a body's DOCUMENT ID onto the path the scene has
+ * just given it — or nothing to move.
+ *
+ * `selectionAfter` THE OTHER WAY ROUND, and the same defect seen from the other
+ * side. A body's row in the proposal's branch is selected by its path in the
+ * SCENE where it has one and by its own node id where it has not, because a row
+ * that cannot be opened is a dead end: the fields are how a document the kernel
+ * refused gets repaired. So the row's identity CHANGES the moment the body is
+ * staged, and without this the change lands under the reader — `s.sel` matches
+ * neither spelling, the row deselects itself and the block being typed in shuts.
+ *
+ * IT IS REACHABLE TWICE OVER. The ordinary way is the staging window: the branch
+ * draws from `state.proposal` at once while `show()` waits on the library, so
+ * every body row is sceneless for a moment after `+ box` and after each opening
+ * of the panel. The deterministic way is a document the kernel refused — a new
+ * body that never reached the overlay, its row selected and being typed in, and
+ * then the document repaired by something that does not touch `sel`, such as the
+ * `×` on the body that broke it. The staging that follows would close the block
+ * the reader is working in.
+ *
+ * MOVED RATHER THAN MERELY ACCEPTED ALONGSIDE, which was the other way to answer
+ * this. `sel` is the page's ONE selection and half a dozen things read it as a
+ * path: `selectedPaths()` hands it to the viewport, `selectedKey()` looks up a
+ * catalogue record, `measAdd` posts it as the `partId` of a comment. A node id
+ * left standing there once the body HAS a path would be a foreign value in a
+ * field all of them read as a path — the scene would highlight nothing, and `add
+ * to comment` would file a task against `n5`. Carrying it over keeps `sel`
+ * meaning one thing the moment there is one thing for it to mean.
+ *
+ * THE TREE IS CHECKED AND NOT ASSUMED. A refused document leaves the LAST GOOD
+ * overlay standing, so the group is there while this particular body is not;
+ * moving the selection onto a path the tree does not hold would break the row
+ * all over again, from the other end.
+ *
+ * AND NOT WHILE A COMPARISON IS UP, whatever the tree holds. `staged()` lays the
+ * overlay into whatever payload is current (viewport/element.js), so under a
+ * comparison the group really is there — at a path of the comparison's — and
+ * `overlayRoot` finds it exactly as it finds the build's. Carried onto, `sel`
+ * would hold a path naming a part no revision has, and it would go on holding it
+ * after the comparison closed, since `leaveCompare` does not clear `sel` the way
+ * `leaveBuild` does. `measAdd` then posts it: `proposalBody` cannot recognise it
+ * once the build's scene is back, and the shape test lets it by because it does
+ * begin with `/`. Two ordinary roads reach this — editing any field with a
+ * comparison up re-stages, and the model event that comes back carries the
+ * comparison's tree; and so does switching view tabs while comparing.
+ *
+ * THE QUESTION IS `compared` AND NOT THE SHAPE OF THE TREE, and it is the same
+ * decision `proposalRows` makes on `path`, for the same reason: what settles it
+ * is whether the scene on screen is this build's, not whether a path happens to
+ * be spelled one way. The branch is drawn over a comparison deliberately, so
+ * both ends of it have to ask.
+ *
+ * A MODULE FUNCTION AND NOT A METHOD, so that the state updater it is spread
+ * into stays a pure function of what it is handed — `overlay` and `compared` are
+ * resolved outside it, where the element and the methods may be read.
+ */
+function stagedSelection(overlay, tree, s, compared) {
+  if (compared || !overlay || !s.sel || !s.proposal) return null;
+  const node = bodies(s.proposal).find((body) => body.id === s.sel);
+  if (!node) return null;
+  const path = `${overlay}/${node.name}`;
+  return tree.nodes.has(path) ? { sel: path, selName: node.name } : null;
+}
+
 // HOW MANY VIEWS STILL FIT AS A STRIP OF PILLS before the switcher becomes a
 // menu. The strip is a centred flex row that does NOT wrap, inside a root that
 // is `overflow:hidden` — so a row too wide for the window is neither scrollable
@@ -1160,8 +1233,8 @@ export default class HammerolaViewer extends React.Component {
    *
    * THE SAME CLASS `toolsOff` IS FOR, one source of parts further over. The
    * proposal panel stages its bodies into the scene (`staged()` in
-   * viewport/element.js), which makes each of them an ordinary row in the tree
-   * and an ordinary pick target — so the Comment tool opens a composer headed
+   * viewport/element.js), which makes each of them an ordinary pick target — so
+   * the Comment tool opens a composer headed
    * `motor` and posts `partId: "/<root>/proposal/motor"`, and `add to comment` on
    * the measurement chip attaches that same path to the number. Both are tasks
    * written in the BUILD's terms about a body that is in no build, no catalogue
@@ -1191,6 +1264,33 @@ export default class HammerolaViewer extends React.Component {
   proposalBody(id) {
     const el = this.el();
     return !!(el && typeof el.isOverlay === 'function' && el.isOverlay(id));
+  }
+
+  /**
+   * Where the overlay's bodies hang in a tree, or null while nothing is staged.
+   *
+   * THE VIEWPORT IS ASKED AND NOT A NAME MATCHED, for the reason `overlayAt` in
+   * viewport/element.js gives: the group's name is minted over there against the
+   * model's own parts — `proposal`, or `proposal2` where the model publishes a
+   * group of that name — so only over there can the overlay be told apart from a
+   * model that honestly publishes a part called `proposal`. `proposalBody` above
+   * is the ref call that asks.
+   *
+   * THE ROOT'S OWN CHILDREN AND NO DEEPER, because that is where `staged()`
+   * hangs it, so the question costs one call per top-level row rather than one
+   * per node of the tree.
+   *
+   * A METHOD BECAUSE TWO CALLERS NEED THE SAME ANSWER about two different trees:
+   * `computed()` asks it of the tree on screen, to draw the proposal's branch
+   * and to keep the overlay's rows out of the parts tree; `onModel` asks it of
+   * the tree that has just LANDED, to move a selection made before the body was
+   * staged onto the path the body now has.
+   */
+  overlayRoot(tree) {
+    if (!tree) return null;
+    return tree.roots
+      .flatMap((id) => tree.nodes.get(id).children)
+      .find((id) => this.proposalBody(id)) || null;
   }
 
   // -- loading --------------------------------------------------------------
@@ -1441,7 +1541,7 @@ export default class HammerolaViewer extends React.Component {
           // THE SHRUNK NODE IS RENAMED, because the name was resolved once at
           // the record above and CARRIES THE COUNT (`countedName`): `pin ×5`
           // left on a node that now holds four paths is a false line in the
-          // projection the agent reads and a false row in the panel. Re-resolved
+          // projection the agent reads and a false row in the tree. Re-resolved
           // the way the record resolves it — the row under the first path that
           // remains, counted by how many remain — and where no row claims that
           // path any more, the name the node already had is kept rather than one
@@ -1461,9 +1561,9 @@ export default class HammerolaViewer extends React.Component {
           // because a second drag of the same set of paths is the SAME
           // statement said again and not a new one: the delta is cumulative
           // from where the build puts the part, so what changed is the number
-          // on one sentence. Minting a fresh id for it would remount the
-          // panel's row (`proposalMoveRows` keys on the id) and walk the line
-          // to the bottom of the projection, both of which describe a sentence
+          // on one sentence. Minting a fresh id for it would remount the row in
+          // the proposal's branch (`proposalRows` keys on the id) and walk the
+          // line to the bottom of the projection, both of which describe a sentence
           // being replaced rather than corrected.
           //
           // AND THE TURN THAT NODE ALREADY CARRIES SURVIVES THE EDIT, because
@@ -2677,8 +2777,17 @@ export default class HammerolaViewer extends React.Component {
     // element answers by rendering the first one instead. So the field the build
     // page keeps is left exactly where the reader left it.
     const compared = !!this.comparePair();
+    // RESOLVED OUT HERE, where reading the element is allowed, so the updater
+    // below stays a pure function of the state it is handed. `stagedSelection`
+    // says what it is for: a body selected before it was staged has its row's
+    // identity change underneath it the moment the scene answers, and this is
+    // the moment. It is handed `compared` for the reason written on it — a
+    // re-stage under a comparison brings a tree whose overlay is the
+    // comparison's, and that path must not become the page's selection.
+    const overlay = this.overlayRoot(tree);
     this.setState((s) => ({
       tree,
+      ...stagedSelection(overlay, tree, s, compared),
       view: compared ? s.view : (d.view || s.view),
       viewError: null,
       // Both belonged to the scene that has just been torn down: the
@@ -3546,8 +3655,74 @@ export default class HammerolaViewer extends React.Component {
    * and an empty overlay in the tree is worse than no overlay at all.
    */
   setProposal(doc) {
-    this.setState({ proposal: doc });
+    this.setState({ proposal: doc, ...this.selectionAfter(doc) });
     this.stageProposal(doc);
+  }
+
+  /**
+   * The selection, moved onto a body's NEW SPELLING — or nothing to move.
+   *
+   * WHY IT HAS TO MOVE AT ALL. A body's row in the proposal's branch is selected
+   * by its path in the SCENE, `<overlay group>/<name>`, because that is what
+   * makes clicking the row and clicking the body on the model the same act. The
+   * name is IN that path — so committing a new one leaves `sel` pointing at a
+   * spelling nothing answers to, the row stops reading as selected, and the
+   * field block the reader is typing in shuts under them. Every other field on
+   * that row commits and stays; this one has to as well.
+   *
+   * HERE AND NOT INSIDE THE NAME FIELD'S `commit`, which is where it first looks
+   * like it belongs. `field` in `computed()` states a contract — `commit` turns
+   * the raw text into the whole NEXT DOCUMENT, and there is no partial write
+   * anywhere in the panel — and roughly twenty fields are built from it. A
+   * `setState` inside one of them makes that promise false for all of them, and
+   * a reader checking whether a commit is pure would have to open every call
+   * site. This method is the one place the next document meets the one it
+   * replaces, which is exactly the comparison the question needs.
+   *
+   * BY NODE ID AND NOT BY NAME, because the name is the thing that changed: the
+   * node that used to answer to `overlayBody(sel)` is found in the document
+   * being REPLACED, looked up again by id in the one replacing it, and only then
+   * compared. So a rename moves the selection whichever door it came through —
+   * including `freeName` numbering a typed name that was already taken
+   * (`korpus` -> `korpus2`), which is the case a reader is least expecting.
+   *
+   * THE PATH IS PATCHED AND NOT REBUILT, since only its last segment is a name.
+   * The group's own spelling is the viewport's to mint (`overlayAt` in
+   * viewport/element.js) and is already standing in `sel`; asking for it again
+   * would be this side deriving a string it is holding.
+   *
+   * A MOVE NODE IS NOT ONE OF THESE and needs no clause saying so: its row is
+   * selected by the path of the BUILD part it displaces, which no rename of the
+   * node's own label touches. `overlayBody` answers null for such a path anyway,
+   * since it is not an overlay path at all.
+   *
+   * AND THE SCENE FOLLOWS WITHOUT A `sync` FROM HERE, which is why `setProposal`
+   * goes on writing with `setState`. The commit re-stages, the re-stage clears
+   * `applied.selected` and emits a model event, and `onModel` ends in `sync()` —
+   * by which time the tree holds the new path, so `selectedPaths()` resolves it
+   * and the highlight lands on the body under its new name. Pushing from here
+   * instead would send a path the scene has not been built with yet.
+   */
+  selectionAfter(next) {
+    const el = this.el();
+    const sel = this.state.sel;
+    if (!sel || !el || typeof el.overlayBody !== 'function') return null;
+    let was = null;
+    try {
+      was = el.overlayBody(sel);
+    } catch (error) {
+      console.warn('proposal selection', error);
+      return null;
+    }
+    if (!was) return null;
+    const before = bodies(this.state.proposal || emptyProposal())
+      .find((node) => node.name === was);
+    const after = before && next.nodes.find((node) => node.id === before.id);
+    if (!after || after.name === was) return null;
+    return {
+      sel: `${sel.slice(0, sel.lastIndexOf('/') + 1)}${after.name}`,
+      selName: after.name,
+    };
   }
 
   /**
@@ -4442,20 +4617,23 @@ export default class HammerolaViewer extends React.Component {
     // assembly structure spelled out (`treeFromShapes` builds it as parent
     // plus `/name`), so a view laying the same parts out under the same
     // names holds the same paths and `node(s.sel)` answers there too.
-    // What carries the pair across is that `showView` touches neither half
-    // and neither does `onModel` — so a pick in one view and a measurement
-    // in another that dropped the part lands on that fallback with both
-    // halves still set. Diverged, it posts the first copy's path to the hub
-    // under the third copy's name.
+    // What carries the pair across is that `showView` touches neither half,
+    // and that `onModel` writes both halves together or neither — so a pick in
+    // one view and a measurement in another that dropped the part lands on that
+    // fallback with both halves still set. Diverged, it posts the first copy's
+    // path to the hub under the third copy's name.
     //
     // `onModel` DOES NOT "REPLACE ONLY THE TREE", and the precision matters
     // to anyone walking this route: it writes `tree`, `view`, `viewError`,
     // `expanded` and whatever `rejoin` returned, and on a build that is not a
     // re-stage it CLEARS `measure` and takes the moves out of the proposal
-    // document. What it leaves untouched is this pair, which is the whole of
-    // the argument. A measurement taken BEFORE the tab was changed does not
-    // survive to `measAdd` — the order that reaches it is pick, tab,
-    // measurement.
+    // document. It does write this pair, since the proposal got a branch of its
+    // own: `stagedSelection` carries a selected staged body from the document
+    // node's id onto the path the scene has just given it. Both halves in one
+    // spread or neither, which is the whole of the argument — what this fallback
+    // needs is that they never diverge, not that nobody writes them. A
+    // measurement taken BEFORE the tab was changed does not survive to
+    // `measAdd` — the order that reaches it is pick, tab, measurement.
     //
     // THE SOLID'S NAME IS STILL THE FALLBACK, for a path no row claims — a
     // pick that arrived before the tree did, which is the same case `sel`
@@ -4658,13 +4836,18 @@ export default class HammerolaViewer extends React.Component {
     // Since issue #75 a row may stand for several copies of its part, and `sel`
     // may hold the path of a copy that is not the first: the pick handler
     // resolves it through `node()`, but only if the tree had already landed,
-    // and nothing resolves it afterwards (`onModel` leaves `sel` alone).
+    // and nothing resolves it afterwards: the one thing that writes `sel` later
+    // is `stagedSelection` in `onModel`, and it answers a different class —
+    // a staged body's document id becoming its scene path — never re-resolving
+    // a build path that arrived unresolved.
     // Compared raw, such a selection lights up all five copies in the SCENE —
     // `selectedPaths()` resolves the same value — and no row at all in the
     // panel. Every path of a row is a key of `nodes` (`indexTree`), so this is
     // the same Map lookup that side already makes; hoisted out of the row loop
     // because `sel` cannot change while `computed()` runs.
     const selRow = this.node(s.sel);
+
+    const overlayPath = this.overlayRoot(tree);
 
     // -- the tree: a flat list of rows, indented by depth
     const rows = [];
@@ -4673,15 +4856,38 @@ export default class HammerolaViewer extends React.Component {
     const ghostIcon = (on) => 'width:11px;height:11px;border-radius:3px;' + (on ? 'background:linear-gradient(135deg,var(--text-soft) 50%,var(--hover-bg) 50%);border:1px solid var(--text-soft)' : 'border:1px solid var(--line-strong);background:linear-gradient(135deg,var(--hover-bg) 50%,transparent 50%)');
 
     const emit = (node) => {
+      // THE OVERLAY IS NOT A ROW OF THIS TREE. Its bodies are drawn in the
+      // proposal's own branch above (`proposalRows`), where the moves are too,
+      // and a body drawn in both places is one statement the reader can act on
+      // twice: two eyes, two `×`es, one of them putting back what the other took
+      // away. THE SCENE IS UNTOUCHED — the group is still staged under the
+      // model's root and every path is the one the picker, the moves and a
+      // swap's carried hidden state are already spelled in.
+      if (node.id === overlayPath) return;
       const expanded = !!s.expanded[node.id];
-      const visible = node.leaves.filter((id) => !hiddenSet.has(id)).length;
-      const eye = visible === 0 ? 'off' : visible === node.leaves.length ? 'on' : 'part';
-      const ghosted = node.leaves.length > 0 && node.leaves.every((id) => ghostSet.has(id));
+      // NOR IS IT PART OF WHAT A ROW ABOVE IT COUNTS, which is the same removal
+      // one storey up and not a second decision. `indexTree` builds a group's
+      // `leaves` out of every leaf underneath it, and the overlay is staged as a
+      // child of the MODEL'S ROOT — so the root row went on reporting `4` over
+      // three rows, and its eye went on hiding a body the branch above has its
+      // own eye for. A number that counts rows nobody can see is the overlay
+      // appearing under the root after all, as a digit instead of a line.
+      //
+      // ONLY THE ROOT CAN DIFFER, since that is the one node the overlay hangs
+      // under; every other row is handed its own list back unchanged, which is
+      // what the `some` guard buys before the copy.
+      const leaves = overlayPath
+        && node.leaves.some((id) => id.startsWith(`${overlayPath}/`))
+        ? node.leaves.filter((id) => !id.startsWith(`${overlayPath}/`))
+        : node.leaves;
+      const visible = leaves.filter((id) => !hiddenSet.has(id)).length;
+      const eye = visible === 0 ? 'off' : visible === leaves.length ? 'on' : 'part';
+      const ghosted = leaves.length > 0 && leaves.every((id) => ghostSet.has(id));
       // `null` for an empty or stale `sel`, and a row is always an object, so
       // no row is drawn selected — which is what the raw comparison did too.
       const selected = selRow === node;
       const meta_ = node.isNode
-        ? (eye === 'part' ? `${visible}/${node.leaves.length}` : String(node.leaves.length))
+        ? (eye === 'part' ? `${visible}/${leaves.length}` : String(leaves.length))
         : (node.known ? '' : '?');
       rows.push({
         key: node.id,
@@ -4727,8 +4933,12 @@ export default class HammerolaViewer extends React.Component {
         // two lists: a swap in flight is carrying them across BY NAME, and a row
         // clicked in that window is a row of the leaving build's tree — the only
         // moment those ids can still be read. See the method.
-        onVis: stop(() => this.setVisibility({ hidden: this.toggle(s.hidden, node.leaves) })),
-        onGhost: stop(() => this.setVisibility({ ghost: this.toggle(s.ghost, node.leaves) })),
+        // `leaves` AND NOT `node.leaves`, so the model root's eye stops reaching
+        // into the proposal: those bodies have an eye of their own in the branch
+        // above, and one control taking another's subject is two answers to one
+        // question. Every other row's two lists are the same object.
+        onVis: stop(() => this.setVisibility({ hidden: this.toggle(s.hidden, leaves) })),
+        onGhost: stop(() => this.setVisibility({ ghost: this.toggle(s.ghost, leaves) })),
         onSelect: stop(() => this.set({ sel: node.id, selName: node.name })),
         // The other door into this menu is a right-click on the part in the
         // SCENE (`sceneMenu`), and the two share `menuAt` so they cannot open in
@@ -5213,8 +5423,9 @@ export default class HammerolaViewer extends React.Component {
           // and the one above it. A displacement has a gesture — the hand says
           // "about here" better than a field does — and a turn has none: it is
           // three numbers, and the place a part's three numbers are typed is its
-          // row in the panel. So this row's work is to MAKE THAT ROW EXIST for a
-          // part nothing has displaced yet, and then to open the panel it is in.
+          // row in the proposal's branch of the tree. So this row's work is to
+          // MAKE THAT ROW EXIST for a part nothing has displaced yet, and then
+          // to open the panel, which is what the branch is drawn with.
           //
           // GATED AS MOVE IS AND THEN ONCE MORE, and the extra gate is the one
           // that matters. The four Move carries answer the same way here,
@@ -5678,6 +5889,275 @@ export default class HammerolaViewer extends React.Component {
       }));
     };
 
+    // -- the proposal, as a small tree of its own above the parts --------------
+    //
+    // THE WHOLE DOCUMENT IS ROWS AND THERE IS NO SECOND LIST. Every node gets
+    // one — bodies and moves together, in the order the document holds them —
+    // because they are the same kind of statement and the reader should have one
+    // place to look at what they have said. The panel keeps what is ABOUT the
+    // proposal rather than IN it: what it is for, the buttons that add a body,
+    // what the kernel thinks of it, and the door out to a comment.
+    //
+    // A BRANCH OF THE INTERFACE AND NOT OF THE SCENE, which is what makes it
+    // possible at all. `render()` in the library takes ONE root shape object and
+    // `treeFromShapes` derives every id from where a part SITS, so a second root
+    // would repath every part of the model from `/<root>/…` — and paths are
+    // identities here: comments anchor to them, move nodes name them, a swap
+    // carries hidden state keyed by them. A MOVE could not be a scene row in any
+    // case: it is a sentence about a part of the build and exists in no scene.
+    // So this is assembled from `this.state.proposal` and owes the tree nothing
+    // but the rows it resolves bodies through.
+
+    const proposalRows = doc.nodes.map((node) => {
+      const isMove = node.role === 'move';
+      // WHERE THIS BODY STANDS IN THE SCENE, BY NAME, whether or not the tree
+      // has caught up. `staged()` in viewport/element.js re-roots every part of
+      // the overlay under the group as `<group>/<part name>`, and a part's name
+      // is the body's own (`part()` in proposalgeom.js) — so this is that same
+      // spelling worked out from this side, off the group path the VIEWPORT
+      // minted rather than off a second guess at what the group is called.
+      //
+      // COMPUTED RATHER THAN LOOKED UP, which is the difference that matters
+      // below: the tree lags every edit by a whole re-stage, so a row that took
+      // its identity from what the tree HOLDS would lose it for the length of
+      // one — most visibly on a rename, where `selectionAfter` has already moved
+      // the selection onto a path the tree does not have yet.
+      const wanted = isMove || !overlayPath ? null : `${overlayPath}/${node.name}`;
+      // THE ROW IN THE SCENE THIS ONE ANSWERS FOR. A body's is the part the
+      // overlay staged for it; a move's is the row of the BUILD it displaces,
+      // which is where its first path points — `paths` is the row's `leaves` at
+      // the moment of the gesture, so the first of them is that row's own id.
+      // Null for either wherever the tree cannot answer: nothing staged yet, a
+      // document the kernel refused, a build whose part has gone.
+      const scene = isMove ? this.node(node.paths[0])
+        : (wanted && tree.nodes.get(wanted)) || null;
+      // WHAT THE ROW SELECTS. The scene's path where there is a LIVE one, so
+      // that clicking a body's row lights the body up exactly as clicking the
+      // body does, and clicking a move's row lights up the part the sentence is
+      // about — the only way to see what it displaced. The DOCUMENT's own node
+      // id otherwise, which buys a row that still OPENS: the fields are how a
+      // document the kernel refused gets repaired, and a row that could not be
+      // opened would be a dead end with the error box standing over it.
+      //
+      // AND THE ID WHILE A COMPARISON IS UP, whatever the scene holds. The
+      // paths of a comparison's scene are `/cmp/<a>:<b>/…`, which name a part no
+      // revision has — and `sel` outlives the comparison, because
+      // `leaveCompare` does not clear it the way `leaveBuild` does. Written
+      // there and left standing, such a path is what `measAdd` would post as the
+      // `partId` of a comment once the reader closed the panel and measured
+      // something: a task filed against a string that resolves in no build, and
+      // the exact class `toolsOff` refuses everywhere else. It is also the one
+      // door of its kind now — `onPick` writes `cmpSel` under a comparison, the
+      // parts tree is not drawn, and Move is not offered. A node id instead is
+      // recognisably NOT A PATH, which is what `measAdd` asks.
+      //
+      // `sel` IS THEREFORE EITHER A LIVE PATH OR RECOGNISABLY NOT ONE, and that
+      // is the property everything downstream leans on rather than a tidiness.
+      const path = compared || !scene ? node.id : scene.id;
+      // THE PAGE'S ONE SELECTION AND NOT A SECOND OF THE PANEL'S, asked three
+      // ways because `sel` can honestly be any of three things and the row is
+      // the same row under all of them:
+      //
+      //   * the DOCUMENT's id — selected while nothing was staged, or while a
+      //     comparison was up, or on a document the kernel refused;
+      //   * the path this body WANTS, which is what `selectionAfter` writes the
+      //     moment a name is committed and what the tree will hold one re-stage
+      //     later. Asked of `wanted` and not of `scene`, so the block does not
+      //     shut for the length of that window — and on a refused document,
+      //     where the re-stage never comes, does not shut for good;
+      //   * the ROW the selection resolves to, which is how a COPY picked in the
+      //     scene selects the row that collapsed it. That is a move's case: a
+      //     body is one part and has no copies.
+      const selected = s.sel === node.id
+        || (!!wanted && s.sel === wanted)
+        || (!!scene && selRow === scene);
+      // THE EYE, THE GHOST SQUARE AND THE COLOUR ARE THE SCENE'S, so they are a
+      // BODY's alone — `marks` is the row they come off, and it is null for
+      // every move. A move draws NOTHING: it displaces a part the build already
+      // draws, and that part keeps its own row, its own eye and its own colour
+      // in the tree below, so a second set here would be two answers to one
+      // question about one part. Held apart from `scene`, which a move does
+      // have and needs — it is the row the sentence is ABOUT, and selecting the
+      // move is how the reader finds out which part that is.
+      //
+      // AND NULL FOR EVERY ROW WHILE A COMPARISON IS UP, which is the one place
+      // this branch inherited a control the parts tree never had: that tree is
+      // not drawn during a comparison at all, and this one is — deliberately,
+      // because a proposal is as true over a comparison as over a build. But
+      // `sync` sends `hidden: diffHidden(s.diffShow), ghost: []` while the scene
+      // is a comparison's and never looks at `s.hidden`/`s.ghost`, which is why
+      // `menuItems` throws Isolate, Hide and Translucent away under the same
+      // `compared`. Left standing, the eye went pale over a body still on
+      // screen — a control saying it did something it did not — and wrote
+      // rubbish besides: the overlay's path inside a comparison is
+      // `/cmp/…/proposal`, so a path that exists in no build went into
+      // `s.hidden` and rode on through `setVisibility` into the history and the
+      // swap's carry. Silence is the honest answer, and it is the menu's.
+      const marks = isMove || compared ? null : scene;
+      const leaves = marks ? marks.leaves : [];
+      const visible = leaves.filter((id) => !hiddenSet.has(id)).length;
+      const eye = visible === 0 ? 'off' : visible === leaves.length ? 'on' : 'part';
+      const ghosted = leaves.length > 0 && leaves.every((id) => ghostSet.has(id));
+      return {
+        key: node.id,
+        move: isMove,
+        name: node.name,
+        // ONE STEP IN FROM THE `proposal` HEAD, which is the indent the parts
+        // tree spends on a depth of one (`node.depth * 16` in `emit`), because
+        // this branch is read as a tree beside that one.
+        rowStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px 16px;border-radius:4px;background:'
+          + (selected ? 'var(--accent-bg)' : 'var(--float-bg-soft)') + ';cursor:default',
+        // DRAWN AS ABSENT RATHER THAN LEFT OUT on a row with nothing in the
+        // scene: `visibility:hidden` keeps the boxes' width, so the names of the
+        // two kinds of row stand in one column, and the browser gives a hidden
+        // box no pointer events — there is nothing to press rather than a
+        // control that answers nothing.
+        marksStyle: 'display:flex;align-items:center;flex:none'
+          + (leaves.length ? '' : ';visibility:hidden'),
+        eyeOuter: eyeOuter(eye), eyeDot: eyeDot(eye), ghostIcon: ghostIcon(ghosted),
+        dotStyle: 'width:9px;height:9px;border-radius:3px;flex:none;margin:0 4px 0 2px;background:'
+          + ((marks && marks.color) || 'transparent'),
+        nameStyle: 'white-space:nowrap;cursor:pointer;padding-right:4px;font:400 12px ' + MONO
+          + ';color:' + (leaves.length && eye === 'off' ? 'var(--text-faint)' : 'var(--text)'),
+        // The same two writers every row of the parts tree uses, and for the
+        // same reason: a swap in flight is carrying these lists across BY NAME.
+        onVis: stop(() => this.setVisibility({ hidden: this.toggle(s.hidden, leaves) })),
+        onGhost: stop(() => this.setVisibility({ ghost: this.toggle(s.ghost, leaves) })),
+        // THE ROW'S PLAIN NAME WHERE THE SCENE CAN ANSWER, and the node's own
+        // only where it cannot. `measAdd` heads a composer with `selName` when
+        // the tree cannot place the selection and states that both doors put a
+        // BARE name there — and a move node's name carries the count, `pin ×3`,
+        // which is a tally of parts and not the name of one. The fallback is
+        // only ever spent on a selection `measAdd` refuses to attach at all,
+        // since a row the scene cannot place selects by its node id.
+        onSelect: stop(() => this.set({
+          sel: path, selName: scene ? scene.name : node.name,
+        })),
+        // THE CONTROL THE WHOLE FEATURE TURNS ON, on both kinds of row. A body
+        // is deleted; a part goes home by having its entry deleted — offset and
+        // turn together, because the node is the one statement that carried both
+        // — and what happens next is the viewport's half: the push that follows
+        // stops claiming the path, and `reconcileMoves` puts it back.
+        onRemove: stop(() => this.setProposal(removeNode(doc, node.id))),
+        removeTitle: isMove ? 'put it back where the build has it' : '',
+        // THE SAME MENU THE ROW HAD IN THE PARTS TREE, given back. Isolate, Hide
+        // others and Move were all reachable by right-clicking a staged body's
+        // row there, and taking that row out of the parts tree took them with
+        // it: the scene still has them on a right-click of the body itself, but
+        // a reader who used the tree lost them with nothing saying where they
+        // went. It resolves `marks` — the same node the old row was — so this
+        // opens the menu `menuItems` already builds rather than a second one.
+        //
+        // A MOVE ROW HAS NONE, and null rather than a handler that declines is
+        // how that is said. Nothing in that menu applies to it: Isolate and Hide
+        // others are about geometry the node does not own, the Files are the
+        // catalogue's, and Move and Turn would mint a second node over paths
+        // this one already claims — which `menuItems` refuses anyway. What is
+        // left is a menu ABOUT THE BUILD PART, opened from a row that only names
+        // it, which is the confusion the whole branch exists to avoid.
+        //
+        // AND NOTHING ON A BODY THE SCENE CANNOT PLACE, for a plainer reason:
+        // `menuItems` is `[]` for a path no row answers to, and `menuStyle`
+        // opens on `s.menu` alone — so the gesture would put an empty box on the
+        // screen.
+        //
+        // ASKED OF `scene` AND NOT OF `marks`, which are the same object outside
+        // a comparison and deliberately not inside one. This gate is only about
+        // whether there is a scene object to open a menu ABOUT; what belongs in
+        // that menu over a comparison is `menuItems`' own question, and it
+        // already answers it — everything that writes visibility or names a file
+        // is gone under `compared`, and `Copy name` is what remains.
+        onMenu: isMove || !scene ? null : stop((e) => {
+          e.preventDefault();
+          this.setState({ menu: { id: scene.id, ...menuAt(e.clientX, e.clientY) } });
+        }),
+        // THE FIELDS ARE THE ROW'S, SHOWN WHEN IT IS SELECTED. A tree row is one
+        // 24px line, and a panel of numbers under every row at once is the tree
+        // covering the model it describes — so the block opens under the row the
+        // reader is looking at and the rest stay one line each. BUILT EITHER
+        // WAY and hidden by the style, because a field carries a `ref` that
+        // wires the browser's own `change` (`field` above): building them only
+        // for the open row would make what the panel can commit depend on what
+        // is on screen.
+        fieldsStyle: 'display:' + (selected ? 'block' : 'none')
+          + ';width:250px;box-sizing:border-box;margin:1px 0 5px 32px;padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--float-bg)',
+        // A MOVE HAS NO NAME FIELD, NO OP AND NO ROLE. Its name is a row of the
+        // BUILD's, resolved when the gesture landed and never chosen by the
+        // reader; it draws no geometry, so there is no op to show and nothing
+        // for `solid`/`hole` to be about.
+        nameField: isMove ? null : field(`${node.id}.name`, node.name, (raw) => {
+          const wanted = raw.trim();
+          return updateNode(doc, node.id,
+                            { name: wanted ? freeName(wanted, node.id) : node.name });
+        }, '38%'),
+        op: isMove ? '' : node.op,
+        role: isMove ? '' : node.role,
+        roleStyle: `padding:2px 7px;border-radius:4px;cursor:pointer;font:600 9.5px ${MONO};letter-spacing:.05em;border:1px solid `
+          + (node.role === 'hole'
+            ? 'var(--danger-line);background:var(--danger-bg);color:var(--danger)'
+            : 'var(--line);background:var(--chip-bg);color:var(--text-soft)'),
+        onRole: stop(() => this.setProposal(updateNode(doc, node.id, {
+          role: node.role === 'hole' ? 'solid' : 'hole',
+        }))),
+        // THE SAME THREE-BY-THREE A BODY AND A MOVE HAVE ALWAYS BEEN DRAWN IN,
+        // and the same `field`, because they are the same kind of number: a
+        // move's `by` is an offset from wherever the build puts the part rather
+        // than a place in the document's own space, and `turn°` is the same
+        // three degrees about the same three axes a body's `rot°` is.
+        groups: isMove ? [
+          {
+            key: 'delta',
+            label: 'by',
+            fields: [0, 1, 2].map((axis) => field(
+              `${node.id}.delta.${axis}`, node.delta[axis],
+              (raw) => updateNode(doc, node.id,
+                                  { delta: swap(node.delta, axis, num(raw)) }),
+              '31%', STEP_MM)),
+          },
+          {
+            key: 'turn',
+            label: 'turn°',
+            fields: [0, 1, 2].map((axis) => field(
+              `${node.id}.turn.${axis}`, node.turn[axis],
+              (raw) => updateNode(doc, node.id,
+                                  { turn: swap(node.turn, axis, num(raw)) }),
+              '31%', STEP_DEG)),
+          },
+        ] : [
+          { key: 'dims', ...SIZES[node.op](node) },
+          {
+            key: 'at',
+            label: 'at',
+            fields: [0, 1, 2].map((axis) => field(
+              `${node.id}.at.${axis}`, node.at[axis],
+              (raw) => updateNode(doc, node.id, { at: swap(node.at, axis, num(raw)) }),
+              '31%', STEP_MM)),
+          },
+          {
+            key: 'rot',
+            // DEGREES, said on the row rather than assumed: the kernel takes
+            // radians and `placed` converts, so a reader who read this as
+            // radians would turn a body two and a half times and get something
+            // that still looks like a box. It is also what the arrows step by —
+            // `STEP_DEG` and not `STEP_MM`, because this is the one row of the
+            // three whose numbers are not millimetres.
+            label: 'rot°',
+            fields: [0, 1, 2].map((axis) => field(
+              `${node.id}.rot.${axis}`, node.rot[axis],
+              (raw) => updateNode(doc, node.id, { rot: swap(node.rot, axis, num(raw)) }),
+              '31%', STEP_DEG)),
+          },
+        ],
+      };
+    });
+
+    // OPEN UNLESS THE READER FOLDED IT, which is what `!== false` says and a
+    // truthy read could not: the branch is only ever drawn over a document that
+    // has something in it, and a row that arrives already folded away is a row
+    // they have to go and find. The expand-all and collapse-all buttons above
+    // the tree are expressed over `tree.nodes` and say nothing about this one.
+    const branchOpen = s.expanded[PROPOSAL_BRANCH] !== false;
+
     return {
       rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, tokenPop: false }),
 
@@ -6092,10 +6572,17 @@ export default class HammerolaViewer extends React.Component {
       //
       // AND NOT TAKEN OUT OF SERVICE BY A COMPARISON, unlike all three. What
       // `toolsOff` guards is a task filed in the BUILD's terms against a scene
-      // that is not the build — a `/cmp/…` path in `partId`. A proposal names no
-      // part of anything: it posts no path, and the body it describes is the
-      // reader's own claim about a motor or a wall, which is as true over a
-      // comparison as over a build.
+      // that is not the build — a `/cmp/…` path in `partId`. This panel's own
+      // door posts no path at all (`proposalAdd` sends `partId: null`), and the
+      // body it describes is the reader's own claim about a motor or a wall,
+      // which is as true over a comparison as over a build.
+      //
+      // THE ROWS DO WRITE `sel`, THOUGH, and that is where the same hazard
+      // would have got in by another road: a row of the proposal's branch
+      // selects the path its body is staged under, and under a comparison that
+      // path is the comparison's. So those rows select by the DOCUMENT's own
+      // node id while one is up — the reasoning is on `path` in `proposalRows`,
+      // and `measAdd` refuses such a value by its shape.
       tProposal: () => this.toggleProposal(),
       // THE FLAG ITSELF, because `render` is where it is spent: it decides
       // whether these two nodes exist, not how they look.
@@ -6122,10 +6609,23 @@ export default class HammerolaViewer extends React.Component {
 
       notCompare: !s.compare, compare: s.compare,
       hasTree: !!tree,
-      expandAll: () => this.setState({
-        expanded: Object.fromEntries(Array.from(tree ? tree.nodes.values() : [])
-          .filter((n) => n.isNode).map((n) => [n.id, true])) }),
-      collapseAll: () => this.setState({ expanded: {} }),
+      // THE PROPOSAL'S BRANCH IS CARRIED THROUGH BOTH OF THESE rather than
+      // dropped. They are the PARTS tree's buttons — they sit in its own header
+      // and are expressed over `tree.nodes`, which the branch is not in — but
+      // they both REBUILD the map rather than patching it, so a branch the
+      // reader had folded would silently spring open when either was pressed.
+      // Written into a copy for the reason `proposalToggle` gives.
+      expandAll: () => {
+        const expanded = Object.fromEntries(Array.from(tree ? tree.nodes.values() : [])
+          .filter((n) => n.isNode).map((n) => [n.id, true]));
+        expanded[PROPOSAL_BRANCH] = branchOpen;
+        this.setState({ expanded });
+      },
+      collapseAll: () => {
+        const expanded = {};
+        expanded[PROPOSAL_BRANCH] = branchOpen;
+        this.setState({ expanded });
+      },
       // RENDERED ABOVE THE ROWS AND OUTSIDE THE `hasTree` BRANCH, so this one is
       // pressable on a page whose tree never arrived — which is exactly the
       // state where a swap's carry is the only record of what was hidden. Hence
@@ -6199,129 +6699,55 @@ export default class HammerolaViewer extends React.Component {
         onClick: addBody(op),
       })),
 
-      // THE BODIES AND ONLY THE BODIES (`bodies`), because a move node has no op
-      // and no size: every row below asks the op's table for its fields, and a
-      // node that is in no table would be asked for a shape it does not have.
-      // The moves get rows of their own, drawn straight after these — see
-      // `proposalMoveRows`.
-      proposalBodies: bodies(doc).map((node) => ({
-        key: node.id,
-        op: node.op,
-        // A NAME THAT CANNOT BE EMPTIED AND CANNOT BE TAKEN, because it is not
-        // only a label: it is the part's `name` in the payload, and a hole is
-        // drawn as a part of its own under it (proposalgeom.js). Cleared, the
-        // field shows what the reader typed — nothing — while the document keeps
-        // the last name, and the commit puts it back; typed onto a name another
-        // body already has, it comes back numbered (`freeName`).
-        name: field(`${node.id}.name`, node.name, (raw) => {
-          const wanted = raw.trim();
-          return updateNode(doc, node.id,
-                            { name: wanted ? freeName(wanted, node.id) : node.name });
-        }, '38%'),
-        role: node.role,
-        // The hole's own colour, because it is the same statement the payload
-        // makes: a hole is the subtraction tool, drawn red and translucent over
-        // the result. Neither value is written here — this is the palette's
-        // `--danger` family, and the part's is `proposalgeom.js`'s.
-        roleStyle: `padding:2px 7px;border-radius:4px;cursor:pointer;font:600 9.5px ${MONO};letter-spacing:.05em;border:1px solid `
-          + (node.role === 'hole'
-            ? 'var(--danger-line);background:var(--danger-bg);color:var(--danger)'
-            : 'var(--line);background:var(--chip-bg);color:var(--text-soft)'),
-        onRole: () => this.setProposal(updateNode(doc, node.id, {
-          role: node.role === 'hole' ? 'solid' : 'hole',
-        })),
-        onRemove: () => this.setProposal(removeNode(doc, node.id)),
-        groups: [
-          { key: 'dims', ...SIZES[node.op](node) },
-          {
-            key: 'at',
-            label: 'at',
-            fields: [0, 1, 2].map((axis) => field(
-              `${node.id}.at.${axis}`, node.at[axis],
-              (raw) => updateNode(doc, node.id, { at: swap(node.at, axis, num(raw)) }),
-              '31%', STEP_MM)),
-          },
-          {
-            key: 'rot',
-            // DEGREES, said on the row rather than assumed: the kernel takes
-            // radians and `placed` converts, so a reader who read this as
-            // radians would turn a body two and a half times and get something
-            // that still looks like a box. It is also what the arrows step by —
-            // `STEP_DEG` and not `STEP_MM`, because this is the one row of the
-            // three whose numbers are not millimetres.
-            label: 'rot°',
-            fields: [0, 1, 2].map((axis) => field(
-              `${node.id}.rot.${axis}`, node.rot[axis],
-              (raw) => updateNode(doc, node.id, { rot: swap(node.rot, axis, num(raw)) }),
-              '31%', STEP_DEG)),
-          },
-        ],
-      })),
+      // -- the proposal's branch of the tree ----------------------------------
+      //
+      // DRAWN ONLY OVER A DOCUMENT WITH SOMETHING IN IT, and only while the
+      // panel is open. The second condition is the overlay's: closing the panel
+      // takes the bodies off the model (`toggleProposal`), so a branch left
+      // standing would list rows with an eye, a colour and a ghost square over
+      // geometry that is no longer in the scene. The first is what keeps the
+      // column quiet — a heading over nothing says less than the panel's own
+      // sentence about what a body is, which is where that explanation stayed.
+      proposalTreeStyle: 'padding:1px 0 6px;flex-direction:column;align-items:flex-start;display:'
+        + (s.proposalOpen && doc.nodes.length ? 'flex' : 'none'),
+      // THE HEAD OF THE BRANCH, drawn as a group of the parts tree is drawn at
+      // depth 0 — the same height, the same caret, the same count on the right —
+      // because it is read beside that tree and a second shape for it would read
+      // as a second kind of thing.
+      proposalHeadStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px;border-radius:4px;background:var(--float-bg-soft);cursor:default',
+      proposalCaretPath: branchOpen ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4',
+      proposalCaretStyle: 'width:20px;height:20px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-soft);cursor:pointer',
+      // WRITTEN INTO A COPY RATHER THAN SPELLED AS A COMPUTED KEY, which is the
+      // same rule `SIZES` above keeps: `test_every_handled_event_is_imported_
+      // from_events_js` reads `[x]:` out of this file as a handler key, and a
+      // `{ [PROPOSAL_BRANCH]: … }` here would arrive there as an event constant
+      // that events.js has never heard of.
+      proposalToggle: stop(() => {
+        const expanded = { ...s.expanded };
+        expanded[PROPOSAL_BRANCH] = !branchOpen;
+        this.setState({ expanded });
+      }),
+      proposalHeadName: PROPOSAL_BRANCH,
+      proposalHeadNameStyle: `white-space:nowrap;padding-right:4px;font:600 12px ${MONO};color:var(--text)`,
+      // HOW MANY STATEMENTS ARE IN IT, bodies and moves together, in the place a
+      // group of the parts tree carries how many parts are under it.
+      proposalCount: String(doc.nodes.length),
+      proposalCountStyle: `flex:none;font:400 10px ${MONO};color:var(--text-faint);padding:0 2px`,
+      // EMPTIED BY THE CARET rather than hidden by a style, which is how the
+      // parts tree collapses a group too: a collapsed branch emits no rows.
+      proposalRows: branchOpen ? proposalRows : [],
 
-      // A PART OF THE BUILD THE READER DRAGGED, as a row in the same list the
-      // bodies are in and drawn straight after them. It is the same kind of
-      // statement — "this is what I mean, and it is not an edit of the model" —
-      // so it belongs in the list where the reader is already looking rather than
-      // in a panel of its own.
+      // The sentence that says what a proposal can be built out of, drawn in the
+      // panel above the buttons that add one and only while there is nothing in
+      // the document. It stands in for the branch rather than beside it: the
+      // branch is over in the tree column and is not drawn at all on an empty
+      // document, so this is the only thing on the page saying what would appear
+      // there — and a heading over empty space says less than one sentence does.
       //
-      // THE NUMBERS ARE TYPED HERE AS A BODY'S ARE, through the same `field` and
-      // the same two rows of three, because they are the same kind of number and
-      // a second design for them would read as a second feature. The drag is one
-      // way to reach them and the arrows are the other: a hand is how somebody
-      // says "about here", and a field is how they say "12, exactly" — and the
-      // TURN has no hand at all, so without the fields it could not be said.
-      //
-      // THE NAME IS STILL NOT A FIELD: it is a row of the build's, resolved when
-      // the drag landed, and the reader never chose it.
-      //
-      // AND THE `×` IS STILL THE CONTROL THE FEATURE TURNS ON: a part goes home
-      // by having its entry DELETED — offset and turn together, because the node
-      // is the one statement that carried both — which is the same `removeNode` a
-      // body's `×` calls and the same `setProposal` it goes through. What happens
-      // next is the viewport's half: the push that follows stops claiming this
-      // path, and `reconcileMoves` puts it back.
-      proposalMoveRows: moves(doc).map((node) => ({
-        key: node.id,
-        name: node.name,
-        onRemove: () => this.setProposal(removeNode(doc, node.id)),
-        groups: [
-          {
-            key: 'delta',
-            // `by` AND NOT `at`, which is the body's word for a place: these
-            // millimetres are an offset from wherever the build puts the part,
-            // and that is how the projection prints them (`proposalText`).
-            label: 'by',
-            fields: [0, 1, 2].map((axis) => field(
-              `${node.id}.delta.${axis}`, node.delta[axis],
-              (raw) => updateNode(doc, node.id,
-                                  { delta: swap(node.delta, axis, num(raw)) }),
-              '31%', STEP_MM)),
-          },
-          {
-            key: 'turn',
-            // DEGREES AND THE SAME STEP A BODY'S `rot°` TAKES, because they are
-            // the same three angles about the same three axes — the viewport
-            // turns a part by them exactly as the kernel turns a body
-            // (`quaternionOf` in viewport/parts.js). Measured about the part's
-            // OWN centre, which is what makes a quarter turn read as a quarter
-            // turn rather than as a throw across the scene.
-            label: 'turn°',
-            fields: [0, 1, 2].map((axis) => field(
-              `${node.id}.turn.${axis}`, node.turn[axis],
-              (raw) => updateNode(doc, node.id,
-                                  { turn: swap(node.turn, axis, num(raw)) }),
-              '31%', STEP_DEG)),
-          },
-        ],
-      })),
-
-      // The sentence under BODIES that says what one can be built out of, drawn
-      // only while there is nothing in the document: a panel of headings over
-      // empty space says less than one sentence does. ON THE WHOLE DOCUMENT and
-      // not on the bodies alone, so a proposal that holds nothing but a dragged
-      // part is not offered an explanation of what it is missing — it has
-      // something to say to the agent already.
-      proposalEmptyStyle: `font:400 10.5px/1.5 ${MONO};color:var(--text-muted);display:`
+      // ON THE WHOLE DOCUMENT and not on the bodies alone, so a proposal that
+      // holds nothing but a dragged part is not offered an explanation of what
+      // it is missing — it has something to say to the agent already.
+      proposalEmptyStyle: `font:400 10.5px/1.5 ${MONO};color:var(--text-muted);margin-bottom:9px;display:`
         + (doc.nodes.length ? 'none' : 'block'),
 
       // THE KERNEL'S OWN SENTENCE ABOUT THE DOCUMENT AS IT STANDS, in a box in
@@ -6625,7 +7051,26 @@ export default class HammerolaViewer extends React.Component {
         // catalogue key at all (`part()` in proposalgeom.js says why), so the
         // row's is already null. Nothing else in this payload names the
         // selection — the measurement text is a value and a note about the view.
-        const proposed = this.proposalBody(s.sel);
+        // AND A SELECTION THAT IS NOT A PATH IS NOT ONE EITHER, which is the
+        // second half and the one asked about the SHAPE rather than about
+        // membership. A row of the proposal's branch selects by the DOCUMENT's
+        // own node id wherever the scene cannot place it — nothing staged yet, a
+        // document the kernel refused, a comparison up — and `isOverlay` cannot
+        // recognise that value, because it is not a path for it to measure.
+        //
+        // THE SHAPE AND NOT `doc.nodes.some(...)`, which was the first answer
+        // and the wrong question: it asks whether the node is still THERE, and
+        // the case that matters is the one where it is not. A refused document
+        // repaired by the `×` on the body that broke it leaves `sel` standing at
+        // `n5` over a document that no longer holds it, and membership then says
+        // "not a proposal thing" about the one value that could only have come
+        // from one.
+        //
+        // IT RESTS ON EVERY TREE ID BEING A PATH, and that invariant is held by
+        // a test rather than by this sentence — `treeFromShapes` spells every id
+        // as `${parent}/${name}`, which ui/tests/proposalpanel.test.js drives.
+        const proposed = this.proposalBody(s.sel)
+          || (!!s.sel && !s.sel.startsWith('/'));
         this.set({
           composer: {
             part: proposed ? '' : (node ? node.name : (s.selName || 'model')),
@@ -6906,6 +7351,104 @@ export default class HammerolaViewer extends React.Component {
 
           {/* ── the tree, floating over the model ── */}
           <div style={css('position:absolute;left:12px;top:10px;max-height:calc(100% - 20px);display:flex;flex-direction:column;align-items:flex-start;overflow:auto;z-index:10')}>
+
+            {/* ── the proposal: a second, small tree above the parts ──
+
+                WHAT THE READER HAS SAID, ALL OF IT, IN ONE PLACE. Every node of
+                the document is a row here — the bodies they drew and the parts
+                of the build they displaced, in the order the document holds them
+                — and a selected row opens the numbers underneath itself. The
+                panel over on the right keeps what is ABOUT the proposal rather
+                than IN it: what it is for, the buttons that add a body, the
+                kernel's verdict, and the door out to a comment.
+
+                A BRANCH OF THE INTERFACE. It is built from `this.state.proposal`
+                and is not part of `tree` at all — `computed()` says why a second
+                scene root was not on the table, and why a MOVE could not be a
+                scene row in any case. The bodies ARE in the scene, staged under
+                the model's root exactly as before, and each row resolves through
+                its staged path for the eye, the ghost square, the colour and the
+                selection.
+
+                NOT INSIDE `treeShown` OR `notCompare`, unlike the parts tree
+                below it. The proposal is the reader's own claim about a motor or
+                a wall, which is as true over a comparison as over a build — the
+                panel is not taken out of service by one either — and it is the
+                only place the rows exist now that the panel has no list. */}
+            {v.proposalOn && (
+              <div style={css(v.proposalTreeStyle)}>
+                <div style={css(v.proposalHeadStyle)}>
+                  <span onClick={v.proposalToggle} style={css(v.proposalCaretStyle)}>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d={v.proposalCaretPath} /></svg>
+                  </span>
+                  <span onClick={v.proposalToggle} style={css(v.proposalHeadNameStyle)}>{v.proposalHeadName}</span>
+                  <span style={css(v.proposalCountStyle)}>{v.proposalCount}</span>
+                </div>
+                {v.proposalRows.map((row) => (
+                  <div key={row.key} style={css('display:flex;flex-direction:column;align-items:flex-start')}>
+                    {/* `onContextMenu` is null on a move and on a body the scene
+                        cannot place, which leaves the browser's own menu where
+                        this page has nothing to put — see the row. */}
+                    <div onContextMenu={row.onMenu} style={css(row.rowStyle)}>
+                      {/* The eye, the ghost square and the colour, in one box so
+                          that a MOVE — which draws nothing and has none of them
+                          — can drop all three at once and still line its name up
+                          with the bodies above it. */}
+                      <span style={css(row.marksStyle)}>
+                        <span onClick={row.onVis} title="show / hide" style={css('width:24px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                          <span style={css(row.eyeOuter)}><span style={css(row.eyeDot)} /></span>
+                        </span>
+                        <span onClick={row.onGhost} title="translucent" style={css('width:22px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                          <span style={css(row.ghostIcon)} />
+                        </span>
+                        <span style={css(row.dotStyle)} />
+                      </span>
+                      <span onClick={row.onSelect} style={css(row.nameStyle)}>{row.name}</span>
+                      <span onClick={row.onRemove} title={row.removeTitle} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                    </div>
+                    <div style={css(row.fieldsStyle)}>
+                      {/* A BODY'S HEAD LINE, absent on a move: the name it is
+                          drawn under, the op it was built from, and the switch
+                          between the two roles — `result = union(solid) −
+                          union(hole)`, with a hole drawn as its own translucent
+                          part so the reader can see what they asked to remove. */}
+                      {row.nameField && (
+                        <div style={css('display:flex;align-items:center;gap:6px')}>
+                          {/* `onKeyDown` on every field of this block: the value
+                              is committed on `change` — a blur, an Enter, or a
+                              nudge of the arrows — and not on the keystroke, so
+                              a field with only the blur wired would ignore the
+                              reader who types a number and presses return. */}
+                          <input type={row.nameField.type} value={row.nameField.value}
+                                 onChange={row.nameField.onChange} onBlur={row.nameField.onBlur}
+                                 onKeyDown={row.nameField.onKeyDown} style={css(row.nameField.style)} />
+                          <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>{row.op}</span>
+                          <span onClick={row.onRole} title="solid adds material, hole takes it away" style={css(row.roleStyle)}>{row.role}</span>
+                        </div>
+                      )}
+                      {row.groups.map((g) => (
+                        <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
+                          <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
+                          {/* `type` AND `step` COME OFF THE FIELD, so a number
+                              gets the browser's own arrows and an extrusion's
+                              profile — `x,y; x,y; …`, which is no kind of number
+                              — does not. `ref` is how a nudge of those arrows
+                              reaches the document; `field` in `computed()` says
+                              why React leaves it no other way, and what
+                              `onWheel` is for. */}
+                          {g.fields.map((f) => (
+                            <input key={f.key} type={f.type} step={f.step} ref={f.ref}
+                                   value={f.value} onChange={f.onChange} onBlur={f.onBlur}
+                                   onKeyDown={f.onKeyDown} onWheel={f.onWheel} style={css(f.style)} />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {v.notCompare && v.treeShown && (
               <div style={css('display:flex;flex-direction:column;min-height:0')}>
                 <div style={css('flex:none;display:flex;align-items:center;gap:2px;padding:0 0 3px')}>
@@ -7300,6 +7843,14 @@ export default class HammerolaViewer extends React.Component {
 
             {/* ── the proposal: a rough body the model has to fit, in numbers ──
 
+                THE DOCUMENT ITSELF IS NOT HERE ANY MORE. Every node of it is a
+                row in the proposal's own branch of the tree, over on the left,
+                where a selected row opens the very fields this panel used to
+                carry. What is left is everything ABOUT a proposal rather than IN
+                one: what it is for, the buttons that add a body, the sentence
+                that explains a document with nothing in it, what the kernel
+                makes of the one there is, and the door out to a comment.
+
                 NUMBERS AND ONE HAND. The fields are where a body is SIZED, and
                 they are the only way to say `20 x 20 x 20`; where it SITS can
                 also be dragged, with the Move tool over the body itself — the
@@ -7331,75 +7882,11 @@ export default class HammerolaViewer extends React.Component {
                   the next rebuild forgets it.
                 </div>
 
-                <div style={css(`font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.07em;margin-bottom:5px`)}>BODIES AND MOVES</div>
                 <div style={css(v.proposalEmptyStyle)}>
                   add a box, a cylinder, a sphere or an extruded profile, then say how
                   big it is and where it sits. Every measurement is a plain number
                   &mdash; there is no arithmetic.
                 </div>
-                {v.proposalBodies.map((b) => (
-                  <div key={b.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:7px 8px;margin-bottom:6px')}>
-                    <div style={css('display:flex;align-items:center;gap:6px')}>
-                      {/* `onKeyDown` on every field of this panel: the value is
-                          committed on `change` — a blur, an Enter, or a nudge of
-                          the arrows — and not on the keystroke, so a field with
-                          only the blur wired would ignore the reader who types a
-                          number and presses return. */}
-                      <input type={b.name.type} value={b.name.value}
-                             onChange={b.name.onChange} onBlur={b.name.onBlur}
-                             onKeyDown={b.name.onKeyDown} style={css(b.name.style)} />
-                      <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>{b.op}</span>
-                      {/* The role is a two-state switch and not a pair of radio
-                          buttons: there are two roles, `result = union(solid) -
-                          union(hole)`, and a hole is drawn as its own translucent
-                          part so the reader can see what they asked to remove. */}
-                      <span onClick={b.onRole} title="solid adds material, hole takes it away" style={css(b.roleStyle)}>{b.role}</span>
-                      <span onClick={b.onRemove} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
-                    </div>
-                    {b.groups.map((g) => (
-                      <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
-                        <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
-                        {/* `type` AND `step` COME OFF THE FIELD, so a number gets
-                            the browser's own arrows and an extrusion's profile —
-                            `x,y; x,y; …`, which is no kind of number — does not.
-                            `ref` is how a nudge of those arrows reaches the
-                            document; `field` in `computed()` says why React
-                            leaves it no other way, and what `onWheel` is for. */}
-                        {g.fields.map((f) => (
-                          <input key={f.key} type={f.type} step={f.step} ref={f.ref}
-                                 value={f.value} onChange={f.onChange} onBlur={f.onBlur}
-                                 onKeyDown={f.onKeyDown} onWheel={f.onWheel} style={css(f.style)} />
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                ))}
-                {/* THE SAME LIST, AFTER THE BODIES: a part of the build the
-                    reader dragged is the same kind of statement as a body they
-                    drew, so it is a row among them rather than a section of its
-                    own — and it is drawn the same way, down to the two rows of
-                    three the body's `at` and `rot°` are drawn in. What the head
-                    carries instead of a name field and a role switch is the row
-                    of the BUILD it names, which the reader never chose, and the
-                    `×` that puts the part back. */}
-                {v.proposalMoveRows.map((m) => (
-                  <div key={m.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:7px 8px;margin-bottom:6px')}>
-                    <div style={css('display:flex;align-items:center;gap:6px')}>
-                      <span style={css(`flex:1;min-width:0;font:400 11px ${MONO};color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap`)}>{m.name}</span>
-                      <span onClick={m.onRemove} title="put it back where the build has it" style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
-                    </div>
-                    {m.groups.map((g) => (
-                      <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
-                        <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
-                        {g.fields.map((f) => (
-                          <input key={f.key} type={f.type} step={f.step} ref={f.ref}
-                                 value={f.value} onChange={f.onChange} onBlur={f.onBlur}
-                                 onKeyDown={f.onKeyDown} onWheel={f.onWheel} style={css(f.style)} />
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                ))}
                 <div style={css('display:flex;flex-wrap:wrap;gap:5px')}>
                   {v.proposalOps.map((op) => (
                     <div key={op.key} onClick={op.onClick} style={css(`padding:4px 9px;border:1px dashed var(--line-strong);border-radius:5px;font:500 10.5px ${MONO};color:var(--text-soft);cursor:pointer`)}>{op.label}</div>

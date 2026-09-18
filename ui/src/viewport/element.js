@@ -980,12 +980,19 @@ export class HmrViewport extends HTMLElement {
    *
    * THE QUESTION THE INTERFACE CANNOT ANSWER FOR ITSELF, and a method for the
    * reason the two above are: it is asked of the scene as it stands right now.
-   * A staged body is an ordinary row in the tree and an ordinary pick target, so
-   * the Comment tool would otherwise file a task in the BUILD's terms —
-   * `partId: "/<root>/proposal/motor"` — against a body that is in no build and
-   * no catalogue. The group's name is minted here, against the model's own parts,
+   * A staged body is an ordinary pick target, so the Comment tool would
+   * otherwise file a task in the BUILD's terms — `partId:
+   * "/<root>/proposal/motor"` — against a body that is in no build and no
+   * catalogue. The group's name is minted here, against the model's own parts,
    * so only here can it be told apart from a model part that is honestly called
    * `proposal`.
+   *
+   * IT IS ALSO WHAT THE INTERFACE FINDS THE OVERLAY BY. `computed()` in
+   * HammerolaViewer.jsx asks this of each of the root's children to locate the
+   * group, so that the proposal's own branch of the tree can resolve each body
+   * to the row the scene staged for it — and so that the parts tree can leave
+   * those rows out, the branch having them. `onModel` asks it through the same
+   * lookup, to carry a selection onto the path a body has only just been given.
    *
    * THE MOVE TOOL ASKS THIS TOO AND DOES SOMETHING ELSE WITH THE ANSWER. It does
    * not refuse a proposal body: a drag of one is an ordinary edit of the panel's
@@ -995,14 +1002,21 @@ export class HmrViewport extends HTMLElement {
    * proposal body together with a part of the model, is refused whole because
    * there is no such thing as half of either.
    *
-   * THE GROUP NODE ITSELF ANSWERS YES, and it is the case that reads as an edge
-   * one and is not: the group is a ROW OF THE TREE, a row is selected with the
-   * mouse (`onSelect`), and `selectedPaths()` hands a node's OWN id over rather
-   * than the leaves under it. So `/<root>/proposal` arrives here as an ordinary
-   * selection — `add to comment` on a measurement would head the composer
-   * `proposal` — and it is the same task about a body in no build that one of
-   * the bodies under it is. Nothing PICKS the group in the scene, which is what
-   * made it look safe; the tree is the other door.
+   * THE GROUP NODE ITSELF ANSWERS YES, and the reason is no longer the one this
+   * paragraph used to give. It WAS that the group is a row of the parts tree, a
+   * row is selected with the mouse, and `selectedPaths()` hands a node's own id
+   * over — so `/<root>/proposal` could arrive here as an ordinary selection and
+   * `add to comment` on a measurement would head the composer `proposal`. That
+   * door is shut: the overlay is not drawn in the parts tree at all any more,
+   * and the branch that replaced it draws the BODIES rather than the group.
+   *
+   * WHAT KEEPS THE ANSWER IS THAT `overlayBody` AND THE OVERLAY LOOKUP ARE
+   * SPELLED ON TOP OF IT. `overlayBody` is this question one segment further in
+   * and returns null for the group, which is how the Move tool refuses a drag of
+   * it; and `computed()` locates the group by asking exactly this of a path that
+   * IS the group. Answering no for the group would break both — and it would
+   * still be the wrong answer besides, since `/<root>/proposal` names a thing in
+   * no build whatever reaches here holding it.
    *
    * NOTHING IS A BODY OF AN OVERLAY THAT IS NOT STAGED: with the panel closed
    * `overlayParts` is empty, `staged()` hands the document straight back, and
@@ -1028,10 +1042,12 @@ export class HmrViewport extends HTMLElement {
    * (proposalgeom.js), which is where the two halves meet: every part there is
    * one body of the document, solid or hole, under that body's own name.
    *
-   * THE GROUP ANSWERS NULL, and that is the one real decision in here. It is a
-   * row of the tree like any other and it can be selected and dragged from empty
-   * space, but it stands for no body: it is the panel's whole output, named
-   * after nothing in the document. A drag of it would arrive at the panel naming
+   * THE GROUP ANSWERS NULL, and that is the one real decision in here. It
+   * stands for no body: it is the panel's whole output, named after nothing in
+   * the document. The parts tree does not draw it — nor its bodies — since the
+   * proposal got a branch of its own (`isOverlay` above), but THE SCENE STILL
+   * HOLDS IT, and that is where this question arrives from: a drag reaches here
+   * by path. A drag of the group would arrive at the panel naming
    * `proposal`, which no node answers to — so the body would be left displaced
    * with the document saying otherwise, which is exactly what this feature is
    * written to avoid. Refused at the press instead, where the gesture simply

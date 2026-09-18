@@ -415,9 +415,10 @@ export function installTools(vp) {
     // or away from the reader — which is what "show me where" means with a mouse.
     //
     // THE TURN IS NOT IN THIS GESTURE. A move node carries one now (`turn` in
-    // ui/src/proposal.js), and it is typed into the row's own fields in the panel
-    // rather than dragged: the hand does one thing here, and the turn the part is
-    // already standing at is carried along untouched (`press.move.turn` below).
+    // ui/src/proposal.js), and it is typed into the row's own fields in the
+    // proposal branch of the tree rather than dragged: the hand does one thing
+    // here, and the turn the part is already standing at is carried along
+    // untouched (`press.move.turn` below).
     const from = ndcOffset(g, b.eye, b.view, d.ndc[0], d.ndc[1]);
     const to = ndcOffset(g, b.eye, b.view, ndc[0], ndc[1]);
     if (!from || !to) return;

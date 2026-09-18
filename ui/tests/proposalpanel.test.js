@@ -22,7 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import HammerolaViewer from '../src/HammerolaViewer.jsx'
+import HammerolaViewer, { PROPOSAL_BRANCH } from '../src/HammerolaViewer.jsx'
 import { MOVED, PLACE, PROPOSALMOVE } from '../src/events.js'
 import { indexTree } from '../src/hub.js'
 import {
@@ -30,6 +30,7 @@ import {
 } from '../src/proposal.js'
 import { SHAPE_OPS } from '../src/proposalgeom.js'
 import { css } from '../src/style.jsx'
+import { treeFromShapes } from '../src/viewport/parts.js'
 import { collect, texts } from './eltree.js'
 
 const REV = 'e05f73ba91b263b8517147e338d23e868533c6a034a342ad5926abb6edcb7b40'
@@ -98,7 +99,14 @@ function panel({ token = 'sekrit', proposal, open = true, narrow = false,
   stampProposal(served)
   const el = {
     setOverlay: vi.fn(), clearOverlay: vi.fn(), setMoves: vi.fn(),
+    // THE TWO QUESTIONS THIS PAGE ASKS THE ELEMENT BACK, and both are spies for
+    // the reason the note above gives: what the viewport DOES with the parts,
+    // these two answers included, is element.test.js's subject. `overlayBody`
+    // is the one the selection rides on — it is how a rename finds the path it
+    // has to move (`selectionAfter`) — so a fixture that left it off would be
+    // testing the guard rather than the carry.
     isOverlay: vi.fn(() => false),
+    overlayBody: vi.fn(() => null),
   }
   const c = Object.create(HammerolaViewer.prototype)
   c.props = { ...HammerolaViewer.defaultProps }
@@ -175,8 +183,22 @@ const pushed = (el) => el.setMoves.mock.calls.at(-1)[0]
 /** The four ops, in the order the panel offers them. */
 const ops = (c) => c.computed().proposalOps.map((op) => op.key)
 
+/**
+ * The proposal's own branch of the tree: EVERY node of the document as a row,
+ * bodies and moves together and in the order the document holds them.
+ *
+ * WHERE THE PANEL'S TWO LISTS WENT. They were `proposalBodies` and
+ * `proposalMoveRows` in the panel on the right, and the whole document is now
+ * one branch above the parts tree — so the two helpers below are a FILTER over
+ * the one list rather than two members of `computed()`. What each row is when it
+ * is a body and when it is a move is what the describes below still ask.
+ */
+const rows = (c) => c.computed().proposalRows
+const bodyRows = (c) => rows(c).filter((row) => !row.move)
+const moveRows = (c) => rows(c).filter((row) => row.move)
+
 /** One body's size fields, whatever op it is. */
-const sizeFields = (c, index = 0) => c.computed().proposalBodies[index].groups[0].fields
+const sizeFields = (c, index = 0) => bodyRows(c)[index].groups[0].fields
 
 /**
  * A field typed in and FINISHED WITH — the `change` the panel commits on.
@@ -408,6 +430,679 @@ describe('the panel', () => {
   })
 })
 
+// -- the branch of the tree the whole document is drawn in ---------------------
+
+describe('the proposal as a branch of the tree', () => {
+  // WHERE THE DOCUMENT IS NOW. It used to be two lists inside the panel on the
+  // right; it is a small tree of its own above the parts tree, and what was
+  // asked for was "a separate proposal part of the tree with ALL the proposals
+  // in it", which "is not part of a group — it is a root of the tree". So every
+  // node is a row — bodies and moves alike, in document order — the fields open
+  // under the row that is selected, and the panel keeps only what is ABOUT a
+  // proposal rather than in one.
+
+  /**
+   * The tree as the viewport reports it WITH THE OVERLAY STAGED: the model's own
+   * parts, and the proposal's group beside them holding one part per body.
+   *
+   * THE GROUP'S NAME IS THE VIEWPORT'S TO MINT, which is why `isOverlay` is
+   * taught the same path rather than the page being left to match `proposal`
+   * against a name: the page asks the element which of the root's children the
+   * overlay is (`overlayAt` in viewport/element.js says why only it can answer),
+   * and every fixture that wants a staged body has to answer as the real element
+   * does.
+   *
+   * THE COLOURS ARE THE SCENE'S and are spelled out here for that reason: a row
+   * shows whatever colour the part it resolves to was given, so the fixture has
+   * to give the two kinds of part different ones for the assertion to mean
+   * anything. The body's is the neutral grey proposalgeom.js paints a solid.
+   */
+  const sceneTree = (bodies, parts = ['plate'], root = '/model') => ({
+    id: root,
+    name: root.slice(1),
+    children: [
+      ...parts.map((name) => ({ id: `${root}/${name}`, name, color: '#4b5563' })),
+      {
+        id: `${root}/proposal`,
+        name: 'proposal',
+        children: bodies.map((name) => ({
+          id: `${root}/proposal/${name}`, name, color: '#9aa3ad',
+        })),
+      },
+    ],
+  })
+
+  /**
+   * The element's two answers about that scene.
+   *
+   * `overlayBody` TRANSCRIBED rather than stubbed to a value: it is `isOverlay`
+   * one segment further in, null for the group and null for anything deeper
+   * (viewport/element.js), and the page reads it at moments this fixture cannot
+   * enumerate ahead of time — a rename asks it about the selection as it stood
+   * BEFORE the document changed.
+   */
+  const teach = (el, at) => {
+    el.isOverlay.mockImplementation(
+      (id) => id === at || String(id).startsWith(`${at}/`))
+    el.overlayBody.mockImplementation((id) => {
+      if (!String(id).startsWith(`${at}/`)) return null
+      const name = String(id).slice(at.length + 1)
+      return name && !name.includes('/') ? name : null
+    })
+  }
+
+  const stage = (c, el, bodies, parts = ['plate'], root = '/model') => {
+    const at = `${root}/proposal`
+    c.state.tree = indexTree(sceneTree(bodies, parts, root))
+    teach(el, at)
+    return at
+  }
+
+  /**
+   * The same scene ARRIVING, through the page's own `onModel`.
+   *
+   * `stage` puts a tree into state; this one delivers it the way the viewport
+   * does, which is the only way to reach what the page does AT the moment a
+   * stage lands. The element is taught first, because `onModel` asks it which
+   * of the root's children the overlay is.
+   *
+   * THE ROOT IS A PARAMETER, exactly as `stage`'s is, because a comparison's
+   * scene lands through this same door: `staged()` lays the overlay into
+   * whatever payload is current, so a re-stage with a comparison up brings a
+   * tree whose overlay is the comparison's. Hardwiring `/model` here made a test
+   * that could only ever watch a build arrive, and a build arriving is the one
+   * case where the carry is right.
+   */
+  const land = (c, el, bodies, parts = ['plate'], root = '/model') => {
+    const at = `${root}/proposal`
+    teach(el, at)
+    c.onModel({ tree: sceneTree(bodies, parts, root), view: 'assembled',
+                live: true, restage: true })
+    return at
+  }
+
+  /** The names of the rows the PARTS tree draws, in draw order. */
+  const treeRows = (c) => c.computed().rows.map((row) => row.name)
+
+  it('draws every node of the document as a row, in the order it holds them', () => {
+    // BODIES AND MOVES TOGETHER AND NOT TWO LISTS, because they are the same
+    // kind of statement: this is what one place to look actually means.
+    const { c } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    c.computed().proposalOps[0].onClick()
+
+    expect(rows(c).map((row) => row.name)).toEqual(['korpus', 'plate', 'box3'])
+    expect(rows(c).map((row) => row.move)).toEqual([false, true, false])
+    expect(c.computed().proposalCount).toBe('3')
+  })
+
+  it('heads the branch with a row of its own, which folds it away', () => {
+    // A ROOT ELEMENT OF THE TREE and not a group inside the model's, which is
+    // the owner's other sentence: it is the interface's branch, built from the
+    // document, and the caret is the same one a group of the parts tree has.
+    const { c } = mounted({ proposal: withBlock() })
+
+    expect(c.computed().proposalHeadName).toBe('proposal')
+    expect(rows(c)).toHaveLength(1)
+    const open = c.computed().proposalCaretPath
+
+    c.computed().proposalToggle(click)
+
+    expect(rows(c)).toEqual([])
+    expect(c.computed().proposalCaretPath).not.toBe(open)
+    // And the count stays: what is folded away is still in the document.
+    expect(c.computed().proposalCount).toBe('1')
+
+    c.computed().proposalToggle(click)
+    expect(rows(c)).toHaveLength(1)
+  })
+
+  it('stays folded when the parts tree is expanded or collapsed whole', () => {
+    // THE TWO BUTTONS ARE THE PARTS TREE'S — they sit in its own header and are
+    // expressed over `tree.nodes`, which this branch is not in — and both
+    // REBUILD the expansion map rather than patching it. A branch the reader
+    // folded would otherwise spring open at a press meant for the tree below.
+    const { c } = mounted({ proposal: withBlock() })
+    c.computed().proposalToggle(click)
+    expect(rows(c)).toEqual([])
+
+    c.computed().collapseAll()
+    expect(rows(c)).toEqual([])
+
+    c.computed().expandAll()
+    expect(rows(c)).toEqual([])
+  })
+
+  it('is gone from an empty document, and from a panel that is shut', () => {
+    // The overlay goes off the model when the panel closes (`toggleProposal`),
+    // so a branch left standing would offer an eye and a colour over geometry
+    // that is no longer in the scene. An empty document has nothing to show and
+    // the panel's own sentence is what explains it.
+    expect(css(mounted({}).c.computed().proposalTreeStyle).display).toBe('none')
+    expect(css(mounted({ proposal: withBlock(), open: false }).c
+      .computed().proposalTreeStyle).display).toBe('none')
+    expect(css(mounted({ proposal: withBlock() }).c
+      .computed().proposalTreeStyle).display).toBe('flex')
+  })
+
+  it('takes the overlay out of the parts tree, so no body is drawn twice', () => {
+    // THE WHOLE POINT OF THE FILTER in `emit`. A body drawn in both branches is
+    // one statement the reader can act on twice — two eyes, two `×`es, one of
+    // them putting back what the other took away. The SCENE is untouched: the
+    // group is still staged under the model's root, and the row here resolves
+    // through exactly that path.
+    const { c, el } = mounted({ proposal: withBlock() })
+    stage(c, el, ['korpus'])
+    c.state.expanded = { '/model': true }
+
+    expect(treeRows(c)).toEqual(['model', 'plate'])
+    expect(rows(c).map((row) => row.name)).toEqual(['korpus'])
+  })
+
+  it('takes it out of what the root above it counts and hides, too', () => {
+    // THE SAME REMOVAL ONE STOREY UP. `indexTree` builds a group's `leaves` out
+    // of every leaf underneath it and the overlay is staged as a child of the
+    // model's root — so without this the root said `2` over one row, and its eye
+    // reached into bodies the branch above has its own eye for. A count of rows
+    // nobody can see is the overlay under the root after all, as a digit.
+    const { c, el } = mounted({ proposal: withBlock() })
+    stage(c, el, ['korpus'])
+    c.state.expanded = { '/model': true }
+
+    const root = () => c.computed().rows[0]
+    expect(root().meta).toBe('1')
+
+    root().onVis(click)
+
+    expect(c.state.hidden).toEqual(['/model/plate'])
+  })
+
+  it('gives a body row the eye, the ghost square and the colour of the part', () => {
+    // EVERYTHING THE SCENE GIVES IT, resolved through the staged path — the same
+    // controls the part would have had in the tree it has just been taken out
+    // of, so nothing was lost by moving it.
+    const { c, el } = mounted({ proposal: withBlock() })
+    const at = stage(c, el, ['korpus'])
+    const row = () => rows(c)[0]
+
+    expect(row().dotStyle).toContain('#9aa3ad')
+    expect(css(row().marksStyle).visibility).toBeUndefined()
+
+    row().onVis(click)
+    expect(c.state.hidden).toEqual([`${at}/korpus`])
+    row().onGhost(click)
+    expect(c.state.ghost).toEqual([`${at}/korpus`])
+    // And the name goes faint with the body, as a hidden row of the tree does.
+    expect(row().nameStyle).toContain('var(--text-faint)')
+  })
+
+  it('selects the body in the scene, and opens its fields under the row', () => {
+    const { c, el } = mounted({ proposal: withBlock() })
+    const at = stage(c, el, ['korpus'])
+
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('none')
+
+    rows(c)[0].onSelect(click)
+
+    expect(c.state.sel).toBe(`${at}/korpus`)
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
+    // The block is the panel's old one, unchanged: the name, the op, the role
+    // switch and the three groups of numbers.
+    expect(rows(c)[0].nameField.value).toBe('korpus')
+    expect(rows(c)[0].op).toBe('box')
+    expect(rows(c)[0].role).toBe('solid')
+    expect(rows(c)[0].groups.map((g) => g.label)).toEqual(['size', 'at', 'rot°'])
+  })
+
+  it('keeps the fields open on a body whose name was just typed', () => {
+    // THE NAME IS IN THE PATH THE ROW IS SELECTED BY, so committing a new one
+    // used to leave `sel` on a spelling nothing answers to: the row deselected
+    // and the block the reader was typing in shut under them. Every other field
+    // on that row commits and stays, and this one has to as well —
+    // `selectionAfter` is what carries it.
+    const { c, el } = mounted({ proposal: withBlock() })
+    const at = stage(c, el, ['korpus'])
+    rows(c)[0].onSelect(click)
+
+    type(rows(c)[0].nameField, 'motor')
+
+    // The selection moved with the name BEFORE the scene answered, which is the
+    // half that has to hold on its own: the re-stage is asynchronous and the
+    // tree lands behind it.
+    expect(c.state.sel).toBe(`${at}/motor`)
+    expect(c.state.selName).toBe('motor')
+
+    // AND THE BLOCK IS OPEN THROUGHOUT THAT WINDOW, which is the half the
+    // assertions above step over. The tree still holds `korpus`, so the row has
+    // no scene row at all for the length of one re-stage — and if its identity
+    // came from what the tree HOLDS rather than from the path its name wants,
+    // the block would go `display:none` and the input the reader has just
+    // pressed Enter in would lose the focus with it.
+    expect(rows(c)[0].name).toBe('motor')
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
+
+    // And once the tree catches up, the row is still the selected one and its
+    // block is still open — on the same node, under the new name.
+    stage(c, el, ['motor'])
+    expect(rows(c)[0].name).toBe('motor')
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
+  })
+
+  it('keeps it open on a rename the re-stage never comes back from', () => {
+    // A DOCUMENT THE KERNEL REFUSED is the case where that window never closes:
+    // the last good overlay stays on screen, this body reaches no scene, and
+    // nothing arrives to put the row back. `selectionAfter` finds no overlay
+    // body under a name the scene never had, so `sel` stays the node's id — and
+    // the row has to be selected by that.
+    const { c, el } = mounted({ proposal: withBlock() })
+    stage(c, el, [])
+    rows(c)[0].onSelect(click)
+    expect(c.state.sel).toBe('n1')
+
+    type(rows(c)[0].nameField, 'motor')
+
+    expect(c.state.proposal.nodes[0].name).toBe('motor')
+    expect(c.state.sel).toBe('n1')
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
+  })
+
+  it('refuses the id as a partId once the node it named is gone', () => {
+    // THE CASE MEMBERSHIP GETS WRONG. A refused document repaired by the `×` on
+    // the body that broke it leaves `sel` standing at a node the document no
+    // longer holds — so asking whether the node is still THERE says "not a
+    // proposal thing" about the one value that could only have come from one.
+    // The shape is what answers: it does not begin with `/`, so it is not a path
+    // and cannot be posted as one.
+    const { c } = mounted({ proposal: withBlock() })
+    rows(c)[0].onSelect(click)
+    expect(c.state.sel).toBe('n1')
+
+    rows(c)[0].onRemove(click)
+    expect(c.state.proposal.nodes).toEqual([])
+
+    c.setState({ measure: { full: '12.0 mm' } })
+    c.computed().measAdd()
+
+    expect(c.state.composer.partId).toBeNull()
+    expect(c.state.composer.part).toBe('')
+  })
+
+  it('carries it onto the name freeName had to number, too', () => {
+    // THE CASE A READER IS LEAST EXPECTING: the name they typed was taken, so
+    // the document holds `korpus2` and not the `korpus` they pressed Enter on.
+    // Resolved by NODE ID for exactly this — a comparison by name would find the
+    // typed word missing and give up.
+    const { c, el } = mounted({ proposal: withBlock() })
+    c.computed().proposalOps[0].onClick()
+    const at = stage(c, el, ['korpus', 'box2'])
+    rows(c)[1].onSelect(click)
+    expect(c.state.sel).toBe(`${at}/box2`)
+
+    type(rows(c)[1].nameField, 'korpus')
+
+    expect(c.state.proposal.nodes[1].name).toBe('korpus2')
+    expect(c.state.sel).toBe(`${at}/korpus2`)
+  })
+
+  it('leaves the selection alone when it is not the renamed body', () => {
+    // A number typed into one row must not move a selection standing on
+    // another, and neither must a rename of a body nobody is looking at.
+    const { c, el } = mounted({ proposal: withBlock() })
+    c.computed().proposalOps[0].onClick()
+    const at = stage(c, el, ['korpus', 'box2'])
+    rows(c)[0].onSelect(click)
+
+    type(rows(c)[1].nameField, 'motor')
+    expect(c.state.sel).toBe(`${at}/korpus`)
+
+    type(rows(c)[0].groups[1].fields[0], '12')
+    expect(c.state.sel).toBe(`${at}/korpus`)
+  })
+
+  it('opens the fields of the row that is selected and of no other', () => {
+    // A tree row is one line; a column of number panels over the model is the
+    // tree covering the thing it describes.
+    const { c, el } = mounted({ proposal: withBlock() })
+    stage(c, el, ['korpus'])
+    c.computed().proposalOps[1].onClick()
+    stage(c, el, ['korpus', 'cylinder2'])
+
+    rows(c)[1].onSelect(click)
+
+    expect(rows(c).map((row) => css(row.fieldsStyle).display)).toEqual(['none', 'block'])
+  })
+
+  it('offers no eye, no ghost and no colour while a comparison is up', () => {
+    // THE ONE CONTROL THIS BRANCH INHERITED THAT THE PARTS TREE NEVER HAD THERE,
+    // because that tree is not drawn during a comparison at all and this one is.
+    // `sync` sends `hidden: diffHidden(s.diffShow), ghost: []` while the scene
+    // is a comparison's and never looks at `s.hidden`/`s.ghost` — which is why
+    // `menuItems` throws Isolate, Hide and Translucent away under the same
+    // question. Left standing, the eye went pale over a body still on screen,
+    // and wrote a `/cmp/…` path — one that exists in no build — into `s.hidden`,
+    // whence `setVisibility` carries it into the history and the swap's carry.
+    const { c, el } = mounted({ proposal: withBlock() })
+    stage(c, el, ['korpus'], ['plate'], '/cmp')
+    c.setState({ compare: true, cmpPair: ['a', 'b'], cmpView: 'assembled',
+                 cmpStage: 'ready' })
+
+    expect(css(rows(c)[0].marksStyle).visibility).toBe('hidden')
+    expect(rows(c)[0].dotStyle).toContain('transparent')
+
+    rows(c)[0].onVis(click)
+    rows(c)[0].onGhost(click)
+
+    expect(c.state.hidden).toEqual([])
+    expect(c.state.ghost).toEqual([])
+  })
+
+  it('still names, selects and edits its rows inside that comparison', () => {
+    // WHAT THE SILENCE ABOVE MUST NOT TAKE WITH IT. A proposal is the reader's
+    // own claim about a motor or a wall, which is as true over a comparison as
+    // over a build — the panel was never taken out of service by one, and the
+    // rows are the panel now.
+    //
+    // BUT IT SELECTS BY THE DOCUMENT'S OWN ID, NOT BY THE COMPARISON'S PATH.
+    // `/cmp/<a>:<b>/…` names a part no revision has, and `sel` OUTLIVES the
+    // comparison — `leaveCompare` does not clear it the way `leaveBuild` does —
+    // so such a path left standing is what `measAdd` would post as the `partId`
+    // of a comment measured after the panel closed. This branch is the only door
+    // of its kind: `onPick` writes `cmpSel` under a comparison, the parts tree
+    // is not drawn, and Move is not offered.
+    const { c, el } = mounted({ proposal: withBlock() })
+    stage(c, el, ['korpus'], ['plate'], '/cmp')
+    c.setState({ compare: true, cmpPair: ['a', 'b'], cmpView: 'assembled',
+                 cmpStage: 'ready' })
+
+    expect(rows(c).map((row) => row.name)).toEqual(['korpus'])
+
+    rows(c)[0].onSelect(click)
+    expect(c.state.sel).toBe('n1')
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
+
+    type(rows(c)[0].groups[0].fields[0], '30')
+    expect(c.state.proposal.nodes[0].size).toEqual([30, 20, 20])
+
+    // AND THE MENU IS STILL OFFERED, which is why `onMenu` asks `scene` and not
+    // `marks`: whether there is a scene object to open a menu ABOUT is a
+    // different question from whether its visibility controls would work, and
+    // `menuItems` already answers the second — everything that writes visibility
+    // or names a file is gone under `compared`, and Copy name is what remains.
+    rows(c)[0].onMenu({ ...click, clientX: 10, clientY: 10 })
+    expect(c.computed().menuItems.map((m) => m.label)).toEqual(['Copy name'])
+  })
+
+  it('never lets a comparison\'s path out as the part a comment is about', () => {
+    // THE WHOLE ROAD, END TO END, because every step of it is ordinary: open the
+    // panel, compare two revisions, click a body row to read its numbers, change
+    // one, close the comparison, measure two faces, `add to comment`. Nothing in
+    // between clears `sel`.
+    //
+    // AND A SCENE LANDS TWICE ALONG IT, which is what a live page does and what
+    // this test used to leave out entirely. `staged()` lays the overlay into
+    // whatever payload is current, so while a comparison is up the group is
+    // really there at a path of the COMPARISON's — and every commit re-stages,
+    // so the model event that comes back carries that tree. The row asking
+    // `compared` shuts one door onto this hole; the carry in `onModel` is the
+    // other, and with no model event in between a test can only see the first.
+    const { c, el } = mounted({ proposal: withBlock() })
+    stage(c, el, ['korpus'], ['plate'], '/cmp')
+    c.setState({ compare: true, cmpPair: ['a', 'b'], cmpView: 'assembled',
+                 cmpStage: 'ready' })
+    rows(c)[0].onSelect(click)
+    expect(c.state.sel).toBe('n1')
+
+    // A view tab switched while comparing: the same scene arrives again.
+    land(c, el, ['korpus'], ['plate'], '/cmp')
+    expect(c.state.sel).toBe('n1')
+
+    // A number typed into the row that is open: the commit re-stages, and the
+    // event that comes back is the one that moved `sel` onto the overlay.
+    type(rows(c)[0].groups[0].fields[0], '30')
+    land(c, el, ['korpus'], ['plate'], '/cmp')
+    expect(c.state.sel).toBe('n1')
+    expect(c.state.proposal.nodes[0].size).toEqual([30, 20, 20])
+    // AND THE ROW IS STILL OPEN THROUGH ALL OF IT, so the fix is not bought by
+    // deselecting the reader mid-edit: `selected` matches on the document id.
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
+
+    // The comparison closes; `sel` is whatever the road left there.
+    c.setState({ compare: false, cmpPair: [], cmpView: null, cmpStage: null })
+    expect(c.state.sel.startsWith('/cmp')).toBe(false)
+
+    c.setState({ measure: { full: '12.0 mm' } })
+    c.computed().measAdd()
+
+    expect(c.state.composer.partId).toBeNull()
+    expect(c.state.composer.part).toBe('')
+  })
+
+  it('keeps a row selected and open when its body is staged afterwards', () => {
+    // THE ROW'S IDENTITY CHANGES UNDER THE READER otherwise, which is the rename
+    // defect from the other side: `path` is the document's node id while the
+    // scene has nothing and the scene's path once it does, so `s.sel` matched
+    // neither and the block being typed in shut. The ordinary way in is the
+    // staging window — the branch draws from `state.proposal` at once while
+    // `show()` waits on the library, so every body row is sceneless for a moment
+    // after `+ box` and after each opening of the panel.
+    const { c, el } = mounted({ proposal: withBlock() })
+    rows(c)[0].onSelect(click)
+    expect(c.state.sel).toBe('n1')
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
+
+    const at = land(c, el, ['korpus'])
+
+    // MOVED AND NOT MERELY ACCEPTED ALONGSIDE: `sel` is the page's one
+    // selection and half a dozen readers take it for a path.
+    expect(c.state.sel).toBe(`${at}/korpus`)
+    expect(c.state.selName).toBe('korpus')
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
+  })
+
+  it('leaves the id standing when the stage did not bring that body', () => {
+    // A document the kernel refused keeps the LAST GOOD overlay, so the group is
+    // on screen and this body is not. Moved onto a path the tree does not hold,
+    // the row would break all over again from the other end.
+    const { c, el } = mounted({ proposal: withBlock() })
+    rows(c)[0].onSelect(click)
+
+    land(c, el, [])
+
+    expect(c.state.sel).toBe('n1')
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
+  })
+
+  it('never files that id as the part a comment is about', () => {
+    // `measAdd` forwards `sel` as `partId`, and a document id resolves in no
+    // build — the exact class `proposalBody` refuses, in a spelling it cannot
+    // recognise because it is not a path.
+    const { c } = mounted({ proposal: withBlock() })
+    c.setState({ measure: { full: '12.0 mm' } })
+    rows(c)[0].onSelect(click)
+    expect(c.state.sel).toBe('n1')
+
+    c.computed().measAdd()
+
+    expect(c.state.composer.partId).toBeNull()
+    expect(c.state.composer.part).toBe('')
+    expect(c.state.composer.meas).toBe('12.0 mm')
+  })
+
+  it('opens a row the scene cannot place, which is how a refusal is repaired', () => {
+    // A DOCUMENT THE KERNEL REFUSED KEEPS THE LAST GOOD OVERLAY (`setProposal`),
+    // so the body that broke it is in no scene and has no path. The fields are
+    // the only way to fix the numbers, so the row still selects — on the
+    // document's own node id, which names no part and selects nothing.
+    const { c } = mounted({ proposal: withBlock() })
+
+    rows(c)[0].onSelect(click)
+
+    expect(c.state.sel).toBe('n1')
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
+  })
+
+  it('gives a move row no eye, no ghost and no colour', () => {
+    // A move draws NOTHING. It displaces a part the build already draws, and
+    // that part keeps its own row, its own eye and its own colour in the tree
+    // below — two eyes over one part would be two answers to one question.
+    const { c, el } = mounted({})
+    stage(c, el, [])
+    drag('/model/plate', [3, 0, 0])
+
+    expect(rows(c)[0].move).toBe(true)
+    expect(css(rows(c)[0].marksStyle).visibility).toBe('hidden')
+    expect(rows(c)[0].dotStyle).toContain('transparent')
+    expect(rows(c)[0].nameField).toBeNull()
+    expect(rows(c)[0].groups.map((g) => g.label)).toEqual(['by', 'turn°'])
+  })
+
+  it('selects the part of the build a move row displaces', () => {
+    // SO THE READER CAN SEE WHAT THE SENTENCE IS ABOUT. The row names a part of
+    // the model; selecting it lights that part up, which is the only way to find
+    // out which `plate` the sentence means.
+    const { c, el } = mounted({})
+    stage(c, el, [])
+    drag('/model/plate', [3, 0, 0])
+
+    rows(c)[0].onSelect(click)
+
+    expect(c.state.sel).toBe('/model/plate')
+    expect(c.state.selName).toBe('plate')
+    expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
+  })
+
+  it('puts the row\'s BARE name in selName, never the tally', () => {
+    // A MOVE NODE'S NAME CARRIES THE COUNT — `pin ×3`, which is the string the
+    // projection prints and a tally of parts rather than the name of one. That
+    // is fine on the row; it is not fine in `selName`, which `measAdd` heads a
+    // composer with when the tree cannot place the selection, and which that
+    // method states both of its doors fill with a bare name.
+    const { c, el } = mounted({})
+    stage(c, el, [], ['plate'])
+    drag('/model/plate', [3, 0, 0], { count: 3, name: 'plate' })
+    expect(rows(c)[0].name).toBe('plate ×3')
+
+    rows(c)[0].onSelect(click)
+
+    expect(c.state.selName).toBe('plate')
+  })
+
+  it('gives a body row back the menu it had in the parts tree', () => {
+    // WHAT THE MOVE COST AND THIS RETURNS. Isolate, Hide others and Move were
+    // all reachable by right-clicking a staged body's row in the parts tree, and
+    // taking that row out took them with it — the scene still has them on a
+    // right-click of the body, but a reader who used the tree lost them with
+    // nothing saying where they went. It resolves the SAME node the old row
+    // was, so the menu that opens is the one `menuItems` already builds.
+    const { c, el } = mounted({ proposal: withBlock() })
+    const at = stage(c, el, ['korpus'])
+
+    rows(c)[0].onMenu({ ...click, clientX: 40, clientY: 90 })
+
+    expect(c.state.menu.id).toBe(`${at}/korpus`)
+    const said = c.computed().menuItems.map((m) => m.label)
+    expect(said).toContain('Isolate')
+    expect(said).toContain('Move')
+    // Turn is the one row a body is right to be refused — it would mint a move
+    // node naming an overlay path, contradicting the body's own `rot°`.
+    expect(said).not.toContain('Turn')
+  })
+
+  it('gives a move row no menu at all', () => {
+    // NOTHING IN THAT MENU APPLIES TO IT. Isolate and Hide others are about
+    // geometry the node does not own, the Files are the catalogue's, and Move
+    // and Turn would mint a second node over paths this one already claims.
+    // What is left is a menu ABOUT THE BUILD PART, opened from a row that only
+    // names it — the confusion the branch exists to avoid.
+    const { c, el } = mounted({})
+    stage(c, el, [])
+    drag('/model/plate', [3, 0, 0])
+
+    expect(rows(c)[0].onMenu).toBeNull()
+  })
+
+  it('gives no menu to a body the scene cannot place', () => {
+    // `menuItems` is `[]` for a path no row answers to and `menuStyle` opens on
+    // `s.menu` alone, so the gesture would put an empty box on the screen.
+    const { c } = mounted({ proposal: withBlock() })
+
+    expect(rows(c)[0].onMenu).toBeNull()
+  })
+
+  it('carries the × on both kinds of row', () => {
+    const { c, el } = mounted({ proposal: withBlock() })
+    stage(c, el, ['korpus'])
+    drag('/model/plate', [3, 0, 0])
+    expect(rows(c)).toHaveLength(2)
+
+    rows(c)[1].onRemove(click)
+    expect(rows(c).map((row) => row.name)).toEqual(['korpus'])
+    rows(c)[0].onRemove(click)
+    expect(rows(c)).toEqual([])
+    expect(c.state.proposal.nodes).toEqual([])
+  })
+
+  it('is drawn on the page, above the parts tree and not in the panel', () => {
+    // `computed()` answering with a row is not the same as the page drawing one
+    // — the lesson eltree.js is written around.
+    const { c, el } = mounted({ proposal: withBlock() })
+    stage(c, el, ['korpus'])
+    drag('/model/plate', [3, 0, 0])
+
+    const said = texts(c.render())
+    expect(said).toContain('proposal')
+    expect(said).toContain('korpus')
+    expect(said).toContain('turn°')
+    // ABOVE the parts tree, whose own rows start at the model's root.
+    expect(said.indexOf('proposal')).toBeLessThan(said.indexOf('model'))
+    // And the panel's label for the list it no longer has is gone with it.
+    expect(said).not.toContain('BODIES AND MOVES')
+  })
+})
+
+// -- the invariant the branch's two bare-word keys stand on --------------------
+
+describe('every id the tree hands the interface', () => {
+  // TWO THINGS IN THE PROPOSAL'S BRANCH ARE BARE WORDS COMPARED AGAINST TREE
+  // IDS, and both are safe only because a tree id is always a PATH.
+  // `PROPOSAL_BRANCH` is a key in the very `expanded` map the parts tree keys by
+  // node id; and a body row whose scene has not staged it is selected by the
+  // DOCUMENT's own node id — `n1`, `m2` — which `proposalRows` compares against
+  // `s.sel`, a field that otherwise holds tree ids.
+  //
+  // THE INVARIANT IS NOT `indexTree`'S, which is why this is a test and not a
+  // sentence: `pathOf` in hub.js passes any non-empty `id` a node carries
+  // straight through. It is `treeFromShapes`', which spells every id as
+  // `${parent}/${name}` and never reads the incoming one — so this drives the
+  // real pair, in the order the page gets them.
+
+  it('is a path, so a bare word can never collide with one', () => {
+    const tree = indexTree(treeFromShapes({
+      name: 'model',
+      parts: [
+        // A MODEL THAT HONESTLY PUBLISHES A PART CALLED `proposal`, which is the
+        // case `groupName` steps aside for and the one a bare-word key would
+        // collide with if an id were ever a name.
+        { name: 'proposal', id: 'proposal' },
+        // And two parts named exactly as the document names its own nodes.
+        { name: 'n1', id: 'n1' },
+        { name: 'assembly', id: 'assembly', parts: [{ name: 'm2', id: 'm2' }] },
+      ],
+    }, null))
+
+    const ids = [...tree.nodes.keys()]
+    expect(ids.length).toBeGreaterThan(3)
+    for (const id of ids) expect(id.startsWith('/')).toBe(true)
+
+    expect(ids).not.toContain(PROPOSAL_BRANCH)
+    expect(ids).not.toContain('n1')
+    expect(ids).not.toContain('m2')
+    // The model's own `proposal` is still there — as a path, which is the whole
+    // of why the branch's key is not it.
+    expect(ids).toContain('/model/proposal')
+  })
+})
+
 // -- the bodies ---------------------------------------------------------------
 
 describe('a body', () => {
@@ -436,7 +1131,7 @@ describe('a body', () => {
     const { c } = panel()
     c.computed().proposalOps[0].onClick()
     c.computed().proposalOps[0].onClick()
-    c.computed().proposalBodies[0].onRemove()
+    bodyRows(c)[0].onRemove(click)
     c.computed().proposalOps[0].onClick()
 
     const ids = c.state.proposal.nodes.map((node) => node.id)
@@ -446,8 +1141,8 @@ describe('a body', () => {
   it('takes its size, its place and its turn from the fields', () => {
     const { c, el } = panel({ proposal: withBlock() })
     type(sizeFields(c)[0], '30')
-    type(c.computed().proposalBodies[0].groups[1].fields[2], '-4.5')
-    type(c.computed().proposalBodies[0].groups[2].fields[1], '45')
+    type(bodyRows(c)[0].groups[1].fields[2], '-4.5')
+    type(bodyRows(c)[0].groups[2].fields[1], '45')
 
     const node = c.state.proposal.nodes[0]
     expect(node.size).toEqual([30, 20, 20])
@@ -462,10 +1157,10 @@ describe('a body', () => {
     // The name is not only a label: it is the part's `name` in the payload, and
     // a hole is drawn as a part of its own under it.
     const { c } = panel({ proposal: withBlock() })
-    type(c.computed().proposalBodies[0].name, 'motor')
+    type(bodyRows(c)[0].nameField, 'motor')
     expect(c.state.proposal.nodes[0].name).toBe('motor')
 
-    type(c.computed().proposalBodies[0].name, '   ')
+    type(bodyRows(c)[0].nameField, '   ')
     expect(c.state.proposal.nodes[0].name).toBe('motor')
   })
 
@@ -475,16 +1170,16 @@ describe('a body', () => {
     // The bodies are the whole of it — `firstFree` in proposal.js is the rule.
     const { c } = panel({ proposal: withBlock() })
     c.computed().proposalOps[1].onClick()
-    type(c.computed().proposalBodies[1].name, 'korpus')
+    type(bodyRows(c)[1].nameField, 'korpus')
     expect(c.state.proposal.nodes.map((node) => node.name)).toEqual(['korpus', 'korpus2'])
 
     // AND THE PAYLOAD KEEPS NO NAME FOR ITSELF any more: it is one part per
     // body and nothing else, so `result` is a name like any other.
-    type(c.computed().proposalBodies[1].name, 'result')
+    type(bodyRows(c)[1].nameField, 'result')
     expect(c.state.proposal.nodes[1].name).toBe('result')
 
     // ...and a body may still be renamed to the name it already has.
-    type(c.computed().proposalBodies[0].name, 'korpus')
+    type(bodyRows(c)[0].nameField, 'korpus')
     expect(c.state.proposal.nodes[0].name).toBe('korpus')
   })
 
@@ -497,7 +1192,7 @@ describe('a body', () => {
     const { c } = mounted({ proposal: withBlock() })
     drag('/model/motor', [3, 0, 0])
 
-    type(c.computed().proposalBodies[0].name, 'motor')
+    type(bodyRows(c)[0].nameField, 'motor')
 
     expect(c.state.proposal.nodes[0].name).toBe('motor')
     expect(moves(c.state.proposal)[0].name).toBe('motor')
@@ -513,9 +1208,9 @@ describe('a body', () => {
         at: [0, 0, 0], rot: [0, 0, 0], d: 6, h: 40,
       }),
     })
-    expect(c.computed().proposalBodies[1].role).toBe('solid')
+    expect(bodyRows(c)[1].role).toBe('solid')
 
-    c.computed().proposalBodies[1].onRole()
+    bodyRows(c)[1].onRole(click)
 
     expect(c.state.proposal.nodes[1].role).toBe('hole')
     expect(overlay(el)).toEqual(['korpus', 'bore'])
@@ -523,7 +1218,7 @@ describe('a body', () => {
 
   it('goes away on the cross, and the last one takes the overlay with it', () => {
     const { c, el } = panel({ proposal: withBlock() })
-    c.computed().proposalBodies[0].onRemove()
+    bodyRows(c)[0].onRemove(click)
 
     expect(c.state.proposal.nodes).toEqual([])
     expect(el.clearOverlay).toHaveBeenCalledTimes(1)
@@ -532,7 +1227,7 @@ describe('a body', () => {
   it('spells an extruded profile as points, and reads them back the same way', () => {
     const { c } = panel()
     c.computed().proposalOps[3].onClick()
-    const profile = c.computed().proposalBodies[0].groups[0].fields[1]
+    const profile = bodyRows(c)[0].groups[0].fields[1]
     expect(profile.value).toBe('0,0; 20,0; 20,10; 0,10')
 
     type(profile, '0,0; 10,0; 10,10;')
@@ -548,7 +1243,7 @@ describe('a body', () => {
     // points nobody typed, in a profile the reader is looking at.
     const { c } = panel()
     c.computed().proposalOps[3].onClick()
-    const profile = () => c.computed().proposalBodies[0].groups[0].fields[1]
+    const profile = () => bodyRows(c)[0].groups[0].fields[1]
 
     type(profile(), '0,0; a,b; 20,10')
     expect(c.state.proposal.nodes[0].profile).toEqual([[0, 0], [20, 10]])
@@ -567,7 +1262,7 @@ describe('a body', () => {
 describe('a document the kernel refuses', () => {
   /** The size fields of the body added last, whatever op it is. */
   const lastSize = (c) => {
-    const bodies = c.computed().proposalBodies
+    const bodies = bodyRows(c)
     return bodies[bodies.length - 1].groups[0].fields
   }
 
@@ -619,7 +1314,7 @@ describe('a document the kernel refuses', () => {
 // -- typing -------------------------------------------------------------------
 
 describe('a field being typed in', () => {
-  const at = (c, axis = 0) => c.computed().proposalBodies[0].groups[1].fields[axis]
+  const at = (c, axis = 0) => bodyRows(c)[0].groups[1].fields[axis]
 
   it('costs nothing at all until the value is settled', () => {
     // THE ASSERTION THE COMMIT MODEL EXISTS FOR. A keystroke that reached the
@@ -726,8 +1421,8 @@ describe('a field being typed in', () => {
 // -- a number moved with the arrows instead of the keyboard -------------------
 
 describe('a number field', () => {
-  const at = (c, axis = 0) => c.computed().proposalBodies[0].groups[1].fields[axis]
-  const rot = (c, axis = 0) => c.computed().proposalBodies[0].groups[2].fields[axis]
+  const at = (c, axis = 0) => bodyRows(c)[0].groups[1].fields[axis]
+  const rot = (c, axis = 0) => bodyRows(c)[0].groups[2].fields[axis]
 
   // THE CLOCK IS THIS BLOCK'S SUBJECT and not its background: a run of nudges is
   // one document written when the run stops, so every test in here has to be
@@ -752,13 +1447,13 @@ describe('a number field', () => {
     // be two dozen clicks to reach any of them.
     for (const axis of [0, 1, 2]) expect(rot(c, axis).step).toBe(15)
 
-    const extrusion = c.computed().proposalBodies[1]
+    const extrusion = bodyRows(c)[1]
     expect(extrusion.groups[0].fields[0]).toMatchObject({ type: 'number', step: 1 })
     expect(extrusion.groups[0].fields[1].type).toBe('text')
     expect(extrusion.groups[0].fields[1].step).toBeUndefined()
     // Nor is a name a number, and nothing nudges one.
-    expect(extrusion.name.type).toBe('text')
-    expect(extrusion.name.ref).toBeUndefined()
+    expect(extrusion.nameField.type).toBe('text')
+    expect(extrusion.nameField.ref).toBeUndefined()
   })
 
   it('reaches the document and the model when it is nudged', () => {
@@ -967,8 +1662,8 @@ describe('a number field', () => {
 
     // And a field with no arrows on it has nothing to take away.
     c.computed().proposalOps[3].onClick()
-    expect(c.computed().proposalBodies[1].groups[0].fields[1].onWheel).toBeUndefined()
-    expect(c.computed().proposalBodies[1].name.onWheel).toBeUndefined()
+    expect(bodyRows(c)[1].groups[0].fields[1].onWheel).toBeUndefined()
+    expect(bodyRows(c)[1].nameField.onWheel).toBeUndefined()
   })
 
   it('keeps the number that was there when the text is not one the browser can read', () => {
@@ -1090,7 +1785,7 @@ describe('add to comment', () => {
     // panel is already saying what is wrong; what it must not do is offer to
     // send it.
     const { c } = panel({ proposal: withBlock() })
-    const profile = () => c.computed().proposalBodies[1].groups[0].fields[1]
+    const profile = () => bodyRows(c)[1].groups[0].fields[1]
     c.computed().proposalOps[3].onClick()
     type(profile(), '0,0; 20,0')
     expect(c.state.proposalError).toBeTruthy()
@@ -1141,7 +1836,7 @@ describe('a body dragged in the scene', () => {
   const places = (c) => c.state.proposal.nodes.map((node) => node.at)
 
   /** What the panel's own `at` fields are showing for one body. */
-  const atFields = (c, index = 0) => c.computed().proposalBodies[index].groups[1]
+  const atFields = (c, index = 0) => bodyRows(c)[index].groups[1]
     .fields.map((f) => f.value)
 
   const withBore = () => addNode(withBlock(), BORE)
@@ -1212,7 +1907,7 @@ describe('a body dragged in the scene', () => {
     // has already moved, and the blur that came later would commit that text
     // back over the axis the drag had just written.
     const { c } = mounted({ proposal: withBore() })
-    const x = () => c.computed().proposalBodies[0].groups[1].fields[0]
+    const x = () => bodyRows(c)[0].groups[1].fields[0]
     x().onChange({ target: { value: '9' } })
     expect(c.state.proposalDraft).toEqual({ key: 'n1.at.0', text: '9' })
 
@@ -1329,7 +2024,7 @@ describe('a part of the build dragged in the scene', () => {
 
     expect(moves(c.state.proposal)[0].delta).toEqual([0.6, 0, 0])
     expect(proposalText(c.state.proposal)).toContain('by (0.6, 0, 0)')
-    expect(c.computed().proposalMoveRows[0].groups[0].fields.map((f) => f.value))
+    expect(moveRows(c)[0].groups[0].fields.map((f) => f.value))
       .toEqual(['0.6', '0', '0'])
   })
 
@@ -1423,7 +2118,7 @@ describe('a part of the build dragged in the scene', () => {
     drag('/model/pin', [3, 0, 0])
     drag('/model/pin(2)', [0, 3, 0])
     for (const at of [0, 1]) {
-      type(c.computed().proposalMoveRows[at].groups[1].fields[2], '90')
+      type(moveRows(c)[at].groups[1].fields[2], '90')
     }
 
     drag('/model/pin', [5, 0, 0], { paths: row, count: 3 })
@@ -1442,8 +2137,8 @@ describe('a part of the build dragged in the scene', () => {
     const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
     drag('/model/pin', [3, 0, 0])
     drag('/model/pin(2)', [0, 3, 0])
-    type(c.computed().proposalMoveRows[0].groups[1].fields[2], '90')
-    type(c.computed().proposalMoveRows[1].groups[1].fields[2], '45')
+    type(moveRows(c)[0].groups[1].fields[2], '90')
+    type(moveRows(c)[1].groups[1].fields[2], '45')
 
     drag('/model/pin', [5, 0, 0], { paths: row, count: 3 })
 
@@ -1466,7 +2161,7 @@ describe('a part of the build dragged in the scene', () => {
     // paths should straighten what it already said.
     const { c } = mounted({})
     drag('/model/pin', [3, 0, 0])
-    type(c.computed().proposalMoveRows[0].groups[1].fields[2], '90')
+    type(moveRows(c)[0].groups[1].fields[2], '90')
 
     drag('/model/pin', [6, 0, 0], { paths: ['/model/pin', '/model/pin(2)'], count: 2 })
 
@@ -1487,9 +2182,9 @@ describe('a part of the build dragged in the scene', () => {
     // which is `shared`, and not whether any turn exists anywhere.
     const { c } = mounted({})
     drag('/model/pin', [3, 0, 0])
-    type(c.computed().proposalMoveRows[0].groups[1].fields[2], '90')
+    type(moveRows(c)[0].groups[1].fields[2], '90')
     drag('/model/pin(2)', [5, 0, 0])
-    type(c.computed().proposalMoveRows[1].groups[1].fields[2], '45')
+    type(moveRows(c)[1].groups[1].fields[2], '45')
 
     drag('/model/pin', [0, 0, 0], { paths: ['/model/pin', '/model/pin(2)'], count: 2 })
 
@@ -1511,7 +2206,7 @@ describe('a part of the build dragged in the scene', () => {
     const { c } = mounted({})
     const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
     drag('/model/pin', [3, 0, 0], { paths: row, count: 3 })
-    type(c.computed().proposalMoveRows[0].groups[1].fields[0], '30')
+    type(moveRows(c)[0].groups[1].fields[0], '30')
 
     drag('/model/pin(2)', [8, 0, 0])
 
@@ -1611,14 +2306,14 @@ describe('a part of the build dragged in the scene', () => {
     // `×` is still how the whole statement is undone.
     const { c, el } = mounted({ proposal: withBlock() })
     drag('/model/plate', [3, 0, 0])
-    type(c.computed().proposalMoveRows[0].groups[1].fields[2], '90')
+    type(moveRows(c)[0].groups[1].fields[2], '90')
 
     drag('/model/plate', [0, 0, 0])
 
     expect(moves(c.state.proposal)).toHaveLength(1)
     expect(moves(c.state.proposal)[0].delta).toEqual([0, 0, 0])
     expect(moves(c.state.proposal)[0].turn).toEqual([0, 0, 90])
-    expect(c.computed().proposalMoveRows).toHaveLength(1)
+    expect(moveRows(c)).toHaveLength(1)
     expect(proposalText(c.state.proposal))
       .toContain('move "plate" by (0, 0, 0) turned (0, 0, 90)')
     // AND THE SCENE IS TOLD THE SAME THING, so the part really does stand at
@@ -1702,7 +2397,7 @@ describe('a part of the build dragged in the scene', () => {
     drag('/model/plate', [3, 0, 0])
 
     expect(c.state.proposalOpen).toBe(true)
-    expect(c.computed().proposalMoveRows).toHaveLength(1)
+    expect(moveRows(c)).toHaveLength(1)
     expect(css(c.computed().proposalPanelStyle).display).toBe('block')
     // AND THE BODIES GO BACK OVER THE MODEL WITH IT, because that is what an
     // open panel means — closing it is what took them off (`toggleProposal`),
@@ -1736,17 +2431,17 @@ describe('a part of the build dragged in the scene', () => {
   })
 })
 
-// -- and the row it gets in the panel -----------------------------------------
+// -- and the row it gets in the tree -------------------------------------------
 
 describe('the row a move is drawn as', () => {
   // WHY THERE HAS TO BE ONE AT ALL: a dragged part goes home by having its entry
   // DELETED, and a row nobody can see is an entry nobody can delete. It is in the
-  // same list as the bodies because it is the same kind of statement — the
+  // same branch as the bodies because it is the same kind of statement — the
   // reader's own words for it were "you have new parts in that tree, just add
   // `shift of an existing part` to it".
 
-  /** The rows the panel draws for the moves, as `computed()` hands them over. */
-  const rows = (c) => c.computed().proposalMoveRows
+  /** The rows of the branch that are moves, as `computed()` hands them over. */
+  const rows = moveRows
 
   it('shows the part, and its numbers in fields a body would know', () => {
     const { c } = mounted({ proposal: withBlock() })
@@ -1769,9 +2464,9 @@ describe('the row a move is drawn as', () => {
     // millimetres for the offset, and the body's own `STEP_DEG` for the turn.
     expect(rows(c)[0].groups.map((g) => g.fields[0].type)).toEqual(['number', 'number'])
     expect(rows(c)[0].groups[0].fields[0].step)
-      .toBe(c.computed().proposalBodies[0].groups[1].fields[0].step)
+      .toBe(bodyRows(c)[0].groups[1].fields[0].step)
     expect(rows(c)[0].groups[1].fields[0].step)
-      .toBe(c.computed().proposalBodies[0].groups[2].fields[0].step)
+      .toBe(bodyRows(c)[0].groups[2].fields[0].step)
     expect(proposalText(c.state.proposal)).toContain('by (3.2, 0, -1)')
   })
 
@@ -1804,7 +2499,7 @@ describe('the row a move is drawn as', () => {
     ])
   })
 
-  it('is drawn on the page, in the list the bodies are in and after them', () => {
+  it('is drawn on the page, in the branch the bodies are in and after them', () => {
     // `computed()` answering with a row is not the same as the page drawing one
     // — the lesson eltree.js is written around — and a row nobody draws is a
     // part that cannot be put back.
@@ -1814,8 +2509,8 @@ describe('the row a move is drawn as', () => {
     const said = texts(c.render())
     expect(said).toContain('turn°')
     expect(said).toContain('plate')
-    // AFTER THE BODIES AND BEFORE THE BUTTONS THAT ADD ONE, which is what puts
-    // it in the same list rather than in a section of its own.
+    // AFTER THE BODIES AND BEFORE THE BUTTONS THAT ADD ONE — which are still in
+    // the panel — so it is a row among them rather than a section of its own.
     expect(said.indexOf('turn°')).toBeGreaterThan(said.indexOf('rot°'))
     expect(said.indexOf('turn°')).toBeLessThan(said.indexOf('+ box'))
   })
@@ -1825,7 +2520,7 @@ describe('the row a move is drawn as', () => {
 
     drag('/model/plate', [3, 0, 0])
 
-    expect(c.computed().proposalBodies.map((b) => b.name.value)).toEqual(['korpus'])
+    expect(bodyRows(c).map((b) => b.nameField.value)).toEqual(['korpus'])
   })
 
   it('puts the part back when the row is closed', () => {
@@ -1838,12 +2533,12 @@ describe('the row a move is drawn as', () => {
     expect(pushed(el))
       .toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] }])
 
-    rows(c)[0].onRemove()
+    rows(c)[0].onRemove(click)
 
     expect(rows(c)).toEqual([])
     expect(pushed(el)).toEqual([])
     // The body beside it is untouched, and so is the overlay it is staged as.
-    expect(c.computed().proposalBodies).toHaveLength(1)
+    expect(bodyRows(c)).toHaveLength(1)
     expect(overlay(el)).toEqual(['korpus'])
   })
 
@@ -1852,7 +2547,7 @@ describe('the row a move is drawn as', () => {
     drag('/model/plate', [3, 0, 0])
     drag('/model/lid', [0, 4, 0])
 
-    rows(c)[0].onRemove()
+    rows(c)[0].onRemove(click)
 
     expect(rows(c).map((row) => row.name)).toEqual(['lid'])
     expect(pushed(el))
@@ -1872,8 +2567,8 @@ describe('a document holding moves and no bodies', () => {
 
     drag('/model/plate', [3, 0, 0])
 
-    expect(c.computed().proposalBodies).toEqual([])
-    expect(c.computed().proposalMoveRows).toHaveLength(1)
+    expect(bodyRows(c)).toEqual([])
+    expect(moveRows(c)).toHaveLength(1)
     expect(css(c.computed().proposalAddStyle).display).not.toBe('none')
     expect(texts(c.render())).toContain('turn°')
   })
@@ -2163,8 +2858,8 @@ describe('Turn, in a part\'s own menu', () => {
     // THE PANEL COMES UP WITH IT, because a row nobody can see is a row nobody
     // can type in — which is the whole of what this item is for.
     expect(c.state.proposalOpen).toBe(true)
-    expect(c.computed().proposalMoveRows).toHaveLength(1)
-    expect(c.computed().proposalMoveRows[0].groups.map((g) => g.label))
+    expect(moveRows(c)).toHaveLength(1)
+    expect(moveRows(c)[0].groups.map((g) => g.label))
       .toEqual(['by', 'turn°'])
     // AND THE VIEWPORT IS TOLD, so the scene and the document agree from the
     // first moment the row exists — at nothing, which is where the part already
@@ -2200,14 +2895,14 @@ describe('Turn, in a part\'s own menu', () => {
     expect(pushed(el))
       .toEqual([{ paths: ['/model/plate'], delta: [0, 0, 0], turn: [0, 0, 0] }])
     // And it is still there to be typed into after the row has been redrawn.
-    expect(c.computed().proposalMoveRows).toHaveLength(1)
+    expect(moveRows(c)).toHaveLength(1)
   })
 
   it('types a turn into the row it just made', () => {
     const { c, el } = menu('/model/plate')
     choose(c, 'Turn')
 
-    const row = c.computed().proposalMoveRows[0]
+    const row = moveRows(c)[0]
     type(row.groups[1].fields[1], '45')
 
     expect(moves(c.state.proposal)[0].turn).toEqual([0, 45, 0])
@@ -2261,7 +2956,7 @@ describe('the op tables', () => {
       c.computed().proposalOps[index].onClick()
 
       expect(c.state.proposalError).toBeNull()
-      expect(c.computed().proposalBodies[0].groups[0].fields.length)
+      expect(bodyRows(c)[0].groups[0].fields.length)
         .toBeGreaterThan(0)
       expect(proposalText(c.state.proposal)).toContain(`solid  ${op}`)
     }
