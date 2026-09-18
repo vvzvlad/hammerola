@@ -121,6 +121,8 @@ function element(state = {}, viewer = fakeViewer()) {
   vp.sectionSeed = null
   vp.moved = new Map()
   vp.partHome = new Map()
+  vp.partPivot = new Map()
+  vp.partFacing = new Map()
   vp.measurePicks = []
   vp.measureLabel = null
   vp.loadToken = 0
@@ -1188,11 +1190,14 @@ describe('the overlay laid over the model', () => {
     await vp.show(model(), { view: 'a', token: 0 })
     const staged = viewer.render.mock.calls.length
 
-    vp.setMoves([{ paths: ['/Group/plate'], delta: [0, 0, 3] }])
+    vp.setMoves([{ paths: ['/Group/plate'], delta: [0, 0, 3], turn: [0, 90, 0] }])
 
     calledWithViewport(reconcileMoves, vp)
+    // THE TURN TRAVELS WITH THE OFFSET, because one node carries both: a part
+    // the document says is turned and displaced is one statement, and a door
+    // that dropped half of it would leave the scene answering the other half.
     expect(reconcileMoves.mock.calls[0][1])
-      .toEqual([{ paths: ['/Group/plate'], delta: [0, 0, 3] }])
+      .toEqual([{ paths: ['/Group/plate'], delta: [0, 0, 3], turn: [0, 90, 0] }])
     // NOT A RE-STAGE: nothing is composed and no scene is built again, which is
     // what makes this safe to push on every edit of the document.
     expect(viewer.render).toHaveBeenCalledTimes(staged)
@@ -1305,15 +1310,25 @@ describe('the overlay laid over the model', () => {
     await vp.show(model(), { view: 'a', token: 0 })
     vp.measurePicks = [{ path: '/Group/plate/faces/face_0' }]
     vp.measureLabel = { text: '2.4 mm', point: [0, 0, 0] }
-    vp.moved.set('/Group/plate', [0, 0, 3])
+    vp.moved.set('/Group/plate', { delta: [0, 0, 3], turn: [0, 0, 0] })
     vp.partHome.set('/Group/plate', [0, 0, 0])
+    vp.partPivot.set('/Group/plate', [1, 1, 1])
+    vp.partFacing.set('/Group/plate', [1, 0, 0, 0])
 
     await vp.setOverlay([body('result')])
 
     expect(vp.measurePicks).toHaveLength(1)
     expect(vp.measureLabel.text).toBe('2.4 mm')
-    expect([...vp.moved.entries()]).toEqual([['/Group/plate', [0, 0, 3]]])
+    expect([...vp.moved.entries()])
+      .toEqual([['/Group/plate', { delta: [0, 0, 3], turn: [0, 0, 0] }]])
     expect(vp.partHome.get('/Group/plate')).toEqual([0, 0, 0])
+    // THE PIVOT AND THE POSE KEEP THE HOME'S COMPANY THROUGH BOTH DOORS, here
+    // and in the test below: the three are memos about one scene, and a
+    // re-stage that kept some and dropped others would leave `restageMoves`
+    // re-applying a turn about a centre read off a part that was already
+    // turned, composed onto a pose that already had the reader's turn in it.
+    expect(vp.partPivot.get('/Group/plate')).toEqual([1, 1, 1])
+    expect(vp.partFacing.get('/Group/plate')).toEqual([1, 0, 0, 0])
     // AND THE OFFSETS ARE PUT BACK ON THE SCENE, which is not the same thing as
     // keeping the map: `clear()` disposed the ObjectGroups the drag was written
     // on and `render()` built new ones at the model's own positions, so a map
@@ -1327,8 +1342,10 @@ describe('the overlay laid over the model', () => {
     await vp.show(model(), { view: 'a', token: 0 })
     vp.measurePicks = [{ path: '/Group/plate/faces/face_0' }]
     vp.measureLabel = { text: '2.4 mm', point: [0, 0, 0] }
-    vp.moved.set('/Group/plate', [0, 0, 3])
+    vp.moved.set('/Group/plate', { delta: [0, 0, 3], turn: [0, 0, 0] })
     vp.partHome.set('/Group/plate', [0, 0, 0])
+    vp.partPivot.set('/Group/plate', [1, 1, 1])
+    vp.partFacing.set('/Group/plate', [1, 0, 0, 0])
 
     await vp.show(model(), { view: 'a', token: 0 })
 
@@ -1336,6 +1353,8 @@ describe('the overlay laid over the model', () => {
     expect(vp.measureLabel).toBeNull()
     expect(vp.moved.size).toBe(0)
     expect(vp.partHome.size).toBe(0)
+    expect(vp.partPivot.size).toBe(0)
+    expect(vp.partFacing.size).toBe(0)
     expect(restageMoves).not.toHaveBeenCalled()
   })
 

@@ -5,12 +5,12 @@
 // of primitives: the motor the bracket has to clear, the wall it bolts to, the
 // bought part it holds, or an example of how they want things laid out. What is
 // drawn is a STATEMENT and not an edit — the same rule ui-brief block 6 states
-// for a moved part, one step further on. Nothing here is pushed, nothing is
-// rebuilt from it, and the model on screen is untouched by it. What travels to
-// the agent is the projection `proposalText` renders: a few aligned lines
-// saying how big the thing is and where its features sit, which is a constraint
-// the agent can design against instead of a sentence like "it is about four
-// centimetres".
+// for a part somebody moved or turned, one step further on. Nothing here is
+// pushed, nothing is rebuilt from it, and the model on screen is untouched by
+// it. What travels to the agent is the projection `proposalText` renders: a few
+// aligned lines saying how big the thing is and where its features sit, which is
+// a constraint the agent can design against instead of a sentence like "it is
+// about four centimetres".
 //
 // PURE, AND WITH NO GEOMETRY IN IT. Every helper returns a new document and this
 // module imports nothing at all; the kernel lives next door in proposalgeom.js.
@@ -27,9 +27,18 @@
 // said here rather than left to the shape of the objects. A BODY is something
 // the reader drew — `solid` or `hole`, an op and its dimensions, placed by `at`
 // and `rot` — and it is geometry: proposalgeom.js builds a part out of it. A
-// MOVE is a part of the BUILD, displaced: `{role: 'move', paths, name, delta}`,
-// with no op and no size, because the part already exists in the model and
-// nothing here draws it.
+// MOVE is a part of the BUILD, displaced and turned:
+// `{role: 'move', paths, name, delta, turn}`, with no op and no size, because
+// the part already exists in the model and nothing here draws it.
+//
+// `turn` IS A BODY'S `rot` UNDER ANOTHER NAME AND IN THE SAME UNITS — three
+// angles in DEGREES about the three axes, applied the way jscad applies a
+// body's (`placed` in proposalgeom.js, `quaternionOf` in viewport/parts.js). The
+// name differs because the two are measured from different places: a body's
+// `rot` is an orientation the reader GAVE it, while a `turn` is an offset from
+// the orientation the build already put the part in, exactly as `delta` is an
+// offset from where the build put it. Both are undone the same way — the node is
+// deleted — and neither changes any geometry.
 //
 // WHY A MOVE IS A NODE OF THIS DOCUMENT AT ALL. A drag of a published part is
 // the same kind of statement a body is — "this is what I mean, and it is not an
@@ -46,7 +55,9 @@
 // prints: resolved from the tree at RECORD time and never looked up again at
 // print time, because a name is a fact about the tree that was on screen then
 // and a collapsed run may have no row under it later. `delta` is the offset from
-// where the build puts the part, in the document's own units.
+// where the build puts the part, in the document's own units, and `turn` is the
+// same kind of answer about its ORIENTATION — three degrees about the part's own
+// centre, measured from the way the build leaves it standing.
 //
 // THE ONE THING THAT RE-RESOLVES IT IS THE PATHS CHANGING UNDER IT. A name
 // carries the count — `pin ×5` — so a node whose paths are subtracted when a
@@ -223,10 +234,15 @@ export const DIM_OPS = Object.freeze(Object.keys(DIMS))
  * every line at `at (…)` — the padding is trimmed rather than left hanging.
  *
  * THE MOVES ARE A BLOCK OF THEIR OWN and are aligned among THEMSELVES, which is
- * the whole reason they are not a seventh column or a seventh kind of row. They
- * share no field with a body — no op, no size, no rotation — so a move folded
- * into that table would pad every body's columns out to make room for a sentence
- * that is not in them. They come after the bodies and before the `result` line
+ * the whole reason they are not a seventh column or a seventh kind of row. What
+ * a move shares with a body is a NAME and a turn — `turn` and `rot` are the same
+ * three degrees about the same three axes, and both are dropped from the line
+ * when they are all zero. What it does not share is the half that makes the
+ * body's table wide: no op and no size, because the part is already in the
+ * model, and its place is a `by (…)` measured from wherever the build puts it
+ * rather than an `at (…)` in the document's own space. Folded into that table, a
+ * move would pad every body's columns out to make room for two cells that mean
+ * something else. They come after the bodies and before the `result` line
  * because the parts they name are the ones the build already has: the bodies say
  * what is being asked for, the moves say where the existing thing should go, and
  * the last line is what the two together come to.
@@ -246,15 +262,26 @@ export function proposalText(doc) {
     .join('  ')
     .trimEnd())
 
-  // ONE SPACE AND NOT TWO between the two halves, so that a proposal with a
-  // single move in it reads exactly as the sentence it is — `move "bracket" by
-  // (3, 0, 0)` — and the padding only ever appears when there is a longer name
+  // ONE SPACE AND NOT TWO between the columns, so that a proposal with a single
+  // move in it reads exactly as the sentence it is — `move "bracket" by
+  // (3, 0, 0)` — and the padding only ever appears when there is a longer entry
   // beside it to line up with.
+  //
+  // THE TURN IS LEFT OFF WHOLE WHERE IT IS NOTHING, exactly as the body table
+  // drops `rot (…)`: a part somebody only slid across the scene should not read
+  // as one they decided not to turn. The padding is trimmed with it, so a block
+  // nobody turned anything in ends every line at `by (…)` as it always did.
   const shifts = moves(doc).map((node) => [
-    `move "${node.name}"`, `by (${node.delta.join(', ')})`,
+    `move "${node.name}"`,
+    `by (${node.delta.join(', ')})`,
+    node.turn.some((angle) => angle !== 0)
+      ? `turned (${node.turn.join(', ')})` : '',
   ])
-  const named = () => Math.max(...shifts.map(([head]) => head.length))
-  const moveTable = shifts.map(([head, tail]) => `${head.padEnd(named())} ${tail}`)
+  const shifted = (column) => Math.max(...shifts.map((row) => row[column].length))
+  const moveTable = shifts.map((row) => row
+    .map((cell, column) => cell.padEnd(shifted(column)))
+    .join(' ')
+    .trimEnd())
 
   const blocks = [`units: ${doc.units}`]
   if (table.length) blocks.push(table.join('\n'))

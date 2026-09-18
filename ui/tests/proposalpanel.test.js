@@ -1289,6 +1289,9 @@ describe('a part of the build dragged in the scene', () => {
     expect(moves(c.state.proposal)).toEqual([{
       id: 'm2', role: 'move', paths: ['/model/plate'], name: 'plate',
       delta: [3.2, 0, -1],
+      // A DRAG SAYS NOTHING ABOUT WHICH WAY ROUND, so the node it mints starts
+      // at no turn and the row's own fields are where that changes.
+      turn: [0, 0, 0],
     }])
     expect(proposalText(c.state.proposal))
       .toContain('move "plate" by (3.2, 0, -1)')
@@ -1305,7 +1308,7 @@ describe('a part of the build dragged in the scene', () => {
     drag('/model/pin', [3, 0, 0], { paths: row, count: 3 })
 
     expect(moves(c.state.proposal)[0].paths).toEqual(row)
-    expect(pushed(el)).toEqual([{ paths: row, delta: [3, 0, 0] }])
+    expect(pushed(el)).toEqual([{ paths: row, delta: [3, 0, 0], turn: [0, 0, 0] }])
   })
 
   it('writes the number the viewport sent, and does not round it again', () => {
@@ -1326,7 +1329,8 @@ describe('a part of the build dragged in the scene', () => {
 
     expect(moves(c.state.proposal)[0].delta).toEqual([0.6, 0, 0])
     expect(proposalText(c.state.proposal)).toContain('by (0.6, 0, 0)')
-    expect(c.computed().proposalMoveRows[0].delta).toBe('moved by (0.6, 0, 0)')
+    expect(c.computed().proposalMoveRows[0].groups[0].fields.map((f) => f.value))
+      .toEqual(['0.6', '0', '0'])
   })
 
   it('replaces the move of the same grab rather than adding it up', () => {
@@ -1362,7 +1366,7 @@ describe('a part of the build dragged in the scene', () => {
     expect(moves(c.state.proposal)).toHaveLength(1)
     expect(moves(c.state.proposal)[0].paths).toEqual(row)
     expect(moves(c.state.proposal)[0].delta).toEqual([5, 0, 0])
-    expect(pushed(el)).toEqual([{ paths: row, delta: [5, 0, 0] }])
+    expect(pushed(el)).toEqual([{ paths: row, delta: [5, 0, 0], turn: [0, 0, 0] }])
   })
 
   it('drops every move the new gesture touches, where more than one does', () => {
@@ -1381,7 +1385,7 @@ describe('a part of the build dragged in the scene', () => {
 
     expect(moves(c.state.proposal)).toHaveLength(1)
     expect(moves(c.state.proposal)[0].paths).toEqual(row)
-    expect(pushed(el)).toEqual([{ paths: row, delta: [5, 0, 0] }])
+    expect(pushed(el)).toEqual([{ paths: row, delta: [5, 0, 0], turn: [0, 0, 0] }])
   })
 
   it('subtracts the grabbed copy and leaves the rest of the row displaced', () => {
@@ -1404,8 +1408,116 @@ describe('a part of the build dragged in the scene', () => {
     // AND THE VIEWPORT IS TOLD ALL OF IT, which is where "still displaced"
     // stops being a claim about a document and becomes one about the scene.
     expect(pushed(el)).toEqual([
-      { paths: ['/model/pin', '/model/pin(3)'], delta: [3, 0, 0] },
-      { paths: ['/model/pin(2)'], delta: [8, 0, 0] },
+      { paths: ['/model/pin', '/model/pin(3)'], delta: [3, 0, 0], turn: [0, 0, 0] },
+      { paths: ['/model/pin(2)'], delta: [8, 0, 0], turn: [0, 0, 0] },
+    ])
+  })
+
+  it('carries the turn the superseded nodes agree on into the minted one', () => {
+    // SEVERAL NODES COVERED AT ONCE is the reader having moved these copies
+    // apart one at a time, and the commonest way to have several is to have
+    // TURNED them together — a fresh node minted at zero would straighten every
+    // one of them on a gesture that was about where they stand.
+    const { c, el } = mounted({})
+    const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
+    drag('/model/pin', [3, 0, 0])
+    drag('/model/pin(2)', [0, 3, 0])
+    for (const at of [0, 1]) {
+      type(c.computed().proposalMoveRows[at].groups[1].fields[2], '90')
+    }
+
+    drag('/model/pin', [5, 0, 0], { paths: row, count: 3 })
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(moves(c.state.proposal)[0].turn).toEqual([0, 0, 90])
+    expect(pushed(el)).toEqual([{ paths: row, delta: [5, 0, 0], turn: [0, 0, 90] }])
+  })
+
+  it('mints at no turn where the superseded nodes do not agree on one', () => {
+    // THE OTHER BRANCH, and zero is the honest answer for it: two copies turned
+    // different ways have no single turn to carry onto the one sentence that
+    // now speaks for both, and picking either would be this handler choosing
+    // which of the reader's two statements to keep.
+    const { c } = mounted({})
+    const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
+    drag('/model/pin', [3, 0, 0])
+    drag('/model/pin(2)', [0, 3, 0])
+    type(c.computed().proposalMoveRows[0].groups[1].fields[2], '90')
+    type(c.computed().proposalMoveRows[1].groups[1].fields[2], '45')
+
+    drag('/model/pin', [5, 0, 0], { paths: row, count: 3 })
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(moves(c.state.proposal)[0].turn).toEqual([0, 0, 0])
+  })
+
+  it('turns a copy nobody turned, when one gesture merges it with one that is', () => {
+    // THE OTHER FACE OF "A DRAG CANNOT STRAIGHTEN ANYTHING", and it is held
+    // here rather than in prose because prose does not fail. One node carries
+    // one turn for ALL its paths, so a gesture that merges a turned copy with
+    // an untouched one has nowhere to keep the difference and something has to
+    // give. It gives this way round: the untouched copy comes out turned.
+    //
+    // THE BRANCH THIS GOES THROUGH IS THE EXPANDING ONE, not the minting one —
+    // the turned node is covered whole, so its sentence is corrected rather
+    // than replaced, and it gains the second path while keeping the turn the
+    // patch never names. So this does not pin `shared`, which the two tests
+    // above do; what it catches is someone deciding that widening a node's
+    // paths should straighten what it already said.
+    const { c } = mounted({})
+    drag('/model/pin', [3, 0, 0])
+    type(c.computed().proposalMoveRows[0].groups[1].fields[2], '90')
+
+    drag('/model/pin', [6, 0, 0], { paths: ['/model/pin', '/model/pin(2)'], count: 2 })
+
+    expect(moves(c.state.proposal).map((m) => [m.paths, m.turn])).toEqual([
+      [['/model/pin', '/model/pin(2)'], [0, 0, 90]],
+    ])
+  })
+
+  it('leaves no empty sentence when a row of disagreeing turns is dragged home', () => {
+    // A row whose copies were turned to DIFFERENT angles cannot be carried by
+    // one node, so dragging it home straightens them — that is the price of the
+    // disagreement and it is decided. What must not survive is a node saying
+    // nothing: `move "pin ×2" by (0, 0, 0)` with no turn on it is a line for the
+    // agent to puzzle over and a row to close by hand, and the panel does not
+    // even open on a flat drag to show it.
+    //
+    // The retraction therefore asks what the node would COME OUT carrying,
+    // which is `shared`, and not whether any turn exists anywhere.
+    const { c } = mounted({})
+    drag('/model/pin', [3, 0, 0])
+    type(c.computed().proposalMoveRows[0].groups[1].fields[2], '90')
+    drag('/model/pin(2)', [5, 0, 0])
+    type(c.computed().proposalMoveRows[1].groups[1].fields[2], '45')
+
+    drag('/model/pin', [0, 0, 0], { paths: ['/model/pin', '/model/pin(2)'], count: 2 })
+
+    expect(moves(c.state.proposal)).toEqual([])
+  })
+
+  it('sends a copy out of a turned row still facing the way the row faced', () => {
+    // A DRAG SAYS WHERE AND NEVER WHICH WAY, and this is the case that says it
+    // about a node nothing supersedes. The old node is still standing and still
+    // claims the two copies left behind, so reading the turn off the COVERED
+    // nodes alone would find none to carry and straighten the one copy the
+    // reader has hold of — a rotation undone by a gesture that was about
+    // position. `touching` is what closes it.
+    //
+    // THE TRIMMING TOUCHES THE PATHS AND THE NAME AND NOTHING ELSE, so the two
+    // left behind keep the offset they were already at and their turn. Both
+    // halves of the row therefore come out of this facing the same way, which
+    // is what the reader did to them and all they did to them.
+    const { c } = mounted({})
+    const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
+    drag('/model/pin', [3, 0, 0], { paths: row, count: 3 })
+    type(c.computed().proposalMoveRows[0].groups[1].fields[0], '30')
+
+    drag('/model/pin(2)', [8, 0, 0])
+
+    expect(moves(c.state.proposal).map((m) => [m.paths, m.turn])).toEqual([
+      [['/model/pin', '/model/pin(3)'], [30, 0, 0]],
+      [['/model/pin(2)'], [30, 0, 0]],
     ])
   })
 
@@ -1446,7 +1558,8 @@ describe('a part of the build dragged in the scene', () => {
 
     drag('/model/plate', [3, 0, 0])
 
-    expect(pushed(el)).toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0] }])
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] }])
     expect(moves(c.state.proposal)[0].delta).toEqual([3, 0, 0])
   })
 
@@ -1486,6 +1599,47 @@ describe('a part of the build dragged in the scene', () => {
     expect(pushed(el)).toEqual([])
   })
 
+  it('keeps a TURNED node when the part is dragged back, and zeroes the delta', () => {
+    // A TRANSLATION GESTURE EDITS THE TRANSLATION. The hand was on the part's
+    // position, so "put it back where it was" is an answer about WHERE — and a
+    // node that also says which way the part faces has not been retracted by
+    // it. Dropped anyway, the drag would take a rotation the reader set in the
+    // panel and never mentioned, with nothing on screen saying why.
+    //
+    // WHAT IS LEFT IS THE SENTENCE WITH ITS DELTA AT NOTHING: the part is back
+    // where the build puts it and still turned, the row still says so, and the
+    // `×` is still how the whole statement is undone.
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    type(c.computed().proposalMoveRows[0].groups[1].fields[2], '90')
+
+    drag('/model/plate', [0, 0, 0])
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(moves(c.state.proposal)[0].delta).toEqual([0, 0, 0])
+    expect(moves(c.state.proposal)[0].turn).toEqual([0, 0, 90])
+    expect(c.computed().proposalMoveRows).toHaveLength(1)
+    expect(proposalText(c.state.proposal))
+      .toContain('move "plate" by (0, 0, 0) turned (0, 0, 90)')
+    // AND THE SCENE IS TOLD THE SAME THING, so the part really does stand at
+    // home still turned rather than the document alone claiming it.
+    expect(pushed(el)).toEqual([
+      { paths: ['/model/plate'], delta: [0, 0, 0], turn: [0, 0, 90] },
+    ])
+  })
+
+  it('still drops a node dragged home when it says nothing but the offset', () => {
+    // The rule above narrowed and not replaced: with no turn on it, a drag home
+    // is the plain retraction it always was.
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+
+    drag('/model/plate', [0, 0, 0])
+
+    expect(moves(c.state.proposal)).toEqual([])
+    expect(pushed(el)).toEqual([])
+  })
+
   it('takes only the copies the retraction names out of a row\'s entry', () => {
     // The same subtraction the other direction: a row of three at one offset,
     // one copy dragged home. That copy loses its claim and the other two keep
@@ -1498,8 +1652,9 @@ describe('a part of the build dragged in the scene', () => {
 
     expect(moves(c.state.proposal).map((m) => m.paths))
       .toEqual([['/model/pin', '/model/pin(3)']])
-    expect(pushed(el))
-      .toEqual([{ paths: ['/model/pin', '/model/pin(3)'], delta: [3, 0, 0] }])
+    expect(pushed(el)).toEqual([
+      { paths: ['/model/pin', '/model/pin(3)'], delta: [3, 0, 0], turn: [0, 0, 0] },
+    ])
   })
 
   it('leaves the panel shut for a retraction, having nothing to show', () => {
@@ -1532,7 +1687,8 @@ describe('a part of the build dragged in the scene', () => {
     expect(moves(c.state.proposal)).toHaveLength(1)
     expect(el.setOverlay).not.toHaveBeenCalled()
     expect(el.clearOverlay).not.toHaveBeenCalled()
-    expect(pushed(el)).toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0] }])
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] }])
   })
 
   it('opens the panel it was recorded in, if the reader had it shut', () => {
@@ -1553,7 +1709,8 @@ describe('a part of the build dragged in the scene', () => {
     // and a panel listing bodies the model does not show is the same
     // disagreement read the other way.
     expect(overlay(el)).toEqual(['korpus'])
-    expect(pushed(el)).toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0] }])
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] }])
   })
 
   it('records nothing while the scene on screen is a comparison\'s', () => {
@@ -1591,7 +1748,7 @@ describe('the row a move is drawn as', () => {
   /** The rows the panel draws for the moves, as `computed()` hands them over. */
   const rows = (c) => c.computed().proposalMoveRows
 
-  it('shows the part and how far it went, and nothing to type', () => {
+  it('shows the part, and its numbers in fields a body would know', () => {
     const { c } = mounted({ proposal: withBlock() })
 
     drag('/model/plate', [3.2, 0, -1], { count: 3, name: 'plate' })
@@ -1599,15 +1756,52 @@ describe('the row a move is drawn as', () => {
     expect(rows(c)).toHaveLength(1)
     // The name the node was recorded under, count and all: what the row says and
     // what the projection prints are the same string, resolved once at the drag.
+    // IT IS STILL NOT A FIELD — it is a row of the build's, and the reader never
+    // chose it.
     expect(rows(c)[0].name).toBe('plate ×3')
-    // The same numbers the projection prints, in the same spelling: a reader
-    // comparing the panel with what they are about to send should not have to
-    // translate between the two.
-    expect(rows(c)[0].delta).toBe('moved by (3.2, 0, -1)')
+    // TWO ROWS OF THREE, exactly as a body's `at` and `rot°` are drawn, because
+    // they are the same kind of number: the offset the drag left, and a turn
+    // that has no gesture at all and could not be said any other way.
+    expect(rows(c)[0].groups.map((g) => g.label)).toEqual(['by', 'turn°'])
+    expect(rows(c)[0].groups.map((g) => g.fields.map((f) => f.value)))
+      .toEqual([['3.2', '0', '-1'], ['0', '0', '0']])
+    // AND THE ARROWS ARE THE PLATFORM'S OWN, stepped in the units of the row:
+    // millimetres for the offset, and the body's own `STEP_DEG` for the turn.
+    expect(rows(c)[0].groups.map((g) => g.fields[0].type)).toEqual(['number', 'number'])
+    expect(rows(c)[0].groups[0].fields[0].step)
+      .toBe(c.computed().proposalBodies[0].groups[1].fields[0].step)
+    expect(rows(c)[0].groups[1].fields[0].step)
+      .toBe(c.computed().proposalBodies[0].groups[2].fields[0].step)
     expect(proposalText(c.state.proposal)).toContain('by (3.2, 0, -1)')
-    // No fields and no groups: a body's numbers are the reader's own, a move's
-    // came from the gesture.
-    expect(rows(c)[0].groups).toBeUndefined()
+  })
+
+  it('types a turn into the document, and pushes it at the viewport', () => {
+    // THE ONLY DOOR THERE IS FOR ONE: the drag says where, and three numbers in
+    // this row say which way round. What leaves the page is the node — the
+    // projection prints it, and the scene is handed the same three degrees.
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+
+    type(rows(c)[0].groups[1].fields[2], '90')
+
+    expect(moves(c.state.proposal)[0].turn).toEqual([0, 0, 90])
+    expect(pushed(el)).toEqual([
+      { paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 90] },
+    ])
+    expect(proposalText(c.state.proposal))
+      .toContain('move "plate" by (3, 0, 0) turned (0, 0, 90)')
+  })
+
+  it('types an offset into the same row, which is the drag said exactly', () => {
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+
+    type(rows(c)[0].groups[0].fields[2], '12')
+
+    expect(moves(c.state.proposal)[0].delta).toEqual([3, 0, 12])
+    expect(pushed(el)).toEqual([
+      { paths: ['/model/plate'], delta: [3, 0, 12], turn: [0, 0, 0] },
+    ])
   })
 
   it('is drawn on the page, in the list the bodies are in and after them', () => {
@@ -1618,13 +1812,12 @@ describe('the row a move is drawn as', () => {
     drag('/model/plate', [3, 0, 0])
 
     const said = texts(c.render())
-    expect(said).toContain('moved by (3, 0, 0)')
+    expect(said).toContain('turn°')
     expect(said).toContain('plate')
     // AFTER THE BODIES AND BEFORE THE BUTTONS THAT ADD ONE, which is what puts
     // it in the same list rather than in a section of its own.
-    expect(said.indexOf('moved by (3, 0, 0)'))
-      .toBeGreaterThan(said.indexOf('rot°'))
-    expect(said.indexOf('moved by (3, 0, 0)')).toBeLessThan(said.indexOf('+ box'))
+    expect(said.indexOf('turn°')).toBeGreaterThan(said.indexOf('rot°'))
+    expect(said.indexOf('turn°')).toBeLessThan(said.indexOf('+ box'))
   })
 
   it('leaves the bodies their own rows, and takes none of them', () => {
@@ -1642,7 +1835,8 @@ describe('the row a move is drawn as', () => {
     // (ui/tests/parts.test.js holds that half).
     const { c, el } = mounted({ proposal: withBlock() })
     drag('/model/plate', [3, 0, 0])
-    expect(pushed(el)).toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0] }])
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] }])
 
     rows(c)[0].onRemove()
 
@@ -1661,7 +1855,8 @@ describe('the row a move is drawn as', () => {
     rows(c)[0].onRemove()
 
     expect(rows(c).map((row) => row.name)).toEqual(['lid'])
-    expect(pushed(el)).toEqual([{ paths: ['/model/lid'], delta: [0, 4, 0] }])
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/lid'], delta: [0, 4, 0], turn: [0, 0, 0] }])
   })
 })
 
@@ -1680,7 +1875,7 @@ describe('a document holding moves and no bodies', () => {
     expect(c.computed().proposalBodies).toEqual([])
     expect(c.computed().proposalMoveRows).toHaveLength(1)
     expect(css(c.computed().proposalAddStyle).display).not.toBe('none')
-    expect(texts(c.render())).toContain('moved by (3, 0, 0)')
+    expect(texts(c.render())).toContain('turn°')
   })
 
   it('stops explaining what a body is, because something has been put in it', () => {
@@ -1853,6 +2048,30 @@ describe('a proposal body as the part a task is filed against', () => {
     expect(labelsOn('/model/proposal')).not.toContain('Move')
   })
 
+  it('is offered NO Turn row, because it has a rot° row of its own', () => {
+    // THE ONE ROW OF THE TWO THAT A BODY MUST NOT HAVE. Move is offered because
+    // the DRAG is re-routed at the press — the viewport tells the two gestures
+    // apart and sends a body's on `hmr:proposalmove`, which edits the `at`
+    // beside that very `rot` — and there is no such routing for a row that
+    // MINTS A NODE. Turn on a body would put a move node on an overlay path: a
+    // second way to turn the same body, contradicting the fields three rows up
+    // the same panel, and printing `move "korpus" turned (…)` about a body that
+    // is in no build for the agent to read beside its own `rot (…)`.
+    const labelsOn = (id) => {
+      const { c, el } = panel({ proposal: withBlock() })
+      staging(el)
+      c.state = { ...c.state, tree: indexTree(STAGED), menu: { id, x: 0, y: 0 } }
+      return c.computed().menuItems.map((m) => m.label)
+    }
+
+    expect(labelsOn('/model/proposal/korpus')).toContain('Move')
+    expect(labelsOn('/model/proposal/korpus')).not.toContain('Turn')
+    // AND THE BUILD'S OWN PARTS KEEP BOTH, so what is withheld is the body's
+    // case and not the row.
+    expect(labelsOn('/model/plate')).toEqual(
+      expect.arrayContaining(['Move', 'Turn']))
+  })
+
   it('is told apart from a build part by the sentence the row raises', () => {
     // The two drags MEAN different things and the toast is where the reader is
     // told which one they are in. A part of the build moves as a statement to
@@ -1876,6 +2095,143 @@ describe('a proposal body as the part a task is filed against', () => {
     expect(body.c.state.tool).toBe('move')
 
     expect(armOn('/model/plate').said).toContain('snaps back')
+  })
+})
+
+// -- the row that makes a move where no drag has been --------------------------
+
+describe('Turn, in a part\'s own menu', () => {
+  // A DISPLACEMENT HAS A GESTURE AND A TURN HAS NONE. The hand says "about here"
+  // better than a field does, and there is no such hand for three angles — so a
+  // part nobody has dragged has no row in the panel, and therefore nowhere to
+  // type them. This row is what makes the row exist.
+
+  const STAGED = {
+    id: '/model',
+    name: 'model',
+    children: [
+      { id: '/model/plate', name: 'plate', key: 'plate', known: true },
+      { id: '/model/pin', name: 'pin', key: 'pin', known: true },
+      { id: '/model/pin(2)', name: 'pin', key: 'pin', known: true },
+      {
+        id: '/model/housing',
+        name: 'housing',
+        children: [{ id: '/model/housing/lid', name: 'lid', key: 'lid', known: true }],
+      },
+    ],
+  }
+
+  /** The page with a row's menu open on `id`. */
+  function menu(id, over = {}) {
+    const { c, el } = panel({ proposal: withBlock(), ...over })
+    c.state = { ...c.state, tree: indexTree(STAGED), menu: { id, x: 0, y: 0 } }
+    return { c, el }
+  }
+
+  const labels = (c) => c.computed().menuItems.map((m) => m.label)
+
+  const choose = (c, label) => c.computed().menuItems.find((m) => m.label === label)
+    .onClick({ stopPropagation() {}, preventDefault() {} })
+
+  it('stands beside Move, under exactly the same four gates', () => {
+    // THE SAME NODE OF THE SAME DOCUMENT comes out of both rows, so the four
+    // answers that take Move away take this away with it: a reader with no token
+    // has nowhere to send it, a phone has no room to aim, a group is a path no
+    // press can hit, and a hub that serves no panel has nowhere to draw the row.
+    expect(labels(menu('/model/plate').c)).toContain('Turn')
+    expect(labels(menu('/model/plate', { token: null }).c)).not.toContain('Turn')
+    expect(labels(menu('/model/plate', { narrow: true }).c)).not.toContain('Turn')
+    expect(labels(menu('/model/housing').c)).not.toContain('Turn')
+    expect(labels(menu('/model/plate', { served: false }).c)).not.toContain('Turn')
+    // And the two rows are gated together rather than each on its own reading of
+    // the same four questions.
+    for (const over of [{ token: null }, { narrow: true }, { served: false }]) {
+      const said = labels(menu('/model/plate', over).c)
+      expect(said.includes('Turn')).toBe(said.includes('Move'))
+    }
+  })
+
+  it('mints a row at no offset and no turn, and opens the panel on it', () => {
+    const { c, el } = menu('/model/plate', { open: false })
+
+    choose(c, 'Turn')
+
+    expect(moves(c.state.proposal)).toEqual([{
+      id: 'm2', role: 'move', paths: ['/model/plate'], name: 'plate',
+      delta: [0, 0, 0], turn: [0, 0, 0],
+    }])
+    // THE PANEL COMES UP WITH IT, because a row nobody can see is a row nobody
+    // can type in — which is the whole of what this item is for.
+    expect(c.state.proposalOpen).toBe(true)
+    expect(c.computed().proposalMoveRows).toHaveLength(1)
+    expect(c.computed().proposalMoveRows[0].groups.map((g) => g.label))
+      .toEqual(['by', 'turn°'])
+    // AND THE VIEWPORT IS TOLD, so the scene and the document agree from the
+    // first moment the row exists — at nothing, which is where the part already
+    // stands.
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [0, 0, 0], turn: [0, 0, 0] }])
+  })
+
+  it('takes every copy a collapsed row stands for, and its counted name', () => {
+    // The same paths Hide and Isolate take, because it is the same object: a row
+    // reading `pin ×2` is two solids, and turning one of them alone would be the
+    // row quietly meaning something else here than it does everywhere else.
+    const { c } = menu('/model/pin')
+
+    choose(c, 'Turn')
+
+    expect(moves(c.state.proposal)[0].paths).toEqual(['/model/pin', '/model/pin(2)'])
+    expect(moves(c.state.proposal)[0].name).toBe('pin ×2')
+  })
+
+  it('survives the reconcile that follows, which drops nothing it did not', () => {
+    // THE RULE THIS IS NOT. A node is dropped when a DRAG is reported at zero —
+    // the reader putting a displacement back by hand — and a node minted here is
+    // a row asked for rather than a statement withdrawn, so nothing looks at its
+    // zeroes. Pushing the document is what would have shown otherwise: the
+    // viewport is handed the node, and the document still holds it afterwards.
+    const { c, el } = menu('/model/plate')
+
+    choose(c, 'Turn')
+    c.proposalMoves(c.state.proposal)
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [0, 0, 0], turn: [0, 0, 0] }])
+    // And it is still there to be typed into after the row has been redrawn.
+    expect(c.computed().proposalMoveRows).toHaveLength(1)
+  })
+
+  it('types a turn into the row it just made', () => {
+    const { c, el } = menu('/model/plate')
+    choose(c, 'Turn')
+
+    const row = c.computed().proposalMoveRows[0]
+    type(row.groups[1].fields[1], '45')
+
+    expect(moves(c.state.proposal)[0].turn).toEqual([0, 45, 0])
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [0, 0, 0], turn: [0, 45, 0] }])
+    expect(proposalText(c.state.proposal))
+      .toContain('move "plate" by (0, 0, 0) turned (0, 45, 0)')
+  })
+
+  it('gives a part that already has a row no second one', () => {
+    // Two nodes claiming one path are two contradictory sentences about it in the
+    // projection and two rows of which only one `×` appears to do anything — the
+    // hazard the drag handler matches by intersection to avoid. The row is
+    // already there; all this has left to do is open the panel it is in.
+    const { c } = mounted({ proposal: withBlock(), open: false })
+    drag('/model/plate', [3, 0, 0])
+    c.setState({ proposalOpen: false })
+    c.state = { ...c.state, tree: indexTree(STAGED), menu: { id: '/model/plate', x: 0, y: 0 } }
+
+    choose(c, 'Turn')
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(moves(c.state.proposal)[0].delta).toEqual([3, 0, 0])
+    expect(c.state.proposalOpen).toBe(true)
   })
 })
 
@@ -1934,7 +2290,7 @@ describe('the model event a re-stage sends back', () => {
   /** The document with a body in it and a part of the build dragged. */
   const withMove = () => addNode(withBlock(), {
     id: 'm2', role: 'move', paths: ['/model/plate'], name: 'plate',
-    delta: [3, 0, 0],
+    delta: [3, 0, 0], turn: [0, 0, 0],
   })
 
   it('leaves the measurement and the moved part exactly where they were', () => {

@@ -20,12 +20,13 @@
 // nodes.
 
 import { describe, expect, it, vi } from 'vitest'
+import { geometries, transforms } from '@jscad/modeling'
 
 import { internals } from '../src/viewport/internals.js'
 import { GHOST_OPACITY, renderOptions } from '../src/viewport/options.js'
 import {
   applyGhost, applyHidden, applySelected, movePart, movableGroup, partCentre,
-  reconcileMoves, restageMoves, statesOf, treeFromShapes,
+  quaternionOf, reconcileMoves, restageMoves, statesOf, treeFromShapes, turned,
 } from '../src/viewport/parts.js'
 import {
   fakeGroup, fakeMatrix, fakeShapeSolid, fakeViewer, fakeViewport,
@@ -593,7 +594,7 @@ describe('movePart and reconcileMoves', () => {
     expect(at(dropped)).toEqual(homes[1])
     expect(at(changed)).toEqual([homes[2][0], homes[2][1], homes[2][2] + 4])
     expect([...vp.moved.keys()]).toEqual([kept, changed])
-    expect(vp.moved.get(changed)).toEqual([0, 0, 4])
+    expect(vp.moved.get(changed)).toEqual({ delta: [0, 0, 4], turn: [0, 0, 0] })
   })
 
   it('writes nothing at all for a move that is already standing', () => {
@@ -623,7 +624,7 @@ describe('movePart and reconcileMoves', () => {
 
     expect(vp.viewer.update).toHaveBeenCalledTimes(drawn)
     expect(at()).toEqual(stood)
-    expect(vp.moved.get(PATHS[0])).toEqual(delta)
+    expect(vp.moved.get(PATHS[0])).toEqual({ delta, turn: [0, 0, 0] })
   })
 
   it('forgets a path it cannot put back, rather than trying again forever', () => {
@@ -632,7 +633,7 @@ describe('movePart and reconcileMoves', () => {
     // the view laid out over a part that is not there.
     const { vp } = crowd()
     movePart(vp, [PATHS[0]], [10, 0, 0])
-    vp.moved.set('/Group/not a part', [1, 0, 0])
+    vp.moved.set('/Group/not a part', { delta: [1, 0, 0], turn: [0, 0, 0] })
 
     reconcileMoves(vp, [])
 
@@ -688,7 +689,8 @@ describe('movePart and reconcileMoves', () => {
       expect([now.x, now.y, now.z], `copy ${at} snapped home`)
         .toEqual([homes[at][0] + 10, homes[at][1] - 5, homes[at][2] + 2])
     })
-    expect([...vp.moved.values()]).toEqual(PATHS.map(() => [10, -5, 2]))
+    expect([...vp.moved.values()])
+      .toEqual(PATHS.map(() => ({ delta: [10, -5, 2], turn: [0, 0, 0] })))
     // THE HOMES ARE THE NEW SCENE'S, taken again rather than carried over — so
     // "put it back" puts it back to a position read off the groups that are
     // actually on screen.
@@ -769,5 +771,409 @@ describe('partCentre', () => {
       states: statesFor([PIN]), groups: { [PIN]: fakeGroup() } })
     expect(partCentre(viewer, PIN)).toBeNull()
     expect(partCentre(null, PIN)).toBeNull()
+  })
+})
+
+// -- and the same part TURNED where it stands ---------------------------------
+//
+// WHAT MAKES THIS HARDER THAN THE OFFSET, and the whole reason for the block.
+// A leaf's vertices are the part's OWN coordinates and its `loc` is where the
+// view PUTS it — an offset in `loc[0]` and a rotation in `loc[1]`, both written
+// by the library onto the very group a move writes to (`renderLoop`). So the
+// group's origin is not the part's centre and its quaternion is not necessarily
+// the identity, and turning the part about itself takes both fields:
+//
+//     position = C - q·(C - home) + delta,  quaternion = q ⊗ R
+//
+// with `C` the world centre off `matrixWorld`, `home` where the group stands and
+// `R` the pose the build gave it. Every test below asks one question about that
+// line rather than about the numbers it happens to produce.
+//
+// TWO STANDS, AND THE SECOND ONE IS THE POINT. `turnable` is a part its view
+// left square, where `R` is the identity and every error in the orientation
+// cancels; `seated` is one its view turned over, where none of them do. A
+// `movePart` that wrote the reader's turn straight onto the group passed every
+// test built on the first stand while flipping a seated lid out of its pose on
+// an ordinary drag, which is what the second stand is here to catch.
+
+/**
+ * A point turned by three DEGREES the way jscad turns a BODY.
+ *
+ * THE INDEPENDENT IMPLEMENTATION, and that is the point of dragging a kernel
+ * into this file: `transforms.rotate` is what `placed` in proposalgeom.js turns
+ * a body's `rot` with, so pinning `quaternionOf` against it is what holds the
+ * two halves of the document to one meaning for the same three numbers. Written
+ * out by hand here it would only pin this file against itself.
+ */
+function jscadTurn(angles, point) {
+  const solid = geometries.geom3.create([
+    geometries.poly3.create([point, [0, 0, 0], [0, 0, 1]]),
+  ])
+  const spun = transforms.rotate(angles.map((angle) => (angle * Math.PI) / 180), solid)
+  return [...geometries.geom3.toPolygons(spun)[0].vertices[0]]
+}
+
+describe('movePart, turning', () => {
+  /** One tessellated part standing where the build put it, ready to be turned.
+   *
+   *  `home` goes into BOTH the group's position and its world matrix, which is
+   *  what a real scene has: the matrix a part's centre is read off carries the
+   *  group's own placement in it. So the centre this scene answers with is the
+   *  box's own centre moved by `home` — a point that is neither the group's
+   *  origin nor anything a formula could get right by accident. */
+  function turnable(home = [4, -2, 7]) {
+    const solid = fakeShapeSolid(PIN, {
+      positions: BOX_POSITIONS,
+      index: BOX_INDEX,
+      matrix: fakeMatrix({ position: home }),
+    })
+    solid.position.set(home[0], home[1], home[2])
+    const viewer = fakeViewer({ states: statesFor([PIN]), groups: { [PIN]: solid } })
+    return {
+      home,
+      solid,
+      vp: fakeViewport(viewer),
+      centre: BOX_CENTRE.map((value, axis) => value + home[axis]),
+    }
+  }
+
+  // THE POSE A VIEW SEATS A PART IN — a half turn about x, which is exactly
+  // `LID_SEATED` in model_template/model.py: the template every project starts
+  // from turns the lid over and drops it on the rim, and hands that `cq.Location`
+  // to the view as the part's `at`. The build writes it into the leaf's `loc[1]`
+  // and the library writes THAT onto the group (`renderLoop`:
+  // `mesh.quaternion.set(...shape.loc[1])`), so this is what an ordinary part of
+  // an ordinary model arrives here standing at.
+  //
+  // ITS MATRIX IS THE DIAGONAL (1, -1, -1), which is why this particular pose is
+  // the one the stand below is built on: `fakeMatrix` can express it with no
+  // quaternion arithmetic of its own, so the `matrixWorld` a centre is read off
+  // stays a fact rather than a second implementation of the thing under test.
+  const SEATED = [1, 0, 0, 0]
+  const SEATED_DEG = [180, 0, 0]
+
+  /** The same part as `turnable`, seated by its view rather than left square:
+   *  the group arrives carrying a pose, which is what a leaf's `loc[1]` is. */
+  function seated(home = [4, -2, 7]) {
+    const solid = fakeShapeSolid(PIN, {
+      positions: BOX_POSITIONS,
+      index: BOX_INDEX,
+      matrix: fakeMatrix({ scale: [1, -1, -1], position: home }),
+    })
+    solid.position.set(home[0], home[1], home[2])
+    solid.quaternion.set(SEATED[0], SEATED[1], SEATED[2], SEATED[3])
+    const viewer = fakeViewer({ states: statesFor([PIN]), groups: { [PIN]: solid } })
+    return {
+      home,
+      solid,
+      vp: fakeViewport(viewer),
+      // The world centre of a seated part: its own box centre turned by the
+      // pose and then carried to where the view puts it — which is what the
+      // matrix above works out and what `partCentre` reads off it.
+      centre: jscadTurn(SEATED_DEG, BOX_CENTRE).map((v, axis) => v + home[axis]),
+    }
+  }
+
+  /** Where the group now stands, and which way it faces. */
+  const at = (g) => [g.position.x, g.position.y, g.position.z]
+  const facing = (g) => [g.quaternion.x, g.quaternion.y, g.quaternion.z, g.quaternion.w]
+
+  /** Where a point given in GROUP-LOCAL coordinates lands on the screen.
+   *
+   *  `position + q·v`, which is what three.js composes a group's world matrix
+   *  out of — and `q·v` is computed by the kernel rather than by the module
+   *  under test, so this measures the scene the library would really draw. */
+  const lands = (g, turn, local) => {
+    const spun = jscadTurn(turn, local)
+    return at(g).map((value, axis) => value + spun[axis])
+  }
+
+  /** The same, for a part its view SEATED: the pose first, the reader's turn on
+   *  top of it — `(q⊗R)·v` is `q·(R·v)`, composed here by the kernel twice over
+   *  so the ORDER is pinned as well as the arithmetic. Composed the other way
+   *  round the two would disagree, because a half turn about x and a quarter
+   *  turn about z do not commute. */
+  const landsSeated = (g, turn, local) =>
+    lands(g, turn, jscadTurn(SEATED_DEG, local))
+
+  it('spells a quarter turn about z as x, y, z and THEN w', () => {
+    // THE ONE THING THE SCENE CANNOT ANSWER, which is why it is asked here. Both
+    // sides of every test below are this module's own convention, so a
+    // quaternion built scalar-first would cancel out of all of them — and then
+    // `group.quaternion.set(x, y, z, w)` would hand three.js the scalar as an
+    // axis and every part would turn about something nobody named.
+    const [x, y, z, w] = quaternionOf([0, 0, 90])
+    expect([x, y]).toEqual([0, 0])
+    expect(z).toBeCloseTo(Math.SQRT1_2, 12)
+    expect(w).toBeCloseTo(Math.SQRT1_2, 12)
+    // And a turn of nothing is the identity, which is what makes the collapse
+    // below arithmetic rather than a special case.
+    expect(quaternionOf([0, 0, 0])).toEqual([0, 0, 0, 1])
+  })
+
+  it('leaves a turn of nothing exactly where the offset alone puts it', () => {
+    // THE IDENTITY COLLAPSE, which is the whole licence for one code path. With
+    // `q` the identity, `C - q·(C - home)` is `home` whatever the centre is — so
+    // everything this viewport did before it could turn anything has to come out
+    // of the new line unchanged, and the quaternion it writes has to be the one
+    // a group starts with.
+    const { home, solid, vp } = turnable()
+    expect(movePart(vp, [PIN], [10, -5, 2], [0, 0, 0])).toBe(true)
+
+    expect(at(solid)).toEqual([home[0] + 10, home[1] - 5, home[2] + 2])
+    expect(facing(solid)).toEqual([0, 0, 0, 1])
+  })
+
+  it('collapses the same way when no turn is passed at all', () => {
+    // THE ARGUMENT IS OPTIONAL AND ITS ABSENCE READS AS A TURN OF NOTHING —
+    // the function's own contract, not a claim about who calls it. Every
+    // caller in `ui/src` passes a turn today; this is what keeps the two
+    // spellings from meaning different things if one ever stops.
+    const { home, solid, vp } = turnable()
+    expect(movePart(vp, [PIN], [1, 2, 3])).toBe(true)
+
+    expect(at(solid)).toEqual([home[0] + 1, home[1] + 2, home[2] + 3])
+    expect(facing(solid)).toEqual([0, 0, 0, 1])
+  })
+
+  it('turns the part about its own centre, so the centre does not move', () => {
+    // THE PIVOT, ASKED AS THE ONE THING IT MEANS. Whatever the angles, the point
+    // the part is turned about has to end up where the OFFSET alone would have
+    // left it — anything else is the part swinging about some other origin, and
+    // the further that origin is from the part the further it is flung.
+    const { home, solid, vp, centre } = turnable()
+    const turn = [0, 0, 90]
+
+    expect(movePart(vp, [PIN], [0, 0, 0], turn)).toBe(true)
+
+    // THE GROUP ITSELF DID HAVE TO MOVE, and that is the half a quaternion on
+    // its own would have missed: the part is not at the group's origin, so
+    // holding it still takes a position as well as a rotation.
+    expect(at(solid)).not.toEqual(home)
+    // The centre in the coordinates the GROUP holds it in: it stood at `home`
+    // when the centre was read, so the local coordinate is `centre - home`.
+    const inGroup = centre.map((value, axis) => value - home[axis])
+    for (const [axis, value] of lands(solid, turn, inGroup).entries()) {
+      expect(value, `axis ${axis}`).toBeCloseTo(centre[axis], 9)
+    }
+  })
+
+  it('means by three degrees what the kernel means by a body\'s rot', () => {
+    // THE OFFSET AND THE TURN TOGETHER, AND THE EULER ORDER WITH THEM — one
+    // equation, because it is one line of arithmetic.
+    //
+    // jscad builds `Rz · Ry · Rx` for a body's `rot` (`mat4.
+    // fromTaitBryanRotation`, reached through `placed` in proposalgeom.js), so
+    // the viewport's quaternion has to be `qz ⊗ qy ⊗ qx`. What is compared here
+    // is exactly that: the position under test is computed with the VIEWPORT's
+    // quaternion, `lands` turns the centre with the KERNEL's, and the two only
+    // add up to `centre + delta` if the two rotations are the same one. An
+    // order read any other way turns a proposal body one way and the part
+    // beside it another, on the same three numbers, with nothing on screen
+    // saying which of them the agent will read.
+    //
+    // THREE ANGLES THAT ARE ALL DIFFERENT AND NONE OF THEM RIGHT-ANGLED, so
+    // that no two orders of them agree by symmetry.
+    const { home, solid, vp, centre } = turnable()
+    const turn = [15, -30, 45]
+    const delta = [10, -5, 2]
+
+    expect(movePart(vp, [PIN], delta, turn)).toBe(true)
+
+    const inGroup = centre.map((value, axis) => value - home[axis])
+    for (const [axis, value] of lands(solid, turn, inGroup).entries()) {
+      expect(value, `axis ${axis}`).toBeCloseTo(centre[axis] + delta[axis], 9)
+    }
+  })
+
+  it('does not walk across the scene when it is turned again and again', () => {
+    // WHY THE CENTRE IS MEMOISED. `partCentre` reads the matrix the part is
+    // standing at RIGHT NOW, so a live read after the first turn answers about
+    // the turned part and the next turn is taken about that new point. Two
+    // quarter turns would then not be a half turn, and the part would wander.
+    const one = turnable()
+    movePart(one.vp, [PIN], [0, 0, 0], [0, 0, 90])
+    movePart(one.vp, [PIN], [0, 0, 0], [0, 0, 180])
+
+    const straight = turnable()
+    movePart(straight.vp, [PIN], [0, 0, 0], [0, 0, 180])
+
+    expect(at(one.solid)).toEqual(at(straight.solid))
+    expect(facing(one.solid)).toEqual(facing(straight.solid))
+  })
+
+  it('refuses to turn a part the scene can name no centre for', () => {
+    // A node of the tree is in `nestedGroup.groups` too and carries no
+    // tessellation, so it has no box and no centre. Turned about the only other
+    // point available — the group's own origin — it would swing away from
+    // everything around it. The whole gesture is refused instead.
+    const vp = fakeViewport(fakeViewer({
+      states: statesFor([PIN]), groups: { [PIN]: fakeGroup([1, 2, 3]) } }))
+
+    expect(movePart(vp, [PIN], [0, 0, 0], [0, 0, 90])).toBe(false)
+    expect(vp.moved.size).toBe(0)
+    // AND GOES ON DISPLACING IT, because at a turn of nothing the centre never
+    // enters the arithmetic: a group that could be dragged before this feature
+    // existed can still be dragged.
+    expect(movePart(vp, [PIN], [10, 0, 0])).toBe(true)
+  })
+
+  it('re-applies the turn with the offset after the scene is built again', () => {
+    const { vp, home, centre } = turnable()
+    const turn = [0, 90, 0]
+    movePart(vp, [PIN], [3, 0, 0], turn)
+
+    const solid = fakeShapeSolid(PIN, {
+      positions: BOX_POSITIONS, index: BOX_INDEX,
+      matrix: fakeMatrix({ position: home }),
+    })
+    solid.position.set(home[0], home[1], home[2])
+    vp.viewer = fakeViewer({ states: statesFor([PIN]), groups: { [PIN]: solid } })
+
+    restageMoves(vp)
+
+    expect(vp.moved.get(PIN)).toEqual({ delta: [3, 0, 0], turn })
+    const inGroup = centre.map((value, axis) => value - home[axis])
+    for (const [axis, value] of lands(solid, turn, inGroup).entries()) {
+      expect(value, `axis ${axis}`).toBeCloseTo(centre[axis] + [3, 0, 0][axis], 9)
+    }
+  })
+
+  it('takes the POSE off the scene in front of it after a re-stage', () => {
+    // THE SAME RULE THE HOMES CARRY, read off the orientation: the memo is about
+    // groups that `clear()` disposed, so it is forgotten and taken again rather
+    // than reused. Stated here with a part that comes back SEATED where it went
+    // away square — which a re-stage of one document does not do, and which is
+    // exactly why the rule belongs in the code rather than in the argument that
+    // it cannot happen. Kept instead, the reader's turn would be composed onto
+    // the pose of a scene that has gone.
+    const { vp, home } = turnable()
+    const turn = [0, 0, 90]
+    movePart(vp, [PIN], [0, 0, 0], turn)
+
+    const solid = fakeShapeSolid(PIN, {
+      positions: BOX_POSITIONS, index: BOX_INDEX,
+      matrix: fakeMatrix({ scale: [1, -1, -1], position: home }),
+    })
+    solid.position.set(home[0], home[1], home[2])
+    solid.quaternion.set(SEATED[0], SEATED[1], SEATED[2], SEATED[3])
+    vp.viewer = fakeViewer({ states: statesFor([PIN]), groups: { [PIN]: solid } })
+
+    restageMoves(vp)
+
+    expect(vp.partFacing.get(PIN)).toEqual(SEATED)
+    const corner = [2, 6, 1]
+    const spun = jscadTurn(turn, jscadTurn(SEATED_DEG, corner))
+    for (const [axis, value] of turned(facing(solid), corner).entries()) {
+      expect(value, `axis ${axis}`).toBeCloseTo(spun[axis], 12)
+    }
+  })
+
+  it('puts the turn back with the offset when the document stops claiming it', () => {
+    // ONE STATEMENT AND NOT TWO: the node carried both, and deleting it is the
+    // only way either comes off. Back to the pose the build gave the part,
+    // which for this square stand is the identity — the seated stand below asks
+    // the same question where the two answers differ.
+    const { home, solid, vp } = turnable()
+    movePart(vp, [PIN], [10, 0, 0], [0, 0, 90])
+
+    reconcileMoves(vp, [])
+
+    expect(at(solid)).toEqual(home)
+    expect(facing(solid)).toEqual([0, 0, 0, 1])
+    expect(vp.moved.size).toBe(0)
+  })
+
+  it('applies a move whose TURN changed under an offset that did not', () => {
+    // `standing` asks about both halves. On the delta alone this entry would
+    // read as already standing, and the scene would keep the turn the reader has
+    // just typed over — with the document saying otherwise and nothing left to
+    // notice it.
+    const { solid, vp } = turnable()
+    movePart(vp, [PIN], [3, 0, 0], [0, 0, 90])
+    const drawn = vp.viewer.update.mock.calls.length
+
+    reconcileMoves(vp, [{ paths: [PIN], delta: [3, 0, 0], turn: [0, 0, 45] }])
+
+    expect(vp.moved.get(PIN)).toEqual({ delta: [3, 0, 0], turn: [0, 0, 45] })
+    expect(facing(solid)[2]).toBeCloseTo(Math.sin((45 / 2) * (Math.PI / 180)), 12)
+    expect(vp.viewer.update.mock.calls.length).toBeGreaterThan(drawn)
+  })
+
+  // -- the part its view seated, which is where the orientation is at stake ----
+
+  it('leaves the pose the BUILD gave the part alone on a plain drag', () => {
+    // THE REGRESSION THIS BLOCK EXISTS FOR. A displacement asks for no rotation
+    // at all, so `quaternionOf` hands back the identity — and a `quaternion.set`
+    // of that identity is not "no change", it is the part flipped out of the
+    // pose its own view seated it in, under the reader's hand, on the gesture
+    // that worked before any of this existed. The group's quaternion is the only
+    // copy of `loc[1]` there is.
+    const { home, solid, vp } = seated()
+
+    expect(movePart(vp, [PIN], [10, -5, 2])).toBe(true)
+
+    expect(at(solid)).toEqual([home[0] + 10, home[1] - 5, home[2] + 2])
+    expect(facing(solid)).toEqual(SEATED)
+  })
+
+  it('composes the reader\'s turn onto that pose, still about the centre', () => {
+    // `q ⊗ R` AND NOT `q`. The reader asked for a quarter turn of a part that is
+    // already standing on its head; what they must get is a lid still on its
+    // head and now turned a quarter, about its own centre — so the centre lands
+    // where the offset alone would have left it, exactly as for a square part.
+    const { solid, vp, centre } = seated()
+    const turn = [0, 0, 90]
+    const delta = [10, -5, 2]
+
+    expect(movePart(vp, [PIN], delta, turn)).toBe(true)
+
+    for (const [axis, value] of landsSeated(solid, turn, BOX_CENTRE).entries()) {
+      expect(value, `axis ${axis}`).toBeCloseTo(centre[axis] + delta[axis], 9)
+    }
+    // AND THE COMPOSITION ITSELF, IN THE ORDER IT IS COMPOSED IN — which the
+    // line above cannot see, because the POSITION is the same either way round:
+    // `C - q·(C - home)` never mentions the pose. What tells `q ⊗ R` from
+    // `R ⊗ q` is where the group's own quaternion sends a point, so that is what
+    // is asked. A corner rather than the centre, since the centre is the one
+    // point both orders agree on.
+    //
+    // THE TWO REALLY DO DIFFER HERE: a quarter turn about z after a half turn
+    // about x is a half turn about the diagonal (1, 1, 0), and the other way
+    // round it is a half turn about (1, -1, 0). A pose and a turn that commuted
+    // would make this test say nothing.
+    const corner = [2, 6, 1]
+    const spun = jscadTurn(turn, jscadTurn(SEATED_DEG, corner))
+    for (const [axis, value] of turned(facing(solid), corner).entries()) {
+      expect(value, `axis ${axis}`).toBeCloseTo(spun[axis], 12)
+    }
+    expect(facing(solid)).not.toEqual(quaternionOf(turn))
+  })
+
+  it('puts the part back into its view\'s pose, not into the identity', () => {
+    // "PUT IT BACK" IS BACK TO WHAT THE BUILD SAYS, and for the orientation that
+    // is `loc[1]` and not the identity. Straightened here, a seated lid would
+    // stand flipped with the document claiming nothing at all about it and only
+    // a rebuild to put it right.
+    const { home, solid, vp } = seated()
+    movePart(vp, [PIN], [10, 0, 0], [0, 0, 90])
+
+    reconcileMoves(vp, [])
+
+    expect(at(solid)).toEqual(home)
+    expect(facing(solid)).toEqual(SEATED)
+    expect(vp.moved.size).toBe(0)
+  })
+
+  it('writes nothing for a move already standing at that offset AND turn', () => {
+    const { solid, vp } = turnable()
+    movePart(vp, [PIN], [3, 0, 0], [0, 0, 90])
+    const drawn = vp.viewer.update.mock.calls.length
+    const stood = at(solid)
+
+    reconcileMoves(vp, [{ paths: [PIN], delta: [3, 0, 0], turn: [0, 0, 90] }])
+
+    expect(vp.viewer.update).toHaveBeenCalledTimes(drawn)
+    expect(at(solid)).toEqual(stood)
   })
 })

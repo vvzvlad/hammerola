@@ -272,11 +272,19 @@ export function fakeViewer({
   return viewer
 }
 
-/** A group as `nestedGroup.groups[path]` holds one: a position and a toggle.
+/** A group as `nestedGroup.groups[path]` holds one: a placement and a toggle.
  *
  *  `setTransparent` is `ObjectGroup.setTransparent` in its effect: the FACE
  *  materials go to `opacity * alpha` when on and back to `alpha` when off —
- *  the value the ghost pass reads back off `front.material`. */
+ *  the value the ghost pass reads back off `front.material`.
+ *
+ *  THE QUATERNION IS THERE BECAUSE EVERY ObjectGroup IS AN Object3D and carries
+ *  one — and because the library writes a leaf's `loc[1]` onto it (`renderLoop`:
+ *  `mesh.quaternion.set(...shape.loc[1])`), so it is where a part's SEATED POSE
+ *  lives. It starts at the identity here, which is a part its view did not turn;
+ *  `parts.test.js` builds the seated case by writing one. No geometry, though,
+ *  so `partCentre` says nothing about one of these — which is the state a TURN
+ *  is refused in, and `fakeShapeSolid` is the fake that can be turned. */
 export function fakeGroup(position = [0, 0, 0]) {
   const group = {
     opacity: 1,
@@ -286,6 +294,10 @@ export function fakeGroup(position = [0, 0, 0]) {
     position: {
       x: position[0], y: position[1], z: position[2],
       set(x, y, z) { this.x = x; this.y = y; this.z = z },
+    },
+    quaternion: {
+      x: 0, y: 0, z: 0, w: 1,
+      set(x, y, z, w) { this.x = x; this.y = y; this.z = z; this.w = w },
     },
     setTransparent: vi.fn((on) => {
       group.transparent = on
@@ -622,13 +634,17 @@ export function fakeShapeSolid(name, { positions, index, matrix, edges = true } 
     front,
     edges: edges ? fakeEdges() : null,
     // The ObjectGroup fields the part passes drive (`applyGhost`), plus the
-    // `position` object `movePart` writes the move through.
+    // `position` and `quaternion` objects `movePart` writes the move through.
     opacity: 1,
     alpha: 1,
     transparent: false,
     position: {
       x: 0, y: 0, z: 0,
       set(x, y, z) { this.x = x; this.y = y; this.z = z },
+    },
+    quaternion: {
+      x: 0, y: 0, z: 0, w: 1,
+      set(x, y, z, w) { this.x = x; this.y = y; this.z = z; this.w = w },
     },
     // `ObjectGroup.setTransparent` in its effect: the FACE materials go to
     // `opacity * alpha` when on and back to `alpha` when off — the value the
@@ -657,6 +673,8 @@ export function fakeViewport(viewer, state = {}) {
     zoomAnchor: null,
     moved: new Map(),
     partHome: new Map(),
+    partPivot: new Map(),
+    partFacing: new Map(),
     overlay: { setPins: vi.fn(), refresh: vi.fn() },
   }
 }

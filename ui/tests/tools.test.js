@@ -593,6 +593,35 @@ describe('what a drag with the move tool takes with it', () => {
       .toEqual([0, 0, 0])
   })
 
+  it('carries the turn the part is already standing at through the drag', async () => {
+    // `movePart` writes the group's quaternion on EVERY call, the identity
+    // included — so a drag that said nothing about the turn would flatten a part
+    // the reader had turned in the panel, under their own hand, with the
+    // document still saying it is turned. The press reads the anchor's turn once
+    // and hands it back on every step.
+    //
+    // THE PIVOT IS SEEDED WITH WHAT THE SCENE WOULD HAVE ANSWERED, because these
+    // fakes carry no tessellation and a part whose centre cannot be read is one
+    // `movePart` refuses to turn at all (parts.test.js pins that refusal).
+    const { groups, vp } = moving(PINS)
+    for (const path of PINS) {
+      vp.moved.set(path, { delta: [0, 0, 0], turn: [0, 0, 90] })
+      vp.partPivot.set(path, [1, 3, 0])
+    }
+    pickEntity.mockReturnValue({ id: PINS[0], name: 'pin', point: [0, 0, 0] })
+
+    await dragAndDrop(vp)
+
+    expect(vp.moved.get(PINS[0]).turn).toEqual([0, 0, 90])
+    expect(groups[PINS[0]].quaternion.w)
+      .toBeCloseTo(Math.cos((45 * Math.PI) / 180), 12)
+    // AND THE REPORT SAYS NOTHING ABOUT THE TURN, because a drag is about where:
+    // the node the interface edits keeps the turn it was already carrying.
+    const [report] = details(vp, EVENT_MOVED)
+    expect(report.delta).not.toEqual([0, 0, 0])
+    expect(report.turn).toBeUndefined()
+  })
+
   it('reports every path that went, and how many they were', async () => {
     // `count` is what the NAME is written with — `pin ×2` and not `pin` — and
     // `paths` is what the interface records the displacement under. Both are
@@ -714,7 +743,7 @@ describe('what a drag with the move tool takes with it', () => {
     expect(report.delta).toEqual([0.6, 0, 0])
     // And the scene and the map carry that same one, which is the whole point of
     // rounding at the source rather than on the way out.
-    expect(vp.moved.get('/Group/pin')).toEqual([0.6, 0, 0])
+    expect(vp.moved.get('/Group/pin')).toEqual({ delta: [0.6, 0, 0], turn: [0, 0, 0] })
     expect(at(groups['/Group/pin'])).toEqual([0.6, 0, 0])
   })
 
@@ -856,7 +885,7 @@ describe('what a drag with the move tool takes with it', () => {
 
     pointerDown(vp, [100, 100])
     pointerMove([300, 100])
-    const landed = [...vp.moved.get(PINS[0])]
+    const landed = [...vp.moved.get(PINS[0]).delta]
     groups[PINS[1]].position.set = () => { throw new Error('gone') }
     pointerMove([500, 100])
     pointerUp([500, 100])
@@ -1231,7 +1260,7 @@ describe('what a drag with the move tool takes with it', () => {
       expect(moved.paths).toEqual(['/Group/lid'])
       expect(moved.count).toBe(1)
       expect(at(groups['/Group/lid'])).toEqual(moved.delta)
-      expect(vp.moved.get('/Group/lid')).toEqual(moved.delta)
+      expect(vp.moved.get('/Group/lid')).toEqual({ delta: moved.delta, turn: [0, 0, 0] })
       expect(emitted(vp)).not.toContain(EVENT_PROPOSALMOVE)
     })
   })

@@ -249,6 +249,114 @@ function home(vp, path, group) {
   return vp.partHome.get(path);
 }
 
+/**
+ * Which way a part's group FACED before anything turned it, remembered on first
+ * touch beside `partHome`.
+ *
+ * BECAUSE `loc` IS A PLACEMENT AND NOT AN OFFSET. A leaf's vertices are the
+ * part's OWN coordinates and its `loc` is where the view puts it
+ * (`src/cadbuild/preview_png.py` says so in as many words) — an offset in
+ * `loc[0]` and a ROTATION in `loc[1]` — and the library writes both onto this
+ * very group: `renderLoop` does `mesh.position.set(...shape.loc[0])` and
+ * `mesh.quaternion.set(...shape.loc[1])` on the ObjectGroup it then files under
+ * `groups[entry.id]`. A part seated by its view — `LID_SEATED` in
+ * `model_template/model.py` turns the lid a half turn about x before dropping it
+ * on the rim — therefore arrives here standing at a quaternion that is not the
+ * identity, and that quaternion is the only copy of it there is.
+ *
+ * SO THE READER'S TURN IS COMPOSED ONTO THIS AND NEVER WRITTEN OVER IT, and
+ * "put it back" restores it. Overwritten, a part with a seated pose would flip
+ * out of it on a drag that asked for no rotation at all.
+ */
+function facing(vp, path, group) {
+  if (!vp.partFacing.has(path)) {
+    vp.partFacing.set(path, [group.quaternion.x, group.quaternion.y,
+                             group.quaternion.z, group.quaternion.w]);
+  }
+  return vp.partFacing.get(path);
+}
+
+/** A turn of nothing — what a move with no `turn` on it is read as. */
+const NO_TURN = [0, 0, 0];
+
+const DEGREES = Math.PI / 180;
+
+/**
+ * Where a part's group was TURNED ABOUT before anything turned it: the world
+ * centre of its box, remembered on first touch beside `partHome`.
+ *
+ * MEMOISED FOR THE REASON THE HOME IS, and it is the one thing in here that
+ * cannot be read live. `partCentre` computes the centre off `front.matrixWorld`,
+ * which is the matrix the part is standing at right now — so read again after a
+ * turn it answers about the TURNED part, and the next turn would be taken about
+ * that new point. Two 90° steps would then not be one 180° step, and a part
+ * turned back and forth would walk away across the scene.
+ *
+ * NULL IS A REAL ANSWER and it is left as one. A node of the tree is in
+ * `nestedGroup.groups` too (`renderLoop` puts a `CompoundGroup` there) and it
+ * carries no tessellation, so it has no box and no centre; `movePart` refuses to
+ * TURN such a thing and goes on displacing it exactly as it always has.
+ */
+function pivot(vp, path) {
+  if (!vp.partPivot.has(path)) vp.partPivot.set(path, partCentre(vp.viewer, path));
+  return vp.partPivot.get(path);
+}
+
+/**
+ * Three Euler angles in DEGREES as one quaternion, `[x, y, z, w]`.
+ *
+ * THE ORDER IS THE ONE A BODY'S `rot` MEANS, because the two halves of the
+ * document have to mean the same thing by the same three numbers. A body is
+ * turned by jscad (`placed` in proposalgeom.js → `transforms.rotate` →
+ * `mat4.fromTaitBryanRotation`), which builds `Rz · Ry · Rx` — the three angles
+ * applied about the FIXED axes in the order x, then y, then z, which is the same
+ * rotation as the intrinsic z-y-x an aircraft's yaw-pitch-roll is named for. So
+ * the quaternion is `qz ⊗ qy ⊗ qx`, in that order.
+ *
+ * BY HAND, because three.js is not a dependency of this bundle — the same reason
+ * `partCentre` multiplies out `matrixWorld.elements` for itself.
+ */
+export function quaternionOf(turn) {
+  const half = turn.map((angle) => (angle * DEGREES) / 2);
+  const [cx, cy, cz] = half.map(Math.cos);
+  const [sx, sy, sz] = half.map(Math.sin);
+  return [
+    sx * cy * cz - cx * sy * sz,
+    cx * sy * cz + sx * cy * sz,
+    cx * cy * sz - sx * sy * cz,
+    cx * cy * cz + sx * sy * sz,
+  ];
+}
+
+/** `a` applied AFTER `b`: the Hamilton product `a ⊗ b`, in `[x, y, z, w]`. */
+function after(a, b) {
+  const [ax, ay, az, aw] = a;
+  const [bx, by, bz, bw] = b;
+  return [
+    aw * bx + ax * bw + ay * bz - az * by,
+    aw * by - ax * bz + ay * bw + az * bx,
+    aw * bz + ax * by - ay * bx + az * bw,
+    aw * bw - ax * bx - ay * by - az * bz,
+  ];
+}
+
+/** The vector `v` turned by `q` — `v + 2q_w(q_v × v) + 2q_v × (q_v × v)`.
+ *
+ *  EXPORTED FOR THE SAME REASON `quaternionOf` IS: it is the pair of primitives
+ *  the turn is built out of, and the composed quaternion this file writes onto a
+ *  group can only be checked by asking where it sends a point. */
+export function turned(q, v) {
+  const [qx, qy, qz, qw] = q;
+  const tx = 2 * (qy * v[2] - qz * v[1]);
+  const ty = 2 * (qz * v[0] - qx * v[2]);
+  const tz = 2 * (qx * v[1] - qy * v[0]);
+  return [
+    v[0] + qw * tx + qy * tz - qz * ty,
+    v[1] + qw * ty + qz * tx - qx * tz,
+    v[2] + qw * tz + qx * ty - qy * tx,
+  ];
+}
+
 /** The group of one part, if it can be moved at all. */
 export function movableGroup(viewer, path) {
   const g = internals(viewer);
@@ -360,16 +468,56 @@ function redrawCut(vp) {
 }
 
 /**
- * Offset a part from where the build put it. `delta` is world units.
+ * Offset a part from where the build put it and turn it where it stands.
+ * `delta` is world units, `turn` is three degrees (`quaternionOf`).
  *
  * NOT a change to the model, and the interface has to say so (ui-brief block 6):
  * nothing is written anywhere, the next rebuild puts the part back, and the
  * offset travels to the agent as part of a sentence rather than as a result.
  *
- * SEVERAL PATHS, ONE DELTA: a row that collapsed five copies of one part
- * (hub.indexTree) moves as one thing, so every instance takes the same offset
- * from its OWN home — which is why `home` is remembered per path and not per
- * row.
+ * THE PART TURNS ABOUT ITS OWN CENTRE, and that is what takes BOTH of the
+ * group's placement fields rather than the quaternion alone. A leaf's vertices
+ * are the part's OWN coordinates and its `loc` is where the view puts it, so the
+ * group carries the whole placement: an offset in `position` (`home`) and the
+ * build's own pose in `quaternion` (`facing`, which says where both come from).
+ * The group's origin is therefore not the part's centre — `quaternion` on its
+ * own would swing it about a point somewhere else entirely and throw it across
+ * the scene.
+ *
+ * With `home` the group's position, `R` the pose the build gave it, `C` the
+ * part's world centre and `q` the turn asked for: a vertex `v` in the part's own
+ * coordinates lands at `position + Q·v` for whatever `Q` the group faces at, and
+ * unturned it lands at `home + R·v`. Turning the part about `C` has to send that
+ * world point to `C + q·(home + R·v - C)` = `(C - q·(C - home)) + (q⊗R)·v`.
+ * Matching the two:
+ *
+ *     position = C - q·(C - home) + delta
+ *     quaternion = q ⊗ R
+ *
+ * ONLY THE ORIENTATION IS COMPOSED; THE POSITION LINE IS THE SAME LINE. `C` is
+ * the world centre — read off `matrixWorld`, so the build's pose is already in
+ * it — and `C - home` is the vector from the group's origin to it in WORLD
+ * terms, which is `R·c_local`. So `C - q·(C - home)` is identically
+ * `C - (q⊗R)·c_local`: the pose enters the position through `C` and needs no
+ * second mention.
+ *
+ * AT A TURN OF NOTHING BOTH COLLAPSE — `q` is the identity, `q·(C - home)` is
+ * `C - home`, the position falls back to `home + delta`, and `q ⊗ R` is `R`, the
+ * pose the build gave the part. That is exactly what this function did before it
+ * could turn anything, which is the point: a drag that asks for no rotation must
+ * not straighten a lid its view seated upside down. One path and not two, so the
+ * displacement everything else depends on cannot drift away from the turn's
+ * arithmetic; `parts.test.js` pins both halves of the collapse.
+ *
+ * A PART WHOSE CENTRE THE SCENE CANNOT GIVE IS NOT TURNED AT ALL, and the whole
+ * gesture is refused rather than taken about some other point — see `pivot`,
+ * whose null is a tree node with no tessellation under it. Displacing one goes
+ * on working, because at a turn of nothing the centre never enters the line.
+ *
+ * SEVERAL PATHS, ONE DELTA AND ONE TURN: a row that collapsed five copies of one
+ * part (hub.indexTree) moves as one thing, so every instance takes the same
+ * offset from its OWN home and the same turn about its OWN centre — which is why
+ * both memos are per path and not per row.
  *
  * ALL OR NOTHING, AS FAR AS THE PRE-CHECK REACHES. One path that cannot be
  * moved refuses the whole gesture before anything has moved, because half a row
@@ -386,17 +534,38 @@ function redrawCut(vp) {
  * one the document does not claim, from `partHome`, and that recovery is what
  * this leans on instead.
  */
-export function movePart(vp, paths, delta) {
+export function movePart(vp, paths, delta, turn) {
   const list = Array.isArray(paths) ? paths : [];
-  if (!list.length || !finite3(delta)) return false;
+  const spin = Array.isArray(turn) ? turn : NO_TURN;
+  if (!list.length || !finite3(delta) || !finite3(spin)) return false;
   const groups = list.map((path) => movableGroup(vp.viewer, path));
   if (groups.some((group) => !group)) return false;
+  // BEFORE ANYTHING MOVES, for the reason `pivot` memoises at all: the centre is
+  // read off the matrix the part is standing at, and by the second path of a row
+  // the first one has already been written.
+  const centres = list.map((path) => pivot(vp, path));
+  const q = quaternionOf(spin);
+  if (spin.some((angle) => angle !== 0) && centres.some((centre) => !centre)) {
+    return false;
+  }
   try {
     list.forEach((path, at) => {
       const base = home(vp, path, groups[at]);
+      const pose = facing(vp, path, groups[at]);
+      // `base` where the scene can name no centre, which the refusal above has
+      // already narrowed to a turn of nothing — and at a turn of nothing the
+      // pivot cancels out of the line below whatever it is.
+      const centre = centres[at] || base;
+      const back = turned(q, [
+        centre[0] - base[0], centre[1] - base[1], centre[2] - base[2],
+      ]);
+      const faced = after(q, pose);
       groups[at].position.set(
-        base[0] + delta[0], base[1] + delta[1], base[2] + delta[2]);
-      vp.moved.set(path, delta);
+        centre[0] - back[0] + delta[0],
+        centre[1] - back[1] + delta[1],
+        centre[2] - back[2] + delta[2]);
+      groups[at].quaternion.set(faced[0], faced[1], faced[2], faced[3]);
+      vp.moved.set(path, { delta, turn: spin });
     });
     vp.viewer.update(true, false);
   } catch (error) {
@@ -486,15 +655,24 @@ export function restageMoves(vp) {
   const offsets = [...vp.moved.entries()];
   vp.moved.clear();
   vp.partHome.clear();
-  // ONE CALL PER PATH, because one delta belongs to one path: a row standing for
+  // THE CENTRES AND THE POSES GO WITH THE HOMES, and for the same reason: all
+  // three were read off groups that no longer exist, and they were read on those
+  // groups AS THEY STOOD — displaced and turned. Kept, the first re-applied turn
+  // would be taken about the centre of a part that was already turned, and
+  // composed onto a pose that already had the reader's turn in it.
+  vp.partPivot.clear();
+  vp.partFacing.clear();
+  // ONE CALL PER PATH, because one offset belongs to one path: a row standing for
   // five copies of a part moved all five by the same offset, and every one of
   // them is its own entry in this map.
-  for (const [path, delta] of offsets) movePart(vp, [path], delta);
+  for (const [path, stood] of offsets) {
+    movePart(vp, [path], stood.delta, stood.turn);
+  }
 }
 
 /**
  * Make the scene's offsets say what the DOCUMENT says: `wanted` is the whole of
- * it, as `{paths, delta}` entries.
+ * it, as `{paths, delta, turn}` entries.
  *
  * THE DOCUMENT IS THE SOURCE OF TRUTH and this is the one function that acts on
  * that. A drag is recorded as a node of the proposal (ui/src/proposal.js), the
@@ -529,9 +707,15 @@ export function reconcileMoves(vp, wanted) {
   const list = Array.isArray(wanted) ? wanted : [];
   const keep = new Set();
   for (const move of list) for (const path of move.paths) keep.add(path);
-  const standing = (path, delta) => {
+  const spin = (move) => (Array.isArray(move.turn) ? move.turn : NO_TURN);
+  // BOTH HALVES OR IT IS NOT STANDING. A part already at this offset but turned
+  // some other way is a part this list does not describe yet, and skipping it on
+  // the delta alone would leave the scene disagreeing with the document with
+  // nothing left to notice it.
+  const standing = (path, delta, turn) => {
     const now = vp.moved.get(path);
-    return !!now && delta.every((value, axis) => value === now[axis]);
+    return !!now && delta.every((value, axis) => value === now.delta[axis])
+      && turn.every((angle, axis) => angle === now.turn[axis]);
   };
 
   let home = false;
@@ -539,6 +723,11 @@ export function reconcileMoves(vp, wanted) {
     if (keep.has(path)) continue;
     const group = movableGroup(vp.viewer, path);
     const base = vp.partHome.get(path);
+    // READ AS A PAIR because they are WRITTEN as a pair: one line of `movePart`
+    // remembers where the group stood and which way it faced, and one line of
+    // `restageMoves` forgets both. A path with one and not the other is not a
+    // state this file can reach.
+    const pose = vp.partFacing.get(path);
     // OFF THE MAP BEFORE THE ATTEMPT, so it goes whether or not the attempt
     // gets anywhere — a path the scene no longer has, and a `position.set` that
     // throws, leave it recorded just the same. What that would cost is a map
@@ -546,9 +735,19 @@ export function reconcileMoves(vp, wanted) {
     // the view laid out, and every later reconcile tries the same failing write
     // again.
     vp.moved.delete(path);
-    if (!group || !base) continue;
+    if (!group || !base || !pose) continue;
     try {
       group.position.set(base[0], base[1], base[2]);
+      // AND THE TURN COMES OFF WITH THE OFFSET, because "put it back" is one
+      // thing and not two: the node that said both was deleted, and it said
+      // both.
+      //
+      // BACK TO THE POSE THE BUILD GAVE IT AND NOT TO THE IDENTITY. The group's
+      // quaternion is where a view's `loc[1]` lives — a lid its view seats
+      // upside down stands at a half turn before anybody touches it — so the
+      // identity here would leave that part flipped out of its seated pose, with
+      // the document claiming nothing at all and only a rebuild to fix it.
+      group.quaternion.set(pose[0], pose[1], pose[2], pose[3]);
       home = true;
     } catch (error) {
       console.warn("move reset", error);
@@ -556,12 +755,13 @@ export function reconcileMoves(vp, wanted) {
   }
   if (home && vp.viewer) vp.viewer.update(true, false);
 
-  // ONE CALL PER ENTRY, because one delta belongs to one gesture: a row standing
+  // ONE CALL PER ENTRY, because one offset belongs to one gesture: a row standing
   // for five copies of a part moved all five by the same offset, and `movePart`
   // takes exactly that shape — every path from its own home.
   for (const move of list) {
-    if (move.paths.every((path) => standing(path, move.delta))) continue;
-    movePart(vp, move.paths, move.delta);
+    const turn = spin(move);
+    if (move.paths.every((path) => standing(path, move.delta, turn))) continue;
+    movePart(vp, move.paths, move.delta, turn);
   }
 
   // The contours the parts that went home carried off the plane with them.

@@ -412,8 +412,12 @@ export function installTools(vp) {
     // The world vector a screen displacement spans, exactly as the swipe pan
     // computes it: the difference of the two ends' offsets. Under ortho that is
     // depth-free, so a part slides in the plane of the screen and never towards
-    // or away from the reader — which is what "show me where" means with a mouse
-    // and is the reason no gizmo is needed for it.
+    // or away from the reader — which is what "show me where" means with a mouse.
+    //
+    // THE TURN IS NOT IN THIS GESTURE. A move node carries one now (`turn` in
+    // ui/src/proposal.js), and it is typed into the row's own fields in the panel
+    // rather than dragged: the hand does one thing here, and the turn the part is
+    // already standing at is carried along untouched (`press.move.turn` below).
     const from = ndcOffset(g, b.eye, b.view, d.ndc[0], d.ndc[1]);
     const to = ndcOffset(g, b.eye, b.view, ndc[0], ndc[1]);
     if (!from || !to) return;
@@ -468,7 +472,7 @@ export function installTools(vp) {
     // it walks `vp.moved` and writes every path the document's offset is not
     // already standing at. Reporting per step made the distinction for free: a
     // failed step simply emitted nothing.
-    if (movePart(vp, d.paths, delta)) d.stood = delta;
+    if (movePart(vp, d.paths, delta, d.turn)) d.stood = delta;
   };
 
   function onMove(event) {
@@ -771,10 +775,34 @@ export function installTools(vp) {
       // new build's key, match on arrival, and file paths read off the assembly
       // that was still on screen. `show()` writes `drawnKey` beside the payload,
       // which is the line that means the new scene is really up.
-      const base = vp.moved.get(anchor) || [0, 0, 0];
+      //
+      // `turn` IS CARRIED AND NEVER CHANGED BY THIS GESTURE, and it is the
+      // anchor's for the same reason `base` is: one call of `movePart` writes one
+      // turn onto every path it holds, so a drag that left it out would flatten a
+      // part the reader had turned the moment they slid it (`movePart` writes the
+      // group's quaternion on every call). The panel's fields are where it moves.
+      //
+      // WHICH MAKES THE PICTURE DURING THE DRAG THE ANCHOR'S AND THE ANSWER THE
+      // DOCUMENT'S, and the two can disagree for the length of one gesture.
+      // Grab copies that are turned differently and they all stand at the
+      // anchor's turn while the hand is down; on release the interface merges
+      // them into one node, finds no turn they agree on, and they straighten
+      // (`hmr:moved` in HammerolaViewer.jsx). The end state is the document's
+      // and it is right; what is in between is a preview, and this is the only
+      // place that says so.
+      //
+      // `already` AND NOT `stood`, which is taken: `press.move.stood` a few
+      // lines down is the last delta this GESTURE landed, and two different
+      // things under one name in ten lines is how the wrong one gets read.
+      const already = vp.moved.get(anchor);
+      const base = already ? already.delta : [0, 0, 0];
       press.move = {
         paths: wanted, ndc, base, last: base, stood: base,
-        bases: wanted.map((path) => vp.moved.get(path) || [0, 0, 0]),
+        turn: already ? already.turn : [0, 0, 0],
+        bases: wanted.map((path) => {
+          const held = vp.moved.get(path);
+          return held ? held.delta : [0, 0, 0];
+        }),
         build: vp.drawnKey,
         body: proposal ? vp.overlayBody(anchor) : null,
         homes: proposal ? wanted.map((path) => groupHome(viewer, path)) : null,

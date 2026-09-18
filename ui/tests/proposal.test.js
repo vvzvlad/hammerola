@@ -39,13 +39,21 @@ const KREPEZH = {
 // part is already in the model and nothing here draws it. `paths` is the scene's
 // own, `name` is the row as it read at the moment of the drag, and the second
 // one carries a counted name because that is what a row of copies reads as.
+//
+// `turn` IS ON BOTH OF THEM AT NOTHING, because that is the state a dragged part
+// is recorded in: the hand says where, and the turn is typed afterwards. The one
+// that was turned is `TURNED_MOVE` below.
 const MOVE = {
   id: 'm4', role: 'move', paths: ['/model/plate'], name: 'plate',
-  delta: [3.2, 0, -1],
+  delta: [3.2, 0, -1], turn: [0, 0, 0],
 }
 const OTHER_MOVE = {
-  id: 'm5', role: 'move', name: 'pin ×3', delta: [0, 0, 5],
+  id: 'm5', role: 'move', name: 'pin ×3', delta: [0, 0, 5], turn: [0, 0, 0],
   paths: ['/model/pin', '/model/pin(2)', '/model/pin(3)'],
+}
+const TURNED_MOVE = {
+  id: 'm6', role: 'move', paths: ['/model/bracket'], name: 'bracket',
+  delta: [0, 0, 12], turn: [0, 0, 90],
 }
 
 /** The document the text projection is pinned against: three bodies, a hole, a rotation. */
@@ -278,6 +286,29 @@ describe('proposalText', () => {
       '',
       'result = union(solid) - union(hole)',
     ].join('\n'))
+  })
+
+  it('prints the turn beside the offset, on the moves that have one', () => {
+    // THE SAME THREE DEGREES A BODY'S `rot (…)` PRINTS, in the sentence about a
+    // part the build already has — and the padding is measured among the moves
+    // alone, so the turned one does not push the others' `by (…)` about.
+    expect(proposalText(addNode(just(MOVE), TURNED_MOVE))).toBe([
+      'units: mm',
+      '',
+      'move "plate"   by (3.2, 0, -1)',
+      'move "bracket" by (0, 0, 12)   turned (0, 0, 90)',
+      '',
+      'result = union(solid) - union(hole)',
+    ].join('\n'))
+  })
+
+  it('leaves the cell off entirely where nothing was turned', () => {
+    // EXACTLY AS THE BODY TABLE DROPS `rot (…)`: a part somebody only slid
+    // across the scene should not read as one they decided not to turn, and the
+    // padding that would have lined the cell up goes with it.
+    const text = proposalText(addNode(just(VAL), MOVE))
+    expect(text).toContain('move "plate" by (3.2, 0, -1)')
+    expect(text).not.toContain('turned')
   })
 
   it('leaves the bodies\' own columns exactly as they were', () => {

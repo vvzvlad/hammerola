@@ -264,6 +264,13 @@ export class HmrViewport extends HTMLElement {
     this.measureLabel = null;
     this.moved = new Map();
     this.partHome = new Map();
+    // WHERE A PART IS TURNED ABOUT, AND WHICH WAY IT FACED BEFORE ANYBODY
+    // TURNED IT — beside where it goes back to and cleared wherever that is.
+    // All three are read off the scene before anything moved the part, and all
+    // three are lies the moment the groups they were read off are gone (`pivot`
+    // and `facing` in parts.js).
+    this.partPivot = new Map();
+    this.partFacing = new Map();
     // THE IDS OF THE POINTERS CURRENTLY DOWN ON THE CANVAS, and not a flag: two
     // fingers on the glass are two presses, and one bit meant the first release
     // answered for the second — see `installIdleClock`, which is the only thing
@@ -710,6 +717,8 @@ export class HmrViewport extends HTMLElement {
         this.measureLabel = null;
         this.moved.clear();
         this.partHome.clear();
+        this.partPivot.clear();
+        this.partFacing.clear();
       }
 
       if (!this.viewer) {
@@ -941,7 +950,8 @@ export class HmrViewport extends HTMLElement {
 
   /**
    * Which parts of the BUILD stand displaced, as the whole list of them:
-   * `{paths, delta}` per entry, in world units.
+   * `{paths, delta, turn}` per entry — world units, and three degrees about the
+   * part's own centre.
    *
    * THE SECOND HALF OF THE PROPOSAL, and the counterpart of `setOverlay` above:
    * that one lays bodies the reader DREW over the model, this one shifts parts

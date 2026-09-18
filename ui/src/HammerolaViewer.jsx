@@ -1373,7 +1373,16 @@ export default class HammerolaViewer extends React.Component {
         // says that by losing the node, not by carrying a `move "plate" by
         // (0, 0, 0)` line into the projection for an agent to puzzle over and a
         // row into the panel to be closed by a second gesture.
-        const home = delta.every((value) => value === 0);
+        //
+        // OF THE DISPLACEMENT AND OF NOTHING ELSE, which is why this is only
+        // half the question and the other half is asked inside the updater. A
+        // TRANSLATION GESTURE EDITS THE TRANSLATION: the hand was on the part's
+        // position, so "put it back where it was" is an answer about where, and
+        // a node that also says which way the part faces is not a node this
+        // gesture has retracted. Dropped anyway, it would take a rotation the
+        // reader set in the panel and never mentioned — an answer to a question
+        // they did not ask, and one nothing on screen would explain.
+        const flat = delta.every((value) => value === 0);
         // ONE NODE PER PART, REPLACED AND NEVER ADDED UP. The delta the
         // viewport reports is CUMULATIVE from where the build puts the part —
         // each press starts from the offset already standing (`vp.moved.get` in
@@ -1456,13 +1465,75 @@ export default class HammerolaViewer extends React.Component {
           // panel's row (`proposalMoveRows` keys on the id) and walk the line
           // to the bottom of the projection, both of which describe a sentence
           // being replaced rather than corrected.
+          //
+          // AND THE TURN THAT NODE ALREADY CARRIES SURVIVES THE EDIT, because
+          // this patch does not name it: a drag says where the part should be
+          // and says nothing whatever about which way it should face.
+          //
+          // A MINTED NODE TAKES THE TURN THE NODES IT TOUCHED AGREE ON. A drag
+          // says where a part should be and says nothing whatever about which
+          // way it should face, so no gesture of translation may straighten
+          // anything — and there are two ways it would. Minting at zero after
+          // SUPERSEDING several nodes straightens every copy at once, and the
+          // commonest way to have several nodes is to have turned those copies
+          // together. Minting at zero for a copy dragged OUT of a turned row
+          // straightens that one: nothing is superseded there, the old node
+          // still stands and still claims the copies left behind, so reading
+          // only the covered ones would find no turn to carry and flatten the
+          // very part the reader is holding.
+          //
+          // `touching` AND NOT `covered` is what closes the second: it is every
+          // node this gesture's paths meet, whole or in part. Where they
+          // genuinely disagree there is no single answer and zero is the honest
+          // one; where there were no nodes at all it is the only one, since
+          // nobody has turned this part yet.
+          //
+          // A PARTLY COVERED NODE KEEPS ITS OWN as well, and needs nothing here
+          // to say so: `trimmed` patches its paths and its name, and this
+          // gesture said nothing about the copies it did not take. So a copy
+          // taken out of a turned row and the copies left behind come out of it
+          // facing the same way, which is the whole point.
+          //
+          // AND THE OTHER FACE OF IT, ACCEPTED RATHER THAN FIXED: a merge can
+          // TURN a copy nobody turned. Drag a turned part and an untouched one
+          // as one row and both come out at the turn, because ONE NODE KEEPS
+          // ONE TURN FOR ALL ITS PATHS and has nowhere to keep the difference —
+          // the same property that makes `pin ×5` one row and one sentence.
+          // Splitting the node per path is the model this document does not
+          // have, and the alternative inside this one is zero, which straightens
+          // the part the reader turned. Between spreading a turn onto a copy
+          // that had none and undoing one the reader set by hand, the rule that
+          // decides is the one a drag has to obey: it cannot straighten
+          // anything.
+          const turns = touching.map((node) => node.turn);
+          const agreed = turns.length > 0 && turns.every(
+            (turn) => turn.every((angle, axis) => angle === turns[0][axis]));
+          const shared = agreed ? turns[0] : [0, 0, 0];
+          // A RETRACTION IS A DRAG HOME OF SOMETHING THAT SAYS NOTHING ELSE.
+          // With a turn standing the node is kept and its delta simply becomes
+          // zero: the part is back where the build puts it, still turned, the
+          // row still says so, and the `×` is still how the whole statement is
+          // undone. That is the single-covered branch below doing what it
+          // always did — the delta on the sentence changed, to nothing.
+          //
+          // ASKED OF `shared` AND NOT OF THE TURNS THEMSELVES, because `shared`
+          // is what the node would actually come out carrying. Ask the turns and
+          // a row whose copies were turned to DIFFERENT angles, dragged home,
+          // answers "something is turned here" and keeps a node — but the turns
+          // disagree, so that node is minted at zero and says nothing at all:
+          // `move "pin ×3" by (0, 0, 0)` in the projection, the very line the
+          // paragraph above refuses to write, and no panel opening to show the
+          // row it left behind (`opened` is off for a flat drag). The parts
+          // going home and straightening is the price of the disagreement and
+          // is already decided; a sentence about them is not.
+          const retract = flat && shared.every((angle) => angle === 0);
           let next = null;
-          if (home) next = without();
+          if (retract) next = without();
           else if (covered.length === 1) {
             next = updateNode(trimmed, covered[0].id, { paths, name, delta });
           } else {
             next = addNode(without(),
-                           { id, role: 'move', paths, name, delta });
+                           { id, role: 'move', paths, name, delta, turn: shared });
           }
           // THE PANEL COMES UP WITH THE MOVE, which is the one moment a reader
           // who had it shut is shown that a part is now standing somewhere the
@@ -1475,10 +1546,13 @@ export default class HammerolaViewer extends React.Component {
           // without this the displacement could be made without the panel ever
           // having been opened.
           //
-          // NOT FOR A RETRACTION, because there is nothing to show: a drag home
-          // takes a displacement AWAY, and a panel that jumps open to announce
-          // that would be answering "never mind" with a demand to look.
-          opened = !s.proposalOpen && !home;
+          // NOT FOR A DRAG HOME, because there is nothing to show: it takes a
+          // displacement AWAY, and a panel that jumps open to announce that
+          // would be answering "never mind" with a demand to look. `flat` and
+          // not `retract`, so that holds for a turned part too — the row it
+          // keeps is one the reader already had open to type the turn into, and
+          // the gesture left the part LESS out of place than it found it.
+          opened = !s.proposalOpen && !flat;
           return opened ? { proposal: next, proposalOpen: true }
                         : { proposal: next };
         }, () => {
@@ -3527,8 +3601,8 @@ export default class HammerolaViewer extends React.Component {
    * node DELETED, so a push has to be able to say what is no longer moved as
    * well as what is.
    *
-   * ONLY THE TWO FIELDS THE SCENE CAN ACT ON. The rest of a move node — its id,
-   * its role, the row name the projection prints — is the document's own
+   * ONLY THE THREE FIELDS THE SCENE CAN ACT ON. The rest of a move node — its
+   * id, its role, the row name the projection prints — is the document's own
    * business, and the viewport has no tree to check a name against anyway.
    */
   proposalMoves(doc) {
@@ -3536,7 +3610,7 @@ export default class HammerolaViewer extends React.Component {
     if (!el || typeof el.setMoves !== 'function') return;
     try {
       el.setMoves(moves(doc).map((node) => ({
-        paths: node.paths, delta: node.delta,
+        paths: node.paths, delta: node.delta, turn: node.turn,
       })));
     } catch (error) {
       console.error('proposal moves', error);
@@ -5135,6 +5209,73 @@ export default class HammerolaViewer extends React.Component {
               ? 'Drag the body — the proposal keeps it where you put it'
               : 'Drag a part — it snaps back on the next rebuild');
           }),
+          // TURN ARMS NOTHING, and that is the whole difference between this row
+          // and the one above it. A displacement has a gesture — the hand says
+          // "about here" better than a field does — and a turn has none: it is
+          // three numbers, and the place a part's three numbers are typed is its
+          // row in the panel. So this row's work is to MAKE THAT ROW EXIST for a
+          // part nothing has displaced yet, and then to open the panel it is in.
+          //
+          // GATED AS MOVE IS AND THEN ONCE MORE, and the extra gate is the one
+          // that matters. The four Move carries answer the same way here,
+          // because what this produces is the same node of the same document:
+          // no token, no phone, no group, no panel on this hub. The fifth is a
+          // BODY OF THE PROPOSAL, which Move is right to offer and this is not.
+          //
+          // A body is the reader's own drawing and it has a `rot°` row of its
+          // own, three fields further up the same panel, editing the document
+          // they are authoring. Move is offered on one because the DRAG is
+          // re-routed at the press — the viewport tells the two gestures apart
+          // and sends a body's on `hmr:proposalmove`, which edits that same
+          // `rot`'s neighbour `at` — and there is no such routing for a row
+          // that mints a node. It would mint a MOVE node naming an overlay
+          // path: a second way to turn the same body, contradicting the first,
+          // printing `move "motor" turned (…)` about a body that is in no build
+          // for an agent to read beside the body's own `rot (…)`.
+          //
+          // A PART THAT ALREADY HAS A ROW GETS NO SECOND ONE. Two nodes claiming
+          // one path are two contradictory statements about it in the projection
+          // and two rows of which only one `×` appears to do anything — the very
+          // thing the `hmr:moved` handler matches by intersection to avoid. The
+          // row is already there; the panel is all this has left to open.
+          //
+          // AND IT IS NOT A RETRACTION. The rule that drops a node reported at
+          // zero is about a DRAG — the reader taking a displacement back by hand
+          // (the `[MOVED]` handler) — and says nothing about a node minted here,
+          // which is a row asked for rather than a statement withdrawn. Nothing
+          // else drops one: the push that follows claims these paths, and
+          // `reconcileMoves` leaves a part standing exactly where it is.
+          // The gate of its own, spelled here so the four above are read as the
+          // pair's and this one as Turn's alone.
+          ...(this.proposalBody(mNode.id) ? [] : [
+            mi('Turn', '', () => {
+              // `current` AND NOT `doc`, which `computed()` binds further down for
+              // the panel's own rows: this closure runs long after that line, so
+              // the name would resolve to a document read at a different moment
+              // and it would take a reader two scrolls to find out which.
+              const current = s.proposal || emptyProposal();
+              const paths = mNode.leaves;
+              const claimed = moves(current).some(
+                (node) => node.paths.some((path) => paths.includes(path)));
+              let next = current;
+              if (!claimed) {
+                this._proposalSeq += 1;
+                next = addNode(current, {
+                  id: `m${this._proposalSeq}`,
+                  role: 'move',
+                  paths,
+                  // THE COUNTED NAME, exactly as a drag records it: a row standing
+                  // for five copies of a part turns all five, and `pin ×5` is what
+                  // that reads as in the panel and in the projection.
+                  name: mName,
+                  delta: [0, 0, 0],
+                  turn: [0, 0, 0],
+                });
+              }
+              this.setState({ proposalOpen: true });
+              this.setProposal(next);
+            }),
+          ]),
         ]),
       ]),
       // A NOTE IS FILED UNDER THE CATALOGUE KEY, so a row that has none is not
@@ -6123,26 +6264,55 @@ export default class HammerolaViewer extends React.Component {
       // so it belongs in the list where the reader is already looking rather than
       // in a panel of its own.
       //
-      // NOTHING ON IT CAN BE TYPED, which is the whole difference from a body's
-      // row. A body's numbers are the reader's own and every one of them is a
-      // field; a move's are the gesture's — the drag snapped them (`niceStep` in
-      // viewport/tools.js) and another drag is how they change. The NAME is not a
-      // field either: it is a row of the build's, resolved when the drag landed,
-      // and the reader never chose it.
+      // THE NUMBERS ARE TYPED HERE AS A BODY'S ARE, through the same `field` and
+      // the same two rows of three, because they are the same kind of number and
+      // a second design for them would read as a second feature. The drag is one
+      // way to reach them and the arrows are the other: a hand is how somebody
+      // says "about here", and a field is how they say "12, exactly" — and the
+      // TURN has no hand at all, so without the fields it could not be said.
       //
-      // SO THE `×` IS THE ONLY CONTROL, and it is the one the whole feature turns
-      // on: a part goes home by having its entry DELETED, which is the same
-      // `removeNode` a body's `×` calls and the same `setProposal` it goes
-      // through. What happens next is the viewport's half — the push that follows
-      // stops claiming this path, and `reconcileMoves` puts it back.
+      // THE NAME IS STILL NOT A FIELD: it is a row of the build's, resolved when
+      // the drag landed, and the reader never chose it.
+      //
+      // AND THE `×` IS STILL THE CONTROL THE FEATURE TURNS ON: a part goes home
+      // by having its entry DELETED — offset and turn together, because the node
+      // is the one statement that carried both — which is the same `removeNode` a
+      // body's `×` calls and the same `setProposal` it goes through. What happens
+      // next is the viewport's half: the push that follows stops claiming this
+      // path, and `reconcileMoves` puts it back.
       proposalMoveRows: moves(doc).map((node) => ({
         key: node.id,
         name: node.name,
-        // SPELLED AS THE PROJECTION SPELLS IT (`proposalText`), because these are
-        // the same numbers the agent will read and a reader comparing the two
-        // should not have to translate between them.
-        delta: `moved by (${node.delta.join(', ')})`,
         onRemove: () => this.setProposal(removeNode(doc, node.id)),
+        groups: [
+          {
+            key: 'delta',
+            // `by` AND NOT `at`, which is the body's word for a place: these
+            // millimetres are an offset from wherever the build puts the part,
+            // and that is how the projection prints them (`proposalText`).
+            label: 'by',
+            fields: [0, 1, 2].map((axis) => field(
+              `${node.id}.delta.${axis}`, node.delta[axis],
+              (raw) => updateNode(doc, node.id,
+                                  { delta: swap(node.delta, axis, num(raw)) }),
+              '31%', STEP_MM)),
+          },
+          {
+            key: 'turn',
+            // DEGREES AND THE SAME STEP A BODY'S `rot°` TAKES, because they are
+            // the same three angles about the same three axes — the viewport
+            // turns a part by them exactly as the kernel turns a body
+            // (`quaternionOf` in viewport/parts.js). Measured about the part's
+            // OWN centre, which is what makes a quarter turn read as a quarter
+            // turn rather than as a throw across the scene.
+            label: 'turn°',
+            fields: [0, 1, 2].map((axis) => field(
+              `${node.id}.turn.${axis}`, node.turn[axis],
+              (raw) => updateNode(doc, node.id,
+                                  { turn: swap(node.turn, axis, num(raw)) }),
+              '31%', STEP_DEG)),
+          },
+        ],
       })),
 
       // The sentence under BODIES that says what one can be built out of, drawn
@@ -7207,14 +7377,27 @@ export default class HammerolaViewer extends React.Component {
                 {/* THE SAME LIST, AFTER THE BODIES: a part of the build the
                     reader dragged is the same kind of statement as a body they
                     drew, so it is a row among them rather than a section of its
-                    own. One line, because there is nothing on it to edit — the
-                    numbers came from the gesture and the name from the tree —
-                    and the `×` is what puts the part back. */}
+                    own — and it is drawn the same way, down to the two rows of
+                    three the body's `at` and `rot°` are drawn in. What the head
+                    carries instead of a name field and a role switch is the row
+                    of the BUILD it names, which the reader never chose, and the
+                    `×` that puts the part back. */}
                 {v.proposalMoveRows.map((m) => (
-                  <div key={m.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:7px 8px;margin-bottom:6px;display:flex;align-items:center;gap:6px')}>
-                    <span style={css(`font:400 11px ${MONO};color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap`)}>{m.name}</span>
-                    <span style={css(`flex:1;min-width:0;font:400 10px ${MONO};color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap`)}>{m.delta}</span>
-                    <span onClick={m.onRemove} title="put it back where the build has it" style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                  <div key={m.key} style={css('border:1px solid var(--line-soft);border-radius:6px;padding:7px 8px;margin-bottom:6px')}>
+                    <div style={css('display:flex;align-items:center;gap:6px')}>
+                      <span style={css(`flex:1;min-width:0;font:400 11px ${MONO};color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap`)}>{m.name}</span>
+                      <span onClick={m.onRemove} title="put it back where the build has it" style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                    </div>
+                    {m.groups.map((g) => (
+                      <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
+                        <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
+                        {g.fields.map((f) => (
+                          <input key={f.key} type={f.type} step={f.step} ref={f.ref}
+                                 value={f.value} onChange={f.onChange} onBlur={f.onBlur}
+                                 onKeyDown={f.onKeyDown} onWheel={f.onWheel} style={css(f.style)} />
+                        ))}
+                      </div>
+                    ))}
                   </div>
                 ))}
                 <div style={css('display:flex;flex-wrap:wrap;gap:5px')}>
