@@ -289,6 +289,60 @@ export const INPUT_KEY = "hammerola.pointing_device";
  * issue is spending its effort removing.
  */
 
+/* The move tool's axis arrows (gizmo.js). CSS PIXELS again, and for the same
+ * reason the section grip's lengths are: the widget has to be the same size on
+ * a 2 mm part and a 200 mm one.
+ *
+ * THEIR OWN NUMBERS AND NOT THE `HANDLE_*` ONES, though three of the four look
+ * alike. The grip is ONE double-headed arrow standing on a cut face; this is
+ * THREE single-headed ones standing on the same point, and three arrows that
+ * are as long and as fat as that one cover the part they are supposed to be
+ * moving. Sharing the constants would make every future adjustment to either
+ * widget an adjustment to both, which is the trade `HANDLE_MIN_SCALE` already
+ * argues against for a pair that merely happen to be equal. */
+
+/** One arrow's length, from the part's centre outwards. */
+export const GIZMO_PX = 64;
+
+/** Each head, as long as it is wide — `HANDLE_HEAD_PX`'s reasoning, one head
+ *  instead of two: the arrow points AWAY from the part along its axis, because
+ *  that is the direction the axis is named for, and the drag goes both ways. */
+export const GIZMO_HEAD_PX = 9;
+
+/** The shaft's thickness. Thinner than the grip's: three of these cross at the
+ *  part's centre and a heavier line turns that crossing into a blot. */
+export const GIZMO_SHAFT_PX = 2;
+
+/** The height of the box that takes the press, against that 2 px shaft. Lower
+ *  than the grip's for the reason above: three overlapping targets meeting at
+ *  one point, and a fat one would decide which axis the reader gets by which
+ *  arrow happens to be drawn last. */
+export const GIZMO_HIT_PX = 14;
+
+/** How much of an axis must survive the projection for its arrow to be drawn
+ *  at all — the fraction `foreshorten` measures, and BELOW IT THE ARROW IS
+ *  TAKEN OFF THE SCREEN rather than floored.
+ *
+ * THE OPPOSITE ANSWER TO `HANDLE_MIN_SCALE`, deliberately, and the difference
+ * is what the stub would still be good for. The grip's floored stub DRAGS: it
+ * moves the plane along a normal that is pointing at the reader, and the
+ * gesture it offers is the vertical fallback `sectionGripAxis` invents. An axis
+ * arrow has no such fallback, because the constraint is the whole point of it.
+ *
+ * AND UNUSABLE HERE MEANS VIOLENT RATHER THAN DEAD, which is the half that is
+ * easy to get backwards. The drag divides by this fraction SQUARED (`onMove` in
+ * gizmo.js says why: the screen only ever sees that much of the axis, and the
+ * projection takes the factor twice), so a nearly end-on axis does not sit
+ * still — it multiplies every tremor of the hand. At 0.2 one pixel of pointer
+ * buys twenty-five times the world it buys face-on, which is already several
+ * snap steps; the reader turns the model a little and the arrow comes back.
+ *
+ * 0.2 is about 11.5 degrees off the view axis, where the arrow is down to 13 px
+ * of its 64 — the shaft nearly gone and the head, which keeps its own size,
+ * standing for most of what is left.
+ */
+export const GIZMO_MIN_SCALE = 0.2;
+
 /** How long after the last press or wheel the viewport still counts as busy.
  *
  * A live swap re-renders the scene and re-seats the camera; doing that between a

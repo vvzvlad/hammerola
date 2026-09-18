@@ -31,6 +31,7 @@ import { installPinchGuard } from "./pinch.js";
 import { installTools } from "./tools.js";
 import { installWheel, initialPointingDevice, setPointingDevice } from "./wheel.js";
 import { createOverlay } from "./overlay.js";
+import { createGizmo } from "./gizmo.js";
 import { createHandle } from "./handle.js";
 import { createViewCube } from "./viewcube.js";
 import { internals } from "./internals.js";
@@ -329,6 +330,16 @@ export class HmrViewport extends HTMLElement {
     this.handle = createHandle(this);
     this.appendChild(this.handle.root);
 
+    // AND THE AXIS ARROWS AFTER THE GRIP, by the same rule again. Both are on
+    // screen only in their own mode, and the two modes can stand at once — a cut
+    // is a THING THAT IS ON and the Move tool can be armed over it — so where an
+    // arrow crosses the grip something has to win. It is the arrows: they are up
+    // only when the reader has armed Move AND selected a part, which is the more
+    // deliberate of the two states, and the grip is reachable anywhere else along
+    // its length.
+    this.gizmo = createGizmo(this);
+    this.appendChild(this.gizmo.root);
+
     setPointingDevice(this, initialPointingDevice(), false);
 
     this.teardown = [
@@ -363,6 +374,20 @@ export class HmrViewport extends HTMLElement {
         if (!this.holdActive) return;
         this.holdActive = false;
         emit(this, EVENT_TOOL, { tool: this.state.tool || null, held: false });
+        // AND THE ARROWS COME BACK, which nothing else would do. The gizmo draws
+        // while `activeTool` is `move`, so the hold key took it off the screen
+        // and — its loop stopping when there is nothing to draw, as handle.js's
+        // does — left it off. The way back is the wake-up, and the only events
+        // that carry one are `hmr:state` pushes: this release emits `hmr:tool`
+        // alone, which the interface answers with a local `setState` and no push
+        // at all. So the arrows stayed gone until the reader happened to click
+        // something in the tree.
+        //
+        // NOT NEEDED ON `onHold`, and the asymmetry is the loop rather than an
+        // oversight: going the other way the loop is already running, so the
+        // frame already queued sees `activeTool` is now the cut, takes the
+        // arrows off and lets itself stop.
+        this.gizmo.refresh();
       },
       onEscape: () => emit(this, EVENT_TOOL, { tool: null, held: false, escape: true }),
     }));
@@ -411,6 +436,7 @@ export class HmrViewport extends HTMLElement {
     if (this.overlay) this.overlay.destroy();
     if (this.viewcube) this.viewcube.destroy();
     if (this.handle) this.handle.destroy();
+    if (this.gizmo) this.gizmo.destroy();
     try {
       if (this.viewer) this.viewer.dispose();
     } catch (error) {
@@ -680,6 +706,12 @@ export class HmrViewport extends HTMLElement {
       // press lands on a layer that is a sibling of `this.box`, so neither the
       // line above nor the idle clock that defers this swap ever sees it.
       this.handle.endDrag();
+      // And a drag of an axis arrow is a THIRD one, on a layer that is a sibling
+      // of `this.box` too. It is concluded rather than abandoned for the reason
+      // `concludeMove` gives in tools.js: the part is standing displaced in
+      // `this.moved` with nothing in the document claiming it, and the next push
+      // would send it home under the reader's hand.
+      this.gizmo.endDrag();
 
       const keep = live ? captureLive(this) : null;
       const [w, h] = sized(this);
@@ -888,6 +920,10 @@ export class HmrViewport extends HTMLElement {
     // has just appeared — this pass is where it appears — has to wake it. Every
     // other frame it draws it asks for itself.
     this.handle.refresh();
+    // The axis arrows keep a loop of the same shape and it stops itself whenever
+    // the Move tool is down or nothing is selected — both of which arrive as
+    // state, i.e. here. Same wake-up, same reason.
+    this.gizmo.refresh();
   }
 
   /** The library's notification channel. */

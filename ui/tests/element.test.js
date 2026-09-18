@@ -139,6 +139,11 @@ function element(state = {}, viewer = fakeViewer()) {
   // `reconcile` owes it is the wake-up, and what `show` owes it is the end of a
   // drag — both are asked about below.
   vp.handle = { refresh: vi.fn(), endDrag: vi.fn() }
+  // The move tool's axis arrows keep a loop and a drag of the same two shapes,
+  // on a layer that is a sibling of the box in the same way — so the element
+  // owes them the same wake-up and the same end, and they are stubbed for the
+  // same reason.
+  vp.gizmo = { refresh: vi.fn(), endDrag: vi.fn() }
   // The up-events go through `dispatchEvent`, which is a real DOM method on a
   // real element and refuses to run on an object the DOM never built — the same
   // reason the note above `calledWithViewport` gives about `getAttributeNames`.
@@ -359,6 +364,19 @@ describe('reconcile', () => {
     vp.reconcile()
     vp.reconcile()
     expect(vp.handle.refresh).toHaveBeenCalledTimes(2)
+  })
+
+  it('wakes the axis arrows on every pass', () => {
+    // THE SAME HOLE ONE WIDGET OVER, and it is wider here: the gizmo's loop
+    // stops itself whenever the Move tool is down or nothing is selected, which
+    // is most of the time, so this line is what brings the arrows back every
+    // time a reader arms the tool or picks a part. Delete it and they appear
+    // only after the hold key has been pressed and let go — the one other
+    // wake-up there is — with the whole suite still green.
+    const vp = element({ tool: 'move', selected: ['/Group/plate'] })
+    vp.reconcile()
+    vp.reconcile()
+    expect(vp.gizmo.refresh).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -751,6 +769,26 @@ describe('show', () => {
     expect(types).toContain(EVENT_MODEL)
     expect(vp.handle.endDrag).toHaveBeenCalledTimes(1)
     expect(vp.handle.endDrag.mock.invocationCallOrder[0])
+      .toBeLessThan(viewer.render.mock.invocationCallOrder[0])
+  })
+
+  it('ends a drag of an axis arrow before it replaces the scene', async () => {
+    // The same sibling-layer blindness, and what it costs is worse than a
+    // printed number: an unconcluded move leaves the part displaced in
+    // `vp.moved` with nothing in the document claiming it, so the next push
+    // sends it home under the reader's hand — and three capture-phase listeners
+    // stay on the window holding a scene that has gone. BEFORE `render()`,
+    // because the gesture has to conclude against the scene it was measured on.
+    const { vp, viewer } = rendering()
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+
+    // The same guard both neighbours in this describe take first: without it the
+    // assertions below could be resting on a `show()` that threw and put an
+    // error panel in front of the reader.
+    const types = vp.dispatchEvent.mock.calls.map(([event]) => event.type)
+    expect(types).toContain(EVENT_MODEL)
+    expect(vp.gizmo.endDrag).toHaveBeenCalledTimes(1)
+    expect(vp.gizmo.endDrag.mock.invocationCallOrder[0])
       .toBeLessThan(viewer.render.mock.invocationCallOrder[0])
   })
 
@@ -1478,6 +1516,27 @@ describe('the widgets connectedCallback puts on the page', () => {
     expect(gripIn(el)).toBeTruthy()
     el.destroy()
     expect(gripIn(el)).toBeUndefined()
+  })
+
+  it('wakes the axis arrows when the hold key lets go of the cut', () => {
+    // THE ARROWS OTHERWISE NEVER COME BACK. They are drawn while `activeTool` is
+    // `move`, so the hold key takes them off and the gizmo's loop — which stops
+    // itself when there is nothing to draw — leaves them off. This release emits
+    // `hmr:tool` and nothing else: the interface answers that with a local
+    // `setState`, never a push, so no `hmr:state` arrives to reconcile and the
+    // arrows stay gone until the reader clicks something in the tree.
+    const el = mount()
+    el.state = { ...el.state, tool: 'move' }
+    const gizmo = { refresh: vi.fn(), endDrag: vi.fn(), destroy: vi.fn() }
+    el.gizmo = gizmo
+    dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyC', key: 'c' }))
+    expect(el.activeTool).toBe('cut')
+    // Nothing on the way IN, and that is the loop rather than an omission: it is
+    // still running, so the frame already queued takes the arrows off by itself.
+    expect(gizmo.refresh).not.toHaveBeenCalled()
+    dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyC', key: 'c' }))
+    expect(el.activeTool).toBe('move')
+    expect(gizmo.refresh).toHaveBeenCalled()
   })
 
   it('lets the remembered view document go with everything else', () => {
