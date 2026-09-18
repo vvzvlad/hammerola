@@ -437,6 +437,9 @@ describe('sectionAxis', () => {
     const expected = (camera.zoom * RECT.width) / (2 * camera.halfW)
     expect(axis.sx).toBeCloseTo(expected, 9)
     expect(axis.sy).toBeCloseTo(0, 9)
+    // And how much of the normal the projection leaves. This one is square
+    // ACROSS the view, so all of it: the plane is seen edge-on.
+    expect(axis.sine).toBeCloseTo(1, 9)
   })
 
   it('is null when the normal points nearly straight at the camera', () => {
@@ -532,6 +535,54 @@ describe('sectionGripAxis', () => {
 
     facing(viewer)
     expect(sectionGripAxis(viewer, g, face).sy).toBeCloseTo(scale, 9)
+  })
+
+  it('measures the sine against the camera axis, not the ray it branched on', () => {
+    // The two numbers are different questions and this function holds both. The
+    // GUARD that sent it down this branch is the normal against the ray from the
+    // eye to the anchor; `sine` is the normal against the camera's projection
+    // axis, which is what the grip draws its arrow's length from.
+    //
+    // On the axis they agree, so the second anchor is moved OFF it — far enough
+    // that a normal `MIN_SINE * 0.9` off the view axis is nearly 45 degrees off
+    // the RAY to it. A `sine` taken from the ray would answer about 0.70 there.
+    //
+    // And the two anchors reach it down DIFFERENT branches, which is the point
+    // of taking both: on the axis the guard refuses and the fallback answers,
+    // while off it the ray-based guard is satisfied and `sectionAxis` does. The
+    // measurement has to be the same either way, because it is a fact about the
+    // plane and the camera and not about which branch ran.
+    const { viewer, g } = ctx
+    facing(viewer)
+    expect(sectionGripAxis(viewer, g, face).sine).toBeCloseTo(MIN_SINE * 0.9, 9)
+    expect(sectionAxis(viewer, g, face), 'the premise: face takes the fallback')
+      .toBeNull()
+
+    const aside = [60, 0, 0]
+    expect(sectionAxis(viewer, g, aside), 'and aside does not').not.toBeNull()
+    expect(sectionGripAxis(viewer, g, aside).sine).toBeCloseTo(MIN_SINE * 0.9, 9)
+
+    // THE CASE WHERE THE TWO ACTUALLY DISAGREE, and the only one that catches a
+    // fallback measuring off the ray. Above, `face` reaches the fallback but
+    // sits ON the camera axis, where ray and axis coincide; `aside` is off the
+    // axis but the guard lets it through. So: the anchor off the axis AND the
+    // normal laid along the RAY to it, which sends it down the fallback with a
+    // foreshortening that is nothing like the guard's number.
+    //
+    // The ray to `aside` is unit([60, 0, -80]) = [0.6, 0, -0.8]. A normal in the
+    // xz plane written [sin t, 0, cos t] is `MIN_SINE * 0.9` off that ray at
+    // t = atan2(0.6, -0.8) + asin(MIN_SINE * 0.9). Its sine against the camera
+    // axis — which is [0, 0, -1] here — is then just the size of its x, since
+    // the sine to the z axis of a unit vector IS its component across z. That
+    // is about 0.49, three and a half times the ray's 0.135.
+    const t = Math.atan2(0.6, -0.8) + Math.asin(MIN_SINE * 0.9)
+    const along = [Math.sin(t), 0, Math.cos(t)]
+    viewer.setClipNormal(SECTION_INDEX, along, null, true)
+    expect(sectionAxis(viewer, g, aside), 'the premise: the guard refuses')
+      .toBeNull()
+    expect(sectionGripAxis(viewer, g, aside).sine)
+      .toBeCloseTo(Math.abs(along[0]), 9)
+    expect(sectionGripAxis(viewer, g, aside).sine).toBeGreaterThan(MIN_SINE * 3)
   })
 
   it('makes a drag DOWNWARDS move the plane along the POSITIVE normal', () => {

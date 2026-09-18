@@ -7,6 +7,7 @@
 // What it does not give is the normal of a face — that is `picking.js` — and the
 // frame of reference the slider counts in, which is the whole of the note below.
 
+import { cameraBasis } from "./camera.js";
 import { internals } from "./internals.js";
 import { clamp, cross3, dot3, finite3, sub3, unit3, vec3 } from "./math.js";
 import { MIN_SINE, SECTION_BIAS, SECTION_INDEX } from "./options.js";
@@ -77,6 +78,45 @@ function viewDir(g, point) {
   if (!eye || !finite3(point)) return null;
   const dir = unit3(sub3(vec3(point), eye));
   return finite3(dir) ? dir : null;
+}
+
+/**
+ * How much of a unit world vector survives the projection, between 0 and 1.
+ *
+ * 1 when it lies square across the view and 0 when it points straight down the
+ * camera's axis — which for the grip's arrow is the difference between seeing
+ * the whole of it and seeing its end.
+ *
+ * AGAINST THE CAMERA'S OWN AXIS AND NOT THE RAY TO A POINT, which is the whole
+ * reason this is a function rather than the sine `sectionAxis` computes in its
+ * own guard. This viewport's camera is ORTHOGRAPHIC: every point projects along
+ * one fixed direction, so the foreshortening of a vector is its angle to THAT
+ * direction and has nothing to do with where on the screen it happens to sit.
+ * The guard's `viewDir` is the ray from the eye to the anchor, which swings
+ * across the frame — measured on a 45-degree plane, it reported 0.55 with the
+ * cut on one side of a part and 0.83 on the other, both for a plane standing at
+ * exactly the same angle. Drawn from that, the arrow's length would encode
+ * where the cut is on screen as much as how the plane stands, which is the
+ * opposite of what it is for.
+ *
+ * THE GUARD IS LEFT ON `viewDir` DELIBERATELY. It answers a different question
+ * — whether px -> world is about to run away under the DRAG — and that one is
+ * asked about the pointer, which does move along the ray. Its tests pin it and
+ * the drag is not part of this.
+ *
+ * Null when the camera cannot be read at all. The caller draws the arrow at
+ * full length then, which is what it did before any of this and leaves the
+ * widget visible and grabbable rather than collapsed on a scene nobody can
+ * measure.
+ */
+function foreshorten(viewer, g, n) {
+  const basis = cameraBasis(viewer, g);
+  if (!basis) return null;
+  // Both are unit vectors, so the dot IS the cosine and no division enters it.
+  // `clamp` because that dot can still land a hair outside [-1, 1] in floating
+  // point, where `1 - cos * cos` would go negative and the root NaN.
+  const cos = clamp(dot3(n, basis.view), -1, 1);
+  return Math.sqrt(1 - cos * cos);
 }
 
 /**
@@ -289,6 +329,10 @@ export function applySection(vp, given) {
 
 /** Canvas px of screen travel per one world unit along the clip normal.
  *
+ * `{sx, sy}` is that travel and `s2` its squared length; `sine` is how much of
+ * the normal SURVIVES the projection, between 0 and 1 — see where it is computed
+ * below. The drag reads the first three and the grip's ink is drawn at `sine`.
+ *
  * null when the normal is too close to the view axis: its screen projection
  * collapses there and `px -> world` runs away to infinity, so a two-pixel twitch
  * would fling the plane across the model.
@@ -307,6 +351,7 @@ export function sectionAxis(viewer, g, point) {
   if (!view) return null;
   const cos = clamp(dot3(n, view), -1, 1);
   if (Math.sqrt(1 - cos * cos) < MIN_SINE) return null;
+  const sine = foreshorten(viewer, g, n);
   const rect = g.canvas.getBoundingClientRect();
   if (!(rect.width > 0) || !(rect.height > 0)) return null;
   // A short step rather than a whole world unit: on a perspective camera this is
@@ -322,12 +367,19 @@ export function sectionAxis(viewer, g, point) {
   const sy = (-(b.y - a.y) * rect.height / 2) / L;  // NDC y is up, pixels are down
   const s2 = sx * sx + sy * sy;
   if (!(s2 > 1e-12)) return null;
-  return { sx, sy, s2 };
+  return { sx, sy, s2, sine };
 }
 
 /** The screen axis THE GRIP is drawn along and dragged on: `sectionAxis` where
  *  that one answers, and a VERTICAL axis where it declines. Null only for a
  *  scene that cannot answer at all.
+ *
+ * `sine` comes back from BOTH branches and is the same measurement in both: the
+ * foreshortening the grip draws its ink at, taken by `foreshorten` against the
+ * camera's own projection axis. It is NOT the number this function's two
+ * branches are chosen by — that one is the guard's, measured against the ray to
+ * the anchor — so it does not jump where the branch changes, and the fallback's
+ * is not bounded by `MIN_SINE` the way the guard's is.
  *
  * WHY THERE ARE TWO FUNCTIONS RATHER THAN A LOOSER GUARD IN ONE. `sectionAxis`
  * refuses in the degenerate zone — the plane's normal pointing nearly AT or AWAY
@@ -374,11 +426,21 @@ export function sectionGripAxis(viewer, g, point) {
   // because its own step is measured ACROSS the view and is perfectly finite. So
   // without this the grip would be drawn, and dragged, on a scene whose clip
   // plane is not a plane.
-  if (!Array.isArray(n) || !finite3(unit3(n))) return null;
+  const unit = Array.isArray(n) ? unit3(n) : null;
+  if (!finite3(unit)) return null;
   // The rest of `sectionAxis`'s own guards, minus the angle: what is left is a
   // scene that cannot be measured at all.
   const view = viewDir(g, point);
   if (!view) return null;
+  // THE SAME MEASUREMENT `sectionAxis` RETURNS, off the same axis, so the grip's
+  // ink is drawn from one number across both branches. A constant here would be
+  // wrong twice over: the length would jump where this branch is entered, and
+  // it would be a lie about the plane, since which branch runs is decided by the
+  // GUARD's sine — measured against the ray to the anchor — while what is drawn
+  // is the projection's, measured against the camera axis. The two disagree by
+  // as much as the frame is wide, so this branch does NOT imply a foreshortening
+  // below `MIN_SINE`.
+  const sine = foreshorten(viewer, g, unit);
   const rect = g.canvas.getBoundingClientRect();
   if (!(rect.width > 0) || !(rect.height > 0)) return null;
   const eye = g.camera.getPosition();
@@ -409,7 +471,7 @@ export function sectionGripAxis(viewer, g, point) {
   const px = Math.hypot((b.x - a.x) * rect.width / 2,
                         (b.y - a.y) * rect.height / 2) / L;
   if (!Number.isFinite(px) || !(px * px > 1e-12)) return null;
-  return { sx: 0, sy: px, s2: px * px };
+  return { sx: 0, sy: px, s2: px * px, sine };
 }
 
 /**

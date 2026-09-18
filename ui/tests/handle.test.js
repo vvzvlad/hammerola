@@ -6,6 +6,9 @@
 // (a projection, in px, of a world point the module works out from the seed),
 // WHICH WAY it points (the screen axis of the clip normal, and vertical in the
 // degenerate zone the paragraph below is about),
+// HOW LONG its ink is drawn (the foreshortening of the normal against the
+// camera's projection axis, floored at `HANDLE_MIN_SCALE`, inside a hit box
+// that does not change size),
 // WHEN it refuses to be drawn — three cases, three different reasons — and what
 // one whole drag does to the plane and says at the end of it.
 //
@@ -36,6 +39,7 @@ vi.mock('../src/viewport/section.js', async (importOriginal) => {
 import { EVENT_FACE } from '../src/viewport/events.js'
 import { createHandle } from '../src/viewport/handle.js'
 import { internals } from '../src/viewport/internals.js'
+import { HANDLE_MIN_SCALE, MIN_SINE } from '../src/viewport/options.js'
 import {
   applySection, dragSection, placeSectionPlane, sectionAxis, sectionGripAxis,
   sectionOffset,
@@ -112,6 +116,41 @@ const angleOf = (arrow) => {
   const match = /rotate\((-?[\d.e-]+)deg\)/.exec(arrow.style.transform)
   expect(match, `no rotation in ${arrow.style.transform}`).toBeTruthy()
   return Number(match[1])
+}
+
+/** How much of its length the INK is drawn at.
+ *
+ * A separate element from the one the rotation is on, and the test reaches for
+ * it separately for the same reason the module keeps them apart: the box takes
+ * the press and never changes size, the wrapper inside it carries the
+ * foreshortening. Reading the scale off `arrow` would pass just as well with
+ * the two collapsed into one, which is the mistake being guarded against.
+ */
+const inkOf = (arrow) => {
+  const ink = arrow.firstElementChild
+  // THE SEAM ITSELF, asserted on every read. The scale means nothing unless the
+  // shaft and both heads are INSIDE the wrapper it sits on: appended to `arrow`
+  // instead, they would be drawn at full length beside an empty div carrying a
+  // perfectly correct `scaleX`, and every assertion below would still hold
+  // while nothing on screen foreshortened at all.
+  expect(arrow.children.length, 'the box holds exactly the ink wrapper').toBe(1)
+  expect(ink.children.length, 'shaft and both heads scale with it').toBe(3)
+  const match = /scaleX\(([\d.e-]+)\)/.exec(ink.style.transform)
+  expect(match, `no scale in ${ink.style.transform}`).toBeTruthy()
+  return Number(match[1])
+}
+
+/** The box that takes the press, as the module DECLARES it. Not what the
+ *  browser would hit-test: that is the declared box after the ancestors'
+ *  transforms, which jsdom computes for nobody. The claim here is that the
+ *  module writes the same size whatever the camera does. */
+const hitBox = (arrow) => [arrow.style.width, arrow.style.height]
+
+/** A clip normal tilted `sine` away from the view axis, which the camera in
+ *  these tests looks down. */
+const tilted = (sine) => {
+  const angle = Math.asin(sine)
+  return [Math.sin(angle), 0, Math.cos(angle)]
 }
 
 /** A press on the arrow itself, with both refusals watched. */
@@ -334,6 +373,125 @@ describe('which way it points', () => {
     const axis = sectionAxis(vp.viewer, g, [0, 0, 45])
     expect(angleOf(arrow))
       .toBeCloseTo((Math.atan2(axis.sy, axis.sx) * 180) / Math.PI, 9)
+  })
+})
+
+describe('how long it is drawn', () => {
+  it('is drawn at its full length with the plane seen edge-on', () => {
+    // The normal is square across the view, so the projection takes nothing off
+    // it: this is the one camera where the arrow on screen is the arrow in the
+    // world.
+    const { handle, arrow } = scene()
+    drawn(handle)
+    expect(inkOf(arrow)).toBeCloseTo(1, 9)
+  })
+
+  it('collapses towards its end as the reader turns to face the cut', () => {
+    // Looking ALONG the arrow. A real one would foreshorten to nearly nothing
+    // here, and that collapse is the whole of what the widget says about where
+    // the plane stands — drawn full length in every view, it would say the same
+    // thing about every camera and so say nothing.
+    // Well clear of the floor, so what is pinned is the PROPORTION and not the
+    // clamp: at the floor exactly, `max(sine, floor)` and a bare `floor` are
+    // the same number and this would say nothing the next test does not.
+    const { handle, arrow } = scene({ normal: tilted(0.4) })
+    drawn(handle)
+    expect(inkOf(arrow)).toBeCloseTo(0.4, 9)
+  })
+
+  it('holds at the floor instead of vanishing', () => {
+    // A legibility limit and nothing to do with the drag's `MIN_SINE`: the
+    // arrow must still be there to be seen and taken hold of in the very view
+    // where the cut face is squarely in sight. So the ink stops shrinking
+    // rather than disappearing under the reader.
+    const { handle, arrow } = scene({ normal: tilted(HANDLE_MIN_SCALE / 4) })
+    drawn(handle)
+    expect(inkOf(arrow)).toBeCloseTo(HANDLE_MIN_SCALE, 9)
+  })
+
+  it('says how the plane stands and not where the cut sits on screen', () => {
+    // The camera is ORTHOGRAPHIC: everything projects along one fixed axis, so
+    // a plane at 45 degrees to it is foreshortened by the same amount wherever
+    // it is in the frame. Measured against the RAY from the eye to the anchor
+    // instead — which swings across the frame — the same plane reads 0.71 in
+    // the middle and 1.00 at x = 15 of the 20 the frame spans, three quarters
+    // of the way out, and the arrow's length would be telling the reader about
+    // the panning as much as about the plane.
+    const tilt = Math.PI / 4
+    const normal = [Math.sin(tilt), 0, Math.cos(tilt)]
+    const middle = scene({ normal, point: [0, 0, 45] })
+    drawn(middle.handle)
+    const aside = scene({ normal, point: [15, 0, 45] })
+    drawn(aside.handle)
+
+    expect(inkOf(middle.arrow)).toBeCloseTo(Math.SQRT1_2, 9)
+    expect(inkOf(aside.arrow)).toBeCloseTo(inkOf(middle.arrow), 9)
+  })
+
+  it('does not jump where the angle does', () => {
+    // The ANGLE snaps at this boundary on purpose: below it the projected
+    // normal is a stub whose direction swings with the smallest camera move, so
+    // the grip stands the arrow up vertically instead. The LENGTH must not snap
+    // with it — and it does not, because it is not measured off the number the
+    // branch is chosen by. `foreshorten` asks the camera's projection axis on
+    // both sides of the seam, so what is drawn is one continuous function of the
+    // camera's pose while the angle is not.
+    //
+    // THE TWO POSES ARE TAKEN CLOSE TO THE SEAM, a percent either side, and the
+    // bound is several times the gap between them. Taken further apart, or with
+    // a bound cut down to that gap, a perfectly continuous function sits right
+    // on the limit and only the FLOOR can drag the lower sample up to meet it —
+    // which would make this a test of the clamp under a name about the seam,
+    // and would silently forbid ever lowering `HANDLE_MIN_SCALE` below
+    // `MIN_SINE`. The two are separate constants precisely so either can move.
+    //
+    // What is still caught is the thing worth catching: reading the length off
+    // the number the BRANCH is chosen by would jump about 0.85 here, which no
+    // bound of this order lets through.
+    const inside = scene({ normal: tilted(MIN_SINE * 1.01) })
+    drawn(inside.handle)
+    const outside = scene({ normal: tilted(MIN_SINE * 0.99) })
+    drawn(outside.handle)
+
+    expect(angleOf(inside.arrow), 'the premise: the angle DOES snap')
+      .not.toBeCloseTo(angleOf(outside.arrow), 1)
+    expect(Math.abs(inkOf(inside.arrow) - inkOf(outside.arrow)))
+      .toBeLessThanOrEqual(MIN_SINE * 0.05)
+  })
+
+  it('draws the whole arrow when the camera cannot be measured', () => {
+    // `foreshorten` reads the camera's TARGET, and `sectionAxis` never does —
+    // it works off the eye alone — so a viewer that can answer one and not the
+    // other leaves a live axis with no foreshortening to draw from. Rare, and
+    // reachable: the two readings are separate calls into the library.
+    //
+    // Full length is the right answer there and the floor is not. It is what
+    // this drew before it foreshortened at all, and it leaves a widget that can
+    // be seen and grabbed, where collapsing to a stub on a scene nobody can
+    // measure would take the control away for a reason the reader cannot see.
+    const { viewer, handle, arrow } = scene({ normal: tilted(0.3) })
+    drawn(handle)
+    expect(inkOf(arrow), 'the premise: it WAS foreshortened').toBeCloseTo(0.3, 9)
+
+    viewer.getCameraTarget = () => [Number.NaN, 0, 0]
+    drawn(handle)
+    expect(shown(arrow)).toBe(true)
+    expect(inkOf(arrow)).toBe(1)
+  })
+
+  it('leaves the box that takes the press alone', () => {
+    // The requirement the foreshortening is not allowed to cost: the arrow must
+    // not become hard to hit exactly where the cut face is squarely in view,
+    // which is the same thing `sectionGripAxis`'s fallback exists for. So the
+    // ink shrinks inside a target that does not.
+    const edgeOn = scene()
+    drawn(edgeOn.handle)
+    const facing = scene({ normal: tilted(HANDLE_MIN_SCALE / 4) })
+    drawn(facing.handle)
+
+    expect(inkOf(facing.arrow)).toBeLessThan(inkOf(edgeOn.arrow))
+    expect(hitBox(facing.arrow)).toEqual(hitBox(edgeOn.arrow))
+    expect(facing.arrow.style.pointerEvents).toBe('auto')
   })
 })
 

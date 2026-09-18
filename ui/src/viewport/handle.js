@@ -34,7 +34,7 @@ import { projectPoint } from "./camera.js";
 import { dragSection, sectionGripAxis, sectionOffset } from "./section.js";
 import { reportCut } from "./tools.js";
 import {
-  HANDLE_HEAD_PX, HANDLE_HIT_PX, HANDLE_PX, HANDLE_SHAFT_PX,
+  HANDLE_HEAD_PX, HANDLE_HIT_PX, HANDLE_MIN_SCALE, HANDLE_PX, HANDLE_SHAFT_PX,
 } from "./options.js";
 
 /** The arrow's ink.
@@ -74,11 +74,30 @@ export function createHandle(vp) {
     + `pointer-events:auto;cursor:grab;filter:${HALO}`;
   root.appendChild(arrow);
 
+  // THE INK FORESHORTENS AND THE BOX DOES NOT, and this wrapper is the seam
+  // between the two. The arrow lies along the plane's NORMAL, so a reader who
+  // has turned to look straight at the cut face is looking ALONG it: a real
+  // arrow would collapse towards its own end there, and that collapse is what
+  // tells the reader how the plane is standing. Drawn at its full length in
+  // every view, as it was, the widget says the same thing about every camera
+  // and so says nothing.
+  //
+  // The scale goes HERE and the rotation stays on `arrow`, which is what keeps
+  // the two independent: the outer box is the target, `HANDLE_PX` by
+  // `HANDLE_HIT_PX` with `pointer-events: auto`, and it is the same size
+  // wherever the model is turned. So the ink shrinks and the grab does not —
+  // the arrow must not become hard to hit exactly where the cut face is
+  // squarely in view, which is the same requirement `sectionGripAxis`'s
+  // fallback exists for.
+  const ink = document.createElement("div");
+  ink.style.cssText = "position:absolute;inset:0";
+  arrow.appendChild(ink);
+
   /** One absolutely-positioned piece of the arrow. */
   const piece = (css) => {
     const el = document.createElement("div");
     el.style.cssText = `position:absolute;${css}`;
-    arrow.appendChild(el);
+    ink.appendChild(el);
   };
 
   // The shaft, between the two heads.
@@ -87,7 +106,10 @@ export function createHandle(vp) {
     + `background:${INK}`);
   // The two heads, as CSS border triangles: a box of zero size whose remaining
   // border is a wedge. As long as it is wide, so the arrow reads the same at
-  // every angle the model can be turned to.
+  // every angle it is turned to ON THE SCREEN — not at every angle the MODEL
+  // can be turned to, which is the opposite of what the grip wants: the
+  // foreshortening below squeezes the heads along with the shaft, and a head
+  // seen nearly end-on is meant to be a sliver.
   //
   // THE BORDER AND THE EDGE ARE OPPOSITE SIDES, which is why they are two names:
   // the border that is left standing is the one AWAY from the point, so a wedge
@@ -196,6 +218,27 @@ export function createHandle(vp) {
     // moves BOTH ways from there.
     arrow.style.transform = "translate(-50%,-50%) "
       + `rotate(${(Math.atan2(axis.sy, axis.sx) * 180) / Math.PI}deg)`;
+    // And the ink inside that box is drawn at the fraction of the normal the
+    // projection leaves — `scaleX`, i.e. along the arrow's OWN length, since the
+    // rotation above has already turned this wrapper's x onto it. The whole
+    // group scales, heads included: a real arrow seen end-on foreshortens its
+    // heads with its shaft, and shortening the shaft alone would draw a picture
+    // of something else.
+    //
+    // FLOORED SO IT CANNOT VANISH, at `HANDLE_MIN_SCALE` — about 8 px, a stub
+    // beside the cut. That floor is a legibility limit and must not be confused
+    // with the drag's `MIN_SINE`, which it happens to equal today: the guard is
+    // asked about the ray to the anchor and this is asked about the camera's
+    // projection axis, so a view can easily be past one and not the other.
+    //
+    // A NULL SINE IS FULL LENGTH, which is what this drew before it foreshortened
+    // at all: `foreshorten` answers null only for a camera it cannot read, and a
+    // widget left whole is visible and grabbable where one collapsed to its
+    // floor would be neither, on a scene nobody can measure anyway.
+    const scale = axis.sine === null
+      ? 1
+      : Math.max(axis.sine, HANDLE_MIN_SCALE);
+    ink.style.transform = `scaleX(${scale})`;
   };
 
   const draw = () => {

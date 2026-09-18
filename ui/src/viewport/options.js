@@ -184,17 +184,44 @@ export const SECTION_BIAS = 1e-4;
 /** Which of the library's three clip planes this tool drives. */
 export const SECTION_INDEX = 0;
 
-/* The section plane's handle (handle.js), in CSS PIXELS — a constant size on
- * screen, which is free for a DOM overlay and is what keeps the grip the same
- * size on a 2 mm part and a 200 mm one. */
+/* The section plane's handle (handle.js). The lengths are CSS PIXELS — free for
+ * a DOM overlay, and what keeps the grip the same size on a 2 mm part and a
+ * 200 mm one.
+ *
+ * That constancy is now the TARGET's alone. The ink inside it is drawn at a
+ * fraction of `HANDLE_PX` that follows the camera (`HANDLE_MIN_SCALE` below is
+ * the floor on it), because the arrow stands for a direction in the world and
+ * has to foreshorten like one. So one number here is a ratio and not a length;
+ * it is kept beside the others because it is meaningless apart from them. */
 
 /** The whole arrow's length. Long enough to read as a two-way arrow beside the
  *  cut, short enough not to cover the face it is standing on. */
 export const HANDLE_PX = 56;
 
 /** Each head, as long as it is wide, so the arrow reads the same at every angle
- *  the model can be turned to. */
+ *  it is turned to ON THE SCREEN. Not at every angle the MODEL can be turned to,
+ *  which is the opposite of what the grip now wants: the ink is foreshortened
+ *  along the arrow's length (`handle.js`), so a head seen nearly end-on is
+ *  deliberately a sliver rather than a square. */
 export const HANDLE_HEAD_PX = 10;
+
+/** How short the grip's ink may be drawn, as a fraction of `HANDLE_PX`.
+ *
+ * A FLOOR AGAINST VANISHING AND NOTHING ELSE. The arrow lies along the plane's
+ * normal and is drawn at the fraction of itself the projection leaves, so a
+ * reader looking straight down that normal would be left with no widget at all
+ * — and that is the very view where the cut face is squarely in sight and the
+ * grip most wanted. At `HANDLE_PX` this is about 8 px, which reads as the stub
+ * an arrow seen end-on should be.
+ *
+ * DELIBERATELY ITS OWN NUMBER, though it happens to equal `MIN_SINE` today.
+ * That one is the DRAG's guard — below it px -> world runs away — and the two
+ * ask different questions off different axes: the guard measures the normal
+ * against the ray to the anchor, the foreshortening against the camera's own
+ * projection axis. Sharing a constant would tie a legibility floor to a
+ * numerical stability limit and make each impossible to move alone.
+ */
+export const HANDLE_MIN_SCALE = 0.15;
 
 /** The shaft's thickness. Twice the weight of the view cube's silhouette, which
  *  is drawn at 0.9: the cube stands on the empty corner of the canvas and this
