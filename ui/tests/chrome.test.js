@@ -35,10 +35,11 @@ import { describe, expect, it } from 'vitest'
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { HammerolaProjects } from '../src/HammerolaEntry.jsx'
-import { indexTree, rereadPage } from '../src/hub.js'
+import { rereadPage } from '../src/hub.js'
 import {
   css, FONTS, HEADER_BG, HEADER_LINE, Mark, PAGE_BG, PAGE_FG,
 } from '../src/style.jsx'
+import { makeComponent } from './component.js'
 import { collect, styles } from './eltree.js'
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
@@ -1433,37 +1434,25 @@ const COMMENTS = [
 
 function buildPage({ feed = COMMENTS } = {}) {
   rereadPage(`/project/proj1/${REV}/`)
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { ...HammerolaViewer.defaultProps }
-  c.home = null
-  c.host = { current: null }
-  c.setState = () => {}
-  c.sync = () => {}
-  c.state = {
-    meta: {
-      project: 'fixture', title: 'Fixture bracket', commit: REV,
-      built: '2026-08-27T18:20:00Z',
-      parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
-      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
-                parts: ['lid'], gzip: 1000 }],
+  const c = makeComponent(HammerolaViewer, {
+    // A NO-OP, not a recording double: nothing in this file calls it, and what
+    // is read here is the tree `render()` draws from the state below.
+    setState: () => () => {},
+    sync: () => {},
+    state: {
+      meta: {
+        project: 'fixture', title: 'Fixture bracket', commit: REV,
+        built: '2026-08-27T18:20:00Z',
+        parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
+        views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+                  parts: ['lid'], gzip: 1000 }],
+      },
+      rail: true, menu: { id: null, x: 0, y: 0 },
+      // A note of each kind, so the amber box is drawn with both of its levels.
+      notes: { lid: 'mine' },
+      feed,
     },
-    builds: null,
-    tree: indexTree({ id: '/model', name: 'model', children: [] }),
-    error: null, viewError: null, pending: null, swapping: false,
-    view: 'assembled', tool: null, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
-    bannerGone: false, rail: true, menu: { id: null, x: 0, y: 0 },
-    // A note of each kind, so the amber box is drawn with both of its levels.
-    notePop: null, noteDraft: '', notes: { lid: 'mine' },
-    feed,
-    activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    token: 'sekrit', tokenPop: false, tokenDraft: '',
-    theme: 'light', tabs: [], narrow: false, treeOpen: false,
-  }
+  })
   return c
 }
 

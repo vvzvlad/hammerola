@@ -175,8 +175,9 @@ def door_site(error):
 # `build()` with the numbers walk taken out, for the doors that are further in.
 # A namespace rather than a monkeypatch of each function, because `build.py`
 # reaches them through the module object.
-NO_NUMBERS = SimpleNamespace(collect=lambda model: [],
-                             unwrapped=lambda model: [],
+NO_NUMBERS = SimpleNamespace(module_level_lines=lambda: {},
+                             collect=lambda model, lines=None: [],
+                             unwrapped=lambda model, lines=None: [],
                              check=lambda entries, bare, root: None,
                              report=lambda entries: {})
 

@@ -13,18 +13,20 @@
 // baking them in would mean two places to change them.
 
 import { EVENT_PIN, emit } from "./events.js";
-import { projectPoint } from "./camera.js";
+import { spot } from "./camera.js";
 import { internals } from "./internals.js";
+import { createLayer } from "./layer.js";
 import { finite3 } from "./math.js";
 
 export function createOverlay(vp) {
-  const root = document.createElement("div");
+  // The root, the rAF loop and the teardown are `layer.js`'s, which three other
+  // layers are built out of as well. `wanted` and `place` are the declarations
+  // below, so the root exists before anything is put on it.
+  const layer = createLayer({ wanted, place });
+  const { root } = layer;
+  // THE ONE LAYER WITH A CLASS NAME, for the reason at the head of this file:
+  // the pins' looks are the designer's and the stylesheet owns them.
   root.className = "hmr_overlay";
-  // `pointer-events: none` on the layer and back on for the pins: the layer
-  // covers the whole canvas, so without this it would swallow every press meant
-  // for the model — rotation included.
-  root.style.cssText =
-    "position:absolute;inset:0;overflow:hidden;pointer-events:none";
 
   const label = document.createElement("div");
   label.className = "hmr_measure_label";
@@ -33,69 +35,52 @@ export function createOverlay(vp) {
   root.appendChild(label);
 
   const pins = new Map();
-  let frame = 0;
 
-  /** Place one absolutely-positioned child at a world point, or hide it.
+  /** Whether there is anything to place at all — a pin, or a measurement. */
+  function wanted() {
+    return !!(pins.size || vp.measureLabel);
+  }
+
+  /** Put one absolutely-positioned child at a world point, or hide it.
    *
-   * THE TWO RECTS ARE PASSED IN rather than measured here, and that is the
-   * whole difference between this and a synchronous reflow per pin: `draw()`
-   * calls this in a loop and every iteration WRITES styles, so a
-   * `getBoundingClientRect()` at the top of the next one forces the browser to
-   * flush the layout the previous one invalidated — inside a rAF loop that runs
-   * right through a pinch. Neither rect can change between two iterations of
-   * one frame anyway: they are the canvas and the container, and this writes to
-   * neither.
+   * THE TWO RECTS ARE PASSED IN rather than measured here, and `spot` in
+   * camera.js says why: `place` calls this in a loop and every iteration WRITES
+   * styles, so a `getBoundingClientRect()` at the top of the next one forces
+   * the browser to flush the layout the previous one invalidated.
    */
-  const place = (el, point, g, rect, box) => {
+  const put = (el, point, g, rect, box) => {
     if (!g || !finite3(point)) {
       el.style.display = "none";
       return;
     }
-    const ndc = projectPoint(g, point);
+    const at = spot(g, rect, box, point);
     // z > 1 is behind the camera's far plane, i.e. behind the reader. Under an
     // ortho projection that is a real case rather than a curiosity: the frustum
     // has a back and the model rotates through it.
-    if (!ndc || ndc[2] > 1) {
+    if (!at || at[2] > 1) {
       el.style.display = "none";
       return;
     }
     el.style.display = "";
-    el.style.left = `${(ndc[0] * 0.5 + 0.5) * rect.width + (rect.left - box.left)}px`;
-    el.style.top = `${(-ndc[1] * 0.5 + 0.5) * rect.height + (rect.top - box.top)}px`;
+    el.style.left = `${at[0]}px`;
+    el.style.top = `${at[1]}px`;
   };
 
-  const draw = () => {
-    frame = 0;
+  function place() {
     // READ EVERYTHING FIRST, THEN WRITE — one measurement per frame instead of
-    // one per pin. Nothing is read when the library is not there: `place` hides
+    // one per pin. Nothing is read when the library is not there: `put` hides
     // its element without looking at a rect, so the rects are not taken either.
     const g = internals(vp.viewer);
     const rect = g ? g.canvas.getBoundingClientRect() : null;
     const box = g ? vp.box.getBoundingClientRect() : null;
-    for (const [, entry] of pins) place(entry.el, entry.point, g, rect, box);
+    for (const [, entry] of pins) put(entry.el, entry.point, g, rect, box);
     if (vp.measureLabel) {
       label.textContent = vp.measureLabel.text;
-      place(label, vp.measureLabel.point, g, rect, box);
+      put(label, vp.measureLabel.point, g, rect, box);
     } else {
       label.style.display = "none";
     }
-    schedule();
-  };
-
-  /**
-   * One rAF loop, and only while there is something to place.
-   *
-   * The library owns the render loop and offers no post-render hook, so the
-   * alternative would be re-projecting from the trackball's `change` event —
-   * which fires on camera moves and NOT on the frames a live swap or a
-   * visibility change redraws. A loop that stops on its own when the overlay is
-   * empty costs nothing on the ordinary page, which has no pins.
-   */
-  const schedule = () => {
-    if (frame) return;
-    if (!pins.size && !vp.measureLabel) return;
-    frame = requestAnimationFrame(draw);
-  };
+  }
 
   /** Reconcile the pin elements against `state.pins`. */
   const setPins = (list) => {
@@ -132,18 +117,16 @@ export function createOverlay(vp) {
       entry.el.remove();
       pins.delete(key);
     }
-    schedule();
+    layer.refresh();
   };
 
   return {
     root,
     setPins,
-    refresh: schedule,
+    refresh: layer.refresh,
     destroy() {
-      if (frame) cancelAnimationFrame(frame);
-      frame = 0;
       pins.clear();
-      root.remove();
+      layer.destroy();
     },
   };
 }

@@ -97,10 +97,11 @@ import {
   PLACE, PIN, MODEL, ERROR, TOOL, VIEWPORT_TAG,
 } from './events.js';
 import {
-  PAGE, ASSEMBLED_VIEW_ID, COMPARE_GROUPS, DIFF_COLOURS, JOB_DONE,
-  JOB_FAILED, anchorFor, compareBase, isPointerPage, buildKey, countedName,
-  compareView, indexTree, loadCompareReport, loadJob, loadMeta, loadBuilds,
-  pageFrom, projectUrl, rereadPage, rowsByKey, shortId, stamp, startCompare, mb,
+  PAGE, ASSEMBLED_VIEW_ID, COMPARE_GROUPS, HUB_UNREACHABLE, JOB_DONE,
+  JOB_FAILED, anchorFor, askHub, compareBase, isPointerPage, buildKey,
+  countedName, compareView, hubBody, hubTrouble, indexTree, loadCompareReport,
+  loadJob, loadMeta, loadBuilds, pageFrom, rereadPage, rowsByKey, shortId,
+  startCompare, mb,
 } from './hub.js';
 // `readTheme`/`writeTheme` COME FROM HERE AND NOT FROM THE VIEWPORT, which is
 // the last step of the move issue #35 made: the theme stopped being the colour
@@ -110,7 +111,7 @@ import {
 // for them; it does not any more, and there is again exactly one module that
 // reaches the cookie.
 import {
-  readToken, writeToken, clearToken, readNotes, writeNotes, rememberPointer,
+  readToken, readNotes, writeNotes, rememberPointer,
   readTabs, rememberTab, forgetTab, readTheme, writeTheme,
 } from './store.js';
 // The two attachments a comment carries, made small enough to send. Imported
@@ -125,16 +126,45 @@ import {
 // modules, and the split is the same one the viewport draws: the document and
 // its projection are pure text (`proposal.js`), the kernel that turns one into
 // parts is next door (`proposalgeom.js`), and the COLOURS of those parts live
-// over there with it. That is not an exemption from this file's no-literal rule
-// — a part's colour is model content, like the colours the hub pushes in a view
-// file, and this file paints no part.
+// over there with it. The no-literal rule sweeps this whole page now rather
+// than this one file, and `proposalgeom.js` is its ONE named exemption in
+// `tests/test_ui_source.py` — a part's colour is model content, like the
+// colours the hub pushes in a view file, and this file paints no part.
 import {
-  addNode, bodies, dropMoves, emptyProposal, firstFree, isEmpty, moveNodes,
+  addNode, bodies, dropMoves, emptyProposal, isEmpty, moveNodes,
   moves, removeNode, proposalText, sendsNothing, turnNodes, updateNode,
 } from './proposal.js';
 import { buildProposal } from './proposalgeom.js';
+// The panel's own half of `computed()`, and the first section to leave it
+// (issue #103): a view model that takes the state and a bag of this page's
+// doors and answers with the `proposal*` keys `render()` draws from.
+import { proposalView } from './proposalview.js';
+// And the menu a right-click opens, on a row of the tree or on the part in the
+// scene — one section of `computed()` and one shape, whichever door opened it.
+import { rowMenu } from './rowmenu.js';
+// And the chrome round the model: the header, the token control, the tab strip,
+// the view switcher and the floating toolbar.
+import { chromeView } from './chromeview.js';
+// And the four panels that answer to little more than the state: the revision
+// picker, the downloads menu, the comment rail and the comparison. `fileHref`
+// comes with the downloads because the row menu builds the same link for one
+// part that the header's menu builds for all of them.
+import { revisionView } from './revisionview.js';
+import { downloadsView, fileHref } from './downloadsview.js';
+import { feedView } from './feedview.js';
+import { comparePanel } from './compareview.js';
+// The rules this page and the front page both write: the popover recipe its six
+// panels share, the three controls, the tree's icons, and the declarations that
+// were spelled out once per call site.
 import {
-  css, FONTS, SANS, MONO, Mark, NARROW, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
+  ACCENT_BTN, BLANK_BOX, DIM_CLICK, FAINT_CLICK, FAINT_MONO, FILL, HALF_BTN, HEADER_RULE,
+  HEAD_MONO, HEAD_SANS, IDLE, INDEX_MONO, INK, KEY_MONO, LABEL_SANS, LINK, META_MONO,
+  ON_ACCENT, ON_ACCENT_EDGE, POP_SHADOW_HIGH, QUIET_BTN, RELATIVE, ROW, ROW_LABELLED,
+  RULE, SLOT_22, SLOT_24, SPAN_MONO, SWATCH, TITLE, TOOL_SQUARE, WARN_BODY, WARN_CAPS,
+  WORDMARK, chip, eyeDot, eyeOuter, ghostIcon, popover,
+} from './panelstyle.js';
+import {
+  css, FONTS, SANS, MONO, Mark, NARROW, PAGE_BG, PAGE_FG,
 } from './style.jsx';
 // The one question this file's keydown handler cannot answer for itself: is the
 // reader in a field. Imported rather than repeated because the rule is subtle —
@@ -1164,6 +1194,50 @@ export default class HammerolaViewer extends React.Component {
     // Not state, for the reason `this.carry` is not — nothing on the page is
     // drawn from it, so a bump must not cost a render.
     this._proposalSeq = 0;
+    // THE REST OF THIS PAGE'S FIELDS, DECLARED RATHER THAN MINTED WHERE THEY
+    // ARE FIRST WRITTEN. Twenty of them used to appear for the first time
+    // somewhere inside a method — a timer in `schedulePoll`, a listener map in
+    // `componentDidMount`, a generation counter inside `switchBuild` — while
+    // `componentWillUnmount` has to know EVERY ONE of them: it removes the
+    // listeners and clears the timers, and a field it does not name is a
+    // listener left on the window or a timer that wakes up on a component that
+    // is gone. That list could only be assembled by reading the whole file, and
+    // the one place it must be complete is thirty lines long and four hundred
+    // lines away. Here it is one block.
+    //
+    // `undefined` AND NOT A TIDIER VALUE, deliberately and for every one of
+    // them: that is what each of these reads as today until its first write,
+    // and every reader is written for it — `clearTimeout(undefined)` is a
+    // no-op, `this._h || {}` sweeps nothing, `(this._swapGen || 0) + 1` starts
+    // at one. Seeding a `0`, a `null` or an empty object here would be a
+    // behaviour change wearing the clothes of a tidy-up.
+    //
+    // -- the listeners `componentDidMount` puts on the window
+    this._h = undefined;            // the viewport's events, name -> handler
+    this._kd = undefined;           // keydown: Escape, the undo chord, the hold key
+    this._pop = undefined;          // popstate, for a build swapped in place
+    this._mq = undefined;           // the breakpoint's media query list, or null
+    this._narrow = undefined;       // and the listener on it
+    // -- true once this component has gone, for anything that may wake up after
+    this._gone = undefined;
+    // -- generations: a late answer whose number has moved on is dropped whole
+    this._swapGen = undefined;      // build swaps started
+    this._pollGen = undefined;      // polls started
+    // -- timers, every one of them cleared on unmount
+    this._poll = undefined;         // the next poll of the pointer's meta.json
+    this._pollDelay = undefined;    // and the delay it is armed at, which backs off
+    this._swap = undefined;         // a swap deferred while the viewport is busy
+    this._nudge = undefined;        // the run of spinner nudges, committed once it stops
+    this._tt = undefined;           // the toast's own life
+    this._proposalSave = undefined; // the debounce on writing the document to the hub
+    this._cmpWaits = undefined;     // every gap between two polls of a comparison job
+    // -- what the model event and the stored proposal leave for each other
+    this._refit = undefined;        // the next model event refits the camera
+    this._modelSeen = undefined;    // a model event has landed at all
+    this._proposalRecord = undefined; // what `loadProposal` read, for `adoptProposal`
+    this._proposalSent = undefined; // the payload last written, so a save can be skipped
+    // -- the download chain in flight, which `cancelDownloads` aborts
+    this._dl = undefined;
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
@@ -2374,6 +2448,7 @@ export default class HammerolaViewer extends React.Component {
     // composer block at the foot of that object carries the rest of the
     // argument.
     const left = dropMoves(this.state.proposal || emptyProposal());
+
     return {
       state: {
         // Cleared so the panel does not describe the build that has left. The
@@ -4867,29 +4942,19 @@ export default class HammerolaViewer extends React.Component {
    * one that stays, and the refetch behind it is silent.
    */
   async loadFeed(quiet = false) {
-    let response = null;
-    try {
-      response = await fetch(
-        `/api/v1/comments?project=${encodeURIComponent(PAGE.pid)}`,
-        { headers: { Authorization: `Bearer ${this.state.token}` } });
-    } catch (error) {
+    const { response, error } = await askHub(
+      `/api/v1/comments?project=${encodeURIComponent(PAGE.pid)}`,
+      this.state.token);
+    if (error) {
       console.error('feed', error);
-      if (!quiet) this.toast('Could not reach the hub');
+      if (!quiet) this.toast(HUB_UNREACHABLE);
       return;
     }
-    if (response.status !== 200) {
-      if (!quiet) {
-        this.toast(response.status === 401
-          ? 'The hub refused the token'
-          : 'Could not load the comments');
-      }
-      return;
-    }
-    let body = null;
-    try {
-      body = await response.json();
-    } catch (error) {
-      console.error('feed', error);
+    const said = hubTrouble(response, 200, 'Could not load the comments');
+    if (said) { if (!quiet) this.toast(said); return; }
+    const { body, error: unread } = await hubBody(response);
+    if (unread) {
+      console.error('feed', unread);
       if (!quiet) this.toast('Could not load the comments');
       return;
     }
@@ -4915,35 +4980,26 @@ export default class HammerolaViewer extends React.Component {
    * is not this one.
    */
   async loadProposal() {
-    let response = null;
-    try {
-      response = await fetch(
-        `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`,
-        { headers: { Authorization: `Bearer ${this.state.token}` } });
-    } catch (error) {
+    const { response, error } = await askHub(
+      `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`, this.state.token);
+    if (error) {
       console.error('proposal', error);
-      this.toast('Could not reach the hub');
+      this.toast(HUB_UNREACHABLE);
       return;
     }
     // A PROJECT WITH NOTHING STORED IS NOT A FAILURE, and it is the answer that
     // opens the door to saving: there is nothing left to overwrite. Nothing to
     // adopt either, so this one needs no scene and no build and is answered on
-    // the spot.
+    // the spot. Read BEFORE the sentence below, which would call it one.
     if (response.status === 404) {
       this.setState({ proposalHeld: false, proposalStands: false });
       return;
     }
-    if (response.status !== 200) {
-      this.toast(response.status === 401
-        ? 'The hub refused the token'
-        : 'Could not load the proposal');
-      return;
-    }
-    let body = null;
-    try {
-      body = await response.json();
-    } catch (error) {
-      console.error('proposal', error);
+    const said = hubTrouble(response, 200, 'Could not load the proposal');
+    if (said) { this.toast(said); return; }
+    const { body, error: unread } = await hubBody(response);
+    if (unread) {
+      console.error('proposal', unread);
       this.toast('Could not load the proposal');
       return;
     }
@@ -5206,19 +5262,13 @@ export default class HammerolaViewer extends React.Component {
    */
   async postProposal(body, says) {
     this._proposalSent = body;
-    let response = null;
-    try {
-      response = await fetch(`/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.state.token}`,
-          'Content-Type': 'application/json',
-        },
-        body,
-      });
-    } catch (error) {
-      console.error('proposal', error);
-    }
+    // NO `hubTrouble` HERE, and that is the silence above rather than an
+    // oversight: this one has no sentence to choose between, so a 401 and a
+    // hub that went away take the same path out.
+    const { response, error } = await askHub(
+      `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`, this.state.token,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    if (error) console.error('proposal', error);
     if (!response || response.status !== 200) {
       this._proposalSent = null;
       return;
@@ -5268,25 +5318,16 @@ export default class HammerolaViewer extends React.Component {
       'Delete the proposal — the stored one and the drawing on this page?')) {
       return;
     }
-    let response = null;
-    try {
-      response = await fetch(
-        `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${this.state.token}` },
-        });
-    } catch (error) {
+    const { response, error } = await askHub(
+      `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`, this.state.token,
+      { method: 'DELETE' });
+    if (error) {
       console.error('proposal', error);
-      this.toast('Could not reach the hub');
+      this.toast(HUB_UNREACHABLE);
       return;
     }
-    if (response.status !== 200) {
-      this.toast(response.status === 401
-        ? 'The hub refused the token'
-        : 'Could not delete the proposal');
-      return;
-    }
+    const said = hubTrouble(response, 200, 'Could not delete the proposal');
+    if (said) { this.toast(said); return; }
     this.setState({ proposalHeld: false, proposalStands: false });
     this.setProposal(emptyProposal());
     clearTimeout(this._proposalSave);
@@ -5406,33 +5447,29 @@ export default class HammerolaViewer extends React.Component {
         form.append('shot', shot, named('shot', shot));
       }
 
-      // Required by the hub since step 0, and checked there before the body is
-      // parsed at all — so this header is what makes the request a comment rather
-      // than a 401.
-      const headers = { Authorization: `Bearer ${this.state.token}` };
-
-      let response = null;
-      try {
-        response = await fetch(`/api/v1/comments/${PAGE.pid}/${meta.commit}`,
-                               { method: 'POST', body: form, headers });
-      } catch (error) {
+      // The token `askHub` sends has been required by the hub since step 0, and
+      // is checked there before the body is parsed at all — so it is what makes
+      // this a comment rather than a 401, with the whole upload already spent.
+      const { response, error } = await askHub(
+        `/api/v1/comments/${PAGE.pid}/${meta.commit}`, this.state.token,
+        { method: 'POST', body: form });
+      if (error) {
         console.error('comment', error);
-        this.toast('Could not reach the hub');
+        this.toast(HUB_UNREACHABLE);
         return;
       }
-      if (response.status !== 201) {
-        // Fixed sentences rather than the hub's own message: nothing on this page
-        // should be in the habit of putting a response body on the screen.
-        const said = {
-          401: 'The hub refused the token',
-          404: 'This build is no longer available',
-          413: 'Too large — try a smaller photo',
-          422: 'The hub refused this comment. Is the photo a JPEG, PNG or WebP?',
-          429: 'Too many comments from here. Try again in a few minutes.',
-        }[response.status];
-        this.toast(said || 'Could not send the comment');
-        return;
-      }
+      // FIXED SENTENCES RATHER THAN THE HUB'S OWN MESSAGE: nothing on this page
+      // should be in the habit of putting a response body on the screen. The
+      // longest list on this page, because this is the request that can be
+      // refused for reasons the reader can act on; 401 is not among them here,
+      // since `hubTrouble` answers it with the same sentence it always does.
+      const said = hubTrouble(response, 201, {
+        404: 'This build is no longer available',
+        413: 'Too large — try a smaller photo',
+        422: 'The hub refused this comment. Is the photo a JPEG, PNG or WebP?',
+        429: 'Too many comments from here. Try again in a few minutes.',
+      }[response.status] || 'Could not send the comment');
+      if (said) { this.toast(said); return; }
 
       // THE QUEUE IS REFETCHED RATHER THAN GUESSED AT. This page used to append a
       // row of its own making — its own id, its own label, `just now` — because it
@@ -5473,23 +5510,16 @@ export default class HammerolaViewer extends React.Component {
    */
   async resolveComment(id) {
     if (!id || this.viewer()) return;
-    let response = null;
-    try {
-      response = await fetch(`/api/v1/comments/${encodeURIComponent(id)}/resolve`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${this.state.token}` },
-      });
-    } catch (error) {
+    const { response, error } = await askHub(
+      `/api/v1/comments/${encodeURIComponent(id)}/resolve`, this.state.token,
+      { method: 'POST' });
+    if (error) {
       console.error('resolve', error);
-      this.toast('Could not reach the hub');
+      this.toast(HUB_UNREACHABLE);
       return;
     }
-    if (response.status !== 200) {
-      this.toast(response.status === 401
-        ? 'The hub refused the token'
-        : 'Could not mark it processed');
-      return;
-    }
+    const said = hubTrouble(response, 200, 'Could not mark it processed');
+    if (said) { this.toast(said); return; }
     this.toast('Marked processed');
     await this.loadFeed(true);
   }
@@ -5821,7 +5851,31 @@ export default class HammerolaViewer extends React.Component {
     this.set({ viewError: null }, { __retry: true });
   }
 
-  /** All derived values and handlers. render() below only lays them out. */
+  /**
+   * All derived values and handlers. render() below only lays them out.
+   *
+   * SEVEN OF THE PANELS ARE BUILT NEXT DOOR (issue #103) and this method is
+   * what hands them what they need. Each is a plain function of the state and a
+   * bag of this page's own doors — `proposalView`, `rowMenu`, `chromeView`,
+   * `revisionView`, `downloadsView`, `feedView`, `comparePanel` — and what
+   * comes back is spread into, or read out of, the one object below. The
+   * sections never did interleave; what kept them here was that they were all
+   * in one method's scope.
+   *
+   * WHAT IS LEFT HERE IS WHAT MORE THAN ONE OF THEM NEEDS: the tree's rows,
+   * the two flags every panel asks about (`narrow`, `compared`), and the
+   * section's own row — whose `clearSection` is one closure behind two doors.
+   * Working any of those out twice is two panels free to disagree about one
+   * answer. What every panel DRAWS with — the popover recipe, the three
+   * controls, the tree's four icons — is not handed down at all any more: it is
+   * ui/src/panelstyle.js, which each of them imports.
+   *
+   * THE OBJECT IS THE CONTRACT. Fifteen files in ui/tests build this component
+   * by hand and call this method directly, asserting on its keys by name, so a
+   * key is a name that has to keep meaning what it meant — which is what makes
+   * a spread of per-panel objects a safe shape for it and a renamed key not a
+   * refactor.
+   */
   computed() {
     const s = this.state;
     const tree = s.tree;
@@ -5849,16 +5903,6 @@ export default class HammerolaViewer extends React.Component {
 
     // -- the tree: a flat list of rows, indented by depth
     const rows = [];
-    const eyeOuter = (st) => 'width:15px;height:10px;border:1.5px solid ' + (st === 'off' ? 'var(--line-strong)' : 'var(--text-soft)') + ';border-radius:50%;display:flex;align-items:center;justify-content:center';
-    const eyeDot = (st) => 'width:5px;height:5px;border-radius:3px;' + (st === 'on' ? 'background:var(--text-soft)' : st === 'part' ? 'background:linear-gradient(90deg,var(--text-soft) 50%,var(--line-strong) 50%)' : 'background:transparent');
-    const ghostIcon = (on) => 'width:11px;height:11px;border-radius:3px;' + (on ? 'background:linear-gradient(135deg,var(--text-soft) 50%,var(--hover-bg) 50%);border:1px solid var(--text-soft)' : 'border:1px solid var(--line-strong);background:linear-gradient(135deg,var(--hover-bg) 50%,transparent 50%)');
-    // THE PROPOSAL'S TICK, drawn as the square beside it so the two read as one
-    // row of controls rather than a checkbox bolted onto a tree. FILLED MEANS
-    // HELD BACK, which is the way round the reader asked for it — a tick is
-    // "leave this out of what you send" — and empty means the node travels, so
-    // a branch nobody has touched is a row of empty squares and says so.
-    const skipIcon = (on) => 'width:11px;height:11px;border-radius:3px;border:1px solid '
-      + (on ? 'var(--text-soft);background:var(--text-soft)' : 'var(--line-strong);background:transparent');
 
     const emit = (node) => {
       // THE OVERLAY IS NOT A ROW OF THIS TREE. Its bodies are drawn in the
@@ -5912,7 +5956,7 @@ export default class HammerolaViewer extends React.Component {
         onExpand: stop(() => node.isNode
           && this.setState({ expanded: { ...s.expanded, [node.id]: !expanded } })),
         eyeOuter: eyeOuter(eye), eyeDot: eyeDot(eye), ghostIcon: ghostIcon(ghosted),
-        dotStyle: 'width:9px;height:9px;border-radius:3px;flex:none;margin:0 4px 0 2px;background:' + (node.color || 'transparent') + (node.isNode ? ';border:1px solid var(--line-strong);background:transparent' : ''),
+        dotStyle: SWATCH + (node.color || 'transparent') + (node.isNode ? ';border:1px solid var(--line-strong);background:transparent' : ''),
         // `pin ×5` where the row collapsed five copies of one part (issue #75).
         // A GROUP NEVER GETS ONE, and the reason is that it would not be the
         // same quantity: a group's `leaves` is every leaf path UNDERNEATH it
@@ -5930,7 +5974,7 @@ export default class HammerolaViewer extends React.Component {
         // to the library's own state map is a row nothing can be done to, and a
         // tree missing a row reads as a build with fewer parts.
         metaTitle: node.isNode || node.known ? '' : 'the viewport does not know this part',
-        metaStyle: `flex:none;font:400 10px ${MONO};color:var(--text-faint);padding:0 2px`,
+        metaStyle: INDEX_MONO,
         // A group toggles as a whole: anything still visible means hide it all,
         // nothing visible means show it all. Expressed in LEAF ids — see
         // hub.indexTree for why.
@@ -5963,249 +6007,35 @@ export default class HammerolaViewer extends React.Component {
     const secRange = Array.isArray(s.secRange) ? s.secRange : [-30, 30];
 
     // -- the revision picker, from builds.json
-    const info = s.builds || { has_dev: false, latest: null, builds: [] };
-    const history = Array.isArray(info.builds) ? info.builds : [];
-    const revs = [];
-    if (info.has_dev) {
-      revs.push({ id: 'dev', head: 'POINTERS', badge: '→ dev slot',
-                  date: '', message: '', pointer: true });
-    }
-    if (info.latest) {
-      revs.push({ id: 'latest', head: info.has_dev ? '' : 'POINTERS',
-                  badge: `→ ${shortId(info.latest)}`, date: '', message: '',
-                  pointer: true });
-    }
-    history.forEach((b, at) => revs.push({
-      id: b.commit, head: at === 0 ? 'BUILDS' : '', badge: '',
-      // THE TIME BELONGS HERE, and this is the list that changed its mind about
-      // it. `day()` was written for a picker whose rows were CI commits — one or
-      // two a day, so the clock was noise beside the date. Publishing is now
-      // `hammerola build` from a laptop (issue #26), which an author runs
-      // as often as they save; a column of identical `2026-08-27`s then tells a
-      // reader nothing about the one thing this menu is for, which is choosing
-      // between two of them. So the picker shows the same `stamp` the header
-      // does — and shows it in the same shape, which is the second half of the
-      // fix: the two were formatted differently while naming the same instant.
-      date: stamp(b.built), pointer: false,
-      // WHAT THE AUTHOR SAID THIS REVISION IS (issue #67), and the reason this
-      // menu can now be read at all: every other thing on the row — twelve hex
-      // characters and a timestamp — tells two revisions apart without saying
-      // what either one is. Absent on the ones pushed before the field existed
-      // and on any push made without `-m`, so it is read as "" and the row is
-      // then exactly the row it always was.
-      message: typeof b.message === 'string' ? b.message : '',
-    }));
-
-    const revRows = revs.map((r) => {
-      const current = r.id === PAGE.slot;
-      // THE TICK HOLDS THE COMMIT AND NOT THE ROW'S NAME. The hub refuses a
-      // pointer as an end of a pair, so `latest` has to be the commit it
-      // resolves to before anything is asked — and `dev` resolves to nothing,
-      // which is what takes the tick off that row below.
-      const commit = this.commitOf(r.id);
-      const inCmp = !!commit && s.cmp.includes(commit);
-      return {
-        key: r.id,
-        head: r.head || '',
-        headStyle: r.head ? `padding:7px 14px 3px;font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.09em` : 'display:none',
-        id: r.pointer ? r.id : shortId(r.id),
-        date: r.date,
-        // IN THE PLACE THE SPACER USED TO HOLD, which is what keeps the row one
-        // line: it takes the free width between the id and the date, and gives
-        // it back by ellipsis when there is more text than room. `title` is the
-        // rest of a long one, and a row with no message is the flexible gap the
-        // spacer always was.
-        message: r.message,
-        messageStyle: `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 11.5px ${SANS};color:var(--text-muted)`,
-        idStyle: `font:600 12px ${MONO};color:` + (current ? 'var(--accent-text)' : r.pointer ? 'var(--note)' : 'var(--text)'),
-        badge: current && !r.badge ? 'viewing' : r.badge,
-        badgeStyle: `font:500 10.5px ${MONO};` + (r.pointer ? 'color:var(--text-muted)' : (current || r.badge) ? 'padding:2px 6px;border-radius:4px;background:var(--accent-bg);color:var(--accent-text)' : 'display:none'),
-        // THE SOFT TINT AND NOT THE FULL ONE, because this row says "you are
-        // here" and the tree's selected row a few pixels away says "you picked
-        // this" — two markers the reader tells apart by weight rather than by
-        // hue. One tint for both makes the picker shout and takes the
-        // difference away; `--accent-bg-soft` is what the row was drawn in
-        // before the palette existed, said as a role.
-        style: 'display:flex;align-items:center;gap:4px;padding:7px 14px 7px 10px;' + (current ? 'background:var(--accent-bg-soft);' : '') + 'cursor:default',
-        // NO TICK ON A ROW THAT NAMES NO COMMIT, which is the `dev` slot and
-        // only it. A comparison is cached under the names it was asked with, so
-        // both ends have to be permanent addresses, and the slot has none by
-        // decision — `has_dev` is a flag, not an id. Offering the tick and
-        // failing at the POST would be the same answer given later and as an
-        // error; this is it given honestly, on the row. The box keeps its space
-        // so that the rows below still line up under one another.
-        cmpMark: inCmp ? '✓' : '',
-        cmpStyle: `width:16px;height:16px;border-radius:4px;flex:none;margin-right:6px;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO};cursor:pointer;` + (inCmp ? 'background:var(--accent);color:var(--text-on-accent);border:1px solid var(--accent-strong)' : 'border:1px solid var(--line-strong);background:var(--card-bg);color:transparent') + (commit ? '' : ';visibility:hidden;cursor:default'),
-        onCmp: !commit ? undefined : stop(() => {
-          let picked = s.cmp.includes(commit) ? s.cmp.filter((x) => x !== commit) : s.cmp.concat(commit);
-          if (picked.length > 2) picked = picked.slice(-2);
-          this.setState({ cmp: picked });
-        }),
-        // A build is an ADDRESS, so switching to one is a navigation and not a
-        // state change: the URL is the thing that has to keep saying which
-        // geometry this is, a year from now, to whoever the link was sent to.
-        //
-        // THAT IS A SENTENCE ABOUT THE ADDRESS BAR, NOT ABOUT THE DOCUMENT, and
-        // reading it as a refusal is what kept this a full page load. There is
-        // no wall here: `history.pushState` satisfies every word of it — the URL
-        // changes, the link copies and opens exactly as it did, and the page the
-        // hub renders at that address on its own is untouched — while the reader
-        // keeps the camera, the hidden parts and the section they set up in
-        // order to compare two builds (issue #62). Which is the whole
-        // point: those get thrown away at precisely the moment they are worth
-        // the most. `switchBuild` is where it happens, and a different PROJECT
-        // is still a real navigation, because there everything changes at once.
-        onPick: stop(() => {
-          this.switchBuild(PAGE.pid, r.id)
-            .catch((error) => console.error('switch', error));
-        }),
-      };
-    });
-    const cmpReady = s.cmp.length === 2;
-
-    // -- the comparison panel, which stands where the tree stands
     //
-    // FOUR THINGS CAN BE ON THE SCREEN HERE and only one of them is a list:
-    // waiting for the hub, a refusal because this browser has no token, a
-    // failure with the hub's own words in it, and the report. The first three
-    // are one paragraph with a heading — a panel that draws an EMPTY LIST for
-    // any of them would be saying "nothing changed", which is one of the
-    // answers this block has to be able to give truthfully.
-    const cmpPair = Array.isArray(s.cmpPair) ? s.cmpPair : [];
-    const cmpRows = compareRows(s.cmpReport);
-    const cmpDone = s.cmpStage === 'ready';
-    const cmpNote = cmpDone ? null
-      : s.cmpStage === 'locked'
-        ? { head: 'This needs the editing token',
-            body: 'A comparison is computed on request, and both of its documents'
-              + ' are read under the same token that publishes. Add the token in'
-              + ' the header, then press Compare again.' }
-        : s.cmpStage === 'failed'
-          ? { head: 'The comparison did not finish',
-              body: s.cmpError || 'the hub did not say why' }
-          : { head: 'Measuring the difference…',
-              body: 'The hub is intersecting the two revisions part by part. It'
-                + ' takes a second or two once the build queue reaches it.' };
+    // THE FALLBACK STAYS HERE AND THE ROWS DO NOT, which is the one seam in
+    // this split that a reader would not have drawn: the object below names
+    // exactly what builds.json carries, and `tests/test_ui_source.py` reads it
+    // out of THIS file as text to check that against what `src/render.py`
+    // writes. Lifting the line would take the check with it, so the picker is
+    // handed its own fallback instead.
+    const info = s.builds || { has_dev: false, latest: null, builds: [] };
+    const { revRows, revEmpty } = revisionView(s, info, {
+      stop,
+      commitOf: this.commitOf.bind(this),
+      setState: this.setState.bind(this),
+      switchBuild: this.switchBuild.bind(this),
+    });
 
     // -- the downloads, out of the part catalogue: key -> {extension -> file}
     const catalogue = (meta && meta.parts) || null;
-    const fileHref = (file) => PAGE.base + encodeURIComponent(String(file));
-    const dlRowStyle = `display:flex;align-items:center;gap:10px;padding:6px 14px 6px 22px;text-decoration:none;color:var(--text);font:400 12px ${SANS}`;
-    const downloadGroups = groupDownloads(catalogue).map((g) => ({
-      key: g.ext,
-      ext: g.ext,
-      files: g.files.map((f) => ({
-        key: f.file, label: f.label, file: f.file, href: fileHref(f.file),
-        style: dlRowStyle,
-      })),
-      headStyle: `display:flex;align-items:center;gap:8px;padding:8px 14px 3px;font:600 10px ${MONO};color:var(--text-muted);letter-spacing:.08em`,
-      allStyle: `cursor:pointer;font:500 10.5px ${MONO};color:var(--accent-text);text-decoration:underline`,
-      // ONE CLICK, N DOWNLOADS, DONE IN THE BROWSER — the owner's decision, and
-      // the cost is worth stating rather than discovering. A browser does not
-      // block the second file and the ones after it; it ASKS, once, with a
-      // per-site permission it then remembers (the note further down, on the
-      // tree row's group, is where that correction is written out). So for a
-      // PERSON this is one prompt and then nothing. For an agent driving the
-      // page there is nobody to answer that prompt, which is why an agent takes
-      // `hammerola artifacts` instead and why this is not the hub's job: no
-      // route, no archive, no client change.
-      //
-      // No `stop()`: the click bubbles to `rootClick` and closes the menu, which
-      // is exactly what a file row beside it already does by being a plain link.
-      onAll: () => this.downloadAll(g.files.map((f) => fileHref(f.file))),
-    }));
-    const anyDownloads = downloadGroups.length > 0;
+    const { downloadGroups, anyDownloads } = downloadsView(catalogue, {
+      groupDownloads, downloadAll: this.downloadAll.bind(this),
+    });
 
     // -- the project's comment queue, as `loadFeed` fetched it
-    //
-    // THE WHOLE QUEUE AND NOT THIS SESSION'S NOTES. The rail used to list what
-    // this page had posted since it opened, because that was the only copy of a
-    // comment it had; the hub answers with the project's queue now, oldest first
-    // (SPEC 7A.2), and the row number is the position in it — the same number
-    // `sync` writes on the pin, so the badge on the model and the badge in the
-    // rail name the same item.
-    //
-    // EVERY ROW SAYS WHERE IT HANGS, in words, because most of them cannot be
-    // pointed at: a comment left on another revision follows its catalogue key
-    // to whatever draws that part today, a comment on a part this view does not
-    // draw has no pin at all, and a comment whose part has left the catalogue is
-    // ORPHANED — a fact about the model, and the one the reader must not have to
-    // infer from a missing pin.
-    const anchoredAt = {
-      commit: (meta && meta.commit) || null,
-      published: (meta && meta.published) || null,
-      view: s.view,
-      keyRows: rowsByKey(s.tree),
-      parts: catalogue || {},
-    };
-    const threads = s.feed.map((record, i) => {
-      const anchor = anchorFor(record, anchoredAt);
-      const resolved = record.status === 'resolved';
-      // THE HEADING IS A ROW OF THE TREE ON SCREEN or it is the catalogue key,
-      // and never the stored path used as a stand-in: on another build that
-      // path is a number the tessellator was free to hand to something else.
-      const node = anchor.state === 'point'
-        ? this.node(record.part)
-        : (anchor.state === 'part' ? this.node(anchor.path) : null);
-      // TWO OF THE FIVE SENTENCES SAY LESS THAN THE OBVIOUS WORDING WOULD, and
-      // both are shorter for the same reason: they were guessing at a cause the
-      // record does not carry. `none` used to read "left before comments named
-      // a part", which is one of its causes and not the common one — `measAdd`
-      // and the place handler both send a null key TODAY, whenever nothing is
-      // selected or the selected row is a GROUP, and a group has no catalogue
-      // key at all. And `elsewhere` names the view the comment was left on,
-      // which the hub is free to store as null (`validate_payload`), so the
-      // interpolation printed the word "null" at the reader.
-      const says = {
-        point: 'left here, on this build',
-        part: 'follows the part through the rebuild',
-        elsewhere: record.view
-          ? `the part is not in this view — left on ${record.view}`
-          : 'the part is not in this view',
-        orphan: 'the part this was left on is no longer in the catalogue',
-        none: 'not tied to a part',
-      }[anchor.state];
-      return {
-        key: record.id,
-        label: String(i + 1),
-        part: (node && node.name) || record.key || '',
-        time: stamp(record.created),
-        text: record.text,
-        says,
-        style: 'padding:10px 12px;background:var(--card-bg);border:1px solid ' + (s.activePin === record.id ? 'var(--accent-line)' : 'var(--line)') + ';border-radius:8px;cursor:pointer;' + (resolved ? 'opacity:.62' : ''),
-        // RESOLVED IS A LIGHTER GREY HERE THAN ON THE CANVAS, and that is the
-        // ground rather than an inconsistency: this badge sits on a card in the
-        // rail, where the ordinary chip fill is already a visible pill, while
-        // `.hmr_pin.is_resolved` sits on the 3D MODEL, where nothing lighter than
-        // `--line-strong` keeps a silhouette against a white canvas. Same badge,
-        // two backdrops, two weights — which is why they were two literals before
-        // they were two roles.
-        pinStyle: `width:20px;height:20px;border-radius:10px 10px 10px 3px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO};` + (resolved ? 'background:var(--chip-bg);color:var(--text-muted)' : 'background:var(--accent);color:var(--text-on-accent)'),
-        // An orphan is the one anchor state that is news about the model rather
-        // than about where the pin went, so it is the one that is coloured.
-        saysStyle: `margin-top:6px;font:400 10.5px/1.5 ${MONO};color:`
-          + (anchor.state === 'orphan' ? 'var(--warn)' : 'var(--text-muted)'),
-        onOpen: stop(() => this.set({ activePin: record.id })),
-        resolved,
-        // A real request since step 0 — see resolveComment. Closing an item is
-        // still mostly the agent's move; what changed is that the person who
-        // raised it can now take it back without one.
-        onResolve: stop(() => { if (!resolved) this.resolveComment(record.id); }),
-      };
+    const { threads, openCount } = feedView(s, {
+      meta, catalogue, stop,
+      node: this.node.bind(this),
+      set: this.set.bind(this),
+      resolveComment: this.resolveComment.bind(this),
     });
-    const openCount = s.feed.filter((c) => c.status !== 'resolved').length;
 
-    // -- context menu on a tree row
-    const mNode = this.node(s.menu && s.menu.id);
-    // THE SECTION'S ROW IS THE ONE SUBJECT OF THIS MENU THAT IS NOT A NODE, and
-    // it is asked for by name rather than faked into one. A stand-in node would
-    // have to carry `leaves`, a `key` and a `name` it does not have, and every
-    // item below reads at least one of the three — so the fake would reach
-    // Isolate, the files and Copy name, all of them about a part that is not
-    // there. `mNode` stays `null` for it (`SECTION_ROW` is no tree path), which
-    // is what keeps those items off; the two branches below add the ones that
-    // ARE about the cut.
-    const secMenu = !!(s.menu && s.menu.id === SECTION_ROW);
     // ONE RESET BEHIND TWO DOORS — the section popover's `reset` button and the
     // row menu's Delete. They are one closure and not two copies of the same
     // four fields, because the fields are not the whole of it: the `__resetCut`
@@ -6215,127 +6045,6 @@ export default class HammerolaViewer extends React.Component {
     const clearSection = () => this.set(
       { secOn: false, secFace: null, secOff: 0, secFlip: false },
       { __resetCut: true });
-    // WHETHER THERE IS A SECTION FOR Delete TO CLEAR, which is the four fields
-    // above standing anywhere but where that call would put them. NOT `s.secOn`:
-    // the eye on the row takes the cut off the screen and deliberately KEEPS the
-    // plane and the offset, so a Delete that read an unlit row as "no section"
-    // would decline on exactly the state it exists to clean up.
-    const secSet = s.secOn || !!s.secFace || s.secOff !== 0 || s.secFlip;
-    // TWO NAMES, AND THE MENU USES BOTH FOR DIFFERENT THINGS. `mName` is the
-    // row's own label and is what the menu is headed with — it addresses the
-    // ROW, which is one solid in one view UNLESS the row collapsed repeats of
-    // one part, and then it is all of them. `mKey` is
-    // the catalogue key and is what everything about the PART is looked up
-    // under: its note, its files. A group has no key and neither has a leaf
-    // that names none, and in both cases the answer is that this row has
-    // nothing in the catalogue — never the name used as a stand-in (issue #75).
-    //
-    // THE COUNT IS ON THE HEADER because the items below it act on the whole
-    // row: Hide takes `mNode.leaves`, so a menu headed plain `pin` over a row
-    // of five would hide five parts having named one. Copy name is the other
-    // half of the same decision and deliberately copies `mNode.name` bare —
-    // what goes on the clipboard is a part's name, not a tally of it.
-    //
-    // A GROUP IS EXCLUDED, on the same ground the tree row gives next door: it
-    // would not be the same quantity. A group's `leaves` is every leaf path
-    // UNDERNEATH it (`indexTree`), so `housing ×7` reads as seven housings when
-    // the seven are the parts inside one. Hide does act on all seven — the
-    // argument above holds for a group word for word — but a header naming the
-    // wrong quantity is worse than one naming none. What does NOT carry over is
-    // the tree row's second remark, that the number is drawn on the right
-    // anyway: this menu has no meta column, so nothing here shows it at all.
-    //
-    // THE SECTION HEADS ITS MENU WITH THE WORD ON ITS ROW, which is the constant
-    // the id is: a menu headed anything else would read as being about a part.
-    const mName = secMenu ? SECTION_ROW : (mNode && !mNode.isNode
-      ? countedName(mNode.name, mNode.leaves.length)
-      : (mNode ? mNode.name : ''));
-    const mKey = (mNode && mNode.key) || '';
-    // Through `noteFor` like the other read of the reader's map. This one throws
-    // EARLIEST of the two when it is not: the item below slices the note to 22
-    // characters for its hint, and a part called `constructor` hands a bare
-    // lookup a function, which has no `slice` — so the whole menu, and with it
-    // `computed()` and the page, ends on a right-click.
-    const note = noteFor(s.notes, mKey);
-    // `href` turns the row into a real `<a download>` — see the files block
-    // below — and `tone` is 'top' for a rule above the row, 'said' for a row that
-    // states something rather than doing it.
-    //
-    // A 'said' ROW GETS NO HANDLER AT ALL, which is what makes its `cursor:
-    // default` and its grey true rather than a costume. It used to be styled
-    // unclickable and then handed an `onClick` anyway — one that stopped the
-    // event and closed the menu, i.e. a row that acted while saying it would
-    // not. Without one the row is inert, which is exactly what it claims to be:
-    // the click stops at the menu's own wrapper (which stops propagation so that
-    // a press on the menu's padding does not close it through `rootClick`), and
-    // the menu closes on the next click anywhere outside, as it always has.
-    const mi = (label, hint, fn, tone, href) => ({
-      key: label, label, hint: hint || '', href: href || '',
-      style: `display:flex;align-items:center;gap:10px;padding:7px 14px;text-decoration:none;font:400 12px ${SANS};`
-        + (tone === 'said' ? 'cursor:default;color:var(--text-faint)' : 'cursor:pointer;color:var(--text)')
-        + (tone === 'top' || tone === 'said' ? ';border-top:1px solid var(--line-soft)' : ''),
-      onClick: tone === 'said'
-        ? undefined
-        : stop(() => { fn(); this.setState({ menu: null }); }),
-    });
-
-    /**
-     * What arming the manipulator on `id` says, which is ONE sentence because
-     * there is one widget.
-     *
-     * Two rows arm it — Move and Turn — and they used to raise two sentences
-     * because they armed two tools. Now there is a single manipulator round the
-     * part (`viewport/gizmo.js` and `viewport/rings.js`): an origin dot and
-     * three arrows and three plane quads that slide it, and three coloured
-     * discs that turn it, all at once. A sentence naming only one half would
-     * leave the reader who came in through that row never looking for the
-     * other, which is the whole of what merging the tools was for.
-     *
-     * THE TAIL IS STILL TWO SENTENCES, and it has to be: a part of the BUILD
-     * moves as a statement to the agent and the model is untouched, so the next
-     * rebuild puts it back; a body of the PROPOSAL moves as an edit of the
-     * document the reader is authoring, so it stays. One tail would be false on
-     * one of them.
-     */
-    const armedSaid = (id) => (this.proposalBody(id)
-      ? 'Drag it to slide, a coloured disc to turn — the proposal keeps the body where you put it'
-      : 'Drag it to slide, a coloured disc to turn — it snaps back on the next rebuild');
-
-    /**
-     * This part's files — the row-menu half of the header's Downloads menu.
-     *
-     * Three rows and not a submenu: one click cannot sensibly deliver three
-     * files, this menu has no submenu machinery anywhere in it, and a row per
-     * file is exactly what the header's menu already looks like — extension on
-     * the left, filename on the right. Each one is a plain `<a href download>`
-     * against the same base URL the header builds, so middle-click and "save
-     * link as" work on it like any other link on the page.
-     *
-     * BOTH EMPTY CASES SAY SO OUT LOUD. A part that is not printed — a bought
-     * screw, a mock of something bought — has no files and never will, and a
-     * menu that silently dropped the item would read as a menu that forgot.
-     * Same for a build that ships nothing: the header's menu has a sentence for
-     * that case and this one must not be worse.
-     *
-     * A ROW WITH NO KEY LANDS ON THE SAME SENTENCE, through `partRecord`
-     * answering `null` for an empty key. It is the honest answer: the row names
-     * no catalogue entry, so there is nothing here that is this row's.
-     *
-     * TAKEN OFF `files` AND NEVER OFF `kind`, though the two say the same thing
-     * on any document the hub accepted (`_catalogue` refuses a printable with
-     * no files and a non-printable with some). `files` is what actually names
-     * the files, so reading it is one question with one answer; reading `kind`
-     * and then trusting `files` to match would be two, free to disagree on the
-     * one document nobody validated. `preview` sits in the same record and is
-     * deliberately not read: see `fileList`.
-     */
-    const fileRows = (key) => {
-      if (!anyDownloads) return [mi('No files in this build', '', () => {}, 'said')];
-      const files = fileList(partRecord(catalogue, key));
-      if (!files.length) return [mi('No files for this part', 'not a printable', () => {}, 'said')];
-      return files.map((f, at) => mi(f.ext.toUpperCase(), f.file, () => {},
-                                     at === 0 ? 'top' : '', fileHref(f.file)));
-    };
 
     // THE ONLY QUESTION THE NARROW LAYOUT IS ASKED, and every answer that
     // depends on it is baked into a style string below rather than branched on
@@ -6344,394 +6053,38 @@ export default class HammerolaViewer extends React.Component {
     // every test in ui/tests builds one — need not carry the field at all, and
     // "not there" is the wide layout.
     //
-    // ASKED THIS EARLY BECAUSE THE ROW MENU ASKS IT TOO, and it is the one asker
-    // that sits above `computed`'s style strings rather than below them.
+    // ASKED THIS EARLY BECAUSE THE ROW MENU ASKS IT TOO — it is handed this
+    // answer rather than reading `s.narrow` again, so the two cannot come to
+    // disagree about which layout the page is in.
     const narrow = !!s.narrow;
 
-    // WHILE A COMPARISON IS UP, VISIBILITY IS THE THREE TABS AND NOTHING ELSE.
-    // `sync` sends the tabs' own hidden list and ignores `s.hidden`/`s.ghost`
-    // while the scene is a comparison's, so the three visibility items below
-    // would do NOTHING VISIBLE and write to the reader's build lists behind
-    // their back — Isolate worst of all, which replaces `s.hidden` wholesale
-    // with `/cmp/…` paths that match nothing in the build's tree, so the parts
-    // they had hidden before comparing came back on screen when they closed the
-    // panel. The same question `sync` asks, so the two cannot answer it
-    // differently.
-    //
-    // MOVE RIDES IN THE SAME EXCLUSION ON ITS OWN GROUND, which is `toolsOff`'s:
-    // a drag inside a comparison files a `/cmp/…` path as the part a comment is
-    // about. Its row says so where it stands; it is in this block because the
-    // block is where a row that must not be offered over a comparison goes.
-    //
-    // AND THE FILES GO WITH THEM, on a stronger ground than "they would do
-    // nothing": they would do the WRONG THING quietly. The catalogue on this
-    // page is `<a>`'s (`PAGE.base`, `meta.parts`), so a right-click on a part
-    // inside `/cmp/rev b` — the geometry of the NEW revision, on screen, under
-    // the cursor — offered `<b>`'s part under `<a>`'s file, with the same file
-    // name on the row and nothing anywhere saying which revision came down.
-    // Serving `<b>`'s would take `<b>`'s meta.json, which this page never
-    // fetches; so the honest answer is to offer nothing, and the header's
-    // Downloads menu goes on being `<a>`'s where it says so.
+    // IS THE SCENE ON SCREEN A COMPARISON'S — asked once, for the two sections
+    // that gate controls on it: the row menu drops every item that would write
+    // the build's visibility or name one of its files, and the proposal's
+    // branch drops the eye and the ghost square for the same reason. Both
+    // arguments are written out where the items are. `toolsOff()` is the same
+    // question of the same method, asked for the three canvas tools.
     const compared = !!this.comparePair();
-    /**
-     * The section's two items — the whole of what that row's right-click offers.
-     *
-     * EDIT IS THE POPOVER AND NOT A SECOND DIALOG. Clicking the row's name or
-     * its subtitle already opens it; this is the same door reached by the
-     * gesture every other row in the panel answers to, so what it writes is the
-     * one flag that panel is drawn by. `openSecPop` itself is not called here:
-     * it is built further down `computed()` and is `stop()`-wrapped for a DOM
-     * event this closure does not have — `mi` has already stopped the click and
-     * will close the menu behind us.
-     *
-     * AND DELETE SAYS SO RATHER THAN ACTING WHEN THERE IS NOTHING TO DELETE,
-     * which is `fileRows`' rule for an item that does not apply: a grey row
-     * stating the case, with no handler at all, instead of a live row that
-     * quietly writes the values already in place.
-     */
-    const sectionItems = [
-      mi('Edit', '', () => this.setState({ secPop: true })),
-      ...(secSet
-        ? [mi('Delete', 'clear the plane', clearSection, 'top')]
-        : [mi('No section to delete', '', () => {}, 'said')]),
-    ];
-    const partItems = !mNode ? [] : [
-      // HIDING EVERYTHING ELSE IS THE WHOLE OF IT, and the selection it used to
-      // write alongside is gone (issue #83). `sel` reaches `selectSolid`, whose
-      // shader REPLACES the part's colour with the selection blue — and colour
-      // is an assertion in this interface, grey for a mock and the author's own
-      // hue for everything else — so isolating a part destroyed the one thing
-      // the reader isolated it to look at.
-      ...(compared ? [] : [
-        mi('Isolate', 'show only this', () => {
-          const keep = new Set(mNode.leaves);
-          this.setVisibility({ hidden: tree.leaves.filter((id) => !keep.has(id)) });
-        }),
-        mi('Hide', '', () => this.setVisibility({ hidden: this.toggle(s.hidden, mNode.leaves) })),
-        mi('Translucent', 'see through it', () => this.setVisibility({ ghost: this.toggle(s.ghost, mNode.leaves) })),
-        // THE MOVE TOOL, ARMED ON THIS OBJECT. It used to be a button in the
-        // toolbar, which armed a gesture and left the reader to find the part
-        // afterwards; here the object is already named, so the row can do both.
-        //
-        // AND IT SELECTS BEFORE IT ARMS, in one write, which is the half that
-        // makes the row mean what it says. The armed tool drags what is
-        // SELECTED and only falls back to the part under the cursor when
-        // nothing is (`onDown` in viewport/tools.js) — and neither door into
-        // this menu writes `sel`: a right-click on a tree row does not select,
-        // and neither does one on the part in the scene. So Move chosen here
-        // while another object stood selected would have dragged that other
-        // one, or refused the press.
-        //
-        // ARMED AND NOT TOGGLED, unlike the toolbar buttons `setTool` draws: a
-        // row of a menu that closes behind it is not something a reader presses
-        // a second time to undo. Escape still disarms, as it always did.
-        //
-        // AND THE SELECTION IS WHY THE ROW IS OFFERED ON A PROPOSAL BODY TOO,
-        // rather than being the one kind of object this is kept off. Such a body
-        // needs the same armed tool as any part (`onDown` returns on no tool at
-        // all), and an armed tool drags what is SELECTED: a press outside a
-        // standing selection is refused whole. So a row offered on the parts and
-        // withheld from the bodies would arm the tool holding a PART every time,
-        // and the first grab on a body would be refused.
-        //
-        // NOT UNREACHABLE — ONE GESTURE MORE, AND AN OBSCURE ONE. The refused
-        // press degrades to a plain one, so a CLICK on the body selects it and
-        // the drag after that takes it. A drag is not a click, though: a press
-        // that travels goes to `conclude` instead (`onUp` in viewport/tools.js)
-        // and rotates the view, selecting nothing. So a reader who simply tries
-        // to drag the body gets an orbit, and the step that would have worked is
-        // one they had no reason to try.
-        //
-        // THE SENTENCE IS NOT THE SAME FOR THE TWO, because the surprising half
-        // differs. A part of the MODEL moves as a statement to the agent and the
-        // model is untouched, so it goes back where the build put it. A body of
-        // the PROPOSAL moves as an edit of the panel's own document, which is
-        // the thing the reader is authoring — it stays where it is put, and the
-        // numbers in the panel follow it.
-        //
-        // AND A GROUP IS REFUSED BY THE SAME ARITHMETIC THE BODIES ALMOST WERE.
-        // `selectedPaths` spreads a LEAF into the copies of its part, but a group
-        // it leaves as the node's own path — so arming from a group row puts one
-        // path in the selection that no press will ever hit, and every grab on a
-        // part inside that group is then outside the selection and refused. The
-        // only press that moves anything is one that MISSES the model, which
-        // takes the whole sub-assembly. A row promising to move this object,
-        // which then turns every grab on it into an orbit, is worse than no row:
-        // `Note` and the file rows already stand off a group for reasons of
-        // their own, and this is a third.
-        //
-        // THREE MORE THINGS TAKE IT AWAY, each answering a different question.
-        // `viewer` is about who the reader IS: both kinds of drag end in the
-        // proposal document, which travels to the agent as a comment and is
-        // behind the token either way, so a reader without one has nothing to
-        // move a thing FOR — and the panel that holds it is gone too. `narrow`
-        // is about the WINDOW: the toolbar drops every tool at that width and
-        // the crossing disarms the one in hand (`componentDidMount`), because
-        // there is no room to aim on a phone, and a row that armed one anyway
-        // would hand back exactly what narrow takes away.
-        //
-        // AND THE THIRD IS WHETHER THIS HUB HAS A PANEL AT ALL. `proposal_panel`
-        // is off by default (src/settings.py), and where it is off the panel is
-        // left out of the tree entirely (`v.proposalOn` in `render`) — so a
-        // displacement would have nowhere to be. It IS a node of the proposal
-        // now: no panel means no row saying a part is out of place, no `×` to
-        // put it back, and no projection to send it to the agent in, which is
-        // ui-brief block 6 unanswered in all three of its parts. The part would
-        // simply stand displaced until the next rebuild. Offering the tool and
-        // then dropping what it produces is worse than not offering it.
-        //
-        // `proposalPanelOn()` DIRECTLY and not `v.proposalOn`, because this menu
-        // is built above where that key is computed; the call is one attribute
-        // lookup and the function's own note says it is meant to be spent where
-        // the answer is wanted.
-        //
-        // The comparison is the fourth, and it is the block above rather than a
-        // condition here: a drag inside one puts a `/cmp/…` path in `partId`,
-        // which is what `toolsOff` refuses everywhere else.
-        ...(viewer || narrow || mNode.isNode || !proposalPanelOn() ? [] : [
-          mi('Move', '', () => {
-            this.set({ sel: mNode.id, selName: mNode.name, tool: 'move' });
-            this.toast(armedSaid(mNode.id));
-          }),
-          // TURN ARMS THE SAME TOOL THE ROW ABOVE DOES, and there is nothing
-          // left in `tool` to tell the two apart with. It used to arm nothing,
-          // because a displacement had a gesture — the hand says "about here"
-          // better than a field does — and a turn had none: it was three
-          // numbers, typed into the row in the proposal's branch. Then it armed
-          // a `turn` tool of its own, and the reader had to put a part down
-          // before they could turn it. The widget is one manipulator now —
-          // arrows, quads and an origin in viewport/gizmo.js, rotation handles
-          // in viewport/rings.js, all of it answering to `move` — so this row
-          // arms that, in the same two writes as the one above and for the same
-          // reason: the armed tool works on what is SELECTED, and neither door
-          // into this menu writes `sel`.
-          //
-          // WHICH LEAVES IT A ROW WORTH KEEPING, and that is not obvious from
-          // the line itself. Everything ELSE it does is still its own — the
-          // node it mints, the panel it opens — and those are what a reader who
-          // means "exactly 90 degrees" came to this row for. What it no longer
-          // does is promise a different gesture from Move, because there is no
-          // longer a different gesture to promise.
-          //
-          // GATED EXACTLY AS MOVE IS, and the extra gate this row used to carry
-          // is gone with the reason for it. It excluded a BODY OF THE PROPOSAL,
-          // because what the row produced was a MOVE NODE and a move node
-          // naming an overlay path is a second way to turn a body that already
-          // has a `rot°` of its own — `move "motor" turned (…)` printed for an
-          // agent beside that body's own `rot (…)`. The GESTURE has no such
-          // problem: the viewport tells the two apart at the press exactly as
-          // it does for a drag, and a body's turn goes out on
-          // `hmr:proposalturn` and edits that very `rot`. So the tool is armed
-          // on either kind of object, and only the node-minting below is still
-          // the build's alone.
-          //
-          // AND IT GOES ON MAKING THE ROW, which is the half that is easy to
-          // read as leftover and is not. A gesture says "about this much" and a
-          // field says "exactly 90", and a reader who wants the second has
-          // nowhere to type it until some node claims the part. So the row
-          // still mints one for a part nothing has claimed yet and still opens
-          // the panel, and the gesture then edits the node that is already
-          // there rather than minting a second.
-          //
-          // A PART THAT ALREADY HAS A ROW GETS NO SECOND ONE. Two nodes
-          // claiming one path are two contradictory statements about it in the
-          // projection and two rows of which only one `×` appears to do
-          // anything — the very thing `recordGesture` matches by intersection
-          // to avoid. The row is already there; the panel is all this has left
-          // to open.
-          //
-          // AND IT IS NOT A RETRACTION. The rule that drops a node reported at
-          // zero is about a GESTURE — the reader taking a displacement or a
-          // rotation back by hand — and says nothing about a node minted here,
-          // which is a row asked for rather than a statement withdrawn. Nothing
-          // else drops one: the push that follows claims these paths, and
-          // `reconcileMoves` leaves a part standing exactly where it is.
-          mi('Turn', '', () => {
-            const body = this.proposalBody(mNode.id);
-            this.set({ sel: mNode.id, selName: mNode.name, tool: 'move' });
-            // THE SAME SENTENCE THE ROW ABOVE RAISES, because it is the same
-            // widget and one of them would otherwise be describing half of it:
-            // a reader who came in through Turn and was told only about the
-            // discs would never find the arrows, and one who came in through
-            // Move and was told only "drag it" would never find the discs.
-            this.toast(armedSaid(mNode.id));
-            // NO NODE FOR A BODY, which is the one thing left of the gate this
-            // row used to sit inside: a body's pose is its own `rot` and a move
-            // node about it would be the contradiction described above. The
-            // fields it wants are already on its row.
-            if (body) return;
-            // `current` AND NOT `doc`, which `computed()` binds further down for
-            // the panel's own rows: this closure runs long after that line, so
-            // the name would resolve to a document read at a different moment
-            // and it would take a reader two scrolls to find out which.
-            const current = s.proposal || emptyProposal();
-            const paths = mNode.leaves;
-            const claimed = moves(current).some(
-              (node) => node.paths.some((path) => paths.includes(path)));
-            let next = current;
-            if (!claimed) {
-              this._proposalSeq += 1;
-              next = addNode(current, {
-                id: `m${this._proposalSeq}`,
-                role: 'move',
-                paths,
-                // THE COUNTED NAME, exactly as a gesture records it: a row
-                // standing for five copies of a part turns all five, and
-                // `pin ×5` is what that reads as in the panel and in the
-                // projection.
-                name: mName,
-                delta: [0, 0, 0],
-                turn: [0, 0, 0],
-              });
-            }
-            this.setState({ proposalOpen: true });
-            this.setProposal(next);
-          }),
-        ]),
-      ]),
-      // A NOTE IS FILED UNDER THE CATALOGUE KEY, so a row that has none is not
-      // offered one — and the reason is the WRITE, not the catalogue. A note
-      // lives in localStorage and is never looked up in `meta.parts`: a leaf
-      // whose key the catalogue does not declare gets this item and should,
-      // because the reader's sentence is theirs rather than the build's. What
-      // an empty key breaks is `notesWith`, which hands the map back UNTOUCHED
-      // (`if (!key) return next`) — so the item on such a row would take the
-      // text, close the dialog exactly as a successful save closes it, and
-      // store nothing, with nothing anywhere saying so.
-      //
-      // DO NOT "FIX" THIS INTO `partRecord(...)`: that would take the note away
-      // from a keyed leaf the catalogue happens not to declare, which is a row
-      // this page is built to survive.
-      //
-      // `mKey` is empty on a group and on a leaf that names no key, which is
-      // why the condition asks about it rather than about `isNode`.
-      ...(viewer || !mKey ? [] : [mi('Note', note ? (note.length > 22 ? `${note.slice(0, 22)}…` : note) : '',
-        () => this.setState({ notePop: mKey, noteDraft: note || '' }))]),
-      // Files hang on a PART, so a group row has none of its own — the same rule
-      // and the same reason as the note above it. A group is not a printable and
-      // has no catalogue record of its own, so the union of its leaves' files is
-      // a set this menu would be INVENTING; and bulk by the axis a reader
-      // actually asks along — one format, all parts — is in the header's menu,
-      // where each group has a "download all" of its own.
-      //
-      // THIS USED TO SAY BROWSERS BLOCK EVERY DOWNLOAD AFTER THE FIRST. They do
-      // not — they ASK, once, with a per-site permission a person grants and the
-      // browser then remembers. Corrected here rather than deleted because the
-      // false version reads like a hard wall and was quoted onward as one: it
-      // makes "hand out N files on one click" look impossible, when for a person
-      // it costs one prompt. What it does still cost is anything driving the
-      // page that cannot answer a prompt — an agent — and a file whose name the
-      // page never chose. Those are the reasons to prefer one archive over N
-      // links; "the browser refuses" is not one, because it does not.
-      ...(compared || mNode.isNode ? [] : fileRows(mKey)),
-      // WHAT IS COPIED IS THE PART, and inside a comparison the row's own label
-      // is not it. The scene numbers the pieces of one difference apart —
-      // `plate #1`, and a vent slot widened by 0.4 mm came out as twelve of them
-      // (`cadbuild/comparescene`) — so `mNode.name` on a difference leaf is an
-      // internal piece label that names nothing a reader can look up, in the
-      // catalogue, in the report beside it, or in `model.py`. The catalogue key
-      // is what all three speak, and it is what the panel's own rows print.
-      //
-      // THE ROW'S NAME REMAINS THE ANSWER EVERYWHERE ELSE, unchanged: on a build
-      // page a leaf's name IS the part as the reader is shown it, and a
-      // collapsed run copies the name bare rather than the tally (the header
-      // above). A group inside a comparison has no key, and falls back to its
-      // own name, which for `/cmp/rev a` is exactly what it says.
-      mi('Copy name', '', () => {
-        const name = (compared && mKey) || mNode.name;
-        try {
-          navigator.clipboard.writeText(name);
-          this.toast(`copied: ${name}`);
-        } catch (error) {
-          console.warn('clipboard', error);
-          this.toast('Could not copy the name');
-        }
-      }, 'top'),
-    ];
-    const menuItems = secMenu ? sectionItems : partItems;
 
-    // `off` is a THIRD state, beside resting and active, and it is not `hide`:
-    // the button stays where the reader left it and stops working, which is what
-    // a control that is out of service FOR NOW has to look like — the argument
-    // `bannerSwitchStyle` makes at length, and the two properties
-    // `compareBtnStyle` already spells an unpressable button with. Last in the
-    // string, so its `color` and `cursor` beat the resting pair above (`css`
-    // keeps the last spelling of a property), and `pointer-events:none` is the
-    // half that actually refuses the click.
-    const btn = (active, hide, off) => `display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:6px;font:500 12px ${SANS};cursor:pointer;border:1px solid ` + (active ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'transparent;color:var(--text-soft)') + (hide ? ';display:none' : '') + (off ? ';color:var(--text-faint);cursor:default;pointer-events:none' : '');
-    const tab = (active) => `padding:5px 13px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;` + (active ? 'background:var(--card-bg);color:var(--text);box-shadow:0 1px 2px var(--shadow-soft)' : 'color:var(--text-soft)');
-    const chip = (show, bg, border, color) => 'pointer-events:auto;display:' + (show ? 'flex' : 'none') + `;align-items:center;gap:8px;padding:7px 12px;background:${bg};border:1px solid ${border};border-radius:7px;font:500 11.5px ${SANS};color:${color};box-shadow:0 2px 8px var(--shadow-soft)`;
+    // THE ROW MENU, BUILT NEXT DOOR — ui/src/rowmenu.js. Both doors into it,
+    // the tree row and the part in the scene, write `s.menu`, so the module is
+    // handed the whole state and reads the subject out of that one field.
+    const menu = rowMenu(s, {
+      tree, viewer, narrow, compared, catalogue, anyDownloads, fileHref,
+      clearSection, stop, SECTION_ROW,
+      noteFor, partRecord, fileList, proposalPanelOn,
+      node: this.node.bind(this),
+      nextSeq: () => { this._proposalSeq += 1; return this._proposalSeq; },
+      proposalBody: this.proposalBody.bind(this),
+      set: this.set.bind(this),
+      setProposal: this.setProposal.bind(this),
+      setState: this.setState.bind(this),
+      setVisibility: this.setVisibility.bind(this),
+      toast: this.toast.bind(this),
+      toggle: this.toggle.bind(this),
+    });
 
-    // WHICH TOOL IS REALLY IN FORCE DOWN HERE, which is not always `s.tool`:
-    // opening a comparison does not disarm one (the three handlers guard
-    // themselves instead — `toolsOff`), so the field can name a tool that cannot
-    // fire. Only the hint below reads this; the BUTTONS are drawn from
-    // `s.tool === t` on purpose, so the one that is armed still shows as armed
-    // while it is out of service and comes back armed when the panel closes.
-    // `cut` is not one of the three and is left alone: the hold key sections a
-    // comparison's scene like any other.
-    const armed = this.toolsOff() && s.tool !== 'cut' ? null : s.tool;
-
-    const setTool = (t) => () => {
-      this.set({ tool: s.tool === t ? null : t, revOpen: false, dlOpen: false, viewsOpen: false, menu: null });
-      if (t === 'comment' && s.tool !== 'comment') this.toast('Click a spot on the model to pin the task');
-      if (t === 'measure' && s.tool !== 'measure') this.toast('Click a part for its size, or two for the gap between them');
-    };
-
-    // Two of these are reachable today. `building` and `failed` need a job id
-    // this page does not have: `GET /api/v1/jobs/<id>` exists and is behind
-    // EDIT_TOKEN, but nothing tells a build page which job produced it. The
-    // brief (block 11) asks for all of them; what is missing is that link, not
-    // the endpoint. (The front page does show the two words — issue #32 — off
-    // the draft pointer, which a build page has no equivalent of.)
-    const status = s.pending
-      ? { text: 'new build ready', style: 'color:var(--accent-text);background:var(--accent-bg);border:1px solid var(--accent-line)', dot: 'var(--accent)' }
-      : { text: isPointerPage() ? 'up to date' : 'pinned build', style: 'color:var(--text-soft);background:transparent;border:1px solid transparent', dot: 'var(--ok)' };
-
-    const railOpen = s.rail === null ? this.props.commentsOpen : s.rail;
     const cutOn = s.secOn || s.held;
-
-    // A POPOVER AS ONE SHEET ALONG THE BOTTOM EDGE. Panels on this page are
-    // placed from the CONTROL that opens them, which at phone width puts them
-    // off the side of the screen — and the root above is `overflow:hidden`, so
-    // what hangs off it is CUT OFF rather than scrollable. Which panels take
-    // this is asserted in `narrow.test.js`, not listed here.
-    //
-    // `fixed` RATHER THAN `absolute`, and that is the half that does the work:
-    // `left`/`right` resolve against the containing block, which for a panel
-    // placed this way is its own control's wrapper — a couple of hundred
-    // pixels, and after the header wraps not at the window's edge any more — so
-    // an absolute clamp would make the sheet NARROWER than the popover it
-    // replaces and leave it off the side as well. Fixed resolves against the
-    // viewport.
-    //
-    // ANCHORED TO THE BOTTOM, and that is not a taste: the header above is
-    // wrappable BY CONSTRUCTION, so its height is 50px, or two rows, or three,
-    // and with a tab strip under it more again. Every constant measured from the
-    // top of the window therefore has a header height at which it opens ON TOP
-    // OF the button that opened it — and the token sheet stops clicks, so that
-    // covered button could not then be pressed at all. The bottom edge of the
-    // window is the one anchor nothing above it can move. What the sheet covers
-    // instead is the toolbar, which on narrow is the view tabs and Fit:
-    // somebody picking a revision is not switching views at the same moment.
-    //
-    // `top:auto` because `css()` splits on `;` and the LAST spelling of a
-    // property wins: it is what keeps a `top` out of the branch whatever the
-    // wide string beside it says.
-    const popSheet = 'position:fixed;left:8px;right:8px;bottom:8px;top:auto;width:auto;';
-
-    // `|| []` because `computed()` runs over a state built by hand as often as
-    // over the constructor's: every test file in ui/tests spells the fields out,
-    // and a field added here would otherwise take down the ones written before
-    // it existed, at `.length`.
-    const openTabs = s.tabs || [];
-
-    // The views this build declares, and the one on screen, read once: the
-    // switcher below asks three separate questions of them — how many there
-    // are, which is active, what it is called — and three reads of `meta.views`
-    // are three chances for the button to name a view the rows disagree with.
-    const views = (meta && meta.views) || [];
-    const shownView = views.find((v) => v.id === s.view);
 
     // Both notes on the part in front of the reader, read once: the box below
     // asks three questions of each of them (is it there, does the box open, does
@@ -6742,537 +6095,13 @@ export default class HammerolaViewer extends React.Component {
 
     // -- the proposal: a rough body in numbers, laid over the model -----------
     //
-    // WHETHER THIS HUB HAS THE PANEL AT ALL, asked once for the two styles that
-    // gate it below. It is not state and nothing on this page can change it —
-    // see `proposalPanelOn`, which says where the answer comes from.
+    // WHETHER THIS HUB HAS THE PANEL AT ALL, asked once and spent in two
+    // places: `v.proposalOn`, which the chrome carries and `render()` wraps
+    // both the button and the panel in, and the row menu — which is handed the
+    // FUNCTION rather than this answer, for the reason written where that menu
+    // is built. It is not state and nothing on this page can change it; see
+    // `proposalPanelOn`, which says where the answer comes from.
     const proposalOn = proposalPanelOn();
-
-    // `|| emptyProposal()` for the reason `openTabs` above carries its `|| []`:
-    // every test file in ui/tests spells the state out by hand, and a field
-    // added here would otherwise take down the ones written before it existed,
-    // at `.nodes.length`.
-    const doc = s.proposal || emptyProposal();
-
-    // EVERY DIMENSION AND EVERY PLACEMENT IS A NUMBER and nothing else — the
-    // whole of the language `proposal.js` defines, with no expression syntax and
-    // deliberately none coming. So this is the entire parser, and it is the same
-    // one for a size, a place and an angle: they all reach the kernel raw
-    // (proposalgeom.js, `placed`), where anything that is not a number arrives in
-    // an arithmetic and comes out as NaN — geometry that renders as nothing,
-    // with nothing said about it.
-    //
-    // AN EMPTY FIELD IS A ZERO, and what that decides is what the reader is
-    // shown while they are mid-edit: a zero builds, so the body goes flat until
-    // the next digit lands, which is visibly about the field they are typing in.
-    const num = (raw) => {
-      const value = Number(String(raw).trim());
-      return Number.isFinite(value) ? value : 0;
-    };
-    // AND A FIELD THE BROWSER COULD NOT READ IS NOT AN EMPTY ONE. A number input
-    // reports `""` for text it cannot parse, and `num` answers 0 for that, so a
-    // field in that state committed a zero and flattened the body.
-    //
-    // WHICH TEXT actually reaches it was measured rather than reasoned about —
-    // Chrome 153, a real `<input type="number">`, one keystroke at a time,
-    // reading `value` on every `input` event. A lone `-` and a lone `.` do:
-    // `""` with `badInput` set. NOTHING ELSE DOES — `.5` reads back as `.5`, and
-    // a trailing dot is dropped rather than emptying the field, so `12.` reads
-    // back as `12`. So the case this is here for is a sign or a point typed as
-    // the first character of a number and then abandoned, the focus leaving on a
-    // click elsewhere: without this, a dimension the reader never finished
-    // typing goes to zero and the body goes flat.
-    //
-    // `badInput` is the platform's own answer to "there is text in here and I
-    // could not read it", and it is the only thing that tells that apart from
-    // the genuinely empty field the rule above is about. It is `false` on a text
-    // input, so the name and the profile pass through it unchanged.
-    const unread = (target) => !!(target && target.validity && target.validity.badInput);
-    // `x,y; x,y; …`. A PAIR THAT DOES NOT READ AS TWO NUMBERS IS DROPPED rather
-    // than guessed at, and `num` is the wrong parser for it: it answers 0 for
-    // anything that is not a number, so `a,b` came through as a corner at the
-    // origin and `20,` as one on the axis — a point nobody typed, in a profile
-    // they are looking at. An empty field is not a number either, which is what
-    // makes the trailing `;` somebody types before the next point cost nothing
-    // while they think about it.
-    const coord = (text) => (text.trim() ? Number(text.trim()) : NaN);
-    const points = (raw) => String(raw).split(';')
-      .map((pair) => pair.split(',').map(coord))
-      .filter((pair) => pair.length === 2 && pair.every(Number.isFinite));
-    const pointsText = (list) => list.map((pair) => pair.join(',')).join('; ');
-    const swap = (list, index, value) => list.map((v, i) => (i === index ? value : v));
-
-    // HOW FAR ONE NUDGE OF A NUMBER GOES. Every number of a body is an
-    // `<input type="number">` with a step, so the arrows, the up/down keys and
-    // the press-and-hold repeat are all the browser's own and none of them is
-    // drawn here. TWO ANSWERS BECAUSE THERE ARE TWO KINDS OF NUMBER: a size and
-    // a place are read in millimetres, where one is the unit somebody means by
-    // "a bit bigger", while a turn is read in degrees, where the angles a body
-    // is actually set to are the corners — a quarter turn, 45 at a diagonal —
-    // and a degree a click would be two dozen clicks to reach any of them.
-    const STEP_MM = 1;
-    const STEP_DEG = 15;
-
-    // One field of the panel: what it shows, and what typing in it does.
-    // `commit` turns the raw text into the whole NEXT DOCUMENT, because that is
-    // what `setProposal` takes — there is no partial write anywhere in here.
-    // A `step` makes it one of the NUMBER fields; the name and the profile are
-    // text and pass none.
-    //
-    // TYPING TOUCHES THE DRAFT AND NOTHING ELSE; the document is written on
-    // `change` — a blur, an Enter, or a nudge of the arrows — which is the
-    // browser's own event for "this field's value is settled" and what JSCAD's
-    // parameter panel commits on. Per KEYSTROKE, which is what this used to be,
-    // every character cost a whole scene: `setProposal` builds the bodies, hands
-    // them to the viewport, and `restage` tears the model down and renders it
-    // again with the tree going back up to React behind it. The CSG ALONE,
-    // measured on this repository's own kernel (@jscad/modeling 2.13.0, vitest,
-    // Apple M-series, mixed ops with every fifth body a hole): 0.3 ms at one
-    // body, 23 ms at four, 81 ms at twelve — before any of the rest of it.
-    // `-12.5` is five of those on the way to one number.
-    const field = (key, value, commit, width, step) => ({
-      key,
-      // `number` IS WHAT BRINGS THE ARROWS, and it is the only thing that does:
-      // the spinner, the up/down keys and the repeat on a held key are the
-      // platform's, sized by `step`.
-      type: step ? 'number' : 'text',
-      step,
-      // The draft while this is the field being typed in, the document
-      // everywhere else. `typeProposal` says why both are needed.
-      value: s.proposalDraft && s.proposalDraft.key === key
-        ? s.proposalDraft.text
-        : String(value === undefined || value === null ? '' : value),
-      style: `width:${width};box-sizing:border-box;border:1px solid var(--line);border-radius:5px;outline:none;padding:3px 5px;font:400 11px ${MONO};color:var(--text);background:var(--card-bg)`,
-      onChange: (e) => this.typeProposal(key, e.target.value),
-      onBlur: (e) => this.commitProposal(key, e.target.value, commit, unread(e.target)),
-      // ENTER IS THE OTHER HALF OF `change`, and it is here rather than left to
-      // the blur because a reader who types a number and presses Enter has
-      // finished with that field whether or not they move off it — a panel that
-      // answered nothing until the focus left would read as one that had
-      // stopped listening.
-      onKeyDown: (e) => {
-        if (e.key === 'Enter') this.commitProposal(key, e.target.value, commit, unread(e.target));
-      },
-      // THE WHEEL SCROLLS THE SHEET AND DOES NOT EDIT THE BODY. Over a FOCUSED
-      // number input the wheel is a step of the value in both Chrome and
-      // Firefox — `input`, `change` and all — and this panel is a tall sheet
-      // somebody scrolls through: the ordinary way to reach the body below the
-      // one just typed in is a wheel click with the cursor still standing on its
-      // size field. That was ±1 mm per click of the wheel, ±15° in a `rot` row,
-      // on a body nobody meant to touch; a text field had no such road.
-      //
-      // DROPPING THE FOCUS IS THE ONLY MECHANISM THERE IS, and it is enough: the
-      // platform steps only a field that HAS the focus, and taking it away
-      // leaves the scrolling untouched. Not `preventDefault` — React registers
-      // the root's `wheel` listener as PASSIVE (react-dom 18.3.1), so a
-      // `preventDefault` from here is ignored outright and would stop neither
-      // the step nor the scroll. ON THE FIELD and not on the sheet, because a
-      // wheel over anything else in here was never an edit. The blur it causes
-      // is the ordinary one: a number typed and not yet committed commits,
-      // exactly as it would have when the focus left any other way.
-      onWheel: step ? (e) => e.target.blur() : undefined,
-      // A NUDGE TAKES THE SAME ROAD AS A TYPED NUMBER — `commitProposal` — AND IT
-      // NEEDS A REAL `change` LISTENER TO GET THERE. React's `onChange` is the
-      // DOM's `input` event, which is the keystroke and lands in the draft; the
-      // `change` the platform fires after a step of the spinner arrives at the
-      // same handler and is then DROPPED by React's own value tracker, which
-      // sees a value it has already reported. Measured against react-dom 18.3.1
-      // rather than assumed. Wired to `onChange` alone, a nudge would move the
-      // number in the field and leave the body on the model where it was.
-      //
-      // THE NODE'S OWN `onchange` PROPERTY and not `addEventListener`: a
-      // property is replaced by the next render rather than stacked on top of
-      // the last one, so there is nothing to remove and no way to end up
-      // committing twice. A blur after typing fires `change` too, and what that
-      // schedules wakes up behind the blur above, which has already committed the
-      // same text: it finds no draft and does nothing.
-      //
-      // THROUGH `nudgeProposal` and not straight into `commitProposal`, because
-      // an arrow held down is a run of `change` events and not one; that method
-      // says what happens to the run.
-      ref: step ? (el) => {
-        if (el) {
-          el.onchange = (e) => this.nudgeProposal(
-            key, e.target.value, commit, unread(e.target),
-          );
-        }
-      } : undefined,
-    });
-
-    // HOW EACH OP SPELLS ITS OWN SIZE, keyed the way `DIMS` in proposal.js and
-    // `SHAPES` in proposalgeom.js are keyed — so an op that grows a dimension is
-    // changed in three tables and nowhere else, and an op in only two of them
-    // throws where it is looked up instead of drawing half a body.
-    const SIZES = {
-      box: (node) => ({
-        label: 'size',
-        fields: [0, 1, 2].map((axis) => field(
-          `${node.id}.size.${axis}`, node.size[axis],
-          (raw) => updateNode(doc, node.id, { size: swap(node.size, axis, num(raw)) }),
-          '31%', STEP_MM)),
-      }),
-      // SPELLED OUT AND NOT MAPPED OVER `['d', 'h']`, which is the shorter way
-      // and reaches for a computed key. `test_every_handled_event_is_imported_
-      // from_events_js` reads `[x]:` out of this file as a handler key, and the
-      // saving is two lines.
-      cylinder: (node) => ({
-        label: 'd · h',
-        fields: [
-          field(`${node.id}.d`, node.d,
-                (raw) => updateNode(doc, node.id, { d: num(raw) }), '47%', STEP_MM),
-          field(`${node.id}.h`, node.h,
-                (raw) => updateNode(doc, node.id, { h: num(raw) }), '47%', STEP_MM),
-        ],
-      }),
-      sphere: (node) => ({
-        label: 'd',
-        fields: [field(`${node.id}.d`, node.d,
-                       (raw) => updateNode(doc, node.id, { d: num(raw) }),
-                       '47%', STEP_MM)],
-      }),
-      extrude: (node) => ({
-        label: 'h · profile',
-        fields: [
-          field(`${node.id}.h`, node.h,
-                (raw) => updateNode(doc, node.id, { h: num(raw) }), '24%', STEP_MM),
-          field(`${node.id}.profile`, pointsText(node.profile),
-                (raw) => updateNode(doc, node.id, { profile: points(raw) }), '72%'),
-        ],
-      }),
-    };
-
-    // WHAT EACH OP IS THE MOMENT IT IS ADDED: a body big enough to see, at the
-    // origin. Sizes rather than zeroes, because a zero builds perfectly well and
-    // draws nothing — so a button that added one would read as a button that did
-    // nothing at all.
-    const NEW_BODY = {
-      box: { size: [20, 20, 20] },
-      cylinder: { d: 10, h: 20 },
-      sphere: { d: 20 },
-      extrude: { h: 5, profile: [[0, 0], [20, 0], [20, 10], [0, 10]] },
-    };
-
-    // THE FIRST FREE NAME, and for a harder reason than tidiness. A body's name
-    // is its part's `name` in the payload and every body is drawn as a part of
-    // its own — so two bodies under one name are one entry in the library's
-    // groups map and one row in the tree, the second quietly standing in for the
-    // first. This has to hold for a name the reader TYPES and not only for one
-    // the + button mints: naming a body after the thing it stands for —
-    // `motor`, `wall` — is most of what the panel is for.
-    //
-    // THE LOOP ITSELF IS `firstFree` IN proposal.js, beside the document it is a
-    // fact about rather than here: what a name is when something already answers
-    // to it is settled once, for a name the + button mints and for one the
-    // reader types.
-    //
-    // AMONG THE BODIES AND NOT AMONG THE NODES (`bodies`), because a move node
-    // carries a name too and it is a ROW OF THE BUILD's — `plate`, which the
-    // reader never chose and cannot edit. Counted as taken, a part dragged in
-    // the scene would rename the reader's own `plate` to `plate2` under their
-    // hands, and the two names collide over nothing: one is a part in the
-    // payload this panel builds, the other names a part in the model.
-    const freeName = (wanted, exceptId) => {
-      const taken = new Set(bodies(doc)
-        .filter((node) => node.id !== exceptId)
-        .map((node) => node.name));
-      return firstFree(wanted, taken);
-    };
-
-    const addBody = (op) => () => {
-      this._proposalSeq += 1;
-      this.setProposal(addNode(doc, {
-        id: `n${this._proposalSeq}`,
-        name: freeName(`${op}${this._proposalSeq}`),
-        op,
-        role: 'solid',
-        at: [0, 0, 0],
-        rot: [0, 0, 0],
-        ...NEW_BODY[op],
-      }));
-    };
-
-    // -- the proposal, as a small tree of its own below the parts --------------
-    //
-    // THE WHOLE DOCUMENT IS ROWS AND THERE IS NO SECOND LIST. Every node gets
-    // one — bodies and moves together, in the order the document holds them —
-    // because they are the same kind of statement and the reader should have one
-    // place to look at what they have said. The panel keeps what is ABOUT the
-    // proposal rather than IN it: what it is for, the buttons that add a body,
-    // what the kernel thinks of it, and the door out to a comment.
-    //
-    // A BRANCH OF THE INTERFACE AND NOT OF THE SCENE, which is what makes it
-    // possible at all. `render()` in the library takes ONE root shape object and
-    // `treeFromShapes` derives every id from where a part SITS, so a second root
-    // would repath every part of the model from `/<root>/…` — and paths are
-    // identities here: comments anchor to them, move nodes name them, a swap
-    // carries hidden state keyed by them. A MOVE could not be a scene row in any
-    // case: it is a sentence about a part of the build and exists in no scene.
-    // So this is assembled from `this.state.proposal` and owes the tree nothing
-    // but the rows it resolves bodies through.
-
-    const proposalRows = doc.nodes.map((node) => {
-      const isMove = node.role === 'move';
-      // WHERE THIS BODY STANDS IN THE SCENE, BY NAME, whether or not the tree
-      // has caught up. `staged()` in viewport/element.js re-roots every part of
-      // the overlay under the group as `<group>/<part name>`, and a part's name
-      // is the body's own (`part()` in proposalgeom.js) — so this is that same
-      // spelling worked out from this side, off the group path the VIEWPORT
-      // minted rather than off a second guess at what the group is called.
-      //
-      // COMPUTED RATHER THAN LOOKED UP, which is the difference that matters
-      // below: the tree lags every edit by a whole re-stage, so a row that took
-      // its identity from what the tree HOLDS would lose it for the length of
-      // one — most visibly on a rename, where `selectionAfter` has already moved
-      // the selection onto a path the tree does not have yet.
-      const wanted = isMove || !overlayPath ? null : `${overlayPath}/${node.name}`;
-      // THE ROW IN THE SCENE THIS ONE ANSWERS FOR. A body's is the part the
-      // overlay staged for it; a move's is the row of the BUILD it displaces,
-      // which is where its first path points — `paths` is the row's `leaves` at
-      // the moment of the gesture, so the first of them is that row's own id.
-      // Null for either wherever the tree cannot answer: nothing staged yet, a
-      // document the kernel refused, a build whose part has gone.
-      const scene = isMove ? this.node(node.paths[0])
-        : (wanted && tree.nodes.get(wanted)) || null;
-      // WHAT THE ROW SELECTS. The scene's path where there is a LIVE one, so
-      // that clicking a body's row lights the body up exactly as clicking the
-      // body does, and clicking a move's row lights up the part the sentence is
-      // about — the only way to see what it displaced. The DOCUMENT's own node
-      // id otherwise, which buys a row that still OPENS: the fields are how a
-      // document the kernel refused gets repaired, and a row that could not be
-      // opened would be a dead end with the error box standing over it.
-      //
-      // AND THE ID WHILE A COMPARISON IS UP, whatever the scene holds. The
-      // paths of a comparison's scene are `/cmp/<a>:<b>/…`, which name a part no
-      // revision has — and `sel` outlives the comparison, because
-      // `leaveCompare` does not clear it the way `leaveBuild` does. Written
-      // there and left standing, such a path is what `measAdd` would post as the
-      // `partId` of a comment once the reader closed the panel and measured
-      // something: a task filed against a string that resolves in no build, and
-      // the exact class `toolsOff` refuses everywhere else. It is also the one
-      // door of its kind now — `onPick` writes `cmpSel` under a comparison, the
-      // parts tree is not drawn, and Move is not offered. A node id instead is
-      // recognisably NOT A PATH, which is what `measAdd` asks.
-      //
-      // `sel` IS THEREFORE EITHER A LIVE PATH OR RECOGNISABLY NOT ONE, and that
-      // is the property everything downstream leans on rather than a tidiness.
-      const path = compared || !scene ? node.id : scene.id;
-      // THE PAGE'S ONE SELECTION AND NOT A SECOND OF THE PANEL'S, asked three
-      // ways because `sel` can honestly be any of three things and the row is
-      // the same row under all of them:
-      //
-      //   * the DOCUMENT's id — selected while nothing was staged, or while a
-      //     comparison was up, or on a document the kernel refused;
-      //   * the path this body WANTS, which is what `selectionAfter` writes the
-      //     moment a name is committed and what the tree will hold one re-stage
-      //     later. Asked of `wanted` and not of `scene`, so the block does not
-      //     shut for the length of that window — and on a refused document,
-      //     where the re-stage never comes, does not shut for good;
-      //   * the ROW the selection resolves to, which is how a COPY picked in the
-      //     scene selects the row that collapsed it. That is a move's case: a
-      //     body is one part and has no copies.
-      const selected = s.sel === node.id
-        || (!!wanted && s.sel === wanted)
-        || (!!scene && selRow === scene);
-      // THE EYE, THE GHOST SQUARE AND THE COLOUR ARE THE SCENE'S, so they are a
-      // BODY's alone — `marks` is the row they come off, and it is null for
-      // every move. A move draws NOTHING: it displaces a part the build already
-      // draws, and that part keeps its own row, its own eye and its own colour
-      // in the tree below, so a second set here would be two answers to one
-      // question about one part. Held apart from `scene`, which a move does
-      // have and needs — it is the row the sentence is ABOUT, and selecting the
-      // move is how the reader finds out which part that is.
-      //
-      // AND NULL FOR EVERY ROW WHILE A COMPARISON IS UP, which is the one place
-      // this branch inherited a control the parts tree never had: that tree is
-      // not drawn during a comparison at all, and this one is — deliberately,
-      // because a proposal is as true over a comparison as over a build. But
-      // `sync` sends `hidden: diffHidden(s.diffShow), ghost: []` while the scene
-      // is a comparison's and never looks at `s.hidden`/`s.ghost`, which is why
-      // `menuItems` throws Isolate, Hide and Translucent away under the same
-      // `compared`. Left standing, the eye went pale over a body still on
-      // screen — a control saying it did something it did not — and wrote
-      // rubbish besides: the overlay's path inside a comparison is
-      // `/cmp/…/proposal`, so a path that exists in no build went into
-      // `s.hidden` and rode on through `setVisibility` into the history and the
-      // swap's carry. Silence is the honest answer, and it is the menu's.
-      const marks = isMove || compared ? null : scene;
-      const leaves = marks ? marks.leaves : [];
-      const visible = leaves.filter((id) => !hiddenSet.has(id)).length;
-      const eye = visible === 0 ? 'off' : visible === leaves.length ? 'on' : 'part';
-      const ghosted = leaves.length > 0 && leaves.every((id) => ghostSet.has(id));
-      return {
-        key: node.id,
-        move: isMove,
-        name: node.name,
-        // ONE STEP IN FROM THE `proposal` HEAD, which is the indent the parts
-        // tree spends on a depth of one (`node.depth * 16` in `emit`), because
-        // this branch is read as a tree beside that one.
-        rowStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px 16px;border-radius:4px;background:'
-          + (selected ? 'var(--accent-bg)' : 'var(--float-bg-soft)') + ';cursor:default',
-        // DRAWN AS ABSENT RATHER THAN LEFT OUT on a row with nothing in the
-        // scene: `visibility:hidden` keeps the boxes' width, so the names of the
-        // two kinds of row stand in one column, and the browser gives a hidden
-        // box no pointer events — there is nothing to press rather than a
-        // control that answers nothing.
-        marksStyle: 'display:flex;align-items:center;flex:none'
-          + (leaves.length ? '' : ';visibility:hidden'),
-        eyeOuter: eyeOuter(eye), eyeDot: eyeDot(eye), ghostIcon: ghostIcon(ghosted),
-        dotStyle: 'width:9px;height:9px;border-radius:3px;flex:none;margin:0 4px 0 2px;background:'
-          + ((marks && marks.color) || 'transparent'),
-        // WHAT KIND OF STATEMENT THIS ROW IS, said in the word rather than left
-        // to be inferred. A move's row used to be an indented name with three
-        // invisible boxes in front of it — nothing on it said this was a part
-        // of the build displaced rather than a body the reader had drawn, and
-        // the two are the opposite claim about the same model. `move` and not a
-        // badge or an icon, in the order and the spelling `proposalText` prints
-        // (`move "bracket" by (…)`), so the row and the projection it travels
-        // as read alike. NULL AND NOT `''` on a body: an empty string is a
-        // child React renders as nothing and every reading of the tree still
-        // reports, which is a blank where a reader of a test expects silence.
-        kind: isMove ? 'move' : null,
-        kindStyle: `flex:none;font:400 10px ${MONO};color:var(--text-faint);padding:0 2px`,
-        // EXCLUDED FROM WHAT IS SENT, and from nothing else: the node stays in
-        // the document, the body stays over the model, the part stays where the
-        // move puts it. `!node.skip` is the whole of the read, which is what
-        // makes a document written before this field existed a document with
-        // nothing ticked off rather than one to migrate.
-        skipIcon: skipIcon(!!node.skip),
-        skipTitle: node.skip ? 'held back from the text sent to the agent'
-                             : 'leave this out of the text sent to the agent',
-        onSkip: stop(() => this.skipProposal(
-          updateNode(doc, node.id, { skip: !node.skip }))),
-        nameStyle: 'white-space:nowrap;cursor:pointer;padding-right:4px;font:400 12px ' + MONO
-          + ';color:' + (leaves.length && eye === 'off' ? 'var(--text-faint)' : 'var(--text)'),
-        // The same two writers every row of the parts tree uses, and for the
-        // same reason: a swap in flight is carrying these lists across BY NAME.
-        onVis: stop(() => this.setVisibility({ hidden: this.toggle(s.hidden, leaves) })),
-        onGhost: stop(() => this.setVisibility({ ghost: this.toggle(s.ghost, leaves) })),
-        // THE ROW'S PLAIN NAME WHERE THE SCENE CAN ANSWER, and the node's own
-        // only where it cannot. `measAdd` heads a composer with `selName` when
-        // the tree cannot place the selection and states that both doors put a
-        // BARE name there — and a move node's name carries the count, `pin ×3`,
-        // which is a tally of parts and not the name of one. The fallback is
-        // only ever spent on a selection `measAdd` refuses to attach at all,
-        // since a row the scene cannot place selects by its node id.
-        onSelect: stop(() => this.set({
-          sel: path, selName: scene ? scene.name : node.name,
-        })),
-        // THE CONTROL THE WHOLE FEATURE TURNS ON, on both kinds of row. A body
-        // is deleted; a part goes home by having its entry deleted — offset and
-        // turn together, because the node is the one statement that carried both
-        // — and what happens next is the viewport's half: the push that follows
-        // stops claiming the path, and `reconcileMoves` puts it back.
-        onRemove: stop(() => this.setProposal(removeNode(doc, node.id))),
-        removeTitle: isMove ? 'put it back where the build has it' : '',
-        // THE SAME MENU THE ROW HAD IN THE PARTS TREE, given back. Isolate, Hide
-        // others and Move were all reachable by right-clicking a staged body's
-        // row there, and taking that row out of the parts tree took them with
-        // it: the scene still has them on a right-click of the body itself, but
-        // a reader who used the tree lost them with nothing saying where they
-        // went. It resolves `marks` — the same node the old row was — so this
-        // opens the menu `menuItems` already builds rather than a second one.
-        //
-        // A MOVE ROW HAS NONE, and null rather than a handler that declines is
-        // how that is said. Nothing in that menu applies to it: Isolate and Hide
-        // others are about geometry the node does not own, the Files are the
-        // catalogue's, and Move and Turn would mint a second node over paths
-        // this one already claims — which `menuItems` refuses anyway. What is
-        // left is a menu ABOUT THE BUILD PART, opened from a row that only names
-        // it, which is the confusion the whole branch exists to avoid.
-        //
-        // AND NOTHING ON A BODY THE SCENE CANNOT PLACE, for a plainer reason:
-        // `menuItems` is `[]` for a path no row answers to, and `menuStyle`
-        // opens on `s.menu` alone — so the gesture would put an empty box on the
-        // screen.
-        //
-        // ASKED OF `scene` AND NOT OF `marks`, which are the same object outside
-        // a comparison and deliberately not inside one. This gate is only about
-        // whether there is a scene object to open a menu ABOUT; what belongs in
-        // that menu over a comparison is `menuItems`' own question, and it
-        // already answers it — everything that writes visibility or names a file
-        // is gone under `compared`, and `Copy name` is what remains.
-        onMenu: isMove || !scene ? null : stop((e) => {
-          e.preventDefault();
-          this.setState({ menu: { id: scene.id, ...menuAt(e.clientX, e.clientY) } });
-        }),
-        // THE FIELDS ARE THE ROW'S, SHOWN WHEN IT IS SELECTED. A tree row is one
-        // 24px line, and a panel of numbers under every row at once is the tree
-        // covering the model it describes — so the block opens under the row the
-        // reader is looking at and the rest stay one line each. BUILT EITHER
-        // WAY and hidden by the style, because a field carries a `ref` that
-        // wires the browser's own `change` (`field` above): building them only
-        // for the open row would make what the panel can commit depend on what
-        // is on screen.
-        fieldsStyle: 'display:' + (selected ? 'block' : 'none')
-          + ';width:250px;box-sizing:border-box;margin:1px 0 5px 32px;padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--float-bg)',
-        // A MOVE HAS NO NAME FIELD, NO OP AND NO ROLE. Its name is a row of the
-        // BUILD's, resolved when the gesture landed and never chosen by the
-        // reader; it draws no geometry, so there is no op to show and nothing
-        // for `solid`/`hole` to be about.
-        nameField: isMove ? null : field(`${node.id}.name`, node.name, (raw) => {
-          const wanted = raw.trim();
-          return updateNode(doc, node.id,
-                            { name: wanted ? freeName(wanted, node.id) : node.name });
-        }, '38%'),
-        op: isMove ? '' : node.op,
-        role: isMove ? '' : node.role,
-        roleStyle: `padding:2px 7px;border-radius:4px;cursor:pointer;font:600 9.5px ${MONO};letter-spacing:.05em;border:1px solid `
-          + (node.role === 'hole'
-            ? 'var(--danger-line);background:var(--danger-bg);color:var(--danger)'
-            : 'var(--line);background:var(--chip-bg);color:var(--text-soft)'),
-        onRole: stop(() => this.setProposal(updateNode(doc, node.id, {
-          role: node.role === 'hole' ? 'solid' : 'hole',
-        }))),
-        // THE SAME THREE-BY-THREE A BODY AND A MOVE HAVE ALWAYS BEEN DRAWN IN,
-        // and the same `field`, because they are the same kind of number: a
-        // move's `by` is an offset from wherever the build puts the part rather
-        // than a place in the document's own space, and `turn°` is the same
-        // three degrees about the same three axes a body's `rot°` is.
-        groups: isMove ? [
-          {
-            key: 'delta',
-            label: 'by',
-            fields: [0, 1, 2].map((axis) => field(
-              `${node.id}.delta.${axis}`, node.delta[axis],
-              (raw) => updateNode(doc, node.id,
-                                  { delta: swap(node.delta, axis, num(raw)) }),
-              '31%', STEP_MM)),
-          },
-          {
-            key: 'turn',
-            label: 'turn°',
-            fields: [0, 1, 2].map((axis) => field(
-              `${node.id}.turn.${axis}`, node.turn[axis],
-              (raw) => updateNode(doc, node.id,
-                                  { turn: swap(node.turn, axis, num(raw)) }),
-              '31%', STEP_DEG)),
-          },
-        ] : [
-          { key: 'dims', ...SIZES[node.op](node) },
-          {
-            key: 'at',
-            label: 'at',
-            fields: [0, 1, 2].map((axis) => field(
-              `${node.id}.at.${axis}`, node.at[axis],
-              (raw) => updateNode(doc, node.id, { at: swap(node.at, axis, num(raw)) }),
-              '31%', STEP_MM)),
-          },
-          {
-            key: 'rot',
-            // DEGREES, said on the row rather than assumed: the kernel takes
-            // radians and `placed` converts, so a reader who read this as
-            // radians would turn a body two and a half times and get something
-            // that still looks like a box. It is also what the arrows step by —
-            // `STEP_DEG` and not `STEP_MM`, because this is the one row of the
-            // three whose numbers are not millimetres.
-            label: 'rot°',
-            fields: [0, 1, 2].map((axis) => field(
-              `${node.id}.rot.${axis}`, node.rot[axis],
-              (raw) => updateNode(doc, node.id, { rot: swap(node.rot, axis, num(raw)) }),
-              '31%', STEP_DEG)),
-          },
-        ],
-      };
-    });
 
     // OPEN UNLESS THE READER FOLDED IT, which is what `!== false` says and a
     // truthy read could not: the branch is only ever drawn over a document that
@@ -7281,522 +6110,84 @@ export default class HammerolaViewer extends React.Component {
     // the tree are expressed over `tree.nodes` and say nothing about this one.
     const branchOpen = s.expanded[PROPOSAL_BRANCH] !== false;
 
-    // IS THERE ANYTHING LEFT TO SEND — the master tick's own state, and what
-    // pressing it does read backwards. `sendsNothing` is the same question asked
-    // of the projection and answers true for an EMPTY document too, which is the
-    // one reading that would be wrong here: a master drawn filled over a branch
-    // that has no rows would say the reader had held something back. The branch
-    // is not drawn at all in that state, so this is about the head of a branch
-    // that has rows under it.
-    const allSkipped = doc.nodes.length > 0 && doc.nodes.every((node) => node.skip);
+    // THE PANEL AND ITS BRANCH, BUILT NEXT DOOR — ui/src/proposalview.js, which
+    // says what this bag is. The doors are handed over rather than reached for:
+    // a module that held `this` would be a second copy of the component, and
+    // every one of these is a method whose whole job is to write the page's
+    // state or push the viewport.
+    const proposal = proposalView(s, {
+      tree, overlayPath, hiddenSet, ghostSet, selRow, compared, narrow, viewer,
+      branchOpen, PROPOSAL_BRANCH, stop, menuAt,
+      node: this.node.bind(this),
+      // ONE COUNTER FOR THE WHOLE PAGE, which is what keeps two nodes from
+      // being minted under one id — see `_proposalSeq` in the constructor. It
+      // is bumped here and read back, so a caller cannot forget the bump.
+      nextSeq: () => { this._proposalSeq += 1; return this._proposalSeq; },
+      set: this.set.bind(this),
+      setState: this.setState.bind(this),
+      setVisibility: this.setVisibility.bind(this),
+      toggle: this.toggle.bind(this),
+      typeProposal: this.typeProposal.bind(this),
+      commitProposal: this.commitProposal.bind(this),
+      nudgeProposal: this.nudgeProposal.bind(this),
+      setProposal: this.setProposal.bind(this),
+      skipProposal: this.skipProposal.bind(this),
+      toggleProposal: this.toggleProposal.bind(this),
+      toggleProposalEye: this.toggleProposalEye.bind(this),
+      removeProposal: this.removeProposal.bind(this),
+    });
+
+    // -- the comparison panel, which stands where the tree stands
+    const compare = comparePanel(s, {
+      stop,
+      compareRows, compareSummary, statusChip, rowReason, mm3,
+      NOT_COMPARED, NOT_COMPARED_WHY,
+      set: this.set.bind(this),
+      leaveCompare: this.leaveCompare.bind(this),
+      compareRevisions: this.compareRevisions.bind(this),
+    });
+
+    // THE CHROME, BUILT NEXT DOOR — ui/src/chromeview.js. It is handed the four
+    // panels' own answers above rather than building them: the rail's count is
+    // drawn on a header button, the picker's rows inside a header menu, and a
+    // second count worked out up there could disagree with the rail it is about.
+    const chrome = chromeView(s, this.props, {
+      meta, viewer, narrow, stop, proposalOn,
+      revRows, downloadGroups, threads, openCount,
+      viewPartCount, HOLD_KEY_LABEL, VIEW_TABS_MAX,
+      set: this.set.bind(this),
+      setState: this.setState.bind(this),
+      // THE STATE AS IT STANDS WHEN THE HANDLER RUNS, and not as it stood when
+      // this object was built: both readers of it are inside a `setState`
+      // callback, where the point is that the update has landed. See the token
+      // control, which is the only place it is spent.
+      stateNow: () => this.state,
+      toast: this.toast.bind(this),
+      toolsOff: this.toolsOff.bind(this),
+      subtitle: this.subtitle.bind(this),
+      applyTheme: this.applyTheme.bind(this),
+      closeTab: this.closeTab.bind(this),
+      compareRevisions: this.compareRevisions.bind(this),
+      fitView: this.fitView.bind(this),
+      saveFrame: this.saveFrame.bind(this),
+      showView: this.showView.bind(this),
+      loadFeed: this.loadFeed.bind(this),
+      loadProposal: this.loadProposal.bind(this),
+      proposalMoves: this.proposalMoves.bind(this),
+      proposalOverlay: this.proposalOverlay.bind(this),
+      stageProposal: this.stageProposal.bind(this),
+      toggleProposal: this.toggleProposal.bind(this),
+    });
 
     return {
       rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, tokenPop: false }),
 
-      // -- the header row ------------------------------------------------------
+      // -- the page's chrome ---------------------------------------------------
       //
-      // `min-height` RATHER THAN `height`, AND IT WRAPS. Nothing that could be
-      // dropped from this row makes it fit below the breakpoint: what is left —
-      // the mark, the title, the revision picker and four controls — is still
-      // wider than a phone, and the theme button #35 moved in here is a fifth.
-      // A row that cannot break its line can only overflow,
-      // and the root this sits in is `overflow:hidden`, so overflowing means
-      // silently CUT OFF rather than scrolled: the comment button would simply
-      // not be there. It grows a second line instead. Same fix, same reason, as
-      // `static/_v/site.css` already makes on the resolver's copy of this header
-      // — read the rule there, the argument is written out in full.
-      headerStyle: 'min-height:50px;flex:none;display:flex;flex-wrap:wrap;align-items:center;'
-        + 'gap:6px 12px;padding:0 16px;'
-        + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE};position:relative;z-index:30`,
-
-      // WHAT THE HEADER LETS GO OF FIRST, and each of these is chosen because
-      // the page still says it somewhere else. The wordmark sits beside a mark
-      // that stays and goes on linking home; the subtitle is a description of
-      // the build (parts, views, size) and not a control, with the same counts
-      // on the view tabs; and the status chip's dot is already on the revision
-      // button next to it, while the one status worth interrupting somebody for
-      // — a newer build — announces itself with the banner over the model.
-      showWordmark: !narrow,
-      showSubtitle: !narrow,
-      showStatus: !narrow,
-
-      title: (meta && (meta.title || meta.project)) || '',
-      // THE COLUMN HOLDING THE TITLE HAS TO BE ABLE TO SHRINK, and it could
-      // not: `flex:none` stood here, so the item kept its content width whatever
-      // the window did, and the `text-overflow:ellipsis` on the title inside it
-      // could never fire. A model named after its whole assembly pushed the row
-      // past the edge of the window rather than being cut — the failure the
-      // ellipsis was written to prevent, with the ellipsis in place.
-      // `0 1 auto`: shrink allowed, grow still refused, because a title that
-      // claimed the leftover room would push the picker beside it away from it.
-      titleColStyle: 'display:flex;flex-direction:column;gap:1px;flex:0 1 auto;min-width:0',
-      subtitle: meta ? this.subtitle() : '',
-      // SHORTENED HERE TOO, and this was the one place it was not. `PAGE.slot`
-      // is a path segment straight out of the URL, so on a pinned revision it is
-      // the full digest of the sources — 64 characters, in a fixed-width header
-      // row, next to a title and a status chip that then have nowhere to go. The
-      // picker below this button has always drawn the same value at seven
-      // (`shortId`), so the header was contradicting the menu it opens. A
-      // pointer name passes through unchanged: `dev` is special-cased and
-      // `latest` is shorter than the cut.
-      slot: shortId(PAGE.slot),
-      // The whole of it, for the reader who needs to copy one. A revision is
-      // addressed by its full digest everywhere off this page — `hammerola
-      // source <rev>`, a permanent URL — and the seven characters above cannot
-      // be pasted anywhere. Empty when nothing was cut: a tooltip that repeats
-      // the word under the cursor is noise, and `dev` and `latest` are shown
-      // whole already.
-      slotTitle: shortId(PAGE.slot) === PAGE.slot ? '' : PAGE.slot,
-      slotDate: meta ? stamp(meta.built) : '',
-      revToggle: stop(() => this.setState({ revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false })),
-      revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid var(--line);background:var(--card-bg);border-radius:6px;cursor:pointer',
-      revMenuStyle: (narrow ? popSheet : 'position:absolute;left:0;top:40px;width:430px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);z-index:40;display:' + (s.revOpen ? 'block' : 'none'),
-      revRows,
-      revEmpty: revRows.length === 0,
-      // SHORTENED, like every other place this site prints a revision. A commit
-      // is the digest of its sources (SPEC 7.7), so `s.cmp` holds 64 characters
-      // per side and this label is a button in a 430px menu.
-      cmpLabel: cmpReady ? `${shortId(s.cmp[0])} → ${shortId(s.cmp[1])}` : '',
-      compareBtnStyle: `padding:7px 14px;border-radius:6px;font:600 12px ${SANS};cursor:pointer;` + (cmpReady ? 'background:var(--accent);color:var(--text-on-accent)' : 'background:var(--sunken-bg);color:var(--text-faint);pointer-events:none'),
-      startCompare: stop(() => this.compareRevisions(s.cmp)),
-
-      statusChipStyle: `display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:6px;font:500 11.5px ${SANS};` + status.style,
-      statusText: status.text,
-      statusDotStyle: `width:8px;height:8px;border-radius:4px;background:${status.dot};flex:none`,
-
-      downloadGroups,
-      dlToggle: stop(() => this.setState({ dlOpen: !s.dlOpen, revOpen: false, viewsOpen: false, tokenPop: false })),
-      dlBtnStyle: btn(s.dlOpen) + ';border:1px solid var(--line);background:var(--card-bg)',
-      // CLAMPED LIKE THE OTHER TWO. This one is a HEADER button and survives
-      // everything the narrow branch drops, so its menu is reachable on a phone
-      // — and `right:0` is measured from a button that, once the row has
-      // wrapped, is no longer at the window's right edge: a 250px menu then
-      // starts off the left of a 390px screen and is cut off by the root's
-      // `overflow:hidden` with nothing to scroll.
-      dlMenuStyle: (narrow ? popSheet : 'position:absolute;right:0;top:40px;width:250px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;z-index:40;display:' + (s.dlOpen ? 'block' : 'none'),
-
-      // -- the token: the whole customer/viewer split, in one control
-      viewer,
-      tokenToggle: stop(() => this.setState({
-        tokenPop: !s.tokenPop, tokenDraft: '', revOpen: false, dlOpen: false, viewsOpen: false })),
-      tokenBtnStyle: btn(false) + ';border:1px solid ' + (viewer ? 'var(--line);background:var(--card-bg)' : 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)'),
-      tokenLabel: viewer ? 'View only' : 'Editing on',
-      tokenPopStyle: (narrow ? popSheet : 'position:absolute;right:0;top:40px;width:320px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px var(--shadow);z-index:40;display:' + (s.tokenPop ? 'block' : 'none'),
-      tokenDraft: s.tokenDraft,
-      tokenType: (e) => this.setState({ tokenDraft: e.target.value }),
-      tokenSave: stop(() => {
-        const value = s.tokenDraft.trim();
-        if (!value) { this.toast('Paste the token first'); return; }
-        writeToken(value);
-        // The queue is behind the same token, so entering one is the moment it
-        // can be asked for — from the callback, because `this.state.token` is
-        // still the old one until the update lands.
-        //
-        // AND THE PROPOSAL COMES BACK ON THE MODEL, which is the other half of
-        // what `tokenClear` did and has to be undone in the same breath. That
-        // door shuts the eye as a DEFAULT for a reader who has stopped being an
-        // editor; left standing across a round trip it stops being a default and
-        // becomes a trap, because nothing connects it to the gesture that caused
-        // it. The reader hands the token back, presses `add a box`, and the model
-        // does not change — `stageProposal` would reach `proposalOverlay` and be
-        // turned away by a flag set before they left.
-        //
-        // STAGED FROM THE CALLBACK for the same reason the feed is: the flag is
-        // read inside those doors, so a push made before this update landed would
-        // be refused by exactly the value being cleared.
-        this.setState({ token: value, tokenPop: false, tokenDraft: '',
-                        proposalOff: false },
-                      () => {
-                        this.loadFeed();
-                        // AND THE STORED PROPOSAL, which is behind the same
-                        // token: this is the second of the two doors the token
-                        // arrives through, and `loadProposal` says why there is
-                        // no third. From the callback for the reason the feed
-                        // is: the request reads `this.state.token`.
-                        this.loadProposal();
-                        this.stageProposal(this.state.proposal || emptyProposal());
-                      });
-        this.toast('Editing is on in this browser');
-      }),
-      tokenClear: stop(() => {
-        clearToken();
-        // The feed goes with it: it was fetched under a token this browser no
-        // longer has, and a reader without one may not read the queue at all.
-        //
-        // AND THE PROPOSAL PANEL, which is HIDDEN WITHOUT A TOKEN like Move
-        // — everything it produces leaves this page as a comment. Left open it
-        // is a panel the button no longer offers to reopen, with `add to
-        // comment` gone from under it.
-        //
-        // AND THE PROPOSAL COMES OFF THE MODEL, THROUGH THE EYE — which is a
-        // different thing from the bare `proposalOverlay(null)` that stood here,
-        // and the difference is a state machine that cannot disagree with
-        // itself. `proposalOff` is now the one answer to "is the proposal on the
-        // model", and both doors to the viewport read it. Cleared by hand
-        // instead, the overlay went off while that flag still said it was on —
-        // and since the branch now survives this (it is drawn on the document
-        // alone), the first edit through any of its rows called `setProposal`
-        // and staged the bodies straight back onto a model this had just
-        // cleared.
-        //
-        // WHY OFF AT ALL, given the panel is what carries the token: the reader
-        // is giving up the right to edit, and a body standing over the model is
-        // a statement they can no longer send. THE BRANCH STAYS, so the document
-        // is still there to be read and the eye is still there to put it back —
-        // this is a default and not a lock, which is the honest shape for it:
-        // nothing here is a permission gate, and pretending otherwise would be
-        // the invented adversary AGENTS.md warns about.
-        //
-        // BOTH PUSHES CARRY THEIR OWN ANSWER rather than leaning on the flag
-        // they just set: `setState` has not landed when these run, so the doors
-        // would still read the old `proposalOff` and push the proposal back
-        // down. `null` and a document with no moves in it mean the same thing on
-        // either side of that update, which is what makes the order not matter.
-        // The moves need the second call at all because nothing else pushes
-        // here, and without it the displaced parts would stand where they are
-        // until some later edit happened to send a document.
-        this.setState({ token: null, tokenPop: false, tokenDraft: '',
-                        composer: null, notePop: null, feed: [],
-                        proposalOpen: false, proposalOff: true });
-        this.proposalOverlay(null);
-        this.proposalMoves(dropMoves(this.state.proposal));
-        this.set({ tool: null });
-        this.toast('Token removed — back to viewing');
-      }),
-
-      // -- the tree, which on narrow is something you open ---------------------
-      //
-      // Wide, it floats over a corner of the model and there is room for both.
-      // Narrow, it covers the thing it describes — so it starts closed and this
-      // button in the header is what opens it. Its openness is state and only
-      // state; the constructor says why it is not remembered.
-      // AND NOT WHILE TWO REVISIONS ARE BEING COMPARED, which is the other way
-      // the tree can be absent: the compare panel stands in its place, so the
-      // button would be offering to open something the page is not drawing
-      // either way.
-      treeShown: !narrow || s.treeOpen,
-      treeToggle: stop(() => this.setState({ treeOpen: !s.treeOpen })),
-      treeBtnStyle: btn(false, !narrow || s.compare) + ';border:1px solid '
-        + (s.treeOpen ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'var(--line);background:var(--card-bg)'),
-
-      railToggle: stop(() => this.setState({ rail: !railOpen })),
-      railBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)' + (viewer ? ';display:none' : ''),
-      // WHAT SEPARATES THE TWO STATES IS TONE, NOT INK CONTRAST, and saying so
-      // plainly is the only honest version. White on `--accent` is 4.27:1 in
-      // both themes and cannot be raised without moving the accent itself, so
-      // the live pill is not the high-contrast one; and the resting pill
-      // cannot be "the faint version" of it either, because a grey that looks
-      // faint on a light page is a grey that stands out on a dark one. What
-      // does carry across both themes and reads at 17px is the disc turning
-      // BLUE — so that is the signal, and each state simply gets an ink its
-      // own fill can be read with.
-      //
-      // WHICH MEANS THE RESTING PILL IS AN ORDINARY CHIP: the neutral chip
-      // fill with the secondary ink on it, `--text-soft` on `--chip-bg` —
-      // 6.51:1 in light, 8.36:1 in dark. It reads as a count at rest in both.
-      //
-      // IT WAS `--line-strong` UNDER WHITE, a line role spent as a fill on the
-      // strength of a number measured in the light theme alone: white on light
-      // `--line-strong` is 1.68:1, which is not "faint" but illegible, and on
-      // the dark value it is 9.89:1 — so the resting pill came out CLEARER
-      // than the live one, exactly backwards, in half the interface.
-      railCountStyle: 'min-width:17px;height:17px;padding:0 5px;border-radius:9px;'
-        + (openCount ? 'background:var(--accent);color:var(--text-on-accent)'
-                     : 'background:var(--chip-bg);color:var(--text-soft)')
-        + `;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO}`,
-      openCount,
-      // A COLUMN BESIDE THE MODEL, OR A SHEET OVER IT. 300px taken out of the
-      // width is a third of a phone's screen, and what is left is the thing the
-      // page exists to show — so on narrow the rail stops being a column and
-      // covers the body instead, the way the tree already does. It is the same
-      // panel either way: it opens and closes by the same button and holds the
-      // same threads.
-      railStyle: (narrow ? 'position:absolute;inset:0;z-index:20' : 'width:300px;flex:none')
-        + ';background:var(--header-bg);border-left:1px solid var(--line);display:'
-        + (railOpen && !viewer ? 'flex' : 'none') + ';flex-direction:column;min-height:0',
-      threads,
-
-      // -- the theme, standing next to the comments ----------------------------
-      //
-      // WHERE THE ISSUE PUTS IT, in as many words: «кнопка — жить у
-      // комментариев» (#35). It used to sit in the floating strip under the
-      // model, with Measure and Fit, and that was right while it changed the
-      // CANVAS and nothing else. It changes the whole page now, so the strip
-      // that belongs to the viewport is the wrong drawer for it — and it is the
-      // one part of this page a phone does not draw at all (`showTools`), which
-      // is how a page-wide preference came to be unreachable at the width where
-      // a reader is most likely to want the dark one.
-      //
-      // BESIDE THE COMMENTS BUTTON AND NOT INSIDE THE RAIL, which is the half
-      // of that instruction worth writing down rather than deciding twice. The
-      // rail is `display:none` two ways over — while it is closed, and for a
-      // reader with no token at all — so a control living IN it would be a
-      // preference you reach by opening a panel you may not even have. The
-      // header row holds the comments control itself, wraps instead of being
-      // clipped, and is drawn at every width and for every reader: the button
-      // stands next to the comments and stays reachable.
-      //
-      // NO `stop()`, unlike the two buttons before it — this one is last in the
-      // row and nothing follows it. Parts and Comments each open
-      // something and must not have the same click close it again; this one
-      // opens nothing, so letting the click reach `rootClick` is what makes a
-      // press over here dismiss a menu left open over there.
-      //
-      // THE LABEL NAMES THE MODE THE READER IS IN, the way the access button
-      // beside the token does; what it switches to is in the tooltip.
-      themeDark: s.theme === 'dark',
-      themeLabel: s.theme === 'dark' ? 'Dark' : 'Light',
-      themeTitle: s.theme === 'dark'
-        ? 'the whole interface is dark — click for light'
-        : 'the whole interface is light — click for dark',
-      themeBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)',
-      toggleTheme: () => this.applyTheme(s.theme === 'dark' ? 'light' : 'dark'),
-
-      // -- the strip under the header: the projects this browser has been in
-      //
-      // A ROW OF ITS OWN and not part of the 50px header above, which is already
-      // carrying a title, a picker, a status chip and four controls.
-      //
-      // BELOW TWO IT IS NOT DRAWN AT ALL — not drawn `display:none`, but absent:
-      // a strip whose only link is the project already on screen is noise with a
-      // border round it, and the row it would occupy is 30px off the model.
-      //
-      // WHICH ONE IS ACTIVE IS ASKED OF THE ADDRESS, `PAGE.pid`, and of nothing
-      // else. Nothing stores it and no state here holds it, so the highlighted
-      // pill cannot disagree with the page it is drawn on (store.js says why).
-      // IT WRAPS, and that is not a detail. Ten pills at the 190px cap below,
-      // with their gaps and this padding, is close to 2000px — wider than the
-      // window this interface is drawn for, and the root above is
-      // `overflow:hidden`. A row that cannot break its line can only overflow,
-      // and overflowing under `overflow:hidden` means silently CUT OFF rather
-      // than scrolled: the eleventh project this browser opened would evict the
-      // coldest tab, and the reader would watch a strip that never changed. It
-      // is the same failure `static/_v/site.css` fixed on the resolver's own
-      // header, and it is fixed here the same way — wrap, so a full strip grows
-      // a second row instead of losing its tail.
-      tabsShown: openTabs.length > 1,
-      tabsStyle: 'flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:5px 12px;'
-        + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE}`,
-      tabs: openTabs.map((t) => ({
-        key: t.pid,
-        // The pointer-less URL, exactly what a card on the front page links at:
-        // a tab is a PROJECT, and which revision of it opens is the reader's own
-        // remembered answer rather than this strip's to decide (hub.projectUrl).
-        href: projectUrl(t.pid),
-        label: t.title,
-        // The pill the view switcher is drawn with, so "the one you are on"
-        // reads the same way here as it does there rather than in a second
-        // visual language invented for one row.
-        style: tab(t.pid === PAGE.pid)
-          + ';display:flex;align-items:center;gap:7px;max-width:190px;text-decoration:none;color:inherit',
-        // Capped and ellipsised like the header's title: a model named after its
-        // whole assembly must not be able to push the page wider than the
-        // window, and ten of them must not push the strip off the side.
-        labelStyle: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
-        // BOTH CALLS, and `preventDefault` is the one that does the work here:
-        // the ✕ sits INSIDE the anchor, so stopping React's synthetic bubbling
-        // leaves the browser's own navigation entirely untouched and closing a
-        // tab would open it. `stopPropagation` is for the root's click handler,
-        // which would take the open menus down under a gesture about neither.
-        onClose: (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          this.closeTab(t.pid);
-        },
-      })),
-
-      // Views come from the model's code: as many tabs as it declares.
-      //
-      // ONE LIST, DRAWN TWO WAYS. Each entry carries both dresses — `style` is
-      // the pill the strip draws it as, `rowStyle` the line the menu draws it
-      // as — because which of the two is on screen is a question about how MANY
-      // views there are and about nothing else. Building the rows only in the
-      // branch that shows them would put the view switcher's identity in two
-      // places, free to disagree about which view is the one you are on.
-      viewTabs: views.map((v) => ({
-        key: v.id,
-        label: v.name,
-        hint: `${viewPartCount(v)} parts · ${mb(v.gzip)}`,
-        style: tab(s.view === v.id),
-        // The menu's own row, shaped like the tree menu's items (`mi`) rather
-        // than like a pill: in a column it is the highlight that says which one
-        // is on, and a pill's raised card in a list reads as a stray button.
-        rowStyle: `display:flex;align-items:center;gap:10px;padding:7px 14px;font:400 12px ${SANS};cursor:pointer;`
-          + (s.view === v.id ? 'color:var(--accent-text);background:var(--accent-bg)' : 'color:var(--text)'),
-        // CLOSES THE MENU WHATEVER `showView` DOES WITH THE CLICK — it returns
-        // without touching a thing when the view asked for is the one already
-        // on screen, and a menu left standing open on the row you just pressed
-        // is a control that ignored you.
-        onClick: () => { this.showView(v.id); this.setState({ viewsOpen: false }); },
-      })),
-      // PAST THE THRESHOLD THE STRIP BECOMES ONE BUTTON — see `VIEW_TABS_MAX`
-      // for what the strip does to the toolbar when it is too long for it.
-      viewMenu: views.length > VIEW_TABS_MAX,
-      // What that button says: the view on screen. Empty where none matches —
-      // `s.view` is null until the first view lands, and a switcher captioned
-      // `undefined` is worse than a bare one.
-      viewLabel: shownView ? shownView.name : '',
-      // A view's name is the model's own sentence and can be any length; the
-      // button is in a toolbar that must not grow past the window (`viewBtnStyle`
-      // caps it), so the name is cut rather than allowed to push.
-      viewLabelStyle: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
-      viewsToggle: stop(() => this.setState({
-        viewsOpen: !s.viewsOpen, revOpen: false, dlOpen: false, tokenPop: false, menu: null })),
-      viewBtnStyle: `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
-        + (s.viewsOpen ? 'background:var(--card-bg);color:var(--text);box-shadow:0 1px 2px var(--shadow-soft)' : 'color:var(--text-soft)'),
-      // OPENS UPWARDS, unlike every other popover on this page: the toolbar it
-      // hangs off floats at the BOTTOM of the model, so a menu measured from
-      // the top of its button would be drawn off the bottom edge of the window.
-      //
-      // WHICH MAKES `bottom:38px` A MEASUREMENT AND NOT A TASTE, since the
-      // offset is counted up from the button rather than down from anything:
-      // the button is about 25px tall (a 12px line box and 5px of padding
-      // either side), the toolbar adds its 4px of padding and 1px border, and
-      // the rest is the air between the two cards. It moves with
-      // `viewBtnStyle` — grow the button and this has to grow with it, or the
-      // menu comes down on top of the control that opened it.
-      //
-      // AND IT IS THE ONE POPOVER THAT TAKES NO SHEET ON A NARROW WINDOW. The
-      // toolbar carries `backdrop-filter:blur(10px)`, and a `backdrop-filter`
-      // makes the element a containing block for descendants positioned `fixed`
-      // AS WELL AS `absolute` (CSS Filter Effects 2, §2.1) — so `popSheet` would
-      // resolve its `left`/`right`/`bottom` against the TOOLBAR's box rather
-      // than the window, and the "sheet" would come up over the button that
-      // opened it. Nor does it need the clamp the header's panels need: this
-      // toolbar is always centred on the bottom edge, and on a narrow window it
-      // is this button and Fit and nothing else, so 260px measured from the
-      // button's left edge is inside a 320px window.
-      //
-      // NO `z-index`, deliberately: the toolbar is its own stacking context for
-      // the same reason, so any value here only sorts this menu against the
-      // toolbar's other children. What has to move is the CONTAINER —
-      // `toolbarStyle` below.
-      //
-      // HEIGHT CAPPED like the revision menu's list, because the count here is
-      // the model's to choose: a model may declare twenty views, and the root
-      // this page lives in is `overflow:hidden` — a menu taller than the window
-      // is not scrolled, it is cut off, with the rows past the cut unreachable.
-      viewMenuStyle: 'position:absolute;left:0;bottom:38px;width:260px;max-height:308px;overflow:auto;'
-        + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
-        + (s.viewsOpen ? 'block' : 'none'),
-      // THE LAYER THE WHOLE TOOLBAR SITS ON, raised for as long as the menu is
-      // open. While it is, the toolbar has to cover the overlays that share the
-      // model's area with it — the "This view did not render" card (14), the
-      // section panel (15) and the composer (16) — or a click on a row one of
-      // them covers lands in the overlay instead. It stays UNDER the tree rail
-      // on a narrow window (20) and under the header (30), which are the two
-      // things that are allowed to cover the toolbar. Closed, it is 12 again,
-      // so nothing else on the page ever sees a different order.
-      toolbarStyle: 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:'
-        + (s.viewsOpen ? '17' : '12'),
-      // WHAT THE TOOLBAR KEEPS WHEN IT IS THE WIDTH OF A PHONE: the view tabs
-      // and Fit, which are the two controls about LOOKING at the model. The
-      // rest goes — Measure and Comment are gestures that want a pointer and a
-      // canvas with room to aim in, Frame saves a PNG a phone has nowhere to
-      // put, and the theme toggle is a preference rather than a step. The
-      // dividers go with them: three rules with nothing left between them.
-      //
-      // MOVE IS NOT ON THIS STRIP and goes narrow all the same, out of its own
-      // row in `menuItems`: it is the same gesture wanting the same room, and
-      // the flag it reads is this one.
-      //
-      // IT TAKES AWAY NO POPOVER, and this once said the opposite — it read as
-      // the reason some of this page's popovers needed clamping and others did
-      // not. None of the buttons above opens one, so dropping them narrows
-      // nothing but the toolbar itself.
-      //
-      // WHICH POPOVERS ARE CLAMPED IS NOT WRITTEN DOWN HERE, and that is on
-      // purpose: this comment has carried a count of them twice and been wrong
-      // both times, because a sentence cannot be re-checked when a panel is
-      // added. `narrow.test.js` names the clamped ones and asserts it — the
-      // list lives there, where it can fail.
-      showTools: !narrow,
-      // AND BOTH ARE OUT OF SERVICE WHILE THE SCENE IS A COMPARISON'S, which is
-      // a different question from the `viewer` beside it: that one is about who
-      // the reader IS, this one about what is under the cursor. What each tool
-      // filed against a comparison, and why the answer is `toolsOff()` rather
-      // than `s.compare`, is written out on the method. The buttons are the half
-      // a person sees; the handlers are the half that stops a tool armed before
-      // the panel opened.
-      //
-      // MOVE IS NOT A BUTTON HERE ANY MORE: it is armed from the object's own
-      // row menu (`menuItems`), which is where the reader has already said WHICH
-      // object the drag is about. Its share of `toolsOff` is the `compared`
-      // exclusion that row sits inside.
-      tMeasure: setTool('measure'),
-      measureBtnStyle: btn(s.tool === 'measure', false, this.toolsOff()),
-      tComment: setTool('comment'),
-      commentBtnStyle: btn(s.tool === 'comment', viewer, this.toolsOff()),
-      // NOT ONE OF `s.tool`, and that is the whole difference between this
-      // button and the two above it. Those two ARM A GESTURE on the canvas
-      // and the viewport is told which one; this one opens a panel of number
-      // fields and arms nothing of its own. The bodies it stages CAN be dragged
-      // — under the MOVE tool, armed from any part's row menu, because a staged
-      // body is a body in the scene like any other and one tool for moving
-      // things is better than two. What that drag means is the panel's business:
-      // it ends in `hmr:proposalmove` and writes the body's `at`, raising no
-      // chip. So this button is drawn like its neighbours and lit from its own
-      // flag.
-      //
-      // HIDDEN WITHOUT A TOKEN, like Move and unlike Measure: everything the
-      // proposal produces leaves this page as a comment, which is behind the
-      // token, so a reader who cannot comment has nowhere to send it.
-      //
-      // AND ABSENT — not hidden — ON A HUB THAT DID NOT ASK FOR THE PANEL. That
-      // is a DIFFERENT KIND of gate from the token above, and the difference is
-      // who is being answered: the token is about this READER, who cannot use a
-      // feature the hub does serve, and `display:none` is the right answer to
-      // it. The flag is about this HUB, which never asked for the feature at
-      // all (`proposalPanelOn`, decided before the page was sent) — and the right
-      // answer to that is no markup, so the button and the panel are wrapped in
-      // `v.proposalOn` in `render` and the styles below say nothing about it.
-      //
-      // AND NOT TAKEN OUT OF SERVICE BY A COMPARISON, unlike all three. What
-      // `toolsOff` guards is a task filed in the BUILD's terms against a scene
-      // that is not the build — a `/cmp/…` path in `partId`. This panel's own
-      // door posts no path at all (`proposalAdd` sends `partId: null`), and the
-      // body it describes is the reader's own claim about a motor or a wall,
-      // which is as true over a comparison as over a build.
-      //
-      // THE ROWS DO WRITE `sel`, THOUGH, and that is where the same hazard
-      // would have got in by another road: a row of the proposal's branch
-      // selects the path its body is staged under, and under a comparison that
-      // path is the comparison's. So those rows select by the DOCUMENT's own
-      // node id while one is up — the reasoning is on `path` in `proposalRows`,
-      // and `measAdd` refuses such a value by its shape.
-      tProposal: () => this.toggleProposal(),
-      // THE FLAG ITSELF, because `render` is where it is spent: it decides
-      // whether these two nodes exist, not how they look.
-      proposalOn,
-      proposalBtnStyle: btn(s.proposalOpen, viewer, false),
-      fitView: () => this.fitView(),
-      grabFrame: () => this.saveFrame(),
-      // OFF `armed` AND NOT OFF `s.tool`, so the strip stops instructing the
-      // reader to click a model that will not answer: a tool armed before a
-      // comparison opened stays armed and stops firing, and this line is the
-      // only place on the page that would still have described it as live.
-      hintText: armed === 'comment' ? 'click the model to pin a task'
-        : armed === 'measure' ? 'click a part, or two, to measure'
-        // `it` and not `a part`: this tool is armed on a body of the proposal
-        // just as readily as on a part of the build, and the row that arms it
-        // already says which of the two the reader is in.
-        //
-        // AND BOTH HALVES OF THE WIDGET IN ONE LINE, because there is one tool
-        // now and this is the only place on the page that describes it while it
-        // is in force. `drag it` alone was true and incomplete — it slides and
-        // says nothing about turning — and the `turn` line that used to stand
-        // under this one described the other half of the same widget as though
-        // it were a second tool. A reader told half of it never goes looking
-        // for the rest.
-        //
-        // THE DISC AND NOT THE RING, which is the one piece of aim this has
-        // room for: the press is taken by the coloured handle, and the arc
-        // drawn through it is a picture the trackball still owns (`rings.js`),
-        // so naming the ring would send the reader to grab the one part of the
-        // widget that does nothing.
-        : armed === 'move' ? 'drag it to slide, a coloured disc to turn · esc to stop'
-        : armed === 'cut' ? 'click a face to place the section plane'
-        : `drag — orbit · wheel — zoom · hold ${HOLD_KEY_LABEL} — section`,
+      // The header, the token control, the tab strip, the view switcher and the
+      // floating toolbar are `chromeView` in ui/src/chromeview.js: everything
+      // round the model that is not a panel about the model.
+      ...chrome,
 
       viewError: s.viewError || '',
       viewErrorStyle: 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:420px;padding:14px 16px;background:var(--card-bg);border:1px solid var(--danger-line);border-radius:9px;box-shadow:0 8px 28px var(--shadow);z-index:14;text-align:center;display:' + (s.viewError ? 'block' : 'none'),
@@ -7854,9 +6245,11 @@ export default class HammerolaViewer extends React.Component {
       // has no Escape key. Opened there it could only be closed by reloading
       // the page. It is reached through the tree, which on narrow the "Parts"
       // button above is what opens.
-      secPopStyle: (narrow ? popSheet : 'position:absolute;left:278px;top:52px;width:270px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px var(--shadow);z-index:15;display:' + (s.secPop ? 'block' : 'none'),
+      secPopStyle: popover({
+        narrow, anchor: 'left:278px;top:52px', width: '270px', radius: '10px',
+        pad: '13px 14px', z: 15, open: s.secPop }),
       pickFace: stop(() => { this.set({ tool: 'cut', secPop: false }); this.toast('Click a face — the plane will sit on it'); }),
-      pickFaceStyle: `padding:7px;text-align:center;border-radius:6px;font:600 11.5px ${MONO};cursor:pointer;` + (s.tool === 'cut' ? 'background:var(--accent-bg);color:var(--accent-text);border:1px solid var(--accent-line)' : 'background:var(--accent);color:var(--text-on-accent);border:1px solid var(--accent-strong)'),
+      pickFaceStyle: `padding:7px;text-align:center;border-radius:6px;font:600 11.5px ${MONO};cursor:pointer;` + (s.tool === 'cut' ? 'background:var(--accent-bg);color:var(--accent-text);border:1px solid var(--accent-line)' : ON_ACCENT_EDGE),
       pickFaceText: s.tool === 'cut' ? 'now click a face on the model…' : (s.secFace ? 'pick another face' : 'pick a face to place the plane'),
       secOff: s.secOff, secMin: secRange[0], secMax: secRange[1],
       secStep: Math.max(0.1, Math.round((secRange[1] - secRange[0]) / 40) / 10),
@@ -7865,204 +6258,15 @@ export default class HammerolaViewer extends React.Component {
       flipSec: stop(() => this.set({ secFlip: !s.secFlip })),
       resetSec: stop(clearSection),
       toggleHatch: stop(() => this.set({ hatch: !s.hatch })),
-      hatchBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;' + (s.hatch ? 'background:var(--accent);color:var(--text-on-accent)' : 'border:1px solid var(--line-strong);background:var(--card-bg);color:transparent'),
+      hatchBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;' + (s.hatch ? ON_ACCENT : BLANK_BOX),
       hatchMark: s.hatch ? '✓' : '',
 
-      // -- the proposal panel ---------------------------------------------------
+      // -- the proposal panel, and its branch of the tree -------------------
       //
-      // CLAMPED ON NARROW like the section panel and the note editor, for the
-      // same reason and one more of its own: it is anchored to the right-hand
-      // edge of the model area, its own close cross is at the top of it, and it
-      // is the tallest panel on this page. The button that opens it is gone at
-      // phone width (`showTools`) — but the flag is not, so a window dragged
-      // narrower with the panel open would otherwise leave a sheet nothing could
-      // take back. `narrow.test.js` holds the list.
-      //
-      // AND IT SAYS NOTHING ABOUT `proposalOn`, which is the division these two
-      // gates keep: a style answers about THIS READER — open or closed, wide or
-      // narrow, token or none — while the hub's flag is answered one level up,
-      // by leaving the markup out of the tree entirely (`v.proposalOn` in
-      // `render`). Spelling the flag here as well would be a second gate that
-      // can never fire, sitting on a node that is not there to style.
-      proposalPanelStyle: (narrow ? popSheet : 'position:absolute;right:16px;top:52px;width:330px;')
-        + 'max-height:calc(100% - 110px);overflow:auto;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 12px 40px var(--shadow);z-index:15;display:' + (s.proposalOpen ? 'block' : 'none'),
-      proposalClose: stop(() => this.toggleProposal()),
-
-      // EVERY OP `SIZES` CAN DRAW, read off that table rather than listed again
-      // beside it: a button for an op with no size row is a button that adds a
-      // body the panel cannot show, and a missing button is an op nothing can
-      // reach. The ORDER is the table's, which is the order proposal.js tables
-      // them in.
-      proposalOps: Object.keys(SIZES).map((op) => ({
-        key: op,
-        // The op's own name unless it reads badly on a button — `+ profile` is
-        // what the reader is about to type into `extrude`. Not a table anything
-        // has to be kept in step with: an op missing from it gets its own name.
-        label: `+ ${{ extrude: 'profile' }[op] || op}`,
-        onClick: addBody(op),
-      })),
-
-      // -- the proposal's branch of the tree ----------------------------------
-      //
-      // DRAWN OVER A DOCUMENT WITH SOMETHING IN IT, AND ON NOTHING ELSE. What
-      // keeps the column quiet is the only condition left — a heading over
-      // nothing says less than the panel's own sentence about what a body is,
-      // which is where that explanation stayed.
-      //
-      // IT USED TO ASK `s.proposalOpen` AS WELL, and that was the overlay's
-      // condition borrowed: closing the panel took the bodies off the model, so
-      // a branch left standing would have listed rows with an eye and a colour
-      // over geometry that had gone. It borrowed only half of it. The moves
-      // stayed applied — a part of the build standing where the reader dragged
-      // it — while the row that said so, and the `×` that puts it back, went off
-      // screen with the panel. The panel no longer touches the model at all
-      // (`toggleProposal`); what takes the proposal off it is this branch's own
-      // eye, which has to stay on screen to be pressed again.
-      proposalTreeStyle: 'padding:1px 0 6px;flex-direction:column;align-items:flex-start;display:'
-        + (doc.nodes.length ? 'flex' : 'none'),
-      // THE HEAD OF THE BRANCH, drawn as a group of the parts tree is drawn at
-      // depth 0 — the same height, the same caret, the same count on the right —
-      // because it is read beside that tree and a second shape for it would read
-      // as a second kind of thing.
-      proposalHeadStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px;border-radius:4px;background:var(--float-bg-soft);cursor:default',
-      proposalCaretPath: branchOpen ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4',
-      proposalCaretStyle: 'width:20px;height:20px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-soft);cursor:pointer',
-      // WRITTEN INTO A COPY RATHER THAN SPELLED AS A COMPUTED KEY, which is the
-      // same rule `SIZES` above keeps: `test_every_handled_event_is_imported_
-      // from_events_js` reads `[x]:` out of this file as a handler key, and a
-      // `{ [PROPOSAL_BRANCH]: … }` here would arrive there as an event constant
-      // that events.js has never heard of.
-      proposalToggle: stop(() => {
-        const expanded = { ...s.expanded };
-        expanded[PROPOSAL_BRANCH] = !branchOpen;
-        this.setState({ expanded });
-      }),
-      // THE BRANCH'S OWN EYE, drawn with the rows' own `eyeOuter`/`eyeDot` so it
-      // reads as the same control one level up — which is what it is: the whole
-      // proposal off the model, bodies unstaged and every displaced part back
-      // where the build puts it. `toggleProposalEye` has the rest of the
-      // argument, including why it is one boolean of interface state and not a
-      // per-node thing.
-      //
-      // TWO STATES AND NOT THREE. A group of the parts tree can be half-hidden
-      // (`part`) because its eye is a tally of its leaves; this one is a switch,
-      // and the per-body eyes underneath it go on saying what each body is
-      // doing. So a proposal whose bodies are individually hidden still reads as
-      // ON here — that is the truthful answer, because the moves are still
-      // applied and the eyes below say the rest.
-      proposalEyeOuter: eyeOuter(s.proposalOff ? 'off' : 'on'),
-      proposalEyeDot: eyeDot(s.proposalOff ? 'off' : 'on'),
-      proposalEyeClick: stop(() => this.toggleProposalEye()),
-      // THE MASTER TICK: every node held back, or every node let through. It
-      // shows filled only when there is nothing left to send, which is the state
-      // it would put the document in — so pressing it twice is a round trip, and
-      // a branch with one node ticked off shows an empty master with a filled
-      // row under it.
-      proposalSkipAll: stop(() => this.skipProposal({
-        ...doc,
-        nodes: doc.nodes.map((node) => ({ ...node, skip: !allSkipped })),
-      })),
-      proposalSkipIcon: skipIcon(allSkipped),
-      proposalSkipTitle: allSkipped ? 'send all of it again'
-                                    : 'hold all of it back from the agent',
-      proposalHeadName: PROPOSAL_BRANCH,
-      proposalHeadNameStyle: `white-space:nowrap;padding-right:4px;font:600 12px ${MONO};color:var(--text)`,
-      // THE WHOLE THING, DELETED — the record on the hub and the document on the
-      // page together, which is the one control here that reaches past this
-      // browser. It asks before it does it; `removeProposal` says why this `×`
-      // and no other one on the page is allowed to interrupt.
-      proposalRemove: stop(() => this.removeProposal().catch((error) => {
-        console.error('proposal', error);
-      })),
-      proposalRemoveTitle: 'delete the whole proposal, here and on the hub',
-      // HOW MANY STATEMENTS ARE IN IT, bodies and moves together, in the place a
-      // group of the parts tree carries how many parts are under it.
-      proposalCount: String(doc.nodes.length),
-      proposalCountStyle: `flex:none;font:400 10px ${MONO};color:var(--text-faint);padding:0 2px`,
-      // EMPTIED BY THE CARET rather than hidden by a style, which is how the
-      // parts tree collapses a group too: a collapsed branch emits no rows.
-      proposalRows: branchOpen ? proposalRows : [],
-
-      // The sentence that says what a proposal can be built out of, drawn in the
-      // panel above the buttons that add one and only while there is nothing in
-      // the document. It stands in for the branch rather than beside it: the
-      // branch is over in the tree column and is not drawn at all on an empty
-      // document, so this is the only thing on the page saying what would appear
-      // there — and a heading over empty space says less than one sentence does.
-      //
-      // ON THE WHOLE DOCUMENT and not on the bodies alone, so a proposal that
-      // holds nothing but a dragged part is not offered an explanation of what
-      // it is missing — it has something to say to the agent already.
-      proposalEmptyStyle: `font:400 10.5px/1.5 ${MONO};color:var(--text-muted);margin-bottom:9px;display:`
-        + (doc.nodes.length ? 'none' : 'block'),
-
-      // THE KERNEL'S OWN SENTENCE ABOUT THE DOCUMENT AS IT STANDS, in a box in
-      // the panel, where the reader is already looking. Drawn from `proposalError`
-      // through a key of its own rather than from the field directly, so the
-      // markup asks the panel what it has to say instead of naming the one
-      // source it comes from today.
-      proposalSays: s.proposalError || '',
-      proposalSaysStyle: `margin-top:9px;padding:7px 9px;border:1px solid var(--danger-line);background:var(--danger-bg);border-radius:6px;font:400 10.5px/1.5 ${MONO};color:var(--danger);display:`
-        + (s.proposalError ? 'block' : 'none'),
-
-      // THE SAME DOOR THE MEASUREMENT AND THE DRAG USE, and the same gate: the
-      // panel is already closed to a reader with no token, and this carries the
-      // gate anyway so the link cannot open a composer `composerStyle` keeps at
-      // `display:none`. Hidden on an empty proposal too — there is nothing to say.
-      //
-      // AND ON A DOCUMENT THE PANEL HAS ALREADY FLAGGED, which is the third
-      // condition and the one that was a defect rather than a decision. A
-      // document `setProposal` could not build is one the projection cannot be
-      // rendered off either, so the link stood over something that would throw
-      // inside a React handler: nothing opened, nothing was said, and the
-      // feature's only exit did nothing at all. The message for it is already on
-      // screen in the panel's error box; what is missing is the offer.
-      // `sendsNothing` AND NOT `isEmpty`, which is the same offer read one step
-      // further on: a document whose every node is ticked off projects to a
-      // heading and a `result =` line, and a link that attached THAT would send
-      // the agent a proposal the reader had just finished withholding.
-      proposalAddStyle: 'cursor:pointer;text-decoration:underline'
-        + (viewer || sendsNothing(doc) || s.proposalError ? ';display:none' : ''),
-      // THE TEXT AND NOT THE DOCUMENT, taken at the moment the link is pressed.
-      // `proposalText` is the projection the agent reads — a few aligned lines
-      // saying how big the thing is and where its features sit, and a block
-      // below them naming every part of the build the reader dragged — and it
-      // rides in the comment's TEXT like the measurement, because the hub's
-      // schema is closed and silently drops what it does not know
-      // (`sendComment`, and tests/test_ui_source.py holds it). A drag is no
-      // longer a passenger of its own beside the projection: it is a line
-      // inside it.
-      //
-      // `part` IS EMPTY, deliberately, where the other two doors fill it: a
-      // proposal is about a body that is in no build and no catalogue, so there is
-      // no row to name and no key to anchor to. The reader can still click a
-      // part afterwards and attach it.
-      //
-      // THE FLAG IS READ HERE TOO and not only in the style above, because the
-      // two answer different questions: one is whether to OFFER the link, the
-      // other is what happens when it is pressed anyway. A document the kernel
-      // would not build is not one to send an agent to design against — and
-      // where what it refused was an op no table knows, `proposalText` looks the
-      // same op up and throws, which in here is a React handler's throw: no
-      // composer, no message, nothing in the console the reader will ever see.
-      proposalAdd: () => {
-        if (s.proposalError) return;
-        this.set({
-          composer: {
-            part: '', partId: null, key: null,
-            p: null, text: '', photo: null,
-            // `attached` IS THE DRAFT'S ANSWER TO "was a proposal put on this
-            // one", and `proposal` is the text as it stands. Not `held`: this
-            // feature already spends "held back" on the OPPOSITE meaning — a node
-            // the reader is keeping out of the text — and the page has an `s.held`
-            // of its own for the section hold key. They part company
-            // the moment every node is ticked off: the text goes and the answer
-            // does not, which is what lets a tick be undone (`skipProposal`).
-            proposal: proposalText(doc), attached: true,
-          },
-          tool: null,
-        });
-      },
+      // Both of them, and the fields they are made of, are `proposalView` in
+      // ui/src/proposalview.js: twenty-six keys that answer to nothing on
+      // this page but the document, the flags above and the doors handed to it.
+      ...proposal,
 
       // -- the two notes on the selected part ---------------------------------
       //
@@ -8108,96 +6312,10 @@ export default class HammerolaViewer extends React.Component {
       editNote: stop(() => this.setState({ notePop: this.selectedKey(), noteDraft: this.selectedNote() })),
 
       // -- comparing two revisions (issue #10) --------------------------------
-      cmpA: shortId(cmpPair[0] || ''), cmpB: shortId(cmpPair[1] || ''),
-      // A method rather than a closure, because closing the panel has an
-      // ADDRESS to put back when this page was opened as a comparison, and that
-      // is a paragraph of reasoning rather than a state patch (`leaveCompare`).
-      exitCompare: stop(() => this.leaveCompare()),
-      // The three ways of looking at one comparison. Each is one group hidden in
-      // the scene (`diffHidden`), so they are `set` like any other viewport
-      // state and cost no fetch.
-      // A FLEX BOX AND `min-width:0`, not `text-align:center`. Two of the three
-      // labels carry a revision identifier, which is a commit of seven
-      // characters or a pointer name of up to sixty-four — and a flex item does
-      // not shrink below its own content unless it is told it may, so a long
-      // one used to push the whole segmented control wider than the panel. The
-      // name inside then ellipses and the word beside it does not; `padding:0`
-      // because the box now centres its own children.
-      dsBothStyle: tab(s.diffShow === 'both') + ';flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:4px;padding-left:0;padding-right:0',
-      dsAStyle: tab(s.diffShow === 'a') + ';flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:4px;padding-left:0;padding-right:0',
-      dsBStyle: tab(s.diffShow === 'b') + ';flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:4px;padding-left:0;padding-right:0',
-      // The half of a mode label that may be too long, and the half that must
-      // never be dropped: without "only" the three tabs stop naming choices.
-      dsNameStyle: 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
-      dsWordStyle: 'flex:none',
-      showBoth: stop(() => this.set({ diffShow: 'both' })),
-      showA: stop(() => this.set({ diffShow: 'a' })),
-      showB: stop(() => this.set({ diffShow: 'b' })),
-
-      cmpNoteStyle: 'display:' + (cmpNote ? 'block' : 'none'),
-      cmpNoteHead: cmpNote ? cmpNote.head : '',
-      cmpNote: cmpNote ? cmpNote.body : '',
-      cmpRetryStyle: `margin-top:9px;padding:5px 11px;border-radius:6px;font:600 11.5px ${SANS};cursor:pointer;background:var(--accent);color:var(--text-on-accent);display:`
-        + (s.cmpStage === 'failed' || s.cmpStage === 'locked' ? 'inline-block' : 'none'),
-      retryCompare: stop(() => this.compareRevisions(s.cmpPair)),
-
-      cmpSummary: cmpDone ? compareSummary(cmpRows) : '',
-      cmpSummaryStyle: `font:600 11.5px ${SANS};padding:0 2px 8px;display:`
-        + (cmpDone ? 'block' : 'none'),
-      cmpRows: cmpRows.map((row) => ({
-        key: row.key,
-        // THE CATALOGUE KEY IS WHAT IS DRAWN, and not a name looked up in the
-        // build's own catalogue: the pair being compared need not include the
-        // build this page is standing on, and a part that is `new` has no entry
-        // in the older revision's catalogue at all. The key is the identity
-        // (issue #75), it is what the author wrote, and it is what the agent
-        // will be told about.
-        name: row.key,
-        status: row.status,
-        volume: [row.added > 0 ? `+${mm3(row.added)}` : '',
-                 row.removed > 0 ? `−${mm3(row.removed)}` : '']
-          .filter(Boolean).join(' / ') + (row.added > 0 || row.removed > 0 ? ' mm³' : ''),
-        // A COLUMN, because a refused part has a second line under it. Every
-        // other row is one line and looks exactly as it did: the line itself is
-        // the flex box that used to be this element, and the sentence below it
-        // is `display:none` where there is nothing to say.
-        rowStyle: 'padding:4px 6px;border-radius:5px;cursor:pointer;background:'
-          + (s.cmpSel === row.key ? 'var(--accent-bg)' : 'transparent'),
-        nameStyle: `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 11.5px ${MONO};color:var(--text)`,
-        // The chip, and the legend's line about `not compared` wears the same
-        // one — see `statusChip`, where the argument for each colour is.
-        statusStyle: statusChip(row.status),
-        volumeStyle: `flex:none;font:400 10px ${MONO};color:var(--text-muted)`,
-        // WHY THE KERNEL WOULD NOT ANSWER FOR THIS PART, in the hub's own words
-        // and only where the words are about THIS part (`rowReason`). It wraps
-        // rather than being cut to a hint: it names which identity failed and by
-        // how much, and half of that is no use.
-        reason: rowReason(row),
-        reasonStyle: `padding:1px 1px 0;font:400 10.5px/1.45 ${SANS};color:var(--text-muted);display:`
-          + (rowReason(row) ? 'block' : 'none'),
-        // The other half of "по строке списка можно попасть к детали на модели,
-        // и наоборот": this direction writes the key and `comparePaths` turns it
-        // into every solid the scene draws it as. The `hmr:pick` handler is the
-        // other one.
-        onSelect: stop(() => this.set({ cmpSel: row.key })),
-      })),
-      // The legend's swatches are the payload's OWN colours (hub.DIFF_COLOURS)
-      // and deliberately not palette roles: they are samples of what is on the
-      // model, and a sample that followed the theme would stop being one.
-      legendAddedStyle: `width:12px;height:12px;border-radius:3px;flex:none;background:${DIFF_COLOURS.added}`,
-      legendRemovedStyle: `width:12px;height:12px;border-radius:3px;flex:none;background:${DIFF_COLOURS.removed}`,
-      legendNeutralStyle: `width:12px;height:12px;border-radius:3px;flex:none;background:${DIFF_COLOURS.neutral}`,
-      // THE WORD IS THE HUB'S AND NOT A LABEL WRITTEN AGAIN HERE: the legend
-      // explains the chip the rows wear, so it draws the same chip with the same
-      // word in it, and a spelling that drifted from the hub's would be a legend
-      // about a status nothing in the list has.
-      legendNotCompared: NOT_COMPARED,
-      legendNotComparedStyle: statusChip(NOT_COMPARED),
-      // THE SENTENCE UNDER THE WORD, out here rather than written into the
-      // markup for the reason the word is: it has to agree with what the hub
-      // writes on the row (`NOT_COMPARED_WHY`), and an assertion about that is
-      // a test rather than a note in two files.
-      legendNotComparedWhy: NOT_COMPARED_WHY,
+      //
+      // The panel that stands where the tree stands is `compareView` in
+      // ui/src/compareview.js.
+      ...compare,
 
       // The new build is offered, never substituted: somebody may be halfway
       // through a section with half the tree hidden, and a model that changes by
@@ -8247,7 +6365,7 @@ export default class HammerolaViewer extends React.Component {
       // the chip goes grey because it hides itself while a composer stands, and
       // there is no close button on screen to take it back. The composer then
       // opens with that stale measurement in it the moment a token is entered.
-      measAddStyle: 'cursor:pointer;text-decoration:underline'
+      measAddStyle: LINK
         + (viewer ? ';display:none' : ''),
       // `part` IS A DISPLAYED STRING AND NOTHING MORE, and it is displayed
       // TWICE rather than once: `composerPart` heads the composer with it, and
@@ -8384,8 +6502,9 @@ export default class HammerolaViewer extends React.Component {
         + `color:var(--text-on-accent);border-radius:6px;font:600 12px ${SANS};`
         + `cursor:${s.sending ? 'default' : 'pointer'}`,
 
-      menuStyle: 'position:fixed;width:230px;background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 12px 40px var(--shadow);padding:2px 0 6px;z-index:60;display:' + (s.menu ? 'block' : 'none') + ';left:' + (s.menu ? s.menu.x : 0) + 'px;top:' + (s.menu ? s.menu.y : 0) + 'px',
-      menuName: mName, menuItems,
+      // -- the menu a right-click opens, on a row of the tree or on the part
+      // in the scene: `rowMenu` in ui/src/rowmenu.js.
+      ...menu,
 
       // CLAMPED FOR THE REASON `secPopStyle` IS, and it is the worse of the two:
       // at `left:310px` and 300px wide, a phone shows the empty left margin of
@@ -8395,7 +6514,9 @@ export default class HammerolaViewer extends React.Component {
       // that would reach it, and there is no Escape key on a phone: opened, it
       // could only be dismissed by reloading. Reachable there through the note
       // box and through the tree row's context menu.
-      notePopStyle: (narrow ? popSheet : 'position:absolute;left:310px;top:120px;width:300px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 12px 40px var(--shadow);z-index:60;display:' + (s.notePop ? 'block' : 'none'),
+      notePopStyle: popover({
+        narrow, anchor: 'left:310px;top:120px', width: '300px', radius: '10px',
+        pad: '13px 14px', shadow: POP_SHADOW_HIGH, z: 60, open: s.notePop }),
       notePopName: s.notePop || '',
       noteDraft: s.noteDraft,
       noteType: (e) => this.setState({ noteDraft: e.target.value }),
@@ -8446,19 +6567,19 @@ export default class HammerolaViewer extends React.Component {
                 changes when you navigate is one of the three reasons that module
                 exists. */}
             <Mark />
-            {v.showWordmark && <span style={css(`font:700 14px ${SANS};letter-spacing:-.2px`)}>hammerola</span>}
+            {v.showWordmark && <span style={css(WORDMARK)}>hammerola</span>}
           </a>
-          <div style={css(`width:1px;height:22px;background:${HEADER_LINE}`)} />
+          <div style={css(HEADER_RULE)} />
           <div style={css(v.titleColStyle)}>
-            <div style={css(`font:600 13.5px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{v.title}</div>
+            <div style={css(TITLE)}>{v.title}</div>
             {v.showSubtitle && <div style={css(`font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap`)}>{v.subtitle}</div>}
           </div>
 
           <div style={css('position:relative;margin-left:8px;flex:none')}>
             <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>
               <span style={css(v.statusDotStyle)} />
-              <span style={css(`font:600 12px ${MONO}`)}>{v.slot}</span>
-              <span style={css(`font:400 11px ${MONO};color:var(--text-muted)`)}>{v.slotDate}</span>
+              <span style={css(HEAD_MONO)}>{v.slot}</span>
+              <span style={css(META_MONO)}>{v.slotDate}</span>
               <span style={css('font-size:9px;color:var(--text-faint)')}>&#9662;</span>
             </div>
 
@@ -8474,7 +6595,7 @@ export default class HammerolaViewer extends React.Component {
                         <span style={css(r.idStyle)}>{r.id}</span>
                         <span style={css(r.badgeStyle)}>{r.badge}</span>
                         <span title={r.message} style={css(r.messageStyle)}>{r.message}</span>
-                        <span style={css(`font:400 11px ${MONO};color:var(--text-muted)`)}>{r.date}</span>
+                        <span style={css(META_MONO)}>{r.date}</span>
                       </span>
                     </div>
                   </React.Fragment>
@@ -8492,10 +6613,10 @@ export default class HammerolaViewer extends React.Component {
           </div>
 
           {v.showStatus && <div style={css(v.statusChipStyle)}>{v.statusText}</div>}
-          <div style={css('flex:1')} />
+          <div style={css(FILL)} />
 
           {/* downloads: whole-build files, exactly the ones meta.json names */}
-          <div style={css('position:relative')}>
+          <div style={css(RELATIVE)}>
             <div onClick={v.dlToggle} style={css(v.dlBtnStyle)}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
               Downloads
@@ -8507,12 +6628,12 @@ export default class HammerolaViewer extends React.Component {
               {v.downloadGroups.map((g) => (
                 <React.Fragment key={g.key}>
                   <div style={css(g.headStyle)}>
-                    <span style={css('flex:1')}>{g.ext}</span>
+                    <span style={css(FILL)}>{g.ext}</span>
                     <span onClick={g.onAll} style={css(g.allStyle)}>download all</span>
                   </div>
                   {g.files.map((f) => (
                     <a key={f.key} href={f.href} download style={css(f.style)}>
-                      <span style={css('flex:1')}>{f.label}</span>
+                      <span style={css(FILL)}>{f.label}</span>
                       <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
                     </a>
                   ))}
@@ -8527,7 +6648,7 @@ export default class HammerolaViewer extends React.Component {
           </div>
 
           {/* access: the token is what turns a viewer into the customer */}
-          <div style={css('position:relative')}>
+          <div style={css(RELATIVE)}>
             <div onClick={v.tokenToggle} style={css(v.tokenBtnStyle)}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2.5" y="7" width="11" height="7" rx="1.5" /><path d="M5 7V4.8a3 3 0 0 1 6 0V7" /></svg>
               {v.tokenLabel}
@@ -8547,7 +6668,7 @@ export default class HammerolaViewer extends React.Component {
                          placeholder="paste the token"
                          style={css(`width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;outline:none;padding:8px 10px;font:400 12px ${MONO};background:var(--card-bg)`)} />
                   <div style={css('display:flex;justify-content:flex-end;margin-top:9px')}>
-                    <span onClick={v.tokenSave} style={css(`padding:6px 14px;background:var(--accent);color:var(--text-on-accent);border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`)}>Save</span>
+                    <span onClick={v.tokenSave} style={css(ACCENT_BTN)}>Save</span>
                   </div>
                 </>
               ) : (
@@ -8618,13 +6739,13 @@ export default class HammerolaViewer extends React.Component {
             {v.notCompare && v.treeShown && (
               <div style={css('display:flex;flex-direction:column;min-height:0')}>
                 <div style={css('flex:none;display:flex;align-items:center;gap:2px;padding:0 0 3px')}>
-                  <span onClick={v.expandAll} title="expand all" style={css('width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--text-soft);cursor:pointer;background:var(--float-bg-soft)')}>
+                  <span onClick={v.expandAll} title="expand all" style={css(TOOL_SQUARE)}>
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M4 5.5L8 1.5l4 4M4 10.5l4 4 4-4" /></svg>
                   </span>
-                  <span onClick={v.collapseAll} title="collapse all" style={css('width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--text-soft);cursor:pointer;background:var(--float-bg-soft)')}>
+                  <span onClick={v.collapseAll} title="collapse all" style={css(TOOL_SQUARE)}>
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M4 1.5l4 4 4-4M4 14.5l4-4 4 4" /></svg>
                   </span>
-                  <span onClick={v.showAll} title="show all parts" style={css('width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--text-soft);cursor:pointer;background:var(--float-bg-soft)')}>
+                  <span onClick={v.showAll} title="show all parts" style={css(TOOL_SQUARE)}>
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><ellipse cx="8" cy="8" rx="6.5" ry="4.5" /><circle cx="8" cy="8" r="1.8" /></svg>
                   </span>
                 </div>
@@ -8646,10 +6767,10 @@ export default class HammerolaViewer extends React.Component {
                           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d={row.caretPath} /></svg>
                         )}
                       </span>
-                      <span onClick={row.onVis} title="show / hide" style={css('width:24px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                      <span onClick={row.onVis} title="show / hide" style={css(SLOT_24)}>
                         <span style={css(row.eyeOuter)}><span style={css(row.eyeDot)} /></span>
                       </span>
-                      <span onClick={row.onGhost} title="translucent" style={css('width:22px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                      <span onClick={row.onGhost} title="translucent" style={css(SLOT_22)}>
                         <span style={css(row.ghostIcon)} />
                       </span>
                       <span style={css(row.dotStyle)} />
@@ -8715,7 +6836,7 @@ export default class HammerolaViewer extends React.Component {
                       the model and the tick holds all of it back from the text;
                       neither edits a body, and the rows keep answering for
                       themselves underneath both. */}
-                  <span onClick={v.proposalEyeClick} title="show / hide the whole proposal" style={css('width:24px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                  <span onClick={v.proposalEyeClick} title="show / hide the whole proposal" style={css(SLOT_24)}>
                     <span style={css(v.proposalEyeOuter)}><span style={css(v.proposalEyeDot)} /></span>
                   </span>
                   {/* THE GHOST COLUMN, STOOD OVER AND NOT USED. A row spends
@@ -8728,7 +6849,7 @@ export default class HammerolaViewer extends React.Component {
                       still reads as the same control one level up; a tick over
                       the wrong column does not. */}
                   <span style={css('width:22px;flex:none')} />
-                  <span onClick={v.proposalSkipAll} title={v.proposalSkipTitle} style={css('width:22px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                  <span onClick={v.proposalSkipAll} title={v.proposalSkipTitle} style={css(SLOT_22)}>
                     <span style={css(v.proposalSkipIcon)} />
                   </span>
                   <span onClick={v.proposalToggle} style={css(v.proposalHeadNameStyle)}>{v.proposalHeadName}</span>
@@ -8738,7 +6859,7 @@ export default class HammerolaViewer extends React.Component {
                       back out of a document being edited; this one takes the
                       whole document, and the hub's copy of it, which is why it
                       is the only control on this page that asks first. */}
-                  <span onClick={v.proposalRemove} title={v.proposalRemoveTitle} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                  <span onClick={v.proposalRemove} title={v.proposalRemoveTitle} style={css(FAINT_CLICK)}>&#10005;</span>
                 </div>
                 {v.proposalRows.map((row) => (
                   <div key={row.key} style={css('display:flex;flex-direction:column;align-items:flex-start')}>
@@ -8751,10 +6872,10 @@ export default class HammerolaViewer extends React.Component {
                           — can drop all three at once and still line its name up
                           with the bodies above it. */}
                       <span style={css(row.marksStyle)}>
-                        <span onClick={row.onVis} title="show / hide" style={css('width:24px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                        <span onClick={row.onVis} title="show / hide" style={css(SLOT_24)}>
                           <span style={css(row.eyeOuter)}><span style={css(row.eyeDot)} /></span>
                         </span>
-                        <span onClick={row.onGhost} title="translucent" style={css('width:22px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                        <span onClick={row.onGhost} title="translucent" style={css(SLOT_22)}>
                           <span style={css(row.ghostIcon)} />
                         </span>
                         <span style={css(row.dotStyle)} />
@@ -8764,7 +6885,7 @@ export default class HammerolaViewer extends React.Component {
                           nothing in the scene, and every move is such a row —
                           while a move is a statement that can be held back
                           exactly as a body can. */}
-                      <span onClick={row.onSkip} title={row.skipTitle} style={css('width:22px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                      <span onClick={row.onSkip} title={row.skipTitle} style={css(SLOT_22)}>
                         <span style={css(row.skipIcon)} />
                       </span>
                       {/* `move`, on the rows that are one, before the name and
@@ -8775,7 +6896,7 @@ export default class HammerolaViewer extends React.Component {
                         <span style={css(row.kindStyle)}>{row.kind}</span>
                       )}
                       <span onClick={row.onSelect} style={css(row.nameStyle)}>{row.name}</span>
-                      <span onClick={row.onRemove} title={row.removeTitle} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                      <span onClick={row.onRemove} title={row.removeTitle} style={css(FAINT_CLICK)}>&#10005;</span>
                     </div>
                     <div style={css(row.fieldsStyle)}>
                       {/* A BODY'S HEAD LINE, absent on a move: the name it is
@@ -8793,7 +6914,7 @@ export default class HammerolaViewer extends React.Component {
                           <input type={row.nameField.type} value={row.nameField.value}
                                  onChange={row.nameField.onChange} onBlur={row.nameField.onBlur}
                                  onKeyDown={row.nameField.onKeyDown} style={css(row.nameField.style)} />
-                          <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>{row.op}</span>
+                          <span style={css(SPAN_MONO)}>{row.op}</span>
                           <span onClick={row.onRole} title="solid adds material, hole takes it away" style={css(row.roleStyle)}>{row.role}</span>
                         </div>
                       )}
@@ -8833,12 +6954,12 @@ export default class HammerolaViewer extends React.Component {
                       `exit` past the panel's edge, where `overflow:hidden` cut it
                       off, and broke the cross onto a line of its own. The full
                       name stays reachable in the tooltip. */}
-                  <div style={css('display:flex;align-items:center;gap:8px')}>
+                  <div style={css(ROW)}>
                     <span style={css(`font:600 12.5px ${SANS};flex:none`)}>Comparing</span>
-                    <span title={v.cmpA} style={css(`font:600 12px ${MONO};background:var(--chip-bg);padding:2px 7px;border-radius:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`)}>{v.cmpA}</span>
+                    <span title={v.cmpA} style={css(KEY_MONO)}>{v.cmpA}</span>
                     <span style={css('color:var(--text-muted);flex:none')}>&#8594;</span>
-                    <span title={v.cmpB} style={css(`font:600 12px ${MONO};background:var(--chip-bg);padding:2px 7px;border-radius:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`)}>{v.cmpB}</span>
-                    <span style={css('flex:1')} />
+                    <span title={v.cmpB} style={css(KEY_MONO)}>{v.cmpB}</span>
+                    <span style={css(FILL)} />
                     <span onClick={v.exitCompare} style={css(`font:500 11px ${MONO};color:var(--accent-text);cursor:pointer;flex:none;white-space:nowrap`)}>exit &#10005;</span>
                   </div>
                   {/* Three ways of looking at the SAME scene: each one hides a
@@ -8895,13 +7016,13 @@ export default class HammerolaViewer extends React.Component {
                       extra material), so the colours have to be labelled, and
                       the pair has to stay legible to a colourblind reader —
                       which is what the words beside them are for. */}
-                  <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:5px')}><span style={css(v.legendAddedStyle)} /><span style={css(`font:400 11.5px ${SANS}`)}>added &mdash; material only in {v.cmpB}</span></div>
-                  <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:5px')}><span style={css(v.legendRemovedStyle)} /><span style={css(`font:400 11.5px ${SANS}`)}>removed &mdash; material only in {v.cmpA}</span></div>
+                  <div style={css(ROW_LABELLED)}><span style={css(v.legendAddedStyle)} /><span style={css(LABEL_SANS)}>added &mdash; material only in {v.cmpB}</span></div>
+                  <div style={css(ROW_LABELLED)}><span style={css(v.legendRemovedStyle)} /><span style={css(LABEL_SANS)}>removed &mdash; material only in {v.cmpA}</span></div>
                   {/* THE COLOUR'S MEANING AND NOT A CLAIM ABOUT THE TAB. It
                       read "both revisions, ghosted", which is true of Overlay
                       and false of the two tabs beside it: A-only and B-only
                       show exactly one revision, ghosted in this same colour. */}
-                  <div style={css('display:flex;align-items:center;gap:8px')}><span style={css(v.legendNeutralStyle)} /><span style={css(`font:400 11.5px ${SANS}`)}>unchanged &mdash; ghosted</span></div>
+                  <div style={css(ROW)}><span style={css(v.legendNeutralStyle)} /><span style={css(LABEL_SANS)}>unchanged &mdash; ghosted</span></div>
                   {/* THE ONE EXPLANATION THAT IS TRUE OF A CATEGORY AND NOT OF A
                       PART, so it is said once here instead of once per row. Every
                       `not compared` row means the same thing — no pair of STEP
@@ -8922,7 +7043,7 @@ export default class HammerolaViewer extends React.Component {
                       it. `not measured` is deliberately NOT here — that sentence
                       is about one part and what went wrong with it, and it stays
                       on that part's row. */}
-                  <div style={css('display:flex;align-items:center;gap:8px;margin-top:7px;padding-top:7px;border-top:1px solid var(--line-soft)')}><span style={css(v.legendNotComparedStyle)}>{v.legendNotCompared}</span><span style={css(`font:400 11.5px ${SANS}`)}>{v.legendNotComparedWhy}</span></div>
+                  <div style={css('display:flex;align-items:center;gap:8px;margin-top:7px;padding-top:7px;border-top:1px solid var(--line-soft)')}><span style={css(v.legendNotComparedStyle)}>{v.legendNotCompared}</span><span style={css(LABEL_SANS)}>{v.legendNotComparedWhy}</span></div>
                 </div>
               </div>
             )}
@@ -8955,7 +7076,7 @@ export default class HammerolaViewer extends React.Component {
                     wrapper the menu would be measured from the toolbar's whole
                     box and start at its left end rather than at the button. */}
                 {v.viewMenu ? (
-                  <div style={css('position:relative')}>
+                  <div style={css(RELATIVE)}>
                     <div onClick={v.viewsToggle} title={v.viewLabel} style={css(v.viewBtnStyle)}>
                       <span style={css(v.viewLabelStyle)}>{v.viewLabel}</span>
                       <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M4 6l4 4 4-4" /></svg>
@@ -8963,8 +7084,8 @@ export default class HammerolaViewer extends React.Component {
                     <div onClick={(e) => e.stopPropagation()} style={css(v.viewMenuStyle)}>
                       {v.viewTabs.map((t) => (
                         <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
-                          <span style={css('flex:1')}>{t.label}</span>
-                          <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint)`)}>{t.hint}</span>
+                          <span style={css(FILL)}>{t.label}</span>
+                          <span style={css(FAINT_MONO)}>{t.hint}</span>
                         </div>
                       ))}
                     </div>
@@ -8980,7 +7101,7 @@ export default class HammerolaViewer extends React.Component {
                     a canvas with room to aim in — see `showTools`. */}
                 {v.showTools && (
                   <>
-                    <div style={css('width:1px;height:18px;background:var(--line)')} />
+                    <div style={css(RULE)} />
                     <div onClick={v.tMeasure} style={css(v.measureBtnStyle)}>
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 14L14 2M2 14l2.2-.55M14 2l-.55 2.2M6.2 9.8l1.4 1.4M9 7l1.4 1.4" /></svg>
                       Measure
@@ -8999,15 +7120,15 @@ export default class HammerolaViewer extends React.Component {
                         Proposal
                       </div>
                     )}
-                    <div style={css('width:1px;height:18px;background:var(--line)')} />
+                    <div style={css(RULE)} />
                   </>
                 )}
-                <div onClick={v.fitView} title="back to the frame this view opened in" style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:var(--text-soft);cursor:pointer;border:1px solid transparent`)}>
+                <div onClick={v.fitView} title="back to the frame this view opened in" style={css(QUIET_BTN)}>
                   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5" /></svg>
                   Fit
                 </div>
                 {v.showTools && (
-                  <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:var(--text-soft);cursor:pointer;border:1px solid transparent`)}>
+                  <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(QUIET_BTN)}>
                     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
                     Frame
                   </div>
@@ -9030,12 +7151,12 @@ export default class HammerolaViewer extends React.Component {
             {/* state chips: a live measurement */}
             <div style={css(v.chipsStyle)}>
               <div style={css(v.measChipStyle)}>
-                <span style={css(`font:600 12px ${MONO}`)}>{v.measText}</span>
+                <span style={css(HEAD_MONO)}>{v.measText}</span>
                 {/* The qualifier the brief insists on: a distance taken between
                     parts that have been laid apart is not the assembled one. */}
                 {v.measNote && <span style={css(`font:500 10.5px ${MONO};color:var(--warn);background:var(--warn-bg);padding:3px 7px;border-radius:4px`)}>{v.measNote}</span>}
                 <span onClick={v.measAdd} style={css(v.measAddStyle)}>add to comment</span>
-                <span onClick={v.measClear} style={css('cursor:pointer;opacity:.6')}>&#10005;</span>
+                <span onClick={v.measClear} style={css(DIM_CLICK)}>&#10005;</span>
               </div>
             </div>
 
@@ -9056,7 +7177,7 @@ export default class HammerolaViewer extends React.Component {
             <div style={css(v.noteBoxStyle)}>
               <div style={css(`display:flex;align-items:center;gap:6px;font:600 10px ${MONO};color:var(--warn);letter-spacing:.06em`)}>
                 NOTE &middot; {v.noteName}
-                <span style={css('flex:1')} />
+                <span style={css(FILL)} />
                 <span onClick={v.editNote} style={css(v.editNoteStyle)}>{v.editNoteLabel}</span>
               </div>
               {/* `--warn-soft` AND NOT `--warn`, on both of these: the box has
@@ -9067,12 +7188,12 @@ export default class HammerolaViewer extends React.Component {
                   specification from their own reminder is the failure it was
                   built to prevent. */}
               <div style={css(v.authorNoteStyle)}>
-                <div style={css(`font:600 9px ${MONO};color:var(--warn-soft);letter-spacing:.07em`)}>FROM THE MODEL</div>
-                <div style={css(`font:400 11.5px/1.5 ${SANS};color:var(--text-soft);margin-top:3px`)}>{v.authorNote}</div>
+                <div style={css(WARN_CAPS)}>FROM THE MODEL</div>
+                <div style={css(WARN_BODY)}>{v.authorNote}</div>
               </div>
               <div style={css(v.readerNoteStyle)}>
-                <div style={css(`font:600 9px ${MONO};color:var(--warn-soft);letter-spacing:.07em`)}>ONLY IN THIS BROWSER</div>
-                <div style={css(`font:400 11.5px/1.5 ${SANS};color:var(--text-soft);margin-top:3px`)}>{v.noteText}</div>
+                <div style={css(WARN_CAPS)}>ONLY IN THIS BROWSER</div>
+                <div style={css(WARN_BODY)}>{v.noteText}</div>
               </div>
             </div>
 
@@ -9103,10 +7224,10 @@ export default class HammerolaViewer extends React.Component {
                     otherwise keep a lone middle dot standing where it used to
                     be — a leftover pointing at the build the page has left. */}
                 {v.composerPart
-                  ? <span style={css(`font:400 11px ${MONO};color:var(--text-muted)`)}>&middot; {v.composerPart}</span>
+                  ? <span style={css(META_MONO)}>&middot; {v.composerPart}</span>
                   : null}
-                <span style={css('flex:1')} />
-                <span onClick={v.compCancel} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                <span style={css(FILL)} />
+                <span onClick={v.compCancel} style={css(FAINT_CLICK)}>&#10005;</span>
               </div>
               <textarea
                 value={v.composerText}
@@ -9120,14 +7241,14 @@ export default class HammerolaViewer extends React.Component {
                   <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
                   camera frame &mdash; attached automatically
                 </span>
-                <span style={css(v.compMeasChipStyle)}>&#8596; {v.compMeasText} <span onClick={v.compMeasRemove} style={css('cursor:pointer;opacity:.6')}>&#10005;</span></span>
-                <span style={css(v.compProposalChipStyle)}>&#9634; proposal attached <span onClick={v.compProposalRemove} style={css('cursor:pointer;opacity:.6')}>&#10005;</span></span>
+                <span style={css(v.compMeasChipStyle)}>&#8596; {v.compMeasText} <span onClick={v.compMeasRemove} style={css(DIM_CLICK)}>&#10005;</span></span>
+                <span style={css(v.compProposalChipStyle)}>&#9634; proposal attached <span onClick={v.compProposalRemove} style={css(DIM_CLICK)}>&#10005;</span></span>
                 <label style={css(`padding:4px 8px;border:1px dashed var(--line-strong);border-radius:5px;font:400 10.5px ${MONO};color:var(--text-muted);cursor:pointer`)}>
                   {v.compPhotoName ? `photo: ${v.compPhotoName}` : '+ photo of the print'}
                   <input type="file" accept="image/jpeg,image/png,image/webp"
                          onChange={v.compPhoto} style={{ display: 'none' }} />
                 </label>
-                <span style={css('flex:1')} />
+                <span style={css(FILL)} />
                 <span onClick={v.compSend} style={css(v.compSendStyle)}>{v.compSendLabel}</span>
               </div>
             </div>
@@ -9135,13 +7256,13 @@ export default class HammerolaViewer extends React.Component {
             {/* the section plane */}
             <div onClick={(e) => e.stopPropagation()} style={css(v.secPopStyle)}>
               <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:10px')}>
-                <span style={css(`font:600 12.5px ${SANS}`)}>Section plane</span>
-                <span style={css('flex:1')} />
-                <span onClick={v.closeSecPop} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                <span style={css(HEAD_SANS)}>Section plane</span>
+                <span style={css(FILL)} />
+                <span onClick={v.closeSecPop} style={css(FAINT_CLICK)}>&#10005;</span>
               </div>
               <div onClick={v.pickFace} style={css(v.pickFaceStyle)}>{v.pickFaceText}</div>
               <div style={css(`display:flex;justify-content:space-between;font:500 11px ${MONO};color:var(--text-soft);margin:12px 0 5px`)}>
-                <span>offset</span><span style={css('color:var(--text)')}>{v.secOffLabel}</span>
+                <span>offset</span><span style={css(INK)}>{v.secOffLabel}</span>
               </div>
               {/* The range is the viewport's: it comes back on `hmr:face` from the
                   model's own extent, so a 400 mm part and a 4 mm one both get a
@@ -9149,8 +7270,8 @@ export default class HammerolaViewer extends React.Component {
               <input type="range" min={v.secMin} max={v.secMax} step={v.secStep}
                      value={v.secOff} onChange={v.setSecOff} style={{ width: '100%' }} />
               <div style={css('display:flex;gap:6px;margin-top:10px')}>
-                <div onClick={v.flipSec} style={css(`flex:1;padding:6px;text-align:center;border:1px solid var(--line);border-radius:5px;font:500 11px ${MONO};color:var(--text-soft);cursor:pointer;background:var(--card-bg)`)}>flip side</div>
-                <div onClick={v.resetSec} style={css(`flex:1;padding:6px;text-align:center;border:1px solid var(--line);border-radius:5px;font:500 11px ${MONO};color:var(--text-soft);cursor:pointer;background:var(--card-bg)`)}>reset</div>
+                <div onClick={v.flipSec} style={css(HALF_BTN)}>flip side</div>
+                <div onClick={v.resetSec} style={css(HALF_BTN)}>reset</div>
               </div>
               <div onClick={v.toggleHatch} style={css('display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:11px')}>
                 <span style={css(v.hatchBox)}>{v.hatchMark}</span>
@@ -9186,9 +7307,9 @@ export default class HammerolaViewer extends React.Component {
             {v.proposalOn && (
               <div onClick={(e) => e.stopPropagation()} style={css(v.proposalPanelStyle)}>
                 <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:3px')}>
-                  <span style={css(`font:600 12.5px ${SANS}`)}>Proposal</span>
-                  <span style={css('flex:1')} />
-                  <span onClick={v.proposalClose} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                  <span style={css(HEAD_SANS)}>Proposal</span>
+                  <span style={css(FILL)} />
+                  <span onClick={v.proposalClose} style={css(FAINT_CLICK)}>&#10005;</span>
                 </div>
                 {/* Block 6's tone, one step on: a way to SHOW the agent what you
                     want instead of describing it, and explicitly not an edit. */}
@@ -9217,7 +7338,7 @@ export default class HammerolaViewer extends React.Component {
                 <div style={css(v.proposalSaysStyle)}>{v.proposalSays}</div>
 
                 <div style={css('display:flex;align-items:center;gap:10px;margin-top:11px;padding-top:9px;border-top:1px solid var(--line-soft)')}>
-                  <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>result = union(solid) &minus; union(hole)</span>
+                  <span style={css(SPAN_MONO)}>result = union(solid) &minus; union(hole)</span>
                   <span onClick={v.proposalAdd} style={css(v.proposalAddStyle)}>add to comment</span>
                 </div>
               </div>
@@ -9229,8 +7350,8 @@ export default class HammerolaViewer extends React.Component {
           {/* ── the comment rail ── */}
           <div style={css(v.railStyle)}>
             <div style={css('flex:none;display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line-soft)')}>
-              <span style={css(`font:600 12.5px ${SANS}`)}>Comments</span>
-              <span style={css('flex:1')} />
+              <span style={css(HEAD_SANS)}>Comments</span>
+              <span style={css(FILL)} />
               <span onClick={v.railToggle} style={css('color:var(--text-faint);cursor:pointer;font-size:14px')}>&#10005;</span>
             </div>
             {/* The whole project queue since issue #33, so nothing here has to
@@ -9239,16 +7360,16 @@ export default class HammerolaViewer extends React.Component {
             <div style={css('flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:10px')}>
               {v.threads.map((c) => (
                 <div key={c.key} onClick={c.onOpen} style={css(c.style)}>
-                  <div style={css('display:flex;align-items:center;gap:8px')}>
+                  <div style={css(ROW)}>
                     <span style={css(c.pinStyle)}>{c.label}</span>
                     <span style={css(`font:500 11.5px ${MONO};color:var(--text)`)}>{c.part}</span>
-                    <span style={css('flex:1')} />
+                    <span style={css(FILL)} />
                     <span style={css(`font:400 10.5px ${MONO};color:var(--text-muted)`)}>{c.time}</span>
                   </div>
                   <div style={css(`font:400 12px/1.5 ${SANS};color:var(--text);margin:7px 0 8px`)}>{c.text}</div>
                   <div style={css(c.saysStyle)}>{c.says}</div>
                   <div style={css('display:flex;align-items:center;gap:10px;margin-top:8px')}>
-                    <span onClick={c.onResolve} style={css(`font:500 10.5px ${MONO};color:var(--text-muted);` + (c.resolved ? 'cursor:default' : 'cursor:pointer'))}>
+                    <span onClick={c.onResolve} style={css(`font:500 10.5px ${MONO};color:var(--text-muted);` + (c.resolved ? IDLE : 'cursor:pointer'))}>
                       {c.resolved ? 'processed' : 'mark processed'}
                     </span>
                   </div>
@@ -9266,8 +7387,8 @@ export default class HammerolaViewer extends React.Component {
             {v.menuItems.map((m) => {
               const inner = (
                 <>
-                  <span style={css('flex:1')}>{m.label}</span>
-                  <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint)`)}>{m.hint}</span>
+                  <span style={css(FILL)}>{m.label}</span>
+                  <span style={css(FAINT_MONO)}>{m.hint}</span>
                 </>
               );
               return m.href
@@ -9300,7 +7421,7 @@ export default class HammerolaViewer extends React.Component {
             </div>
             <div style={css('display:flex;gap:8px;justify-content:flex-end;margin-top:8px')}>
               <span onClick={v.noteCancel} style={css(`padding:6px 12px;border-radius:6px;font:500 11.5px ${SANS};color:var(--text-soft);cursor:pointer`)}>Cancel</span>
-              <span onClick={v.noteSave} style={css(`padding:6px 14px;background:var(--accent);color:var(--text-on-accent);border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`)}>Save</span>
+              <span onClick={v.noteSave} style={css(ACCENT_BTN)}>Save</span>
             </div>
           </div>
 

@@ -31,10 +31,11 @@ THE THREE THINGS IT ANSWERS, in the order somebody asks them:
     builds    the revisions that exist, newest first
 """
 
-from hammerola import config, project
+from hammerola import project
 from hammerola.errors import ClientError
-from hammerola.hub import QUERY_TIMEOUT, Hub
+from hammerola.hub import Hub
 from hammerola.limits import DEV_SLOT
+from hammerola.sources import hub_for
 
 # How many revisions are listed before the tail is summarised. A project with a
 # year of history is a list nobody reads; the newest few plus a count is what
@@ -44,7 +45,7 @@ DEFAULT_LIMIT = 10
 
 def run(args) -> int:
     """Print what the hub has for the project in this directory. -> exit code."""
-    limit = _limit(getattr(args, "limit", None))
+    limit = _limit(args.limit)
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
     # The token is required even though `builds.json` is public, and that is a
@@ -52,8 +53,7 @@ def run(args) -> int:
     # so a machine that cannot answer "as whom" is a machine that has not been
     # set up — and being told that here, by a command somebody runs first, is
     # better than being told it by the first push.
-    hub = Hub(config.hub_url(root), config.edit_token(root),
-              timeout=QUERY_TIMEOUT)
+    hub = hub_for(root)
 
     title = project.read_project_title(root)
     print(f"{pid}  {title or '(no title)'}")
@@ -83,9 +83,13 @@ def _limit(given) -> int:
     reads it from the OTHER end — `-n -3` drops the three oldest and lists the
     rest, then reports `len(builds) + 3` more "older" ones that do not exist.
     Neither fails, and neither is what was asked for.
+
+    NO `None` ARM. The parser declares `-n` with `default=DEFAULT_LIMIT` and
+    neither `nargs` nor SUPPRESS, so every parse sets it and the only caller
+    passes `args.limit` straight in. The arm that turned `None` into the
+    default was a guard against a namespace argparse cannot build, and it was
+    the one unexecuted line in this module (#108).
     """
-    if given is None:
-        return DEFAULT_LIMIT
     if not isinstance(given, int) or isinstance(given, bool) or given < 1:
         raise ClientError(
             f"-n takes a count of revisions to list, so it has to be 1 or more; "

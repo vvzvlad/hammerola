@@ -500,6 +500,12 @@ export const COMPARE_GROUPS = Object.freeze({
  * colours actually on the model. They are the payload's, not the interface's, so
  * they are NOT palette roles: they do not follow the theme, because the geometry
  * they name does not follow it either.
+ *
+ * WHICH IS WHY THIS FILE IS EXCUSED from
+ * `test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own`,
+ * beside `proposalgeom.js` and for the same reason. A hex added ANYWHERE ELSE
+ * in this module is excused by that exemption too, so it goes in a module the
+ * sweep still reads.
  */
 export const DIFF_COLOURS = Object.freeze({
   neutral: '#7a8fa6',
@@ -529,6 +535,78 @@ async function guarded(url, init) {
   const response = await fetch(url, { ...init, cache: 'no-store' });
   if (response.status === 401) throw new Unauthorized(`${url} -> HTTP 401`);
   return response;
+}
+
+// -- a guarded route asked for by a page that is already up -------------------
+//
+// The three below are the same contract as `guarded` answered in SENTENCES
+// rather than in exceptions. Their caller is the build page, whose model is on
+// screen before any of them is asked: a failure there leaves the page holding
+// what it had and puts one line in front of the reader, so an exception would
+// be caught at every call site and turned back into a string. The sentences are
+// the interface's own and the ui suite pins them; nothing here draws one.
+
+/** The hub never answered at all. */
+export const HUB_UNREACHABLE = 'Could not reach the hub';
+
+/** It answered 401, told apart for the reason `loadIndex` gives. Unexported
+ *  because `hubTrouble` is the only reader it has: a page never has to decide
+ *  this one for itself, the way it decides what "failed" means. */
+const HUB_REFUSED = 'The hub refused the token';
+
+/**
+ * One request that reports a dead hub instead of throwing at its caller.
+ *
+ * `{response}` or `{error}`, never both, so a caller with something of its own
+ * to log keeps the tag it logs under. NOT `guarded`: that one raises on a 401
+ * and adds `cache: 'no-store'`, while here the 401 is a sentence and the init
+ * goes out as written but for `headers`, which gets the token merged in — so a
+ * caller's own `Content-Type` survives and `FormData` still goes without one.
+ * NOT `bearer` either: the header is unconditional, which is what keeps these
+ * six the requests the raw `fetch`es sent. Nothing on screen rests on that
+ * choice — `_authorized` in `src/app.py` refuses an empty bearer and a missing
+ * header alike, so either spelling ends in the same 401 and the same line.
+ */
+export async function askHub(url, token, init) {
+  try {
+    return {
+      response: await fetch(url, {
+        ...init,
+        headers: { ...(init && init.headers), Authorization: `Bearer ${token}` },
+      }),
+    };
+  } catch (error) {
+    return { error };
+  }
+}
+
+/**
+ * What to say about a reply that is not the one asked for; `null` for the one
+ * that is.
+ *
+ * `ok` is a parameter because a POST that creates something answers 201, and
+ * `failed` because the sentence is about what the CALLER was doing — "could not
+ * load the comments" and "could not delete the proposal" are not one message.
+ * The 401 is the only one the hub itself owns, so it is the only one shared.
+ */
+export const hubTrouble = (response, ok, failed) => {
+  if (response.status === ok) return null;
+  return response.status === 401 ? HUB_REFUSED : failed;
+};
+
+/**
+ * The reply's document, or `{error}` where the body would not parse.
+ *
+ * A step of its own rather than part of the two above, because it is a third
+ * failure with a third sentence: a 200 carrying a proxy's HTML is a reply that
+ * arrived, was not refused, and still cannot be read.
+ */
+export async function hubBody(response) {
+  try {
+    return { body: await response.json() };
+  } catch (error) {
+    return { error };
+  }
 }
 
 /**

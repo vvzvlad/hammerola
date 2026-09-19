@@ -23,12 +23,14 @@ if (typeof customElements !== "undefined" && !customElements.get(TAG)) {
   customElements.define(TAG, HmrViewport);
 }
 
-export { HmrViewport };
-
-// AND NOTHING ELSE. There used to be four more names here — the hold key's
-// three, and the library's URL — each with a plausible caller in mind and none
-// with a real one, which is exactly the shape the rule above warns about: a name
-// nobody asked for still puts `customElements.define` into the import graph of
-// whoever eventually does, and by then it looks like the ordinary way to reach
-// it. Their modules are `./holdkey.js` and `./library.js`, importable directly
-// by anything that turns out to need them.
+// AND NOTHING AT ALL, which is the rule above applied to the last name that
+// was still here. `HmrViewport` was exported from this module and imported
+// from it by nobody: `main.jsx` imports this file for the side effect, and the
+// six test files that want the class take it from `./element.js`, where it is
+// defined. Before it there were four more — the hold key's three and the
+// library's URL — each with a plausible caller in mind and none with a real
+// one, which is exactly the shape the rule warns about: a name nobody asked
+// for still puts `customElements.define` into the import graph of whoever
+// eventually does, and by then it looks like the ordinary way to reach it.
+// Their modules are `./element.js`, `./holdkey.js` and `./library.js`,
+// importable directly by anything that turns out to need them.

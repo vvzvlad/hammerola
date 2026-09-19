@@ -41,9 +41,9 @@ the disk belongs to whoever is running it, and a tool that removed a directory
 because a server call succeeded would be a different and much worse tool.
 """
 
-from hammerola import config, project
+from hammerola import project
 from hammerola.errors import ClientError
-from hammerola.hub import QUERY_TIMEOUT, Hub
+from hammerola.sources import hub_for
 
 # What has to be typed to confirm a removal. The ID rather than the title: it is
 # unambiguous, it is what the hub is addressed by, and it is printed two lines
@@ -60,11 +60,6 @@ _NOTHING_TO_READ = (
     "  copy kept.")
 
 
-def _hub(root) -> Hub:
-    return Hub(config.hub_url(root), config.edit_token(root),
-               timeout=QUERY_TIMEOUT)
-
-
 def rename(args) -> int:
     """Change the project's title, locally and on the hub. -> exit code."""
     root = project.find_project_root(args.directory)
@@ -75,7 +70,7 @@ def rename(args) -> int:
     # what the project is called from the next push onwards.
     title = project.write_project_title(root, args.title)
 
-    hub = _hub(root)
+    hub = hub_for(root)
     answer = hub.rename_project(pid, title, missing_ok=True)
 
     print(f"{pid}")
@@ -101,7 +96,7 @@ def remove(args) -> int:
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
     title = project.read_project_title(root)
-    hub = _hub(root)
+    hub = hub_for(root)
 
     picker = hub.builds(pid)
     print(f"about to remove {pid}  {title or '(no title)'}")
@@ -128,7 +123,7 @@ def remove(args) -> int:
     print("  this cannot be undone: the hub keeps no copy, and the permanent "
           "URLs stop resolving.")
 
-    _confirm(pid, getattr(args, "yes", False))
+    _confirm(pid, args.yes)
 
     removed = hub.remove_project(pid)
     print(f"removed {pid}")

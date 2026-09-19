@@ -96,14 +96,16 @@
 // part the way the hand went. See `circleSpace` below.
 
 import { internals } from "./internals.js";
-import { cameraBasis, projectPoint } from "./camera.js";
+import { cameraBasis, spot } from "./camera.js";
+import { travelled, watchDrag } from "./drag.js";
 import { EVENT_PROPOSALTURN, EVENT_TURNED, emit } from "./events.js";
+import { createLayer } from "./layer.js";
 import { finite3 } from "./math.js";
 import {
-  groupFacing, groupHome, movableGroup, movePart, nudgeTurn, partCentre,
+  grabbable, groupFacing, groupHome, movePart, nudgeTurn, partCentre,
 } from "./parts.js";
 import {
-  CLICK_PX, RING_ARC_DEG, RING_CASE_PX, RING_DISC_PX, RING_MIN_PX, RING_PX,
+  RING_ARC_DEG, RING_CASE_PX, RING_DISC_PX, RING_MIN_PX, RING_PX,
   RING_RIM_PX, RING_SHAFT_PX,
 } from "./options.js";
 import { turnedFrom } from "../proposal.js";
@@ -272,27 +274,6 @@ const pieces = ({ ink }) => {
 const HALF_TURN = Math.PI;
 
 const DEGREES_PER_RADIAN = 180 / Math.PI;
-
-/**
- * Where a world point lands on this layer, in CSS pixels, with the NDC depth
- * alongside — or null for a point the projection cannot place.
- *
- * `gizmo.js`'s own two-rect arithmetic, lifted into a function because this
- * layer projects four points per frame instead of one: the canvas's rect gives
- * the pixel size of the NDC cube and the element's own rect is what the
- * absolutely-positioned children are placed against, so the difference of the
- * two corners is the offset between them. The overlay's `place` and the
- * gizmo's spell the same sum.
- */
-function spot(g, rect, box, point) {
-  const ndc = projectPoint(g, point);
-  if (!ndc) return null;
-  return [
-    (ndc[0] * 0.5 + 0.5) * rect.width + (rect.left - box.left),
-    (-ndc[1] * 0.5 + 0.5) * rect.height + (rect.top - box.top),
-    ndc[2],
-  ];
-}
 
 /**
  * The minor semi-axis of the ellipse `{cos t * a + sin t * b}`, in pixels.
@@ -627,7 +608,11 @@ function reportTurn(vp, turn) {
 }
 
 export function createRings(vp) {
-  const root = document.createElement("div");
+  // The root, the rAF loop and the teardown are `layer.js`'s, which the three
+  // other layers over the canvas are built out of as well. `wanted` and `place`
+  // are the declarations below, so the root exists before the rings are built
+  // on it.
+  //
   // `pointer-events: none` ON THE LAYER AND NOWHERE BACK ON, which is where
   // this widget parts company with the overlay, the view cube, the section grip
   // and the axis arrows. All four put `auto` on the thing they want pressed,
@@ -637,14 +622,8 @@ export function createRings(vp) {
   // very reach where the reader grabs to orbit. So nothing on this layer takes
   // a press, and the press is read off the CANVAS in the capture phase instead
   // (`onDown`), where it can be measured against the disc itself.
-  //
-  // NO CLASS NAME, for the view cube's and the gizmo's reason: a class is a
-  // promise the interface's stylesheet keeps a rule for it
-  // (tests/test_ui_source.py checks exactly that), and everything about how this
-  // looks is a legibility requirement over two canvases rather than a palette
-  // the designer owns.
-  root.style.cssText =
-    "position:absolute;inset:0;overflow:hidden;pointer-events:none";
+  const layer = createLayer({ wanted, place });
+  const { root } = layer;
 
   /** One of the six circles: a round box of its own REAL SIZE, for the ring's
    *  own matrix to work on.
@@ -747,7 +726,6 @@ export function createRings(vp) {
 
   const rings = AXES.map(build);
 
-  let frame = 0;
   // The gesture in progress: which ring it is on, the frame it was measured
   // against at the press, where in circle space the hand started and how far it
   // has gone since, the record it is applying, and whether the pointer has
@@ -776,38 +754,27 @@ export function createRings(vp) {
    * The selection these rings stand for, or null when there is nothing to put
    * them round.
    *
-   * `held` IN gizmo.js, ASKED ABOUT THE SAME TOOL, and it has to be the same
-   * question twice over: rings offering a turn that the press would then refuse
-   * are a promise the widget cannot keep, and two halves of ONE widget that
-   * appeared on different conditions would be a widget with a piece missing. So
-   * the Move tool has to be in force, something has to be selected, and every
-   * selected path has to be one the scene can move — with the extra clause a
-   * gesture on the reader's own drawing carries, that a proposal body is
-   * grabbable only when the panel can name it (`overlayBody`).
-   *
-   * MIXED SELECTIONS ARE REFUSED WHOLE by the `some` and then `every` below,
-   * which is tools.js's line: one overlay path makes this a proposal gesture,
-   * and then a part of the model has no body name and is not grabbable into it.
-   * There is no such thing as half of either statement.
+   * `held` IN gizmo.js, CHARACTER FOR CHARACTER, and it has to be: rings
+   * offering a turn that the press would then refuse are a promise the widget
+   * cannot keep, and two halves of ONE widget that appeared on different
+   * conditions would be a widget with a piece missing. That is why the question
+   * itself is `grabbable` in parts.js — one function, which the canvas drag
+   * asks as well — and why what is left here is the tool it is asked under.
    *
    * `activeTool` AND NOT `state.tool`, for the reason tools.js gives: the hold
    * key puts the cut up without writing to `state`, and rings left standing
    * under a cut gesture would be offering a turn the press is no longer for.
    *
-   * READ EVERY FRAME rather than remembered, which is what lets the loop below
-   * stop by itself when the reader disarms the tool or clears the selection.
+   * READ EVERY FRAME rather than remembered, which is what lets the loop stop
+   * by itself when the reader disarms the tool or clears the selection.
    */
-  const held = () => {
-    if (vp.activeTool !== "move") return null;
-    const paths = Array.isArray(vp.state.selected) ? vp.state.selected : [];
-    if (!paths.length) return null;
-    const proposal = paths.some((path) => vp.isOverlay(path));
-    const grabbable = (path) => !!movableGroup(vp.viewer, path)
-      && (!proposal || !!vp.overlayBody(path));
-    return paths.every(grabbable) ? { paths, proposal } : null;
-  };
+  const held = () => (vp.activeTool === "move"
+    ? grabbable(vp, vp.state.selected)
+    : null);
 
-  const wanted = () => !!held();
+  function wanted() {
+    return !!held();
+  }
 
   const hide = () => {
     for (const ring of rings) ring.group.style.display = "none";
@@ -890,7 +857,7 @@ export function createRings(vp) {
   };
 
   /** Put the three rings round the part, or take them off the screen. */
-  const place = () => {
+  function place() {
     const sel = held();
     const frameOf = sel ? measure(sel) : null;
     if (!frameOf) {
@@ -933,51 +900,25 @@ export function createRings(vp) {
         + `matrix(${a[0] / RING_PX},${a[1] / RING_PX},`
         + `${b[0] / RING_PX},${b[1] / RING_PX},0,0)`;
     });
-  };
+  }
 
-  const draw = () => {
-    frame = 0;
-    place();
-    schedule();
-  };
-
-  /**
-   * One rAF loop, and only while there is a selection to put rings round.
+  /** The window listeners this gesture is followed with — the release and the
+   *  cancel, and NOT the move.
    *
-   * gizmo.js's loop, word for word in its reasoning: the library owns the
-   * render loop and offers no post-render hook, and the trackball's `change`
-   * event misses every frame a live swap, a visibility change or a gesture of
-   * this very widget redraws. A loop that stops on its own costs nothing on the
-   * ordinary page, which has no Move tool armed.
-   *
-   * THE INVARIANT THAT MAKES `refresh` ENOUGH: while a ring is on screen a
-   * frame is always pending, because the only thing that shows one is `place`,
-   * which runs from `draw`, which re-arms.
+   * `pointermove` is on the window for the whole life of the layer, beside
+   * `pointerdown`, because it answers two questions rather than one: where the
+   * hand has carried a live drag, and where the cursor is standing when there
+   * is no drag at all — which is what says whether a disc is being hovered. One
+   * listener and one handler rather than a second of each, so there is one
+   * place where this layer learns where the pointer is. `watchDrag` takes the
+   * handlers it is given, which is what lets this gesture arm two of the three.
    */
-  const schedule = () => {
-    if (frame) return;
-    if (!wanted()) return;
-    frame = requestAnimationFrame(draw);
-  };
+  const watch = watchDrag({ onUp, onCancel });
 
-  /** Let go of the gesture, wherever it ended.
-   *
-   * The listeners are on the WINDOW and in the capture phase for the reason
-   * tools.js's `watch` gives: a drag that starts on a ring can perfectly well
-   * end anywhere, and a release missed here strands the gesture forever.
-   *
-   * `pointermove` IS NOT ONE OF THEM ANY MORE. It is on the window for the
-   * whole life of the layer, beside `pointerdown`, because it now answers two
-   * questions rather than one: where the hand has carried a live drag, and
-   * where the cursor is standing when there is no drag at all — which is what
-   * says whether a disc is being hovered. One listener and one handler rather
-   * than a second of each, so there is one place where this layer learns where
-   * the pointer is.
-   */
+  /** Let go of the gesture, wherever it ended. */
   const finish = () => {
     drag = null;
-    removeEventListener("pointerup", onUp, true);
-    removeEventListener("pointercancel", onCancel, true);
+    watch.disarm();
   };
 
   /** End the gesture and say which way the part ended up facing.
@@ -1022,15 +963,12 @@ export function createRings(vp) {
     const g = internals(vp.viewer);
     over = !!g && event.target === g.canvas;
     if (!drag) return;
-    // A CLICK IS NOT A ONE-PIXEL DRAG, and the canvas gesture spells the same
-    // rule out: until the pointer has travelled `CLICK_PX` this press is still
-    // a click. It matters more here than there, because there IS no click on a
-    // ring — nothing selects, and the only thing a twitch can do is turn the
-    // part a degree and file a node the reader never asked for, which opens the
-    // panel on top of it.
-    if (!drag.moved
-        && Math.abs(event.clientX - drag.startX) < CLICK_PX
-        && Math.abs(event.clientY - drag.startY) < CLICK_PX) return;
+    // A CLICK IS NOT A ONE-PIXEL DRAG, and `travelled` in drag.js is the rule
+    // the canvas gesture applies as well. It matters more here than there,
+    // because there IS no click on a ring — nothing selects, and the only thing
+    // a twitch can do is turn the part a degree and file a node the reader
+    // never asked for, which opens the panel on top of it.
+    if (!travelled(event, drag)) return;
     drag.moved = true;
     const point = [event.clientX - drag.box.left, event.clientY - drag.box.top];
     const p = circleSpace(drag.ring, drag.C, point);
@@ -1241,8 +1179,7 @@ export function createRings(vp) {
       turn: turnRecord(vp, sel.paths, sel.paths[0], sel.proposal),
       moved: false,
     };
-    addEventListener("pointerup", onUp, true);
-    addEventListener("pointercancel", onCancel, true);
+    watch.arm();
   }
 
   addEventListener("pointerdown", onDown, true);
@@ -1265,25 +1202,21 @@ export function createRings(vp) {
 
   return {
     root,
-    refresh: schedule,
+    refresh: layer.refresh,
     endDrag,
     destroy() {
-      // `if (frame)` is safe because a browser rAF handle is non-zero by spec
-      // (HTML §8.10), the same reading the view cube's teardown leans on.
-      if (frame) cancelAnimationFrame(frame);
-      frame = 0;
       // `finish` and not `stop`: this is the element going away, and `vp.moved`
       // goes with it, so the pose there would be to report is one nothing is
       // left standing at — the same fifth ending tools.js's teardown takes.
       finish();
-      // AND THE TWO LIFELONG LISTENERS WITH IT, which the two above are not:
-      // these are on the window for the whole life of the layer rather than for
-      // the length of a gesture, so a viewport unmounted with no drag in
-      // progress would still leave them there holding a scene that is gone —
+      // AND THE TWO LIFELONG LISTENERS WITH IT, which the gesture's own are
+      // not: these are on the window for the whole life of the layer rather
+      // than for the length of a gesture, so a viewport unmounted with no drag
+      // in progress would still leave them there holding a scene that is gone —
       // and the move one would go on recording a cursor for nobody.
       removeEventListener("pointerdown", onDown, true);
       removeEventListener("pointermove", onMove, true);
-      root.remove();
+      layer.destroy();
     },
   };
 }

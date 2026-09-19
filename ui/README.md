@@ -123,14 +123,21 @@ hub is what serves the file and sets the headers.
 reads them out of the files and fails when one of them drifts, because the
 symptom otherwise is a green gate and a 404 in the browser.
 
-## The placeholder
+## What is in here
 
-`src/HammerolaViewer.jsx` is a stub that renders one line and the React version.
-It is not the interface — it is what makes the pipeline observable end to end,
-and the port of the designer's mock-up replaces it wholesale.
-
-It renders `hidden`, so look for it in DevTools
-(`document.querySelector('.hmr_stub')`) rather than on the page. The stub
-outlives the commit that adds it while a merge to main publishes `:latest` and
-the auto-update label deploys it unattended, so a visible debug line would reach
-every build page in production without anybody choosing to put it there.
+`src/HammerolaViewer.jsx` is the build page — the tree, the panels and every
+gesture the reader has on a build. Its view model is cut into one module per
+panel beside it — `chromeview`, `proposalview`, `rowmenu`, `compareview`,
+`revisionview`, `feedview`, `downloadsview` — each exporting the keys that
+`computed()` hands to `render()` (#103). `src/panelstyle.js` holds the inline
+style strings more than one of them spells, `src/style.jsx` the ones both pages
+do (#104).
+`src/HammerolaEntry.jsx` is the front page and the project page.
+`src/viewport/` is the imperative half: one custom element (`<hmr-viewport>`)
+around the vendored `three-cad-viewer`, and the modules that draw on top of it —
+the manipulators, the section plane, the view cube, the picking; `layer.js` and
+`drag.js` are the overlay and the pointer loop the four manipulators share
+(#101). In `tests/`, `component.js` builds the page and viewport fixtures the
+test files share (#102) and `fakes.js` the scene under them. `docs/ui-brief.md` says what the
+interface is FOR; `docs/viewer-api.md` says which of the vendored viewer's
+surface is public and which of it the viewport reaches into at its own risk.

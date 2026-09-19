@@ -30,6 +30,7 @@ The helpers live in `modeldir.py`, not here: see its docstring.
 """
 
 import pytest
+from harness import TOKEN
 from modeldir import make_model
 
 
@@ -46,6 +47,33 @@ def client_environment(monkeypatch, tmp_path):
     # the machine's real home, i.e. exactly the case this is here to prevent.
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+
+
+@pytest.fixture
+def configured(monkeypatch, hub):
+    """A machine that knows where its hub is and holds the secret that hub checks.
+
+    Two of the three things the fixture above takes away, handed back on
+    purpose: a file about PUBLISHING needs an address and a token, and what the
+    docstring at the top refuses is inheriting the DEVELOPER's. This gives the
+    harness's own hub and `harness.TOKEN`, so a test that passes here would pass
+    on any machine.
+
+    REQUESTED AND NOT AUTOUSE, which is the whole reason it can live in this
+    conftest at all. Autouse would start a hub for every test in this directory
+    — several files here need none — and, worse, it would configure the files
+    whose SUBJECT is a machine that is not configured yet (`test_config.py`,
+    `test_setup.py`): those would go on passing while asserting nothing they
+    were written to assert. A file asks for it with one line beside its imports,
+    `pytestmark = pytest.mark.usefixtures("configured")`, which is what replaced
+    the six byte-identical copies this used to be (issue #99).
+
+    `test_skill.py` keeps a `configured` of its own and means something else by
+    it: a hub WITHOUT a token, because every test in that file states by passing
+    that `skill` and `update` need no secret.
+    """
+    monkeypatch.setenv("HUB_URL", hub.url)
+    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
 
 
 @pytest.fixture

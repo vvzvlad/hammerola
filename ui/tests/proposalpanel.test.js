@@ -33,6 +33,7 @@ import {
 import { SHAPE_OPS } from '../src/proposalgeom.js'
 import { css } from '../src/style.jsx'
 import { treeFromShapes } from '../src/viewport/parts.js'
+import { makeComponent, replaceState } from './component.js'
 import { collect, texts, titles } from './eltree.js'
 
 const REV = 'e05f73ba91b263b8517147e338d23e868533c6a034a342ad5926abb6edcb7b40'
@@ -144,68 +145,53 @@ function panel({ token = 'sekrit', proposal, open = true, narrow = false,
     isOverlay: vi.fn(() => false),
     overlayBody: vi.fn(() => null),
   }
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { ...HammerolaViewer.defaultProps }
-  c.home = null
-  c.carry = null
-  c.history = []
-  // AS MANY BODIES AS THE DOCUMENT ALREADY HAS, because that is what the
-  // counter means: every id in a real component's document was minted by it, so
-  // a fixture that seeded nodes and left it at 0 would hand the next body an id
-  // one of them already carries — a state the panel cannot reach, in which
-  // `updateNode` edits two nodes at once.
-  c._proposalSeq = proposal ? proposal.nodes.length : 0
-  // A PAGE WHOSE BUILD IS ALREADY ON SCREEN, which is what the tree below and
-  // the element above already say and what every test here but the cold loads
-  // assumes. `adoptProposal` reads it: the moves of a stored document may only
-  // be put back once the model event that would have dropped them has passed
-  // (`onModel`), so the tests that are about a RELOAD clear this and hand the
-  // page its build afterwards.
-  c._modelSeen = true
-  c.host = { current: el }
-  c.sync = vi.fn()
-  c.toast = vi.fn()
-  c.setState = vi.fn((patch, done) => {
-    const next = typeof patch === 'function' ? patch(c.state) : patch
-    c.state = { ...c.state, ...next }
-    if (done) done()
-  })
-  c.state = {
-    meta: {
-      project: 'fixture', title: 'Fixture', commit: REV, published: STAMP,
-      built: '', parts: {},
-      views: [{ id: VIEW, name: VIEW, file: 'a.json',
-                parts: [], gzip: 1000 }],
+  const c = makeComponent(HammerolaViewer, {
+    // AS MANY BODIES AS THE DOCUMENT ALREADY HAS, because that is what the
+    // counter means: every id in a real component's document was minted by it, so
+    // a fixture that seeded nodes and left it at 0 would hand the next body an id
+    // one of them already carries — a state the panel cannot reach, in which
+    // `updateNode` edits two nodes at once.
+    _proposalSeq: proposal ? proposal.nodes.length : 0,
+    // A PAGE WHOSE BUILD IS ALREADY ON SCREEN, which is what the tree below and
+    // the element above already say and what every test here but the cold loads
+    // assumes. `adoptProposal` reads it: the moves of a stored document may only
+    // be put back once the model event that would have dropped them has passed
+    // (`onModel`), so the tests that are about a RELOAD clear this and hand the
+    // page its build afterwards.
+    _modelSeen: true,
+    host: { current: el },
+    sync: vi.fn(),
+    toast: vi.fn(),
+    setState: replaceState,
+    state: {
+      meta: {
+        project: 'fixture', title: 'Fixture', commit: REV, published: STAMP,
+        built: '', parts: {},
+        views: [{ id: VIEW, name: VIEW, file: 'a.json',
+                  parts: [], gzip: 1000 }],
+      },
+      view: VIEW,
+      // THE DOCUMENT, which the shared default leaves out: a page that is about
+      // none of this has none of it under every test in the file, and this is
+      // the file that is about it.
+      proposal: proposal || emptyProposal(), proposalOpen: open, proposalError: null,
+      proposalDraft: null, proposalOff: false,
+      // WHAT THE HUB SAID WHEN THE PAGE ASKED FOR THE STORED DOCUMENT, and `null`
+      // is "it has not answered yet" — which is the state a page mounts in and
+      // the one in which nothing may be written back. So a fixture that says
+      // nothing else is a panel whose edits stay on this side, which is what
+      // every test written before the document was stored anywhere assumes; the
+      // ones that are ABOUT the save say `stored` for themselves.
+      //
+      // `proposalStands` IS THE OTHER HALF and is a different question — does what
+      // the hub holds say anything, which is what a comment points the agent at.
+      // It is false on a page that has not learned otherwise, and only the tests
+      // about the announcement set it.
+      proposalHeld: stored, proposalStands: stands,
+      token,
+      narrow,
     },
-    builds: null,
-    tree: indexTree({ id: '/model', name: 'model', children: [] }),
-    error: null, viewError: null, pending: null, swapping: false,
-    view: VIEW, tool: null, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
-    bannerGone: false, rail: false, menu: null,
-    notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    proposal: proposal || emptyProposal(), proposalOpen: open, proposalError: null,
-    proposalDraft: null, proposalOff: false,
-    // WHAT THE HUB SAID WHEN THE PAGE ASKED FOR THE STORED DOCUMENT, and `null`
-    // is "it has not answered yet" — which is the state a page mounts in and
-    // the one in which nothing may be written back. So a fixture that says
-    // nothing else is a panel whose edits stay on this side, which is what
-    // every test written before the document was stored anywhere assumes; the
-    // ones that are ABOUT the save say `stored` for themselves.
-    //
-    // `proposalStands` IS THE OTHER HALF and is a different question — does what
-    // the hub holds say anything, which is what a comment points the agent at.
-    // It is false on a page that has not learned otherwise, and only the tests
-    // about the announcement set it.
-    proposalHeld: stored, proposalStands: stands,
-    token, tokenPop: false, tokenDraft: '',
-    theme: 'light', tabs: [], narrow, treeOpen: false,
-  }
+  })
   return { c, el }
 }
 

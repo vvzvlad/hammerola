@@ -179,8 +179,14 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
     # anywhere further down. It is spoken here, after `load_model()` and after
     # the line naming the project, so that the estimates it prints are attached
     # to a project the reader has already been told the name of.
-    declared = provenance.collect(model)
-    bare = provenance.unwrapped(model)
+    #
+    # ONE PARSE FOR BOTH HALVES. `collect()` and `unwrapped()` walk the same
+    # names off the same file, and each reads and parses model.py when it is
+    # not handed the walk -- which made every build parse the author's file
+    # twice for one rule.
+    model_lines = provenance.module_level_lines()
+    declared = provenance.collect(model, model_lines)
+    bare = provenance.unwrapped(model, model_lines)
     provenance.check(declared, bare, project_root())
     provenance_summary = provenance.report(declared)
 

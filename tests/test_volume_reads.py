@@ -45,19 +45,21 @@ that is trusted for more than it does is worse than none:
     `builtins.open`. A `from x import SOME_PATH` binding a `Path` object would
     pass for the same reason; no `from` import in these modules binds one today.
     What stands behind the three that ARE argued for, read rather than assumed:
-      - `store` has four `os.open`, none of them a read of a file a build put
-        there. Two are the unpack path, both under `dir_fd`:
-        `_open_member_dir` walks each component `O_RDONLY|O_DIRECTORY|
-        O_NOFOLLOW`, and `_create_member_file` creates the leaf `O_CREAT|O_EXCL|
-        O_WRONLY|O_NOFOLLOW`, so it never opens a name that already exists. The
-        other two open a DIRECTORY: in `_extract_members`, the uuid4 staging
-        directory `Store.accept_sources` created a moment earlier, and in
-        `atomic_write_bytes`, `path.parent`, reached only after a `rename` INTO
-        that directory has succeeded. A directory open does not block, and a
-        fifo cannot be at either name.
-      - `tarfile.open` here is always given a `fileobj`, never a path.
-      - the single `gzip.open` reads the request body this process spooled a
-        moment earlier under a uuid4 name, which nothing can aim at.
+      - `archive` and `store` have four `os.open` between them, none of them a
+        read of a file a build put there. Three are in `archive`, and two of
+        those are the unpack path under `dir_fd`: `_open_member_dir` walks each
+        component `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`, and `_create_member_file`
+        creates the leaf `O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW`, so it never opens
+        a name that already exists. The other two open a DIRECTORY: in
+        `archive._extract_members`, the uuid4 staging directory
+        `Store.accept_sources` created a moment earlier, and in
+        `store.atomic_write_bytes`, `path.parent`, reached only after a `rename`
+        INTO that directory has succeeded. A directory open does not block, and
+        a fifo cannot be at either name.
+      - `tarfile.open`, in `archive`, is always given a `fileobj`, never a path.
+      - the single `gzip.open`, also in `archive`, reads the request body this
+        process spooled a moment earlier under a uuid4 name, which nothing can
+        aim at.
     If a fifth spelling appears, this is where it has to be taught.
   * it reads SOURCE, so it can say a read is not `safeio`'s. It cannot say
     whether the path was on the volume — that is the judgement in `ALLOWED`

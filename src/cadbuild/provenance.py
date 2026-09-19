@@ -158,7 +158,7 @@ Bare = collections.namedtuple("Bare", "name value line")
 Binding = collections.namedtuple("Binding", "line value")
 
 
-def collect(model):
+def collect(model, lines=None):
     """Every `checklib.Number` model.py itself binds at module level, with its line.
 
     The names come off the SYNTAX TREE and the values off `vars(model)`, plus
@@ -181,8 +181,12 @@ def collect(model):
     cannot be about two sets of names. The consequence is worth knowing before
     reaching for it: a number a helper module declares is neither refused nor
     counted, so provenance is a statement about model.py.
+
+    `lines` is `module_level_lines()`, taken once by a caller that also calls
+    `unwrapped()`; left out, it is read here. Both halves walk the same file,
+    so a build that asked for neither would parse model.py twice.
     """
-    lines = _module_level_lines()
+    lines = module_level_lines() if lines is None else lines
     values = vars(model)
     found = []
     for name, line in lines.items():
@@ -193,7 +197,7 @@ def collect(model):
     return found
 
 
-def unwrapped(model):
+def unwrapped(model, lines=None):
     """Every module-level UPPER_SNAKE name bound to a PLAIN float, with its line.
 
     The other half of `collect()`, over exactly the same walk. A `Number` is a
@@ -201,8 +205,10 @@ def unwrapped(model):
     at all and therefore enters neither half, which is a fact about python
     rather than a line of code here (`tests/cadbuild/test_provenance.py` says
     so, since nothing in the source can).
+
+    `lines` is `collect()`'s, handed over rather than taken again.
     """
-    lines = _module_level_lines()
+    lines = module_level_lines() if lines is None else lines
     values = vars(model)
     bare = []
     for name, line in lines.items():
@@ -486,7 +492,7 @@ def _model_source(root):
     there, so this is the entry that answered.
 
     THIS FUNCTION IS GIVEN THE ROOT AND NOT THE MODULE, which is why it asks
-    the finder rather than reading `model.__file__`: `_module_level_lines`
+    the finder rather than reading `model.__file__`: `module_level_lines`
     below has no module object to read one off. Not
     `importlib.util.find_spec`, which consults `sys.modules` and answers with
     the cached module's own spec instead of resolving anything.
@@ -506,7 +512,7 @@ def _model_source(root):
     return Path(origin)
 
 
-def _module_level_lines():
+def module_level_lines():
     """`{name: (every line that binds it,)}`, off the source.
 
     EVERY LINE, not the last one. Which binding put the value in `vars(model)`
@@ -760,7 +766,7 @@ def at_lines(lines):
     """`line 3`, or `lines 3, 5` when the name is bound in more than one place.
 
     SORTED AND DEDUPLICATED HERE, so one input has one answer. It used to be
-    neither, and the caller made up the difference: `_module_level_lines` runs
+    neither, and the caller made up the difference: `module_level_lines` runs
     the lines through `dict.fromkeys` on the way in, so the hub's own messages
     were mostly tidy by accident -- but the walk records a statement's walruses
     BEFORE its own targets, which is the order python binds them, and that is

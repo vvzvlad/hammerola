@@ -261,7 +261,7 @@ cad-test: install ## Run the six tests that need the CAD kernel — CI skips the
 	if printf '%s' "$$out" | grep -qi 'skipped'; then \
 		echo ""; \
 		echo "make cad-test: FAILED — a test skipped, so nothing was checked."; \
-		echo "               These five exist to run on a machine that HAS the CAD"; \
+		echo "               These six exist to run on a machine that HAS the CAD"; \
 		echo "               kernel; CI has none on purpose (issue #27). Install the"; \
 		echo "               kernel here, or run this where it imports."; \
 		exit 1; \

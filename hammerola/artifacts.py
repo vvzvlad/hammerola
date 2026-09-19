@@ -69,7 +69,6 @@ from pathlib import Path
 from hammerola.buildnames import unservable_reason
 from hammerola import project
 from hammerola.errors import ClientError
-from hammerola.hub import Hub
 from hammerola.limits import DEV_SLOT, SAFE_ID
 from hammerola.sources import LATEST, SHORT_ID_CHARS, hub_for, scratch_dir
 
@@ -463,7 +462,7 @@ def _destination(args, name: str) -> Path:
     re-running is an update rather than a merge of two different things.
     """
     base = Path(args.directory).expanduser() if args.directory else Path.cwd()
-    given = getattr(args, "output", None)
+    given = args.output
     if given:
         dest = Path(given).expanduser()
     else:

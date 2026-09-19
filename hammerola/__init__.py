@@ -1,35 +1,10 @@
 """`hammerola` — the tool that puts a model's source on the hub.
 
-The single system-wide client described in issue #26. Two commands
-publish; the other four are the ones that need nothing new from the hub.
-
-    hammerola login            -> checks the password, then writes HUB_URL and
-                                  EDIT_TOKEN into ~/.config/hammerola/env
-    hammerola create           -> a project.json with a fresh id (SPEC §3.1),
-                                  and the starter template from GET /start —
-                                  the one route this tool asks for with no
-                                  token, because `--no-template` is what makes
-                                  the id offline rather than the whole command
-    hammerola build            -> POST /api/v1/publish/<pid>/dev
-    hammerola commit -m "..."  -> POST /api/v1/publish/<pid>, and the hub
-                                  answers with the revision id it minted
-    hammerola status           -> GET /project/<pid>/builds.json, plus the dev
-                                  slot's own meta.json
-    hammerola source <rev>     -> GET /api/v1/sources/<rev>, unpacked into a
-                                  directory of its own
-    hammerola artifacts <rev>  -> GET /project/<pid>/<rev>/<file> for the
-                                  exports and the pictures the build's parts
-                                  and views name — NOT a view's `file`, which
-                                  is the browser's tessellation payload
-    hammerola diff <a> <b>     -> both builds' metrics.json and both stored
-                                  archives, compared
-    hammerola log [dev|<rev>]  -> GET /api/v1/sources/<rev>/log
-    hammerola comments         -> GET /api/v1/comments?project=<pid>, and
-                                  `resolve` POSTs to .../<id>/resolve
-    hammerola rename "..."     -> project.json, and POST
-                                  /api/v1/projects/<pid>/title
-    hammerola rm               -> DELETE /api/v1/projects/<pid>, after the id is
-                                  typed
+The single system-wide client described in issue #26. WHAT THE VERBS ARE, AND
+WHAT EACH ONE IS NOT ALLOWED TO DO, is the docstring of `hammerola/cli.py` —
+next to `build_parser`, which is where a verb is actually added and therefore
+the only place a list of them stays true. What is below holds for the package as
+a whole rather than for any one command.
 
 NOTHING HERE READS GIT TO DECIDE WHAT TO PUBLISH. `commit` means "publish a
 version of this", the hub names that version out of the sources it receives, and
@@ -62,48 +37,18 @@ this machine" and not "authenticate this person". Per-person keys — issuing,
 revoking, expiry — do not exist, and calling this a login should not make them
 look as though they do.
 
-THREE VERBS ARE SHAPED BY WHAT THEY ARE NOT ALLOWED TO DO, and the shape is the
-decision rather than a limitation of what was written:
-
-  * `source` and `artifacts` are two verbs over one build because the RIGHTS
-    differ: the artefacts are public, the code is behind the secret
-    (issue #17). A single verb with a flag would put both behind one word.
-    `source` also unpacks into a directory of its own — writing over the working
-    copy is a flag, and that flag additionally requires git to call the tree
-    clean, because a clean tree is the only thing that can undo it.
-  * `rename` changes the TITLE. There is no command and no flag that changes an
-    id, and there is no route for one either: every permanent URL of the project
-    is built from the id, and the builds behind those URLs went out with a year
-    of `immutable` (SPEC §3.1).
-  * `rm` removes the whole project and asks for its id first. There is no way to
-    remove one build: that breaks a permanent URL while leaving the project
-    standing.
-
-WHAT IS STILL NOT HERE. `status` shows no "last job". It is not waiting on
-anybody's next commit: a job is addressable by its id alone and job order is
-stored nowhere (`src/jobs.py`), so there is no such thing to look up, and
-`status.py` says that out loud rather than guessing. `log dev` used to be the
-second half of this paragraph and no longer is: the slot's meta.json names the
-job that filled it (issue #79), so the log of the build on screen is one lookup
-away — see `sources._dev_log`.
-
-SELF-UPDATE IS HERE (issue #77) AND IT IS ONE VERB. `hammerola update` fetches
-the zipapp the hub serves at `/start/hammerola` and writes it over the file this
-process is running from, printing what changed between the two versions
-(`update.py`, `changelog.py`). The number both sides compare is `VERSION` below:
-the hub repeats it in its manifest as `client_version`, and `build` and `commit`
-refuse to publish from a client older than that. It applies to ONE of the three
-doors, which is why the doors are worth listing: the installed `hammerola`
-script; `python3 -m hammerola` out of a checkout, pointed at the model with `-C`
+THE VERSION BOTH SIDES COMPARE IS `VERSION` BELOW: the hub repeats it in its
+manifest as `client_version`, and `build` and `commit` refuse to publish from a
+client older than that. Replacing this tool with the hub's copy is `hammerola
+update`'s job and `cli.py` describes it; what belongs here is that it can serve
+ONE of the three doors, which is why the doors are worth listing: the installed
+`hammerola` script; `python3 -m hammerola` out of a checkout, pointed at the
+model with `-C`
 (`__main__.py` has the working forms and why the obvious one is not among them);
 and the zipapp, for a machine with neither. Only the last is a single file this
 tool can replace — a checkout is updated with git and an installed distribution
 with pip, and `update` says so rather than writing into either. The first and
 the last carry their own modules, so they run from anywhere and need no `-C`.
-This paragraph used to live in `bin/hammerola`, a door that existed only to be
-symlinked onto PATH — and that symlink is exactly what the hub's own
-`curl -o ~/.local/bin/hammerola` wrote through, silently replacing the
-repository's copy with the download.
 
 STDLIB ONLY, EVERY MODULE BELOW. This runs on the author's machine, under
 whatever python3 is there, so it takes nothing from `requirements.txt` — not

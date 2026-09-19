@@ -37,9 +37,9 @@ handling; a common helper here would be a place for one command's wording to
 start describing the other's.
 """
 
-from hammerola import config, project
+from hammerola import project
 from hammerola.errors import ClientError
-from hammerola.hub import QUERY_TIMEOUT, Hub
+from hammerola.sources import hub_for
 
 # What has to be typed to confirm a removal. The ID rather than a y/n, for the
 # reason `admin.CONFIRM_PROMPT` gives: it is unambiguous, it is what the hub is
@@ -59,7 +59,7 @@ _NOTHING_TO_READ = (
 
 def run(args) -> int:
     """`proposal` or `proposal rm` — whichever the parser reached."""
-    if getattr(args, "proposal_command", None) == "rm":
+    if args.proposal_command == "rm":
         return remove(args)
     return read(args)
 
@@ -68,7 +68,7 @@ def read(args) -> int:
     """Print this project's proposal. -> exit code."""
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
-    hub = _hub(root)
+    hub = hub_for(root)
 
     record = hub.proposal(pid)
     if record is None:
@@ -82,7 +82,7 @@ def remove(args) -> int:
     """Delete this project's proposal, after confirmation. -> exit code."""
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
-    hub = _hub(root)
+    hub = hub_for(root)
 
     # READ BEFORE ASKING, because a prompt is only a safety if what it is
     # confirming has been seen. This is the whole of what is about to go — it
@@ -102,7 +102,7 @@ def remove(args) -> int:
           "copy, and it is in\n"
           "  no build — so nothing can bring it back.")
 
-    _confirm(pid, getattr(args, "yes", False))
+    _confirm(pid, args.yes)
 
     if hub.remove_proposal(pid):
         print(f"removed the proposal on {pid}")
@@ -158,8 +158,3 @@ def _confirm(pid: str, skip: bool) -> None:
     if answer != pid:
         raise ClientError("cancelled: that is not the project id. The proposal "
                           "is still there.")
-
-
-def _hub(root) -> Hub:
-    return Hub(config.hub_url(root), config.edit_token(root),
-               timeout=QUERY_TIMEOUT)

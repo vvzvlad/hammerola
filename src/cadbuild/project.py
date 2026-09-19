@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""project.json, and the commit a snapshot is published under."""
+"""project.json: finding it, reading it, and what it may say.
+
+The revision a build is published under is NOT decided here -- the hub mints it
+from the digest of the sources (SPEC 7.7), so nothing in the build half resolves
+a commit.
+"""
 
 import json
-import os
-import subprocess
 
 from . import project_title
 from .errors import BuildError
@@ -134,24 +137,3 @@ def refuse_test_id():
         "  to make this a real project: delete project.json, then "
         "`hammerola create --no-template --title \"...\"`"
     )
-
-
-def resolve_commit(explicit):
-    """Commit sha for the URL: CLI flag, then CI env, then local git."""
-    for candidate in (explicit, os.environ.get("COMMIT_SHA"),
-                      os.environ.get("GITHUB_SHA")):
-        value = str(candidate or "").strip()
-        if value:
-            if not MEMBER_RE.match(value):
-                raise BuildError(f"commit {value!r} is not a safe path component")
-            return value
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(project_root()), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise BuildError(
-            "cannot determine the commit: pass --commit, or set COMMIT_SHA"
-        ) from exc
-    return out.stdout.strip()

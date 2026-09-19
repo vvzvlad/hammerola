@@ -31,6 +31,7 @@ import { emptyProposal } from '../src/proposal.js'
 import {
   shrink, SHOT_MAX_SIDE, SHOT_QUALITY, PHOTO_MAX_SIDE, PHOTO_QUALITY,
 } from '../src/shrink.js'
+import { drained as settled, makeComponent, replaceState } from './component.js'
 import { texts } from './eltree.js'
 import { guardPage } from './pageguard.js'
 
@@ -100,52 +101,38 @@ function answering(...responses) {
  * puts a `hmr:state` event on the window.
  */
 function page({ feed = [], token = 'sekrit', partPoint, watch, ...over } = {}) {
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { ...HammerolaViewer.defaultProps }
-  c.home = null
-  c.host = { current: partPoint ? { partPoint } : null }
-  c.state = {
-    meta: {
-      project: 'fixture', title: 'Fixture', commit: REV, published: STAMP,
-      built: '2026-08-27T18:00:00Z', parts: PARTS,
-      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
-                parts: ['plate'], gzip: 1000 }],
+  const c = makeComponent(HammerolaViewer, {
+    host: { current: partPoint ? { partPoint } : null },
+    setState: replaceState,
+    toast: vi.fn(),
+    state: {
+      meta: {
+        project: 'fixture', title: 'Fixture', commit: REV, published: STAMP,
+        built: '2026-08-27T18:00:00Z', parts: PARTS,
+        views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+                  parts: ['plate'], gzip: 1000 }],
+      },
+      tree: indexTree(TREE),
+      rail: true, menu: { id: null, x: 0, y: 0 },
+      feed,
+      // THE DOCUMENT IS ALWAYS THERE, empty or not — the constructor seeds one and
+      // nothing ever writes it back to null, so a fixture without it models a
+      // component that cannot exist. It matters at exactly one door in this file:
+      // giving up the token takes the proposal off the model, and the push that
+      // does it reads this. The shared default leaves it out, because a page
+      // that is about none of this has no document under every test in the file.
+      proposal: emptyProposal(), proposalOpen: false, proposalOff: false,
+      proposalError: null, proposalDraft: null,
+      // Whether the hub holds a proposal for this project that SAYS something, as
+      // `loadProposal` learned it and this page's own saves have kept it since.
+      // `sendComment` reads it to decide whether to tell the agent there is one to
+      // read, so the default here is the page that has nothing to point at.
+      proposalStands: false,
+      token,
+      ...over,
     },
-    builds: null,
-    tree: indexTree(TREE),
-    error: null, viewError: null, pending: null, swapping: false,
-    view: 'assembled', tool: null, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
-    bannerGone: false, rail: true, menu: { id: null, x: 0, y: 0 },
-    notePop: null, noteDraft: '', notes: {},
-    feed, activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    // THE DOCUMENT IS ALWAYS THERE, empty or not — the constructor seeds one and
-    // nothing ever writes it back to null, so a fixture without it models a
-    // component that cannot exist. It matters at exactly one door in this file:
-    // giving up the token takes the proposal off the model, and the push that
-    // does it reads this.
-    proposal: emptyProposal(), proposalOpen: false, proposalOff: false,
-    proposalError: null, proposalDraft: null,
-    // Whether the hub holds a proposal for this project that SAYS something, as
-    // `loadProposal` learned it and this page's own saves have kept it since.
-    // `sendComment` reads it to decide whether to tell the agent there is one to
-    // read, so the default here is the page that has nothing to point at.
-    proposalStands: false,
-    token, tokenPop: false, tokenDraft: '',
-    theme: 'light', tabs: [], narrow: false, treeOpen: false,
-    ...over,
-  }
-  c.setState = vi.fn((patch, done) => {
-    const next = typeof patch === 'function' ? patch(c.state) : patch
-    c.state = { ...c.state, ...next }
-    if (done) done()
   })
   if (!watch) c.sync = vi.fn()
-  c.toast = vi.fn()
   return c
 }
 
@@ -157,9 +144,6 @@ function listening() {
   onTestFinished(() => window.removeEventListener(STATE, listen))
   return seen
 }
-
-/** Everything a fetch chain has queued behind it, run. */
-const settled = () => new Promise((done) => { setTimeout(done, 0) })
 
 afterEach(() => {
   vi.unstubAllGlobals()

@@ -29,6 +29,17 @@ from harness import (DEFAULT_EXPORTS, TOKEN, chardev_entry, dir_entry,
                      raw_tar_gz, symlink_entry, view_bytes)
 from loguru import logger
 
+# Both modules, and which one a line names is load-bearing. The reader lives in
+# `src/archive.py` and `src/store.py` re-exports its names, so READING one
+# through either module gives the same object — but a monkeypatch is not a read:
+# it rebinds a name in ONE module's globals, and the code that looks the name up
+# does so in `archive`. So every `setattr` on one of the reader's OWN names says
+# `archive_module`, and a patch aimed at `store_module` instead would take
+# effect nowhere while the test went on passing for the wrong reason.
+# `store_module.os` and `store_module.uuid` stay as they are: there the module
+# named is only a route to the one `os` or `uuid` every module shares, and an
+# attribute set ON that object is seen from everywhere.
+from src import archive as archive_module
 from src import store as store_module
 # The client's copy of `_cut_middle` is driven by the tests here rather than from
 # `tests/client/`, because that suite's conftest strips EDIT_TOKEN out of the
@@ -816,14 +827,14 @@ def test_the_gzip_stream_is_closed_even_when_the_archive_is_refused(
     log handler does that, in a process that stays up for weeks.
     """
     opened = []
-    real_open = store_module.gzip.open
+    real_open = archive_module.gzip.open
 
     def recording_open(*args, **kwargs):
         stream = real_open(*args, **kwargs)
         opened.append(stream)
         return stream
 
-    monkeypatch.setattr(store_module.gzip, "open", recording_open)
+    monkeypatch.setattr(archive_module.gzip, "open", recording_open)
 
     dest = tmp_path / "ok"
     dest.mkdir()
@@ -858,19 +869,19 @@ def test_the_gzip_stream_is_closed_when_our_own_setup_raises(hub, tmp_path,
     change this is here to make unnecessary.
     """
     opened = []
-    real_open = store_module.gzip.open
+    real_open = archive_module.gzip.open
 
     def recording_open(*args, **kwargs):
         stream = real_open(*args, **kwargs)
         opened.append(stream)
         return stream
 
-    monkeypatch.setattr(store_module.gzip, "open", recording_open)
+    monkeypatch.setattr(archive_module.gzip, "open", recording_open)
 
     def exploding_reader(*args, **kwargs):
         raise RuntimeError("a bug in our own setup")
 
-    monkeypatch.setattr(store_module, "_CountingReader", exploding_reader)
+    monkeypatch.setattr(archive_module, "_CountingReader", exploding_reader)
 
     body_path = tmp_path / "body.tar.gz"
     body_path.write_bytes(_payload_build())
@@ -988,7 +999,8 @@ def test_a_chain_that_outruns_the_read_ceiling_is_still_not_a_crash(
     a chain at the head is consumed at open and a chain behind a valid member is
     consumed during the walk.
     """
-    monkeypatch.setattr(store_module, "MAX_HEADER_READS_PER_MEMBER", 1_000_000)
+    monkeypatch.setattr(
+        archive_module, "MAX_HEADER_READS_PER_MEMBER", 1_000_000)
 
     chain = _chained_pax_headers(400)
     if lead:
@@ -1033,7 +1045,7 @@ def test_an_ordinary_member_is_nowhere_near_the_header_read_ceiling(hub, tmp_pat
             super().end_header()
 
     monkeypatched = pytest.MonkeyPatch()
-    monkeypatched.setattr(store_module, "_CountingReader", Recording)
+    monkeypatched.setattr(archive_module, "_CountingReader", Recording)
     try:
         body_path = tmp_path / "body.tar.gz"
         body_path.write_bytes(_payload_build())
@@ -1114,7 +1126,7 @@ def test_no_ordinary_archive_reads_more_at_once_than_the_ceiling_allows(
             readers.append(self)
 
     monkeypatched = pytest.MonkeyPatch()
-    monkeypatched.setattr(store_module, "_CountingReader", Recording)
+    monkeypatched.setattr(archive_module, "_CountingReader", Recording)
     try:
         body_path = tmp_path / "body.tar.gz"
         body_path.write_bytes(raw_tar_gz(
@@ -1257,7 +1269,7 @@ def test_a_read_error_from_the_disk_is_not_dressed_up_as_a_corrupt_archive(
                 raise OSError(errno.EIO, "Input/output error")
             return super().read(size)
 
-    monkeypatch.setattr(store_module, "_CountingReader", Failing)
+    monkeypatch.setattr(archive_module, "_CountingReader", Failing)
 
     body_path = tmp_path / "body.tar.gz"
     body_path.write_bytes(_payload_build())
@@ -1359,7 +1371,7 @@ def test_a_decided_refusal_survives_the_header_window_closing(hub, tmp_path):
     dest.mkdir()
 
     monkeypatched = pytest.MonkeyPatch()
-    monkeypatched.setattr(store_module, "_CountingReader", Failing)
+    monkeypatched.setattr(archive_module, "_CountingReader", Failing)
     try:
         with pytest.raises(store_module.PublishError) as caught:
             hub.store._unpack(body_path, dest)
@@ -2292,7 +2304,8 @@ def test_the_realpath_check_holds_on_its_own_when_the_whitelist_is_relaxed(
     """
     import re
 
-    monkeypatch.setattr(store_module, "SAFE_COMPONENT", re.compile(r"\A.*\Z", re.S))
+    monkeypatch.setattr(
+        archive_module, "SAFE_COMPONENT", re.compile(r"\A.*\Z", re.S))
     body = raw_tar_gz(_payload() + [file_entry("../escaped.txt", b"pwned")])
     r = hub.publish("proj1", "abc123", body)
 
@@ -2324,7 +2337,8 @@ def test_containment_is_by_path_component_and_not_by_string_prefix(
 
     pinned = uuid_module.UUID(int=0x5EC0DE)
     monkeypatch.setattr(store_module.uuid, "uuid4", lambda: pinned)
-    monkeypatch.setattr(store_module, "SAFE_COMPONENT", re.compile(r"\A.*\Z", re.S))
+    monkeypatch.setattr(
+        archive_module, "SAFE_COMPONENT", re.compile(r"\A.*\Z", re.S))
 
     sibling = f"{store_module.STAGING_PREFIX}abc123-{pinned.hex}-evil"
     body = raw_tar_gz(_payload() + [

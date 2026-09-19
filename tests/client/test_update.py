@@ -37,7 +37,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from harness import TOKEN
 from modeldir import make_model
 
 from src import onboarding
@@ -46,19 +45,13 @@ from hammerola import hub as hub_module
 from hammerola.cli import main
 from hammerola.errors import ClientError
 
+# The address and the token, from tests/client/conftest.py (issue #99). The
+# token is for the publishing half of this file only: `update` itself presents
+# none — `/start` and the client it names are public on purpose, and a machine
+# whose tool is too old to publish may be one that was never logged in.
+pytestmark = pytest.mark.usefixtures("configured")
+
 ROOT = Path(update.__file__).resolve().parent.parent
-
-
-@pytest.fixture(autouse=True)
-def configured(monkeypatch, hub):
-    """Point the client at the test hub, with the token that hub checks.
-
-    The token is here for the publishing half only. `update` itself presents
-    none — `/start` and the client it names are public on purpose, and a machine
-    whose tool is too old to publish may be one that was never logged in.
-    """
-    monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
 
 
 @pytest.fixture
@@ -177,6 +170,33 @@ def test_the_shipped_changelog_is_shaped_the_way_the_reader_expects():
             f"the entry for {version} is {type(lines).__name__} and not a "
             f"tuple of lines")
         assert lines and all(isinstance(line, str) and line for line in lines)
+
+
+def test_the_version_this_client_is_has_an_entry_of_its_own():
+    """THE RANGE OF THE CHANGELOG, from the other end (issue #98).
+
+    The test above holds the SHAPE of what is in `ENTRIES` and would pass on an
+    empty dict. What an update prints, though, is the entries strictly after the
+    running version and up to the one it fetched — so the release that ships a
+    version and does not file it here is the release whose own change is the one
+    nobody is told about.
+
+    THE FAILURE IS A RUN THAT LOOKS LIKE IT WORKED. `_print_changes` returns
+    silently on an empty range, so `hammerola update` prints "version X ->
+    version Y" and then nothing at all: the agent it replaced itself under reads
+    that as "nothing about the interface moved" and goes on writing the flags it
+    knew. Nothing fails, and the one moment the reader was going to look is
+    spent.
+
+    The pairing is between this checkout's two halves — the VERSION the tool
+    states and the book it ships beside it — because the client that prints the
+    line reads both out of the archive it downloaded.
+    """
+    assert VERSION in changelog.ENTRIES, (
+        f"this client calls itself {VERSION} and `changelog.ENTRIES` has no "
+        f"entry under that version, so `hammerola update` onto it prints "
+        f"'version <old> -> version {VERSION}' with nothing under it — an "
+        f"update that says, to the one reader it has, that nothing changed")
 
 
 # -- which file this writes over ---------------------------------------------

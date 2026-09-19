@@ -54,6 +54,7 @@ import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { HammerolaProjects, VIEW_BODIES } from '../src/HammerolaEntry.jsx'
 import { indexTree } from '../src/hub.js'
 import { css, NARROW } from '../src/style.jsx'
+import { makeComponent, replaceState } from './component.js'
 import { collect, styles, texts } from './eltree.js'
 
 /**
@@ -98,46 +99,28 @@ afterEach(() => {
  */
 function component({ narrow = false, treeOpen = false, rail = null, tool = null,
                      compare = false, token = 'sekrit' } = {}) {
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { ...HammerolaViewer.defaultProps }
-  c.home = null
-  c.host = { current: null }
-  c.setState = vi.fn((patch, done) => {
-    const next = typeof patch === 'function' ? patch(c.state) : patch
-    c.state = { ...c.state, ...next }
-    if (done) done()
-  })
-  c.sync = vi.fn()
-  c.state = {
-    meta: {
-      project: 'fixture', title: 'Fixture bracket', commit: REV,
-      built: '2026-08-27T18:20:00Z',
-      parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
-      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
-                parts: ['lid'], gzip: 1000 }],
+  return makeComponent(HammerolaViewer, {
+    setState: replaceState,
+    sync: vi.fn(),
+    state: {
+      meta: {
+        project: 'fixture', title: 'Fixture bracket', commit: REV,
+        built: '2026-08-27T18:20:00Z',
+        parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
+        views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+                  parts: ['lid'], gzip: 1000 }],
+      },
+      tool,
+      compare,
+      rail, menu: { id: null, x: 0, y: 0 },
+      // A token by default, because half of what the header draws is hidden from
+      // a viewer for a reason that has nothing to do with the width — and a
+      // parameter, because one control in that row is drawn for BOTH readers and
+      // one block below is about which.
+      token,
+      narrow, treeOpen,
     },
-    builds: null,
-    tree: indexTree({ id: '/model', name: 'model', children: [] }),
-    error: null, viewError: null, pending: null, swapping: false,
-    view: 'assembled', tool, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare, diffShow: 'both',
-    bannerGone: false, rail, menu: { id: null, x: 0, y: 0 },
-    notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    // A token by default, because half of what the header draws is hidden from
-    // a viewer for a reason that has nothing to do with the width — and a
-    // parameter, because one control in that row is drawn for BOTH readers and
-    // one block below is about which.
-    token, tokenPop: false, tokenDraft: '',
-    theme: 'light',
-    tabs: [],
-    narrow, treeOpen,
-  }
-  return c
+  })
 }
 
 const click = { stopPropagation() {}, preventDefault() {} }

@@ -11,9 +11,10 @@ import { outlineChild, refreshSectionOutline } from "./outline.js";
 // now live in `math.js`, because `ui/src/proposal.js` needs them and must not
 // reach the viewer: this file imports `internals.js` and `outline.js`, so an
 // import from here would drag the whole viewport behind a module whose promise
-// is that a document can be built and projected with no browser near it. Every
-// caller that had them from this file — `element.js`, `rings.js`, the tests —
-// goes on doing so, because a turn is still this file's subject.
+// is that a document can be built and projected with no browser near it. The
+// re-export is kept because a turn is still this file's subject, and the tests
+// take them from here for that reason (`parts.test.js` all four, `rings.test.js`
+// three); the modules of `ui/src` import them from `math.js` directly.
 export { after, anglesOf, quaternionOf, turned };
 
 /**
@@ -345,6 +346,44 @@ export function movableGroup(viewer, path) {
     return null;
   }
   return group;
+}
+
+/**
+ * The paths a gesture may take hold of, as `{paths, proposal}` — or null when
+ * one of them is not grabbable and the whole grab is therefore refused.
+ *
+ * THE ONE QUESTION THREE GESTURES ASK. The canvas drag (tools.js) asks it of
+ * the standing selection — unless the press landed on a part outside it, which
+ * is a grab of something else and not a drag of the selection at all — or of
+ * the single part it grabbed when nothing is selected, and the two halves of
+ * the manipulator — the arrows
+ * and quads (gizmo.js) and the rotation handles (rings.js) — ask it every frame
+ * of what is selected, because a widget offering a move that the press would
+ * then refuse is a promise it cannot keep. Two halves of ONE widget that came
+ * up on different conditions would be a widget with a piece missing, and a
+ * widget that came up on conditions the canvas drag does not share would be a
+ * third opinion about the same part.
+ *
+ * MIXED SELECTIONS ARE REFUSED WHOLE by the `some` and then `every` below,
+ * rather than quietly moving the half that may: one overlay path makes this a
+ * proposal gesture, and then a part of the model has no body name and is not
+ * grabbable into it. There is no such thing as half of either statement. The
+ * group node the bodies hang under is refused by the same line — `overlayBody`
+ * answers null for it — so a body the panel cannot NAME is a body no report
+ * could be about.
+ *
+ * WHAT IS NOT ASKED HERE IS WHICH TOOL IS IN FORCE, because the three callers
+ * differ on it: the manipulator wants `move` armed and the canvas press has
+ * already read `activeTool` once, at the press, and lives with that answer for
+ * the rest of the gesture.
+ */
+export function grabbable(vp, paths) {
+  const list = Array.isArray(paths) ? paths : [];
+  if (!list.length) return null;
+  const proposal = list.some((path) => vp.isOverlay(path));
+  const held = (path) => !!movableGroup(vp.viewer, path)
+    && (!proposal || !!vp.overlayBody(path));
+  return list.every(held) ? { paths: list, proposal } : null;
 }
 
 /** Where one part's group stands RIGHT NOW, as `[x, y, z]`, or null.

@@ -50,7 +50,7 @@ import { zoomWheelAfter, zoomWheelBefore } from "./zoom.js";
  * dropped. Should both answer nothing, this returns false, the wheel zooms as it
  * always did, and the reader who wanted the pan has a setting to change.
  */
-export function isMacPlatform() {
+function isMacPlatform() {
   try {
     const hinted = navigator.userAgentData && navigator.userAgentData.platform;
     const name = (typeof hinted === "string" && hinted) || navigator.platform;

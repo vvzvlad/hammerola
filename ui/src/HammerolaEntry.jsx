@@ -88,11 +88,17 @@ import {
   stamp, Unauthorized,
 } from './hub.js';
 import {
+  ACCENT_MONO, BADGE_SANS, BODY_MONO, BODY_SANS, CARD, DANGER, DIALOG_BTN,
+  FAINT_MONO, FILL, HEADER_BAR, HEADER_RULE, HIDDEN, META_MONO,
+  META_MONO_ONE_LINE, NAME_SANS, NOTE_BOX, ON_CARD, PILL, ROW, SEGMENTED, STACK,
+  SUNKEN, TAB_OFF, TAB_ON, TITLE, WORDMARK,
+} from './panelstyle.js';
+import {
   PROJECT_SORTS, PROJECT_VIEWS, clearToken, readProjectSort, readProjectView,
   readToken, writeProjectSort, writeProjectView, writeToken,
 } from './store.js';
 import {
-  css, FONTS, SANS, MONO, Mark, PAGE_BG, PAGE_FG, HEADER_BG, HEADER_LINE,
+  css, FONTS, SANS, MONO, Mark, PAGE_BG, PAGE_FG,
 } from './style.jsx';
 
 /**
@@ -571,27 +577,22 @@ export class HammerolaLogin extends React.Component {
   drawStart(start) {
     return (
       <div style={css('width:100%;margin-top:24px;padding-top:18px;border-top:1px solid var(--line-soft)')}>
-        <div style={css('display:flex;align-items:center;gap:8px')}>
-          <span style={css(`font:600 11.5px ${SANS};color:var(--text)`)}>Nothing published here yet</span>
-          <span style={css('flex:1')} />
+        <div style={css(ROW)}>
+          <span style={css(NAME_SANS)}>Nothing published here yet</span>
+          <span style={css(FILL)} />
           <div
             onClick={this.copy}
-            style={css('padding:4px 9px;border-radius:5px;cursor:pointer;user-select:none;'
-              + `font:600 10.5px ${SANS};border:1px solid var(--line);`
-              + 'background:var(--card-bg);color:var(--text)')}
+            style={css(PILL + BADGE_SANS + ON_CARD)}
           >
             {COPY_LABELS[this.state.copied] || 'Copy'}
           </div>
         </div>
-        <div style={css(`font:400 11px/1.55 ${SANS};color:var(--text-muted);margin-top:5px`)}>
+        <div style={css(BODY_SANS)}>
           Hand this to your agent.
         </div>
-        <div style={css('margin-top:9px;padding:10px 11px;border-radius:6px;'
-          + 'border:1px solid var(--line);background:var(--sunken-bg);'
-          + 'display:flex;flex-direction:column;gap:3px')}
-        >
+        <div style={css(NOTE_BOX + SUNKEN + ';' + STACK)}>
           {agentBrief(start).map((line) => (
-            <span key={line} style={css(`font:400 11px/1.55 ${MONO};color:var(--text);overflow-wrap:anywhere`)}>
+            <span key={line} style={css(BODY_MONO)}>
               {line}
             </span>
           ))}
@@ -615,7 +616,7 @@ export class HammerolaLogin extends React.Component {
         {animate && <MeshBackdrop />}
 
         <div style={css('position:relative;width:360px;max-width:calc(100% - 32px);box-sizing:border-box;'
-          + 'background:var(--card-bg);border:1px solid var(--line);border-radius:12px;'
+          + CARD
           + 'box-shadow:0 14px 44px var(--shadow);padding:40px 36px 32px;'
           + 'display:flex;flex-direction:column;align-items:center')}
         >
@@ -644,11 +645,11 @@ export class HammerolaLogin extends React.Component {
               onBlur={() => this.setState({ focus: false })}
               onKeyDown={(e) => { if (e.key === 'Enter') this.submit(); }}
               style={css(`width:100%;box-sizing:border-box;height:38px;padding:0 12px;border-radius:6px;font:500 13px ${MONO};color:var(--text);outline:none;`
-                + (error ? 'border:1px solid var(--danger-line);background:var(--danger-bg)'
+                + (error ? DANGER
                   : s.focus ? 'border:1px solid var(--accent-line);background:var(--card-bg)'
-                    : 'border:1px solid var(--line);background:var(--sunken-bg)'))}
+                    : SUNKEN))}
             />
-            <div style={css(error ? `font:400 11px ${SANS};color:var(--danger);margin-top:-4px` : 'display:none')}>
+            <div style={css(error ? `font:400 11px ${SANS};color:var(--danger);margin-top:-4px` : HIDDEN)}>
               {error}
             </div>
             <div
@@ -830,7 +831,7 @@ export const RevLine = ({ p }) => {
   const status = STATUS_CHIPS[p.status];
   return (
     <React.Fragment>
-      <span style={css(`font:600 12px ${MONO};color:var(--accent-text)`)}>{p.rev}</span>
+      <span style={css(ACCENT_MONO)}>{p.rev}</span>
       {p.dev && (
         <span
           title="this project also has uncommitted work in its dev slot"
@@ -933,19 +934,19 @@ export const VIEW_BODIES = Object.freeze({
           </div>
           <div style={css('display:flex;flex-direction:column;gap:8px;padding:12px 14px 13px')}>
             <div style={css('display:flex;flex-direction:column;gap:2px;min-width:0')}>
-              <span style={css(`font:600 13.5px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>
-              <span style={css(`font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>
+              <span style={css(TITLE)}>{p.title}</span>
+              <span style={css(META_MONO_ONE_LINE)}>
                 {p.slug} · {p.meta}
               </span>
             </div>
-            <div style={css('display:flex;align-items:center;gap:8px')}>
+            <div style={css(ROW)}>
               <RevLine p={p} />
-              <span style={css('flex:1')} />
-              <span title={stamp(p.built)} style={css(`font:400 11px ${MONO};color:var(--text-muted)`)}>{relTime(p.built)}</span>
+              <span style={css(FILL)} />
+              <span title={stamp(p.built)} style={css(META_MONO)}>{relTime(p.built)}</span>
             </div>
-            <div style={css('display:flex;align-items:center;gap:8px')}>
-              <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint)`)}>first built {monthYear(p.first)}</span>
-              <span style={css('flex:1')} />
+            <div style={css(ROW)}>
+              <span style={css(FAINT_MONO)}>first built {monthYear(p.first)}</span>
+              <span style={css(FILL)} />
               {page.remover(p.pid)}
             </div>
           </div>
@@ -968,7 +969,7 @@ export const VIEW_BODIES = Object.freeze({
           </div>
           <div style={css('flex:1;min-width:0;display:flex;flex-direction:column;gap:2px')}>
             <span style={css(`font:600 13px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>
-            <span style={css(`font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>
+            <span style={css(META_MONO_ONE_LINE)}>
               {p.slug} · {p.meta}
             </span>
           </div>
@@ -1135,9 +1136,7 @@ export class HammerolaProjects extends React.Component {
         key={key}
         onClick={onClick}
         style={css(`display:flex;align-items:center;padding:4px 12px;border-radius:5px;font:500 11.5px ${SANS};cursor:pointer;user-select:none;`
-          + (active
-            ? 'background:var(--card-bg);color:var(--text);box-shadow:0 1px 2px var(--shadow-soft)'
-            : 'color:var(--text-soft)'))}
+          + (active ? TAB_ON : TAB_OFF))}
       >
         {content}
       </div>
@@ -1267,7 +1266,7 @@ export class HammerolaProjects extends React.Component {
         + 'display:flex;align-items:center;justify-content:center;background:var(--shadow)')}
       >
         <div style={css('width:380px;max-width:100%;box-sizing:border-box;'
-          + 'background:var(--card-bg);border:1px solid var(--line);border-radius:12px;'
+          + CARD
           + 'box-shadow:0 14px 44px var(--shadow);padding:22px 22px 18px;'
           + 'display:flex;flex-direction:column;gap:10px')}
         >
@@ -1279,7 +1278,7 @@ export class HammerolaProjects extends React.Component {
             nothing undoes this.
           </div>
           <div style={css(`font:400 12px/1.6 ${SANS};color:var(--text)`)}>
-            Type <span style={css(`font:600 12px ${MONO};color:var(--accent-text)`)}>{pid}</span> to confirm.
+            Type <span style={css(ACCENT_MONO)}>{pid}</span> to confirm.
           </div>
           {/* The same three fills the sign-in field spends, and the same rule:
               recessed at rest, the palette's red tint once the hub has refused. */}
@@ -1292,16 +1291,15 @@ export class HammerolaProjects extends React.Component {
             onChange={(e) => this.setState({ typed: e.target.value })}
             onKeyDown={(e) => { if (e.key === 'Enter') this.remove(); }}
             style={css(`width:100%;box-sizing:border-box;height:36px;padding:0 12px;border-radius:6px;font:500 13px ${MONO};color:var(--text);outline:none;`
-              + (failed ? 'border:1px solid var(--danger-line);background:var(--danger-bg)'
-                : 'border:1px solid var(--line);background:var(--sunken-bg)'))}
+              + (failed ? DANGER : SUNKEN))}
           />
-          <div style={css(failed ? `font:400 11px/1.5 ${SANS};color:var(--danger)` : 'display:none')}>
+          <div style={css(failed ? `font:400 11px/1.5 ${SANS};color:var(--danger)` : HIDDEN)}>
             {failed}
           </div>
           <div style={css('display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:2px')}>
             <div
               onClick={this.cancelRemove}
-              style={css('display:flex;align-items:center;height:34px;padding:0 13px;border-radius:6px;'
+              style={css(DIALOG_BTN
                 + `cursor:pointer;user-select:none;font:600 12px ${SANS};`
                 + 'border:1px solid var(--line);background:var(--card-bg);color:var(--text)')}
             >
@@ -1315,12 +1313,12 @@ export class HammerolaProjects extends React.Component {
                 lines on both screens are already drawn on. */}
             <div
               onClick={this.remove}
-              style={css('display:flex;align-items:center;height:34px;padding:0 13px;border-radius:6px;'
+              style={css(DIALOG_BTN
                 + `user-select:none;font:600 12px ${SANS};`
                 + (armed
                   ? 'border:1px solid var(--danger-line);background:var(--danger-bg);'
                     + 'color:var(--danger);cursor:pointer'
-                  : 'border:1px solid var(--line);background:var(--sunken-bg);'
+                  : SUNKEN + ';'
                     + 'color:var(--text-faint);cursor:default'))}
             >
               {erasing ? 'Deleting…' : 'Delete'}
@@ -1383,26 +1381,21 @@ export class HammerolaProjects extends React.Component {
         + 'border:1px solid var(--line);background:var(--card-bg);text-align:left')}
       >
         <div style={css('display:flex;align-items:center;gap:8px;flex-wrap:wrap')}>
-          <span style={css(`font:600 11.5px ${SANS};color:var(--text)`)}>Hand this to your agent</span>
-          <span style={css('flex:1')} />
+          <span style={css(NAME_SANS)}>Hand this to your agent</span>
+          <span style={css(FILL)} />
           <div
             onClick={this.copy}
-            style={css('padding:4px 9px;border-radius:5px;cursor:pointer;user-select:none;'
-              + `font:600 10.5px ${SANS};border:1px solid var(--line);`
-              + 'background:var(--card-bg);color:var(--text)')}
+            style={css(PILL + BADGE_SANS + ON_CARD)}
           >
             {COPY_LABELS[this.state.copied] || 'Copy'}
           </div>
         </div>
-        <div style={css(`font:400 11px/1.55 ${SANS};color:var(--text-muted);margin-top:5px`)}>
+        <div style={css(BODY_SANS)}>
           It carries this hub&apos;s token: whatever you paste it into is holding a credential.
         </div>
-        <div style={css('margin-top:9px;padding:10px 11px;border-radius:6px;'
-          + 'border:1px solid var(--line);background:var(--sunken-bg);'
-          + 'display:flex;flex-direction:column;gap:3px')}
-        >
+        <div style={css(NOTE_BOX + SUNKEN + ';' + STACK)}>
           {this.brief().map((line) => (
-            <span key={line} style={css(`font:400 11px/1.55 ${MONO};color:var(--text);overflow-wrap:anywhere`)}>
+            <span key={line} style={css(BODY_MONO)}>
               {line}
             </span>
           ))}
@@ -1437,14 +1430,14 @@ export class HammerolaProjects extends React.Component {
             their own. The row gap only ever applies once it has wrapped. */}
         <div style={css('min-height:50px;display:flex;flex-wrap:wrap;align-items:center;'
           + 'gap:6px 12px;padding:0 20px;'
-          + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE}`)}>
-          <div style={css('display:flex;align-items:center;gap:8px')}>
+          + HEADER_BAR)}>
+          <div style={css(ROW)}>
             <Mark />
-            <span style={css(`font:700 14px ${SANS};letter-spacing:-.2px`)}>hammerola</span>
+            <span style={css(WORDMARK)}>hammerola</span>
           </div>
-          <div style={css(`width:1px;height:22px;background:${HEADER_LINE}`)} />
+          <div style={css(HEADER_RULE)} />
           <span style={css(`font:600 13px ${SANS};color:var(--text-soft)`)}>Projects</span>
-          <span style={css('flex:1')} />
+          <span style={css(FILL)} />
           <span style={css(`font:400 11px ${MONO};color:var(--text-faint)`)}>
             {rows.length === 1 ? '1 project' : `${rows.length} projects`}
           </span>
@@ -1457,7 +1450,7 @@ export class HammerolaProjects extends React.Component {
             onClick={this.props.onSignOut}
             style={css('display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:6px;cursor:pointer;'
               + `font:600 11.5px ${SANS};border:1px solid var(--line);`
-              + 'background:var(--card-bg);color:var(--text)')}
+              + ON_CARD)}
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
               <rect x="2.5" y="7" width="11" height="7" rx="1.5" />
@@ -1477,12 +1470,12 @@ export class HammerolaProjects extends React.Component {
                 page's 94.0, a groove drawn lighter than the surface it is cut
                 into — where the literal it replaced was darker than the page by
                 dE 4.0. Both pills below take the same track. */}
-            <div style={css('display:flex;background:var(--chip-bg);border-radius:6px;padding:2px;gap:2px')}>
+            <div style={css(SEGMENTED)}>
               {PROJECT_SORTS.map((id) =>
                 this.tab(this.sort === id, () => this.choose({ sort: id }), SORT_LABELS[id], id))}
             </div>
-            <span style={css('flex:1')} />
-            <div style={css('display:flex;background:var(--chip-bg);border-radius:6px;padding:2px;gap:2px')}>
+            <span style={css(FILL)} />
+            <div style={css(SEGMENTED)}>
               {PROJECT_VIEWS.map((id) =>
                 this.tab(this.view === id, () => this.choose({ view: id }),
                   <svg width="13" height="13" viewBox="0 0 13 13"><path d={VIEW_ICONS[id]} fill="currentColor" /></svg>, id))}

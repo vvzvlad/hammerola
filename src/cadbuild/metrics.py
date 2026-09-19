@@ -55,10 +55,6 @@ from hammerola.metricsdiff import (
     METRICS_NAME,
     METRICS_REL_TOL,
     PHYSICAL_FIELDS,
-    _field_moved,
-    _moved,
-    _part_summary,
-    _shown,
     metrics_diff,
     metrics_summary,
     moved_fields,
@@ -72,8 +68,9 @@ from .paths import project_root
 # Re-exported on purpose: `from .metrics import METRICS_NAME` and
 # `from src.cadbuild.metrics import metrics_diff` are what the build and its
 # tests are written against, and moving the implementation must not move the
-# names. Listed explicitly so a linter cannot decide the imports above are
-# unused and delete the module's public surface.
+# names. `__all__` is what keeps them: every name imported above is either
+# used in this file or listed here, so a linter has no unused import to delete
+# and cannot take the module's public surface with it.
 __all__ = [
     "METRIC_FIELDS", "METRICS_NAME", "METRICS_REL_TOL", "METRICS_VERSION",
     "collect_metrics", "metrics_diff", "metrics_summary", "read_baseline",

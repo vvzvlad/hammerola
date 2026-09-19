@@ -89,10 +89,10 @@ RESERVED_STEMS = {
 def check_stem(stem, made):
     """The key of a whole-build map, or a BuildError naming the rename.
 
-    MEMBER_RE AND NOT LABEL_RE, and the two differ in the place that matters
-    here: LABEL_RE caps a button caption at 32 characters, and nothing below is
-    a caption. A part name has a ceiling of its own -- MEMBER_RE's 128
-    characters -- and it is four times the caption's.
+    MEMBER_RE, which is the rule a name that becomes part of a FILE is held to:
+    128 characters, and the alphabet the hub will serve that file under. It is
+    deliberately not held to any shorter caption-shaped rule -- nothing below
+    is a caption.
 
     MEMBER_RE is the rule every catalogue key already passed in
     `read_catalogue`, so what this can actually catch is the other source of

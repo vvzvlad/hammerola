@@ -23,9 +23,13 @@
 //
 // THE HEX VALUES LIVE HERE. They are the colours of MODEL parts — the same kind
 // of value as the part colours the hub pushes in a view file — rather than
-// interface chrome, and tests/test_ui_source.py forbids a colour literal in
-// HammerolaViewer.jsx precisely so that nobody paints a panel by hand; a part
-// colour has to be somewhere, and the module that builds the parts is it.
+// interface chrome, and tests/test_ui_source.py forbids a colour literal on the
+// build page precisely so that nobody paints a panel by hand; a part colour has
+// to be somewhere, and the module that builds the parts is it. That check
+// sweeps everything the page draws with rather than the one component file, and
+// names this module in the two exemptions it allows — the other is
+// `DIFF_COLOURS` in hub.js, a payload colour for the same reason — so both
+// sides state the same thing instead of this module sitting outside in silence.
 import {
   booleans, extrusions, geometries, measurements, primitives, transforms,
 } from '@jscad/modeling'

@@ -80,6 +80,26 @@ be shorter, and renaming it breaks links, so it is not covered by this rule.
   notice. The corollary is what makes the rule actionable: when you
   catch yourself writing "keep X and Y in step" or "this must match Z", that sentence is the
   specification for a test, and the comment is the version that cannot fail.
+- **A comment says WHY, and three things it does not say** (decided 2026-09-19, issue #109).
+  The why-rule works and stays. What was measured is its price: `ui/src/HammerolaViewer.jsx`
+  carried 5812 lines of comment on 3197 lines of code — 72 % of the file, more bytes than the
+  whole of `docs/` — and the last three features came out at 70–88 % prose, of which the Ctrl+Z
+  one was 33 lines of behaviour under 239 lines of explanation. So:
+  1. **History goes in git and in the issue, not in the code.** "Used to be X", "was called Y",
+     "issue #N moved it here" — one reference, `#N` or a sha, and the story is a `git log -S`
+     away. This is the part that drifts silently: `PUBLISH_TOKEN` was explained as removed in ten
+     places, `cad_publish` in twenty-four files, `MAX_NOTES` in four — each of them a paragraph
+     about something no reader can find.
+  2. **Twelve lines is the ceiling for one block.** What does not fit is not shorter than it
+     should be — it belongs in the module's docstring or in `docs/`, where it is read once
+     instead of at every opening of the function. In the Viewer 195 blocks of 489 ran past ten
+     lines, forty past thirty, and the longest `//` run in the repository was 79.
+  3. **Do not explain what the next line does.** The code says that already, and about a third
+     of the blocks measured were doing it.
+
+  NOT a mandate to go and cut what is already written: that is weeks of work with nothing to
+  show, and it is not what was decided. This changes the cost of the NEXT feature; old prose is
+  tidied when a file is open for another reason anyway.
 - Runtime dependencies are pinned with `==`, and a dependency the code imports DIRECTLY is
   named in `requirements.txt` even when it already arrives through another package's extra.
   Inheriting it means an unrelated upgrade up the tree can take it away, and the import then

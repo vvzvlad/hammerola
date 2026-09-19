@@ -13,9 +13,7 @@ import unicodedata
 # Hub-side limits, mirrored so a bad model fails here with a readable message
 # instead of coming back as an opaque 422 from the hub (SPEC 7.1).
 MEMBER_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
-LABEL_RE = re.compile(r"\A[A-Za-z0-9._-]{1,32}\Z")
 RESERVED_NAMES = {"meta.json", "index.html", "metrics.json"}
-MAX_BUILD_BYTES = 64 * 1024 * 1024
 
 # The AUTHOR's note on a part: free text written in the catalogue that travels
 # with the build and is shown to whoever opens it -- a catalogue name, a

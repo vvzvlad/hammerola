@@ -49,7 +49,6 @@ import json
 import sys
 
 from hammerola import project, unpack
-from hammerola.errors import ClientError
 from hammerola.hub import HubError
 from hammerola.sources import SHORT_ID_CHARS, hub_for, resolve_revision
 from hammerola.metricsdiff import (METRICS_NAME, PHYSICAL_FIELDS, metrics_diff,

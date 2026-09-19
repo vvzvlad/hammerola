@@ -66,6 +66,14 @@ SCRATCH_GITIGNORE = "# Written by hammerola. Fetched builds and sources.\n*\n"
 
 
 def hub_for(root) -> Hub:
+    """The hub handle every project-addressing verb builds. -> Hub.
+
+    Shared by `admin`, `artifacts`, `proposal`, `queue`, `revdiff`, `sources`
+    and `status`, so a timeout or a header added to the client has ONE place to
+    go: four of those carried a byte-identical copy of these three lines until
+    they all became this call. Publishing deliberately does not come through
+    here — `cli.py` builds its own with the longer push budget.
+    """
     return Hub(config.hub_url(root), config.edit_token(root),
                timeout=QUERY_TIMEOUT)
 
@@ -151,7 +159,7 @@ def run_source(args) -> int:
 
     body = hub.revision_archive(revision)
 
-    if getattr(args, "into_working_copy", False):
+    if args.into_working_copy:
         return _into_working_copy(root, revision, body)
 
     dest = _fresh_directory(args, f"source-{revision[:SHORT_ID_CHARS]}")
@@ -176,7 +184,7 @@ def _fresh_directory(args, default_name: str) -> Path:
     into `.hammerola/`, because a default is what lands somewhere nobody chose.
     """
     base = Path(args.directory).expanduser() if args.directory else Path.cwd()
-    given = getattr(args, "output", None)
+    given = args.output
     dest = (Path(given).expanduser() if given
             else scratch_dir(base, default_name))
     if not dest.is_absolute():
@@ -264,7 +272,7 @@ def _into_working_copy(root, revision: str, body: bytes) -> int:
 def run_log(args) -> int:
     """Print the build log of a revision, of `latest`, or of the local slot."""
     root = project.optional_project_root(args.directory)
-    target = getattr(args, "revision", None) or LATEST
+    target = args.revision or LATEST
     hub = hub_for(root)
     if target == DEV_SLOT:
         # The slot belongs to a PROJECT, so this address needs one — unlike a

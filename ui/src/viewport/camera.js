@@ -141,3 +141,44 @@ export function projectPoint(g, point) {
   if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
   return [p.x, p.y, p.z];
 }
+
+/**
+ * Where a world point lands on a LAYER over the canvas, in CSS pixels, with the
+ * NDC depth alongside — `[x, y, z]`, or null for a point the projection cannot
+ * place.
+ *
+ * THE TWO RECTS ARE PASSED IN rather than measured here, and for ONE caller
+ * that is the difference between this and a synchronous reflow per point: the
+ * pin overlay walks its pins and its label, and each `put()` WRITES styles
+ * before the next one projects, so a `getBoundingClientRect()` between two of
+ * them would force the browser to flush the layout the previous write
+ * invalidated — inside a rAF loop that runs right through a pinch. The other
+ * three do not have that shape. The rotation handles take their four points in
+ * one breath, in `frameAt`, and place nothing until afterwards; the section
+ * grip and the arrows project one point each. Those three would pay a
+ * measurement per frame rather than a reflow, which is reason enough to hand
+ * the rects in but is not the reason above.
+ *
+ * Neither rect can change between two placings of one frame anyway: they are
+ * the canvas and the layer's own container, and nothing here writes to either.
+ *
+ * THE CANVAS'S RECT GIVES THE PIXEL SIZE OF THE NDC CUBE and the container's is
+ * what an absolutely-positioned child is placed against, so the difference of
+ * the two corners is the offset between them. All four layers spell the same
+ * sum — the pin overlay, the section grip, the manipulator's arrows and the
+ * rotation handles, which project four points a frame — and a second copy of it
+ * is a widget that drifts by the width of a border.
+ *
+ * `z > 1` IS FOR THE CALLER TO READ: it is behind the camera's far plane, i.e.
+ * behind the reader, which under an ortho projection is a real case rather than
+ * a curiosity — the frustum has a back and the model rotates through it.
+ */
+export function spot(g, rect, box, point) {
+  const ndc = projectPoint(g, point);
+  if (!ndc) return null;
+  return [
+    (ndc[0] * 0.5 + 0.5) * rect.width + (rect.left - box.left),
+    (-ndc[1] * 0.5 + 0.5) * rect.height + (rect.top - box.top),
+    ndc[2],
+  ];
+}

@@ -47,6 +47,13 @@ vi.mock('../src/viewport/parts.js', () => ({
   reconcileMoves: vi.fn(),
   statesOf: vi.fn(() => ({})),
   treeFromShapes: vi.fn(() => ({})),
+  // NOT REACHED FROM element.js AT ALL — the two halves of the manipulator ask
+  // it whether the selection can be taken hold of, and their loops are woken
+  // from here (the hold key releasing the cut). Null is what the real function
+  // answers for the empty selection these tests mount with, so the layers stop
+  // themselves exactly as they do against the real module; whether it refuses
+  // the right selections is parts.test.js's subject.
+  grabbable: vi.fn(() => null),
 }))
 
 vi.mock('../src/viewport/section.js', () => ({

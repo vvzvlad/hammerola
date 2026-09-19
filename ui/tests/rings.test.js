@@ -58,7 +58,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { HmrViewport } from '../src/viewport/element.js'
 import {
   EVENT_MOVED, EVENT_PROPOSALTURN, EVENT_TURNED,
 } from '../src/viewport/events.js'
@@ -71,10 +70,11 @@ import {
   RING_SHAFT_PX,
 } from '../src/viewport/options.js'
 import {
+  makeViewport, RECT, runFrames, settled, stubFrames,
+} from './component.js'
+import {
   fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
 } from './fakes.js'
-
-const RECT = { left: 0, top: 0, width: 800, height: 600 }
 
 const PART = '/Group/plate'
 
@@ -84,30 +84,14 @@ const PART = '/Group/plate'
  *  the three is being asked about. */
 const OBLIQUE = { right: [1, -1, 0], up: [1, 1, -2], forward: [-1, -1, -1] }
 
-// -- the rAF loop, driven by hand ---------------------------------------------
-// Same shape as gizmo.test.js: the module's loop re-arms itself from inside the
-// frame it is running, so a snapshot is taken before the callbacks run and what
-// they queue lands in the next one.
-let frames = new Map()
-let nextFrame = 0
-const runFrames = () => {
-  const due = [...frames.values()]
-  frames.clear()
-  for (const callback of due) callback(0)
-}
-
 const layers = []
 
 beforeEach(() => {
   vi.clearAllMocks()
-  frames = new Map()
-  nextFrame = 0
-  vi.stubGlobal('requestAnimationFrame', (callback) => {
-    nextFrame += 1
-    frames.set(nextFrame, callback)
-    return nextFrame
-  })
-  vi.stubGlobal('cancelAnimationFrame', (id) => frames.delete(id))
+  // The rAF loop, driven by hand (ui/tests/component.js): the module's loop
+  // re-arms itself from inside the frame it is running, so a snapshot is taken
+  // before the callbacks run and what they queue lands in the next one.
+  stubFrames()
 })
 
 afterEach(() => {
@@ -163,29 +147,24 @@ function scene({
   viewer.canvas = canvas
   viewer.renderer.domElement = canvas
 
-  const vp = Object.create(HmrViewport.prototype)
-  Object.assign(vp, fakeViewport(viewer, { tool, selected }))
-  vp.holdActive = false
-  // WHICH BUILD THE GEOMETRY IS OF — on a real element written in `show()`
-  // beside the payload. A fixture that left it null would test a viewport that
-  // has rendered nothing.
-  vp.drawnKey = 'build-1'
-  // The two fields `isOverlay` reads. Null and empty is a page with no proposal
-  // panel open, where every path on screen is the model's own.
-  vp.payload = overlay ? { name: 'Group', parts: [] } : null
-  vp.overlayParts = overlay || []
-  vp.box = { getBoundingClientRect: () => ({ ...RECT }) }
-  vp.dispatchEvent = vi.fn()
-  // THE OTHER HALF OF THE WIDGET, as `element.js` hangs it on the element. A
-  // press on the canvas ends the arrows' gesture as well as this layer's — one
-  // tool means both can be live at once, and two live drags on one part
-  // overwrite each other (`onDown`). A stub by default, replaced with the real
-  // layer by the tests that run the pair against each other.
-  vp.gizmo = { refresh: vi.fn(), endDrag: vi.fn(), destroy: vi.fn() }
-  // AND THE DOOR ONTO THE CANVAS GESTURE, which `installTools` publishes on the
-  // element. A press this layer KEEPS ends that too, because `stopPropagation`
-  // is what stops tools.js's own `onDown` concluding it.
-  vp.endGesture = vi.fn()
+  const vp = makeViewport({
+    ...fakeViewport(viewer, { tool, selected }),
+    // The two fields `isOverlay` reads. Null and empty — which is what the
+    // shared fixture defaults to — is a page with no proposal panel open, where
+    // every path on screen is the model's own.
+    payload: overlay ? { name: 'Group', parts: [] } : null,
+    overlayParts: overlay || [],
+    // THE OTHER HALF OF THE WIDGET, as `element.js` hangs it on the element. A
+    // press on the canvas ends the arrows' gesture as well as this layer's — one
+    // tool means both can be live at once, and two live drags on one part
+    // overwrite each other (`onDown`). A stub by default, replaced with the real
+    // layer by the tests that run the pair against each other.
+    gizmo: { refresh: vi.fn(), endDrag: vi.fn(), destroy: vi.fn() },
+    // AND THE DOOR ONTO THE CANVAS GESTURE, which `installTools` publishes on the
+    // element. A press this layer KEEPS ends that too, because `stopPropagation`
+    // is what stops tools.js's own `onDown` concluding it.
+    endGesture: vi.fn(),
+  })
   const rings = createRings(vp)
   layers.push(rings)
   vp.rings = rings
@@ -389,10 +368,6 @@ const facing = (group) => [group.quaternion.x, group.quaternion.y,
 
 /** Where a group ended up, as three numbers. */
 const at = (group) => [group.position.x, group.position.y, group.position.z]
-
-/** One turn of the microtask queue — both reports are deferred by exactly one
- *  (`reportProposalMove` in tools.js says why). */
-const settled = () => Promise.resolve()
 
 // The Z ring, seen square on: a circle of `RING_PX` about the middle of an
 // 800x600 canvas. Its `u` is world +X, which the camera puts to the RIGHT, and

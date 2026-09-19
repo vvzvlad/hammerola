@@ -92,8 +92,73 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+# `from './chromeview.js'` — a sibling module, as the interface imports one.
+SIBLING_IMPORT = re.compile(r"""from\s+['"]\./([\w./]+\.jsx?)['"]""")
+
+
+def _sibling_imports(path: Path) -> set[Path]:
+    """Every `./x.js` this file imports, RESOLVED against its own directory.
+
+    Resolved and not compared as text, which is the whole of the bug this
+    replaced: `"./events.js" in source` is true of five files under
+    `ui/src/viewport/`, and every one of them means its OWN `events.js`. The
+    page's `events.js` therefore read as "has other consumers" and dropped out
+    of the set below — a silent narrowing inside the function written to stop
+    silent narrowing. Comments are stripped for the same reason: `viewport/
+    index.js` names `./events.js` in its prose, and prose imports nothing.
+
+    ONLY `from` IMPORTS, and the one side-effect import in ui/src
+    (`main.jsx` → `./viewport/index.js`) is outside the set anyway. If a page
+    module ever gains a consumer that way it will be missed — which keeps that
+    module IN the page and swept, so this gap fails towards checking more.
+    """
+    return {(path.parent / name).resolve()
+            for name in SIBLING_IMPORT.findall(strip_comments(read(path)))}
+
+
+def page_draws_with() -> list[Path]:
+    """Everything the build page draws with: the component and what it imports.
+
+    Issue #103 cut seven modules off a 9312-line component, and every check
+    scoped to the component by NAME quietly started sweeping 1800 fewer lines
+    the moment it landed. DERIVED AND NOT LISTED for that reason: a list goes
+    stale in the direction of checking LESS, silently, exactly as that did.
+
+    REACHED RATHER THAN OWNED, and the difference is four files. "Which modules
+    belong to this page" excludes the ones the front page imports too —
+    `style.jsx`, `panelstyle.js`, `store.js`, `hub.js` — and those are then
+    swept by nobody, while a colour spelled in `panelstyle.js` is a colour on
+    this page whoever else spends it. The transitive closure is a strict
+    superset of ownership, so it can only fail towards sweeping more.
+
+    TRANSITIVE, though every import is one hop deep today: a module a PANEL
+    imports and the component does not is on this page just as much, and a
+    derivation that missed it would go dark in the same silent direction.
+
+    ONLY DIRECT CHILDREN OF ui/src, and only `from` imports. `ui/src/viewport/`
+    is its own layer with its own rules, so the walk neither keeps it nor
+    follows it. Panels moved down into `ui/src/panels/` would leave the sweep
+    the same way — the one direction this can still narrow without saying so.
+    """
+    seen: set[Path] = set()
+    todo = [COMPONENT]
+    while todo:
+        for path in _sibling_imports(todo.pop()):
+            if path.is_file() and path.parent == UI and path not in seen:
+                seen.add(path)
+                todo.append(path)
+    # THE FLOOR LIVES HERE AND NOT IN THE CALLER, which has a backstop the
+    # component satisfies on its own: "does the page spend a palette token" is
+    # answered yes by HammerolaViewer.jsx no matter how many modules fell out
+    # of the walk. This is the assertion that would not be.
+    assert seen, (
+        "page_draws_with() found nothing but the component. The derivation has "
+        "gone dark, so every check that takes it is back to sweeping one file")
+    return [COMPONENT] + sorted(seen)
+
+
 def strip_comments(source: str) -> str:
-    """Source with `//` and `/* */` comments removed.
+    r"""Source with `//` and `/* */` comments removed.
 
     Comments are where this file's rules are ALLOWED to be broken: a URL named in
     a sentence explaining why it is not fetched is not a fetch, and `innerHTML`
@@ -110,10 +175,16 @@ def strip_comments(source: str) -> str:
     Only WHOLE-LINE `//` comments go, never a trailing one: `https://` inside a
     string would otherwise be read as the start of a comment and take the rest of
     the line — including the URL this file exists to notice — with it.
+
+    `[ \t]` AND NOT `\s` IN THAT LAST PATTERN, which is the whole of whether the
+    paragraph above is true. `\s` matches a newline, so `^\s*//` starts its match
+    on the BLANK LINE before a comment and takes it away: 30 of the 47 files
+    under ui/src came out short, HammerolaViewer.jsx by 64 lines. Held by
+    `test_strip_comments_keeps_every_file_line_for_line`.
     """
     source = re.sub(r"/\*.*?\*/",
                     lambda m: re.sub(r"[^\n]", " ", m.group(0)), source, flags=re.S)
-    return re.sub(r"^\s*//.*$", "", source, flags=re.M)
+    return re.sub(r"^[ \t]*//.*$", "", source, flags=re.M)
 
 
 def declared_events(path: Path) -> dict:
@@ -180,6 +251,27 @@ def test_the_discovery_found_the_files():
     if not ADAPTER_FILES:
         pytest.skip("ui/src/viewport/ is empty — the cross-checks skip honestly")
     assert (VIEWPORT / "events.js").exists(), "the adapter is there but names no events"
+
+
+def test_strip_comments_keeps_every_file_line_for_line():
+    """`strip_comments` promises the numbering survives. Here is the promise.
+
+    Two checks stand on it: `test_nothing_splits_the_bundle` reads the RAW line
+    beside a stripped one to find `/* @vite-ignore */`, and anything reporting
+    a line number reports the stripped file's. It was false — `^\\s*//` matched
+    from the newline of the BLANK LINE before a comment and swallowed it, so 30
+    of these files came out short and this one by 64 lines. It stayed invisible
+    because the one file the bundle check indexes happened to lose nothing.
+    """
+    short = {path.name: len(read(path).splitlines())
+             - len(strip_comments(read(path)).splitlines())
+             for path in ALL_UI_FILES
+             if len(strip_comments(read(path)).splitlines())
+             != len(read(path).splitlines())}
+    assert not short, (
+        f"strip_comments changed the line count of {short} — every check that "
+        f"reports a line number now reports the wrong one, and the ones that "
+        f"read the raw line beside the stripped one read a different line")
 
 
 # -- the event contract ------------------------------------------------------
@@ -436,7 +528,14 @@ def test_every_meta_field_the_ui_reads_is_one_render_writes():
     written = (set(re.findall(r'"(\w+)":', render))
                | set(re.findall(r'\[\s*"(\w+)"\s*\]\s*=', render)))
     read_by_ui = set()
-    for path in (COMPONENT, UI / "hub.js"):
+    # EVERY FILE UNDER ui/src, and deliberately NOT `page_sources()`. This check
+    # was scoped to the component and hub.js, lost four fields to `chromeview.js`
+    # when the panels moved, and was then put on the derived page set — which is
+    # a dependency it does not need. "No `meta.x` anywhere that render.py does
+    # not write" is strictly stronger, needs no derivation to be right, and
+    # passes today with nothing excused. Only the colour rule is genuinely about
+    # this page rather than about the tree.
+    for path in ALL_UI_FILES:
         # `meta.json` is the FILE the fields come out of, not one of them, and it
         # is spelled the same way a field access is. Dropped by name rather than
         # by excluding the word `json`, so a field genuinely called `json` would
@@ -852,6 +951,40 @@ def test_the_browser_and_the_hub_spell_the_proposal_flag_the_same_way():
         f"interface reads as ON")
 
 
+def test_the_browser_walks_a_part_tree_as_deep_as_the_hub_publishes_one():
+    """One ceiling, two languages, and a page that loads either way (issue #98).
+
+    The hub refuses a push whose view nests parts deeper than MAX_VIEW_DEPTH, so
+    everything it serves is inside that number. The interface stops its own walk
+    at `MAX_DEPTH`, and the comment over it says in as many words that this is
+    the hub's ceiling copied — which nothing was holding it to.
+
+    DRIFT IS SILENT AND ONE-DIRECTIONAL. A browser ceiling BELOW the hub's does
+    not fail a build or log anything: `walk` answers `null` past it, so a
+    published assembly's deepest parts are simply not in the tree the panel
+    draws — no row, nothing to select, nothing to comment on — on a model the
+    hub accepted and is serving. Above it, nothing happens at all, because no
+    such view can be pushed.
+
+    The Python side is IMPORTED and the JavaScript side is read as text, which
+    is this file's division: the values that can be executed are executed.
+    """
+    from src.render import MAX_VIEW_DEPTH
+
+    source = strip_comments(read(UI / "hub.js"))
+    declared = re.search(r"const MAX_DEPTH = (\d+);", source)
+    assert declared, (
+        "ui/src/hub.js no longer declares MAX_DEPTH as a plain literal, so "
+        "this check is reading nothing. It is the ceiling the part-tree walk "
+        "stops at; pin it against src/render.MAX_VIEW_DEPTH however it is "
+        "spelled now")
+    assert int(declared.group(1)) == MAX_VIEW_DEPTH, (
+        f"the interface walks {declared.group(1)} levels of the part tree and "
+        f"src/render.py publishes up to {MAX_VIEW_DEPTH} — the parts below the "
+        f"lower of the two are missing from the tree panel of a model the hub "
+        f"accepted, with nothing in the browser to say so")
+
+
 def test_every_palette_token_the_interface_spends_is_defined():
     """A `var(--…)` nothing defines is a declaration the browser drops in silence.
 
@@ -1029,22 +1162,46 @@ def test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own():
     literal became which role, and why `#8a9099` and `#9aa1a9` are one level and
     not two — and prose paints nothing.
 
-    NO EXEMPTIONS. The only colour on this page that is not ours is the tree
-    swatch's, and it never was a literal here: it is `node.color`, read out of
-    the pushed model, which is the part's own colour and not the interface's to
-    theme.
+    TWO EXEMPTIONS, `proposalgeom.js` and `hub.js`, named in the body below and
+    in each module's own header. Their hexes colour MODEL PARTS rather than
+    interface chrome — the geometry of the bodies the reader is proposing, and
+    the three the comparison is published in — which is the same kind of value
+    the hub pushes in a view file. The other colour here that is not ours was
+    never a literal at all: the tree swatch is `node.color`, read out of the
+    pushed model.
     """
-    source = CHARACTER_REFERENCE.sub("", strip_comments(read(COMPONENT)))
-    found = sorted({match.group(0) for match in COLOUR_LITERAL.finditer(source)})
-    assert not found, (
-        f"{COMPONENT.name} writes {found} rather than naming a role from "
-        f"static/_v/tokens.css. A value here is right in one theme and wrong in "
-        f"the other, and the page that is wrong still renders")
-    # Otherwise a file that stopped painting anything at all would pass by
+    # THE WHOLE PAGE AND NOT THE ONE FILE, via `page_draws_with`: the panels
+    # were cut into modules of their own (#103) and took their `css()` strings
+    # with them, and the shared rules moved into `panelstyle.js` (#104), so a
+    # sweep of the component alone would now pass over most of the colour this
+    # page draws.
+    # TWO EXEMPTIONS, EACH STATED ON BOTH SIDES. `proposalgeom.js` builds the
+    # geometry of the bodies the reader is proposing; `DIFF_COLOURS` in `hub.js`
+    # is the three colours the comparison is PUBLISHED in, which the legend has
+    # to spend or stop matching the model. Both are the payload's colours, not
+    # the interface's: they do not follow the theme because the geometry they
+    # name does not follow it either. Each module's own header says so and names
+    # this check.
+    excused = {"proposalgeom.js", "hub.js"}
+    sources = page_draws_with()
+    whole = ""
+    for path in sources:
+        if path.name in excused:
+            continue
+        source = CHARACTER_REFERENCE.sub("", strip_comments(read(path)))
+        found = sorted({m.group(0) for m in COLOUR_LITERAL.finditer(source)})
+        assert not found, (
+            f"{path.name} writes {found} rather than naming a role from "
+            f"static/_v/tokens.css. A value here is right in one theme and "
+            f"wrong in the other, and the page that is wrong still renders")
+        whole += source
+    # Otherwise a page that stopped painting anything at all would pass by
     # having nothing to find, which is this module's own oldest failure mode.
-    assert re.search(r"var\(\s*--", source), (
-        f"{COMPONENT.name} spends no palette token at all — this check is "
-        f"sweeping a file that has stopped drawing")
+    # Asked of the page rather than of each file, because several of these
+    # modules legitimately draw nothing.
+    assert re.search(r"var\(\s*--", whole), (
+        "the build page spends no palette token at all — this check is "
+        "sweeping files that have stopped drawing")
 
 
 # A `css()` SOURCE FILE, CUT INTO DECLARATION-SIZED PIECES.
@@ -1127,7 +1284,7 @@ def test_the_accents_line_roles_are_never_spent_as_a_fill():
       * the compare legend's grey swatch takes `--line-strong` because it is a
         sample of a colour the MODEL will be painted in, standing beside two
         saturated ones;
-      * the tree's tri-state eye dot — `eyeDot` in HammerolaViewer.jsx — fills
+      * the tree's tri-state eye dot — `eyeDot` in ui/src/panelstyle.js — fills
         HALF of a 5px circle with it, `linear-gradient(90deg, var(--text-soft)
         50%, var(--line-strong) 50%)`, to say "some of this branch is hidden".
         The two halves are the SAME two roles the eye's outline already uses for

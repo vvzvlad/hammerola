@@ -70,42 +70,28 @@ const onSlot = (slot) => {
 beforeEach(() => onSlot(REV))
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
-import { indexTree } from '../src/hub.js'
+import { makeComponent } from './component.js'
 import { collect } from './eltree.js'
 
 /** The component as `computed()` sees it, on a pinned revision with a history. */
 function component({ builds = null, rail = null, props = {} } = {}) {
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { ...HammerolaViewer.defaultProps, ...props }
-  c.home = null
-  c.host = { current: null }
-  c.setState = vi.fn((patch) => { Object.assign(c.state, patch) })
-  c.state = {
-    meta: {
-      project: 'fixture', commit: REV, built: '2026-08-27T18:20:00Z',
-      parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
-      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
-                parts: ['lid'], gzip: 1000 }],
+  return makeComponent(HammerolaViewer, {
+    props: { ...HammerolaViewer.defaultProps, ...props },
+    state: {
+      meta: {
+        project: 'fixture', commit: REV, built: '2026-08-27T18:20:00Z',
+        parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
+        views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+                  parts: ['lid'], gzip: 1000 }],
+      },
+      builds,
+      rail, menu: { id: null, x: 0, y: 0 },
+      // A token, because the rail is drawn for the customer and hidden from the
+      // viewer entirely — without one, "closed" would be true for the wrong
+      // reason and the test would pass with the default flipped back.
+      token: 'sekrit',
     },
-    builds,
-    tree: indexTree({ id: '/model', name: 'model', children: [] }),
-    error: null, viewError: null, pending: null,
-    view: 'assembled', tool: null, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
-    bannerGone: false, rail, menu: { id: null, x: 0, y: 0 },
-    notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    // A token, because the rail is drawn for the customer and hidden from the
-    // viewer entirely — without one, "closed" would be true for the wrong
-    // reason and the test would pass with the default flipped back.
-    token: 'sekrit', tokenPop: false, tokenDraft: '',
-    theme: 'light',
-  }
-  return c
+  })
 }
 
 // -- the line under the title, and the tab strip ------------------------------

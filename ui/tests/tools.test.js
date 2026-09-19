@@ -34,7 +34,6 @@ vi.mock('../src/viewport/picking.js', async (importOriginal) => ({
   pickEntity: vi.fn(() => null),
 }))
 
-import { HmrViewport } from '../src/viewport/element.js'
 import {
   EVENT_FACE, EVENT_MENU, EVENT_MOVED, EVENT_PICK, EVENT_PROPOSALMOVE,
 } from '../src/viewport/events.js'
@@ -44,6 +43,7 @@ import { CLICK_PX } from '../src/viewport/options.js'
 import { faceNormalAt, pickEntity } from '../src/viewport/picking.js'
 import { placeSectionPlane, sectionOffset } from '../src/viewport/section.js'
 import { installTools } from '../src/viewport/tools.js'
+import { makeViewport, RECT, settled } from './component.js'
 import {
   fakeCapUnits, fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
 } from './fakes.js'
@@ -56,30 +56,30 @@ const teardowns = []
  * Built on the real prototype so `activeTool` is the element's own getter. Two
  * of its fields are deliberately not the real thing:
  *
- *   * `box` hands its listener back instead of being a DOM node. `onDown`
+ *   * `box` hands its listener back instead of being a DOM node, which is why
+ *     it is spelled here rather than taken from the shared fixture. `onDown`
  *     refuses any press whose `event.target` is not the library's canvas, and
  *     the fake canvas is not a node an event could be dispatched at;
- *   * `dispatchEvent` is a spy. The object's prototype chain reaches
- *     HTMLElement, but nothing built it through the DOM, so the inherited one
- *     would throw.
+ *   * `dispatchEvent` is a spy — `makeViewport`'s, for the reason it gives
+ *     there: the object's prototype chain reaches HTMLElement, but nothing
+ *     built it through the DOM, so the inherited one would throw.
  */
 function toolViewport(state = {}, viewer = fakeViewer()) {
-  const vp = Object.create(HmrViewport.prototype)
-  Object.assign(vp, fakeViewport(viewer, state))
-  vp.holdActive = false
-  vp.dispatchEvent = vi.fn()
-  vp.box = {
-    down: null,
-    // Every listener by type, not just the press: the right-button menu also
-    // needs the browser's own context menu kept off the canvas, and that is a
-    // second listener on this same element.
-    on: {},
-    addEventListener(type, fn) {
-      this.on[type] = fn
-      if (type === 'pointerdown') this.down = fn
+  const vp = makeViewport({
+    ...fakeViewport(viewer, state),
+    box: {
+      down: null,
+      // Every listener by type, not just the press: the right-button menu also
+      // needs the browser's own context menu kept off the canvas, and that is a
+      // second listener on this same element.
+      on: {},
+      addEventListener(type, fn) {
+        this.on[type] = fn
+        if (type === 'pointerdown') this.down = fn
+      },
+      removeEventListener() {},
     },
-    removeEventListener() {},
-  }
+  })
   teardowns.push(installTools(vp))
   return vp
 }
@@ -382,8 +382,6 @@ describe('with a section cut standing', () => {
     0, 5, 4, 0, 1, 5, 3, 2, 6, 3, 6, 7,
     0, 3, 7, 0, 7, 4, 1, 2, 6, 1, 6, 5,
   ])
-  const RECT = { left: 0, top: 0, width: 800, height: 600 }
-
   /** A viewport over one cube, looking down -Z, with the real cut laid on its
    *  +z face. `standing` is the renderer's clipping flag: switched off, the
    *  plane and the seed stay exactly where they are and nothing is cut — the
@@ -661,16 +659,12 @@ describe('what a drag with the move tool takes with it', () => {
     pointerMove([300, 100])
   }
 
-  /**
-   * One turn of the microtask queue.
-   *
-   * BOTH REPORTS ARE DEFERRED BY ONE, and every assertion about either has to
-   * wait that long — see `reportProposalMove` and `reportModelMove`, which say
-   * why: one of the endings that raise them is `endGesture`, and `endGesture` is
-   * called from inside `show()`, where a report that comes back as a stage would
-   * render the document that render is in the middle of replacing.
-   */
-  const settled = () => Promise.resolve()
+  // `settled` — one turn of the microtask queue (ui/tests/component.js).
+  // BOTH REPORTS ARE DEFERRED BY ONE, and every assertion about either has to
+  // wait that long — see `reportProposalMove` and `reportModelMove`, which say
+  // why: one of the endings that raise them is `endGesture`, and `endGesture` is
+  // called from inside `show()`, where a report that comes back as a stage would
+  // render the document that render is in the middle of replacing.
 
   /** The same drag, released — which is the only thing that reports it. */
   const dragAndDrop = async (vp) => {

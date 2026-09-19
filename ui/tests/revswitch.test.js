@@ -50,6 +50,7 @@ import { PAGE, buildKey, indexTree, loadBuilds, loadMeta } from '../src/hub.js'
 import {
   addNode, bodies, emptyProposal, moveNodes, moves, turnNodes,
 } from '../src/proposal.js'
+import { makeComponent, replaceState } from './component.js'
 import { guardPage } from './pageguard.js'
 
 const path = (slot) => `/project/proj1/${slot}/`
@@ -136,42 +137,21 @@ const TREE_B = {
  * callback — because the callback is where a swap tells the viewport.
  */
 function component(over = {}) {
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { ...HammerolaViewer.defaultProps }
-  c.home = null
-  c.carry = null
-  c.history = []
-  c.host = { current: null }
-  c.state = {
-    meta: {
-      project: 'fixture', commit: A, built: '2026-08-27T18:20:00Z',
-      parts: PARTS, views: VIEWS,
+  return makeComponent(HammerolaViewer, {
+    setState: replaceState,
+    sync: vi.fn(),
+    schedulePoll: vi.fn(),
+    toast: vi.fn(),
+    state: {
+      meta: {
+        project: 'fixture', commit: A, built: '2026-08-27T18:20:00Z',
+        parts: PARTS, views: VIEWS,
+      },
+      builds: BUILDS(),
+      tree: indexTree(TREE),
+      ...over,
     },
-    builds: BUILDS(),
-    tree: indexTree(TREE),
-    error: null, viewError: null, pending: null,
-    view: 'assembled', tool: null, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
-    bannerGone: false, rail: false, menu: null, swapping: false,
-    notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    token: 'sekrit', tokenPop: false, tokenDraft: '',
-    theme: 'light',
-    ...over,
-  }
-  c.setState = vi.fn((patch, done) => {
-    const next = typeof patch === 'function' ? patch(c.state) : patch
-    c.state = { ...c.state, ...next }
-    if (done) done()
   })
-  c.sync = vi.fn()
-  c.schedulePoll = vi.fn()
-  c.toast = vi.fn()
-  return c
 }
 
 /**
@@ -2718,9 +2698,11 @@ const SOURCE = readFileSync(resolve(process.cwd(), 'src/HammerolaViewer.jsx'), '
  *
  * The three quote characters are tracked, so a `//` inside a string is not a
  * comment. Regex literals are NOT, and do not have to be: a `/` is read as a
- * comment only when the next character is `/` or `*`, and this file has no
- * regex containing either (no escaped slash anywhere in it). Newlines survive,
- * so offsets still land on the line they came from.
+ * comment only when the next character is `/` or `*`, and no regex in the three
+ * files this reads contains either. NOT "no escaped slash anywhere", which this
+ * said until the component grew `/^image\/([a-z0-9+.-]+)$/i` -- an escaped
+ * slash is harmless, since what would mis-strip is `//` or `/*` inside a
+ * pattern. Newlines survive, so offsets still land on the line they came from.
  */
 function stripComments(js) {
   let out = ''
@@ -3031,6 +3013,20 @@ function patchKeys(args) {
 }
 
 /**
+ * A call to one of `names`, in either spelling this page writes calls in.
+ *
+ * ONE FORM FOR BOTH HALVES: in the component a door is `this.set({…})`, and in a
+ * module lifted out of `computed()` it is a bare `set({…})` destructured out of
+ * `deps` — so `this.` is optional and the rest is anchored instead. THE ANCHOR
+ * IS THE POINT: `\b` alone holds off `offset(` and `unset(` but not `rows.set(`,
+ * a Map write that is nobody's state, so `.` joins `\w$` in the lookbehind and
+ * `this.` is spelled back in as the one receiver that IS a door. The cost is
+ * said out loud — a write through any other receiver (`deps.set({ hidden })`) is
+ * as invisible here as a patch behind an identifier.
+ */
+const callTo = (names) => new RegExp(`(?<![\\w$.])(?:this\\.)?(?:${names})\\s*\\(`, 'g')
+
+/**
  * Complaints about who writes `hidden` and `ghost` in `source`.
  *
  * ONE WRITER IS ALLOWED AND IT IS NAMED BY METHOD: `onModel` is the build
@@ -3038,6 +3034,13 @@ function patchKeys(args) {
  * spends the snapshot, so it has nothing to keep in step. Excluded by name
  * rather than by how the call is written, because the way it is written is
  * exactly what this guard must not depend on.
+ *
+ * WHICH NAMES THOSE ARE IS THE CALLER'S, one list per file of the page. A module
+ * passes none: `onModel` is a class method of the component and nothing in a
+ * module holds the other end of that mechanism. A module naming one anyway is a
+ * complaint rather than a widened hole — the lookup below reads the component's
+ * two-space method shape, does not find it in a module, and says so, which is
+ * the same complaint the component gets when its own method moves.
  *
  * WHAT IT STILL CANNOT SEE, said out loud rather than implied. A patch built
  * into a variable first (`const patch = { hidden: [] }; this.set(patch)`): the
@@ -3054,12 +3057,14 @@ function patchKeys(args) {
 const VISIBILITY_KEYS = ['hidden', 'ghost']
 const MAY_WRITE_VISIBILITY = ['onModel']
 
-function auditVisibility(source) {
+function auditVisibility(source, allowed = MAY_WRITE_VISIBILITY) {
   const code = stripComments(source)
   const bad = []
-  const writers = code.match(/this\.setVisibility\(/g) || []
+  const writers = code.match(callTo('setVisibility')) || []
   // A regex that stopped matching is a check that vanished with the suite still
-  // green, here exactly as above.
+  // green, here exactly as above — and it is counted PER FILE, because the
+  // component on its own clears any whole-page floor while both modules have
+  // gone dark, which is the shape this widening was built to catch.
   if (writers.length < 2) bad.push('nothing calls setVisibility any more')
 
   // THE WINDOW IS A HOLE, so it is bounded by the same reading the doors above
@@ -3070,19 +3075,19 @@ function auditVisibility(source) {
   // nothing at all. `methodFrom` refuses both ways it can lose its bearings — no
   // closing line, or one belonging to a later method — and a refusal here is a
   // complaint, exactly like the exemption not resolving.
-  const exempt = MAY_WRITE_VISIBILITY.map((name) => {
+  const exempt = allowed.map((name) => {
     const at = new RegExp(`^  ${name}\\s*\\(`, 'm').exec(code)
     if (!at) return null
     const from = at.index + at[0].length
     const body = methodFrom(code, from)
     return body === null ? null : [at.index, from + body.length]
   }).filter(Boolean)
-  if (exempt.length !== MAY_WRITE_VISIBILITY.length) {
+  if (exempt.length !== allowed.length) {
     bad.push(`a method allowed to write these was not found, or does not end `
-             + `where this file's indentation says it should: ${MAY_WRITE_VISIBILITY}`)
+             + `where this file's indentation says it should: ${allowed}`)
   }
 
-  const call = /this\.set(?:State)?\s*\(/g
+  const call = callTo('set(?:State)?')
   for (let m = call.exec(code); m; m = call.exec(code)) {
     if (exempt.some(([from, to]) => m.index >= from && m.index < to)) continue
     const open = m.index + m[0].length - 1
@@ -3095,6 +3100,23 @@ function auditVisibility(source) {
   }
   return bad
 }
+
+/**
+ * Every file of the page this rule is about, with what may write these in it.
+ *
+ * THE PAGE AND NOT THE COMPONENT (#103): five of the six writers moved into
+ * `rowmenu.js` and `proposalview.js`, so a guard reading `HammerolaViewer.jsx`
+ * alone watches one of them and is green about the rest — which it was, because
+ * a bare `set(` matches no rule written for `this.set(`. A file belongs here
+ * when it calls `setVisibility`; the other five modules of the split call it
+ * nowhere, and the per-file canary would read their silence as the regex
+ * having died rather than as a file with nothing to keep in step.
+ */
+const VISIBILITY_PAGE = [
+  ['src/HammerolaViewer.jsx', MAY_WRITE_VISIBILITY],
+  ['src/rowmenu.js', []],
+  ['src/proposalview.js', []],
+]
 
 /** A method of two spaces' indentation, as this file writes them. */
 const method = (name, ...body) => [`  ${name}(detail) {`, ...body.map((l) => `    ${l}`), '  }']
@@ -3117,9 +3139,32 @@ const klass = (lines, extra = ONMODEL) => [
   '  }', '', ...extra, '}', '',
 ].join('\n')
 
+/**
+ * The other half the same fixtures have to be built in: a module of the split.
+ *
+ * The doors arrive in `deps` and are called with no receiver, and the two
+ * counted calls are the shape `rowmenu.js` and `proposalview.js` actually
+ * write. There is no `onModel` here and no class to hang one on, which is the
+ * fixture for what the exemption means in a module.
+ */
+const mod = (lines) => [
+  'export function view(s, deps) {',
+  '  const { leaves, rows, set, setState, setVisibility, toggle } = deps;',
+  '  return {',
+  '    onVis: () => setVisibility({ hidden: toggle(s.hidden, leaves) }),',
+  '    onGhost: () => setVisibility({ ghost: toggle(s.ghost, leaves) }),',
+  ...lines.map((l) => `    ${l}`),
+  '  };',
+  '}', '',
+].join('\n')
+
 describe('the reader changing what they can see', () => {
   it('never writes hidden or ghost through plain set()', () => {
-    expect(auditVisibility(SOURCE)).toEqual([])
+    VISIBILITY_PAGE.forEach(([file, allowed]) => {
+      const source = readFileSync(resolve(process.cwd(), file), 'utf8')
+
+      expect(auditVisibility(source, allowed), file).toEqual([])
+    })
   })
 
   it('is read out of the code here too', () => {
@@ -3256,5 +3301,54 @@ describe('the reader changing what they can see', () => {
     expect(bad[0]).toMatch(/does not end where/)
     expect(bad.some((b) => /hidden is written past setVisibility/.test(b)),
            'the widened window swallowed a real write').toBe(true)
+  })
+
+  // -- and the same guard against a module, which is where the writers went ----
+
+  it('catches the write where the call has no receiver at all', () => {
+    // The shape the split left behind: the door came out of `deps`, so the line
+    // says `set({ … })` and a rule wanting `this.set(` reads a file with no
+    // writers in it — green, watching nothing. The clean module is the control.
+    const clean = mod(['onPick: () => set({ sel: id, tool: null }),'])
+    const planted = mod(['onPick: () => set({ hidden: [] }),'])
+
+    expect(auditVisibility(clean, [])).toEqual([])
+    expect(auditVisibility(planted, [])).toHaveLength(1)
+    expect(auditVisibility(planted, [])[0]).toMatch(/hidden is written past setVisibility/)
+  })
+
+  it('does not read every name ending in set as one of those doors', () => {
+    // The price of dropping the receiver, and why the form is anchored on both
+    // sides rather than started at `set`. The last is the one a word boundary
+    // does not cover: a Map keyed by row, which writes nobody's state.
+    const nearby = [
+      'a: offset({ hidden: 1 }),',
+      'b: reset({ ghost: 1 }),',
+      'c: unset({ hidden: 1 }),',
+      'd: asset({ ghost: 1 }),',
+      'e: rows.set({ hidden: 1 }),',
+    ]
+
+    nearby.forEach((line) => {
+      expect(auditVisibility(mod([line]), []), line).toEqual([])
+    })
+  })
+
+  it('says so when a module stops calling setVisibility at all', () => {
+    // The canary, per file. A whole-page count is satisfied by the component's
+    // four on its own, so a module whose calls are gone — renamed, moved, or
+    // spelled some way this form no longer matches — would take its writers out
+    // of sight with the suite still green.
+    const dark = mod([]).replace(/setVisibility\(/g, 'sync(')
+
+    expect(auditVisibility(dark, [])[0]).toMatch(/nothing calls setVisibility/)
+  })
+
+  it('refuses an exemption a module cannot resolve', () => {
+    // An exemption is a hole, and the lookup that opens it reads a class method
+    // of the component. Handed a module, it finds nothing — and that has to be
+    // the same complaint the component gets, not a quiet zero-width window.
+    expect(auditVisibility(mod([]), MAY_WRITE_VISIBILITY)[0])
+      .toMatch(/allowed to write these was not found/)
   })
 })

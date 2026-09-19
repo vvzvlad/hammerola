@@ -25,10 +25,11 @@ import { geometries, transforms } from '@jscad/modeling'
 import { internals } from '../src/viewport/internals.js'
 import { GHOST_OPACITY, renderOptions } from '../src/viewport/options.js'
 import {
-  anglesOf, applyGhost, applyHidden, applySelected, movePart, movableGroup,
-  partCentre, quaternionOf, reconcileMoves, restageMoves, statesOf,
-  treeFromShapes, turned,
+  anglesOf, applyGhost, applyHidden, applySelected, grabbable, movePart,
+  movableGroup, partCentre, quaternionOf, reconcileMoves, restageMoves,
+  statesOf, treeFromShapes, turned,
 } from '../src/viewport/parts.js'
+import { HmrViewport } from '../src/viewport/element.js'
 import {
   fakeGroup, fakeMatrix, fakeShapeSolid, fakeViewer, fakeViewport,
 } from './fakes.js'
@@ -1294,5 +1295,87 @@ describe('movePart, turning', () => {
 
     expect(vp.viewer.update).toHaveBeenCalledTimes(drawn)
     expect(at(solid)).toEqual(stood)
+  })
+})
+
+// -- the one predicate three gestures ask ------------------------------------
+// `grabbable` was spelled out three times -- in the canvas press, in the axis
+// arrows and in the rotation handles -- and issue #101 lifted it here. The
+// three layers still exercise it through their own gestures (gizmo.test.js,
+// rings.test.js, tools.test.js drive real presses over real selections); what
+// those cannot state is the predicate's own shape, which is what this block is
+// for. A refusal that stops being a refusal shows up in all three layers at
+// once, and an assertion about WHICH selections are refused belongs next to
+// the function rather than in a comment above a mock.
+
+describe('grabbable', () => {
+  // `/Group` is the root `treeFromShapes` builds, and `proposal` is the group
+  // name `element.js` mints for the overlay when the model publishes none --
+  // so these are the paths the scene really holds, not a spelling invented
+  // here.
+  const MODEL = '/Group/plate'
+  const BODY = '/Group/proposal/plate'
+  const OVERLAY_GROUP = '/Group/proposal'
+
+  /**
+   * A viewport built on the REAL element prototype, for the reason
+   * gizmo.test.js gives: `isOverlay` and `overlayBody` are half of what this
+   * predicate asks, and a fake that re-implemented them would let this file
+   * agree with itself instead of with the code.
+   *
+   * `overlay` empty is a page with no proposal panel open, where every path on
+   * screen is the model's own.
+   */
+  function scene({ paths = [MODEL], overlay = [] } = {}) {
+    const groups = Object.fromEntries(
+      paths.map((path) => [path, fakeGroup([0, 0, 0])]))
+    const viewer = fakeViewer({ states: statesFor(paths), groups })
+    const vp = Object.create(HmrViewport.prototype)
+    Object.assign(vp, fakeViewport(viewer))
+    vp.payload = overlay.length ? { name: 'Group', parts: [] } : null
+    vp.overlayParts = overlay
+    return vp
+  }
+
+  it('refuses anything that is not a non-empty list of paths', () => {
+    const vp = scene()
+    expect(grabbable(vp, [])).toBeNull()
+    expect(grabbable(vp, null)).toBeNull()
+    expect(grabbable(vp, undefined)).toBeNull()
+    expect(grabbable(vp, MODEL), 'a bare string is not a selection').toBeNull()
+  })
+
+  it('takes a movable part of the model, and says it is not a proposal', () => {
+    const vp = scene()
+    const paths = [MODEL]
+    expect(grabbable(vp, paths)).toEqual({ paths, proposal: false })
+  })
+
+  it('refuses a path the scene has no movable group for', () => {
+    const vp = scene()
+    expect(grabbable(vp, ['/Group/not a part'])).toBeNull()
+  })
+
+  it('takes a body of the proposal, and says so', () => {
+    const vp = scene({ paths: [BODY], overlay: [{ name: 'plate' }] })
+    expect(grabbable(vp, [BODY])).toEqual({ paths: [BODY], proposal: true })
+  })
+
+  it('refuses the overlay GROUP node, which stands for no body', () => {
+    // `overlayBody` answers null for it: a drag of the group would arrive at
+    // the panel naming nothing the document has ever seen.
+    const vp = scene({
+      paths: [OVERLAY_GROUP, BODY], overlay: [{ name: 'plate' }],
+    })
+    expect(grabbable(vp, [OVERLAY_GROUP])).toBeNull()
+  })
+
+  it('refuses a MIXED selection whole rather than moving the half that may', () => {
+    // One overlay path makes the whole grab a proposal gesture, and then the
+    // model's own part has no body name to be reported under. There is no such
+    // thing as half of either statement.
+    const vp = scene({ paths: [BODY, MODEL], overlay: [{ name: 'plate' }] })
+    expect(grabbable(vp, [BODY, MODEL])).toBeNull()
+    expect(grabbable(vp, [MODEL, BODY])).toBeNull()
   })
 })

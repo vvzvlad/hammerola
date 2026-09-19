@@ -37,10 +37,11 @@
 // The ninth claim of the entry — that a revision switch carries no stale note
 // across — is in `revswitch.test.js`, where the swap's machinery already is.
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import HammerolaViewer, { noteFor, notesWith } from '../src/HammerolaViewer.jsx'
 import { indexTree } from '../src/hub.js'
+import { makeComponent } from './component.js'
 import { collect, texts } from './eltree.js'
 
 /**
@@ -93,47 +94,32 @@ const catalogue = (notes) => Object.fromEntries(
  * purpose: a fixture that called both of them `notes` would be the very mistake
  * the interface is being tested for.
  *
- * The state is spelled out in full rather than defaulted, like every other
- * fixture here: `computed()` reads nearly all of it, and a field left undefined
- * becomes a `TypeError` halfway down that reads like a failure of the box.
+ * The state is the whole page and not a slice of it: `computed()` reads nearly
+ * all of it, and a field left undefined becomes a `TypeError` halfway down that
+ * reads like a failure of the box. That whole page is `makeComponent`'s default
+ * (ui/tests/component.js); what is written below is what this file's tests are
+ * about.
  */
 function component({ sel = '/model/lid', notes, mine = {}, token = 'sekrit',
                      compare = false } = {}) {
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { ...HammerolaViewer.defaultProps }
-  c.home = null
-  c.carry = null
-  c.history = []
-  // `render()` hangs the viewport off this ref; without it the two tests that
-  // read the drawn tree throw before they get to the box.
-  c.host = { current: null }
-  c.setState = vi.fn((patch) => { Object.assign(c.state, patch) })
-  c.state = {
-    meta: {
-      project: 'fixture', commit: 'abc1234', built: '',
-      // The catalogue is always there — a build has parts whether or not any of
-      // them says anything — and it is the notes that are absent unless a test
-      // asks for them, which is the ordinary build.
-      parts: catalogue(notes === undefined ? { lid: '', post: '' } : notes),
-      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
-                parts: ['lid', 'post'], gzip: 1000 }],
+  return makeComponent(HammerolaViewer, {
+    state: {
+      meta: {
+        project: 'fixture', commit: 'abc1234', built: '',
+        // The catalogue is always there — a build has parts whether or not any of
+        // them says anything — and it is the notes that are absent unless a test
+        // asks for them, which is the ordinary build.
+        parts: catalogue(notes === undefined ? { lid: '', post: '' } : notes),
+        views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+                  parts: ['lid', 'post'], gzip: 1000 }],
+      },
+      tree: indexTree(TREE),
+      sel,
+      compare,
+      notes: mine,
+      token,
     },
-    builds: null,
-    tree: indexTree(TREE),
-    error: null, viewError: null, pending: null,
-    view: 'assembled', tool: null, held: false,
-    sel, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare, diffShow: 'both',
-    bannerGone: false, rail: false, menu: null,
-    notePop: null, noteDraft: '', notes: mine,
-    feed: [], activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    token, tokenPop: false, tokenDraft: '',
-    theme: 'light',
-  }
-  return c
+  })
 }
 
 /** Whether a `display:` string from `computed()` draws its block or not. */

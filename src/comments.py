@@ -62,13 +62,15 @@ import json
 import re
 import shutil
 import threading
-import unicodedata
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
 
+from src.errors import CommentError
+from src.records import (WIP_PREFIX, check_body_printable, one_line,
+                         sweep_leftovers)
 from src.safeio import read_regular_text
 from src.store import SAFE_ID, atomic_write_bytes, utcnow_iso
 
@@ -92,28 +94,10 @@ IMAGE_MAGIC = (
 # How much of an upload is enough to identify it. WebP puts `WEBP` at offset 8.
 SNIFF_BYTES = 16
 
-# One line of a JSON field: view id, part name, resolve note. Generous enough for
-# a nested part path like `/assembly/bracket/screw_3`, short enough that a queue
-# entry stays readable.
-MAX_FIELD_CHARS = 200
-
 # Ceiling on the parts of a comment that are not text or an image: the coordinate
 # and the camera. Fixed shapes, so this is only here to keep a hand-written
 # request from asking for a hundred-element "quaternion".
 MAX_VECTOR_LEN = 4
-
-# Temp-file prefix left behind by an interrupted write, swept at startup. The same
-# prefix `store` uses, so one sweep rule covers both trees.
-WIP_PREFIX = ".wip-"
-
-
-class CommentError(Exception):
-    """A refusal that carries the HTTP status it must be answered with."""
-
-    def __init__(self, status: int, message: str):
-        super().__init__(message)
-        self.status = status
-        self.message = message
 
 
 # -- attachments ------------------------------------------------------------
@@ -153,25 +137,15 @@ def _looks_like_svg(data: bytes) -> bool:
 
 
 # -- validation of the JSON half of a comment -------------------------------
-def _one_line(value, field: str, limit: int = MAX_FIELD_CHARS) -> str:
-    """A printable single-line string, or a CommentError naming the field."""
-    if not isinstance(value, str):
-        raise CommentError(422, f"`{field}` must be a string")
-    if len(value) > limit:
-        raise CommentError(422, f"`{field}` is longer than {limit} characters")
-    for char in value:
-        if unicodedata.category(char).startswith("C"):
-            raise CommentError(
-                422, f"`{field}` contains a non-printable character")
-    return value
-
-
 def _body_text(value, limit: int) -> str:
     """The comment itself: several lines allowed, control characters not.
 
-    Newline and tab survive because a comment is prose and people press Enter.
-    Everything else in Unicode category C goes — including U+202E, which reverses
-    the text around it in any terminal or editor the agent reads the queue in.
+    The scan is `records.check_body_printable`, which the proposal store shares:
+    newline and tab survive because a comment is prose and people press Enter,
+    and everything else in Unicode category C goes — including U+202E, which
+    reverses the text around it in any terminal or editor the agent reads the
+    queue in. What is local is the rest — a comment is normalized, may not be
+    empty and has a ceiling, and a proposal's projection has none of the three.
     """
     if not isinstance(value, str):
         raise CommentError(422, "`text` must be a string")
@@ -180,11 +154,7 @@ def _body_text(value, limit: int) -> str:
         raise CommentError(422, "`text` is empty")
     if len(value) > limit:
         raise CommentError(413, f"`text` is longer than {limit} characters")
-    for char in value:
-        if char in "\n\t":
-            continue
-        if unicodedata.category(char).startswith("C"):
-            raise CommentError(422, "`text` contains a non-printable character")
+    check_body_printable(value, CommentError)
     return value
 
 
@@ -235,7 +205,8 @@ def validate_payload(raw, max_text_chars: int) -> dict:
     payload = {"text": _body_text(raw.get("text"), max_text_chars)}
     for field in ("view", "part", "key", "published"):
         value = raw.get(field)
-        payload[field] = None if value is None else _one_line(value, field)
+        payload[field] = (None if value is None
+                          else one_line(value, field, CommentError))
     point = raw.get("point")
     payload["point"] = None if point is None else _numbers(point, "point", 3)
     payload["camera"] = _camera(raw.get("camera"))
@@ -259,22 +230,9 @@ class CommentStore:
         self.max_photo_bytes = max_photo_bytes
         self._lock = threading.Lock()
         self.root.mkdir(parents=True, exist_ok=True)
-        self._sweep_leftovers()
-
-    # -- startup bookkeeping ------------------------------------------------
-    def _sweep_leftovers(self) -> None:
-        """Drop temp files an earlier run died in the middle of writing.
-
-        They are dot-prefixed, so nothing lists or serves them and nothing else
-        would ever notice they are there.
-        """
-        for path in self.root.glob(f"*/{WIP_PREFIX}*"):
-            try:
-                path.unlink()
-            except OSError as error:
-                logger.warning(f"could not sweep leftover {path}: {error}")
-                continue
-            logger.info(f"swept leftover {path}")
+        # One directory per project, so the leftovers of an interrupted write
+        # sit one level down.
+        sweep_leftovers(self.root, f"*/{WIP_PREFIX}*")
 
     # -- reading ------------------------------------------------------------
     def _read_all(self) -> list:
@@ -473,8 +431,9 @@ class CommentStore:
                 return None
             record["status"] = "resolved"
             record["resolved"] = utcnow_iso()
-            record["note"] = (None if note is None
-                              else _one_line(note, "note", MAX_FIELD_CHARS))
+            record["note"] = (
+                None if note is None
+                else one_line(note, "note", CommentError))
             atomic_write_bytes(
                 path,
                 json.dumps(record, indent=1, ensure_ascii=False,

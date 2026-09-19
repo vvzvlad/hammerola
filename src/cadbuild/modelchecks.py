@@ -399,7 +399,38 @@ def _opaque_fill(node, collected):
             and bool(node.value.elts))
 
 
-def count_checks(func):
+# A checks() read back off disk and parsed, once. `count_checks` wants the tree
+# alone; `static_asserts` wants the other two as well -- `source` is the text
+# `ast.get_source_segment` quotes each assert out of, and `first` is the line
+# model.py holds the `def` on, which is what turns a node's `lineno` into a line
+# the author can open.
+_ChecksSource = collections.namedtuple("_ChecksSource", "tree source first")
+
+
+def _checks_source(func):
+    """`_ChecksSource` for `func`, or None when its source cannot be read.
+
+    ONE READ AND ONE PARSE FOR BOTH READERS. `count_checks` and
+    `static_asserts` ask the same question of the same function, and each used
+    to do its own `inspect.getsource` + `ast.parse` -- so `run_checks` read and
+    parsed the author's checks() twice per build. `inspect.getsource` is
+    `"".join(getsourcelines(...)[0])`, so the text both worked on was already
+    the same string.
+
+    None rather than a raise for the three failures a checks() actually arrives
+    with -- a C function, one built by `exec`, a file that has moved since it
+    was imported -- which is the set `count_checks` has always answered None
+    for. Anything else is left to escape, exactly as it did from there.
+    """
+    try:
+        lines, first = inspect.getsourcelines(func)
+        source = textwrap.dedent("".join(lines))
+        return _ChecksSource(ast.parse(source), source, first)
+    except (OSError, TypeError, SyntaxError):
+        return None
+
+
+def count_checks(func, parsed=None):
     """How many checks the function's source holds -- in either style.
 
     Checks get written two ways, and the count has to see both. `assert` is
@@ -425,11 +456,15 @@ def count_checks(func):
     a wrong "empty checks()" would go red on somebody's working model, which is
     far more expensive than failing to print a number. Every rule here is
     written so that an unreadable body ends at None and never at 0.
+
+    `parsed` is `_checks_source(func)`, taken once by a caller that also calls
+    `static_asserts`; left out, it is read here.
     """
-    try:
-        tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
-    except (OSError, TypeError, SyntaxError):
+    if parsed is None:
+        parsed = _checks_source(func)
+    if parsed is None:
         return None
+    tree = parsed.tree
 
     returns, collected = _collected_names(tree)
     reraises = _reraises(tree)
@@ -748,7 +783,7 @@ def _small_exponent(value):
     return isinstance(value, (int, float)) and abs(value) <= MAX_STATIC_POW
 
 
-def static_asserts(func, namespace):
+def static_asserts(func, namespace, parsed=None):
     """`[(lineno, source)]` for the asserts whose truth the constants settle.
 
     `namespace` is the model module's own `vars()`. Line numbers are the ones
@@ -772,11 +807,17 @@ def static_asserts(func, namespace):
     escaped into `run_checks` AFTER every check of the model had passed and
     turned a green build into a crash, for a printed note. "Could not work it
     out" means "found nothing", on every path.
+
+    `parsed` is `count_checks`'s `_checks_source(func)`, handed over rather
+    than read and parsed again. Taking it here stays INSIDE the try, so the
+    promise above holds for a caller that leaves it out.
     """
     try:
-        lines, first = inspect.getsourcelines(func)
-        source = textwrap.dedent("".join(lines))
-        tree = ast.parse(source)
+        if parsed is None:
+            parsed = _checks_source(func)
+        if parsed is None:
+            return []
+        tree, source, first = parsed
 
         # The locals go in as the sentinel rather than being kept in a second
         # set: one lookup then answers both questions a name raises -- "what
@@ -1019,7 +1060,15 @@ def run_checks(model, out_dir):
             f"model.py defines checks, but it is a {type(checks).__name__}, "
             "not a function")
 
-    count = count_checks(checks)
+    # Read and parsed ONCE, here, for the two readers of it below: the count on
+    # the next line and the static-assert note after the checks have run. None
+    # when the source cannot be read at all -- a C function, something built by
+    # exec(), a file that moved. Both readers then repeat the failed read for
+    # themselves and arrive at the same answer, which costs a miss and nothing
+    # else; "once" is about the ordinary path, where there is a source to read.
+    parsed = _checks_source(checks)
+
+    count = count_checks(checks, parsed)
     units = _registered_units()
     if count == 0 and not units:
         raise BuildError(
@@ -1133,7 +1182,7 @@ def run_checks(model, out_dir):
 
     # `vars(model)` is the module's own namespace: the constants at the top of
     # model.py, which is exactly what "decided by the constants alone" means.
-    static = static_asserts(checks, vars(model))
+    static = static_asserts(checks, vars(model), parsed)
     passed = count
     if passed is not None:
         passed -= len(static)

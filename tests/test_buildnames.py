@@ -31,7 +31,7 @@ import ast
 import sys
 from pathlib import Path
 
-from src import app, render
+from src import app, records, render
 from hammerola import artifacts, buildnames
 from hammerola import project as client_project
 
@@ -44,6 +44,11 @@ def test_the_publishing_half_re_exports_the_shared_objects_and_not_copies():
     a year later, when the two have quietly drifted apart."""
     assert render.unservable_reason is buildnames.unservable_reason
     assert render.first_nonprintable is buildnames.first_nonprintable
+    # The fourth reader, and the only one that answers at a write door: both
+    # helpers in `src/records.py` refuse a comment or a proposal field with a
+    # 422. Its docstring says "the loop is `first_nonprintable`'s, and the whole
+    # point is that there is one of it" -- which is a promise, until it is here.
+    assert records.first_nonprintable is buildnames.first_nonprintable
 
 
 def test_the_client_asks_the_hubs_own_rule_and_not_an_approximation_of_it():

@@ -30,7 +30,7 @@ import pytest  # noqa: E402  (must come after the env assignment above)
 
 from harness import start_hub, stop_hub  # noqa: E402
 from process_limits import rlimits as _rlimits  # noqa: E402
-from src import onboarding  # noqa: E402
+from src import jobs, onboarding  # noqa: E402
 from src.jobs import WORKER_THREAD_PREFIX  # noqa: E402
 
 
@@ -272,14 +272,34 @@ def onboarding_cache_sandbox():
         cache.cache_clear()
 
 
+# --- What a hub costs to STOP, which every test using one pays ---------------
+# `stop_hub` is `shutdown()` + `server_close()` + `join()`, and the middle one is
+# where the time is: closing the server stops the build pool, and joining an idle
+# worker cannot finish sooner than the `Queue.get(timeout=WORKER_POLL_SECONDS)`
+# it is sitting in. At the production value that is 50 ms of pure waiting per
+# hub, measured as ~44 ms of the ~57 ms a stop takes — and `hub` alone is asked
+# for by over five hundred tests (issue #99).
+#
+# The constant is PRODUCTION TUNING and nothing reads it as a fact: it decides
+# how often an idle worker wakes to notice it is being shut down, and no test
+# asserts anything about that number or about how long a stop takes. So the
+# suite is free to ask its workers to wake more often, which is all this does.
+# `src/jobs.py` keeps the real value — do not change it there to make the suite
+# faster; the hub's idle cost is a deployment's, not a test's.
+TEST_WORKER_POLL_SECONDS = 0.002
+
+
 @pytest.fixture
-def hub(tmp_path):
+def hub(tmp_path, monkeypatch):
     """A live hub on an ephemeral port, with its own empty data directory.
 
     Function-scoped on purpose: publication mutates a directory tree, a symlink
     and two index files, so tests that shared one hub would depend on collection
     order the moment one of them published anything.
     """
+    # BEFORE the pool exists, so every worker this hub starts is already waking
+    # at the suite's interval rather than the deployment's.
+    monkeypatch.setattr(jobs, "WORKER_POLL_SECONDS", TEST_WORKER_POLL_SECONDS)
     instance = start_hub(tmp_path / "data")
     try:
         yield instance
@@ -288,9 +308,10 @@ def hub(tmp_path):
 
 
 @pytest.fixture
-def hub_factory(tmp_path):
+def hub_factory(tmp_path, monkeypatch):
     """For tests that need a hub configured differently (size caps, mostly)."""
     started = []
+    monkeypatch.setattr(jobs, "WORKER_POLL_SECONDS", TEST_WORKER_POLL_SECONDS)
 
     def make(**kw):
         instance = start_hub(tmp_path / f"data{len(started)}", **kw)
