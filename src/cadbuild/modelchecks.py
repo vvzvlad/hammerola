@@ -1061,7 +1061,11 @@ def run_checks(model, out_dir):
             "not a function")
 
     # Read and parsed ONCE, here, for the two readers of it below: the count on
-    # the next line and the static-assert note after the checks have run.
+    # the next line and the static-assert note after the checks have run. None
+    # when the source cannot be read at all -- a C function, something built by
+    # exec(), a file that moved. Both readers then repeat the failed read for
+    # themselves and arrive at the same answer, which costs a miss and nothing
+    # else; "once" is about the ordinary path, where there is a source to read.
     parsed = _checks_source(checks)
 
     count = count_checks(checks, parsed)

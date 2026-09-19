@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Where the project being built lives, and the two paths derived from it.
+"""Where the project being built lives, and how it is found.
 
 This code used to be a script inside the project, so `__file__` was the answer:
 `Path(__file__).resolve().parent.parent` was the checkout, always. It stopped
