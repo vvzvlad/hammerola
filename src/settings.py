@@ -89,6 +89,19 @@ class Settings(BaseSettings):
     # makes it the ceiling that actually saves the work.
     comment_max_body_bytes: int = Field(default=20 * 1024 * 1024, ge=1)
 
+    # Ceiling on the body of a stored proposal (`POST /api/v1/proposals/<pid>`).
+    # Not a secret, so it has a default, and it is about SIZE like the three
+    # above: an unbounded parse and an unbounded store are not made safe by the
+    # credential in front of them.
+    #
+    # FAR SMALLER THAN A COMMENT'S, and the reason is what the two bodies carry.
+    # A comment's ceiling has to clear a phone photo AND the viewer's render of
+    # the frame; a proposal is a few dozen lines of numbers — the document the
+    # browser holds and the aligned text it renders off it — with no image in it
+    # anywhere. 256 KiB is orders of magnitude more than the panel can produce
+    # by hand and still small enough that the parse is free.
+    proposal_max_body_bytes: int = Field(default=256 * 1024, ge=1)
+
     # -- the proposal panel, which a hub serves only if it was asked to --------
     #
     # NOT A SECRET, so it has a default — and the default is OFF because of what

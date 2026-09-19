@@ -247,7 +247,7 @@ def test_a_project_with_no_builds_can_still_be_removed(hub):
     removed = _remove(hub, "empty1")
     assert removed.status_code == 200
     assert removed.json() == {"pid": "empty1", "builds": 0, "sources": 0,
-                              "comments": 0}
+                              "comments": 0, "proposal": False}
     assert hub.get("/project/empty1/").status_code == 404
 
 

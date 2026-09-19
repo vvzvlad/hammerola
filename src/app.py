@@ -56,6 +56,11 @@ Routing (SPEC 3, 7.4):
     GET  /api/v1/comments/<id>/shot           its rendered frame       EDIT_TOKEN
     POST /api/v1/comments/<id>/resolve        mark it handled          EDIT_TOKEN
 
+    GET    /api/v1/proposals/<pid>            the project's proposal   EDIT_TOKEN
+    POST   /api/v1/proposals/<pid>            store it, replacing
+                                              whatever was there       EDIT_TOKEN
+    DELETE /api/v1/proposals/<pid>            put it away              EDIT_TOKEN
+
 ONE SECRET GUARDS EVERY WRITE AND EVERY PRIVATE READ (issue #26, step 0
 of the plan), and there is exactly one string on the private side of it. There
 used to be two, PUBLISH_TOKEN and COMMENT_READ_TOKEN, and writing a comment used
@@ -141,7 +146,11 @@ from urllib.parse import parse_qs, unquote
 from loguru import logger
 
 from hammerola import buildnames
-from src import onboarding, render
+# `proposals` AS A MODULE AND NOT BY NAME, unlike the imports below it: it
+# exports a `validate_payload` of its own, `src.comments` already supplies one
+# here, and two functions of that name in one file are a rename away from being
+# silently swapped for each other.
+from src import onboarding, proposals, render
 from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
                           normalize_since, validate_payload)
 from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
@@ -452,7 +461,8 @@ def _safe_name(name: str) -> bool:
     return buildnames.unservable_reason(name) is None
 
 
-def make_handler(store: Store, comment_store: CommentStore, settings,
+def make_handler(store: Store, comment_store: CommentStore,
+                 proposal_store: proposals.ProposalStore, settings,
                  jobs: JobStore, builds: BuildQueue):
     """Build the request handler class bound to one store and one settings object.
 
@@ -580,6 +590,8 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                                                with_body, query)
                 if segments[:3] == ["api", "v1", "comments"]:
                     return self._serve_comments(segments[3:], query, with_body)
+                if segments[:3] == ["api", "v1", "proposals"]:
+                    return self._serve_proposal(segments[3:], with_body)
                 if segments[:3] == ["api", "v1", "jobs"]:
                     return self._serve_jobs(segments[3:], with_body)
                 if segments[:3] == ["api", "v1", "sources"]:
@@ -1222,6 +1234,29 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             return self._send(200, data, ctype, CACHE_NONE,
                               {"Content-Disposition": "attachment"}, with_body)
 
+        # -- the stored proposal, read side ----------------------------
+        def _serve_proposal(self, rest: list[str], with_body: bool):
+            """GET /api/v1/proposals/<pid> — this project's one proposal.
+
+            The token is checked BEFORE the shape of the request is, for the
+            reason `_serve_comments` states: without it, a caller must not be
+            able to use the difference between 401 and 404 to find out which
+            projects somebody is drafting against.
+
+            A project with no proposal and an id that is not one this hub could
+            ever have get the same 404: the id is checked before anything is
+            joined onto the store's root, and neither answer says more than the
+            other.
+            """
+            if not self._require_token(with_body):
+                return None
+            if len(rest) != 1 or not store.valid_pid(rest[0]):
+                return self._error(404, "not found", with_body=with_body)
+            record = proposal_store.get(rest[0])
+            if record is None:
+                return self._error(404, "not found", with_body=with_body)
+            return self._json(200, record, CACHE_NONE, with_body=with_body)
+
         # -- publish ---------------------------------------------------
         def _authorized(self) -> bool:
             """Constant-time check of the bearer token (SPEC 7, 7A.2).
@@ -1320,6 +1355,11 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 if segments[4] == "resolve":
                     return self._handle_comment_resolve(segments[3])
                 return self._handle_comment_post(segments[3], segments[4])
+
+            if segments[:3] == ["api", "v1", "proposals"]:
+                if len(segments) == 4:
+                    return self._handle_proposal_post(segments[3])
+                return self._error(404, "not found", {"Connection": "close"})
 
             if segments[:3] == ["api", "v1", "projects"]:
                 if len(segments) == 5 and segments[4] == "title":
@@ -2030,29 +2070,36 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
                 return None
 
         def _handle_delete(self):
-            """DELETE /api/v1/projects/<pid> — the whole project, all of it.
+            """DELETE /api/v1/projects/<pid> — the whole project, all of it,
+            and DELETE /api/v1/proposals/<pid> — the stored proposal alone.
 
-            THE ONLY WAY ANYTHING LEAVES THE VOLUME. There is no retention
+            THE ONLY WAYS ANYTHING LEAVES THE VOLUME. There is no retention
             (SPEC 5.3) and no route that removes a single build, and the second
             of those is the deliberate half: a build's URL is permanent and
             immutable, so removing one build turns a promise into a 404 while
             leaving the project standing. Removing the PROJECT takes the promise
             away together with everything it was about — its builds, its
-            pointers, its comment queue and the stored code of its revisions —
-            which is the honest shape for "I made a test project and I am done
-            with it" (issue #26).
+            pointers, its comment queue, its proposal and the stored code of its
+            revisions — which is the honest shape for "I made a test project and
+            I am done with it" (issue #26). A proposal is the other kind of
+            thing entirely: nobody was ever given a link to it, it is the
+            reader's own working document, and putting it away breaks no promise
+            to anybody. That is also why it is a second COLLECTION rather than a
+            narrower delete under the first: what may be unmade here is decided
+            by the name in the URL, and `projects` still means all of it.
 
-            Behind EDIT_TOKEN and checked first, so nothing about a project is
-            read or touched without it, and every miss is the same 404.
+            Behind EDIT_TOKEN and checked first, so nothing is read or touched
+            without it, and every miss is the same 404.
             """
             if not self._require_token(close=True):
                 return None
             path = self.path.split("?", 1)[0]
             segments = self._split(path)
-            if segments[:3] != ["api", "v1", "projects"] or len(segments) != 4:
+            if segments[:2] != ["api", "v1"] or len(segments) != 4 or \
+                    segments[2] not in ("projects", "proposals"):
                 return self._error(404, "not found", {"Connection": "close"})
             # A body would sit unread on the socket and be parsed as the next
-            # request. Nothing about this route takes one, so it is refused
+            # request. Nothing about these routes takes one, so it is refused
             # rather than drained.
             if self.headers.get("Transfer-Encoding") or \
                     (self.headers.get("Content-Length") or "0").strip() not in \
@@ -2063,6 +2110,11 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             pid = segments[3]
             if not store.valid_pid(pid):
                 return self._error(404, "not found")
+            if segments[2] == "proposals":
+                # No 404 for a project with nothing stored: the caller asked for
+                # this document to be gone and it is, which is the same answer
+                # either way — and the boolean is what says which it was.
+                return self._json(200, {"removed": proposal_store.remove(pid)})
             removed = store.remove_project(pid)
             if removed is None:
                 return self._error(404, "not found")
@@ -2070,6 +2122,10 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             # anchors to <pid>/<commit> (SPEC 7A.1), so once the builds are gone
             # every entry in it points at something nobody can open.
             removed["comments"] = comment_store.remove_project(pid)
+            # And the proposal, for the same reason: it is a statement about
+            # THIS project's geometry, so once the builds are gone there is
+            # nothing left for it to be about.
+            removed["proposal"] = proposal_store.remove_project(pid)
             logger.info(f"project {pid} removed: {removed}")
             return self._json(200, removed)
 
@@ -2236,6 +2292,69 @@ def make_handler(store: Store, comment_store: CommentStore, settings,
             # reply, which stays a bare id because nothing needs more.
             return self._json(201, {"id": record["id"]})
 
+        # -- the stored proposal, write side ---------------------------
+        def _handle_proposal_post(self, pid: str):
+            """POST /api/v1/proposals/<pid> — EDIT_TOKEN.
+
+            ONE PROPOSAL PER PROJECT: this replaces whatever was stored rather
+            than adding to it, which is what saving a working document means.
+
+            The token is checked first, ahead of the route and ahead of
+            Content-Length, for the reason `_handle_comment_post` gives: a
+            caller without the secret must not be able to make this hub read a
+            body and parse it just to be told no. Every early refusal closes the
+            connection, because the unread remains of the body would otherwise
+            be parsed as the next request on a keep-alive connection.
+
+            The project does not have to exist and is deliberately not looked
+            for: a proposal is a statement somebody is drafting, the id is the
+            only thing joined onto the store's root, and asking the volume would
+            be a second answer about what is published here for no reader that
+            needs one.
+            """
+            if not self._require_token(close=True):
+                return None
+            if not store.valid_pid(pid):
+                return self._error(404, "not found", {"Connection": "close"})
+            if self.headers.get("Transfer-Encoding"):
+                # Nothing here decodes chunked, and the ceiling below is applied
+                # to Content-Length, so a body of unknown length cannot be
+                # bounded before it is read.
+                return self._error(411, "Content-Length is required",
+                                   {"Connection": "close"})
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                return self._error(411, "Content-Length is required",
+                                   {"Connection": "close"})
+            if length < 0:
+                return self._error(400, "invalid Content-Length",
+                                   {"Connection": "close"})
+            if length > settings.proposal_max_body_bytes:
+                # Answered without reading, so the ceiling saves the work rather
+                # than reporting it afterwards.
+                return self._error(
+                    413,
+                    f"body is {length} bytes, limit is "
+                    f"{settings.proposal_max_body_bytes}",
+                    {"Connection": "close"})
+
+            body, problem = self._read_body(length)
+            if problem is not None:
+                status, message = problem
+                return self._error(status, message, {"Connection": "close"})
+
+            try:
+                payload = proposals.validate_payload(proposals.parse_body(body))
+                record = proposal_store.put(pid, payload["doc"],
+                                            payload["text"],
+                                            payload["published"],
+                                            payload["view"])
+            except proposals.ProposalError as error:
+                logger.warning(f"proposal on {pid} refused: {error.message}")
+                return self._error(error.status, error.message)
+            return self._json(200, record)
+
         def _read_body(self, length: int):
             """Read exactly `length` bytes into memory. (bytes, problem or None).
 
@@ -2345,6 +2464,11 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
         max_text_chars=settings.comment_max_text_chars,
         max_photo_bytes=settings.comment_max_photo_bytes,
     )
+    # A third tree beside it, for the reason the second one is separate: a
+    # proposal is about the PROJECT rather than about the build it was drawn
+    # over, so it must not inherit a build directory's year of `immutable` or
+    # its public reach (src/proposals.py).
+    proposal_store = proposals.ProposalStore(data_dir=settings.data_dir)
     # Constructed HERE and not lazily, because its constructor is what fails the
     # jobs a previous run left in flight: a hub that has started has no build
     # running, so anything still `queued` or `building` on the volume is stale by
@@ -2357,7 +2481,8 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
         extra["queue_size"] = build_queue_size
     builds = BuildQueue(store, job_store, build_runner=build_runner,
                         compare_runner=compare_runner, **extra)
-    handler = make_handler(store, comment_store, settings, job_store, builds)
+    handler = make_handler(store, comment_store, proposal_store, settings,
+                           job_store, builds)
 
     class Server(ThreadingHTTPServer):
         # Threads die with the process: a hung 2 MB download must never keep the
@@ -2396,6 +2521,7 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
     server = Server((settings.host, settings.port), handler)
     server.store = store
     server.comment_store = comment_store
+    server.proposal_store = proposal_store
     server.jobs = job_store
     server.builds = builds
     # Last, so a bind that fails leaves no threads behind to be joined by nobody.

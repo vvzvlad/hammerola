@@ -61,7 +61,8 @@ def settings_for(data_dir, max_build_bytes=8 * 1024 * 1024, **overrides):
 
     `overrides` carries the comment ceilings (SPEC 7A.4) — all three of them
     about SIZE, since the count ceilings and the rate limit were removed on
-    2026-08-27. They are keyword arguments rather than named parameters because a
+    2026-08-27 — and the proposal body's, which is about size for the same
+    reason. They are keyword arguments rather than named parameters because a
     test only ever varies one: a photo-size test wants
     `comment_max_photo_bytes=1024` and could not care less what the text ceiling
     is.
@@ -75,6 +76,7 @@ def settings_for(data_dir, max_build_bytes=8 * 1024 * 1024, **overrides):
         comment_max_text_chars=4000,
         comment_max_photo_bytes=1024 * 1024,
         comment_max_body_bytes=4 * 1024 * 1024,
+        proposal_max_body_bytes=256 * 1024,
         # OFF, like the real default: a hub in a test is a hub nobody configured,
         # and the whole point of the flag is that such a hub does not serve the
         # proposal panel. A test about the panel overrides it by name.
@@ -259,6 +261,32 @@ class Hub:
 
     def comment_dir(self, pid):
         return self.data / "comments" / pid
+
+    # -- the stored proposal -----------------------------------------------
+    def proposal(self, pid, method="GET", payload=NOTHING, token=TOKEN, **kw):
+        """One request to /api/v1/proposals/<pid>, with the token on it.
+
+        All three verbs through one helper, because all three answer to the
+        same URL and the tests here are mostly about the door: `token=None`
+        omits the header, which is what those ask with. `payload` is encoded as
+        the JSON body; a test that wants to send bytes no client would produce
+        passes `content=` instead and leaves it alone.
+        """
+        headers = kw.pop("headers", {}) or {}
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
+        if payload is not NOTHING:
+            kw["content"] = json.dumps(payload)
+            headers.setdefault("Content-Type", "application/json")
+        # Both defaults through `setdefault`, so a caller's own `timeout=` is
+        # honoured rather than colliding into a TypeError.
+        kw.setdefault("trust_env", self.TRUST_ENV)
+        kw.setdefault("timeout", 10)
+        return httpx.request(method, f"{self.url}/api/v1/proposals/{pid}",
+                             headers=headers, **kw)
+
+    def proposal_path(self, pid):
+        return self.data / "proposals" / f"{pid}.json"
 
 
 def multipart_body(fields=None, files=None, boundary="TestBoundary--123"):
