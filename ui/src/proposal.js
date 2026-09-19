@@ -65,6 +65,30 @@
 // HammerolaViewer.jsx) is left saying five about four parts. What happens there
 // is not a second lookup of the same fact: it is the same resolution made again
 // for a set of paths that is now a different set.
+//
+// `skip` MEANS THE SAME THING ON BOTH KINDS OF NODE, which is rarer here than
+// it sounds — a body and a move share `id`, `role` and `name` and then part
+// company entirely, one carrying an op and a size and the other a list of paths
+// and a delta. This one is about the PROJECTION
+// rather than about the node: a node ticked off is left out of `proposalText`
+// and travels to nobody, while everything else goes on exactly as before — the
+// body is still staged over the model, the move still displaces its part, both
+// still have a row with their numbers in it. So it is a way of holding a
+// sentence back from the agent without deleting the thing it is about, which is
+// what "exclude from the code being sent" asks for.
+//
+// IT IS A FIELD OF THE DOCUMENT AND NOT OF THE INTERFACE, which is the half
+// worth saying, and the reason is what the document ALREADY survives rather
+// than anything it might one day: a reader who ticked eight of ten nodes off has
+// done work that a re-render must not throw away, and the tick has to ride
+// through `dropMoves`, through every functional updater that rebuilds the node
+// list, and through the revision swap, which re-projects the attachment from the
+// document it carried across. Nothing here claims it survives a RELOAD — this
+// document is held in page state and is not written anywhere, so a reload loses
+// all of it; when that changes, the tick goes wherever the rest of it goes,
+// which is the point. A document written before this field existed simply has
+// no such field on its nodes, and reads as not skipped — every test here is a
+// falsy read, so there is nothing to migrate.
 const MOVE = 'move'
 
 /** A document with nothing in it — the state a freshly opened panel is in. */
@@ -75,6 +99,32 @@ export function emptyProposal() {
 /** Nothing has been put in it: not one body, not one move. */
 export function isEmpty(doc) {
   return doc.nodes.length === 0
+}
+
+/** The document as it TRAVELS: every node the reader ticked off, dropped. */
+function unskipped(doc) {
+  return { ...doc, nodes: doc.nodes.filter((node) => !node.skip) }
+}
+
+/**
+ * Nothing in it would reach the agent — empty, or ticked off to the last node.
+ *
+ * THE PREDICATE THE DOORS OUT ASK, and it is beside `isEmpty` rather than
+ * instead of it because the two are asked by different readers about different
+ * things. `isEmpty` is about the DOCUMENT — is there anything in it at all —
+ * and that is the question the branch of the tree is drawn on, though the
+ * interface asks it in its own words (`doc.nodes.length` in `proposalTreeStyle`)
+ * rather than through this module: a reader who ticked every node off must
+ * still see the rows, or there is nothing left to untick. This one is about the
+ * PROJECTION, and it is
+ * what the two places that build the text gate on — `proposalAddStyle` offering
+ * the link, and the revision swap re-rendering an attachment it already has.
+ * Without it, both would attach a `proposal` block that says nothing but
+ * `units:` and `result =`, which is the agent handed a heading and asked to
+ * design against it.
+ */
+export function sendsNothing(doc) {
+  return isEmpty(unskipped(doc))
 }
 
 /** Those nodes that displace a part of the build rather than drawing a body. */
@@ -246,9 +296,16 @@ export const DIM_OPS = Object.freeze(Object.keys(DIMS))
  * because the parts they name are the ones the build already has: the bodies say
  * what is being asked for, the moves say where the existing thing should go, and
  * the last line is what the two together come to.
+ *
+ * A NODE TICKED OFF IS NOT HERE AT ALL (`unskipped`), in either table and in
+ * neither's widths: it is left out the way a node that was deleted would be, so
+ * the columns close up behind it and the agent is never shown a line the reader
+ * decided not to send. Held back rather than deleted, because the thing itself
+ * stays — see `skip` at the head of this file.
  */
 export function proposalText(doc) {
-  const rows = bodies(doc).map((node) => [
+  const sent = unskipped(doc)
+  const rows = bodies(sent).map((node) => [
     node.role,
     node.op,
     `"${node.name}"`,
@@ -271,7 +328,7 @@ export function proposalText(doc) {
   // drops `rot (…)`: a part somebody only slid across the scene should not read
   // as one they decided not to turn. The padding is trimmed with it, so a block
   // nobody turned anything in ends every line at `by (…)` as it always did.
-  const shifts = moves(doc).map((node) => [
+  const shifts = moves(sent).map((node) => [
     `move "${node.name}"`,
     `by (${node.delta.join(', ')})`,
     node.turn.some((angle) => angle !== 0)

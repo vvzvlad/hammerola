@@ -19,7 +19,7 @@ import { geometries, measurements } from '@jscad/modeling'
 
 import {
   addNode, bodies, dropMoves, emptyProposal, isEmpty, moveNodes, moves,
-  removeNode, proposalText, tidy, updateNode,
+  removeNode, proposalText, sendsNothing, tidy, updateNode,
 } from '../src/proposal.js'
 import { buildProposal } from '../src/proposalgeom.js'
 
@@ -316,6 +316,99 @@ describe('proposalText', () => {
     // cannot push a body's `at (…)` sideways.
     expect(proposalText(motor()).split('\n\n')[1])
       .toBe(proposalText(addNode(motor(), MOVE)).split('\n\n')[1])
+  })
+})
+
+describe('a node ticked off', () => {
+  // WHAT `skip` IS: a sentence the reader wrote and decided not to send. The
+  // node stays in the document, the body stays over the model, the move stays
+  // applied — and the projection does not mention it. Everything here is about
+  // the projection, because that is the only thing the flag changes.
+
+  /** The same node, held back. */
+  const held = (node) => ({ ...node, skip: true })
+
+  it('is left out of the body table, and the columns close up behind it', () => {
+    // NOT BLANKED AND NOT GREYED — left out the way a deleted node would be, so
+    // the widths are measured over what is actually sent. `krepezh1` is the
+    // longest name in `motor()`, so a table that kept padding for it would be
+    // this assertion off by two spaces.
+    const doc = { ...motor(), nodes: motor().nodes.map(
+      (node) => (node.id === 'n3' ? held(node) : node)) }
+
+    expect(proposalText(doc)).toBe([
+      'units: mm',
+      '',
+      'solid  box       "korpus"  42.3 x 42.3 x 40  at (0, 0, 0)',
+      'solid  cylinder  "val"     d5 h24            at (0, 0, 42)',
+      '',
+      'result = union(solid) - union(hole)',
+    ].join('\n'))
+  })
+
+  it('is left out of the move block too, on the same terms', () => {
+    // A MOVE IS AS HOLDABLE-BACK AS A BODY. It is a statement about the model
+    // exactly as a body is, so there is no reason for the tick to mean anything
+    // different on one — and the block's own widths are measured over the moves
+    // that survive, which `pin ×3` being the longer name is what shows.
+    const doc = addNode(addNode(just(VAL), MOVE), held(OTHER_MOVE))
+
+    expect(proposalText(doc)).toBe([
+      'units: mm',
+      '',
+      'solid  cylinder  "val"  d5 h24  at (0, 0, 42)',
+      '',
+      'move "plate" by (3.2, 0, -1)',
+      '',
+      'result = union(solid) - union(hole)',
+    ].join('\n'))
+  })
+
+  it('leaves the document itself untouched, which is what makes it undoable', () => {
+    // The flag is a FIELD OF THE NODE and nothing else is derived from it: the
+    // node is still a body, still counted, still there to be unticked.
+    const doc = addNode(just(held(VAL)), MOVE)
+
+    expect(doc.nodes).toHaveLength(2)
+    expect(bodies(doc).map((node) => node.id)).toEqual(['n2'])
+    expect(moves(doc)).toEqual([MOVE])
+    expect(isEmpty(doc)).toBe(false)
+  })
+})
+
+describe('sendsNothing', () => {
+  it('is false while one node survives, of either kind', () => {
+    expect(sendsNothing(just(VAL))).toBe(false)
+    expect(sendsNothing(just(MOVE))).toBe(false)
+    expect(sendsNothing(addNode(just({ ...VAL, skip: true }), MOVE))).toBe(false)
+  })
+
+  it('is true on an empty document, and on one ticked off to the last node', () => {
+    expect(sendsNothing(emptyProposal())).toBe(true)
+    expect(sendsNothing(addNode(
+      just({ ...VAL, skip: true }), { ...MOVE, skip: true }))).toBe(true)
+  })
+
+  it('does not make `isEmpty` answer the same way, which is the whole point', () => {
+    // THE TWO PREDICATES ARE ASKED BY DIFFERENT READERS. `isEmpty` is about the
+    // DOCUMENT and is what the branch of the tree is drawn on — a reader who
+    // ticked every node off must still see the rows, or there is nothing left
+    // to untick. `sendsNothing` is about the PROJECTION, and is what the doors
+    // out gate on. Fold them together and the branch disappears at the moment
+    // the reader most needs it.
+    const doc = just({ ...VAL, skip: true })
+
+    expect(sendsNothing(doc)).toBe(true)
+    expect(isEmpty(doc)).toBe(false)
+    expect(doc.nodes).toHaveLength(1)
+  })
+
+  it('says nothing about a document that projects to bodies alone', () => {
+    // The swap asks this of `dropMoves(doc)`, so the case that matters is a
+    // document whose moves have gone and whose bodies are all ticked off.
+    expect(sendsNothing(dropMoves(addNode(just({ ...VAL, skip: true }), MOVE))))
+      .toBe(true)
+    expect(sendsNothing(dropMoves(addNode(just(VAL), MOVE)))).toBe(false)
   })
 })
 

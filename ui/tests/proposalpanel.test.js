@@ -31,7 +31,7 @@ import {
 import { SHAPE_OPS } from '../src/proposalgeom.js'
 import { css } from '../src/style.jsx'
 import { treeFromShapes } from '../src/viewport/parts.js'
-import { collect, texts } from './eltree.js'
+import { collect, texts, titles } from './eltree.js'
 
 const REV = 'e05f73ba91b263b8517147e338d23e868533c6a034a342ad5926abb6edcb7b40'
 
@@ -146,7 +146,7 @@ function panel({ token = 'sekrit', proposal, open = true, narrow = false,
     feed: [], activePin: null, composer: null, sending: false,
     measure: null, toast: null,
     proposal: proposal || emptyProposal(), proposalOpen: open, proposalError: null,
-    proposalDraft: null,
+    proposalDraft: null, proposalOff: false,
     token, tokenPop: false, tokenDraft: '',
     theme: 'light', tabs: [], narrow, treeOpen: false,
   }
@@ -189,7 +189,7 @@ const ops = (c) => c.computed().proposalOps.map((op) => op.key)
  *
  * WHERE THE PANEL'S TWO LISTS WENT. They were `proposalBodies` and
  * `proposalMoveRows` in the panel on the right, and the whole document is now
- * one branch above the parts tree — so the two helpers below are a FILTER over
+ * one branch below the parts tree — so the two helpers below are a FILTER over
  * the one list rather than two members of `computed()`. What each row is when it
  * is a body and when it is a move is what the describes below still ask.
  */
@@ -393,21 +393,46 @@ describe('the panel', () => {
     expect(el.clearOverlay).toHaveBeenCalled()
   })
 
-  it('takes the body off the model when it is closed, and keeps the document', () => {
-    // The panel is the only thing on screen saying the body is not part of the
-    // model — there is no chip for it, because the panel it came out of is
-    // standing right there. So a closed panel must not leave one over the model.
-    // The DOCUMENT stays: a reader who shut the panel to look underneath comes
-    // back to what they had.
-    const { c, el } = panel({ proposal: withBlock() })
+  it('leaves the model exactly as it was when it is closed, and keeps the document', () => {
+    // CLOSING THE SHEET IS NOT TAKING THE PROPOSAL OFF THE MODEL, and it used to
+    // be half of one: the bodies came off and every displaced part of the build
+    // stayed displaced, with the branch that held its row hidden along with the
+    // panel. A part standing where the model does not put it, nothing saying
+    // why, and no `×` to press. The branch says what is on the model now, and
+    // its eye is what takes it off — so the sheet is a sheet of controls.
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
     c.computed().proposalClose(click)
 
     expect(c.state.proposalOpen).toBe(false)
-    expect(el.clearOverlay).toHaveBeenCalledTimes(1)
-    expect(c.state.proposal.nodes).toHaveLength(1)
+    expect(el.clearOverlay).not.toHaveBeenCalled()
+    expect(c.state.proposal.nodes).toHaveLength(2)
+    // The moves are still the viewport's, which is what the bodies staying is
+    // the other half of.
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] }])
 
     c.computed().tProposal()
     expect(overlay(el)).toEqual(['korpus'])
+  })
+
+  it('draws the branch with the sheet shut, rows, × and all', () => {
+    // THE HOLE THE LINE ABOVE LEFT. A move's row is the only place a displaced
+    // part can be put back from, so a branch that went off screen with the panel
+    // stranded it. The branch is drawn on the DOCUMENT alone now.
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    c.computed().proposalClose(click)
+
+    expect(c.state.proposalOpen).toBe(false)
+    expect(css(c.computed().proposalTreeStyle).display).toBe('flex')
+    expect(rows(c).map((row) => row.name)).toEqual(['korpus', 'plate'])
+    expect(texts(c.render())).toContain('proposal')
+
+    rows(c)[1].onRemove(click)
+
+    expect(pushed(el)).toEqual([])
+    expect(c.state.proposal.nodes).toHaveLength(1)
   })
 
   it('goes when the token does, and takes its body off the model with it', () => {
@@ -434,7 +459,7 @@ describe('the panel', () => {
 
 describe('the proposal as a branch of the tree', () => {
   // WHERE THE DOCUMENT IS NOW. It used to be two lists inside the panel on the
-  // right; it is a small tree of its own above the parts tree, and what was
+  // right; it is a small tree of its own below the parts tree, and what was
   // asked for was "a separate proposal part of the tree with ALL the proposals
   // in it", which "is not part of a group — it is a root of the tree". So every
   // node is a row — bodies and moves alike, in document order — the fields open
@@ -573,14 +598,15 @@ describe('the proposal as a branch of the tree', () => {
     expect(rows(c)).toEqual([])
   })
 
-  it('is gone from an empty document, and from a panel that is shut', () => {
-    // The overlay goes off the model when the panel closes (`toggleProposal`),
-    // so a branch left standing would offer an eye and a colour over geometry
-    // that is no longer in the scene. An empty document has nothing to show and
-    // the panel's own sentence is what explains it.
+  it('is gone from an empty document, and from nothing else', () => {
+    // AN EMPTY DOCUMENT IS THE ONLY CONDITION LEFT: there is nothing to show and
+    // the panel's own sentence is what explains it. The panel being SHUT is not
+    // one — the branch is the only thing on screen that says what the proposal
+    // has put on the model, and its eye is the only thing that takes it off, so
+    // it cannot go away with a sheet of controls.
     expect(css(mounted({}).c.computed().proposalTreeStyle).display).toBe('none')
     expect(css(mounted({ proposal: withBlock(), open: false }).c
-      .computed().proposalTreeStyle).display).toBe('none')
+      .computed().proposalTreeStyle).display).toBe('flex')
     expect(css(mounted({ proposal: withBlock() }).c
       .computed().proposalTreeStyle).display).toBe('flex')
   })
@@ -603,7 +629,7 @@ describe('the proposal as a branch of the tree', () => {
     // THE SAME REMOVAL ONE STOREY UP. `indexTree` builds a group's `leaves` out
     // of every leaf underneath it and the overlay is staged as a child of the
     // model's root — so without this the root said `2` over one row, and its eye
-    // reached into bodies the branch above has its own eye for. A count of rows
+    // reached into bodies the branch below has its own eye for. A count of rows
     // nobody can see is the overlay under the root after all, as a digit.
     const { c, el } = mounted({ proposal: withBlock() })
     stage(c, el, ['korpus'])
@@ -956,6 +982,28 @@ describe('the proposal as a branch of the tree', () => {
     expect(rows(c)[0].groups.map((g) => g.label)).toEqual(['by', 'turn°'])
   })
 
+  it('says `move` before the name, so the row is not read as a body', () => {
+    // WHAT THE ROW LOOKED LIKE WITHOUT IT: an indented name with three invisible
+    // boxes in front of it, which is a body the reader drew and a part of the
+    // build displaced drawn identically — the opposite claim about the same
+    // model. The word and not a badge, in the order `proposalText` prints it
+    // (`move "plate" by (…)`), so the row and the projection read alike.
+    const { c } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+
+    expect(rows(c).map((row) => row.kind)).toEqual([null, 'move'])
+    // The name itself is untouched, count and all.
+    expect(rows(c)[1].name).toBe('plate')
+
+    const said = texts(c.render())
+    expect(said).toContain('move')
+    expect(said.indexOf('move')).toBeLessThan(said.lastIndexOf('plate'))
+    // ONE ROW SAYS IT AND THE OTHER DOES NOT. `null` rather than `''` on a body,
+    // because an empty string is a child React renders as nothing and every
+    // reading of the tree still reports — a blank in a column of words.
+    expect(said.filter((word) => word === 'move')).toHaveLength(1)
+  })
+
   it('selects the part of the build a move row displaces', () => {
     // SO THE READER CAN SEE WHAT THE SENTENCE IS ABOUT. The row names a part of
     // the model; selecting it lights that part up, which is the only way to find
@@ -1042,7 +1090,392 @@ describe('the proposal as a branch of the tree', () => {
     expect(c.state.proposal.nodes).toEqual([])
   })
 
-  it('is drawn on the page, above the parts tree and not in the panel', () => {
+  // -- the branch's own eye: the whole proposal, on the model or off it -------
+
+  it('takes every body and every displaced part off the model when its eye shuts', () => {
+    // ONE CONTROL FOR BOTH HALVES, which is what "take the proposal off the
+    // model" has to mean: the bodies stop being staged AND every part of the
+    // build the document displaces goes back where the build puts it. Half of
+    // it would be the defect the panel used to have, with the halves swapped.
+    // The drag lands with the sheet shut, which is what stages the bodies as
+    // well as recording the move — so both halves are genuinely on the model
+    // before the eye is pressed.
+    const { c, el } = mounted({ proposal: withBlock(), open: false })
+    drag('/model/plate', [3, 0, 0])
+    expect(overlay(el)).toEqual(['korpus'])
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] }])
+
+    c.computed().proposalEyeClick(click)
+
+    expect(c.state.proposalOff).toBe(true)
+    expect(el.clearOverlay).toHaveBeenCalled()
+    expect(pushed(el)).toEqual([])
+  })
+
+  it('puts all of it back the moment the eye opens again', () => {
+    // IT IS DISPLAY STATE AND NOT AN EDIT, so there is nothing to undo: the
+    // document is the same object it was, and the second press stages exactly
+    // what the first took away.
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    const before = c.state.proposal
+
+    c.computed().proposalEyeClick(click)
+    c.computed().proposalEyeClick(click)
+
+    expect(c.state.proposalOff).toBe(false)
+    expect(c.state.proposal).toEqual(before)
+    expect(overlay(el)).toEqual(['korpus'])
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] }])
+  })
+
+  it('takes the bodies off even on a document the kernel refused', () => {
+    // WHERE "LEAVE THE LAST GOOD BODY" AND "TAKE IT ALL AWAY" MEET, and the
+    // second one wins because it was asked for out loud. A document that will
+    // not build leaves the previous shape standing deliberately — a profile
+    // being typed a point at a time must not blink the model away — and the eye
+    // has no road to the scene except that same stage. So it went closed, the
+    // displaced parts went home, and the bodies stayed: a control drawn off over
+    // a thing that is still there.
+    const { c, el } = panel({ proposal: withBlock() })
+    c.computed().proposalOps[3].onClick()
+    // An extrusion with two of its profile's points typed so far, which is no
+    // polygon — the commonest way to reach a document that will not build.
+    const drawn = bodyRows(c)
+    type(drawn[drawn.length - 1].groups[0].fields[1], '0,0; 20,0')
+    expect(c.state.proposalError).toMatch(/three or more points/)
+    expect(el.clearOverlay).not.toHaveBeenCalled()
+
+    c.computed().proposalEyeClick(click)
+
+    expect(c.state.proposalOff).toBe(true)
+    expect(el.clearOverlay).toHaveBeenCalled()
+  })
+
+  it('brings the sheet up to say a document would not build', () => {
+    // WHERE THE VERDICT IS DRAWN AND WHERE THE FIELDS ARE ARE NOW TWO PLACES.
+    // The numbers moved out into this branch and the branch outlives the sheet
+    // being shut — which is the state the move was made for — while
+    // `proposalSays` is still inside the sheet. So a reader typing a profile
+    // with it closed got a refusal that changed nothing on the model and printed
+    // nothing anywhere: the model does not blink, by design, and the sentence
+    // explaining why was behind `display:none`.
+    const { c } = panel({ proposal: withBlock(), open: false })
+    c.computed().proposalOps[3].onClick()
+    expect(c.state.proposalOpen, 'the premise: it is shut').toBe(false)
+
+    const drawn = bodyRows(c)
+    type(drawn[drawn.length - 1].groups[0].fields[1], '0,0; 20,0')
+
+    expect(c.state.proposalError).toMatch(/three or more points/)
+    expect(c.state.proposalOpen).toBe(true)
+    expect(css(c.computed().proposalSaysStyle).display).toBe('block')
+  })
+
+  it('does not put that sheet in front of a reader with no token', () => {
+    // A GATE STANDING RIGHT BESIDE THE NEW ONE. Giving up the token shuts the
+    // sheet and takes away the button that reopens it — `tokenClear` calls a
+    // sheet left standing there a defect in so many words — while the branch
+    // outlives that door and every control in it comes back through
+    // `stageProposal`. So a refused document plus one press of anything handed a
+    // viewer a sheet of editing buttons with no way to put it away. The verdict
+    // is for whoever can act on it.
+    const { c } = panel({ proposal: withBlock(), token: null, open: false })
+    c.computed().proposalOps[3].onClick()
+    const drawn = bodyRows(c)
+    type(drawn[drawn.length - 1].groups[0].fields[1], '0,0; 20,0')
+
+    expect(c.state.proposalError, 'the premise: it really was refused')
+      .toMatch(/three or more points/)
+    expect(c.state.proposalOpen).toBe(false)
+  })
+
+  it('leaves a sheet the reader shut alone while the document builds', () => {
+    // ON A REFUSAL AND NOT ON EVERY STAGE. A reader who closed the sheet to see
+    // the model is working, not waiting to be interrupted.
+    const { c } = panel({ proposal: withBlock(), open: false })
+    // A size typed into the row's own fields, which is the ordinary edit — and
+    // a perfectly good one, so nothing has anything to say about it.
+    type(bodyRows(c)[0].groups[0].fields[0], '30')
+
+    expect(c.state.proposalError).toBeNull()
+    expect(c.state.proposalOpen).toBe(false)
+  })
+
+  it('comes back on the model when the token does', () => {
+    // A DEFAULT THAT OUTLIVES ITS GESTURE IS A TRAP. Giving up the token shuts
+    // the eye, which is reasonable on its own; left standing across a round trip
+    // it stops being connected to anything the reader can see. They hand the
+    // token back, press `add a box`, and nothing appears on the model — turned
+    // away by a flag set before they left.
+    const { c, el } = panel({ proposal: withBlock() })
+    c.computed().tokenClear(click)
+    expect(c.state.proposalOff).toBe(true)
+    el.setOverlay.mockClear()
+
+    c.setState({ tokenDraft: 'sekrit again' })
+    c.computed().tokenSave(click)
+
+    expect(c.state.proposalOff).toBe(false)
+    expect(overlay(el)).toEqual(['korpus'])
+  })
+
+  it('goes off the model through that same eye when the token is given up', () => {
+    // THE ONE ANSWER TO "IS IT ON THE MODEL", and this door has to use it like
+    // any other. Clearing the overlay by hand here — which is what this did
+    // while the branch went off screen with the panel — leaves `proposalOff`
+    // still saying the proposal is on: the branch survives now, so the first
+    // edit through any of its rows calls `setProposal` and stages the bodies
+    // straight back onto the model this had just cleared.
+    //
+    // A DEFAULT AND NOT A LOCK. The reader giving up the right to edit should
+    // not be left with a body standing over the model as a statement they can
+    // no longer send — but the branch stays drawn and the eye still opens, and
+    // nothing here pretends to be a permission gate.
+    const { c, el } = mounted({ proposal: withBlock(), open: false })
+    drag('/model/plate', [3, 0, 0])
+    expect(overlay(el)).toEqual(['korpus'])
+    expect(pushed(el)).not.toEqual([])
+
+    c.computed().tokenClear(click)
+
+    expect(c.state.proposalOff).toBe(true)
+    expect(el.clearOverlay).toHaveBeenCalled()
+    // BOTH HALVES GO, AND THEY GO NOW. The pushes carry their own answer rather
+    // than reading the flag they sit beside — `setState` has not landed when
+    // they run — and the moves need a push at all because nothing else makes
+    // one here: left out, the displaced parts stand where they are until some
+    // later edit happens to send a document.
+    expect(pushed(el)).toEqual([])
+    // The document is untouched, exactly as the eye leaves it.
+    expect(c.state.proposal.nodes.length).toBe(withBlock().nodes.length + 1)
+  })
+
+  it('keeps the branch on screen and writes no visibility of its own', () => {
+    // THE BRANCH CANNOT GO WITH IT — the eye is what reopens it, so a branch
+    // taken off screen would be a proposal nothing could bring back.
+    //
+    // AND IT IS NOT `s.hidden` UNDER ANOTHER NAME, which is the half that would
+    // be invisible until somebody reopened it: a body the reader hid stays
+    // hidden and a body they did not stays shown, either side of the press. Had
+    // this been spelled as "hide every staged path", opening the eye again
+    // would have handed back a scene this control decided on rather than the
+    // one they had.
+    const { c, el } = mounted({ proposal: withBlock() })
+    const at = stage(c, el, ['korpus'])
+    drag('/model/plate', [3, 0, 0])
+    rows(c)[0].onVis(click)
+    expect(c.state.hidden).toEqual([`${at}/korpus`])
+
+    c.computed().proposalEyeClick(click)
+
+    expect(css(c.computed().proposalTreeStyle).display).toBe('flex')
+    expect(rows(c).map((row) => row.name)).toEqual(['korpus', 'plate'])
+    expect(c.computed().proposalCount).toBe('2')
+    expect(c.state.hidden).toEqual([`${at}/korpus`])
+    expect(c.state.ghost).toEqual([])
+
+    // ...and the eye itself says which way it is, which is the one thing on the
+    // head row that the press changes.
+    const shut = c.computed().proposalEyeDot
+    c.computed().proposalEyeClick(click)
+    expect(c.computed().proposalEyeDot).not.toBe(shut)
+    expect(c.state.hidden).toEqual([`${at}/korpus`])
+  })
+
+  it('is the control that decides this, and the shut sheet is not', () => {
+    // THE COUNTERPART, and the pair is the whole point of the eye: closing the
+    // sheet leaves everything on the model, closing the eye takes all of it off
+    // — with the sheet already shut, and with nothing else having changed.
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    c.computed().proposalClose(click)
+    el.setOverlay.mockClear()
+    el.clearOverlay.mockClear()
+
+    c.computed().proposalEyeClick(click)
+
+    expect(el.setOverlay).not.toHaveBeenCalled()
+    expect(el.clearOverlay).toHaveBeenCalled()
+    expect(pushed(el)).toEqual([])
+  })
+
+  // -- the tick: a statement written and held back ----------------------------
+
+  it('holds a node back from the text and changes nothing else about it', () => {
+    // THE TICK IS ABOUT THE PROJECTION AND ABOUT NOTHING ELSE. The node stays
+    // in the document, the body stays over the model, the row stays where it
+    // was — which is what makes it different from the `×` beside it.
+    const { c, el } = mounted({ proposal: withBlock() })
+    stage(c, el, ['korpus'])
+    drag('/model/plate', [3, 0, 0])
+
+    rows(c)[0].onSkip(click)
+
+    expect(c.state.proposal.nodes[0].skip).toBe(true)
+    expect(proposalText(c.state.proposal)).not.toContain('"korpus"')
+    expect(proposalText(c.state.proposal)).toContain('move "plate"')
+    expect(overlay(el)).toEqual(['korpus'])
+    expect(rows(c).map((row) => row.name)).toEqual(['korpus', 'plate'])
+  })
+
+  it('is on a move row like any other, and the part stays displaced', () => {
+    // A MOVE IS A STATEMENT THAT CAN BE HELD BACK exactly as a body can, so the
+    // square is drawn on its row like any other — which it could not be from
+    // inside the marks box, that being `visibility:hidden` on every move.
+    const { c, el } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+
+    rows(c)[0].onSkip(click)
+
+    expect(moves(c.state.proposal)[0].skip).toBe(true)
+    expect(proposalText(c.state.proposal)).not.toContain('move "plate"')
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] }])
+  })
+
+  it('reads a node with no such field as one that was never ticked off', () => {
+    // A DOCUMENT WRITTEN BEFORE THE FIELD EXISTED has no `skip` on its nodes,
+    // and one falsy read is the whole of what that costs: `withBlock()` is such
+    // a document, and the first press has to TICK rather than untick.
+    const { c } = mounted({ proposal: withBlock() })
+    expect('skip' in c.state.proposal.nodes[0]).toBe(false)
+    expect(rows(c)[0].skipIcon).toBe(c.computed().proposalSkipIcon)
+
+    rows(c)[0].onSkip(click)
+
+    expect(c.state.proposal.nodes[0].skip).toBe(true)
+  })
+
+  it('clears and sets every tick from the head of the branch', () => {
+    const { c } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    c.computed().proposalOps[0].onClick()
+    const ticks = () => c.state.proposal.nodes.map((node) => !!node.skip)
+    expect(ticks()).toEqual([false, false, false])
+
+    c.computed().proposalSkipAll(click)
+    expect(ticks()).toEqual([true, true, true])
+
+    c.computed().proposalSkipAll(click)
+    expect(ticks()).toEqual([false, false, false])
+  })
+
+  it('sets the rest where only some are ticked off, rather than clearing them', () => {
+    // THE MASTER SHOWS WHAT IT WOULD PUT THE DOCUMENT IN, and half-ticked is
+    // not one of the two states it has: a branch with one node held back reads
+    // as one with something still to send, and the press holds the rest back
+    // too rather than letting that one through.
+    const { c } = mounted({ proposal: withBlock() })
+    c.computed().proposalOps[0].onClick()
+    rows(c)[0].onSkip(click)
+    expect(c.computed().proposalSkipIcon).toBe(rows(c)[1].skipIcon)
+
+    c.computed().proposalSkipAll(click)
+
+    expect(c.state.proposal.nodes.map((node) => !!node.skip)).toEqual([true, true])
+  })
+
+  it('offers no `add to comment` once nothing survives, and keeps the branch', () => {
+    // THE DOOR OUT GATES ON `sendsNothing` AND THE BRANCH ON `isEmpty`, which
+    // is why the two predicates are not one: a document ticked off to the last
+    // node projects to a heading and a `result =` line, and the rows are the
+    // only place the reader can untick anything.
+    const { c } = mounted({ proposal: withBlock() })
+    expect(css(c.computed().proposalAddStyle).display).not.toBe('none')
+
+    c.computed().proposalSkipAll(click)
+
+    expect(css(c.computed().proposalAddStyle).display).toBe('none')
+    expect(css(c.computed().proposalTreeStyle).display).toBe('flex')
+    expect(rows(c)).toHaveLength(1)
+  })
+
+  it('draws the head\'s eye, the head\'s tick and the rows\' on the page', () => {
+    // `computed()` answering with a handler is not the same as the page drawing
+    // a control for it — the lesson eltree.js is written around. Read off the
+    // titles, because none of these three has any text of its own.
+    const { c } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+
+    const said = titles(c.render())
+    expect(said).toContain('show / hide the whole proposal')
+    expect(said).toContain('hold all of it back from the agent')
+    expect(said.filter((t) => t === 'leave this out of the text sent to the agent'))
+      .toHaveLength(2)
+  })
+
+  it('stands over the ghost column it has no control of its own for', () => {
+    // KEEP X AND Y IN STEP, WHICH IS A TEST AND NOT A COMMENT. A row spends its
+    // width on an eye, a GHOST SQUARE and a tick; the head has an eye and a tick
+    // and nothing that would make the whole proposal translucent, so it carries
+    // an empty span the width of that square to keep its tick in the same
+    // column. Left as prose, the next change to the ghost control's width moves
+    // the master tick silently off the ticks it sets and clears — which is where
+    // it started, a whole column to the left.
+    //
+    // THE SPACER AGAINST THE THING IT STANDS IN FOR, and not the two run-ups
+    // against each other: those do not agree to the pixel and are not meant to
+    // (a row also carries the part's colour dot, which the head has no use for).
+    // What has to hold is that the head reserves exactly the ghost column.
+    const { c } = mounted({ proposal: withBlock() })
+    const drawn = c.render()
+
+    // The children of whichever element holds the control with this title.
+    const beside = (node, title) => {
+      if (!node || typeof node !== 'object') return null
+      if (Array.isArray(node)) {
+        for (const child of node) {
+          const got = beside(child, title)
+          if (got) return got
+        }
+        return null
+      }
+      if (!node.props) return null
+      const kids = [node.props.children].flat(9).filter(Boolean)
+      if (kids.some((k) => k.props && k.props.title === title)) return kids
+      return beside(node.props.children, title)
+    }
+    const widthOf = (el) => (el && el.props && el.props.style
+      ? el.props.style.width : undefined)
+
+    const head = beside(drawn, 'hold all of it back from the agent')
+    expect(head, 'the premise: the head is on the page').toBeTruthy()
+    // REACHED THROUGH THE ROW'S OWN TICK, and not by hunting the page for a
+    // `translucent`. The parts tree draws ghost squares too, out of a second
+    // string literal — and since this branch moved BELOW it, a search from the
+    // top of the render finds that one first. Measured against it, the test goes
+    // green while the column it is named for drifts: the row's tick is the only
+    // control of the two branches that exists here alone.
+    const rowKids = beside(drawn, 'leave this out of the text sent to the agent')
+    expect(rowKids, 'the premise: a row of this branch is drawn').toBeTruthy()
+    const row = beside(rowKids, 'translucent')
+    expect(row, 'the premise: that row draws a ghost square').toBeTruthy()
+
+    // Guarded like `beside` above, and for the same reason: a bare text child
+    // in either list would end this walk in `undefined.props` instead of the
+    // premise message written for that case. Missing the control is still a
+    // failure -- `undefined` width does not equal the ghost's, and `-1` puts
+    // the premise assert below on `head[-2]`.
+    const ghost = widthOf(row.find((k) => k.props && k.props.title === 'translucent'))
+    const tickAt = head.findIndex(
+      (k) => k.props && k.props.title === 'hold all of it back from the agent')
+    const spacer = head[tickAt - 1]
+    // Said out loud rather than thrown as `undefined.props`: a wrapper put round
+    // either control breaks the shape this walk assumes, and the next reader
+    // should be told that and not left reading a stack trace.
+    expect(spacer, 'the premise: the spacer is the tick\'s left neighbour')
+      .toBeTruthy()
+    // An empty span and not another control: it reserves the column, it does
+    // not offer anything in it.
+    expect(spacer.props.onClick).toBeUndefined()
+    expect(spacer.props.children).toBeUndefined()
+    expect(widthOf(spacer)).toBe(ghost)
+  })
+
+  it('is drawn on the page, below the parts tree and not in the panel', () => {
     // `computed()` answering with a row is not the same as the page drawing one
     // — the lesson eltree.js is written around.
     const { c, el } = mounted({ proposal: withBlock() })
@@ -1053,8 +1486,11 @@ describe('the proposal as a branch of the tree', () => {
     expect(said).toContain('proposal')
     expect(said).toContain('korpus')
     expect(said).toContain('turn°')
-    // ABOVE the parts tree, whose own rows start at the model's root.
-    expect(said.indexOf('proposal')).toBeLessThan(said.indexOf('model'))
+    // BELOW the parts tree, whose own rows start at the model's root — because
+    // selecting a row here opens a block of fields under it, and everything
+    // after it in this column moves down by that much. Above the parts, one
+    // click on a proposal row jerked the whole tree down the screen.
+    expect(said.indexOf('proposal')).toBeGreaterThan(said.indexOf('model'))
     // And the panel's label for the list it no longer has is gone with it.
     expect(said).not.toContain('BODIES AND MOVES')
   })
@@ -1766,6 +2202,98 @@ describe('add to comment', () => {
       .display).toBe('none')
   })
 
+  it('holds a node back that was ticked after the draft was attached', () => {
+    // THE ONE EDIT THAT IS ABOUT SENDING, and therefore the one that reaches
+    // into a draft already carrying the projection. The attachment is a snapshot
+    // on purpose — a size the reader goes on adjusting is just a later number,
+    // and a draft rewriting itself under the cursor is worse than a stale one.
+    // A tick is not a later number: it says "do not send this", and the branch
+    // and the composer are on screen together, so "attach, think again, send"
+    // is two clicks.
+    // TWO NODES, so what is asserted is a node LEAVING the text rather than the
+    // whole attachment going — that empty case is the test below.
+    const doc = addNode(withBlock(), {
+      id: 'm2', role: 'move', paths: ['/model/plate'], name: 'plate',
+      delta: [3, 0, 0], turn: [0, 0, 0],
+    })
+    const { c } = panel({ proposal: doc })
+    c.computed().proposalAdd()
+    expect(c.state.composer.proposal).toBe(proposalText(doc))
+
+    rows(c)[0].onSkip(click)
+
+    expect(c.state.composer.proposal).toBe(proposalText(c.state.proposal))
+    expect(c.state.composer.proposal).not.toBe(proposalText(doc))
+    // The body is gone from it and the move is still there, which is the whole
+    // of what the tick was pressed for.
+    expect(c.state.composer.proposal).not.toMatch(/korpus/)
+    expect(c.state.composer.proposal).toMatch(/move "plate"/)
+  })
+
+  it('takes the whole attachment off when nothing is left to send', () => {
+    // A HEADING WITH NO STATEMENTS UNDER IT IS NOT AN ATTACHMENT, which is the
+    // same answer the revision swap gives through the same predicate — so the
+    // two paths that can rewrite a draft's attachment agree about the empty
+    // case, and the chip stops claiming something is going.
+    const { c } = panel({ proposal: withBlock() })
+    c.computed().proposalAdd()
+    expect(css(c.computed().compProposalChipStyle).display).toBe('flex')
+
+    c.computed().proposalSkipAll(click)
+
+    expect(c.state.composer.proposal).toBeNull()
+    expect(css(c.computed().compProposalChipStyle).display).toBe('none')
+  })
+
+  it('gives the attachment back when the ticks come off again', () => {
+    // PRESSING THE MASTER TWICE IS A ROUND TRIP, which its own note promises —
+    // and on a one-node document the first press takes the whole attachment off,
+    // so without this the promise held for the document and not for the draft.
+    // The only way back was `add to comment`, which builds a WHOLE NEW composer:
+    // the reader's typed comment, photo and measurement go with it.
+    const doc = withBlock()
+    const { c } = panel({ proposal: doc })
+    c.computed().proposalAdd()
+    c.setState({ composer: { ...c.state.composer, text: 'clears the motor?' } })
+
+    c.computed().proposalSkipAll(click)
+    expect(c.state.composer.proposal).toBeNull()
+    c.computed().proposalSkipAll(click)
+
+    expect(c.state.composer.proposal).toBe(proposalText(doc))
+    // And the draft it was typed into is the same draft throughout.
+    expect(c.state.composer.text).toBe('clears the motor?')
+  })
+
+  it('does not grow one back on a draft the chip was taken off', () => {
+    // THE TWO ANSWERS ARE DIFFERENT QUESTIONS. A tick empties the text and can
+    // fill it again; the `×` on the chip is the reader saying they do not want a
+    // proposal on this draft at all, and a tick in the branch behind it must not
+    // overrule that.
+    const { c } = panel({ proposal: withBlock() })
+    c.computed().proposalAdd()
+    c.computed().compProposalRemove(click)
+
+    rows(c)[0].onSkip(click)
+    rows(c)[0].onSkip(click)
+
+    expect(c.state.composer.proposal).toBeNull()
+  })
+
+  it('leaves a draft with no proposal on it alone', () => {
+    // The refresh is for a draft that CARRIES one. A comment the reader started
+    // about a part, with no proposal attached, must not grow one because they
+    // ticked a row in the branch behind it.
+    const { c } = panel({ proposal: withBlock() })
+    c.setState({ composer: { part: 'plate', partId: '/model/plate', key: null,
+                             p: null, text: 'hi', photo: null } })
+
+    rows(c)[0].onSkip(click)
+
+    expect(c.state.composer.proposal).toBeUndefined()
+    expect(c.state.composer.text).toBe('hi')
+  })
+
   it('can be taken off a draft again', () => {
     const { c } = panel({ proposal: withBlock() })
     c.computed().proposalAdd()
@@ -1919,8 +2447,8 @@ describe('a body dragged in the scene', () => {
 
   it('records no move of its own, and leaves a move of the BUILD alone', () => {
     // A proposal body is in no build, so there is no path to record it under and
-    // nothing to put back — the panel standing open is what says the body is not
-    // part of the model, and the body's own `at` is where it went. A part of the
+    // nothing to put back — the BRANCH is what says the body is not part of the
+    // model, and the body's own `at` is where it went. A part of the
     // BUILD dragged is a node of this same document and a different statement,
     // and it is not disturbed by a body moving beside it.
     const { c } = mounted({ proposal: withBore() })
@@ -3112,6 +3640,43 @@ describe('another revision opening', () => {
     const { state } = c.leaveBuild(true)
 
     expect(state.composer.proposal).toBeNull()
+  })
+
+  it('drops the attachment where everything left is ticked off', () => {
+    // THE SAME GATE AS THE FRONT DOOR, one step further on. The swap re-renders
+    // the projection off the document as it stands, and it asks `sendsNothing`
+    // rather than `isEmpty` for the same reason the link does: a node the
+    // reader held back travels no further than a node that is not there, so
+    // what would ride along is a `proposal` block with no statement in it.
+    // A BODY TICKED OFF AND A MOVE STILL STANDING, which is the only shape that
+    // tells the two predicates apart. Tick everything instead and the attachment
+    // is already null before the swap begins (`skipProposal` takes it off), so
+    // the ternary below never opens and the test passes with `isEmpty` — or with
+    // anything at all — in it. Here the draft still carries a projection on the
+    // way in, because the move is in it; the swap then drops the moves, and what
+    // is left is one ticked-off body: `sendsNothing` true, `isEmpty` false.
+    const { c } = mounted({
+      proposal: addNode(withBlock(), {
+        id: 'm2', role: 'move', paths: ['/model/plate'], name: 'plate',
+        delta: [3, 0, 0], turn: [0, 0, 0],
+      }),
+    })
+    c.computed().proposalAdd()
+    expect(c.state.composer.proposal).toContain('"korpus"')
+
+    rows(c)[0].onSkip(click)
+    expect(c.state.composer.proposal, 'the premise: the move keeps it alive')
+      .toContain('move "plate"')
+
+    const { state } = c.leaveBuild(true)
+
+    expect(state.composer.proposal).toBeNull()
+    // ...and the document is untouched by the swap, ticks and all: both nodes
+    // are still there to be let through again on the revision that arrives. The
+    // move is dropped from the PROJECTION the swap renders, not from the
+    // document — `onModel` is what takes it out, when the build actually lands.
+    expect(c.state.proposal.nodes.map((node) => !!node.skip))
+      .toEqual([true, false])
   })
 
   it('attaches nothing to a draft that had no projection on it', () => {

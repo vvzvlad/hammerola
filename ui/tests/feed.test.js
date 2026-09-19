@@ -27,6 +27,7 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { STATE } from '../src/events.js'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { indexTree } from '../src/hub.js'
+import { emptyProposal } from '../src/proposal.js'
 import {
   shrink, SHOT_MAX_SIDE, SHOT_QUALITY, PHOTO_MAX_SIDE, PHOTO_QUALITY,
 } from '../src/shrink.js'
@@ -122,6 +123,13 @@ function page({ feed = [], token = 'sekrit', partPoint, watch, ...over } = {}) {
     notePop: null, noteDraft: '', notes: {},
     feed, activePin: null, composer: null, sending: false,
     measure: null, toast: null,
+    // THE DOCUMENT IS ALWAYS THERE, empty or not — the constructor seeds one and
+    // nothing ever writes it back to null, so a fixture without it models a
+    // component that cannot exist. It matters at exactly one door in this file:
+    // giving up the token takes the proposal off the model, and the push that
+    // does it reads this.
+    proposal: emptyProposal(), proposalOpen: false, proposalOff: false,
+    proposalError: null, proposalDraft: null,
     token, tokenPop: false, tokenDraft: '',
     theme: 'light', tabs: [], narrow: false, treeOpen: false,
     ...over,

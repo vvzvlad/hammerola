@@ -129,8 +129,8 @@ import {
 // — a part's colour is model content, like the colours the hub pushes in a view
 // file, and this file paints no part.
 import {
-  addNode, bodies, dropMoves, emptyProposal, firstFree, isEmpty, moveNodes, moves,
-  removeNode, proposalText, updateNode,
+  addNode, bodies, dropMoves, emptyProposal, firstFree, moveNodes, moves,
+  removeNode, proposalText, sendsNothing, updateNode,
 } from './proposal.js';
 import { buildProposal } from './proposalgeom.js';
 import {
@@ -1139,10 +1139,12 @@ export default class HammerolaViewer extends React.Component {
       // Nothing here is pushed, nothing is rebuilt from it, and the model on
       // screen is untouched by it.
       //
-      // A DOCUMENT AND A FLAG rather than one nullable field: closing the panel
-      // takes the overlay off the model, and it must not throw the proposal away
-      // — a reader who shut it to look at something underneath comes back to
-      // what they had.
+      // A DOCUMENT AND A FLAG rather than one nullable field: the panel is a
+      // sheet of controls that opens and shuts, and shutting it must not throw
+      // the proposal away — a reader who shut it to look at something
+      // underneath comes back to what they had. The document is drawn in the
+      // tree's own column either way (`proposalTreeStyle`), so `proposalOpen`
+      // is about the SHEET and about nothing else.
       //
       // `proposalError` is the KERNEL saying no: its own sentence about the
       // document as it stands, drawn in the panel where the reader is already
@@ -1150,8 +1152,19 @@ export default class HammerolaViewer extends React.Component {
       // `setProposal`. `proposalDraft` is the one field the reader is typing
       // in; see `computed`, where it is spent, and `commitProposal`, where it is
       // turned into a document.
+      //
+      // `proposalOff` IS THE BRANCH'S OWN EYE, and it is one boolean of
+      // INTERFACE state rather than anything the document holds: it takes the
+      // whole proposal off the model — the bodies stop being staged and every
+      // displaced part goes back where the build puts it — while leaving the
+      // document exactly as it was, so the moment the eye opens again
+      // everything comes back, on the next stage that BUILDS (see
+      // `toggleProposalEye`). It is read at the two doors to the viewport
+      // (`proposalOverlay`, `proposalMoves`) and nowhere else. FALSE BY
+      // DEFAULT, because a proposal that arrived invisible is one the reader
+      // has to go and find.
       proposal: emptyProposal(), proposalOpen: false, proposalError: null,
-      proposalDraft: null,
+      proposalDraft: null, proposalOff: false,
       // -- who the reader is
       // No project id: the secret is one string for the whole hub since step 0,
       // so keying it per project stored N copies of it (see store.js).
@@ -1635,16 +1648,19 @@ export default class HammerolaViewer extends React.Component {
             next = addNode(without(),
                            { id, role: 'move', paths, name, delta, turn: shared });
           }
-          // THE PANEL COMES UP WITH THE MOVE, which is the one moment a reader
-          // who had it shut is shown that a part is now standing somewhere the
-          // build does not put it — and shown the row whose `×` puts it back.
-          // What that buys is the STATE BEING NAMED once, at the moment it is
-          // entered, and not an indication that persists: closing the panel
-          // again leaves the parts displaced with nothing on screen saying so,
-          // and that is the reader's own act rather than something this handler
-          // can answer for. The Move tool is armed from a part's own menu, so
-          // without this the displacement could be made without the panel ever
-          // having been opened.
+          // THE PANEL COMES UP WITH THE MOVE, and what that is worth changed
+          // under this line rather than going away. It used to be the ONLY thing
+          // that said a part was now standing where the build does not put it:
+          // the row with the `×` was inside the sheet, so a reader who had it
+          // shut was shown the displacement once, here, and closing the sheet
+          // took the explanation away again. The branch of the parts tree now
+          // holds that row, outlives the sheet, and says it for as long as it is
+          // true. What is left is the SHEET's own half — what a proposal is, the
+          // buttons that add a body, the kernel's verdict and the door out to a
+          // comment — brought up at the moment a reader who never opened it has
+          // just made their first statement, the Move tool being armed from a
+          // part's own menu. Kept deliberately, and it is now a convenience
+          // rather than the thing that keeps the page honest.
           //
           // NOT FOR A DRAG HOME, because there is nothing to show: it takes a
           // displacement AWAY, and a panel that jumps open to announce that
@@ -1656,14 +1672,27 @@ export default class HammerolaViewer extends React.Component {
           return opened ? { proposal: next, proposalOpen: true }
                         : { proposal: next };
         }, () => {
-          // THE BODIES ARE STAGED ONLY WHERE THE PANEL OPENED, which is a cost
-          // decision and not a second door. Staging rebuilds every body's
-          // geometry — 23 ms at four bodies, 81 ms at twelve, the measurement
-          // written out at `field` in `computed` — and a move node changes no
-          // body at all, so with the panel already open the bodies on screen are
-          // already the right ones and the rebuild is spent on nothing. The
-          // opening is the one moment they DO have to be staged, because closing
-          // the panel is what took them off the model.
+          // THE BODIES ARE STAGED ONLY WHERE THE SHEET OPENED, and what that
+          // costs has to be stated correctly because the obvious reading is
+          // wrong. Staging runs `buildProposal` over every body before it
+          // reaches any door — the CSG, 23 ms at four bodies and 81 at twelve,
+          // the measurement written out at `field` in `computed` — and
+          // `sameParts` in element.js does NOT save it: that guard spares the
+          // SCENE being disposed and rebuilt, one layer past the point where the
+          // geometry has already been computed. A move node changes no body, so
+          // on the `else` side that whole rebuild would buy nothing, which is
+          // why there is a branch here at all.
+          //
+          // THE REASON THE OPENING SIDE STAGES IS NO LONGER THE ORIGINAL ONE.
+          // It was that closing the sheet took the bodies OFF the model, so
+          // reopening had to put them back; closing stopped doing that when the
+          // branch of the tree took over saying what is on the model. What is
+          // left is belt and braces — in ordinary use the bodies are already
+          // staged, because every edit that put them in the document staged them
+          // and nothing has un-staged them since. Kept rather than removed: what
+          // an opening pushes at the viewport is a contract several tests are
+          // written against, and unpicking it is a change to this page nobody
+          // asked for.
           //
           // READ BACK OUT OF STATE AND NOT CARRIED FROM THE UPDATER, because the
           // updater's own result is what this edit WOULD have committed and not
@@ -1691,9 +1720,10 @@ export default class HammerolaViewer extends React.Component {
         // body of the proposal is the reader's own drawing, so dragging one is an
         // ordinary edit of the document — the same edit as typing the number
         // into the `at` fields, which is why it goes through `setProposal` like
-        // every other one and writes no move node. The panel standing open is
-        // what says the body is not part of the model; there is nothing here to
-        // put back and no row to put it back from.
+        // every other one and writes no move node. The BRANCH is what says the
+        // body is not part of the model — it lists it, with a `×` that deletes
+        // it — and it says so whether or not the sheet is open; there is nothing
+        // here to put back, because nothing of the build was moved.
         //
         // NOT GUARDED BY `toolsOff` unlike the handler above, for the reason the
         // panel itself is not: a proposal names no part of anything, so there is
@@ -2665,18 +2695,20 @@ export default class HammerolaViewer extends React.Component {
             // out of a string the agent is meant to read, and the document is
             // the only thing here that knows which lines are moves.
             //
-            // AN EMPTY DOCUMENT DROPS THE ATTACHMENT INSTEAD, because a
-            // move-only proposal has nothing left once the moves go, and what
-            // would be attached is a `proposal` block with no statement in it.
-            // `isEmpty` is the same predicate `proposalAddStyle` refuses that
-            // state at the front door with, so the swap cannot post what the
-            // link would not offer.
+            // A DOCUMENT WITH NOTHING LEFT TO SAY DROPS THE ATTACHMENT
+            // INSTEAD, because a move-only proposal has nothing left once the
+            // moves go, and what would be attached is a `proposal` block with
+            // no statement in it. `sendsNothing` is the same predicate
+            // `proposalAddStyle` refuses that state at the front door with, so
+            // the swap cannot post what the link would not offer — and it is
+            // that one rather than `isEmpty` because a node the reader ticked
+            // off travels no further than a node that is not there.
             //
             // ONLY WHERE THERE WAS ONE: writing this field unconditionally
             // would attach a projection to a draft the reader never attached
             // one to.
             ...(this.state.composer.proposal
-              ? { proposal: isEmpty(left) ? null : proposalText(left) }
+              ? { proposal: sendsNothing(left) ? null : proposalText(left) }
               : null),
           }
           : null,
@@ -3660,6 +3692,54 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
+   * A tick toggled — the one edit to the document that is ABOUT SENDING, and
+   * therefore the one that reaches into a draft already carrying the projection.
+   *
+   * THE ATTACHMENT IS A SNAPSHOT, AND STAYS ONE FOR EVERYTHING ELSE. `proposalAdd`
+   * takes the text at the moment the link is pressed, deliberately: a size the
+   * reader goes on adjusting afterwards is simply a later number, and a draft
+   * that rewrote itself under the cursor would be a worse answer than a stale
+   * one. A TICK IS NOT A LATER NUMBER. It says "this must not be sent", and a
+   * draft that carries the node anyway is the control doing the opposite of what
+   * it is labelled — reachable in two clicks, since the branch and the composer
+   * are on screen together.
+   *
+   * AND THE WHOLE ATTACHMENT GOES WHERE NOTHING SURVIVES, rather than a block
+   * with a heading and no statements under it. That is the same answer the
+   * revision swap already gives through the same predicate, so the two paths that
+   * can rewrite an attachment agree about the empty case.
+   *
+   * READ BEFORE `setProposal`'s UPDATE LANDS, which is safe because it is the
+   * composer that is read and `setProposal` does not touch it — the document is
+   * taken from the argument, not from the state.
+   *
+   * `attached` AND NOT `proposal`, which is what makes the tick a ROUND TRIP rather
+   * than a one-way door — the master's own note promises that pressing it twice
+   * gets you back where you were, and on a one-node document the first press
+   * takes the whole attachment off. Asked of `proposal`, this saw a draft with
+   * nothing attached and returned: the second press put the node back in the
+   * document and never in the draft, and the only way to re-attach was
+   * `proposalAdd`, which builds a WHOLE NEW composer and takes the reader's
+   * typed comment, photo and measurement chip with it.
+   *
+   * So the two questions are separated: `attached` is "this draft is one a
+   * proposal was attached to", written once by `proposalAdd` and cleared only by the
+   * reader taking the chip off by hand, while `proposal` is "and here is the
+   * text, as of now" — which the ticks are free to empty and fill again.
+   */
+  skipProposal(doc) {
+    const draft = this.state.composer;
+    this.setProposal(doc);
+    if (!draft || !draft.attached) return;
+    this.setState({
+      composer: {
+        ...draft,
+        proposal: sendsNothing(doc) ? null : proposalText(doc),
+      },
+    });
+  }
+
+  /**
    * The selection, moved onto a body's NEW SPELLING — or nothing to move.
    *
    * WHY IT HAS TO MOVE AT ALL. A body's row in the proposal's branch is selected
@@ -3752,7 +3832,30 @@ export default class HammerolaViewer extends React.Component {
     } catch (failure) {
       error = String((failure && failure.message) || failure);
     }
-    this.setState({ proposalError: error });
+    // AND THE SHEET COMES UP TO SAY SO, because it is the only thing on the page
+    // that says anything. `proposalSays` is drawn inside the panel, while the
+    // FIELDS moved out into the branch of the tree and the branch now outlives
+    // the panel being shut — which is the state the whole move was made for. So
+    // a reader typing a profile with the sheet closed got a refusal that changed
+    // nothing on the model and printed nothing anywhere: the same muteness this
+    // file calls a defect a few hundred lines down ("nothing opened, nothing was
+    // said"). Opening on a refusal and not on every stage, so the sheet a reader
+    // deliberately shut stays shut while they are simply working.
+    //
+    // AND NOT AT ALL FOR A READER WITH NO TOKEN, which is a gate standing right
+    // beside this one that the first version of this line walked straight past.
+    // Giving up the token shuts the sheet and takes the button that reopens it
+    // away, and `tokenClear` calls a sheet left standing there a defect in so
+    // many words — while the branch now outlives that door too, and every
+    // control in it comes back through here. So a reader who had a refused
+    // document when they handed the token in, and then pressed anything at all,
+    // was given a sheet of editing buttons with no way to put it away. The
+    // verdict is for whoever can act on it.
+    this.setState({
+      proposalError: error,
+      ...(error && !this.state.proposalOpen && !this.viewer()
+        ? { proposalOpen: true } : null),
+    });
     // THE OFFSETS ARE SETTLED BEFORE ANY RE-STAGE READS THEM, and that holds
     // whichever order these two lines are written in rather than because of it:
     // this push is synchronous, while `setOverlay` re-stages behind an `await`
@@ -3764,7 +3867,22 @@ export default class HammerolaViewer extends React.Component {
     // nothing but moves made into a distinction: it has nodes and builds no
     // geometry at all, and an empty overlay in the tree is worse than no overlay
     // — the same answer this line always gave for a document with nothing in it.
-    if (parts) this.proposalOverlay(parts.length ? parts : null);
+    //
+    // A DOCUMENT THE KERNEL REFUSED LEAVES THE LAST GOOD BODY STANDING, which is
+    // what `parts` being null means here and is deliberate: a reader half way
+    // through typing a profile should not have the model blink out from under
+    // them at every intermediate value.
+    //
+    // UNLESS THE EYE IS SHUT, and that clause is the whole of what this line got
+    // wrong. `toggleProposalEye` has no other road to the scene, so on a refused
+    // document the eye went closed, the displaced parts went home — that push is
+    // unconditional — and the bodies stayed over the model: a control drawn off
+    // while the thing it names is still there. "Leave what is good" and "take it
+    // all away" are answers to different questions, and the second one wins,
+    // because it was asked out loud.
+    if (parts || this.state.proposalOff) {
+      this.proposalOverlay(parts && parts.length ? parts : null);
+    }
   }
 
   /**
@@ -3779,12 +3897,23 @@ export default class HammerolaViewer extends React.Component {
    * ONLY THE THREE FIELDS THE SCENE CAN ACT ON. The rest of a move node — its
    * id, its role, the row name the projection prints — is the document's own
    * business, and the viewport has no tree to check a name against anyway.
+   *
+   * AND NOTHING AT ALL WHILE THE BRANCH'S EYE IS SHUT (`proposalOff`), which is
+   * `dropMoves` spent on the push rather than on the document: the whole set is
+   * what this door takes, so a set with no moves in it is exactly the sentence
+   * "nothing is displaced" and `reconcileMoves` sends every part home. THE
+   * DOCUMENT IS NOT TOUCHED — the nodes are still there, still drawn, still in
+   * the projection — so opening the eye pushes them again and the parts go
+   * straight back out. Read here and in `proposalOverlay` because those are the
+   * two doors to the viewport; every caller of either is covered by that,
+   * including the `hmr:moved` handler, which reaches this one on its own.
    */
   proposalMoves(doc) {
     const el = this.el();
     if (!el || typeof el.setMoves !== 'function') return;
+    const shown = this.state.proposalOff ? dropMoves(doc) : doc;
     try {
-      el.setMoves(moves(doc).map((node) => ({
+      el.setMoves(moves(shown).map((node) => ({
         paths: node.paths, delta: node.delta, turn: node.turn,
       })));
     } catch (error) {
@@ -3801,12 +3930,19 @@ export default class HammerolaViewer extends React.Component {
    * state this side holds a second copy of. The element remembers what it was
    * given, so a rebuild landing under an open panel puts the body back by
    * itself — see `setOverlay` in viewport/element.js.
+   *
+   * THE BRANCH'S EYE IS READ HERE AND NOT AT THE CALLER (`proposalOff`), which
+   * is the other half of the rule `proposalMoves` states: these two are the
+   * doors to the viewport, so a flag read at both of them covers every way the
+   * proposal can reach the scene. Shut, the parts offered are dropped and the
+   * overlay comes off; the document and the branch are untouched, and the next
+   * push with the eye open lays the same bodies back down.
    */
   proposalOverlay(parts) {
     const el = this.el();
     if (!el || typeof el.setOverlay !== 'function') return;
     try {
-      if (parts) el.setOverlay(parts);
+      if (parts && !this.state.proposalOff) el.setOverlay(parts);
       else el.clearOverlay();
     } catch (error) {
       console.error('proposal overlay', error);
@@ -3814,19 +3950,42 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * Open the panel, or close it and take the body off the model.
+   * Open the sheet of controls, or shut it. THE MODEL IS NOT TOUCHED EITHER WAY.
    *
-   * CLOSING CLEARS THE OVERLAY AND KEEPS THE DOCUMENT. The panel is the only
-   * thing on screen that says the body is not part of the model — there is no
-   * chip for it, because the panel it came out of is standing right there — so a
-   * closed panel with a body still over the model would be this page showing a
-   * shape nothing accounts for.
+   * CLOSING USED TO CLEAR THE OVERLAY, and the argument for it was that the
+   * panel was the only thing on screen saying the body is not part of the model
+   * — no chip for it, because the panel it came out of was standing right there
+   * — so a closed panel with a body still over the model would be this page
+   * showing a shape nothing accounts for. THAT PREMISE IS GONE: the document is
+   * drawn as a branch of the tree now, a row per node with an eye, a colour and
+   * a `×` on it, and the branch stays on screen with the sheet shut
+   * (`proposalTreeStyle`). The bodies ARE accounted for, by the branch.
    *
-   * ON A DOCUMENT WITH NOTHING IN IT, BOTH DIRECTIONS COST NOTHING. Opening sets
-   * an empty overlay and closing clears an empty one, and `setOverlay` in
-   * viewport/element.js answers each of those with no re-stage at all — which it
-   * has to, because a stage is a whole scene disposed and built again, and a
-   * reader opening the panel to see what it is would otherwise pay for it twice.
+   * IT WAS ALSO HALF A RULE, which is what made it a defect rather than a
+   * preference. Closing took the BODIES off and left every displaced part of the
+   * build exactly where the reader had dragged it — while hiding the branch that
+   * held those parts' rows. A part standing somewhere the model does not put it,
+   * with nothing on screen saying why and no `×` to put it back.
+   *
+   * WHAT DECIDES WHETHER THE PROPOSAL IS ON THE MODEL IS THE BRANCH'S EYE now
+   * (`toggleProposalEye`), and it decides it for both halves at once. One
+   * control, one meaning; this one is a sheet of controls opening and shutting.
+   *
+   * OPENING STILL RE-STAGES, and what that costs is worth stating correctly
+   * rather than waving at `sameParts`. The stage runs `buildProposal` over every
+   * body before it reaches any door — the CSG, 23 ms at four bodies and 81 at
+   * twelve — and `sameParts` in element.js does NOT save that: it spares the
+   * scene being disposed and rebuilt, one layer past the point where the
+   * geometry has already been computed. So opening the sheet over a document
+   * with bodies in it pays for a rebuild of geometry that is already on screen.
+   *
+   * IT IS KEPT ANYWAY, and deliberately, because taking it out is a change to
+   * this page's behaviour that nobody asked for and the suite has five separate
+   * assertions resting on: what an opening pushes at the viewport is a contract
+   * other things are written against. The honest note is that the cost is real
+   * and the call is now a belt-and-braces one; the drag path next door, which
+   * paid the same price on every gesture, is where it was actually worth
+   * removing (see the `hmr:moved` handler).
    */
   toggleProposal() {
     const open = !this.state.proposalOpen;
@@ -3835,7 +3994,40 @@ export default class HammerolaViewer extends React.Component {
       dlOpen: false,
     });
     if (open) this.setProposal(this.state.proposal);
-    else this.proposalOverlay(null);
+  }
+
+  /**
+   * The branch's own eye: the whole proposal off the model, or back on it.
+   *
+   * ONE BOOLEAN AND NOT A NODE'S BUSINESS. What it answers is "is any of this on
+   * the model right now" — every body unstaged AND every displaced part of the
+   * build back where the build puts it — which is a question about the proposal
+   * as a whole and has no per-node spelling: a move is not in `s.hidden` and
+   * could not be, since the part it displaces has a row and an eye of its own in
+   * the parts tree. The per-body eyes go on working exactly as they do, because
+   * they are the scene's and this is not.
+   *
+   * NOTHING IS WRITTEN TO THE DOCUMENT. It is display state — the branch stays
+   * drawn, every row keeps its numbers, the projection still says what it said —
+   * so the moment the eye opens again everything comes back with no edit to
+   * undo. That is also why the branch cannot be taken off screen with it: the
+   * eye is what reopens it.
+   *
+   * "COMES BACK" IS ON THE NEXT STAGE THAT BUILDS, and on a document the kernel
+   * has refused there is nothing to bring: `stageProposal` has no parts to hand
+   * over, so opening the eye over one leaves the model empty until the numbers
+   * are good again. The same asymmetry that file's own note argues — shutting
+   * the eye takes everything off whatever the document says, because that was
+   * asked for out loud, while opening it can only offer what the kernel builds.
+   *
+   * THROUGH THE CALLBACK, because the two doors read the flag off `this.state`
+   * and `setState` has not landed by the time this method returns. `stageProposal`
+   * and not `setProposal`: the document is not changing, so there is no selection
+   * to move and no second write of `proposal` to make.
+   */
+  toggleProposalEye() {
+    this.setState({ proposalOff: !this.state.proposalOff },
+                  () => this.stageProposal(this.state.proposal || emptyProposal()));
   }
 
   /**
@@ -4854,10 +5046,17 @@ export default class HammerolaViewer extends React.Component {
     const eyeOuter = (st) => 'width:15px;height:10px;border:1.5px solid ' + (st === 'off' ? 'var(--line-strong)' : 'var(--text-soft)') + ';border-radius:50%;display:flex;align-items:center;justify-content:center';
     const eyeDot = (st) => 'width:5px;height:5px;border-radius:3px;' + (st === 'on' ? 'background:var(--text-soft)' : st === 'part' ? 'background:linear-gradient(90deg,var(--text-soft) 50%,var(--line-strong) 50%)' : 'background:transparent');
     const ghostIcon = (on) => 'width:11px;height:11px;border-radius:3px;' + (on ? 'background:linear-gradient(135deg,var(--text-soft) 50%,var(--hover-bg) 50%);border:1px solid var(--text-soft)' : 'border:1px solid var(--line-strong);background:linear-gradient(135deg,var(--hover-bg) 50%,transparent 50%)');
+    // THE PROPOSAL'S TICK, drawn as the square beside it so the two read as one
+    // row of controls rather than a checkbox bolted onto a tree. FILLED MEANS
+    // HELD BACK, which is the way round the reader asked for it — a tick is
+    // "leave this out of what you send" — and empty means the node travels, so
+    // a branch nobody has touched is a row of empty squares and says so.
+    const skipIcon = (on) => 'width:11px;height:11px;border-radius:3px;border:1px solid '
+      + (on ? 'var(--text-soft);background:var(--text-soft)' : 'var(--line-strong);background:transparent');
 
     const emit = (node) => {
       // THE OVERLAY IS NOT A ROW OF THIS TREE. Its bodies are drawn in the
-      // proposal's own branch above (`proposalRows`), where the moves are too,
+      // proposal's own branch below (`proposalRows`), where the moves are too,
       // and a body drawn in both places is one statement the reader can act on
       // twice: two eyes, two `×`es, one of them putting back what the other took
       // away. THE SCENE IS UNTOUCHED — the group is still staged under the
@@ -4869,7 +5068,7 @@ export default class HammerolaViewer extends React.Component {
       // one storey up and not a second decision. `indexTree` builds a group's
       // `leaves` out of every leaf underneath it, and the overlay is staged as a
       // child of the MODEL'S ROOT — so the root row went on reporting `4` over
-      // three rows, and its eye went on hiding a body the branch above has its
+      // three rows, and its eye went on hiding a body the branch below has its
       // own eye for. A number that counts rows nobody can see is the overlay
       // appearing under the root after all, as a digit instead of a line.
       //
@@ -4935,7 +5134,7 @@ export default class HammerolaViewer extends React.Component {
         // moment those ids can still be read. See the method.
         // `leaves` AND NOT `node.leaves`, so the model root's eye stops reaching
         // into the proposal: those bodies have an eye of their own in the branch
-        // above, and one control taking another's subject is two answers to one
+        // below, and one control taking another's subject is two answers to one
         // question. Every other row's two lists are the same object.
         onVis: stop(() => this.setVisibility({ hidden: this.toggle(s.hidden, leaves) })),
         onGhost: stop(() => this.setVisibility({ ghost: this.toggle(s.ghost, leaves) })),
@@ -5889,7 +6088,7 @@ export default class HammerolaViewer extends React.Component {
       }));
     };
 
-    // -- the proposal, as a small tree of its own above the parts --------------
+    // -- the proposal, as a small tree of its own below the parts --------------
     //
     // THE WHOLE DOCUMENT IS ROWS AND THERE IS NO SECOND LIST. Every node gets
     // one — bodies and moves together, in the order the document holds them —
@@ -6017,6 +6216,28 @@ export default class HammerolaViewer extends React.Component {
         eyeOuter: eyeOuter(eye), eyeDot: eyeDot(eye), ghostIcon: ghostIcon(ghosted),
         dotStyle: 'width:9px;height:9px;border-radius:3px;flex:none;margin:0 4px 0 2px;background:'
           + ((marks && marks.color) || 'transparent'),
+        // WHAT KIND OF STATEMENT THIS ROW IS, said in the word rather than left
+        // to be inferred. A move's row used to be an indented name with three
+        // invisible boxes in front of it — nothing on it said this was a part
+        // of the build displaced rather than a body the reader had drawn, and
+        // the two are the opposite claim about the same model. `move` and not a
+        // badge or an icon, in the order and the spelling `proposalText` prints
+        // (`move "bracket" by (…)`), so the row and the projection it travels
+        // as read alike. NULL AND NOT `''` on a body: an empty string is a
+        // child React renders as nothing and every reading of the tree still
+        // reports, which is a blank where a reader of a test expects silence.
+        kind: isMove ? 'move' : null,
+        kindStyle: `flex:none;font:400 10px ${MONO};color:var(--text-faint);padding:0 2px`,
+        // EXCLUDED FROM WHAT IS SENT, and from nothing else: the node stays in
+        // the document, the body stays over the model, the part stays where the
+        // move puts it. `!node.skip` is the whole of the read, which is what
+        // makes a document written before this field existed a document with
+        // nothing ticked off rather than one to migrate.
+        skipIcon: skipIcon(!!node.skip),
+        skipTitle: node.skip ? 'held back from the text sent to the agent'
+                             : 'leave this out of the text sent to the agent',
+        onSkip: stop(() => this.skipProposal(
+          updateNode(doc, node.id, { skip: !node.skip }))),
         nameStyle: 'white-space:nowrap;cursor:pointer;padding-right:4px;font:400 12px ' + MONO
           + ';color:' + (leaves.length && eye === 'off' ? 'var(--text-faint)' : 'var(--text)'),
         // The same two writers every row of the parts tree uses, and for the
@@ -6158,6 +6379,15 @@ export default class HammerolaViewer extends React.Component {
     // the tree are expressed over `tree.nodes` and say nothing about this one.
     const branchOpen = s.expanded[PROPOSAL_BRANCH] !== false;
 
+    // IS THERE ANYTHING LEFT TO SEND — the master tick's own state, and what
+    // pressing it does read backwards. `sendsNothing` is the same question asked
+    // of the projection and answers true for an EMPTY document too, which is the
+    // one reading that would be wrong here: a master drawn filled over a branch
+    // that has no rows would say the reader had held something back. The branch
+    // is not drawn at all in that state, so this is about the head of a branch
+    // that has rows under it.
+    const allSkipped = doc.nodes.length > 0 && doc.nodes.every((node) => node.skip);
+
     return {
       rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, tokenPop: false }),
 
@@ -6259,8 +6489,25 @@ export default class HammerolaViewer extends React.Component {
         // The queue is behind the same token, so entering one is the moment it
         // can be asked for — from the callback, because `this.state.token` is
         // still the old one until the update lands.
-        this.setState({ token: value, tokenPop: false, tokenDraft: '' },
-                      () => this.loadFeed());
+        //
+        // AND THE PROPOSAL COMES BACK ON THE MODEL, which is the other half of
+        // what `tokenClear` did and has to be undone in the same breath. That
+        // door shuts the eye as a DEFAULT for a reader who has stopped being an
+        // editor; left standing across a round trip it stops being a default and
+        // becomes a trap, because nothing connects it to the gesture that caused
+        // it. The reader hands the token back, presses `add a box`, and the model
+        // does not change — `stageProposal` would reach `proposalOverlay` and be
+        // turned away by a flag set before they left.
+        //
+        // STAGED FROM THE CALLBACK for the same reason the feed is: the flag is
+        // read inside those doors, so a push made before this update landed would
+        // be refused by exactly the value being cleared.
+        this.setState({ token: value, tokenPop: false, tokenDraft: '',
+                        proposalOff: false },
+                      () => {
+                        this.loadFeed();
+                        this.stageProposal(this.state.proposal || emptyProposal());
+                      });
         this.toast('Editing is on in this browser');
       }),
       tokenClear: stop(() => {
@@ -6271,14 +6518,40 @@ export default class HammerolaViewer extends React.Component {
         // AND THE PROPOSAL PANEL, which is HIDDEN WITHOUT A TOKEN like Move
         // — everything it produces leaves this page as a comment. Left open it
         // is a panel the button no longer offers to reopen, with `add to
-        // comment` gone from under it and a body standing over the model that
-        // nothing on screen accounts for. The overlay goes with the panel for
-        // the reason `toggleProposal` takes it off: the panel is the only thing
-        // that says the body is not part of the model.
+        // comment` gone from under it.
+        //
+        // AND THE PROPOSAL COMES OFF THE MODEL, THROUGH THE EYE — which is a
+        // different thing from the bare `proposalOverlay(null)` that stood here,
+        // and the difference is a state machine that cannot disagree with
+        // itself. `proposalOff` is now the one answer to "is the proposal on the
+        // model", and both doors to the viewport read it. Cleared by hand
+        // instead, the overlay went off while that flag still said it was on —
+        // and since the branch now survives this (it is drawn on the document
+        // alone), the first edit through any of its rows called `setProposal`
+        // and staged the bodies straight back onto a model this had just
+        // cleared.
+        //
+        // WHY OFF AT ALL, given the panel is what carries the token: the reader
+        // is giving up the right to edit, and a body standing over the model is
+        // a statement they can no longer send. THE BRANCH STAYS, so the document
+        // is still there to be read and the eye is still there to put it back —
+        // this is a default and not a lock, which is the honest shape for it:
+        // nothing here is a permission gate, and pretending otherwise would be
+        // the invented adversary AGENTS.md warns about.
+        //
+        // BOTH PUSHES CARRY THEIR OWN ANSWER rather than leaning on the flag
+        // they just set: `setState` has not landed when these run, so the doors
+        // would still read the old `proposalOff` and push the proposal back
+        // down. `null` and a document with no moves in it mean the same thing on
+        // either side of that update, which is what makes the order not matter.
+        // The moves need the second call at all because nothing else pushes
+        // here, and without it the displaced parts would stand where they are
+        // until some later edit happened to send a document.
         this.setState({ token: null, tokenPop: false, tokenDraft: '',
                         composer: null, notePop: null, feed: [],
-                        proposalOpen: false });
+                        proposalOpen: false, proposalOff: true });
         this.proposalOverlay(null);
+        this.proposalMoves(dropMoves(this.state.proposal));
         this.set({ tool: null });
         this.toast('Token removed — back to viewing');
       }),
@@ -6701,15 +6974,22 @@ export default class HammerolaViewer extends React.Component {
 
       // -- the proposal's branch of the tree ----------------------------------
       //
-      // DRAWN ONLY OVER A DOCUMENT WITH SOMETHING IN IT, and only while the
-      // panel is open. The second condition is the overlay's: closing the panel
-      // takes the bodies off the model (`toggleProposal`), so a branch left
-      // standing would list rows with an eye, a colour and a ghost square over
-      // geometry that is no longer in the scene. The first is what keeps the
-      // column quiet — a heading over nothing says less than the panel's own
-      // sentence about what a body is, which is where that explanation stayed.
+      // DRAWN OVER A DOCUMENT WITH SOMETHING IN IT, AND ON NOTHING ELSE. What
+      // keeps the column quiet is the only condition left — a heading over
+      // nothing says less than the panel's own sentence about what a body is,
+      // which is where that explanation stayed.
+      //
+      // IT USED TO ASK `s.proposalOpen` AS WELL, and that was the overlay's
+      // condition borrowed: closing the panel took the bodies off the model, so
+      // a branch left standing would have listed rows with an eye and a colour
+      // over geometry that had gone. It borrowed only half of it. The moves
+      // stayed applied — a part of the build standing where the reader dragged
+      // it — while the row that said so, and the `×` that puts it back, went off
+      // screen with the panel. The panel no longer touches the model at all
+      // (`toggleProposal`); what takes the proposal off it is this branch's own
+      // eye, which has to stay on screen to be pressed again.
       proposalTreeStyle: 'padding:1px 0 6px;flex-direction:column;align-items:flex-start;display:'
-        + (s.proposalOpen && doc.nodes.length ? 'flex' : 'none'),
+        + (doc.nodes.length ? 'flex' : 'none'),
       // THE HEAD OF THE BRANCH, drawn as a group of the parts tree is drawn at
       // depth 0 — the same height, the same caret, the same count on the right —
       // because it is read beside that tree and a second shape for it would read
@@ -6727,6 +7007,34 @@ export default class HammerolaViewer extends React.Component {
         expanded[PROPOSAL_BRANCH] = !branchOpen;
         this.setState({ expanded });
       }),
+      // THE BRANCH'S OWN EYE, drawn with the rows' own `eyeOuter`/`eyeDot` so it
+      // reads as the same control one level up — which is what it is: the whole
+      // proposal off the model, bodies unstaged and every displaced part back
+      // where the build puts it. `toggleProposalEye` has the rest of the
+      // argument, including why it is one boolean of interface state and not a
+      // per-node thing.
+      //
+      // TWO STATES AND NOT THREE. A group of the parts tree can be half-hidden
+      // (`part`) because its eye is a tally of its leaves; this one is a switch,
+      // and the per-body eyes underneath it go on saying what each body is
+      // doing. So a proposal whose bodies are individually hidden still reads as
+      // ON here — that is the truthful answer, because the moves are still
+      // applied and the eyes below say the rest.
+      proposalEyeOuter: eyeOuter(s.proposalOff ? 'off' : 'on'),
+      proposalEyeDot: eyeDot(s.proposalOff ? 'off' : 'on'),
+      proposalEyeClick: stop(() => this.toggleProposalEye()),
+      // THE MASTER TICK: every node held back, or every node let through. It
+      // shows filled only when there is nothing left to send, which is the state
+      // it would put the document in — so pressing it twice is a round trip, and
+      // a branch with one node ticked off shows an empty master with a filled
+      // row under it.
+      proposalSkipAll: stop(() => this.skipProposal({
+        ...doc,
+        nodes: doc.nodes.map((node) => ({ ...node, skip: !allSkipped })),
+      })),
+      proposalSkipIcon: skipIcon(allSkipped),
+      proposalSkipTitle: allSkipped ? 'send all of it again'
+                                    : 'hold all of it back from the agent',
       proposalHeadName: PROPOSAL_BRANCH,
       proposalHeadNameStyle: `white-space:nowrap;padding-right:4px;font:600 12px ${MONO};color:var(--text)`,
       // HOW MANY STATEMENTS ARE IN IT, bodies and moves together, in the place a
@@ -6771,8 +7079,12 @@ export default class HammerolaViewer extends React.Component {
       // inside a React handler: nothing opened, nothing was said, and the
       // feature's only exit did nothing at all. The message for it is already on
       // screen in the panel's error box; what is missing is the offer.
+      // `sendsNothing` AND NOT `isEmpty`, which is the same offer read one step
+      // further on: a document whose every node is ticked off projects to a
+      // heading and a `result =` line, and a link that attached THAT would send
+      // the agent a proposal the reader had just finished withholding.
       proposalAddStyle: 'cursor:pointer;text-decoration:underline'
-        + (viewer || isEmpty(doc) || s.proposalError ? ';display:none' : ''),
+        + (viewer || sendsNothing(doc) || s.proposalError ? ';display:none' : ''),
       // THE TEXT AND NOT THE DOCUMENT, taken at the moment the link is pressed.
       // `proposalText` is the projection the agent reads — a few aligned lines
       // saying how big the thing is and where its features sit, and a block
@@ -6801,7 +7113,14 @@ export default class HammerolaViewer extends React.Component {
           composer: {
             part: '', partId: null, key: null,
             p: null, text: '', photo: null,
-            proposal: proposalText(doc),
+            // `attached` IS THE DRAFT'S ANSWER TO "was a proposal put on this
+            // one", and `proposal` is the text as it stands. Not `held`: this
+            // feature already spends "held back" on the OPPOSITE meaning — a node
+            // the reader is keeping out of the text — and the page has an `s.held`
+            // of its own for the section hold key. They part company
+            // the moment every node is ticked off: the text goes and the answer
+            // does not, which is what lets a tick be undone (`skipProposal`).
+            proposal: proposalText(doc), attached: true,
           },
           tool: null,
         });
@@ -7097,7 +7416,13 @@ export default class HammerolaViewer extends React.Component {
       // attached, it can be taken off, and `sendComment` is what puts it in the
       // comment.
       compProposalChipStyle: 'display:' + (s.composer && s.composer.proposal ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
-      compProposalRemove: stop(() => this.setState({ composer: { ...s.composer, proposal: null } })),
+      // BOTH HALVES, because this is the reader saying they do not want one on
+      // this draft at all — unlike a tick, which empties the text and can fill
+      // it again. Left holding `attached`, a draft the chip was taken off would grow
+      // its attachment back the next time anything in the branch was ticked.
+      compProposalRemove: stop(() => this.setState({
+        composer: { ...s.composer, proposal: null, attached: false },
+      })),
       compPhotoName: s.composer && s.composer.photo ? s.composer.photo.name : '',
       compPhoto: (e) => {
         const file = e.target.files && e.target.files[0];
@@ -7352,103 +7677,6 @@ export default class HammerolaViewer extends React.Component {
           {/* ── the tree, floating over the model ── */}
           <div style={css('position:absolute;left:12px;top:10px;max-height:calc(100% - 20px);display:flex;flex-direction:column;align-items:flex-start;overflow:auto;z-index:10')}>
 
-            {/* ── the proposal: a second, small tree above the parts ──
-
-                WHAT THE READER HAS SAID, ALL OF IT, IN ONE PLACE. Every node of
-                the document is a row here — the bodies they drew and the parts
-                of the build they displaced, in the order the document holds them
-                — and a selected row opens the numbers underneath itself. The
-                panel over on the right keeps what is ABOUT the proposal rather
-                than IN it: what it is for, the buttons that add a body, the
-                kernel's verdict, and the door out to a comment.
-
-                A BRANCH OF THE INTERFACE. It is built from `this.state.proposal`
-                and is not part of `tree` at all — `computed()` says why a second
-                scene root was not on the table, and why a MOVE could not be a
-                scene row in any case. The bodies ARE in the scene, staged under
-                the model's root exactly as before, and each row resolves through
-                its staged path for the eye, the ghost square, the colour and the
-                selection.
-
-                NOT INSIDE `treeShown` OR `notCompare`, unlike the parts tree
-                below it. The proposal is the reader's own claim about a motor or
-                a wall, which is as true over a comparison as over a build — the
-                panel is not taken out of service by one either — and it is the
-                only place the rows exist now that the panel has no list. */}
-            {v.proposalOn && (
-              <div style={css(v.proposalTreeStyle)}>
-                <div style={css(v.proposalHeadStyle)}>
-                  <span onClick={v.proposalToggle} style={css(v.proposalCaretStyle)}>
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d={v.proposalCaretPath} /></svg>
-                  </span>
-                  <span onClick={v.proposalToggle} style={css(v.proposalHeadNameStyle)}>{v.proposalHeadName}</span>
-                  <span style={css(v.proposalCountStyle)}>{v.proposalCount}</span>
-                </div>
-                {v.proposalRows.map((row) => (
-                  <div key={row.key} style={css('display:flex;flex-direction:column;align-items:flex-start')}>
-                    {/* `onContextMenu` is null on a move and on a body the scene
-                        cannot place, which leaves the browser's own menu where
-                        this page has nothing to put — see the row. */}
-                    <div onContextMenu={row.onMenu} style={css(row.rowStyle)}>
-                      {/* The eye, the ghost square and the colour, in one box so
-                          that a MOVE — which draws nothing and has none of them
-                          — can drop all three at once and still line its name up
-                          with the bodies above it. */}
-                      <span style={css(row.marksStyle)}>
-                        <span onClick={row.onVis} title="show / hide" style={css('width:24px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
-                          <span style={css(row.eyeOuter)}><span style={css(row.eyeDot)} /></span>
-                        </span>
-                        <span onClick={row.onGhost} title="translucent" style={css('width:22px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
-                          <span style={css(row.ghostIcon)} />
-                        </span>
-                        <span style={css(row.dotStyle)} />
-                      </span>
-                      <span onClick={row.onSelect} style={css(row.nameStyle)}>{row.name}</span>
-                      <span onClick={row.onRemove} title={row.removeTitle} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
-                    </div>
-                    <div style={css(row.fieldsStyle)}>
-                      {/* A BODY'S HEAD LINE, absent on a move: the name it is
-                          drawn under, the op it was built from, and the switch
-                          between the two roles — `result = union(solid) −
-                          union(hole)`, with a hole drawn as its own translucent
-                          part so the reader can see what they asked to remove. */}
-                      {row.nameField && (
-                        <div style={css('display:flex;align-items:center;gap:6px')}>
-                          {/* `onKeyDown` on every field of this block: the value
-                              is committed on `change` — a blur, an Enter, or a
-                              nudge of the arrows — and not on the keystroke, so
-                              a field with only the blur wired would ignore the
-                              reader who types a number and presses return. */}
-                          <input type={row.nameField.type} value={row.nameField.value}
-                                 onChange={row.nameField.onChange} onBlur={row.nameField.onBlur}
-                                 onKeyDown={row.nameField.onKeyDown} style={css(row.nameField.style)} />
-                          <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>{row.op}</span>
-                          <span onClick={row.onRole} title="solid adds material, hole takes it away" style={css(row.roleStyle)}>{row.role}</span>
-                        </div>
-                      )}
-                      {row.groups.map((g) => (
-                        <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
-                          <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
-                          {/* `type` AND `step` COME OFF THE FIELD, so a number
-                              gets the browser's own arrows and an extrusion's
-                              profile — `x,y; x,y; …`, which is no kind of number
-                              — does not. `ref` is how a nudge of those arrows
-                              reaches the document; `field` in `computed()` says
-                              why React leaves it no other way, and what
-                              `onWheel` is for. */}
-                          {g.fields.map((f) => (
-                            <input key={f.key} type={f.type} step={f.step} ref={f.ref}
-                                   value={f.value} onChange={f.onChange} onBlur={f.onBlur}
-                                   onKeyDown={f.onKeyDown} onWheel={f.onWheel} style={css(f.style)} />
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
             {v.notCompare && v.treeShown && (
               <div style={css('display:flex;flex-direction:column;min-height:0')}>
                 <div style={css('flex:none;display:flex;align-items:center;gap:2px;padding:0 0 3px')}>
@@ -7500,6 +7728,151 @@ export default class HammerolaViewer extends React.Component {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* ── the proposal: a second, small tree below the parts ──
+
+                WHAT THE READER HAS SAID, ALL OF IT, IN ONE PLACE. Every node of
+                the document is a row here — the bodies they drew and the parts
+                of the build they displaced, in the order the document holds them
+                — and a selected row opens the numbers underneath itself. The
+                panel over on the right keeps what is ABOUT the proposal rather
+                than IN it: what it is for, the buttons that add a body, the
+                kernel's verdict, and the door out to a comment.
+
+                BELOW THE PARTS AND NOT ABOVE THEM, which is about those opening
+                numbers and not about which list matters more. Selecting a row
+                grows this branch by the height of a block of fields, and in a
+                column everything after it moves down by that much: standing
+                above the parts, one click on a proposal row jerked the whole
+                parts tree down the screen while the reader was looking at it.
+                Nothing is under this branch now, so there is nothing for it to
+                shove. The other way out was to float the fields over the column
+                instead, which is a popover with its own placement and its own
+                dismissal, for a block that belongs to the row it opens under.
+
+                A BRANCH OF THE INTERFACE. It is built from `this.state.proposal`
+                and is not part of `tree` at all — `computed()` says why a second
+                scene root was not on the table, and why a MOVE could not be a
+                scene row in any case. The bodies ARE in the scene, staged under
+                the model's root exactly as before, and each row resolves through
+                its staged path for the eye, the ghost square, the colour and the
+                selection.
+
+                NOT INSIDE `treeShown` OR `notCompare`, unlike the parts tree
+                above it. The proposal is the reader's own claim about a motor or
+                a wall, which is as true over a comparison as over a build — the
+                panel is not taken out of service by one either — and it is the
+                only place the rows exist now that the panel has no list. */}
+            {v.proposalOn && (
+              <div style={css(v.proposalTreeStyle)}>
+                <div style={css(v.proposalHeadStyle)}>
+                  <span onClick={v.proposalToggle} style={css(v.proposalCaretStyle)}>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d={v.proposalCaretPath} /></svg>
+                  </span>
+                  {/* THE BRANCH'S OWN EYE AND ITS OWN TICK, in the order every
+                      row below carries them: what is on the model, then what
+                      travels to the agent. The eye takes the whole proposal off
+                      the model and the tick holds all of it back from the text;
+                      neither edits a body, and the rows keep answering for
+                      themselves underneath both. */}
+                  <span onClick={v.proposalEyeClick} title="show / hide the whole proposal" style={css('width:24px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                    <span style={css(v.proposalEyeOuter)}><span style={css(v.proposalEyeDot)} /></span>
+                  </span>
+                  {/* THE GHOST COLUMN, STOOD OVER AND NOT USED. A row spends
+                      24px on its eye, 22 on its ghost square and 22 on its tick,
+                      in that order; the header has an eye and a tick and no
+                      ghost — there is nothing to make the whole proposal
+                      translucent — so without this spacer the master tick lands
+                      over the column of ghost squares, 31px to the left of the
+                      ticks it sets and clears. The eye above is off by 6px and
+                      still reads as the same control one level up; a tick over
+                      the wrong column does not. */}
+                  <span style={css('width:22px;flex:none')} />
+                  <span onClick={v.proposalSkipAll} title={v.proposalSkipTitle} style={css('width:22px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                    <span style={css(v.proposalSkipIcon)} />
+                  </span>
+                  <span onClick={v.proposalToggle} style={css(v.proposalHeadNameStyle)}>{v.proposalHeadName}</span>
+                  <span style={css(v.proposalCountStyle)}>{v.proposalCount}</span>
+                </div>
+                {v.proposalRows.map((row) => (
+                  <div key={row.key} style={css('display:flex;flex-direction:column;align-items:flex-start')}>
+                    {/* `onContextMenu` is null on a move and on a body the scene
+                        cannot place, which leaves the browser's own menu where
+                        this page has nothing to put — see the row. */}
+                    <div onContextMenu={row.onMenu} style={css(row.rowStyle)}>
+                      {/* The eye, the ghost square and the colour, in one box so
+                          that a MOVE — which draws nothing and has none of them
+                          — can drop all three at once and still line its name up
+                          with the bodies above it. */}
+                      <span style={css(row.marksStyle)}>
+                        <span onClick={row.onVis} title="show / hide" style={css('width:24px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                          <span style={css(row.eyeOuter)}><span style={css(row.eyeDot)} /></span>
+                        </span>
+                        <span onClick={row.onGhost} title="translucent" style={css('width:22px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                          <span style={css(row.ghostIcon)} />
+                        </span>
+                        <span style={css(row.dotStyle)} />
+                      </span>
+                      {/* OUTSIDE THAT BOX, which is the whole reason it is not
+                          in it: the box goes `visibility:hidden` on a row with
+                          nothing in the scene, and every move is such a row —
+                          while a move is a statement that can be held back
+                          exactly as a body can. */}
+                      <span onClick={row.onSkip} title={row.skipTitle} style={css('width:22px;display:flex;justify-content:center;cursor:pointer;flex:none')}>
+                        <span style={css(row.skipIcon)} />
+                      </span>
+                      {/* `move`, on the rows that are one, before the name and
+                          in the same muted mono the count is drawn in. Nothing
+                          else on the row says a displacement of a part the build
+                          already has apart from a body somebody drew. */}
+                      {row.kind && (
+                        <span style={css(row.kindStyle)}>{row.kind}</span>
+                      )}
+                      <span onClick={row.onSelect} style={css(row.nameStyle)}>{row.name}</span>
+                      <span onClick={row.onRemove} title={row.removeTitle} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
+                    </div>
+                    <div style={css(row.fieldsStyle)}>
+                      {/* A BODY'S HEAD LINE, absent on a move: the name it is
+                          drawn under, the op it was built from, and the switch
+                          between the two roles — `result = union(solid) −
+                          union(hole)`, with a hole drawn as its own translucent
+                          part so the reader can see what they asked to remove. */}
+                      {row.nameField && (
+                        <div style={css('display:flex;align-items:center;gap:6px')}>
+                          {/* `onKeyDown` on every field of this block: the value
+                              is committed on `change` — a blur, an Enter, or a
+                              nudge of the arrows — and not on the keystroke, so
+                              a field with only the blur wired would ignore the
+                              reader who types a number and presses return. */}
+                          <input type={row.nameField.type} value={row.nameField.value}
+                                 onChange={row.nameField.onChange} onBlur={row.nameField.onBlur}
+                                 onKeyDown={row.nameField.onKeyDown} style={css(row.nameField.style)} />
+                          <span style={css(`flex:1;font:400 10px ${MONO};color:var(--text-muted)`)}>{row.op}</span>
+                          <span onClick={row.onRole} title="solid adds material, hole takes it away" style={css(row.roleStyle)}>{row.role}</span>
+                        </div>
+                      )}
+                      {row.groups.map((g) => (
+                        <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
+                          <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
+                          {/* `type` AND `step` COME OFF THE FIELD, so a number
+                              gets the browser's own arrows and an extrusion's
+                              profile — `x,y; x,y; …`, which is no kind of number
+                              — does not. `ref` is how a nudge of those arrows
+                              reaches the document; `field` in `computed()` says
+                              why React leaves it no other way, and what
+                              `onWheel` is for. */}
+                          {g.fields.map((f) => (
+                            <input key={f.key} type={f.type} step={f.step} ref={f.ref}
+                                   value={f.value} onChange={f.onChange} onBlur={f.onBlur}
+                                   onKeyDown={f.onKeyDown} onWheel={f.onWheel} style={css(f.style)} />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 

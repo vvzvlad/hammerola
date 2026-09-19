@@ -973,13 +973,21 @@ export class HmrViewport extends HTMLElement {
     // costs a full teardown of the scene — see `sameParts`. The panel asks for
     // exactly that more often than it asks for anything else: it sets an empty
     // overlay over an empty one every time it opens on a document nothing has
-    // been put in yet, and again every time it closes.
+    // been put in yet, and again on every stage made while the branch's eye is
+    // shut — which is every edit the reader makes in that state.
     if (sameParts(next, this.overlayParts)) return Promise.resolve();
     this.overlayParts = next;
     return this.restage();
   }
 
-  /** Take the overlay off again. The panel closing, and nothing else. */
+  /** Take the overlay off again.
+   *
+   * THE PANEL CLOSING IS NO LONGER ONE OF THE CALLERS, and the list is worth
+   * keeping straight because it is short: the branch's own eye, shut (through
+   * `stageProposal`, which is also the road a document the kernel refused takes
+   * while that eye is down), the reader giving up their edit token, and a stage
+   * that builds no geometry at all. Closing the sheet stopped touching the model
+   * when the branch of the parts tree took over saying what is on it. */
   clearOverlay() {
     return this.setOverlay([]);
   }
@@ -1054,9 +1062,12 @@ export class HmrViewport extends HTMLElement {
    * still be the wrong answer besides, since `/<root>/proposal` names a thing in
    * no build whatever reaches here holding it.
    *
-   * NOTHING IS A BODY OF AN OVERLAY THAT IS NOT STAGED: with the panel closed
-   * `overlayParts` is empty, `staged()` hands the document straight back, and
-   * every path on screen is the model's own.
+   * NOTHING IS A BODY OF AN OVERLAY THAT IS NOT STAGED: with `overlayParts`
+   * empty, `staged()` hands the document straight back and every path on screen
+   * is the model's own. THAT IS NOT THE SAME AS "the sheet is shut" any more —
+   * closing it leaves the bodies exactly where they were, and the branch of the
+   * tree goes on listing them. What empties this list is the branch's eye, the
+   * token being given up, or a document with no geometry in it.
    */
   isOverlay(id) {
     if (!this.payload || !this.overlayParts.length) return false;
