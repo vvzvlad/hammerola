@@ -11,7 +11,8 @@
  * IT ASKS THE STATE AND NOTHING ELSE. Every answer here is a read of the five
  * `cmp*` fields — which pair, which stage, what the hub said, which row is
  * picked — so the bag it takes is three doors out (`leaveCompare`,
- * `compareRevisions`, `set`) and the handful of readers of the hub's report
+ * `compareRevisions`, `set`), two pieces of the page's own chrome (`tab`,
+ * `stop`) and the handful of readers of the hub's report
  * that stay beside the component because the legend's own sentence has to:
  * `tests/test_ui_source.py` reads `NOT_COMPARED_WHY` out of
  * HammerolaViewer.jsx as text and holds it against what the hub writes on

@@ -128,22 +128,43 @@ def page_sources() -> list[Path]:
     DERIVED AND NOT LISTED, which is the point: a list would go stale in the
     direction of checking less, silently, exactly as it just did.
 
-    A MODULE THAT GAINS A SECOND CONSUMER LEAVES THIS SET AND IS THEN SWEPT BY
-    NOBODY, for the two rules that take it — the no-colour-literal rule and the
-    meta-field rule are page rules and have no whole-tree twin. That is a real
-    edge and it is named here rather than papered over: if a panel's module is
-    ever imported by the front page as well, its colours stop being checked,
-    and the check that notices is the caller's floor below.
+    A CONSUMER INSIDE THE PAGE IS NOT A SECOND CONSUMER, which is why this is a
+    fixed point and not one pass. The panels cut out of one component import
+    each other — `proposal.js` is taken by the component, `chromeview.js`,
+    `proposalview.js` and `rowmenu.js`, every one of them a member — and a
+    single pass read that as "shared" and dropped it, so a 776-line module of
+    the page was swept by nothing. Only a consumer from OUTSIDE takes a
+    candidate out now, and that is checkable rather than hoped for.
+
+    A module that does leave is then swept by nobody for these two rules: they
+    are page rules and have no whole-tree twin. Named rather than papered over.
+
+    ONLY DIRECT CHILDREN OF ui/src, and only `from` imports. Panels moved into
+    `ui/src/panels/` would leave the sweep silently; the one side-effect import
+    in the tree (`main.jsx` → `./viewport/index.js`) is outside the set anyway,
+    and missing one keeps a module IN, which fails towards sweeping more.
     """
-    others = [p for p in ALL_UI_FILES if p != COMPONENT]
-    consumers = {path: _sibling_imports(path) for path in others}
-    mine = []
-    for path in sorted(_sibling_imports(COMPONENT)):
-        if not path.is_file() or path.parent != UI:
-            continue
-        if not any(path in imported for imported in consumers.values()):
-            mine.append(path)
-    return [COMPONENT] + mine
+    outside = [p for p in ALL_UI_FILES if p != COMPONENT]
+    imports = {path: _sibling_imports(path) for path in outside}
+    page = {path for path in _sibling_imports(COMPONENT)
+            if path.is_file() and path.parent == UI}
+    shrinking = True
+    while shrinking:
+        shrinking = False
+        for candidate in sorted(page):
+            if any(candidate in imports[other] for other in outside
+                   if other not in page):
+                page.discard(candidate)
+                shrinking = True
+    # THE FLOOR LIVES HERE AND NOT IN A CALLER, because both callers have a
+    # backstop that the component alone satisfies: "does the page spend a
+    # palette token" and "does the UI read any meta field" are both answered
+    # yes by HammerolaViewer.jsx no matter how many panels fell out. This is
+    # the assertion that would not be — it fires when the derivation goes dark.
+    assert page, (
+        "page_sources() found nothing but the component. The derivation has "
+        "gone dark, so every check that takes it is back to sweeping one file")
+    return [COMPONENT] + sorted(page)
 
 
 def strip_comments(source: str) -> str:
@@ -164,10 +185,16 @@ def strip_comments(source: str) -> str:
     Only WHOLE-LINE `//` comments go, never a trailing one: `https://` inside a
     string would otherwise be read as the start of a comment and take the rest of
     the line — including the URL this file exists to notice — with it.
+
+    `[ \t]` AND NOT `\s` IN THAT LAST PATTERN, which is the whole of whether the
+    paragraph above is true. `\s` matches a newline, so `^\s*//` starts its match
+    on the BLANK LINE before a comment and takes it away: 30 of the 47 files
+    under ui/src came out short, HammerolaViewer.jsx by 64 lines. Held by
+    `test_strip_comments_keeps_every_file_line_for_line`.
     """
     source = re.sub(r"/\*.*?\*/",
                     lambda m: re.sub(r"[^\n]", " ", m.group(0)), source, flags=re.S)
-    return re.sub(r"^\s*//.*$", "", source, flags=re.M)
+    return re.sub(r"^[ \t]*//.*$", "", source, flags=re.M)
 
 
 def declared_events(path: Path) -> dict:
@@ -234,6 +261,27 @@ def test_the_discovery_found_the_files():
     if not ADAPTER_FILES:
         pytest.skip("ui/src/viewport/ is empty — the cross-checks skip honestly")
     assert (VIEWPORT / "events.js").exists(), "the adapter is there but names no events"
+
+
+def test_strip_comments_keeps_every_file_line_for_line():
+    """`strip_comments` promises the numbering survives. Here is the promise.
+
+    Two checks stand on it: `test_nothing_splits_the_bundle` reads the RAW line
+    beside a stripped one to find `/* @vite-ignore */`, and anything reporting
+    a line number reports the stripped file's. It was false — `^\\s*//` matched
+    from the newline of the BLANK LINE before a comment and swallowed it, so 30
+    of these files came out short and this one by 64 lines. It stayed invisible
+    because the one file the bundle check indexes happened to lose nothing.
+    """
+    short = {path.name: len(read(path).splitlines())
+             - len(strip_comments(read(path)).splitlines())
+             for path in ALL_UI_FILES
+             if len(strip_comments(read(path)).splitlines())
+             != len(read(path).splitlines())}
+    assert not short, (
+        f"strip_comments changed the line count of {short} — every check that "
+        f"reports a line number now reports the wrong one, and the ones that "
+        f"read the raw line beside the stripped one read a different line")
 
 
 # -- the event contract ------------------------------------------------------
@@ -1119,10 +1167,12 @@ def test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own():
     literal became which role, and why `#8a9099` and `#9aa1a9` are one level and
     not two — and prose paints nothing.
 
-    NO EXEMPTIONS. The only colour on this page that is not ours is the tree
-    swatch's, and it never was a literal here: it is `node.color`, read out of
-    the pushed model, which is the part's own colour and not the interface's to
-    theme.
+    ONE EXEMPTION, `proposalgeom.js`, named in the body below and in that
+    module's own header. Its two hexes colour MODEL PARTS — the same kind of
+    value the hub pushes in a view file — and it builds the geometry of the
+    bodies the reader is proposing, which is not interface chrome. The other
+    colour here that is not ours was never a literal at all: the tree swatch is
+    `node.color`, read out of the pushed model.
     """
     # THE WHOLE PAGE AND NOT THE ONE FILE, via `page_sources`: the panels were
     # cut into modules of their own (#103) and took their `css()` strings with
@@ -1136,13 +1186,6 @@ def test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own():
     # accident rather than by agreement, which is the weaker of the two.
     excused = {"proposalgeom.js"}
     sources = page_sources()
-    # THE FLOOR, and it guards the derivation rather than the page. The backstop
-    # below asks whether the page spends a token, and the component always does
-    # — so all seven panel modules could fall out of `page_sources()` and that
-    # backstop would still be green. This is the assertion that would not be.
-    assert len(sources) > 1, (
-        "page_sources() found nothing but the component — the derivation has "
-        "gone dark, so this check is back to sweeping one file of ten")
     whole = ""
     for path in sources:
         if path.name in excused:
