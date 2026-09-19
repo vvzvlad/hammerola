@@ -25,11 +25,11 @@ import {
   EVENT_PROPOSALMOVE, emit,
 } from "./events.js";
 import { cameraBasis, canvasXY, ndcAt, ndcOffset } from "./camera.js";
+import { travelled, watchDrag } from "./drag.js";
 import { gestureInternals, internals } from "./internals.js";
 import { measureDistance, measureEntity } from "./measure.js";
-import { groupHome, movePart, movableGroup, nudgePart } from "./parts.js";
+import { grabbable, groupHome, movePart, nudgePart } from "./parts.js";
 import { capOwnerAt, faceNormalAt, pickEntity } from "./picking.js";
-import { CLICK_PX } from "./options.js";
 import {
   dragSection, keepSectionCut, placeSectionPlane, sectionAxis,
   sectionOffset, sectionRange,
@@ -436,23 +436,14 @@ export function dragPart(vp, d, event) {
 export function installTools(vp) {
   let press = null;
 
+  /** Follow this press to wherever it is released — `watch.arm()` at the press
+   *  and `watch.disarm()` in `finish`, on the window and in the capture phase
+   *  for the reason `drag.js` writes out. */
+  const watch = watchDrag({ onMove, onUp, onCancel });
+
   const finish = () => {
     press = null;
-    removeEventListener("pointermove", onMove, true);
-    removeEventListener("pointerup", onUp, true);
-    removeEventListener("pointercancel", onCancel, true);
-  };
-
-  /** Follow this press to wherever it is released.
-   *
-   * On the WINDOW and in the capture phase: the trackball captures the pointer,
-   * so a drag that starts on the canvas can perfectly well end outside it, and a
-   * release missed here strands the gesture forever.
-   */
-  const watch = () => {
-    addEventListener("pointermove", onMove, true);
-    addEventListener("pointerup", onUp, true);
-    addEventListener("pointercancel", onCancel, true);
+    watch.disarm();
   };
 
   /** The end of a gesture that moved something, for the two endings that always
@@ -613,9 +604,7 @@ export function installTools(vp) {
 
   function onMove(event) {
     if (!press) return;
-    if (!press.moved
-        && Math.abs(event.clientX - press.startX) < CLICK_PX
-        && Math.abs(event.clientY - press.startY) < CLICK_PX) return;
+    if (!travelled(event, press)) return;
     press.moved = true;
     if (press.tool === "cut") {
       const g = internals(vp.viewer);
@@ -802,7 +791,7 @@ export function installTools(vp) {
         startX: event.clientX, startY: event.clientY,
         moved: false, axis: undefined, move: null,
       };
-      watch();
+      watch.arm();
       return;
     }
     // `activeTool`, NOT `state.tool`: the hold key puts the cut up without
@@ -820,7 +809,7 @@ export function installTools(vp) {
       startX: event.clientX, startY: event.clientY,
       moved: false, axis: undefined, move: null,
     };
-    watch();
+    watch.arm();
     if (!tool) return;
     // THE RINGS OWN NO PRESS ON THIS ELEMENT, and there is no branch here for
     // them. They answer to `move` along with the arrows now — one widget, one
@@ -861,21 +850,19 @@ export function installTools(vp) {
       // which decides what the scene does while the hand is down, and
       // `concludeMove`, which decides what is said when it comes off.
       //
-      // `some` AND THEN `every`, which is what refuses a MIXED grab — a proposal
-      // body selected together with a part of the model — whole rather than
-      // quietly moving the half it may: one overlay path makes this a proposal
-      // drag, and then a model path has no body name and is not grabbable into
-      // it. The same all-or-nothing `movePart` keeps for the copies of a row, and
-      // the group node the bodies hang under is refused by the same line (see
-      // `overlayBody`, which answers null for it).
+      // `grabbable` IN parts.js IS BOTH HALVES OF THAT — which of the two this
+      // is, and whether every path can be taken hold of as it — and the two
+      // halves of the manipulator ask the very same function about their own
+      // selection every frame. It is also what refuses a MIXED grab — a
+      // proposal body selected together with a part of the model — whole rather
+      // than quietly moving the half it may.
       //
       // REFUSED WITH THE GESTURE and not later, in the same breath as a part the
       // scene cannot move at all: here nothing has moved yet, and the press
-      // degrades into the plain one below.
-      const proposal = wanted ? wanted.some((path) => vp.isOverlay(path)) : false;
-      const grabbable = (path) => !!movableGroup(viewer, path)
-        && (!proposal || !!vp.overlayBody(path));
-      if (!wanted || !ndc || !wanted.every(grabbable)) {
+      // degrades into the plain one below. ASKED LAST of the three, so a press
+      // with no `ndc` to measure from costs no walk of the scene.
+      const grab = wanted && ndc ? grabbable(vp, wanted) : null;
+      if (!grab) {
         // Nothing here to drag. The press DEGRADES to a plain one rather than
         // being dropped: a click still selects and a drag still rotates, which
         // is how a reader reaches the part they meant to move without leaving
@@ -916,7 +903,7 @@ export function installTools(vp) {
       // `moveRecord` above: the axis arrows make one of these too, and a second
       // hand-written copy is how the two gestures would start disagreeing about
       // what a drag of the same part means.
-      press.move = moveRecord(vp, wanted, ndc, anchor, proposal);
+      press.move = moveRecord(vp, wanted, ndc, anchor, grab.proposal);
     }
     // Take the press away from the trackball. A capture-phase listener on the
     // CONTAINER runs before the canvas's own pointerdown handler, so stopping it

@@ -15,10 +15,10 @@
 // browser does it here for nothing and throws in a cursor with it.
 //
 // A MODULE OF ITS OWN AND NOT PART OF overlay.js, though the rAF loop is the
-// same shape and is deliberately written the same way. Two things differ and
-// both are load-bearing: what this draws comes from the SECTION rather than
-// from `state.pins`, and it carries a live drag, which the overlay's pins — a
-// press, a click, nothing in between — do not.
+// same one — `createLayer` in layer.js, which both are built out of. Two things
+// differ and both are load-bearing: what this draws comes from the SECTION
+// rather than from `state.pins`, and it carries a live drag, which the
+// overlay's pins — a press, a click, nothing in between — do not.
 //
 // DRAWN OUT OF DIVS rather than out of an SVG, which is the one place this
 // departs from the view cube. The reason is a TEST and not the page's policy:
@@ -30,39 +30,26 @@
 // rectangles' worth of styling whichever way it is built.
 
 import { internals } from "./internals.js";
-import { projectPoint } from "./camera.js";
+import { spot } from "./camera.js";
+import { watchDrag } from "./drag.js";
+import { HALO, addPiece, createLayer } from "./layer.js";
 import { dragSection, sectionGripAxis, sectionOffset } from "./section.js";
 import { reportCut } from "./tools.js";
 import {
   HANDLE_HEAD_PX, HANDLE_HIT_PX, HANDLE_MIN_SCALE, HANDLE_PX, HANDLE_SHAFT_PX,
 } from "./options.js";
 
-/** The arrow's ink.
- *
- * ONE COLOUR FOR BOTH THEMES, and the halo below is what makes that honest —
- * the same trade the view cube makes and for the same reason: the canvas under
- * this widget is white or near-black depending on the reader's answer
- * (`readTheme` in ui/src/store.js), so the handle has to bring its own contrast
- * rather than borrow the page's. Dark ink reads on the light canvas directly and
- * on the dark one against the white halo, which is a single filter over the
- * whole shape and therefore follows the triangles as well as the shaft.
- */
+/** The arrow's ink, which `HALO` in layer.js is the other half of: one colour
+ *  for both themes, carried on the dark canvas by the white glow. */
 const INK = "#2f353d";
-const HALO = "drop-shadow(0 0 1px #fff) drop-shadow(0 1px 2px rgba(20,24,28,.45))";
 
 export function createHandle(vp) {
-  const root = document.createElement("div");
-  // `pointer-events: none` on the layer and back on for the arrow, exactly as
-  // the overlay and the view cube do it: the layer covers the whole canvas, so
-  // without this it would swallow every press meant for the model — rotation
-  // included.
-  //
-  // NO CLASS NAME, for the view cube's reason: a class is a promise the
-  // interface's stylesheet keeps a rule for it (tests/test_ui_source.py checks
-  // exactly that), and everything about how this looks is a legibility
-  // requirement over two canvases rather than a palette the designer owns.
-  root.style.cssText =
-    "position:absolute;inset:0;overflow:hidden;pointer-events:none";
+  // The root, the rAF loop and the teardown are `layer.js`'s, which the three
+  // other layers over the canvas are built out of as well. `wanted` and `place`
+  // are the declarations below, so the root exists before the arrow is put on
+  // it.
+  const layer = createLayer({ wanted, place });
+  const { root } = layer;
 
   // THE BOX IS THE TARGET AND THE INK INSIDE IT IS THINNER, which is the whole
   // of the "fat enough to hit" requirement: the arrow is `HANDLE_HIT_PX` tall
@@ -93,15 +80,8 @@ export function createHandle(vp) {
   ink.style.cssText = "position:absolute;inset:0";
   arrow.appendChild(ink);
 
-  /** One absolutely-positioned piece of the arrow. */
-  const piece = (css) => {
-    const el = document.createElement("div");
-    el.style.cssText = `position:absolute;${css}`;
-    ink.appendChild(el);
-  };
-
   // The shaft, between the two heads.
-  piece(`left:${HANDLE_HEAD_PX}px;right:${HANDLE_HEAD_PX}px;top:50%;`
+  addPiece(ink, `left:${HANDLE_HEAD_PX}px;right:${HANDLE_HEAD_PX}px;top:50%;`
     + `height:${HANDLE_SHAFT_PX}px;margin-top:${-HANDLE_SHAFT_PX / 2}px;`
     + `background:${INK}`);
   // The two heads, as CSS border triangles: a box of zero size whose remaining
@@ -116,14 +96,13 @@ export function createHandle(vp) {
   // made of `border-right` points LEFT and belongs at the left edge.
   for (const border of ["right", "left"]) {
     const edge = border === "right" ? "left" : "right";
-    piece(`${edge}:0;top:50%;`
+    addPiece(ink, `${edge}:0;top:50%;`
       + `margin-top:${-HANDLE_HEAD_PX / 2}px;width:0;height:0;`
       + `border-top:${HANDLE_HEAD_PX / 2}px solid transparent;`
       + `border-bottom:${HANDLE_HEAD_PX / 2}px solid transparent;`
       + `border-${border}:${HANDLE_HEAD_PX}px solid ${INK}`);
   }
 
-  let frame = 0;
   // The gesture in progress: the screen axis measured at its start, and where
   // the pointer was at the previous event. Null between gestures.
   let drag = null;
@@ -160,12 +139,14 @@ export function createHandle(vp) {
    * model is turned. Stopping the loop on it would mean the handle never
    * returned, since nothing outside calls `refresh` when the camera moves.
    */
-  const wanted = () => !!(vp.sectionSeed && vp.state.cut);
+  function wanted() {
+    return !!(vp.sectionSeed && vp.state.cut);
+  }
 
   const hide = () => { arrow.style.display = "none"; };
 
   /** Put the arrow where the plane is, or take it off the screen. */
-  const place = () => {
+  function place() {
     if (!wanted()) {
       hide();
       return;
@@ -194,21 +175,19 @@ export function createHandle(vp) {
       hide();
       return;
     }
-    const ndc = projectPoint(g, at);
+    const rect = g.canvas.getBoundingClientRect();
+    const box = vp.box.getBoundingClientRect();
+    const on = spot(g, rect, box, at);
     // z > 1 is behind the camera's far plane, i.e. behind the reader — under an
     // ortho projection a real case rather than a curiosity, exactly as the
     // overlay's `place` says.
-    if (!ndc || ndc[2] > 1) {
+    if (!on || on[2] > 1) {
       hide();
       return;
     }
-    const rect = g.canvas.getBoundingClientRect();
-    const box = vp.box.getBoundingClientRect();
     arrow.style.display = "";
-    arrow.style.left =
-      `${(ndc[0] * 0.5 + 0.5) * rect.width + (rect.left - box.left)}px`;
-    arrow.style.top =
-      `${(-ndc[1] * 0.5 + 0.5) * rect.height + (rect.top - box.top)}px`;
+    arrow.style.left = `${on[0]}px`;
+    arrow.style.top = `${on[1]}px`;
     // `sectionGripAxis` answers in canvas pixels per world unit along the clip
     // normal, with `sy` counted DOWNWARDS — which is the direction CSS rotates
     // in as well, so the angle of that vector is the angle of the arrow with
@@ -239,47 +218,17 @@ export function createHandle(vp) {
       ? 1
       : Math.max(axis.sine, HANDLE_MIN_SCALE);
     ink.style.transform = `scaleX(${scale})`;
-  };
+  }
 
-  const draw = () => {
-    frame = 0;
-    place();
-    schedule();
-  };
+  /** The window listeners this gesture is followed with, which `drag.js` says
+   *  why are on the window and in the capture phase. */
+  const watch = watchDrag({ onMove, onUp, onCancel });
 
-  /**
-   * One rAF loop, and only while a cut stands.
-   *
-   * The library owns the render loop and offers no post-render hook, so the
-   * alternative would be re-projecting from the trackball's `change` event —
-   * which fires on camera moves and NOT on the frames a live swap or a
-   * visibility change redraws. A loop that stops on its own costs nothing on
-   * the ordinary page, which has no cut.
-   *
-   * THE INVARIANT THAT MAKES `refresh` ENOUGH: while the arrow is on screen a
-   * frame is always pending, because the only thing that shows it is `place`,
-   * which runs from `draw`, which re-arms. So a cut going away needs no
-   * synchronous hide here — the frame already queued runs `place`, `wanted` is
-   * false by then, and the same call takes the arrow off and lets the loop stop.
-   */
-  const schedule = () => {
-    if (frame) return;
-    if (!wanted()) return;
-    frame = requestAnimationFrame(draw);
-  };
-
-  /** Let go of the gesture, wherever it ended.
-   *
-   * The listeners are on the WINDOW and in the capture phase for the reason
-   * tools.js's `watch` gives: a drag that starts on the arrow can perfectly well
-   * end anywhere, and a release missed here strands the gesture forever.
-   */
+  /** Let go of the gesture, wherever it ended. */
   const finish = () => {
     drag = null;
     arrow.style.cursor = "grab";
-    removeEventListener("pointermove", onMove, true);
-    removeEventListener("pointerup", onUp, true);
-    removeEventListener("pointercancel", onCancel, true);
+    watch.disarm();
   };
 
   function onMove(event) {
@@ -357,9 +306,7 @@ export function createHandle(vp) {
     if (!axis) return;
     drag = { axis, x: event.clientX, y: event.clientY, moved: false };
     arrow.style.cursor = "grabbing";
-    addEventListener("pointermove", onMove, true);
-    addEventListener("pointerup", onUp, true);
-    addEventListener("pointercancel", onCancel, true);
+    watch.arm();
   };
 
   arrow.addEventListener("pointerdown", onDown);
@@ -387,17 +334,13 @@ export function createHandle(vp) {
 
   return {
     root,
-    refresh: schedule,
+    refresh: layer.refresh,
     endDrag,
     destroy() {
-      // `if (frame)` is safe because a browser rAF handle is non-zero by spec
-      // (HTML §8.10), the same reading the view cube's teardown leans on.
-      if (frame) cancelAnimationFrame(frame);
-      frame = 0;
       // A viewport unmounted mid-drag would otherwise leave three capture-phase
       // listeners on the window holding a scene that is gone.
       finish();
-      root.remove();
+      layer.destroy();
     },
   };
 }

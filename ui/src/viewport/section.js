@@ -7,7 +7,7 @@
 // What it does not give is the normal of a face — that is `picking.js` — and the
 // frame of reference the slider counts in, which is the whole of the note below.
 
-import { cameraBasis } from "./camera.js";
+import { cameraBasis, projectPoint } from "./camera.js";
 import { internals } from "./internals.js";
 import { clamp, cross3, dot3, finite3, sub3, unit3, vec3 } from "./math.js";
 import { MIN_SINE, SECTION_BIAS, SECTION_INDEX } from "./options.js";
@@ -358,13 +358,15 @@ export function sectionAxis(viewer, g, point) {
   // a local linearisation, and on the ortho camera this viewport uses it is
   // exact at any length.
   const L = (sectionLimit(viewer) || 1) / 100;
-  const eye = g.camera.getPosition();
-  if (!eye || typeof eye.clone !== "function") return null;
-  const a = eye.clone().set(point[0], point[1], point[2]).project(g.cam);
-  const b = eye.clone().set(point[0] + n[0] * L, point[1] + n[1] * L,
-                            point[2] + n[2] * L).project(g.cam);
-  const sx = ((b.x - a.x) * rect.width / 2) / L;
-  const sy = (-(b.y - a.y) * rect.height / 2) / L;  // NDC y is up, pixels are down
+  // THROUGH `projectPoint` AND NOT A HAND-ROLLED CLONE, which is where the
+  // refusal of a camera that cannot be read comes from as well — it is one
+  // function, and everything that projects a world point goes through it.
+  const a = projectPoint(g, point);
+  const b = projectPoint(g, [point[0] + n[0] * L, point[1] + n[1] * L,
+                             point[2] + n[2] * L]);
+  if (!a || !b) return null;
+  const sx = ((b[0] - a[0]) * rect.width / 2) / L;
+  const sy = (-(b[1] - a[1]) * rect.height / 2) / L;  // NDC y up, pixels down
   const s2 = sx * sx + sy * sy;
   if (!(s2 > 1e-12)) return null;
   return { sx, sy, s2, sine };
@@ -443,8 +445,6 @@ export function sectionGripAxis(viewer, g, point) {
   const sine = foreshorten(viewer, g, unit);
   const rect = g.canvas.getBoundingClientRect();
   if (!(rect.width > 0) || !(rect.height > 0)) return null;
-  const eye = g.camera.getPosition();
-  if (!eye || typeof eye.clone !== "function") return null;
   // A world direction ACROSS the view, which is the only thing this camera's
   // screen scale can honestly be measured along: the clip normal is useless here
   // — the whole reason this branch runs is that it points along the view axis
@@ -459,17 +459,18 @@ export function sectionGripAxis(viewer, g, point) {
   const across = unit3(cross3(view, world));
   if (!across) return null;
   // Measured exactly as `sectionAxis` measures its own step — the same short
-  // length, the same `.project(g.cam)` on a borrowed `Vector3` — so the two
-  // cannot fall out of step about what a world unit is worth in pixels. The
-  // suite pins that: the fallback's scale equals the one `sectionAxis` reports
-  // for a normal across the view on the same camera.
+  // length, the same `projectPoint` — so the two cannot fall out of step about
+  // what a world unit is worth in pixels. The suite pins that: the fallback's
+  // scale equals the one `sectionAxis` reports for a normal across the view on
+  // the same camera.
   const L = (sectionLimit(viewer) || 1) / 100;
-  const a = eye.clone().set(point[0], point[1], point[2]).project(g.cam);
-  const b = eye.clone().set(point[0] + across[0] * L, point[1] + across[1] * L,
-                            point[2] + across[2] * L).project(g.cam);
+  const a = projectPoint(g, point);
+  const b = projectPoint(g, [point[0] + across[0] * L, point[1] + across[1] * L,
+                             point[2] + across[2] * L]);
+  if (!a || !b) return null;
   // A LENGTH and not a direction, so which way NDC y runs does not enter it.
-  const px = Math.hypot((b.x - a.x) * rect.width / 2,
-                        (b.y - a.y) * rect.height / 2) / L;
+  const px = Math.hypot((b[0] - a[0]) * rect.width / 2,
+                        (b[1] - a[1]) * rect.height / 2) / L;
   if (!Number.isFinite(px) || !(px * px > 1e-12)) return null;
   return { sx: 0, sy: px, s2: px * px, sine };
 }

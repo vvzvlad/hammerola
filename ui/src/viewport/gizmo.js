@@ -50,12 +50,13 @@
 // not even project: it calls `dragPart` itself.
 
 import { internals } from "./internals.js";
-import { cameraBasis, ndcAt, ndcOffset, projectPoint } from "./camera.js";
+import { cameraBasis, ndcAt, ndcOffset, spot } from "./camera.js";
+import { travelled, watchDrag } from "./drag.js";
+import { HALO, addPiece, createLayer } from "./layer.js";
 import { clamp, dot3 } from "./math.js";
-import { movableGroup, movePart, nudgePart, partCentre } from "./parts.js";
+import { grabbable, movePart, nudgePart, partCentre } from "./parts.js";
 import { dragPart, moveRecord, niceStep, reportMove, snap } from "./tools.js";
 import {
-  CLICK_PX,
   GIZMO_CASE_PX, GIZMO_DOT_PX, GIZMO_HEAD_PX, GIZMO_HIT_PX, GIZMO_MIN_SCALE,
   GIZMO_PLANE_GAP_PX, GIZMO_PLANE_PX, GIZMO_PX, GIZMO_RIM_PX, GIZMO_SHAFT_PX,
 } from "./options.js";
@@ -80,8 +81,6 @@ const AXES = [
   { world: [0, 1, 0], ink: "#2e8b40" },
   { world: [0, 0, 1], ink: "#2d66c7" },
 ];
-
-const HALO = "drop-shadow(0 0 1px #fff) drop-shadow(0 1px 2px rgba(20,24,28,.45))";
 
 /** The two inks the QUADS and the DOT are constructed out of, which are not a
  *  palette and are not the arrows' answer either.
@@ -181,6 +180,12 @@ function axisOnScreen(g, basis, rect, at, n) {
   // the basis itself: it is that call's own answer, already checked, and asking
   // the camera again three times a frame buys nothing. It is only ever used as a
   // vector to clone, so nothing here can reach the camera through it.
+  //
+  // WHICH IS WHY `projectPoint` IS NOT USED HERE, though it spells this sum and
+  // is used for the same sum everywhere else. It asks the camera itself, once
+  // per point, so routing these two through it would put six `getPosition()`
+  // calls into the frame the docblock above exists to keep at one — and undo a
+  // decision that is stated, not incidental. The copy below is the price.
   const a = basis.eye.clone().set(at[0], at[1], at[2]).project(g.cam);
   const b = basis.eye.clone().set(at[0] + n[0], at[1] + n[1], at[2] + n[2])
     .project(g.cam);
@@ -320,20 +325,17 @@ function reach(axis) {
 }
 
 export function createGizmo(vp) {
-  const root = document.createElement("div");
-  // `pointer-events: none` on the layer and back on for each PIECE, exactly as
-  // the overlay, the view cube and the section grip do it: the layer covers the
-  // whole canvas, so without this it would swallow every press meant for the
-  // model — rotation included. It is also what leaves the rings beside it their
-  // own presses: theirs are read off the canvas, and a press this layer took
-  // would never get there.
+  // The root, the rAF loop and the teardown are `layer.js`'s, which the three
+  // other layers over the canvas are built out of as well. `wanted` and `place`
+  // are the declarations below, so the root exists before the seven pieces are
+  // built on it.
   //
-  // NO CLASS NAME, for the view cube's reason: a class is a promise the
-  // interface's stylesheet keeps a rule for it (tests/test_ui_source.py checks
-  // exactly that), and everything about how this looks is a legibility
-  // requirement over two canvases rather than a palette the designer owns.
-  root.style.cssText =
-    "position:absolute;inset:0;overflow:hidden;pointer-events:none";
+  // `pointer-events: auto` GOES BACK ON EACH PIECE, which the layer leaves to
+  // this file: it is also what leaves the rings beside it their own presses,
+  // since theirs are read off the canvas and a press this layer took would
+  // never get there.
+  const layer = createLayer({ wanted, place });
+  const { root } = layer;
 
   /** One arrow: the box that takes the press, and the ink inside it.
    *
@@ -373,14 +375,8 @@ export function createGizmo(vp) {
       + `pointer-events:auto;cursor:grab;filter:${HALO}`;
     root.appendChild(arrow);
 
-    const piece = (css) => {
-      const el = document.createElement("div");
-      el.style.cssText = `position:absolute;${css}`;
-      arrow.appendChild(el);
-    };
-
     // The shaft, from the tail up to the head.
-    piece(`left:0;right:${GIZMO_HEAD_PX}px;top:50%;`
+    addPiece(arrow, `left:0;right:${GIZMO_HEAD_PX}px;top:50%;`
       + `height:${GIZMO_SHAFT_PX}px;margin-top:${-GIZMO_SHAFT_PX / 2}px;`
       + `background:${colour}`);
     // The head, as a CSS border triangle: a box of zero size whose one remaining
@@ -388,7 +384,8 @@ export function createGizmo(vp) {
     // left standing is the one AWAY from the point — so a wedge made of
     // `border-left` points RIGHT and belongs at the right edge, which is where
     // the arrow's tip is.
-    piece(`right:0;top:50%;margin-top:${-GIZMO_HEAD_PX / 2}px;width:0;height:0;`
+    addPiece(arrow, `right:0;top:50%;margin-top:${-GIZMO_HEAD_PX / 2}px;`
+      + "width:0;height:0;"
       + `border-top:${GIZMO_HEAD_PX / 2}px solid transparent;`
       + `border-bottom:${GIZMO_HEAD_PX / 2}px solid transparent;`
       + `border-left:${GIZMO_HEAD_PX}px solid ${colour}`);
@@ -497,7 +494,6 @@ export function createGizmo(vp) {
   const dot = buildDot();
   const pieces = [...arms, ...quads, dot];
 
-  let frame = 0;
   // The gesture in progress: which piece it is on, how much of that piece's own
   // axis the camera leaves (`sine`, measured once at the press and meaningless
   // for the other two kinds), where the press landed, the move record it is
@@ -509,40 +505,34 @@ export function createGizmo(vp) {
    * The selection this widget stands for, or null when there is nothing to put
    * it on.
    *
-   * THE SAME QUESTION `onDown` IN tools.js ASKS OF A GRAB, and the same one
-   * `held` in rings.js asks: a piece offering a move that the press would then
+   * `grabbable` IN parts.js IS THE WHOLE OF IT — the same question `onDown` in
+   * tools.js asks of a grab and the same one `held` in rings.js asks, which is
+   * why it is one function: a piece offering a move that the press would then
    * refuse is a promise the widget cannot keep, and two halves of ONE widget
    * that came up on different conditions would be a widget with a piece
-   * missing. So the Move tool has to be in force, something has to be
-   * selected, and every selected path has to be one the scene can actually move
-   * — with the extra clause a drag of the reader's own drawing carries, that a
-   * proposal body is grabbable only when the panel can name it (`overlayBody`).
+   * missing.
    *
    * `activeTool` AND NOT `state.tool`, for the reason tools.js gives: the hold
    * key puts the cut up without writing to `state`, and a widget left standing
    * under a cut gesture would be offering a move the press is no longer for.
    *
-   * READ EVERY FRAME rather than remembered, which is what lets the loop below
-   * stop by itself when the reader disarms the tool or clears the selection.
+   * READ EVERY FRAME rather than remembered, which is what lets the loop stop
+   * by itself when the reader disarms the tool or clears the selection.
    */
-  const held = () => {
-    if (vp.activeTool !== "move") return null;
-    const paths = Array.isArray(vp.state.selected) ? vp.state.selected : [];
-    if (!paths.length) return null;
-    const proposal = paths.some((path) => vp.isOverlay(path));
-    const grabbable = (path) => !!movableGroup(vp.viewer, path)
-      && (!proposal || !!vp.overlayBody(path));
-    return paths.every(grabbable) ? { paths, proposal } : null;
-  };
+  const held = () => (vp.activeTool === "move"
+    ? grabbable(vp, vp.state.selected)
+    : null);
 
-  const wanted = () => !!held();
+  function wanted() {
+    return !!held();
+  }
 
   const hide = () => {
-    for (const piece of pieces) piece.el.style.display = "none";
+    for (const { el } of pieces) el.style.display = "none";
   };
 
   /** Put the widget on the part, or take it off the screen. */
-  const place = () => {
+  function place() {
     const sel = held();
     if (!sel) {
       hide();
@@ -587,17 +577,17 @@ export function createGizmo(vp) {
       hide();
       return;
     }
-    const ndc = projectPoint(g, at);
+    const box = vp.box.getBoundingClientRect();
+    const on = spot(g, rect, box, at);
     // z > 1 is behind the camera's far plane, i.e. behind the reader — under an
     // ortho projection a real case rather than a curiosity, exactly as the
     // overlay's `place` says.
-    if (!ndc || ndc[2] > 1) {
+    if (!on || on[2] > 1) {
       hide();
       return;
     }
-    const box = vp.box.getBoundingClientRect();
-    const left = (ndc[0] * 0.5 + 0.5) * rect.width + (rect.left - box.left);
-    const top = (-ndc[1] * 0.5 + 0.5) * rect.height + (rect.top - box.top);
+    const left = on[0];
+    const top = on[1];
     // MEASURED ONCE FOR THE SIX, which is what makes the quads nearly free.
     // There are only three axes to measure and every piece is asking about
     // some of them: an arrow reads its OWN axis, and a quad reads all THREE —
@@ -695,47 +685,17 @@ export function createGizmo(vp) {
     dot.el.style.display = "";
     dot.el.style.left = `${left}px`;
     dot.el.style.top = `${top}px`;
-  };
+  }
 
-  const draw = () => {
-    frame = 0;
-    place();
-    schedule();
-  };
+  /** The window listeners this gesture is followed with, which `drag.js` says
+   *  why are on the window and in the capture phase. */
+  const watch = watchDrag({ onMove, onUp, onCancel });
 
-  /**
-   * One rAF loop, and only while there is a selection to put arrows on.
-   *
-   * The library owns the render loop and offers no post-render hook, so the
-   * alternative would be re-projecting from the trackball's `change` event —
-   * which fires on camera moves and NOT on the frames a live swap, a visibility
-   * change or a drag of this very widget redraws. A loop that stops on its own
-   * costs nothing on the ordinary page, which has no Move tool armed.
-   *
-   * THE INVARIANT THAT MAKES `refresh` ENOUGH is handle.js's: while an arrow is
-   * on screen a frame is always pending, because the only thing that shows one is
-   * `place`, which runs from `draw`, which re-arms. So a selection going away
-   * needs no synchronous hide here — the queued frame runs `place`, `held` is
-   * null by then, and the same call takes the arrows off and lets the loop stop.
-   */
-  const schedule = () => {
-    if (frame) return;
-    if (!wanted()) return;
-    frame = requestAnimationFrame(draw);
-  };
-
-  /** Let go of the gesture, wherever it ended.
-   *
-   * The listeners are on the WINDOW and in the capture phase for the reason
-   * tools.js's `watch` gives: a drag that starts on an arrow can perfectly well
-   * end anywhere, and a release missed here strands the gesture forever.
-   */
+  /** Let go of the gesture, wherever it ended. */
   const finish = () => {
     if (drag) drag.piece.el.style.cursor = "grab";
     drag = null;
-    removeEventListener("pointermove", onMove, true);
-    removeEventListener("pointerup", onUp, true);
-    removeEventListener("pointercancel", onCancel, true);
+    watch.disarm();
   };
 
   /** End the gesture and say where the part ended up.
@@ -762,16 +722,12 @@ export function createGizmo(vp) {
 
   function onMove(event) {
     if (!drag) return;
-    // A CLICK IS NOT A ONE-PIXEL DRAG, and the canvas gesture spells the same
-    // rule out (`onMove` in tools.js): until the pointer has travelled
-    // `CLICK_PX` this press is still a click, and a hand that shifts two pixels
-    // between the press and the release has said nothing. It matters more here
-    // than there, because there IS no click on an arrow — nothing selects, and
-    // the only thing a twitch can do is snap the part one step and file a move
-    // node the reader never asked for, which opens the panel on top of it.
-    if (!drag.moved
-        && Math.abs(event.clientX - drag.startX) < CLICK_PX
-        && Math.abs(event.clientY - drag.startY) < CLICK_PX) return;
+    // A CLICK IS NOT A ONE-PIXEL DRAG, and `travelled` in drag.js is the rule
+    // the canvas gesture applies as well. It matters more here than there,
+    // because there IS no click on an arrow — nothing selects, and the only
+    // thing a twitch can do is snap the part one step and file a move node the
+    // reader never asked for, which opens the panel on top of it.
+    if (!travelled(event, drag)) return;
     drag.moved = true;
     // THE DOT IS THE FREE DRAG ITSELF, and it goes through tools.js's own
     // function rather than round it: `dragPart` is what a press on the part
@@ -1013,9 +969,7 @@ export function createGizmo(vp) {
       moved: false,
     };
     piece.el.style.cursor = "grabbing";
-    addEventListener("pointermove", onMove, true);
-    addEventListener("pointerup", onUp, true);
-    addEventListener("pointercancel", onCancel, true);
+    watch.arm();
   }
 
   /** End a drag the reader has not let go of, because the scene is going away.
@@ -1035,20 +989,16 @@ export function createGizmo(vp) {
 
   return {
     root,
-    refresh: schedule,
+    refresh: layer.refresh,
     endDrag,
     destroy() {
-      // `if (frame)` is safe because a browser rAF handle is non-zero by spec
-      // (HTML §8.10), the same reading the view cube's teardown leans on.
-      if (frame) cancelAnimationFrame(frame);
-      frame = 0;
       // A viewport unmounted mid-drag would otherwise leave three capture-phase
       // listeners on the window holding a scene that is gone. `finish` and not
       // `stop`: this is the element going away, and `vp.moved` goes with it, so
       // the displacement there would be to report is one nothing is left
       // standing at — the same fifth ending tools.js's teardown takes.
       finish();
-      root.remove();
+      layer.destroy();
     },
   };
 }
