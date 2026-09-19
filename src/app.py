@@ -561,41 +561,46 @@ def make_handler(store: Store, comment_store: CommentStore,
             segments = self._split(path)
             trailing_slash = path.endswith("/")
 
+            # ONE ENTRY PER ROUTE, TRIED IN ORDER, and the order is part of what
+            # each entry means: a narrow route that comes before a wide one
+            # keeps its answer only while it stays above it (issue #105).
+            routes = (
+                (lambda: not segments,
+                 lambda: self._serve_page(render.index_page_html, with_body)),
+                (lambda: segments == ["health"],
+                 lambda: self._json(200, {"status": "ok"}, CACHE_NONE,
+                                    with_body=with_body)),
+                (lambda: segments == ["index.json"],
+                 lambda: self._serve_index_json(with_body)),
+                (lambda: segments[:1] == ["_v"],
+                 lambda: self._serve_asset(segments[1:], with_body)),
+                (lambda: segments[:1] == [onboarding.START_SEGMENT],
+                 lambda: self._serve_start(segments[1:], with_body)),
+                # SVG bytes at a `.ico` URL, deliberately. Every page links the
+                # icon by its real name, so this path is only ever taken by a
+                # client that arrived without parsing any HTML — and what
+                # decides how one renders is the Content-Type, which
+                # `_serve_asset` derives from the file's own extension. The
+                # alternative is generating and committing a binary .ico nobody
+                # would ever regenerate, for a URL almost nothing takes.
+                (lambda: segments == ["favicon.ico"],
+                 lambda: self._serve_asset([FAVICON_ASSET], with_body)),
+                (lambda: segments[:1] == ["project"],
+                 lambda: self._serve_project(segments[1:], trailing_slash,
+                                             with_body, query)),
+                (lambda: segments[:3] == ["api", "v1", "comments"],
+                 lambda: self._serve_comments(segments[3:], query, with_body)),
+                (lambda: segments[:3] == ["api", "v1", "proposals"],
+                 lambda: self._serve_proposal(segments[3:], with_body)),
+                (lambda: segments[:3] == ["api", "v1", "jobs"],
+                 lambda: self._serve_jobs(segments[3:], with_body)),
+                (lambda: segments[:3] == ["api", "v1", "sources"],
+                 lambda: self._serve_sources(segments[3:], with_body)),
+            )
             try:
-                if not segments:
-                    return self._serve_page(render.index_page_html, with_body)
-
-                head = segments[0]
-                if head == "health" and len(segments) == 1:
-                    return self._json(200, {"status": "ok"}, CACHE_NONE,
-                                      with_body=with_body)
-                if head == "index.json" and len(segments) == 1:
-                    return self._serve_index_json(with_body)
-                if head == "_v":
-                    return self._serve_asset(segments[1:], with_body)
-                if head == onboarding.START_SEGMENT:
-                    return self._serve_start(segments[1:], with_body)
-                if head == "favicon.ico" and len(segments) == 1:
-                    # SVG bytes at a `.ico` URL, deliberately. Every page links
-                    # the icon by its real name, so this path is only ever taken
-                    # by a client that arrived without parsing any HTML — and
-                    # what decides how one renders is the Content-Type, which
-                    # `_serve_asset` derives from the file's own extension. The
-                    # alternative is generating and committing a binary .ico
-                    # nobody would ever regenerate, for a URL almost nothing
-                    # takes.
-                    return self._serve_asset([FAVICON_ASSET], with_body)
-                if head == "project":
-                    return self._serve_project(segments[1:], trailing_slash,
-                                               with_body, query)
-                if segments[:3] == ["api", "v1", "comments"]:
-                    return self._serve_comments(segments[3:], query, with_body)
-                if segments[:3] == ["api", "v1", "proposals"]:
-                    return self._serve_proposal(segments[3:], with_body)
-                if segments[:3] == ["api", "v1", "jobs"]:
-                    return self._serve_jobs(segments[3:], with_body)
-                if segments[:3] == ["api", "v1", "sources"]:
-                    return self._serve_sources(segments[3:], with_body)
+                for matches, handler in routes:
+                    if matches():
+                        return handler()
             except (BrokenPipeError, ConnectionResetError):
                 # The browser navigated away mid-download, or the client reset
                 # the connection. Ordinary during a 2 MB view fetch, not an error
@@ -1345,29 +1350,39 @@ def make_handler(store: Store, comment_store: CommentStore,
             path, _, query = self.path.partition("?")
             segments = self._split(path)
 
-            if segments[:3] == ["api", "v1", "comments"] and len(segments) == 5:
+            # One entry per route, tried in order, like `_handle_get`. PUBLISH
+            # IS NOT IN IT: what answers that route is the body of this method
+            # rather than a handler, so it stays below the table, where it has
+            # always been — last, after every narrower route has had its look.
+            routes = (
                 # Two routes share this shape: `<pid>/<commit>` to leave a
                 # comment and `<id>/resolve` to close one. `resolve` decides
                 # between them, which reserves it as a commit name for the
                 # comment API — a build called `resolve` can still be published
                 # and served, it just cannot be commented on. That is a cheaper
                 # price than a fifth path segment on the comment endpoint.
-                if segments[4] == "resolve":
-                    return self._handle_comment_resolve(segments[3])
-                return self._handle_comment_post(segments[3], segments[4])
-
-            if segments[:3] == ["api", "v1", "proposals"]:
-                if len(segments) == 4:
-                    return self._handle_proposal_post(segments[3])
-                return self._error(404, "not found", {"Connection": "close"})
-
-            if segments[:3] == ["api", "v1", "projects"]:
-                if len(segments) == 5 and segments[4] == "title":
-                    return self._handle_rename(segments[3])
-                return self._error(404, "not found", {"Connection": "close"})
-
-            if segments[:3] == ["api", "v1", "compare"]:
-                return self._handle_compare(segments[3:])
+                (lambda: segments[:3] == ["api", "v1", "comments"]
+                 and len(segments) == 5,
+                 lambda: (self._handle_comment_resolve(segments[3])
+                          if segments[4] == "resolve"
+                          else self._handle_comment_post(segments[3],
+                                                         segments[4]))),
+                (lambda: segments[:3] == ["api", "v1", "proposals"],
+                 lambda: (self._handle_proposal_post(segments[3])
+                          if len(segments) == 4
+                          else self._error(404, "not found",
+                                           {"Connection": "close"}))),
+                (lambda: segments[:3] == ["api", "v1", "projects"],
+                 lambda: (self._handle_rename(segments[3])
+                          if len(segments) == 5 and segments[4] == "title"
+                          else self._error(404, "not found",
+                                           {"Connection": "close"}))),
+                (lambda: segments[:3] == ["api", "v1", "compare"],
+                 lambda: self._handle_compare(segments[3:])),
+            )
+            for matches, handler in routes:
+                if matches():
+                    return handler()
 
             if segments[:3] != ["api", "v1", "publish"] or \
                     len(segments) not in (4, 5):
@@ -1383,23 +1398,11 @@ def make_handler(store: Store, comment_store: CommentStore,
                     401, "invalid or missing bearer token",
                     {"WWW-Authenticate": "Bearer", "Connection": "close"})
 
-            try:
-                length = int(self.headers.get("Content-Length", ""))
-            except ValueError:
-                return self._error(
-                    411, "Content-Length is required", {"Connection": "close"})
-            if length < 0:
-                return self._error(
-                    400, "invalid Content-Length", {"Connection": "close"})
-            if length > max_build_bytes:
-                # Answered without reading, so the ceiling actually saves the work
-                # rather than just reporting it afterwards. The connection is then
-                # closed because the unread body would otherwise be parsed as the
-                # next request on a keep-alive connection.
-                return self._error(
-                    413,
-                    f"body is {length} bytes, limit is {max_build_bytes}",
-                    {"Connection": "close"})
+            length = self._body_length(
+                max_build_bytes,
+                too_large="body is {length} bytes, limit is {limit}")
+            if length is None:
+                return None
 
             pid = segments[3]
             # FOUR SEGMENTS IS THE MINTING ROUTE and five is the named one, and
@@ -2018,27 +2021,10 @@ def make_handler(store: Store, comment_store: CommentStore,
             """
             if not self._require_token(close=True):
                 return None
-            if self.headers.get("Transfer-Encoding"):
-                # Nothing here decodes chunked, and answering while leaving an
-                # unread body on the socket would turn its remains into the next
-                # request on a keep-alive connection.
-                return self._error(411, "Content-Length is required",
-                                   {"Connection": "close"})
-            try:
-                length = int(self.headers.get("Content-Length", ""))
-            except ValueError:
-                return self._error(411, "Content-Length is required",
-                                   {"Connection": "close"})
-            if length < 0:
-                return self._error(400, "invalid Content-Length",
-                                   {"Connection": "close"})
-            if length > MAX_TITLE_BODY_BYTES:
-                return self._error(413, "title body is too large",
-                                   {"Connection": "close"})
-            body, problem = self._read_body(length)
-            if problem is not None:
-                status, message = problem
-                return self._error(status, message, {"Connection": "close"})
+            body = self._take_body(MAX_TITLE_BODY_BYTES,
+                                   too_large="title body is too large")
+            if body is None:
+                return None
             try:
                 payload = json.loads(body.decode("utf-8"))
             except (UnicodeDecodeError, ValueError):
@@ -2134,22 +2120,21 @@ def make_handler(store: Store, comment_store: CommentStore,
             """POST /api/v1/comments/<id>/resolve — the agent closing an item."""
             if not self._require_token(close=True):
                 return None
-            if self.headers.get("Transfer-Encoding"):
-                # Nothing here decodes chunked, and answering while leaving an
-                # unread body on the socket would turn its remains into the next
-                # request on a keep-alive connection.
-                return self._error(411, "Content-Length is required",
-                                   {"Connection": "close"})
             length = self.headers.get("Content-Length")
             note = None
-            if length and length.isdigit() and int(length) > 0:
-                if int(length) > MAX_RESOLVE_BODY_BYTES:
-                    return self._error(413, "resolve body is too large",
-                                       {"Connection": "close"})
-                body, problem = self._read_body(int(length))
-                if problem is not None:
-                    status, message = problem
-                    return self._error(status, message, {"Connection": "close"})
+            # THE BODY IS OPTIONAL HERE and that is the one difference left
+            # between the five routes that take one: a resolve with no
+            # Content-Length at all is a resolve with no note rather than a
+            # 411, which `test_resolve_without_a_note_is_fine` pins. So the
+            # shared preamble is entered only when there is a body to take —
+            # or when the framing says there is one this service cannot read,
+            # which is what it refuses.
+            if self.headers.get("Transfer-Encoding") or (
+                    length and length.isdigit() and int(length) > 0):
+                body = self._take_body(MAX_RESOLVE_BODY_BYTES,
+                                       too_large="resolve body is too large")
+                if body is None:
+                    return None
                 try:
                     payload = json.loads(body.decode("utf-8"))
                 except (UnicodeDecodeError, ValueError):
@@ -2216,28 +2201,11 @@ def make_handler(store: Store, comment_store: CommentStore,
             # post, and once the door took EDIT_TOKEN the only caller it could
             # ever refuse was the one holding the secret that also erases the
             # project. Everything from here down is about SIZE.
-            try:
-                length = int(self.headers.get("Content-Length", ""))
-            except ValueError:
-                # Also the answer to a chunked body: nothing here decodes one,
-                # and the ceiling below is applied to Content-Length, so a body
-                # of unknown length cannot be bounded before it is read.
-                return self._error(411, "Content-Length is required",
-                                   {"Connection": "close"})
-            if length < 0:
-                return self._error(400, "invalid Content-Length",
-                                   {"Connection": "close"})
-            if length > settings.comment_max_body_bytes:
-                return self._error(
-                    413,
-                    f"body is {length} bytes, limit is "
-                    f"{settings.comment_max_body_bytes}",
-                    {"Connection": "close"})
-
-            body, problem = self._read_body(length)
-            if problem is not None:
-                status, message = problem
-                return self._error(status, message, {"Connection": "close"})
+            body = self._take_body(
+                settings.comment_max_body_bytes,
+                too_large="body is {length} bytes, limit is {limit}")
+            if body is None:
+                return None
 
             try:
                 return self._store_comment(pid, commit, body)
@@ -2316,33 +2284,11 @@ def make_handler(store: Store, comment_store: CommentStore,
                 return None
             if not store.valid_pid(pid):
                 return self._error(404, "not found", {"Connection": "close"})
-            if self.headers.get("Transfer-Encoding"):
-                # Nothing here decodes chunked, and the ceiling below is applied
-                # to Content-Length, so a body of unknown length cannot be
-                # bounded before it is read.
-                return self._error(411, "Content-Length is required",
-                                   {"Connection": "close"})
-            try:
-                length = int(self.headers.get("Content-Length", ""))
-            except ValueError:
-                return self._error(411, "Content-Length is required",
-                                   {"Connection": "close"})
-            if length < 0:
-                return self._error(400, "invalid Content-Length",
-                                   {"Connection": "close"})
-            if length > settings.proposal_max_body_bytes:
-                # Answered without reading, so the ceiling saves the work rather
-                # than reporting it afterwards.
-                return self._error(
-                    413,
-                    f"body is {length} bytes, limit is "
-                    f"{settings.proposal_max_body_bytes}",
-                    {"Connection": "close"})
-
-            body, problem = self._read_body(length)
-            if problem is not None:
-                status, message = problem
-                return self._error(status, message, {"Connection": "close"})
+            body = self._take_body(
+                settings.proposal_max_body_bytes,
+                too_large="body is {length} bytes, limit is {limit}")
+            if body is None:
+                return None
 
             try:
                 payload = proposals.validate_payload(proposals.parse_body(body))
@@ -2354,6 +2300,67 @@ def make_handler(store: Store, comment_store: CommentStore,
                 logger.warning(f"proposal on {pid} refused: {error.message}")
                 return self._error(error.status, error.message)
             return self._json(200, record)
+
+        def _body_length(self, limit: int, *, too_large: str) -> int | None:
+            """The declared length of a body this route will read. Or None.
+
+            None means the request has already been answered. This is the
+            preamble every body-taking route on this service shares (issue
+            #105), and each of its refusals closes the connection, because the
+            unread remains of the body would otherwise be parsed as the next
+            request on a keep-alive connection.
+
+            The CEILING AND ITS WORDING ARE THE CALLER'S — a title is bounded
+            far below a push — so `limit` comes in and `too_large` is the 413
+            text, formatted with `length` and `limit`. The 413 is answered
+            without reading, so the ceiling saves the work rather than
+            reporting it afterwards.
+
+            A CHUNKED BODY IS REFUSED HERE LIKE A MISSING LENGTH IS, on all
+            five routes. Nothing in this service decodes chunked, and the
+            ceiling is applied to Content-Length, so a body of unknown length
+            cannot be bounded before it is read. Two of the five used to let
+            one through as far as the length parse and refuse it only for
+            carrying no Content-Length; they now answer the same as the other
+            three, with the same code and the same text.
+            """
+            if self.headers.get("Transfer-Encoding"):
+                self._error(411, "Content-Length is required",
+                            {"Connection": "close"})
+                return None
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                self._error(411, "Content-Length is required",
+                            {"Connection": "close"})
+                return None
+            if length < 0:
+                self._error(400, "invalid Content-Length",
+                            {"Connection": "close"})
+                return None
+            if length > limit:
+                self._error(413, too_large.format(length=length, limit=limit),
+                            {"Connection": "close"})
+                return None
+            return length
+
+        def _take_body(self, limit: int, *, too_large: str) -> bytes | None:
+            """The whole body, or None once the refusal has been written.
+
+            The preamble above and then the read, for the four routes that take
+            their body into memory. A publish takes the length alone, because
+            what it does with it is spool 64 MiB to disk rather than read them
+            here.
+            """
+            length = self._body_length(limit, too_large=too_large)
+            if length is None:
+                return None
+            body, problem = self._read_body(length)
+            if problem is not None:
+                status, message = problem
+                self._error(status, message, {"Connection": "close"})
+                return None
+            return body
 
         def _read_body(self, length: int):
             """Read exactly `length` bytes into memory. (bytes, problem or None).
