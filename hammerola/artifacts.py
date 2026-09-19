@@ -462,7 +462,7 @@ def _destination(args, name: str) -> Path:
     re-running is an update rather than a merge of two different things.
     """
     base = Path(args.directory).expanduser() if args.directory else Path.cwd()
-    given = getattr(args, "output", None)
+    given = args.output
     if given:
         dest = Path(given).expanduser()
     else:

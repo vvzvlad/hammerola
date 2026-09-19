@@ -81,7 +81,7 @@ SLUG_DISAGREEMENT = (
 
 def login(args) -> int:
     """Ask where and as whom, check it, store it. -> exit code."""
-    url = _hub_address(getattr(args, "url", None))
+    url = _hub_address(args.url)
     token = _password()
 
     # CHECKED BEFORE IT IS STORED, and stored only if the check passes. A
@@ -218,10 +218,10 @@ def create(args) -> int:
     # still untouched — a half-created project holds a permanent id and no
     # model, and the second run then refuses over the project.json the first one
     # left behind.
-    template = () if getattr(args, "no_template", False) else _template_for(root)
+    template = () if args.no_template else _template_for(root)
     _refuse_to_overwrite(root, template)
 
-    payload = project.create_project(root, getattr(args, "title", None))
+    payload = project.create_project(root, args.title)
     written = _write_template(root, template)
 
     print(f"created {root / project.PROJECT_FILE}")

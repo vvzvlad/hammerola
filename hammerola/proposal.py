@@ -59,7 +59,7 @@ _NOTHING_TO_READ = (
 
 def run(args) -> int:
     """`proposal` or `proposal rm` — whichever the parser reached."""
-    if getattr(args, "proposal_command", None) == "rm":
+    if args.proposal_command == "rm":
         return remove(args)
     return read(args)
 
@@ -102,7 +102,7 @@ def remove(args) -> int:
           "copy, and it is in\n"
           "  no build — so nothing can bring it back.")
 
-    _confirm(pid, getattr(args, "yes", False))
+    _confirm(pid, args.yes)
 
     if hub.remove_proposal(pid):
         print(f"removed the proposal on {pid}")

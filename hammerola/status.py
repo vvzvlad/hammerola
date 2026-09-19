@@ -45,6 +45,12 @@ DEFAULT_LIMIT = 10
 
 def run(args) -> int:
     """Print what the hub has for the project in this directory. -> exit code."""
+    # `getattr` KEPT, and it is the one of nineteen that was never a repeat of
+    # argparse's default (#108). The parser's default for `-n` is
+    # DEFAULT_LIMIT; the `None` here is a different answer, and `_limit(None)`
+    # is the branch that turns it into DEFAULT_LIMIT with the refusal's wording
+    # attached. Collapsing this to `args.limit` would orphan that branch, which
+    # nothing else reaches.
     limit = _limit(getattr(args, "limit", None))
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)

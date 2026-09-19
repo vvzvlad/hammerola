@@ -159,7 +159,7 @@ def run_source(args) -> int:
 
     body = hub.revision_archive(revision)
 
-    if getattr(args, "into_working_copy", False):
+    if args.into_working_copy:
         return _into_working_copy(root, revision, body)
 
     dest = _fresh_directory(args, f"source-{revision[:SHORT_ID_CHARS]}")
@@ -184,7 +184,7 @@ def _fresh_directory(args, default_name: str) -> Path:
     into `.hammerola/`, because a default is what lands somewhere nobody chose.
     """
     base = Path(args.directory).expanduser() if args.directory else Path.cwd()
-    given = getattr(args, "output", None)
+    given = args.output
     dest = (Path(given).expanduser() if given
             else scratch_dir(base, default_name))
     if not dest.is_absolute():
@@ -272,7 +272,7 @@ def _into_working_copy(root, revision: str, body: bytes) -> int:
 def run_log(args) -> int:
     """Print the build log of a revision, of `latest`, or of the local slot."""
     root = project.optional_project_root(args.directory)
-    target = getattr(args, "revision", None) or LATEST
+    target = args.revision or LATEST
     hub = hub_for(root)
     if target == DEV_SLOT:
         # The slot belongs to a PROJECT, so this address needs one — unlike a

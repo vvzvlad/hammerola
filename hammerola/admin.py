@@ -123,7 +123,7 @@ def remove(args) -> int:
     print("  this cannot be undone: the hub keeps no copy, and the permanent "
           "URLs stop resolving.")
 
-    _confirm(pid, getattr(args, "yes", False))
+    _confirm(pid, args.yes)
 
     removed = hub.remove_project(pid)
     print(f"removed {pid}")

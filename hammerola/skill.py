@@ -68,7 +68,7 @@ UPDATE_HINT = "hammerola skill update"
 
 def run(args) -> int:
     """`skill`, or `skill update` — whichever the parser reached."""
-    if getattr(args, "skill_command", None) == "update":
+    if args.skill_command == "update":
         return update(args)
     return show(args)
 
@@ -192,7 +192,7 @@ def version_of(text):
 
 def _path(args) -> Path:
     """Where the installed skill is. `--path` first, then the usual place."""
-    return Path(getattr(args, "path", None) or DEFAULT_PATH).expanduser()
+    return Path(args.path or DEFAULT_PATH).expanduser()
 
 
 def _read(path: Path):
