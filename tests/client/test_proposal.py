@@ -23,10 +23,12 @@ a hub are the whole of what a test needs.
 """
 
 import pytest
-from harness import TOKEN
 from modeldir import make_model
 
 from hammerola.cli import main
+
+# The address and the token, from tests/client/conftest.py (issue #99).
+pytestmark = pytest.mark.usefixtures("configured")
 
 # The projection the panel renders, as `ui/src/proposal.js` builds it: a few
 # aligned lines, and the columns are part of what makes them readable — which is
@@ -45,12 +47,6 @@ DOC = {
          "rot": [0.0, 0.0, 0.0]},
     ],
 }
-
-
-@pytest.fixture(autouse=True)
-def configured(monkeypatch, hub):
-    monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
 
 
 def run(model, *args):

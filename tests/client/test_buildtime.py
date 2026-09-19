@@ -33,7 +33,7 @@ minutes cannot be reached by a hub whose builder copies a directory.
 from datetime import datetime
 
 import pytest
-from harness import TOKEN, failing_builder
+from harness import failing_builder
 
 from hammerola import cli
 from hammerola.cli import main
@@ -41,18 +41,14 @@ from hammerola.hub import SLOW_BUILD_SECONDS
 from src.buildproc import runner
 from src.store import utcnow_iso
 
+# The address and the token, from tests/client/conftest.py (issue #99).
+pytestmark = pytest.mark.usefixtures("configured")
+
 # The two stamps of a job that waited eight seconds for a worker. Written out
 # rather than computed, so a test that asserts `queued 8s` is asserting about
 # these two strings and not about arithmetic it did itself.
 CREATED = "2026-09-09T12:00:00Z"
 STARTED = "2026-09-09T12:00:08Z"
-
-
-@pytest.fixture(autouse=True)
-def configured(monkeypatch, hub):
-    """Point the client at the test hub, with the token that hub checks."""
-    monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
 
 
 def run(model, *args):

@@ -852,6 +852,40 @@ def test_the_browser_and_the_hub_spell_the_proposal_flag_the_same_way():
         f"interface reads as ON")
 
 
+def test_the_browser_walks_a_part_tree_as_deep_as_the_hub_publishes_one():
+    """One ceiling, two languages, and a page that loads either way (issue #98).
+
+    The hub refuses a push whose view nests parts deeper than MAX_VIEW_DEPTH, so
+    everything it serves is inside that number. The interface stops its own walk
+    at `MAX_DEPTH`, and the comment over it says in as many words that this is
+    the hub's ceiling copied — which nothing was holding it to.
+
+    DRIFT IS SILENT AND ONE-DIRECTIONAL. A browser ceiling BELOW the hub's does
+    not fail a build or log anything: `walk` answers `null` past it, so a
+    published assembly's deepest parts are simply not in the tree the panel
+    draws — no row, nothing to select, nothing to comment on — on a model the
+    hub accepted and is serving. Above it, nothing happens at all, because no
+    such view can be pushed.
+
+    The Python side is IMPORTED and the JavaScript side is read as text, which
+    is this file's division: the values that can be executed are executed.
+    """
+    from src.render import MAX_VIEW_DEPTH
+
+    source = strip_comments(read(UI / "hub.js"))
+    declared = re.search(r"const MAX_DEPTH = (\d+);", source)
+    assert declared, (
+        "ui/src/hub.js no longer declares MAX_DEPTH as a plain literal, so "
+        "this check is reading nothing. It is the ceiling the part-tree walk "
+        "stops at; pin it against src/render.MAX_VIEW_DEPTH however it is "
+        "spelled now")
+    assert int(declared.group(1)) == MAX_VIEW_DEPTH, (
+        f"the interface walks {declared.group(1)} levels of the part tree and "
+        f"src/render.py publishes up to {MAX_VIEW_DEPTH} — the parts below the "
+        f"lower of the two are missing from the tree panel of a model the hub "
+        f"accepted, with nothing in the browser to say so")
+
+
 def test_every_palette_token_the_interface_spends_is_defined():
     """A `var(--…)` nothing defines is a declaration the browser drops in silence.
 

@@ -26,18 +26,15 @@ import json
 import tarfile
 
 import pytest
-from harness import TOKEN, failing_comparer, meta_bytes, view_bytes
+from harness import failing_comparer, meta_bytes, view_bytes
 from modeldir import git, git_repo, make_model
 
 from hammerola import artifacts, sources
 from hammerola.cli import main
 from hammerola.hub import Hub, HubError
 
-
-@pytest.fixture(autouse=True)
-def configured(monkeypatch, hub):
-    monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
+# The address and the token, from tests/client/conftest.py (issue #99).
+pytestmark = pytest.mark.usefixtures("configured")
 
 
 def run(model, *args):

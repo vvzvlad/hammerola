@@ -18,11 +18,14 @@ import json
 from pathlib import Path
 
 import pytest
-from harness import TOKEN, comment_payload, copying_builder
+from harness import comment_payload, copying_builder
 from modeldir import make_model
 
 from hammerola import limits
 from hammerola.cli import main
+
+# The address and the token, from tests/client/conftest.py (issue #99).
+pytestmark = pytest.mark.usefixtures("configured")
 
 
 def titling_builder(project_dir, out_dir, *, pid, **kw):
@@ -45,12 +48,6 @@ def titling_builder(project_dir, out_dir, *, pid, **kw):
     meta["title"] = project.get("title") or meta.get("title")
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
     return outcome
-
-
-@pytest.fixture(autouse=True)
-def configured(monkeypatch, hub):
-    monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
 
 
 def run(model, *args):

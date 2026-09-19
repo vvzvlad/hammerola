@@ -15,16 +15,12 @@ is deliberate: the hub cannot be asked for it (see the docstring of
 import shutil
 
 import pytest
-from harness import TOKEN
 from modeldir import make_model
 
 from hammerola.cli import main
 
-
-@pytest.fixture(autouse=True)
-def configured(monkeypatch, hub):
-    monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
+# The address and the token, from tests/client/conftest.py (issue #99).
+pytestmark = pytest.mark.usefixtures("configured")
 
 
 def run(model, *args):

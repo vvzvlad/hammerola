@@ -27,12 +27,8 @@ from hammerola import gitsuggest
 from hammerola.cli import main
 from hammerola.limits import MAX_TEXT_CHARS
 
-
-@pytest.fixture(autouse=True)
-def configured(monkeypatch, hub):
-    """Point the client at the test hub, with the token that hub checks."""
-    monkeypatch.setenv("HUB_URL", hub.url)
-    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
+# The address and the token, from tests/client/conftest.py (issue #99).
+pytestmark = pytest.mark.usefixtures("configured")
 
 
 def run(model, *args):
