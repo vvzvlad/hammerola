@@ -353,8 +353,10 @@ export function movableGroup(viewer, path) {
  * one of them is not grabbable and the whole grab is therefore refused.
  *
  * THE ONE QUESTION THREE GESTURES ASK. The canvas drag (tools.js) asks it of
- * the selection the press falls on, or of the single part it grabbed when
- * nothing is selected at all, and the two halves of the manipulator — the arrows
+ * the standing selection — unless the press landed on a part outside it, which
+ * is a grab of something else and not a drag of the selection at all — or of
+ * the single part it grabbed when nothing is selected, and the two halves of
+ * the manipulator — the arrows
  * and quads (gizmo.js) and the rotation handles (rings.js) — ask it every frame
  * of what is selected, because a widget offering a move that the press would
  * then refuse is a promise it cannot keep. Two halves of ONE widget that came

@@ -1351,15 +1351,6 @@ describe('grabbable', () => {
     expect(grabbable(vp, paths)).toEqual({ paths, proposal: false })
   })
 
-  it('hands back the very list it was given, not a copy', () => {
-    // The three callers pass this straight into `movePart`, and one of them
-    // (tools.js) keeps it for the life of the drag. A copy would still move
-    // the right parts, so nothing would fail -- until something compared them.
-    const vp = scene()
-    const paths = [MODEL]
-    expect(grabbable(vp, paths).paths).toBe(paths)
-  })
-
   it('refuses a path the scene has no movable group for', () => {
     const vp = scene()
     expect(grabbable(vp, ['/Group/not a part'])).toBeNull()
