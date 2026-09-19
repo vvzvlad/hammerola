@@ -75,7 +75,7 @@ def nonblocking(path, flags):
     path of its own.
 
     NOT a rule for the whole repository, and the counter-example is deliberate:
-    `Store._extract_members` keeps the `os.fdopen` shape with a hand-rolled
+    `archive._extract_members` keeps the `os.fdopen` shape with a hand-rolled
     `os.close` in its error branch, correctly, because its `os.open` carries
     `dir_fd=parent_fd`, which an opener's `(path, flags)` signature cannot pass.
 

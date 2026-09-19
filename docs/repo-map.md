@@ -4,6 +4,21 @@
 
 ## Project structure
 - `src/` — application code (`settings.py` is the single config entry point)
+- `src/archive.py` — reading the pushed tarball: the ceilings, the alphabet each
+  path COMPONENT is held to, and the unpack that refuses a member before it
+  becomes a file. It was a third of `src/store.py` and knows nothing about
+  projects, builds or pointers, which is why it could leave. The import edge
+  runs `store → archive` and only that way, so it raises `PublishError` from
+  `src/errors.py` rather than from `store`. **Every name here is re-exported by
+  `src/store.py`** — `store.SAFE_COMPONENT` is what `app.py`, `onboarding.py`
+  and `tests/client/test_limits.py` already quote, and the re-export is what
+  kept the move from touching any of them. A RE-EXPORT BINDS A NAME, IT DOES
+  NOT REDIRECT A LOOKUP: code in this module resolves `_CountingReader`,
+  `SAFE_COMPONENT` and `gzip` in THIS module's globals, so a test that replaces
+  one of them has to patch `src.archive` — patching `src.store` sets an
+  attribute nothing reads, and the test then passes without exercising
+  anything. Three tests in `tests/test_archive_security.py` did exactly that
+  for one commit
 - `src/cadbuild/` — the build half, moved in from `cad_publish` (SPEC 8A.2 step
   3): take a model's source, compute the geometry, gate it, export the
   artefacts and the viewer payload. Kept as a subpackage rather than spread
