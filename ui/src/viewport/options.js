@@ -340,10 +340,93 @@ export const GIZMO_HIT_PX = 14;
  * 0.2 is about 11.5 degrees off the view axis, where the arrow is down to 13 px
  * of its 64 — the shaft nearly gone and the head, which keeps its own size,
  * standing for most of what is left.
+ *
+ * AND IT IS THE PLANE QUADS' FLOOR TOO, read off the complementary quantity:
+ * `face`, the cosine between a plane's normal and the same view axis, which is
+ * the fraction of that plane the projection leaves. The same fifth, the same
+ * 11.5 degrees, now measured from EDGE-ON rather than from end-on — and the
+ * two are the two readings of one angle, so an axis and the plane square on to
+ * it are never both taken off the screen.
+ *
+ * IT IS LOAD-BEARING IN THE SAME WAY FOR BOTH. A quad's drag meets the ray
+ * through the cursor with its own plane and divides by `view . n`, which IS
+ * `face` — so this floor is what keeps that divisor at or above a fifth and
+ * the factor at or below five, and `gizmo.js` adds no guard of its own because
+ * a quad below it is never on screen to be pressed. Edge-on there is nothing
+ * to guard: a plane seen edge-on projects onto one line, and "put the grabbed
+ * point back under the pointer" stops naming a point.
  */
 export const GIZMO_MIN_SCALE = 0.2;
 
-/* The turn tool's rings (rings.js). CSS PIXELS for the third time, and for the
+/* The plane quads and the origin dot of the same widget (gizmo.js), which is
+ * Fusion's triad rather than three arrows: an origin, three arrows, three plane
+ * quads and three rotation handles, all at once and under one command
+ * (`TriadCommandInput`).
+ *
+ * THE PLACEMENT IS OURS AND IS NOT A MEASUREMENT OF FUSION'S, which is worth
+ * saying plainly because the ring family above IS one and the two blocks read
+ * alike. Nothing here was read off a sprite; the two numbers are a third and a
+ * quarter of the arrows' own length, chosen so that a quad clears the blot at
+ * the centre where three shafts cross and still ends well inside the arrowheads
+ * — 21 px out and 37 px at its far corner, against a reach of 64.
+ *
+ * DERIVED FROM `GIZMO_PX` AND NOT WRITTEN OUT, so the quads follow the arrows
+ * the day that number moves. Written as two independent lengths they would
+ * stay where they are and quietly drift out of the triad. */
+
+/** How far the near corner of a plane quad stands off the widget's centre, at
+ *  the full px-per-world-unit — a third of one arrow. */
+export const GIZMO_PLANE_GAP_PX = GIZMO_PX / 3;
+
+/** The quad's side at that same scale — a quarter of one arrow. Its outer edge:
+ *  the casing and the rim below are drawn INSIDE it, exactly as the ring's
+ *  circles are, so this is the whole of what the quad covers. */
+export const GIZMO_PLANE_PX = GIZMO_PX / 4;
+
+/** The origin dot's diameter, in CSS pixels.
+ *
+ * A screen-space circle and not a world one: it stands for the free drag, which
+ * has no axis and no plane to be foreshortened by. Larger than an arrowhead,
+ * because it is the target the hand goes to when it wants no constraint at all
+ * and it sits where three shafts already cross; small enough that it covers
+ * about a tenth of each arrow's own reach. */
+export const GIZMO_DOT_PX = 12;
+
+/** The light casing the quads and the dot are carried on, and the dark rim
+ *  outside it, in CSS pixels at the full scale.
+ *
+ * `RING_CASE_PX` AND `RING_RIM_PX`'S CONSTRUCTION AND NOT THEIR NUMBERS, for
+ * the reason the whole of this file keeps two widgets' lengths apart: what is
+ * shared is the MECHANISM — a light casing inside a dark rim — because it is
+ * the only kind of legibility that survives a red mark on a red part and two
+ * canvases at once, and it is construction rather than palette. They happen to
+ * be the same two values today and they are free to move apart.
+ *
+ * AND NOT THE ARROWS' `filter` HALO, though these two pieces are the arrows'
+ * own widget. A halo is an EDGE treatment sized for a 2 px shaft, where the
+ * ink is nearly all edge already; the quad and the dot are FILLED shapes ten
+ * pixels across, where a 1 px glow is a hairline round a block of one colour.
+ * The quad has a second reason of its own, which `gizmo.js` gives at the
+ * element: it is drawn under a projection matrix, and a `filter` is computed in
+ * the element's own space — the same argument `rings.js` makes, pointing the
+ * other way, since the ring's matrix MAGNIFIES a glow where the quad's
+ * collapses one. */
+export const GIZMO_CASE_PX = 2;
+
+/** The dark rim outside that casing, in px.
+ *
+ * A HAIRLINE, because it does the opposite job: the casing holds the ink against
+ * dark geometry and the rim holds the CASING against light geometry, and a white
+ * band with no edge on a white canvas is a shape with no outline. One pixel is
+ * enough for an edge and little enough not to read as a second colour — which is
+ * exactly `RING_RIM_PX`'s argument, and this is deliberately a constant of its
+ * own rather than a reference to it: the two widgets share the MECHANISM and not
+ * the number, and a rim that changed on the arrows because the rings wanted a
+ * heavier one would be a change nobody asked for. */
+export const GIZMO_RIM_PX = 1;
+
+/* The same widget's rotation handles (rings.js), which answer to the same
+ * `move` tool as everything above. CSS PIXELS for the third time, and for the
  * reason the two families above give: a widget that stood at a size in WORLD
  * units would be a thread round a 200 mm part and a hoop round a 2 mm one.
  *
@@ -358,9 +441,11 @@ export const GIZMO_MIN_SCALE = 0.2;
  *
  * FUSION'S OWN NUMBER, measured off its installed manipulator sprites rather
  * than remembered, and it is deliberately NOT the arrows' 64 the way this
- * constant used to be. The two widgets stand on the same point and never at the
- * same time, but this one is no longer a hoop the reader aims the curve of: the
- * press is taken by a disc sitting on the circle (`RING_DISC_PX`).
+ * constant used to be. The two halves stand on the same point and — since the
+ * tools were merged — ALWAYS at the same time, which makes the paragraph below
+ * about reach a live question rather than an academic one. This half is no
+ * longer a hoop the reader aims the curve of: the press is taken by a disc
+ * sitting on the circle (`RING_DISC_PX`).
  *
  * AND IT DOES NOT PUT THE WIDGET OUTSIDE THE ARROWS' REACH, which is the
  * tempting thing to say about a radius bigger than `GIZMO_PX` and is false. Only
@@ -368,10 +453,17 @@ export const GIZMO_MIN_SCALE = 0.2;
  * circle carries it, at `RING_PX` times the sine of the angle between its axis
  * and the direction of view. Down the diagonal — the pose this project's own
  * fixtures take — every ring's narrow direction is exactly where its handle
- * stands, so all three discs come in to about 61 px, inside the arrows' 64, and
- * at the `RING_MIN_PX` floor a handle is 21 px from the centre. What keeps the
- * two widgets from fighting is not distance: it is that only a disc takes a
- * press here, and everything a press misses goes to the trackball.
+ * stands, so all three discs come in to about 61 px, and at the `RING_MIN_PX`
+ * floor a handle is 21 px from the centre.
+ *
+ * AND 64 IS NOT THE NUMBER TO COMPARE THOSE WITH, which is the easy mistake to
+ * make twice: an arrow foreshortens too. Down that same diagonal it is drawn at
+ * `GIZMO_PX` times its own sine, about 52 px, so the discs are in fact outside
+ * the arrowheads there rather than inside them. Both numbers move with the pose
+ * and neither is a distance the other can be checked against once. What keeps
+ * the two halves from fighting is not distance at all: only a disc takes a press
+ * on this side, only its own element takes one on the other, and everything a
+ * press misses goes to the trackball.
  *
  * WHY IT IS THE WIDEST POINT and not "the radius". A world circle seen at an
  * angle projects to an ellipse, and under an ortho camera the plane of any such

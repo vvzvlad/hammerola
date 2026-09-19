@@ -3526,10 +3526,14 @@ describe('a proposal body as the part a task is filed against', () => {
     // and open the panel, and a move node on an overlay path is a second way to
     // turn a body that already has a `rot°` three rows up the same sheet —
     // `move "korpus" turned (…)` printed for the agent beside its own
-    // `rot (…)`. There are rings now (viewport/rings.js), and the gesture is
-    // re-routed at the press exactly as the drag is: a body's turn goes out on
-    // `hmr:proposalturn` and edits that very `rot`. So the tool is armed on
-    // either kind of object.
+    // `rot (…)`. There are rotation handles now (viewport/rings.js), and the
+    // gesture is re-routed at the press exactly as the drag is: a body's turn
+    // goes out on `hmr:proposalturn` and edits that very `rot`. So the tool is
+    // armed on either kind of object.
+    //
+    // AND THE TOOL IS `move`, which is not a slip. The handles and the arrows
+    // are one manipulator under one command, so both rows arm the same thing
+    // and what is left to tell them apart is the node below.
     //
     // WHAT IS STILL THE BUILD'S ALONE is the node: the item makes a row for a
     // part nothing has claimed yet, so that an exact angle has somewhere to be
@@ -3553,7 +3557,7 @@ describe('a proposal body as the part a task is filed against', () => {
     const before = c.state.proposal.nodes.length
     items.find((m) => m.label === 'Turn')
       .onClick({ stopPropagation() {}, preventDefault() {} })
-    expect(c.state.tool).toBe('turn')
+    expect(c.state.tool).toBe('move')
     expect(c.state.proposal.nodes).toHaveLength(before)
     expect(moves(c.state.proposal)).toEqual([])
   })
@@ -3587,10 +3591,12 @@ describe('a proposal body as the part a task is filed against', () => {
 // -- the row that makes a move where no drag has been --------------------------
 
 describe('Turn, in a part\'s own menu', () => {
-  // THIS ROW DOES TWO THINGS AND USED TO DO ONE. It arms the turn tool on the
-  // object it names, exactly as Move arms its own — there are rings round the
-  // part now (ui/src/viewport/rings.js), and an armed tool turns what is
-  // SELECTED, which neither door into this menu writes.
+  // THIS ROW DOES TWO THINGS AND USED TO DO ONE. It arms a tool on the object it
+  // names — the SAME tool Move arms, since the two halves of the manipulator
+  // were merged and turning no longer needs a mode of its own — and it writes
+  // the selection, because an armed tool acts on what is SELECTED and neither
+  // door into this menu writes it. What is left between the two rows is what
+  // each does BESIDES arming, which is the rest of this block.
   //
   // AND IT GOES ON MAKING THE ROW, which is what it did when a turn had no
   // gesture at all: a ring says "about this much" and a field says "exactly
@@ -3642,28 +3648,36 @@ describe('Turn, in a part\'s own menu', () => {
     }
   })
 
-  it('arms the turn tool on the object the row names, and says so', () => {
+  it('arms the one manipulator on the object the row names, and says so', () => {
     // THE SELECTION AND THE TOOL IN ONE WRITE, which is what makes the row mean
-    // what it says: the armed tool turns what is SELECTED, and a right-click on
-    // a row does not select. Chosen while another object stood selected, this
-    // would otherwise have put the rings round that one.
+    // what it says: the armed tool works on what is SELECTED, and a right-click
+    // on a row does not select. Chosen while another object stood selected,
+    // this would otherwise have put the widget round that one.
+    //
+    // `move` AND NOT A TOOL OF ITS OWN. `turn` was one, and it meant the widget
+    // came up as two halves the reader had to swap between — arrows under one
+    // name, rotation handles under the other. There is one manipulator now and
+    // this row arms it; what the row still owns is the node it mints and the
+    // panel it opens, which is where an exact angle is typed.
     const { c } = menu('/model/plate')
 
     choose(c, 'Turn')
 
-    expect(c.state.tool).toBe('turn')
+    expect(c.state.tool).toBe('move')
     expect(c.state.sel).toBe('/model/plate')
-    expect(c.toast.mock.calls.map(([text]) => text).join('')).toContain('dot')
-    // AND THE STRIP SAYS WHERE TO AIM. This is the one gesture on the page whose
-    // target is the WIDGET rather than the model — a press anywhere else still
-    // orbits — so `drag it` would send the reader to grab the part.
-    //
-    // `dot` AND NOT `ring`, which both of these said until the handles were
-    // rebuilt: there is no full ring on screen at rest any more, and a press on
-    // the arc that IS drawn goes to the trackball. Naming the ring sent the
-    // reader to grab the one part of the widget that does nothing — `drag it`'s
-    // own mistake, one step closer in.
-    expect(c.computed().hintText).toContain('dot')
+    // AND THE SENTENCE NAMES BOTH HALVES, which is the whole of what one tool
+    // owes the reader: told only about the discs they would never find the
+    // arrows, and told only `drag it` they would never find the discs.
+    const said = c.toast.mock.calls.map(([text]) => text).join('')
+    expect(said).toContain('slide')
+    expect(said).toContain('disc')
+    // AND THE STRIP SAYS THE SAME THING, because it is the only line on the
+    // page that describes the tool while it is in force. `disc` and not `ring`:
+    // there is no full ring on screen at rest, and a press on the arc that IS
+    // drawn goes to the trackball, so naming the ring would send the reader to
+    // grab the one part of the widget that does nothing.
+    expect(c.computed().hintText).toContain('slide')
+    expect(c.computed().hintText).toContain('disc')
   })
 
   it('mints a row at no offset and no turn, and opens the panel on it', () => {

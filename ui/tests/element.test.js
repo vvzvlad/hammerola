@@ -144,9 +144,11 @@ function element(state = {}, viewer = fakeViewer()) {
   // owes them the same wake-up and the same end, and they are stubbed for the
   // same reason.
   vp.gizmo = { refresh: vi.fn(), endDrag: vi.fn() }
-  // And the turn tool's rings, which are the third widget of that shape: a loop
-  // that stops itself, a gesture on a layer no other listener can see, and the
-  // same two things owed by the element.
+  // And the turn handles, which are the third widget of that shape: a loop that
+  // stops itself, a gesture on a layer no other listener can see, and the same
+  // two things owed by the element. Not a tool of their own any more — they are
+  // the other half of the widget the line above stubs, and both halves answer to
+  // `move` — but a separate LAYER still, so the element owes each its own call.
   vp.rings = { refresh: vi.fn(), endDrag: vi.fn() }
   // The up-events go through `dispatchEvent`, which is a real DOM method on a
   // real element and refuses to run on an object the DOM never built — the same
@@ -370,13 +372,18 @@ describe('reconcile', () => {
     expect(vp.handle.refresh).toHaveBeenCalledTimes(2)
   })
 
-  it('wakes the turn rings on every pass', () => {
-    // THE SAME HOLE AS THE TWO ABOVE, and the widest of the three: arming Turn
-    // from a row's menu is one `hmr:state` carrying a tool and a selection at
-    // once, and this line is the only thing that draws the rings when it lands.
-    // Delete it and the rings appear after the hold key has been pressed and
-    // let go — the one other wake-up there is — with the whole suite green.
-    const vp = element({ tool: 'turn', selected: ['/Group/plate'] })
+  it('wakes the rotation handles on every pass', () => {
+    // THE SAME HOLE AS THE TWO ABOVE, and the widest of the three: arming the
+    // manipulator from a row's menu is one `hmr:state` carrying a tool and a
+    // selection at once, and this line is the only thing that draws the handles
+    // when it lands. Delete it and they appear after the hold key has been
+    // pressed and let go — the one other wake-up there is — with the whole
+    // suite green.
+    //
+    // `move` AND NOT `turn`, which is the tool both halves of the widget answer
+    // to now. Asked about the retired value this would pass with the line
+    // deleted, because nothing draws under it at all.
+    const vp = element({ tool: 'move', selected: ['/Group/plate'] })
     vp.reconcile()
     vp.reconcile()
     expect(vp.rings.refresh).toHaveBeenCalledTimes(2)
@@ -1610,20 +1617,22 @@ describe('the widgets connectedCallback puts on the page', () => {
     expect(gizmo.refresh).toHaveBeenCalled()
   })
 
-  it('wakes the turn rings when the hold key lets go of the cut', () => {
-    // THE SAME SILENCE ONE TOOL OVER. The rings' loop stops on exactly the
-    // conditions the arrows' does, asked about `turn`, so the hold key takes
-    // them off and nothing puts them back: the release emits `hmr:tool` alone
-    // and the interface answers it with a local `setState`, never a push.
+  it('wakes the rotation handles when the hold key lets go of the cut', () => {
+    // THE SAME SILENCE ONE LAYER OVER. The handles' loop stops on exactly the
+    // conditions the arrows' does and on the same tool, so the hold key takes
+    // the whole widget off and nothing puts this half of it back: the release
+    // emits `hmr:tool` alone and the interface answers it with a local
+    // `setState`, never a push. Two calls and not one, because two layers make
+    // one widget and each keeps its own loop.
     const el = mount()
-    el.state = { ...el.state, tool: 'turn' }
+    el.state = { ...el.state, tool: 'move' }
     const rings = { refresh: vi.fn(), endDrag: vi.fn(), destroy: vi.fn() }
     el.rings = rings
     dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyC', key: 'c' }))
     expect(el.activeTool).toBe('cut')
     expect(rings.refresh).not.toHaveBeenCalled()
     dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyC', key: 'c' }))
-    expect(el.activeTool).toBe('turn')
+    expect(el.activeTool).toBe('move')
     expect(rings.refresh).toHaveBeenCalled()
   })
 

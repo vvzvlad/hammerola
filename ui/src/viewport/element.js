@@ -341,17 +341,21 @@ export class HmrViewport extends HTMLElement {
     this.gizmo = createGizmo(this);
     this.appendChild(this.gizmo.root);
 
-    // AND THE TURN RINGS LAST, where the rule the three blocks above apply runs
-    // out and something else takes over. The arrows and the rings are never on
-    // screen together — one is the Move tool's and the other the Turn tool's —
-    // so there is no press for the order to decide between; and this layer
-    // takes no presses at all (`rings.js` says why: a div is a filled box, so a
-    // handle that could take a press would take the corners of its square with
-    // it), so it could not win one if there were. What the
-    // order buys here is only that the rings are PAINTED over the grip where a
-    // cut happens to stand behind them, which is the same answer the arrows get
-    // and for the same reason: the widget the reader armed is the one they are
-    // looking at.
+    // AND THE ROTATION HANDLES LAST, where the rule the three blocks above
+    // apply runs out and something else takes over. These are the fourth piece
+    // of the very widget above — one manipulator answering to one tool, so the
+    // two layers are now always on screen TOGETHER — and yet there is still no
+    // press for the order to decide between, because this layer takes no
+    // presses at all (`rings.js` says why: a div is a filled box, so a handle
+    // that could take a press would take the corners of its square with it). It
+    // reads its own off the canvas instead, in a window listener that declines
+    // any target but the canvas, which is exactly what every element of the
+    // layer above is not. What the order buys here is PAINT. Against the grip it
+    // is the arrows' own answer for the arrows' own reason — the widget the
+    // reader armed is the one they are looking at, and a cut standing behind it
+    // is the occasional case. Against the layer directly above it is the
+    // EVERYDAY case now that both halves are up together: a disc crossing an
+    // arrowhead or a quad is drawn over it, and being last is the whole of why.
     this.rings = createRings(this);
     this.appendChild(this.rings.root);
 
@@ -403,10 +407,11 @@ export class HmrViewport extends HTMLElement {
         // frame already queued sees `activeTool` is now the cut, takes the
         // arrows off and lets itself stop.
         this.gizmo.refresh();
-        // AND THE RINGS FOR THE SAME REASON, whichever of the two tools the
-        // reader had armed when the key went down: both loops stop when there
-        // is nothing to draw, and this release is the one event that can bring
-        // either back without an `hmr:state` behind it.
+        // AND THE ROTATION HANDLES FOR THE SAME REASON, on the same tool: two
+        // layers make one widget, both loops stop when there is nothing to
+        // draw, and this release is the one event that can bring either back
+        // without an `hmr:state` behind it. Two calls and not one because they
+        // are two loops, which is the whole of what keeping two files costs.
         this.rings.refresh();
       },
       onEscape: () => emit(this, EVENT_TOOL, { tool: null, held: false, escape: true }),
@@ -954,10 +959,10 @@ export class HmrViewport extends HTMLElement {
     // the Move tool is down or nothing is selected — both of which arrive as
     // state, i.e. here. Same wake-up, same reason.
     this.gizmo.refresh();
-    // And the turn rings, whose loop stops on exactly the same two conditions
-    // asked about the other tool. Arming Turn from a row's menu is one
-    // `hmr:state` carrying a tool and a selection at once, and this is the line
-    // that draws the rings when it lands.
+    // And the rotation handles, whose loop stops on exactly the same two
+    // conditions asked about the same tool. Arming Move or Turn from a row's
+    // menu is one `hmr:state` carrying a tool and a selection at once, and this
+    // is the line that draws them when it lands.
     this.rings.refresh();
   }
 
