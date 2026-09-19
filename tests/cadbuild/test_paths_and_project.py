@@ -6,10 +6,10 @@ entirely and has to find the project it is being run against. Getting that
 wrong means building under someone else's id, and every published URL is
 permanent.
 
-One test went back to cad_publish with its subject: `_out/` is also the name
-the source tar excludes, and the list it was checked against lives in remote.py
--- build-node machinery that stayed on the client side and that step 7 removes,
-now that the hub builds and there is no build node left to drive.
+What is NOT here any more: the two derived paths (`out_dir`, `archive_path`) and
+`resolve_commit`. They addressed a local build writing `_out.tar.gz` beside the
+model and a revision named after a git commit, and the hub does neither -- it
+unpacks a pushed tree and mints the name from its digest.
 """
 
 import json
@@ -18,16 +18,12 @@ import pytest
 
 from src.cadbuild.errors import BuildError
 from src.cadbuild.paths import (
-    ARCHIVE_NAME,
-    OUT_DIR_NAME,
-    archive_path,
     find_project_root,
-    out_dir,
     project_root,
     set_project_root,
 )
 from src.cadbuild.hubspec import MEMBER_RE, TEST_ID
-from src.cadbuild.project import load_project, refuse_test_id, resolve_commit
+from src.cadbuild.project import load_project, refuse_test_id
 
 
 def write_project(root, **fields):
@@ -74,11 +70,6 @@ def test_an_explicit_root_wins_over_the_search(tmp_path):
     root = write_project(tmp_path / "widget", id="aabbccddeeff", title="x (widget)")
     set_project_root(root)
     assert project_root() == root.resolve()
-
-
-def test_the_two_derived_paths_hang_off_the_root(isolated_project):
-    assert out_dir() == isolated_project / OUT_DIR_NAME
-    assert archive_path() == isolated_project / ARCHIVE_NAME
 
 
 # --------------------------------------------------------------------------
@@ -291,53 +282,3 @@ def test_the_refusal_says_how_to_run_the_pipeline_anyway(tmp_path):
     assert "hammerola create" in message
     for dead in ("LOCAL=1", "NOPUBLISH", "make init", "make build"):
         assert dead not in message
-
-
-# --------------------------------------------------------------------------
-# The commit a snapshot is published under
-# --------------------------------------------------------------------------
-
-def test_an_explicit_commit_wins(monkeypatch):
-    monkeypatch.setenv("COMMIT_SHA", "fromenv")
-    assert resolve_commit("explicit") == "explicit"
-
-
-def test_the_ci_environment_is_next(monkeypatch):
-    monkeypatch.delenv("GITHUB_SHA", raising=False)
-    monkeypatch.setenv("COMMIT_SHA", "fromenv")
-    assert resolve_commit(None) == "fromenv"
-
-
-def test_github_sha_is_read_too(monkeypatch):
-    monkeypatch.delenv("COMMIT_SHA", raising=False)
-    monkeypatch.setenv("GITHUB_SHA", "fromgithub")
-    assert resolve_commit(None) == "fromgithub"
-
-
-def test_a_commit_that_is_not_a_safe_path_component_is_refused(monkeypatch):
-    monkeypatch.setenv("COMMIT_SHA", "../../etc/passwd")
-    with pytest.raises(BuildError) as exc:
-        resolve_commit(None)
-    assert "not a safe path component" in str(exc.value)
-
-
-def test_outside_a_git_checkout_the_commit_has_to_be_given(monkeypatch, tmp_path):
-    monkeypatch.delenv("COMMIT_SHA", raising=False)
-    monkeypatch.delenv("GITHUB_SHA", raising=False)
-    root = write_project(tmp_path / "loose", id="aabbccddeeff", title="x (loose)")
-    # set_project_root() and nothing else. There used to be a
-    # `monkeypatch.setattr(paths, "_root", root)` on the next line, which did
-    # the same thing twice and made the second one impossible to undo:
-    # monkeypatch records the value it found, which by then was already this
-    # root, so its teardown put the root BACK after the conftest fixture had
-    # cleared it -- and every test after this one started with paths._root
-    # pointing at a tmp_path that no longer exists. Harmless while each test
-    # overwrote it on the way in; not harmless the moment one does not.
-    set_project_root(root)
-    try:
-        commit = resolve_commit(None)
-    except BuildError as exc:
-        assert "pass --commit" in str(exc)
-    else:
-        # A tmp_path that happens to sit inside a checkout answers with its sha.
-        assert commit

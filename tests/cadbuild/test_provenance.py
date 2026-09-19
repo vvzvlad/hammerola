@@ -387,7 +387,7 @@ def test_one_set_of_lines_has_one_phrase():
     """`at_lines` sorts and deduplicates, so no caller has to.
 
     It used to do neither, and the only caller made up half the difference:
-    `_module_level_lines` runs its lines through `dict.fromkeys`, so duplicates
+    `module_level_lines` runs its lines through `dict.fromkeys`, so duplicates
     were gone before the phrase was built while ORDER was whatever the walk
     found. That left a function whose answer depended on how it was called --
     `lines 2, 1` and `lines 1, 2` for the same two lines -- with the property
@@ -405,7 +405,7 @@ def test_one_set_of_lines_has_one_phrase():
     # targets -- which is the order python binds them -- so this bound line 2
     # and then line 1, and the message said `lines 2, 1`.
     ("GAP = (\n    GAP := 0.5\n)\n", "lines 1, 2"),
-    # TWICE OVER, on one line. `dict.fromkeys` in `_module_level_lines` is what
+    # TWICE OVER, on one line. `dict.fromkeys` in `module_level_lines` is what
     # kept this reading `line 1` while `at_lines` itself answered `lines 1, 1`.
     ("GAP, GAP = 1.0, 2.0\n", "line 1"),
 ])
@@ -1387,7 +1387,7 @@ def test_a_project_with_no_model_py_is_refused_in_words_rather_than_by_a_crash(
     find the file, so a module built by hand is judged against whatever the
     project root holds, exactly like an imported one.
 
-    BOTH DOORS, because both walks call `_module_level_lines` and only one of
+    BOTH DOORS, because both walks call `module_level_lines` and only one of
     them is on the path a reader would guess.
     """
     model = types.ModuleType("model_with_no_file")

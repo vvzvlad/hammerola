@@ -10,7 +10,7 @@ import pytest
 
 from src import render
 from src.cadbuild.errors import BuildError
-from src.cadbuild.hubspec import (LABEL_RE, MAX_NOTE_CHARS, MAX_PARTS,
+from src.cadbuild.hubspec import (MAX_NOTE_CHARS, MAX_PARTS,
                                   MAX_VIEW_DEPTH, MAX_VIEW_NAME_CHARS,
                                   MEMBER_RE, RESERVED_NAMES, hub_text_problem)
 from src.cadbuild.palette import HARDWARE_COLOR, MOCK_COLOR, PART_PALETTE
@@ -58,14 +58,6 @@ def test_member_rule_matches_the_hub_spec():
     assert not MEMBER_RE.match("with space")
     assert not MEMBER_RE.match("dir/file")
     assert not MEMBER_RE.match("")
-
-
-def test_label_rule_matches_the_hub_spec():
-    assert LABEL_RE.match("stl")
-    assert LABEL_RE.match("a" * 32)
-    assert not LABEL_RE.match("a" * 33)
-    assert not LABEL_RE.match("")
-    assert not LABEL_RE.match("has space")
 
 
 def test_reserved_names_cover_everything_the_build_writes_itself():

@@ -127,10 +127,12 @@ def driven(monkeypatch):
              "parts": ["base"]} for view in prepared]),
         # The provenance rule reads model.py back OFF DISK to find the line of
         # every number in it, and the model here is a SimpleNamespace with no
-        # file behind it. Faked as one object rather than three names because
-        # `build` imports the module, not its functions.
-        ("provenance", SimpleNamespace(collect=lambda model: [],
-                                       unwrapped=lambda model: [],
+        # file behind it. Faked as ONE OBJECT rather than as its individual
+        # names because `build` imports the module, not its functions -- so a
+        # name added to the real module has to be added here too.
+        ("provenance", SimpleNamespace(module_level_lines=lambda: {},
+                                       collect=lambda model, lines=None: [],
+                                       unwrapped=lambda model, lines=None: [],
                                        check=lambda entries, bare, root: None,
                                        report=lambda entries: {})),
         ("collect_metrics",
