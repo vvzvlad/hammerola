@@ -98,6 +98,11 @@ branch (`main`, `develop`) — it makes every `git push <remote> <branch>` ambig
 - **An assertion about how the code behaves, which has to stay true, belongs in a
   TEST rather than in a comment or a document.** When you catch yourself writing
   "keep X and Y in step", that sentence is the specification for a test.
+- **A comment says WHY, and does none of three things**: it does not retell
+  history ("used to be X" belongs in git and in the issue — leave one `#N`), it
+  does not run past 12 lines in one block (longer goes into the module docstring
+  or `docs/`), and it does not say what the next line does. Existing prose is
+  not swept out; this is about the next feature. `docs/conventions.md`.
 - Module-level mutable state (singleton, cache, registry) gets an autouse fixture
   asserting it is clean BOTH before and after each test.
 
