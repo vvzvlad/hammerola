@@ -15,12 +15,17 @@ and the old code parsed it: two of the five routes read the body by that length
 and went on. So this file is what makes removing the `Transfer-Encoding` line
 from the preamble a red run instead of a silent return to that.
 
-WHY IT IS A RAW SOCKET. No client in this repository can produce the request:
-`hammerola/hub.py` sets Content-Length itself, `urllib.request` never switches
-to chunked for a bytes body, and a browser needs a ReadableStream body to send
-chunked at all -- which is exactly why an http library cannot be asked to send
-one either. httpx picks the framing from the body it is given and will not send
-both headers, so the bytes are written out by hand.
+WHY IT IS A RAW SOCKET, and it is not that httpx cannot send one. It can: an
+explicit `Transfer-Encoding: chunked` beside a bytes body survives
+`Request._prepare`, which fills Content-Length in with `setdefault` rather than
+instead of it, and h11 passes the pair through -- measured on httpx 0.28.1, the
+version `requirements-dev.txt` pins. That is a property of one pinned version's
+header merging, though, and not of the request under test: written by hand, what
+this file sends is what this file says it sends, and a pin bump cannot quietly
+turn it into a different request that still passes. No client in this repository
+produces it on its own -- `hammerola/hub.py` sets Content-Length itself,
+`urllib.request` never switches a bytes body to chunked, and a browser needs a
+ReadableStream body to send chunked at all.
 """
 
 import socket
@@ -45,14 +50,15 @@ ROUTES = {
 }
 
 
-def _post_both_framings(hub, path):
-    """POST `path` declaring Content-Length AND chunked. -> the reply's head.
+def _post(hub, path, framing):
+    """POST `path` framed by `framing`. -> the reply's head.
 
-    The five bytes the length declares are spelled as a valid empty chunked
-    body, so that a hub which took either framing at its word would have a
-    complete request to work with. That is what makes the answer a verdict on
-    the framing rather than on a truncated read: without the refusal every one
-    of these routes gets its five bytes and answers 422 about the content.
+    The body is always the same five bytes, and they are a valid EMPTY chunked
+    body which is also exactly the length any Content-Length here declares. So
+    a hub that took either framing at its word has a complete request either
+    way, and what comes back is a verdict on the framing rather than on a
+    truncated read: with the refusals gone, each of these routes gets its five
+    bytes and answers 422 about the content.
     """
     host, port = hub.server.server_address[:2]
     with socket.create_connection((host, port), timeout=10) as sock:
@@ -61,9 +67,8 @@ def _post_both_framings(hub, path):
             + b"Host: hub\r\n"
             b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
             b"Content-Type: application/json\r\n"
-            b"Content-Length: 5\r\n"
-            b"Transfer-Encoding: chunked\r\n"
-            b"\r\n"
+            + framing
+            + b"\r\n"
             b"0\r\n\r\n")
         head = b""
         while b"\r\n\r\n" not in head:
@@ -94,7 +99,8 @@ def test_both_framing_headers_are_411_on_every_route_that_takes_a_body(
     # than a made-up one, so a failure here is never about a missing project.
     assert hub.publish(PID, COMMIT, good_build()).status_code == 201
 
-    head = _post_both_framings(hub, ROUTES[route])
+    head = _post(hub, ROUTES[route],
+                 b"Content-Length: 5\r\nTransfer-Encoding: chunked\r\n")
 
     assert head.startswith(b"HTTP/1.1 411 "), (
         f"{route} answered {head.splitlines()[:1]} to a request framed twice; "
@@ -102,3 +108,28 @@ def test_both_framing_headers_are_411_on_every_route_that_takes_a_body(
     assert b"Connection: close" in head, (
         f"{route} refused the request but offered to keep the connection, so "
         f"the body it did not read becomes the next request on this socket")
+
+
+def test_a_chunked_resolve_with_no_length_is_411_rather_than_a_silent_note(hub):
+    """`resolve` reaches the refusal through a gate of its own, so test the gate.
+
+    It is the one route whose body is OPTIONAL: a resolve with no framing at
+    all is a resolve with no note, which `test_resolve_without_a_note_is_fine`
+    pins, so the shared preamble is entered only when the headers say a body is
+    coming. That gate asks two things -- is there a positive Content-Length, or
+    is there a Transfer-Encoding -- and the test above exercises only the first,
+    because its request carries a length as well.
+
+    WITHOUT THE SECOND HALF THE REFUSAL DOES NOT HAPPEN AT ALL: a chunked body
+    with no Content-Length fails the length half, so the gate is not entered
+    and the route answers about the resolve -- a note-less one for a caller who
+    sent a note -- without reading the body. Measured with that half removed,
+    the hub then logs `code 400, message Bad request syntax ('0')` on the same
+    connection: the body it declined to read became the next request on the
+    socket, which is the whole reason these refusals close it.
+    """
+    head = _post(hub, ROUTES["resolve"], b"Transfer-Encoding: chunked\r\n")
+
+    assert head.startswith(b"HTTP/1.1 411 "), (
+        f"resolve answered {head.splitlines()[:1]} to a chunked body with no "
+        f"length; it must not accept a note it cannot read to the end")
