@@ -44,34 +44,17 @@ import {
   applySection, dragSection, placeSectionPlane, sectionAxis, sectionGripAxis,
   sectionOffset,
 } from '../src/viewport/section.js'
+import { RECT, runFrames, stubFrames } from './component.js'
 import { fakeViewer, fakeViewport, orthoCamera } from './fakes.js'
-
-const RECT = { left: 0, top: 0, width: 800, height: 600 }
-
-// -- the rAF loop, driven by hand ---------------------------------------------
-// Same shape as pinch.test.js: the module's loop re-arms itself from inside the
-// frame it is running, so a snapshot is taken before the callbacks run and what
-// they queue lands in the next one.
-let frames = new Map()
-let nextFrame = 0
-const runFrames = () => {
-  const due = [...frames.values()]
-  frames.clear()
-  for (const callback of due) callback(0)
-}
 
 const handles = []
 
 beforeEach(() => {
   vi.clearAllMocks()
-  frames = new Map()
-  nextFrame = 0
-  vi.stubGlobal('requestAnimationFrame', (callback) => {
-    nextFrame += 1
-    frames.set(nextFrame, callback)
-    return nextFrame
-  })
-  vi.stubGlobal('cancelAnimationFrame', (id) => frames.delete(id))
+  // The rAF loop, driven by hand (ui/tests/component.js): the module's loop
+  // re-arms itself from inside the frame it is running, so a snapshot is taken
+  // before the callbacks run and what they queue lands in the next one.
+  stubFrames()
 })
 
 afterEach(() => {

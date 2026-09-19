@@ -27,9 +27,8 @@ import {
   restoreSection, sectionAxis, sectionGripAxis, sectionLimit, sectionOffset,
   sectionRange, sectionValueFor, suspendSectionCut,
 } from '../src/viewport/section.js'
+import { RECT } from './component.js'
 import { fakeViewer, fakeViewport, orthoCamera } from './fakes.js'
-
-const RECT = { left: 0, top: 0, width: 800, height: 600 }
 
 function scene({ gridSize = 100, clipCenter = [0, 0, 0] } = {}) {
   const camera = orthoCamera({

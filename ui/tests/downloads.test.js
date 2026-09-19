@@ -36,6 +36,7 @@ import HammerolaViewer, {
   DOWNLOAD_GAP_MS, groupDownloads, menuAt, partRecord, sequentialDownload,
 } from '../src/HammerolaViewer.jsx'
 import { indexTree } from '../src/hub.js'
+import { makeComponent } from './component.js'
 
 /**
  * `meta.parts`: two printables and a bought screw, as the hub writes it.
@@ -167,74 +168,64 @@ const TREE_WITH_A_RESERVED_NAME = {
 /**
  * The component as `computed()` sees it, with the row menu open on one node.
  *
- * The state is spelled out rather than defaulted because `computed()` reads
+ * The state is the whole page and not a slice of it because `computed()` reads
  * nearly all of it: what is being avoided is a field left undefined turning into
- * a `TypeError` halfway down and looking like a failure of the menu.
+ * a `TypeError` halfway down and looking like a failure of the menu. That whole
+ * page is `makeComponent`'s default (ui/tests/component.js); what is written
+ * below is what these tests are about.
+ *
+ * The ref `render()` hangs the viewport off is left empty, which is the
+ * arrangement every other file in this directory uses. Building the menu does
+ * not reach the element: the Move row asks the viewport which kind of object it
+ * is from INSIDE its own `onClick`, and its gate asks only `viewer`, `narrow`
+ * and `isNode` — so the ref is touched only by a test that clicks that row, and
+ * no case here does.
  */
 function component({ node, parts = PARTS, token = null, expanded = {},
                      tree = TREE, viewFiles = {} } = {}) {
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { commentsOpen: false }
-  c.home = null
-  // The arrangement every other file in this directory uses. Building the menu
-  // does not reach the element: the Move row asks the viewport which kind of
-  // object it is from INSIDE its own `onClick`, and its gate asks only `viewer`,
-  // `narrow` and `isNode` — so the ref is touched only by a test that clicks
-  // that row, and no case here does.
-  c.host = { current: null }
-  c.setState = vi.fn((patch) => { Object.assign(c.state, patch) })
-  c.state = {
-    meta: {
-      project: 'fixture', commit: 'abc1234', built: '',
-      // `parts: null` MEANS THE FIELD IS NOT THERE, and it is spelled by
-      // omission rather than as an empty object because `{}` describes no
-      // document there has ever been: `_catalogue` in src/render.py refuses an
-      // empty `parts` in as many words, and refuses again a catalogue with no
-      // `printable` in it (and a printable with no `files`). So the reader of
-      // the two "no files" branches below is A HAND-MADE DOCUMENT, OR ONE THIS
-      // PAGE DID NOT GET FROM A PUSH.
-      //
-      // IT IS NOT AN OLD BUILD, and that is worth writing down because the
-      // reading is inviting and wrong. A genuine document from before issue #75
-      // carried `variants` where this one carries `views` (`build_meta` in
-      // src/render.py, before 5683fea), and exactly TWO readings of `meta.views`
-      // are unguarded: `load()` calls `.find` on it the moment meta.json
-      // arrives, and `subtitle()` does the same on every render that has a meta
-      // at all. Those two are also the ones that run FIRST, so such a document
-      // takes the page down long before any catalogue is looked at.
-      //
-      // Every other reading of that field does guard, and that is not an
-      // inconsistency to be tidied in either direction: what those guard is
-      // `meta` not being THERE yet — the page draws before the fetch answers,
-      // and a build swap has a window mid-flight — with the two that ingest a
-      // freshly fetched document (`switchBuild` and `poll`/`takePending`)
-      // checking the shape of `views` on top of that. Neither question is the
-      // one above, and answering it here would only hide the crash that keeps
-      // an old document out.
-      //
-      // Nothing here opens one and nothing here promises to: old builds were
-      // dropped by decision, while an untrusted document is a different thing
-      // and is what these branches are for.
-      ...(parts ? { parts } : {}),
-      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
-                parts: Object.keys(parts || {}), gzip: 1000, ...viewFiles }],
+  return makeComponent(HammerolaViewer, {
+    state: {
+      meta: {
+        project: 'fixture', commit: 'abc1234', built: '',
+        // `parts: null` MEANS THE FIELD IS NOT THERE, and it is spelled by
+        // omission rather than as an empty object because `{}` describes no
+        // document there has ever been: `_catalogue` in src/render.py refuses an
+        // empty `parts` in as many words, and refuses again a catalogue with no
+        // `printable` in it (and a printable with no `files`). So the reader of
+        // the two "no files" branches below is A HAND-MADE DOCUMENT, OR ONE THIS
+        // PAGE DID NOT GET FROM A PUSH.
+        //
+        // IT IS NOT AN OLD BUILD, and that is worth writing down because the
+        // reading is inviting and wrong. A genuine document from before issue #75
+        // carried `variants` where this one carries `views` (`build_meta` in
+        // src/render.py, before 5683fea), and exactly TWO readings of `meta.views`
+        // are unguarded: `load()` calls `.find` on it the moment meta.json
+        // arrives, and `subtitle()` does the same on every render that has a meta
+        // at all. Those two are also the ones that run FIRST, so such a document
+        // takes the page down long before any catalogue is looked at.
+        //
+        // Every other reading of that field does guard, and that is not an
+        // inconsistency to be tidied in either direction: what those guard is
+        // `meta` not being THERE yet — the page draws before the fetch answers,
+        // and a build swap has a window mid-flight — with the two that ingest a
+        // freshly fetched document (`switchBuild` and `poll`/`takePending`)
+        // checking the shape of `views` on top of that. Neither question is the
+        // one above, and answering it here would only hide the crash that keeps
+        // an old document out.
+        //
+        // Nothing here opens one and nothing here promises to: old builds were
+        // dropped by decision, while an untrusted document is a different thing
+        // and is what these branches are for.
+        ...(parts ? { parts } : {}),
+        views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+                  parts: Object.keys(parts || {}), gzip: 1000, ...viewFiles }],
+      },
+      tree: indexTree(tree),
+      expanded,
+      menu: { id: node, x: 0, y: 0 },
+      token,
     },
-    builds: null,
-    tree: indexTree(tree),
-    error: null, viewError: null, pending: null,
-    view: 'assembled', tool: null, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded,
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
-    bannerGone: false, rail: false, menu: { id: node, x: 0, y: 0 },
-    notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    token, tokenPop: false, tokenDraft: '',
-    theme: 'light',
-  }
-  return c
+  })
 }
 
 const menuOn = (options) => component(options).computed().menuItems

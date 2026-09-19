@@ -39,8 +39,8 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 }))
 
 import HammerolaViewer, { VIEW_TABS_MAX } from '../src/HammerolaViewer.jsx'
-import { indexTree } from '../src/hub.js'
 import { css } from '../src/style.jsx'
+import { makeComponent, replaceState } from './component.js'
 import { collect, texts } from './eltree.js'
 
 /** As many views as asked for, named the way a model's code names them. */
@@ -55,42 +55,22 @@ const someViews = (count) => Array.from({ length: count }, (unused, i) => ({
  * `setState` plus a message to a viewport that is not here.
  */
 function component({ views = someViews(2), view = 'v0', narrow = false } = {}) {
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { ...HammerolaViewer.defaultProps }
-  c.home = null
-  c.host = { current: null }
-  c.setState = vi.fn((patch, done) => {
-    const next = typeof patch === 'function' ? patch(c.state) : patch
-    c.state = { ...c.state, ...next }
-    if (done) done()
-  })
-  c.sync = vi.fn()
-  c.state = {
-    meta: {
-      project: 'fixture', title: 'Fixture bracket', commit: 'abc1234',
-      built: '2026-08-27T18:20:00Z',
-      parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
-      views,
+  return makeComponent(HammerolaViewer, {
+    setState: replaceState,
+    sync: vi.fn(),
+    state: {
+      meta: {
+        project: 'fixture', title: 'Fixture bracket', commit: 'abc1234',
+        built: '2026-08-27T18:20:00Z',
+        parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
+        views,
+      },
+      view,
+      viewsOpen: false,
+      rail: null, menu: { id: null, x: 0, y: 0 },
+      narrow,
     },
-    builds: null,
-    tree: indexTree({ id: '/model', name: 'model', children: [] }),
-    error: null, viewError: null, pending: null, swapping: false,
-    view, tool: null, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, viewsOpen: false,
-    cmp: [], compare: false, diffShow: 'both',
-    bannerGone: false, rail: null, menu: { id: null, x: 0, y: 0 },
-    notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    token: 'sekrit', tokenPop: false, tokenDraft: '',
-    theme: 'light',
-    tabs: [],
-    narrow, treeOpen: false,
-  }
-  return c
+  })
 }
 
 const click = { stopPropagation() {}, preventDefault() {} }

@@ -21,9 +21,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { zoomWheelAfter, zoomWheelBefore } from '../src/viewport/zoom.js'
+import { RECT } from './component.js'
 import { eventAt, fakeViewer, orthoCamera } from './fakes.js'
 
-const RECT = { left: 0, top: 0, width: 800, height: 600 }
 // A cursor well away from the centre: at the centre every zoom law agrees,
 // including a broken one.
 const CURSOR = [600, 150]

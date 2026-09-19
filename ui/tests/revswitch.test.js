@@ -50,6 +50,7 @@ import { PAGE, buildKey, indexTree, loadBuilds, loadMeta } from '../src/hub.js'
 import {
   addNode, bodies, emptyProposal, moveNodes, moves, turnNodes,
 } from '../src/proposal.js'
+import { makeComponent, replaceState } from './component.js'
 import { guardPage } from './pageguard.js'
 
 const path = (slot) => `/project/proj1/${slot}/`
@@ -136,42 +137,21 @@ const TREE_B = {
  * callback — because the callback is where a swap tells the viewport.
  */
 function component(over = {}) {
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { ...HammerolaViewer.defaultProps }
-  c.home = null
-  c.carry = null
-  c.history = []
-  c.host = { current: null }
-  c.state = {
-    meta: {
-      project: 'fixture', commit: A, built: '2026-08-27T18:20:00Z',
-      parts: PARTS, views: VIEWS,
+  return makeComponent(HammerolaViewer, {
+    setState: replaceState,
+    sync: vi.fn(),
+    schedulePoll: vi.fn(),
+    toast: vi.fn(),
+    state: {
+      meta: {
+        project: 'fixture', commit: A, built: '2026-08-27T18:20:00Z',
+        parts: PARTS, views: VIEWS,
+      },
+      builds: BUILDS(),
+      tree: indexTree(TREE),
+      ...over,
     },
-    builds: BUILDS(),
-    tree: indexTree(TREE),
-    error: null, viewError: null, pending: null,
-    view: 'assembled', tool: null, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
-    bannerGone: false, rail: false, menu: null, swapping: false,
-    notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    token: 'sekrit', tokenPop: false, tokenDraft: '',
-    theme: 'light',
-    ...over,
-  }
-  c.setState = vi.fn((patch, done) => {
-    const next = typeof patch === 'function' ? patch(c.state) : patch
-    c.state = { ...c.state, ...next }
-    if (done) done()
   })
-  c.sync = vi.fn()
-  c.schedulePoll = vi.fn()
-  c.toast = vi.fn()
-  return c
 }
 
 /**

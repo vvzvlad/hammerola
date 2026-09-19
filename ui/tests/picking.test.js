@@ -25,11 +25,11 @@ import { internals } from '../src/viewport/internals.js'
 import { capOwnerAt, nameOf, planePointAt, solidOf } from '../src/viewport/picking.js'
 import { SECTION_INDEX } from '../src/viewport/options.js'
 import { applySection, placeSectionPlane } from '../src/viewport/section.js'
+import { RECT } from './component.js'
 import {
   fakeCapUnits, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
 } from './fakes.js'
 
-const RECT = { left: 0, top: 0, width: 800, height: 600 }
 const repoFile = (path) => readFileSync(resolve(process.cwd(), path), 'utf8')
 const BUNDLE = '../static/_v/three-cad-viewer.esm.js'
 

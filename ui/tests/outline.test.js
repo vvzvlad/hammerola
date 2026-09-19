@@ -27,11 +27,10 @@ import {
 import {
   dragSection, placeSectionPlane, sectionAxis, suspendSectionCut,
 } from '../src/viewport/section.js'
+import { RECT } from './component.js'
 import {
   fakeMatrix, fakeRenderer, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
 } from './fakes.js'
-
-const RECT = { left: 0, top: 0, width: 800, height: 600 }
 
 const repoFile = (path) => readFileSync(resolve(process.cwd(), path), 'utf8')
 const BUNDLE = '../static/_v/three-cad-viewer.esm.js'

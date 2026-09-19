@@ -51,8 +51,9 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 }))
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
-import { indexTree, loadBuilds, loadMeta } from '../src/hub.js'
+import { loadBuilds, loadMeta } from '../src/hub.js'
 import { forgetTab, readTabs, rememberTab } from '../src/store.js'
+import { makeComponent } from './component.js'
 import { collect, links } from './eltree.js'
 
 /** The smallest thing store.js can tell from the real one. */
@@ -89,35 +90,18 @@ afterEach(() => {
  * and nothing else, which is what makes the readings below exact.
  */
 function component({ tabs = [] } = {}) {
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { ...HammerolaViewer.defaultProps }
-  c.home = null
-  c.host = { current: null }
-  c.setState = vi.fn((patch) => { Object.assign(c.state, patch) })
-  c.state = {
-    meta: {
-      project: 'fixture', title: 'Fixture bracket', commit: 'abc1234',
-      built: '2026-08-27T18:20:00Z', parts: {},
-      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
-                parts: [], gzip: 1000 }],
+  return makeComponent(HammerolaViewer, {
+    state: {
+      meta: {
+        project: 'fixture', title: 'Fixture bracket', commit: 'abc1234',
+        built: '2026-08-27T18:20:00Z', parts: {},
+        views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+                  parts: [], gzip: 1000 }],
+      },
+      rail: null, menu: { id: null, x: 0, y: 0 },
+      tabs,
     },
-    builds: null,
-    tree: indexTree({ id: '/model', name: 'model', children: [] }),
-    error: null, viewError: null, pending: null,
-    view: 'assembled', tool: null, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
-    bannerGone: false, rail: null, menu: { id: null, x: 0, y: 0 },
-    notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    token: 'sekrit', tokenPop: false, tokenDraft: '',
-    theme: 'light',
-    tabs,
-  }
-  return c
+  })
 }
 
 /** One entry as the store hands it over. */

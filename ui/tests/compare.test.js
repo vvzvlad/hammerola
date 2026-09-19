@@ -70,6 +70,7 @@ import {
   COMPARE_GROUPS, DIFF_COLOURS, PAGE, compareBase, indexTree, isPointerPage,
   loadBuilds, loadCompareReport, loadJob, loadMeta, rereadPage, startCompare,
 } from '../src/hub.js'
+import { drained as settled, makeComponent, replaceState } from './component.js'
 import { guardPage } from './pageguard.js'
 
 guardPage(`/project/proj1/${A}/`)
@@ -165,42 +166,23 @@ const REPORT = {
  * where a comparison becomes visible to the viewport.
  */
 function page({ watch, ...over } = {}) {
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { ...HammerolaViewer.defaultProps }
-  c.home = null
-  c.carry = null
-  c.history = []
-  c.host = { current: null }
-  c.state = {
-    meta: {
-      project: 'fixture', title: 'Fixture', commit: A, published: null,
-      built: '2026-08-27T18:20:00Z', parts: PARTS, views: VIEWS,
+  const c = makeComponent(HammerolaViewer, {
+    setState: replaceState,
+    toast: vi.fn(),
+    state: {
+      meta: {
+        project: 'fixture', title: 'Fixture', commit: A, published: null,
+        built: '2026-08-27T18:20:00Z', parts: PARTS, views: VIEWS,
+      },
+      tree: indexTree(TREE),
+      // THE COMPARISON, which the shared default leaves out: a page that is
+      // about neither has none of these, and this is the file that is.
+      cmpPair: null, cmpView: null, cmpStage: null, cmpError: null,
+      cmpReport: null, cmpSel: null,
+      ...over,
     },
-    builds: null,
-    tree: indexTree(TREE),
-    error: null, viewError: null, pending: null, swapping: false,
-    view: 'assembled', tool: null, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
-    cmpPair: null, cmpView: null, cmpStage: null, cmpError: null,
-    cmpReport: null, cmpSel: null,
-    bannerGone: false, rail: false, menu: null,
-    notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    token: 'sekrit', tokenPop: false, tokenDraft: '',
-    theme: 'light', tabs: [], narrow: false, treeOpen: false,
-    ...over,
-  }
-  c.setState = vi.fn((patch, done) => {
-    const next = typeof patch === 'function' ? patch(c.state) : patch
-    c.state = { ...c.state, ...next }
-    if (done) done()
   })
   if (!watch) c.sync = vi.fn()
-  c.toast = vi.fn()
   return c
 }
 
@@ -245,9 +227,6 @@ function listening() {
   onTestFinished(() => window.removeEventListener(STATE, listen))
   return seen
 }
-
-/** Everything a fetch chain has queued behind it, run. */
-const settled = () => new Promise((done) => { setTimeout(done, 0) })
 
 /**
  * The component with its REAL listeners on the window, so a viewport event

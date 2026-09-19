@@ -33,7 +33,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
-import { indexTree } from '../src/hub.js'
+import { makeComponent } from './component.js'
 import { DEFAULT_THEME, readTheme, writeTheme } from '../src/store.js'
 import * as viewport from '../src/viewport/options.js'
 import { displayOptions } from '../src/viewport/options.js'
@@ -264,38 +264,20 @@ describe('what the library is started with', () => {
 
 /** The component, with a fake viewport element under `el()`. */
 function component({ theme = 'light', viewer = {} } = {}) {
-  const c = Object.create(HammerolaViewer.prototype)
-  c.props = { commentsOpen: false }
-  c.home = null
-  c.host = { current: viewer === null ? null : { viewer } }
-  c.patches = []
-  c.setState = vi.fn((patch) => {
-    c.patches.push(patch)
-    Object.assign(c.state, patch)
-  })
-  c.state = {
-    meta: {
-      project: 'fixture', commit: 'abc1234', built: '',
-      parts: { lid: { kind: 'printable', files: { stl: 'lid.stl' } } },
-      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
-                parts: ['lid'], gzip: 1000 }],
+  return makeComponent(HammerolaViewer, {
+    host: { current: viewer === null ? null : { viewer } },
+    patches: [],
+    // The shared `mergeState`, plus the recording the assertions below read.
+    setState: (c) => vi.fn((patch) => {
+      c.patches.push(patch)
+      Object.assign(c.state, patch)
+    }),
+    state: {
+      menu: { id: null, x: 0, y: 0 },
+      token: null,
+      theme,
     },
-    builds: null,
-    tree: indexTree({ id: '/model', name: 'model', children: [] }),
-    error: null, viewError: null, pending: null,
-    view: 'assembled', tool: null, held: false,
-    sel: null, selName: '', hidden: [], ghost: [], expanded: {},
-    secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
-    secFace: null, secPop: false,
-    revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
-    bannerGone: false, rail: false, menu: { id: null, x: 0, y: 0 },
-    notePop: null, noteDraft: '', notes: {},
-    feed: [], activePin: null, composer: null, sending: false,
-    measure: null, toast: null,
-    token: null, tokenPop: false, tokenDraft: '',
-    theme,
-  }
-  return c
+  })
 }
 
 describe('the theme toggle', () => {
