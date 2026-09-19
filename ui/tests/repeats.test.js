@@ -40,7 +40,7 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi }
   from 'vitest'
 
-import HammerolaViewer from '../src/HammerolaViewer.jsx'
+import HammerolaViewer, { menuAt, SECTION_ROW } from '../src/HammerolaViewer.jsx'
 import { countedName, indexTree } from '../src/hub.js'
 import { FACE, MEASURE, MOVED, PICK, PLACE, STATE } from '../src/events.js'
 import { moves } from '../src/proposal.js'
@@ -898,6 +898,228 @@ describe('the part the section plane says it is cut from', () => {
     window.dispatchEvent(new CustomEvent(FACE,
       { detail: { id: null, name: null, offset: 0, range: [-30, 30] } }))
     expect(c.state.secFace).toBe('face')
+  })
+})
+
+// -- the right-click on the section's own row ---------------------------------
+//
+// Issue #89: the section stopped being a MODE and became a THING in the tree,
+// and a thing in this tree answers a right-click. The row already had its eye
+// and its two ways into the popover; what was missing was the menu every part
+// row above it has had all along.
+//
+// THE RISK IS THE SHARED MENU, not the two items. One popover, one `s.menu`, one
+// `menuItems`, and a subject resolved by `this.node(s.menu.id)` — so the section
+// rides in on an id that lookup must never answer, and the ways that can come
+// apart are the ways this block is written against: the id colliding with a tree
+// path, the part branch leaking its items onto the cut, the cut's branch leaking
+// onto a part, and the menu opening in a place the other two doors would not.
+// Another home would need a second tree harness; this file already has one.
+
+describe('the section row\'s context menu', () => {
+  /**
+   * The section row's own right-click, as `computed()` builds it.
+   *
+   * THE DEFAULT IS ASSERTED HERE AND NOT IN A TEST OF ITS OWN, because every
+   * test in this block goes through this door and the claim is the same for all
+   * of them: without `preventDefault` the browser's own context menu opens on
+   * top of ours, and nothing else on the page would notice. It was the one
+   * mutation of this change that survived the suite.
+   */
+  const openSecMenu = (c, [clientX, clientY] = [40, 60]) => {
+    const e = { stopPropagation: vi.fn(), preventDefault: vi.fn(), clientX, clientY }
+    c.computed().secRowMenu(e)
+    expect(e.preventDefault, "the browser's own menu would sit over ours")
+      .toHaveBeenCalled()
+    return c.computed()
+  }
+
+  /** A state with a section actually placed: the plane, the offset and the cut. */
+  const CUT = { secOn: true, secFace: 'pin', secOff: 3, secFlip: true,
+                secRange: [-30, 30] }
+
+  it('cannot be confused with a row of the tree', () => {
+    // The whole basis for riding on the shared menu. Every id `indexTree` mints
+    // is a path and begins with `/`; the sentinel is a bare word, so `node()`
+    // answers `null` for it and the part branch can never be entered by it.
+    expect(SECTION_ROW.startsWith('/')).toBe(false)
+    const c = component(THREE_PINS)
+    expect([...c.state.tree.nodes.keys()]).not.toContain(SECTION_ROW)
+    expect(c.node(SECTION_ROW)).toBeNull()
+  })
+
+  it('opens the menu, headed for the section and not for a part', () => {
+    const c = component(THREE_PINS, CUT)
+    expect(c.state.menu).toBeNull()
+
+    const v = openSecMenu(c)
+
+    expect(c.state.menu.id).toBe(SECTION_ROW)
+    expect(v.menuName).toBe('section')
+    // `menuStyle` is the one thing that decides the box is on screen, and it
+    // asks `s.menu` alone — so a menu with no items would be an empty box.
+    expect(css(v.menuStyle).display).toBe('block')
+    expect(v.menuItems.map((m) => m.label)).toEqual(['Edit', 'Delete'])
+  })
+
+  it('lands where the part rows\' menu would, by the same clamp', () => {
+    // Past the edge of jsdom's window, so the clamp actually bites: a third door
+    // with arithmetic of its own would agree in the middle of the screen and
+    // disagree exactly where `menuAt` exists to matter.
+    const c = component(THREE_PINS, CUT)
+    openSecMenu(c, [9000, 9000])
+    expect(c.state.menu).toEqual({ id: SECTION_ROW, ...menuAt(9000, 9000) })
+  })
+
+  it('offers nothing that belongs to a part', () => {
+    // The leak this sentinel is for. Every item of the part menu reads `mNode`
+    // — its leaves, its key, its name — so one reaching the cut would be an item
+    // about a part that is not there.
+    const c = component(THREE_PINS, CUT)
+    const labels = openSecMenu(c).menuItems.map((m) => m.label)
+    for (const gone of ['Isolate', 'Hide', 'Translucent', 'Move', 'Turn',
+                        'Note', 'Copy name', 'STL']) {
+      expect(labels).not.toContain(gone)
+    }
+  })
+
+  it('opens the popover on Edit, and closes the menu behind it', () => {
+    // The same dialog the row's name and its subtitle open — `secPop` is the
+    // one flag it is drawn by — so this is a third gesture onto one panel and
+    // not a second panel.
+    const c = component(THREE_PINS, CUT)
+    openSecMenu(c).menuItems.find((m) => m.label === 'Edit').onClick(click)
+
+    expect(c.state.secPop).toBe(true)
+    expect(c.state.menu).toBeNull()
+    expect(css(c.computed().secPopStyle).display).toBe('block')
+  })
+
+  it('and leaves the page where the row\'s own name leaves it', () => {
+    // THE TWO DOORS HELD EQUAL, the way Delete and the popover's reset are held
+    // equal below — and here it matters MORE, not less, because those two share
+    // a closure and these two cannot: `openSecPop` is `stop()`-wrapped for a DOM
+    // event a menu item does not have, so the menu spells the write out a second
+    // time. The day `openSecPop` starts writing a second field — `menu: null`, a
+    // tool reset — the menu item will not learn it, and nothing but this would
+    // fail. What is compared is the whole page, not the one flag: a difference
+    // anywhere is the drift this exists to catch.
+    const viaMenu = component(THREE_PINS, CUT)
+    openSecMenu(viaMenu).menuItems.find((m) => m.label === 'Edit').onClick(click)
+
+    const viaName = component(THREE_PINS, CUT)
+    viaName.computed().openSecPop(click)
+
+    // `menu` aside: the menu item closes the menu it was clicked in, which the
+    // row's name never opened. Everything else has to agree.
+    expect({ ...viaMenu.state, menu: null }).toEqual({ ...viaName.state, menu: null })
+  })
+
+  it('clears the section on Delete, exactly as the popover\'s reset does', () => {
+    const c = component(THREE_PINS, CUT)
+    openSecMenu(c).menuItems.find((m) => m.label === 'Delete').onClick(click)
+
+    expect(c.state.menu).toBeNull()
+    for (const [field, value] of
+         [['secOn', false], ['secFace', null], ['secOff', 0], ['secFlip', false]]) {
+      expect(c.state[field], field).toBe(value)
+    }
+    // AND THE FLAG BESIDE THE FIELDS, which is the half no state read would
+    // catch: `__resetCut` is what drops the plane in the viewport, and without
+    // it the cut stays on the screen with every field here reading as cleared.
+    expect(c.sync).toHaveBeenCalledWith({ __resetCut: true })
+  })
+
+  it('leaves the state exactly where the popover\'s reset leaves it', () => {
+    // Two doors onto one reset. Written as a comparison rather than as a second
+    // list of fields, because a list is what drifts: the door that is not in
+    // this file's sights is the one that would quietly grow a fifth field.
+    const viaMenu = component(THREE_PINS, CUT)
+    openSecMenu(viaMenu).menuItems.find((m) => m.label === 'Delete').onClick(click)
+
+    const viaPanel = component(THREE_PINS, CUT)
+    viaPanel.computed().resetSec(click)
+
+    const cut = ({ secOn, secFace, secOff, secFlip, secRange }) =>
+      ({ secOn, secFace, secOff, secFlip, secRange })
+    expect(cut(viaMenu.state)).toEqual(cut(viaPanel.state))
+    expect(viaMenu.sync.mock.calls).toEqual(viaPanel.sync.mock.calls)
+  })
+
+  it('offers Delete on a cut the eye has merely taken off the screen', () => {
+    // The eye keeps the plane and the offset — that is the whole point of it —
+    // so `secOn: false` is not "no section". A Delete that declined here would
+    // decline on the state a reader is likeliest to want cleaned up, and leave
+    // the plane behind on the very row they invoked it from.
+    const c = component(THREE_PINS, { ...CUT, secOn: false })
+    const item = openSecMenu(c).menuItems.find((m) => m.label === 'Delete')
+    expect(item).toBeTruthy()
+
+    item.onClick(click)
+
+    expect(c.state.secFace).toBeNull()
+    expect(c.state.secOff).toBe(0)
+    expect(c.state.secFlip).toBe(false)
+    expect(c.sync).toHaveBeenCalledWith({ __resetCut: true })
+  })
+
+  it('says so rather than acting where there is no section at all', () => {
+    // `fileRows`' rule for an item that does not apply, and the same shape: the
+    // sentence is the LABEL, the tone is grey, and there is NO HANDLER — a row
+    // that said it would not act and then closed the menu anyway is the defect
+    // that rule was written after.
+    const c = component(THREE_PINS)
+    const items = openSecMenu(c).menuItems
+
+    expect(items.map((m) => m.label)).toEqual(['Edit', 'No section to delete'])
+    const said = items[1]
+    expect(said.onClick).toBeUndefined()
+    expect(said.style).toContain('cursor:default')
+    expect(c.sync).not.toHaveBeenCalled()
+  })
+
+  it('counts a plane, an offset and a flip each on their own', () => {
+    // Four fields, four ways to have something to clear. A check written on one
+    // of them passes on the state the other three describe.
+    for (const set of [{ secOn: true }, { secFace: 'pin' },
+                       { secOff: -2 }, { secFlip: true }]) {
+      const c = component(THREE_PINS, set)
+      expect(openSecMenu(c).menuItems.map((m) => m.label),
+             JSON.stringify(set)).toEqual(['Edit', 'Delete'])
+    }
+  })
+
+  it('is wired to the row the reader right-clicks, not merely computed', () => {
+    // READ OFF THE RENDER, which is ui/tests/eltree.js's lesson: a handler that
+    // `computed()` builds and the markup never carries is a handler no gesture
+    // reaches, and every assertion above would still pass.
+    const c = component(THREE_PINS, { ...CUT, narrow: false, treeOpen: false, tabs: [] })
+    // The handler map PINNED for the one render, because `computed()` mints a
+    // fresh closure on every call — so the identity below is a claim about the
+    // wiring rather than about two functions that merely look alike.
+    const v = c.computed()
+    c.computed = () => v
+    const row = collect(c.render(),
+                        (el) => (el.props.style === css(v.secRowStyle) ? el : undefined))
+    expect(row, 'nothing on the page carries the section row\'s style').toHaveLength(1)
+    expect(row[0].props.onContextMenu).toBe(v.secRowMenu)
+  })
+
+  it('leaves the part rows\' own right-click exactly as it was', () => {
+    // The other half of one shared menu: the branch added for the cut must not
+    // be reachable from a part, and the part's own items must all still be.
+    const c = component(THREE_PINS)
+    rowFor(c, '/model/pin').onMenu({ ...click, clientX: 40, clientY: 60 })
+
+    expect(c.state.menu).toEqual({ id: '/model/pin', ...menuAt(40, 60) })
+    const v = c.computed()
+    expect(v.menuName).toBe('pin ×3')
+    const labels = v.menuItems.map((m) => m.label)
+    expect(labels).toContain('Isolate')
+    expect(labels).toContain('Copy name')
+    expect(labels).not.toContain('Edit')
+    expect(labels).not.toContain('Delete')
+    expect(labels).not.toContain('No section to delete')
   })
 })
 

@@ -371,6 +371,17 @@ const proposalPanelOn = () => (
 // arrives already folded away is a row they have to go and find.
 export const PROPOSAL_BRANCH = 'proposal';
 
+// WHAT THE SECTION'S ROW PUTS IN `s.menu.id` when it is right-clicked, so that
+// the row reaches the SAME menu the parts tree's rows reach instead of growing
+// one of its own. It cannot collide with a row of that tree for the reason the
+// constant above cannot either: every id `indexTree` mints is a PATH and begins
+// with `/`, while this is a bare word — so `this.node()` answers `null` for it,
+// and both branches that build the menu ask `secMenu` before they read `mNode`.
+// (The lookup itself runs first and is simply asked a question it cannot answer;
+// what keeps the two apart is the order of the BRANCHES, not of the reads.) The
+// word is the row's own label, which is what the menu is then headed with.
+export const SECTION_ROW = 'section';
+
 /**
  * The selection, moved from a body's DOCUMENT ID onto the path the scene has
  * just given it — or nothing to move.
@@ -5885,6 +5896,30 @@ export default class HammerolaViewer extends React.Component {
 
     // -- context menu on a tree row
     const mNode = this.node(s.menu && s.menu.id);
+    // THE SECTION'S ROW IS THE ONE SUBJECT OF THIS MENU THAT IS NOT A NODE, and
+    // it is asked for by name rather than faked into one. A stand-in node would
+    // have to carry `leaves`, a `key` and a `name` it does not have, and every
+    // item below reads at least one of the three — so the fake would reach
+    // Isolate, the files and Copy name, all of them about a part that is not
+    // there. `mNode` stays `null` for it (`SECTION_ROW` is no tree path), which
+    // is what keeps those items off; the two branches below add the ones that
+    // ARE about the cut.
+    const secMenu = !!(s.menu && s.menu.id === SECTION_ROW);
+    // ONE RESET BEHIND TWO DOORS — the section popover's `reset` button and the
+    // row menu's Delete. They are one closure and not two copies of the same
+    // four fields, because the fields are not the whole of it: the `__resetCut`
+    // beside them is what tells the viewport to drop the plane as well
+    // (`element.js`), and a copy that lost it would leave the cut on screen
+    // while every field on this side read as cleared.
+    const clearSection = () => this.set(
+      { secOn: false, secFace: null, secOff: 0, secFlip: false },
+      { __resetCut: true });
+    // WHETHER THERE IS A SECTION FOR Delete TO CLEAR, which is the four fields
+    // above standing anywhere but where that call would put them. NOT `s.secOn`:
+    // the eye on the row takes the cut off the screen and deliberately KEEPS the
+    // plane and the offset, so a Delete that read an unlit row as "no section"
+    // would decline on exactly the state it exists to clean up.
+    const secSet = s.secOn || !!s.secFace || s.secOff !== 0 || s.secFlip;
     // TWO NAMES, AND THE MENU USES BOTH FOR DIFFERENT THINGS. `mName` is the
     // row's own label and is what the menu is headed with — it addresses the
     // ROW, which is one solid in one view UNLESS the row collapsed repeats of
@@ -5908,9 +5943,12 @@ export default class HammerolaViewer extends React.Component {
     // wrong quantity is worse than one naming none. What does NOT carry over is
     // the tree row's second remark, that the number is drawn on the right
     // anyway: this menu has no meta column, so nothing here shows it at all.
-    const mName = mNode && !mNode.isNode
+    //
+    // THE SECTION HEADS ITS MENU WITH THE WORD ON ITS ROW, which is the constant
+    // the id is: a menu headed anything else would read as being about a part.
+    const mName = secMenu ? SECTION_ROW : (mNode && !mNode.isNode
       ? countedName(mNode.name, mNode.leaves.length)
-      : (mNode ? mNode.name : '');
+      : (mNode ? mNode.name : ''));
     const mKey = (mNode && mNode.key) || '';
     // Through `noteFor` like the other read of the reader's map. This one throws
     // EARLIEST of the two when it is not: the item below slices the note to 22
@@ -6012,7 +6050,29 @@ export default class HammerolaViewer extends React.Component {
     // fetches; so the honest answer is to offer nothing, and the header's
     // Downloads menu goes on being `<a>`'s where it says so.
     const compared = !!this.comparePair();
-    const menuItems = !mNode ? [] : [
+    /**
+     * The section's two items — the whole of what that row's right-click offers.
+     *
+     * EDIT IS THE POPOVER AND NOT A SECOND DIALOG. Clicking the row's name or
+     * its subtitle already opens it; this is the same door reached by the
+     * gesture every other row in the panel answers to, so what it writes is the
+     * one flag that panel is drawn by. `openSecPop` itself is not called here:
+     * it is built further down `computed()` and is `stop()`-wrapped for a DOM
+     * event this closure does not have — `mi` has already stopped the click and
+     * will close the menu behind us.
+     *
+     * AND DELETE SAYS SO RATHER THAN ACTING WHEN THERE IS NOTHING TO DELETE,
+     * which is `fileRows`' rule for an item that does not apply: a grey row
+     * stating the case, with no handler at all, instead of a live row that
+     * quietly writes the values already in place.
+     */
+    const sectionItems = [
+      mi('Edit', '', () => this.setState({ secPop: true })),
+      ...(secSet
+        ? [mi('Delete', 'clear the plane', clearSection, 'top')]
+        : [mi('No section to delete', '', () => {}, 'said')]),
+    ];
+    const partItems = !mNode ? [] : [
       // HIDING EVERYTHING ELSE IS THE WHOLE OF IT, and the selection it used to
       // write alongside is gone (issue #83). `sel` reaches `selectSolid`, whose
       // shader REPLACES the part's colour with the selection blue — and colour
@@ -6241,6 +6301,7 @@ export default class HammerolaViewer extends React.Component {
         }
       }, 'top'),
     ];
+    const menuItems = secMenu ? sectionItems : partItems;
 
     // `off` is a THIRD state, beside resting and active, and it is not `hide`:
     // the button stays where the reader left it and stops working, which is what
@@ -7411,6 +7472,15 @@ export default class HammerolaViewer extends React.Component {
       // every press and release of the hold key would resize the model.
       secRowStyle: 'flex:none;display:inline-flex;align-items:center;gap:7px;margin:0 0 3px;padding:4px 8px;border-radius:5px;border:1px solid ' + (cutOn ? 'var(--accent-line);background:var(--accent-bg-soft)' : 'transparent;background:var(--float-bg-soft)'),
       secEyeClick: stop(() => this.set({ secOn: !s.secOn })),
+      // THE SAME GESTURE THE PARTS BELOW ANSWER TO, on the row above them: a
+      // right-click here opens the one shared menu under `SECTION_ROW`, where
+      // `menuItems` has the cut's own two items waiting. `menuAt` and not a
+      // second clamp, for the reason the helper itself gives — the third door
+      // into this menu must not put it somewhere the other two would not.
+      secRowMenu: stop((e) => {
+        e.preventDefault();
+        this.setState({ menu: { id: SECTION_ROW, ...menuAt(e.clientX, e.clientY) } });
+      }),
       secEyeOuter: eyeOuter(cutOn ? 'on' : 'off'), secEyeDot: eyeDot(cutOn ? 'on' : 'off'),
       secSub: s.held ? `held · ${HOLD_KEY_LABEL}` : secSub,
       openSecPop: stop(() => this.setState({ secPop: true })),
@@ -7432,8 +7502,7 @@ export default class HammerolaViewer extends React.Component {
       secOffLabel: `${s.secOff >= 0 ? '+' : ''}${s.secOff.toFixed(1)} mm`,
       setSecOff: (e) => this.set({ secOff: parseFloat(e.target.value), secOn: true }),
       flipSec: stop(() => this.set({ secFlip: !s.secFlip })),
-      resetSec: stop(() => this.set({ secOn: false, secFace: null, secOff: 0, secFlip: false },
-                                     { __resetCut: true })),
+      resetSec: stop(clearSection),
       toggleHatch: stop(() => this.set({ hatch: !s.hatch })),
       hatchBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;' + (s.hatch ? 'background:var(--accent);color:var(--text-on-accent)' : 'border:1px solid var(--line-strong);background:var(--card-bg);color:transparent'),
       hatchMark: s.hatch ? '✓' : '',
@@ -8199,7 +8268,7 @@ export default class HammerolaViewer extends React.Component {
                   </span>
                 </div>
 
-                <div style={css(v.secRowStyle)}>
+                <div onContextMenu={v.secRowMenu} style={css(v.secRowStyle)}>
                   <div onClick={v.secEyeClick} style={css('width:24px;display:flex;justify-content:center;cursor:pointer;padding:2px 0')}>
                     <span style={css(v.secEyeOuter)}><span style={css(v.secEyeDot)} /></span>
                   </div>
