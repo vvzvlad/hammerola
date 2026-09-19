@@ -125,9 +125,10 @@ import {
 // modules, and the split is the same one the viewport draws: the document and
 // its projection are pure text (`proposal.js`), the kernel that turns one into
 // parts is next door (`proposalgeom.js`), and the COLOURS of those parts live
-// over there with it. That is not an exemption from this file's no-literal rule
-// — a part's colour is model content, like the colours the hub pushes in a view
-// file, and this file paints no part.
+// over there with it. The no-literal rule sweeps this whole page now rather
+// than this one file, and `proposalgeom.js` is its ONE named exemption in
+// `tests/test_ui_source.py` — a part's colour is model content, like the
+// colours the hub pushes in a view file, and this file paints no part.
 import {
   addNode, bodies, dropMoves, emptyProposal, isEmpty, moveNodes,
   moves, removeNode, proposalText, sendsNothing, turnNodes, updateNode,
@@ -6337,7 +6338,7 @@ export default class HammerolaViewer extends React.Component {
       // -- the proposal panel, and its branch of the tree -------------------
       //
       // Both of them, and the fields they are made of, are `proposalView` in
-      // ui/src/proposalview.js: twenty-seven keys that answer to nothing on
+      // ui/src/proposalview.js: twenty-six keys that answer to nothing on
       // this page but the document, the flags above and the doors handed to it.
       ...proposal,
 

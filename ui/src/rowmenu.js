@@ -382,10 +382,11 @@ export function rowMenu(s, deps) {
           // node about it would be the contradiction described above. The
           // fields it wants are already on its row.
           if (body) return;
-          // `current` AND NOT `doc`, which `computed()` binds further down for
-          // the panel's own rows: this closure runs long after that line, so
-          // the name would resolve to a document read at a different moment
-          // and it would take a reader two scrolls to find out which.
+          // `current` AND NOT `doc`, the name `proposalview.js` binds for the
+          // panel's own rows: this closure runs long after any such read, so
+          // that name would resolve to a document taken at a different moment
+          // — and now that the two live in different files, a reader chasing
+          // the difference would not even have it on screen.
           const current = s.proposal || emptyProposal();
           const paths = mNode.leaves;
           const claimed = moves(current).some(

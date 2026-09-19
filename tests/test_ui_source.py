@@ -93,31 +93,55 @@ def read(path: Path) -> str:
 
 
 # `from './chromeview.js'` — a sibling module, as the interface imports one.
-SIBLING_IMPORT = re.compile(r"""from\s+['"]\./([\w.]+\.jsx?)['"]""")
+SIBLING_IMPORT = re.compile(r"""from\s+['"]\./([\w./]+\.jsx?)['"]""")
+
+
+def _sibling_imports(path: Path) -> set[Path]:
+    """Every `./x.js` this file imports, RESOLVED against its own directory.
+
+    Resolved and not compared as text, which is the whole of the bug this
+    replaced: `"./events.js" in source` is true of five files under
+    `ui/src/viewport/`, and every one of them means its OWN `events.js`. The
+    page's `events.js` therefore read as "has other consumers" and dropped out
+    of the set below — a silent narrowing inside the function written to stop
+    silent narrowing. Comments are stripped for the same reason: `viewport/
+    index.js` names `./events.js` in its prose, and prose imports nothing.
+
+    ONLY `from` IMPORTS, and the one side-effect import in ui/src
+    (`main.jsx` → `./viewport/index.js`) is outside the set anyway. If a page
+    module ever gains a consumer that way it will be missed — which keeps that
+    module IN the page and swept, so this gap fails towards checking more.
+    """
+    return {(path.parent / name).resolve()
+            for name in SIBLING_IMPORT.findall(strip_comments(read(path)))}
 
 
 def page_sources() -> list[Path]:
     """The build page's own source: the component and the modules it was cut into.
 
     A module counts when the component imports it from `./` and NO OTHER file
-    under ui/src does — it exists to be part of this page, so what is written in
-    it is written on this page. Issue #103 cut seven such modules off a 9312-line
-    component, and every check scoped to the component by NAME quietly started
-    sweeping 1800 fewer lines the moment it landed.
+    under ui/src imports that same file — it exists to be part of this page, so
+    what is written in it is written on this page. Issue #103 cut seven such
+    modules off a 9312-line component, and every check scoped to the component
+    by NAME quietly started sweeping 1800 fewer lines the moment it landed.
 
     DERIVED AND NOT LISTED, which is the point: a list would go stale in the
-    direction of checking less, silently, exactly as it just did. A module that
-    gains a second consumer drops out of here and becomes shared infrastructure,
-    which the checks over ALL_UI_FILES already cover.
+    direction of checking less, silently, exactly as it just did.
+
+    A MODULE THAT GAINS A SECOND CONSUMER LEAVES THIS SET AND IS THEN SWEPT BY
+    NOBODY, for the two rules that take it — the no-colour-literal rule and the
+    meta-field rule are page rules and have no whole-tree twin. That is a real
+    edge and it is named here rather than papered over: if a panel's module is
+    ever imported by the front page as well, its colours stop being checked,
+    and the check that notices is the caller's floor below.
     """
     others = [p for p in ALL_UI_FILES if p != COMPONENT]
+    consumers = {path: _sibling_imports(path) for path in others}
     mine = []
-    for name in sorted(set(SIBLING_IMPORT.findall(read(COMPONENT)))):
-        path = UI / name
-        if not path.is_file():
+    for path in sorted(_sibling_imports(COMPONENT)):
+        if not path.is_file() or path.parent != UI:
             continue
-        needle = f"./{name}"
-        if not any(needle in read(other) for other in others):
+        if not any(path in imported for imported in consumers.values()):
             mine.append(path)
     return [COMPONENT] + mine
 
@@ -1111,8 +1135,16 @@ def test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own():
     # and names this check; until #103 widened the sweep it sat outside by
     # accident rather than by agreement, which is the weaker of the two.
     excused = {"proposalgeom.js"}
+    sources = page_sources()
+    # THE FLOOR, and it guards the derivation rather than the page. The backstop
+    # below asks whether the page spends a token, and the component always does
+    # — so all seven panel modules could fall out of `page_sources()` and that
+    # backstop would still be green. This is the assertion that would not be.
+    assert len(sources) > 1, (
+        "page_sources() found nothing but the component — the derivation has "
+        "gone dark, so this check is back to sweeping one file of ten")
     whole = ""
-    for path in page_sources():
+    for path in sources:
         if path.name in excused:
             continue
         source = CHARACTER_REFERENCE.sub("", strip_comments(read(path)))

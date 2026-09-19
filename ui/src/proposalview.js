@@ -299,8 +299,9 @@ export function proposalView(s, deps) {
   // identities here: comments anchor to them, move nodes name them, a swap
   // carries hidden state keyed by them. A MOVE could not be a scene row in any
   // case: it is a sentence about a part of the build and exists in no scene.
-  // So this is assembled from `this.state.proposal` and owes the tree nothing
-  // but the rows it resolves bodies through.
+  // So this is assembled from `s.proposal` — the page state handed in, this
+  // module holding no component — and owes the tree nothing but the rows it
+  // resolves bodies through.
 
   const proposalRows = doc.nodes.map((node) => {
     const isMove = node.role === 'move';
