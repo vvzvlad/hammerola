@@ -37,14 +37,13 @@ this machine" and not "authenticate this person". Per-person keys — issuing,
 revoking, expiry — do not exist, and calling this a login should not make them
 look as though they do.
 
-SELF-UPDATE IS HERE (issue #77) AND IT IS ONE VERB. `hammerola update` fetches
-the zipapp the hub serves at `/start/hammerola` and writes it over the file this
-process is running from, printing what changed between the two versions
-(`update.py`, `changelog.py`). The number both sides compare is `VERSION` below:
-the hub repeats it in its manifest as `client_version`, and `build` and `commit`
-refuse to publish from a client older than that. It applies to ONE of the three
-doors, which is why the doors are worth listing: the installed `hammerola`
-script; `python3 -m hammerola` out of a checkout, pointed at the model with `-C`
+THE VERSION BOTH SIDES COMPARE IS `VERSION` BELOW: the hub repeats it in its
+manifest as `client_version`, and `build` and `commit` refuse to publish from a
+client older than that. Replacing this tool with the hub's copy is `hammerola
+update`'s job and `cli.py` describes it; what belongs here is that it can serve
+ONE of the three doors, which is why the doors are worth listing: the installed
+`hammerola` script; `python3 -m hammerola` out of a checkout, pointed at the
+model with `-C`
 (`__main__.py` has the working forms and why the obvious one is not among them);
 and the zipapp, for a machine with neither. Only the last is a single file this
 tool can replace — a checkout is updated with git and an installed distribution

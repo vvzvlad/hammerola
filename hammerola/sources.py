@@ -66,6 +66,14 @@ SCRATCH_GITIGNORE = "# Written by hammerola. Fetched builds and sources.\n*\n"
 
 
 def hub_for(root) -> Hub:
+    """The hub handle every project-addressing verb builds. -> Hub.
+
+    Shared by `admin`, `artifacts`, `proposal`, `queue`, `revdiff`, `sources`
+    and `status`, so a timeout or a header added to the client has ONE place to
+    go: four of those carried a byte-identical copy of these three lines until
+    they all became this call. Publishing deliberately does not come through
+    here — `cli.py` builds its own with the longer push budget.
+    """
     return Hub(config.hub_url(root), config.edit_token(root),
                timeout=QUERY_TIMEOUT)
 
