@@ -116,55 +116,45 @@ def _sibling_imports(path: Path) -> set[Path]:
             for name in SIBLING_IMPORT.findall(strip_comments(read(path)))}
 
 
-def page_sources() -> list[Path]:
-    """The build page's own source: the component and the modules it was cut into.
+def page_draws_with() -> list[Path]:
+    """Everything the build page draws with: the component and what it imports.
 
-    A module counts when the component imports it from `./` and NO OTHER file
-    under ui/src imports that same file — it exists to be part of this page, so
-    what is written in it is written on this page. Issue #103 cut seven such
-    modules off a 9312-line component, and every check scoped to the component
-    by NAME quietly started sweeping 1800 fewer lines the moment it landed.
+    Issue #103 cut seven modules off a 9312-line component, and every check
+    scoped to the component by NAME quietly started sweeping 1800 fewer lines
+    the moment it landed. DERIVED AND NOT LISTED for that reason: a list goes
+    stale in the direction of checking LESS, silently, exactly as that did.
 
-    DERIVED AND NOT LISTED, which is the point: a list would go stale in the
-    direction of checking less, silently, exactly as it just did.
+    REACHED RATHER THAN OWNED, and the difference is four files. "Which modules
+    belong to this page" excludes the ones the front page imports too —
+    `style.jsx`, `panelstyle.js`, `store.js`, `hub.js` — and those are then
+    swept by nobody, while a colour spelled in `panelstyle.js` is a colour on
+    this page whoever else spends it. The transitive closure is a strict
+    superset of ownership, so it can only fail towards sweeping more.
 
-    A CONSUMER INSIDE THE PAGE IS NOT A SECOND CONSUMER, which is why this is a
-    fixed point and not one pass. The panels cut out of one component import
-    each other — `proposal.js` is taken by the component, `chromeview.js`,
-    `proposalview.js` and `rowmenu.js`, every one of them a member — and a
-    single pass read that as "shared" and dropped it, so a 776-line module of
-    the page was swept by nothing. Only a consumer from OUTSIDE takes a
-    candidate out now, and that is checkable rather than hoped for.
+    TRANSITIVE, though every import is one hop deep today: a module a PANEL
+    imports and the component does not is on this page just as much, and a
+    derivation that missed it would go dark in the same silent direction.
 
-    A module that does leave is then swept by nobody for these two rules: they
-    are page rules and have no whole-tree twin. Named rather than papered over.
-
-    ONLY DIRECT CHILDREN OF ui/src, and only `from` imports. Panels moved into
-    `ui/src/panels/` would leave the sweep silently; the one side-effect import
-    in the tree (`main.jsx` → `./viewport/index.js`) is outside the set anyway,
-    and missing one keeps a module IN, which fails towards sweeping more.
+    ONLY DIRECT CHILDREN OF ui/src, and only `from` imports. `ui/src/viewport/`
+    is its own layer with its own rules, so the walk neither keeps it nor
+    follows it. Panels moved down into `ui/src/panels/` would leave the sweep
+    the same way — the one direction this can still narrow without saying so.
     """
-    outside = [p for p in ALL_UI_FILES if p != COMPONENT]
-    imports = {path: _sibling_imports(path) for path in outside}
-    page = {path for path in _sibling_imports(COMPONENT)
-            if path.is_file() and path.parent == UI}
-    shrinking = True
-    while shrinking:
-        shrinking = False
-        for candidate in sorted(page):
-            if any(candidate in imports[other] for other in outside
-                   if other not in page):
-                page.discard(candidate)
-                shrinking = True
-    # THE FLOOR LIVES HERE AND NOT IN A CALLER, because both callers have a
-    # backstop that the component alone satisfies: "does the page spend a
-    # palette token" and "does the UI read any meta field" are both answered
-    # yes by HammerolaViewer.jsx no matter how many panels fell out. This is
-    # the assertion that would not be — it fires when the derivation goes dark.
-    assert page, (
-        "page_sources() found nothing but the component. The derivation has "
+    seen: set[Path] = set()
+    todo = [COMPONENT]
+    while todo:
+        for path in _sibling_imports(todo.pop()):
+            if path.is_file() and path.parent == UI and path not in seen:
+                seen.add(path)
+                todo.append(path)
+    # THE FLOOR LIVES HERE AND NOT IN THE CALLER, which has a backstop the
+    # component satisfies on its own: "does the page spend a palette token" is
+    # answered yes by HammerolaViewer.jsx no matter how many modules fell out
+    # of the walk. This is the assertion that would not be.
+    assert seen, (
+        "page_draws_with() found nothing but the component. The derivation has "
         "gone dark, so every check that takes it is back to sweeping one file")
-    return [COMPONENT] + sorted(page)
+    return [COMPONENT] + sorted(seen)
 
 
 def strip_comments(source: str) -> str:
@@ -1172,25 +1162,28 @@ def test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own():
     literal became which role, and why `#8a9099` and `#9aa1a9` are one level and
     not two — and prose paints nothing.
 
-    ONE EXEMPTION, `proposalgeom.js`, named in the body below and in that
-    module's own header. Its two hexes colour MODEL PARTS — the same kind of
-    value the hub pushes in a view file — and it builds the geometry of the
-    bodies the reader is proposing, which is not interface chrome. The other
-    colour here that is not ours was never a literal at all: the tree swatch is
-    `node.color`, read out of the pushed model.
+    TWO EXEMPTIONS, `proposalgeom.js` and `hub.js`, named in the body below and
+    in each module's own header. Their hexes colour MODEL PARTS rather than
+    interface chrome — the geometry of the bodies the reader is proposing, and
+    the three the comparison is published in — which is the same kind of value
+    the hub pushes in a view file. The other colour here that is not ours was
+    never a literal at all: the tree swatch is `node.color`, read out of the
+    pushed model.
     """
-    # THE WHOLE PAGE AND NOT THE ONE FILE, via `page_sources`: the panels were
-    # cut into modules of their own (#103) and took their `css()` strings with
-    # them, so a sweep of the component alone would now pass over most of the
-    # colour this page draws.
-    # ONE EXEMPTION, AND IT IS STATED ON BOTH SIDES NOW. `proposalgeom.js`
-    # builds the geometry of the bodies the reader is proposing, and its two
-    # hexes colour MODEL PARTS — the same kind of value as the part colours the
-    # hub pushes in a view file, not interface chrome. Its own header says so
-    # and names this check; until #103 widened the sweep it sat outside by
-    # accident rather than by agreement, which is the weaker of the two.
-    excused = {"proposalgeom.js"}
-    sources = page_sources()
+    # THE WHOLE PAGE AND NOT THE ONE FILE, via `page_draws_with`: the panels
+    # were cut into modules of their own (#103) and took their `css()` strings
+    # with them, and the shared rules moved into `panelstyle.js` (#104), so a
+    # sweep of the component alone would now pass over most of the colour this
+    # page draws.
+    # TWO EXEMPTIONS, EACH STATED ON BOTH SIDES. `proposalgeom.js` builds the
+    # geometry of the bodies the reader is proposing; `DIFF_COLOURS` in `hub.js`
+    # is the three colours the comparison is PUBLISHED in, which the legend has
+    # to spend or stop matching the model. Both are the payload's colours, not
+    # the interface's: they do not follow the theme because the geometry they
+    # name does not follow it either. Each module's own header says so and names
+    # this check.
+    excused = {"proposalgeom.js", "hub.js"}
+    sources = page_draws_with()
     whole = ""
     for path in sources:
         if path.name in excused:
@@ -1291,7 +1284,7 @@ def test_the_accents_line_roles_are_never_spent_as_a_fill():
       * the compare legend's grey swatch takes `--line-strong` because it is a
         sample of a colour the MODEL will be painted in, standing beside two
         saturated ones;
-      * the tree's tri-state eye dot — `eyeDot` in HammerolaViewer.jsx — fills
+      * the tree's tri-state eye dot — `eyeDot` in ui/src/panelstyle.js — fills
         HALF of a 5px circle with it, `linear-gradient(90deg, var(--text-soft)
         50%, var(--line-strong) 50%)`, to say "some of this branch is hidden".
         The two halves are the SAME two roles the eye's outline already uses for

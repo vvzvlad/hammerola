@@ -500,6 +500,12 @@ export const COMPARE_GROUPS = Object.freeze({
  * colours actually on the model. They are the payload's, not the interface's, so
  * they are NOT palette roles: they do not follow the theme, because the geometry
  * they name does not follow it either.
+ *
+ * WHICH IS WHY THIS FILE IS EXCUSED from
+ * `test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own`,
+ * beside `proposalgeom.js` and for the same reason. A hex added ANYWHERE ELSE
+ * in this module is excused by that exemption too, so it goes in a module the
+ * sweep still reads.
  */
 export const DIFF_COLOURS = Object.freeze({
   neutral: '#7a8fa6',
