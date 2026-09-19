@@ -588,7 +588,7 @@ export function suspendSectionCut(vp) {
  * `setLocalClipping` is enough for correct END CAPS is written down as NOT
  * TRACED in docs/viewer-api.md §6. Keeping a mechanism that works costs zero.
  */
-export function showTab(vp, name) {
+function showTab(vp, name) {
   try {
     if (vp.viewer && typeof vp.viewer.setActiveTab === "function") {
       vp.viewer.setActiveTab(name);
