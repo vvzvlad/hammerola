@@ -32,7 +32,7 @@ import socket
 
 import pytest
 
-from harness import TOKEN, good_build
+from harness import TOKEN, comment_payload, good_build
 
 PID = "proj1"
 COMMIT = "abc123"
@@ -41,13 +41,27 @@ COMMIT = "abc123"
 # is the one that enters the preamble conditionally -- its body is optional, so
 # a request with no framing at all is a resolve with no note -- and it is here
 # because the framing it does carry is still framing this service cannot read.
-ROUTES = {
-    "publish": f"/api/v1/publish/{PID}/{COMMIT}",
-    "title": f"/api/v1/projects/{PID}/title",
-    "comment": f"/api/v1/comments/{PID}/{COMMIT}",
-    "resolve": "/api/v1/comments/4RpMfPBRAxHCEJDyIhnUZg/resolve",
-    "proposal": f"/api/v1/proposals/{PID}",
-}
+ROUTES = ("comment", "proposal", "publish", "resolve", "title")
+
+
+def _setup(hub):
+    """A published build and one open comment on it. -> the paths, by name.
+
+    EVERY ROUTE IS AIMED AT SOMETHING THAT REALLY EXISTS, and that is not
+    tidiness: `comment` looks the build up before it takes a body and `resolve`
+    looks the comment up after, so a made-up id would let these tests answer
+    404 while reporting it as a verdict about framing -- and, for the test
+    below, would hide the very outcome it is named after behind that 404.
+    """
+    assert hub.publish(PID, COMMIT, good_build()).status_code == 201
+    cid = hub.post_comment(PID, COMMIT, comment_payload()).json()["id"]
+    return {
+        "publish": f"/api/v1/publish/{PID}/{COMMIT}",
+        "title": f"/api/v1/projects/{PID}/title",
+        "comment": f"/api/v1/comments/{PID}/{COMMIT}",
+        "resolve": f"/api/v1/comments/{cid}/resolve",
+        "proposal": f"/api/v1/proposals/{PID}",
+    }
 
 
 def _post(hub, path, framing):
@@ -57,8 +71,11 @@ def _post(hub, path, framing):
     body which is also exactly the length any Content-Length here declares. So
     a hub that took either framing at its word has a complete request either
     way, and what comes back is a verdict on the framing rather than on a
-    truncated read: with the refusals gone, each of these routes gets its five
-    bytes and answers 422 about the content.
+    truncated read: with the refusal gone, a request that DOES declare a length
+    hands each of these routes its five bytes and is answered 422 about the
+    content. A request that declares none stays 411 either way -- the length
+    parse refuses it on its own, which is the case
+    `tests/test_comments.py::test_a_body_of_unknown_length_is_411` pins.
     """
     host, port = hub.server.server_address[:2]
     with socket.create_connection((host, port), timeout=10) as sock:
@@ -93,13 +110,7 @@ def test_both_framing_headers_are_411_on_every_route_that_takes_a_body(
     matters beyond the status code: the request's unread remains would
     otherwise sit on a keep-alive socket and be parsed as the next request.
     """
-    # The comment route is the one that looks the build up before it takes a
-    # body, so there has to be a build. The other four answer before touching
-    # the volume, but they are sent against the same published project rather
-    # than a made-up one, so a failure here is never about a missing project.
-    assert hub.publish(PID, COMMIT, good_build()).status_code == 201
-
-    head = _post(hub, ROUTES[route],
+    head = _post(hub, _setup(hub)[route],
                  b"Content-Length: 5\r\nTransfer-Encoding: chunked\r\n")
 
     assert head.startswith(b"HTTP/1.1 411 "), (
@@ -116,19 +127,22 @@ def test_a_chunked_resolve_with_no_length_is_411_rather_than_a_silent_note(hub):
     It is the one route whose body is OPTIONAL: a resolve with no framing at
     all is a resolve with no note, which `test_resolve_without_a_note_is_fine`
     pins, so the shared preamble is entered only when the headers say a body is
-    coming. That gate asks two things -- is there a positive Content-Length, or
-    is there a Transfer-Encoding -- and the test above exercises only the first,
-    because its request carries a length as well.
+    coming. The gate has a Content-Length half and a Transfer-Encoding half,
+    and the test above reaches the refusal through the Content-Length half,
+    because its request carries a length as well. So the TE half is the one
+    nothing watched.
 
-    WITHOUT THE SECOND HALF THE REFUSAL DOES NOT HAPPEN AT ALL: a chunked body
-    with no Content-Length fails the length half, so the gate is not entered
-    and the route answers about the resolve -- a note-less one for a caller who
-    sent a note -- without reading the body. Measured with that half removed,
-    the hub then logs `code 400, message Bad request syntax ('0')` on the same
-    connection: the body it declined to read became the next request on the
-    socket, which is the whole reason these refusals close it.
+    WITHOUT IT THE REFUSAL DOES NOT HAPPEN AT ALL: a chunked body with no
+    Content-Length fails the length half, the gate is not entered, and the
+    route resolves the comment without reading the body. Measured with that
+    half removed, against the real comment this test files: `HTTP/1.1 200 OK`,
+    and then `code 400, message Bad request syntax ('0')` on the same
+    connection -- the body the hub declined to read arriving as the next
+    request. The note is dropped on the way: that branch leaves `note` at None,
+    which is the value `test_resolve_without_a_note_is_fine` pins for a resolve
+    that really carried none. Both halves of the damage at once.
     """
-    head = _post(hub, ROUTES["resolve"], b"Transfer-Encoding: chunked\r\n")
+    head = _post(hub, _setup(hub)["resolve"], b"Transfer-Encoding: chunked\r\n")
 
     assert head.startswith(b"HTTP/1.1 411 "), (
         f"resolve answered {head.splitlines()[:1]} to a chunked body with no "
