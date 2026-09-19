@@ -457,14 +457,71 @@ function stagedSelection(overlay, tree, s, compared) {
 // laptop still holds on one line.
 export const VIEW_TABS_MAX = 4;
 
-// How many visibility gestures Ctrl+Z can walk back through. A cap rather than
-// no cap because `this.history` is a list of two id lists per entry and this
-// page is opened and left open — a reader working a tree all afternoon would
-// otherwise grow it for the whole session with nothing ever taking anything off
-// it. The OLDEST goes when it overflows: fifty steps back is already further
-// than anybody reconstructs by pressing a key, and losing the newest instead
-// would break the one step the reader is actually about to take back.
+// How many steps Ctrl+Z can walk back through, of either kind. A cap rather
+// than no cap because this page is opened and left open — a reader working a
+// tree all afternoon would otherwise grow `this.history` for the whole session
+// with nothing ever taking anything off it. The OLDEST goes when it overflows:
+// fifty steps back is already further than anybody reconstructs by pressing a
+// key, and losing the newest instead would break the one step the reader is
+// actually about to take back.
+//
+// AN ENTRY IS CHEAP WHICHEVER KIND IT IS. A visibility step is two id lists; a
+// document step is a REFERENCE to a document that already existed, because every
+// helper in proposal.js returns a new document and mutates nothing — so what the
+// cap rations is the walk back rather than the bytes.
 export const UNDO_DEPTH = 50;
+
+// WHAT A STEP IS ABOUT, which is the field `undoStep` dispatches on.
+//
+// TWO KINDS ON ONE STACK and not a stack each, because the chord means "the last
+// thing I did" and the reader does not sort their own gestures into categories:
+// hide a part, drag another, press Ctrl+Z and what must come back is the drag.
+// Stacks per kind would answer that with the hide — taking back a gesture the
+// reader can no longer see, while the one they are looking at stays put.
+const UNDO_VISIBILITY = 'visibility';
+const UNDO_DOCUMENT = 'document';
+
+// WHAT A WRITE OF THE DOCUMENT DOES TO THE DOCUMENT STEPS BEHIND IT — the
+// argument `setProposal` takes, so that the caller SAYS which of the two it
+// means rather than a flag somewhere else deciding for it.
+//
+// A DOCUMENT STEP HOLDS THE WHOLE DOCUMENT, and that is what parts it from a
+// visibility one. `setVisibility` is the ONE door to the two lists it snapshots,
+// so a step of that kind describes state nothing else can have moved. The
+// document's door is `setProposal` and only TWO of the things that come through
+// it record a step — the two gestures. A body drawn, a digit committed, a node
+// deleted, a role flipped, a nudge, a tick, an adoption, a delete: every one of
+// those is a write nothing on the stack knows about. Left standing behind one,
+// a step goes on claiming to be "the last thing you did" while describing a
+// document from before an edit it has never heard of — and pressing the chord
+// then takes that edit away too, and posts the older document over the newer one
+// at the next save. There is no redo to get it back.
+//
+// SO AN UNRECORDED WRITE INVALIDATES THEM, which is what `DROP_STEPS` means and
+// why it is the default: the chord can then never reach past an edit it does not
+// know about. `KEEP_STEPS` is for the two callers that have already accounted
+// for the stack — `undoStep`, which is spending a step it has just popped, and
+// `editBody`, which has just pushed its own. There is no third thing to mean,
+// and anything that is not `KEEP_STEPS` is read as a drop, which is the safe
+// direction for a mistake to fall in.
+//
+// THE VISIBILITY STEPS ARE LEFT WHOLE either way. They are about other state
+// entirely, and a document written under them makes nothing they claim untrue.
+//
+// AND A WRITE THAT HANDS THE SAME DOCUMENT BACK IS NOT AN EDIT, so it
+// invalidates nothing. `toggleProposal` is the caller that does it: opening the
+// sheet re-stages by pushing `state.proposal` through the door untouched. Drop
+// the steps for that too and a reader who drags a part and then merely OPENS the
+// panel has lost the chord over the drag, with nothing on screen saying why.
+// Identity is the whole of the test and not a cheap stand-in for one: every edit
+// on this page BUILDS its document — `addNode`, `removeNode`, `updateNode`,
+// `commit`, `emptyProposal`, a spread — so the object can be the one already on
+// screen only when nobody edited anything. It is also the direction that is safe
+// to be wrong in: a `this.state` read behind a batched update answers with an
+// OLDER object, which a freshly built document is never identical to, so this
+// can report "unchanged" only when the document really is.
+const DROP_STEPS = 'drop';
+const KEEP_STEPS = 'keep';
 
 /**
  * One entry of `meta.parts`, or `null` — the ONLY way this page reads the
@@ -1068,13 +1125,21 @@ export default class HammerolaViewer extends React.Component {
     // renders it, it lives for one model event, and a re-render in the middle of
     // a swap has no business seeing a half-applied one.
     this.carry = null;
-    // What the reader can take back: one entry per visibility gesture, oldest
-    // first, each holding `hidden` and `ghost` as they stood BEFORE it. Written
-    // by `setVisibility` — the ONE door for those two lists, which is what makes
-    // a pair of them a whole step — and spent by `undoVisibility`. Not state,
-    // for the reason `this.carry` is not: nothing on the page is drawn from it,
-    // since there is no undo button and no count of the steps behind one, so a
-    // write to it must not cost a render.
+    // What the reader can take back: one entry per gesture, oldest first, each
+    // holding the page as it stood BEFORE that gesture and saying by its `kind`
+    // which sort of thing it describes. Spent by `undoStep`, which is where the
+    // two are told apart.
+    //
+    // A VISIBILITY STEP holds `hidden` and `ghost`, and is written by
+    // `setVisibility` — the ONE door for those two lists, which is what makes a
+    // pair of them a whole step. A DOCUMENT STEP holds the whole proposal, and
+    // is written by the two gestures that edit it: a part of the build dragged
+    // or turned (`recordGesture`), and a body of the proposal dragged or turned
+    // (`editBody`).
+    //
+    // Not state, for the reason `this.carry` is not: nothing on the page is
+    // drawn from it, since there is no undo button and no count of the steps
+    // behind one, so a write to it must not cost a render.
     this.history = [];
     // Where the last accepted gesture is taking this page, which is NOT where
     // the page has got to (`PAGE.slot`) while a swap is on the wire. `popstate`
@@ -1546,9 +1611,11 @@ export default class HammerolaViewer extends React.Component {
     // most expensive thing on this page to lose, and Escape gets pressed by
     // reflex.
     //
-    // Ctrl+Z and Cmd+Z take back the last thing done to the TREE — hiding,
-    // ghosting, isolating. Both chords, because this page is read on both
-    // platforms and neither is spoken for here; `preventDefault()` so the
+    // Ctrl+Z and Cmd+Z take back THE LAST THING DONE, whichever kind of thing it
+    // was: hiding, ghosting or isolating in the tree, or a part of the build — or
+    // a body of the proposal — dragged or turned in the scene. `undoStep` is
+    // where the two are told apart. Both chords, because this page is read on
+    // both platforms and neither is spoken for here; `preventDefault()` so the
     // browser cannot answer the same keystroke a second time over whatever it
     // decides is in scope.
     //
@@ -1577,7 +1644,7 @@ export default class HammerolaViewer extends React.Component {
       if ((e.ctrlKey || e.metaKey) && undo) {
         if (typingTarget()) return;
         e.preventDefault();
-        this.undoVisibility();
+        this.undoStep();
         return;
       }
       if (e.key !== 'Escape') return;
@@ -2286,12 +2353,17 @@ export default class HammerolaViewer extends React.Component {
                      ghost: this.namesOf(this.state.ghost) };
     }
     // AND THE UNDO STACK GOES, on the argument the paragraph above makes about
-    // ids: every entry in it is two lists of leaf ids of the build being left,
-    // and a rebuild is free to renumber those paths onto other parts. Restoring
-    // one after the swap would not put a step back, it would hide somebody
-    // else's part. Nothing carries a step across either — a carry is one
-    // snapshot resolved by name, and the history is a sequence, which is a
-    // different thing to rejoin and not one the reader asked for.
+    // ids — and it holds for BOTH KINDS of step. A visibility entry is two lists
+    // of leaf ids of the build being left, and a rebuild is free to renumber
+    // those paths onto other parts: restoring one after the swap would not put a
+    // step back, it would hide somebody else's part. A document entry carries
+    // move nodes, which are paths of that same tree plus a delta measured
+    // against where that build put the part — the very thing the `dropMoves`
+    // just below takes out of the document, so a step restored after the swap
+    // would put back by a keystroke exactly what the swap had established was no
+    // longer about anything. Nothing carries a step across either — a
+    // carry is one snapshot resolved by name, and the history is a sequence,
+    // which is a different thing to rejoin and not one the reader asked for.
     this.history = [];
     // WHAT OF THE PROPOSAL SURVIVES THE SWAP: the bodies, never the moves. It is
     // bound here, one line from the state object below, because the draft's
@@ -2572,6 +2644,19 @@ export default class HammerolaViewer extends React.Component {
     // the viewport was handed in `hmr:state` (`buildKey(meta)`), so the two
     // sides are comparing one value and not two spellings of it.
     if (detail.build !== buildKey(this.state.meta)) return;
+    // AND THE STEP IS RECORDED HERE: after the last guard, so a gesture that was
+    // refused leaves nothing on the stack, and before the write, so the entry
+    // describes a document the reader was really looking at. What it holds is
+    // the WHOLE document, which costs a reference and not a copy — every helper
+    // in proposal.js returns a new document and mutates nothing, so the one this
+    // edit is about to replace goes on standing exactly as it is.
+    //
+    // READ OUT HERE AND NOT INSIDE THE UPDATER, for the reason the id below is
+    // minted outside it: React is free to call an updater more than once, and a
+    // push from in there would put a step on the stack per call — a side effect
+    // in a function this file keeps pure on purpose.
+    this.recordStep({ kind: UNDO_DOCUMENT,
+                      doc: this.state.proposal || emptyProposal() });
     // THE NAME IS THE ROW's, resolved before the write for the reasons above
     // — and read here rather than inside the updater because the TREE is not
     // what the updater is guarding: a build landing between these two lines
@@ -2911,6 +2996,18 @@ export default class HammerolaViewer extends React.Component {
       .filter((node) => node.name === name)
       .map((node) => node.id);
     if (!ids.length) return;
+    // AND THE STEP IS RECORDED HERE, on the same rule `recordGesture` states:
+    // after every guard, so a gesture that was refused — three numbers that are
+    // not numbers, a name no body answers to — leaves nothing on the stack, and
+    // before the write, so the entry describes a document the reader was really
+    // looking at. `doc` is the one this edit is about to replace and it is not
+    // copied: `apply` returns a new document and leaves this one standing.
+    //
+    // THE DRAFT IS NOT PART OF THE STEP, and that is the same decision the
+    // gesture makes about everything else on the page: what Ctrl+Z takes back is
+    // the DOCUMENT, and a half-typed field the reader abandoned by grabbing the
+    // body is not a state anybody asked to be returned to.
+    this.recordStep({ kind: UNDO_DOCUMENT, doc });
     // THE DRAFT GOES FIRST, exactly as `commitProposal` drops it and for the
     // same reason one step further: a field renders from `proposalDraft` while
     // one stands on its key, and this is the first door into `setProposal`
@@ -2921,7 +3018,15 @@ export default class HammerolaViewer extends React.Component {
     // text over a body that has already moved — and the blur that came later
     // would commit that text back over the axis the hand had just written.
     this.setState({ proposalDraft: null });
-    this.setProposal(apply(doc, ids, values));
+    // AND `KEEP_STEPS`, because the step this edit is taken back by is the one
+    // four lines up. That door drops the document steps behind a write that
+    // recorded none, which every ordinary edit of the panel is; this one has
+    // just pushed its own, and dropping the rest would cut the stack down to
+    // that one step: a second gesture on a body could never be walked back past
+    // the first, and the press after would reach whatever visibility step lay
+    // under them both — a part un-hiding itself in answer to "take back the
+    // other drag".
+    this.setProposal(apply(doc, ids, values), KEEP_STEPS);
   }
 
   /**
@@ -2954,6 +3059,52 @@ export default class HammerolaViewer extends React.Component {
     // re-stage under a comparison brings a tree whose overlay is the
     // comparison's, and that path must not become the page's selection.
     const overlay = this.overlayRoot(tree);
+    // THE STEPS BEHIND THE READER GET THE SAME RULE THE LIVE DOCUMENT GETS a few
+    // lines below, and OUT HERE rather than in the updater for the reason the
+    // paragraph above gives: `this.history` is not state, and an updater React
+    // may call twice must stay a pure function of what it is handed.
+    //
+    // A stored step of the document kind IS a document, so what a build landing
+    // does to the one on screen it has to do to every one behind it: the moves
+    // in them were measured against the build that has just gone, and a path
+    // like `/model/pin(2)` is a number the tessellator hands out afresh — so
+    // Ctrl+Z after a rebuild would put back a displacement of whatever answers
+    // to that name now. `leaveBuild`'s clear does not cover this: a live rebuild
+    // is not a swap, the page stays on the same revision, and the history is
+    // deliberately kept across one.
+    //
+    // THE VISIBILITY STEPS ARE LEFT WHOLE, for the reason the `expanded` line
+    // below keeps the reader's collapses: part paths survive a rebuild, so a
+    // list of hidden names is as true after one as before.
+    //
+    // AND A STEP THE PRUNE HAS MADE INTO A NO-OP GOES WITH ITS MOVES. A step
+    // that differed from the document only by the moves in it describes, once
+    // both sides have lost them, the document already on screen: the chord
+    // changes nothing a reader can see and still pays a whole `buildProposal`
+    // and a re-staged scene. Left on the stack, those are presses that do
+    // nothing — and this is the product's ordinary cycle, the author editing
+    // `model.py` while the page rebuilds itself, so a reader who hid two parts
+    // and then moved three gets three dead presses and then an un-hide from five
+    // minutes ago. There is no button and no counter anywhere to show them why.
+    //
+    // SERIALISED AND COMPARED AS STRINGS, which is how `saveProposal` already
+    // asks whether a document is the one that has already gone (`body ===
+    // this._proposalSent`). One notion of equality for this page, rather than a
+    // second one invented here for the same question.
+    //
+    // A STEP THAT STILL DIFFERS STAYS, whatever it differs by — a body the
+    // document has since gained, a size since typed, a body the reader has
+    // dragged somewhere else. It is a step back to somewhere, which is the only
+    // thing being asked.
+    if (!d.restage) {
+      const live = JSON.stringify(dropMoves(this.state.proposal
+                                            || emptyProposal()));
+      this.history = this.history
+        .map((step) => (step.kind === UNDO_DOCUMENT
+          ? { ...step, doc: dropMoves(step.doc) } : step))
+        .filter((step) => step.kind !== UNDO_DOCUMENT
+                          || JSON.stringify(step.doc) !== live);
+    }
     this.setState((s) => ({
       tree,
       ...stagedSelection(overlay, tree, s, compared),
@@ -3747,15 +3898,14 @@ export default class HammerolaViewer extends React.Component {
    * and nothing else — issue #83 took the last field that was not one of the two
    * off Isolate — so the pair read before the write is a COMPLETE description of
    * where the reader stood, and going back to it needs nothing else remembered.
-   * `record` is false for the one caller that is going back; see
-   * `undoVisibility`.
+   * `record` is false for the one caller that is going back; see `undoStep`.
    */
   setVisibility(patch, extra, record = true) {
     // BEFORE the write, so the entry says where the reader was standing rather
     // than where this gesture has just taken them.
     if (record) {
-      this.history.push({ hidden: this.state.hidden, ghost: this.state.ghost });
-      if (this.history.length > UNDO_DEPTH) this.history.shift();
+      this.recordStep({ kind: UNDO_VISIBILITY,
+                        hidden: this.state.hidden, ghost: this.state.ghost });
     }
     this.setState(patch, () => {
       // AFTER the patch, so the names are the ones the reader has just chosen.
@@ -3773,28 +3923,74 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * Take back the last visibility gesture — the eye, the ghost square, Isolate,
-   * Hide, Translucent or "show all parts", whichever of the six it was.
+   * One step onto the stack, and the oldest off the bottom of it where that
+   * overflows the cap.
    *
-   * THROUGH `setVisibility` AND NOT THROUGH `setState`, because everything that
-   * door does besides writing the two lists has to happen for a step BACK as
-   * well: an undo pressed while another build is on the wire must re-seat the
-   * swap's snapshot exactly as the click it undoes would have, or `rejoin` lands
-   * the state the reader has just left on the arriving build.
+   * ONE PUSHER FOR THREE CALLERS — the visibility door and the two gestures that
+   * edit the document — because the cap is a rule about the STACK rather than
+   * about any one of the things that grow it, and three copies of `push` next to
+   * `shift` are three places for the pair to drift apart. `UNDO_DEPTH` carries
+   * which end goes and why.
+   */
+  recordStep(entry) {
+    this.history.push(entry);
+    if (this.history.length > UNDO_DEPTH) this.history.shift();
+  }
+
+  /**
+   * Take back the last thing the reader did, whichever kind of thing it was.
    *
-   * AND WITHOUT RECORDING ONE, which is the whole of the third argument. An undo
+   * ONE STACK, ONE ORDER, TWO KINDS. A visibility step is the eye, the ghost
+   * square, Isolate, Hide, Translucent or "show all parts"; a document step is a
+   * part of the build dragged or turned, or a body of the proposal dragged or
+   * turned. They interleave in the order they were made, because that is what a
+   * reader means by the chord — the last thing they did, whatever it was.
+   *
+   * A VISIBILITY STEP GOES BACK THROUGH `setVisibility` AND NOT THROUGH
+   * `setState`, because everything that door does besides writing the two lists
+   * has to happen for a step BACK as well: an undo pressed while another build is
+   * on the wire must re-seat the swap's snapshot exactly as the click it undoes
+   * would have, or `rejoin` lands the state the reader has just left on the
+   * arriving build.
+   *
+   * AND WITHOUT RECORDING ONE, which is the whole of that third argument. An undo
    * that pushed its own before-state would push the state it is leaving, so the
    * next press would come straight back to it: two entries trading places for
    * ever, and a stack that never empties.
+   *
+   * A DOCUMENT STEP GOES BACK THROUGH `setProposal`, THE DOOR THE EDIT ITSELF
+   * CAME THROUGH, because an undo IS an edit and not a private rewind. That door
+   * puts the bodies back over the model, pushes the moves at the viewport — which
+   * is how the dragged part actually returns to where the document now says it
+   * is — and writes the result to the hub. A page that took the drag back on
+   * screen and left the hub holding it would hand the agent a statement the
+   * reader had withdrawn, and would hand it back to this very page on the next
+   * reload.
+   *
+   * IT RECORDS NOTHING EITHER, and needs no flag to say so: the two writers that
+   * record are the gestures, and `setProposal` is not one of them. So walking the
+   * stack out empties it, exactly as the other kind does.
+   *
+   * AND IT SAYS `KEEP_STEPS`, which is the one thing it does have to state. That
+   * door drops the document steps behind a write that recorded none, because
+   * most of what comes through it is exactly such a write; an undo is the
+   * opposite — it is SPENDING a step it has already popped, and what is left
+   * under that step describes edits it has not reached yet. Dropped, one press
+   * would empty the stack of its own kind and every press after it would find
+   * nothing.
    *
    * AN EMPTY STACK DOES NOTHING, and that is the entire feedback story here.
    * There is no redo, no toast and no button: the scene and the tree panel
    * changing IS how a reader sees that a step was taken, and a page with nothing
    * left to take back has nothing to say about it.
    */
-  undoVisibility() {
+  undoStep() {
     const step = this.history.pop();
     if (!step) return;
+    if (step.kind === UNDO_DOCUMENT) {
+      this.setProposal(step.doc, KEEP_STEPS);
+      return;
+    }
     this.setVisibility({ hidden: step.hidden, ghost: step.ghost }, null, false);
   }
 
@@ -3807,6 +4003,16 @@ export default class HammerolaViewer extends React.Component {
    * deleted, a body renamed — comes through here, so there is no arrangement in
    * which the numbers in the panel and the shape over the model describe
    * different things.
+   *
+   * ONE CALLER IS NOT AN EDIT MADE IN THE PANEL AND COMES THROUGH HERE ANYWAY:
+   * `undoStep`, taking back a gesture made in the SCENE — a part of the build
+   * dragged or turned, a body of the proposal dragged or turned. It uses the
+   * door because an undo needs BOTH halves of it. The scene: the bodies go back
+   * over the model and the moves are pushed at the viewport, which is how the
+   * part actually walks back to where the document now says it is. And the hub:
+   * a page that took the drag off the screen and left the record holding it
+   * would hand the agent a statement the reader had withdrawn, and hand it back
+   * to this very page on the next reload.
    *
    * TWO OTHER THINGS WRITE `state.proposal`, AND NEITHER IS AN EDIT OF THE
    * PANEL — the inventory is worth having complete, because each of them skips
@@ -3851,8 +4057,23 @@ export default class HammerolaViewer extends React.Component {
    * in the document and a line in the projection an agent reads. `onModel`'s
    * `dropMoves` is the other writer and is not an edit at all; it takes nodes
    * away because the build they described has gone, and saves nothing.
+   *
+   * AND IT IS WHERE THE DOCUMENT STEPS ARE INVALIDATED, which follows from the
+   * first paragraph rather than being a second feature: every edit that records
+   * no step comes through here, and a document step holds the WHOLE document, so
+   * a step left behind one of them takes back an edit it never described.
+   * `DROP_STEPS` and `KEEP_STEPS` are the argument, and the constants carry the
+   * whole of the reasoning — including why dropping is what a caller that says
+   * nothing gets.
    */
-  setProposal(doc) {
+  setProposal(doc, steps = DROP_STEPS) {
+    // FIRST, so that nothing the write below reaches — `stageProposal` pushes at
+    // the viewport, `saveProposal` arms a post — can observe a stack still
+    // standing behind a document that has gone. Nothing reads it today; the
+    // order is what keeps that from being a thing to re-check.
+    if (steps !== KEEP_STEPS && doc !== this.state.proposal) {
+      this.history = this.history.filter((step) => step.kind !== UNDO_DOCUMENT);
+    }
     this.setState({ proposal: doc, ...this.selectionAfter(doc) });
     this.stageProposal(doc);
     this.saveProposal(doc);
@@ -4153,6 +4374,12 @@ export default class HammerolaViewer extends React.Component {
    * and the call is now a belt-and-braces one; the drag path next door, which
    * paid the same price on every gesture, is where it was actually worth
    * removing (see the `hmr:moved` handler).
+   *
+   * AND IT HANDS THE DOCUMENT BACK BY IDENTITY, which is now load-bearing rather
+   * than incidental. The door drops the document steps for every write that
+   * records none, and this one writes nothing new — it re-stages. Rebuild the
+   * argument here (a spread, a clone, anything) and opening the sheet silently
+   * takes the chord away from the drag the reader made just before it.
    */
   toggleProposal() {
     const open = !this.state.proposalOpen;
@@ -5024,6 +5251,13 @@ export default class HammerolaViewer extends React.Component {
    * the next edit: with the record gone they stop it recreating one by accident.
    * The memo goes with them, so a reader who rebuilds the same document by hand
    * is not skipped for matching a payload the hub no longer holds.
+   *
+   * AND THE DOCUMENT STEPS GO THROUGH THAT SAME DOOR, which is the other half of
+   * the promise above and the reason it is not merely tidy. `setProposal` drops
+   * them for any write that records none (`DROP_STEPS`), so Ctrl+Z after this
+   * cannot bring the drawing back — and a drawing brought back is saved like any
+   * other edit, which would put on the hub, a debounce later, the very record the
+   * reader has just been asked about and confirmed deleting.
    */
   async removeProposal() {
     // BOTH HALVES ARE NAMED IN THE QUESTION, because the `×` takes both and the

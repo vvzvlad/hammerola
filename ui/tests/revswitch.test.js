@@ -46,7 +46,10 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 
 import HammerolaViewer, { UNDO_DEPTH } from '../src/HammerolaViewer.jsx'
 import { STATE } from '../src/events.js'
-import { PAGE, indexTree, loadBuilds, loadMeta } from '../src/hub.js'
+import { PAGE, buildKey, indexTree, loadBuilds, loadMeta } from '../src/hub.js'
+import {
+  addNode, bodies, emptyProposal, moveNodes, moves, turnNodes,
+} from '../src/proposal.js'
 import { guardPage } from './pageguard.js'
 
 const path = (slot) => `/project/proj1/${slot}/`
@@ -1252,7 +1255,7 @@ describe('Ctrl+Z over the tree', () => {
     row(c, '/model/plate').onVis(click)
     expect(c.state.hidden, 'the eye hid nothing').toEqual(['/model/plate'])
 
-    c.undoVisibility()
+    c.undoStep()
 
     expect(c.state.hidden).toEqual([])
     expect(c.state.ghost).toEqual(['/model/lid'])
@@ -1266,7 +1269,7 @@ describe('Ctrl+Z over the tree', () => {
     c.computed().menuItems.find((m) => m.label === 'Isolate').onClick(click)
     expect(c.state.hidden).toEqual(['/model/post', '/model/lid'])
 
-    c.undoVisibility()
+    c.undoStep()
 
     expect(c.state.hidden).toEqual([])
   })
@@ -1278,7 +1281,7 @@ describe('Ctrl+Z over the tree', () => {
     const c = opened({ hidden: ['/model/post'] })
     c.sync.mockClear()
 
-    c.undoVisibility()
+    c.undoStep()
 
     expect(c.state.hidden).toEqual(['/model/post'])
     expect(c.sync, 'an undo with nothing to undo still told the viewport')
@@ -1299,7 +1302,7 @@ describe('Ctrl+Z over the tree', () => {
     c.onModel({ tree: TREE_B, view: 'assembled', live: true })
 
     const landed = c.state.hidden
-    c.undoVisibility()
+    c.undoStep()
 
     expect(c.state.hidden, 'a step of the departed build was applied to this one')
       .toEqual(landed)
@@ -1350,14 +1353,14 @@ describe('Ctrl+Z over the tree', () => {
 
     // The newest step is still there: one press goes back to where the last
     // gesture found the page, not to somewhere fifty gestures ago.
-    c.undoVisibility()
+    c.undoStep()
     expect(c.state.hidden, 'the overflow ate the step about to be taken back')
       .toEqual([`/model/p${UNDO_DEPTH - 1}`])
 
     // And walking the rest of the stack out stops at the first gesture's own
     // state rather than at the empty list the page started on — that empty one
     // IS the entry that was dropped.
-    for (let i = 0; i < UNDO_DEPTH; i += 1) c.undoVisibility()
+    for (let i = 0; i < UNDO_DEPTH; i += 1) c.undoStep()
     expect(c.history).toHaveLength(0)
     expect(c.state.hidden).toEqual(['/model/p0'])
   })
@@ -1387,6 +1390,456 @@ describe('Ctrl+Z over the tree', () => {
 
     expect(c.state.hidden, 'the undo chord missed the physical Z key')
       .toEqual([])
+  })
+})
+
+// -- and taking a MOVE or a TURN back -----------------------------------------
+//
+// The same chord over the other half of what a reader does to this page. A part
+// of the build dragged or turned, and a body of the proposal dragged or turned,
+// are edits of the proposal DOCUMENT — so a step back is a whole document, put
+// back through `setProposal`, the door every other edit of it comes through.
+//
+// ONE STACK WITH THE GESTURES ABOVE, which is the claim that needs holding up
+// most: the entries interleave and come off in the order they were made, because
+// that is what a reader means by Ctrl+Z. The rest is that an entry describes the
+// document as it stood BEFORE the gesture, that a gesture which was refused
+// leaves none, and that the hub ends up holding what the page holds.
+//
+// AND WHAT A WRITE NOBODY RECORDED DOES TO THE STACK, which is the other half of
+// holding a WHOLE DOCUMENT per step. Every ordinary edit of the panel comes
+// through `setProposal` and records nothing, so the document steps behind one are
+// dropped at that door: the chord can never reach past an edit it does not know
+// about. The visibility steps are about other state and stay.
+//
+// WHERE THE GESTURES THEMSELVES ARE TESTED: what the document records for a drag
+// and for a ring is ui/tests/proposalpanel.test.js, and that the viewport reports
+// one event per gesture rather than one per frame is ui/tests/tools.test.js and
+// ui/tests/rings.test.js. What is HERE is only what the chord does to them.
+
+describe('Ctrl+Z over a gesture in the scene', () => {
+  /** A body the reader drew: the document a step has to be able to bring back. */
+  const BLOCK = {
+    id: 'n1', name: 'korpus', op: 'box', role: 'solid',
+    at: [0, 0, 0], rot: [0, 0, 0], size: [20, 20, 20],
+  }
+
+  /** That body in a document, which is where every fixture below starts. */
+  const drawn = () => addNode(emptyProposal(), BLOCK)
+
+  /**
+   * The page with a document on it and a viewport under it.
+   *
+   * THE ELEMENT IS SPIES, the arrangement proposalpanel.test.js uses for the
+   * same reason: what the viewport DOES with the moves is element.test.js's
+   * subject, and what is asked here is that the undo hands them over at all.
+   * `overlayBody` is not optional — `setProposal` asks it where the selection
+   * went, on every document it writes.
+   *
+   * `stored` is what the hub said when the page asked for its record, and it has
+   * to be an ANSWER rather than the `null` a page mounts with: nothing is written
+   * back until the load has resolved (`saveProposal`).
+   */
+  const drawing = ({ proposal = drawn(), stored = false, ...over } = {}) => {
+    const el = {
+      setOverlay: vi.fn(), clearOverlay: vi.fn(), setMoves: vi.fn(),
+      isOverlay: vi.fn(() => false), overlayBody: vi.fn(() => null),
+    }
+    const c = component({
+      expanded: { '/model': true },
+      proposal, proposalOpen: true, proposalError: null,
+      proposalDraft: null, proposalOff: false,
+      proposalHeld: stored, proposalStands: false,
+      ...over,
+    })
+    // AS MANY NODES AS THE DOCUMENT ALREADY HAS, because that is what the
+    // counter means: an id minted off 0 would be one a seeded node already
+    // carries, and `updateNode` would then edit two nodes at once.
+    c._proposalSeq = proposal.nodes.length
+    c.host = { current: el }
+    return { c, el }
+  }
+
+  /**
+   * A part of the build dragged, in the words the viewport reports one in.
+   *
+   * `build` IS THE FIXTURE'S OWN KEY and is on every one of these because it is
+   * on every real report: the handler drops a report whose stamp is not the build
+   * now on screen, so a helper that left it off would be testing that drop and
+   * nothing else.
+   */
+  const drag = (c, path_, delta) => c.recordGesture({
+    id: path_, name: path_.split('/').filter(Boolean).pop(), paths: [path_],
+    count: 1, build: buildKey(c.state.meta), delta,
+  }, 'delta')
+
+  /** The same part TURNED with the rings — one sentence, the other half of it. */
+  const spin = (c, path_, turn) => c.recordGesture({
+    id: path_, name: path_.split('/').filter(Boolean).pop(), paths: [path_],
+    count: 1, build: buildKey(c.state.meta), turn,
+  }, 'turn')
+
+  /** The moves the viewport was last handed, in the shape that door takes. */
+  const handed = (el) => el.setMoves.mock.calls.at(-1)[0]
+
+  const row = (c, id) => c.computed().rows.find((r) => r.key === id)
+  const click = { stopPropagation() {}, preventDefault() {} }
+
+  it('puts a dragged part of the build back, and the document with it', () => {
+    // BOTH HALVES, because either alone would look like the feature working. The
+    // document is what the agent is handed and what the hub stores; the push at
+    // the viewport is what actually walks the part back across the scene, and a
+    // page that restored the one without the other would show the reader a part
+    // standing where nothing claims it is.
+    const { c, el } = drawing()
+
+    drag(c, '/model/plate', [3, 0, 0])
+    expect(moves(c.state.proposal).map((m) => m.delta)).toEqual([[3, 0, 0]])
+
+    c.undoStep()
+
+    expect(c.state.proposal).toEqual(drawn())
+    expect(handed(el), 'the part was left standing where the drag put it')
+      .toEqual([])
+  })
+
+  it('puts a turn of the rings back the same way', () => {
+    // The other gesture on the same node and through the same method, so the two
+    // cannot drift into being taken back differently.
+    const { c, el } = drawing()
+
+    spin(c, '/model/plate', [0, 0, 90])
+    expect(moves(c.state.proposal).map((m) => m.turn)).toEqual([[0, 0, 90]])
+
+    c.undoStep()
+
+    expect(c.state.proposal).toEqual(drawn())
+    expect(handed(el)).toEqual([])
+  })
+
+  it('puts a body of the proposal back, dragged or turned', () => {
+    // THE OTHER DOOR (`editBody`), which means the opposite thing and records a
+    // step for the same reason: a body is the reader's own drawing, so a hand on
+    // one edits its `at` or its `rot` rather than filing a move node — and an
+    // edit that cannot be taken back is the thing this chord is for.
+    const { c } = drawing()
+
+    c.editBody('korpus', [0, 5, 0], moveNodes)
+    c.editBody('korpus', [0, 0, 30], turnNodes)
+    expect(c.state.proposal.nodes[0].at).toEqual([0, 5, 0])
+    expect(c.state.proposal.nodes[0].rot).toEqual([0, 0, 30])
+
+    c.undoStep()
+    expect(c.state.proposal.nodes[0].rot, 'the turn stayed on the body')
+      .toEqual([0, 0, 0])
+    expect(c.state.proposal.nodes[0].at, 'the undo took the drag as well')
+      .toEqual([0, 5, 0])
+
+    c.undoStep()
+    expect(c.state.proposal).toEqual(drawn())
+  })
+
+  it('takes the two kinds back in the order they were made', () => {
+    // THE WHOLE ARGUMENT FOR ONE STACK. A reader hides a part, drags another and
+    // presses the chord: what has to come back is the DRAG, because it is the
+    // last thing they did. Stacks per kind would answer with the hide — undoing
+    // a gesture the reader can no longer see while the one they are looking at
+    // stays put — and the second press would then take the drag, in an order
+    // nobody performed.
+    const { c } = drawing()
+
+    row(c, '/model/plate').onVis(click)
+    drag(c, '/model/post', [3, 0, 0])
+
+    c.undoStep()
+    expect(moves(c.state.proposal), 'the drag was not the first thing back')
+      .toEqual([])
+    expect(c.state.hidden, 'the undo reached past the drag to the hide')
+      .toEqual(['/model/plate'])
+
+    c.undoStep()
+    expect(c.state.hidden).toEqual([])
+    expect(c.history).toHaveLength(0)
+  })
+
+  it('writes the restored document to the hub, the way any edit is written', () => {
+    // AN UNDO IS AN EDIT, which is the whole reason it goes back through
+    // `setProposal`. A page that took the drag off the screen and left the hub
+    // holding it would hand the agent a statement the reader had withdrawn — and
+    // would hand it back to this very page on the next reload.
+    vi.useFakeTimers()
+    onTestFinished(() => vi.useRealTimers())
+    const fetching = vi.fn(async () => ({ status: 200, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetching)
+    onTestFinished(() => vi.unstubAllGlobals())
+    const { c } = drawing()
+
+    drag(c, '/model/plate', [3, 0, 0])
+    vi.runAllTimers()
+    expect(fetching, 'the drag itself was never stored').toHaveBeenCalledTimes(1)
+
+    c.undoStep()
+    vi.runAllTimers()
+
+    expect(fetching).toHaveBeenCalledTimes(2)
+    const sent = JSON.parse(fetching.mock.calls[1][1].body)
+    expect(sent.doc).toEqual(drawn())
+    expect(sent.doc.nodes.some((node) => node.role === 'move')).toBe(false)
+  })
+
+  it('records nothing for a gesture that was refused', () => {
+    // THE STEP IS PUSHED AFTER THE GUARDS, so that every entry on the stack
+    // describes a document the reader was really looking at. Pushed before them,
+    // a report this page threw away would leave a step that undoes the gesture
+    // BEFORE it — one press taking back something the reader never did.
+    const { c } = drawing()
+
+    // A report measured on a build that has since left: the stamp does not match
+    // the one this page is showing, and the handler drops it.
+    c.recordGesture({
+      id: '/model/plate', name: 'plate', paths: ['/model/plate'],
+      count: 1, build: 'another build entirely', delta: [3, 0, 0],
+    }, 'delta')
+    // Three numbers that are not three numbers, which is the guard both handlers
+    // share.
+    c.editBody('korpus', [1, 2], moveNodes)
+    // And a name no body in the document answers to.
+    c.editBody('nothing-of-the-sort', [0, 5, 0], moveNodes)
+
+    expect(c.history).toEqual([])
+    expect(c.state.proposal).toEqual(drawn())
+  })
+
+  it('goes with the build when another one is opened', async () => {
+    // THE SAME CLEARING THE VISIBILITY STEPS GET, and it is right for this kind
+    // too: a move node names paths of the tree being left and a delta measured
+    // against where THAT build put the part, which is why the swap drops the
+    // moves out of the document in the first place. A step restored afterwards
+    // would put them back by a keystroke.
+    const { c } = drawing()
+    c.captureHome = vi.fn()
+    loadMeta.mockResolvedValue(build())
+
+    drag(c, '/model/plate', [3, 0, 0])
+    await c.switchBuild('proj1', B)
+    c.onModel({ tree: TREE_B, view: 'assembled', live: true })
+    expect(moves(c.state.proposal), 'the swap kept a move of the build that left')
+      .toEqual([])
+
+    c.undoStep()
+
+    expect(c.history).toEqual([])
+    expect(moves(c.state.proposal), 'a step of the departed build was applied here')
+      .toEqual([])
+  })
+
+  it('loses its moves to a live rebuild, as the document on screen does', () => {
+    // A LIVE REBUILD IS NOT A SWAP and the history is deliberately kept across
+    // one — the page stays on the same revision, and the reader's steps are
+    // still theirs. But `onModel` drops the moves out of the document when a
+    // build lands, and a stored step IS a document: left whole, Ctrl+Z after a
+    // rebuild would put back a displacement measured against the build that has
+    // gone. The paths make that concrete rather than untidy — `/model/pin(2)` is
+    // a number the tessellator hands out afresh, so the restored move can name a
+    // different part than the one the hand actually dragged.
+    //
+    // THE BODY STAYS, in the step exactly as it stays in the document: a motor
+    // the model has to clear is as true of the build arriving as of the one that
+    // left.
+    const { c } = drawing()
+
+    drag(c, '/model/plate', [3, 0, 0])
+    expect(c.history, 'the premise: the drag left a step').toHaveLength(1)
+    expect(moves(c.history[0].doc), 'the premise: the step before it had none')
+      .toEqual([])
+
+    // A HAND ON THE BODY, which records its own step and keeps the ones behind
+    // it (`editBody`), and two things come of it. The step it leaves DOES carry
+    // the drag's move node — the case this test is about, and the one a single
+    // drag cannot produce — and the document moves on from both steps, so
+    // neither of them is the document on screen after the rebuild. What happens
+    // to the ones that ARE is the test below.
+    c.editBody('korpus', [0, 5, 0], moveNodes)
+    expect(moves(c.history[1].doc), 'the premise: that step carries the move')
+      .toHaveLength(1)
+
+    c.onModel({ tree: TREE, view: 'assembled', live: true })
+
+    expect(moves(c.history[1].doc)).toEqual([])
+    expect(bodies(c.history[1].doc).map((b) => b.name)).toEqual(['korpus'])
+    // AND A RE-STAGE IS STILL THE EXCEPTION it is for the document itself: it
+    // composes the same bodies over the same build, so nothing was measured
+    // against anything that moved. TWO DRAGS AGAIN, for the reason the pair
+    // above needed two — the rebuild has just emptied the document, so the step
+    // a single drag leaves behind carries no move to lose.
+    drag(c, '/model/plate', [9, 0, 0])
+    drag(c, '/model/plate', [12, 0, 0])
+    expect(moves(c.history[3].doc), 'the premise: that step carries a move')
+      .toHaveLength(1)
+
+    c.onModel({ tree: TREE, view: 'assembled', live: true, restage: true })
+
+    expect(moves(c.history[3].doc), 'a re-stage took the step\'s move away')
+      .toHaveLength(1)
+  })
+
+  it('drops a step a rebuild has made equal to the document on screen', () => {
+    // WHAT THE PRUNE ABOVE LEAVES BEHIND IF NOTHING ELSE IS DONE. A step that
+    // differed from the document only by the moves in it is, once both sides
+    // have lost them, the document already on screen — so pressing the chord on
+    // one changes nothing the reader can see, and still pays a whole
+    // `buildProposal` and a re-staged scene.
+    //
+    // AND THE PRESS AFTER IT IS THE REAL COST, which is why this is not merely
+    // wasteful. The stack is one stack: hide two parts, move and turn three,
+    // have a rebuild land, and the dead steps sit on top of the visibility ones.
+    // The presses that do nothing come first and the un-hide comes after them,
+    // so the reader is answered with a part reappearing from five minutes ago —
+    // with no button, no counter and nothing else on the page to say why.
+    const { c, el } = drawing()
+
+    row(c, '/model/plate').onVis(click)
+    drag(c, '/model/plate', [3, 0, 0])
+    spin(c, '/model/plate', [0, 0, 90])
+    expect(c.history, 'the premise: a hide and two gestures').toHaveLength(3)
+
+    c.onModel({ tree: TREE, view: 'assembled', live: true })
+
+    expect(c.history, 'the two steps the rebuild emptied were left on the stack')
+      .toHaveLength(1)
+
+    // And the one press the reader has left is the hide — not the first of two
+    // that do nothing.
+    el.setMoves.mockClear()
+    c.undoStep()
+
+    expect(c.state.hidden, 'the first press went on a step that says nothing')
+      .toEqual([])
+    expect(el.setMoves, 'a dead step was pressed through at the viewport')
+      .not.toHaveBeenCalled()
+  })
+
+  it('does not reach past an edit that recorded no step', () => {
+    // THE HOLE THIS CLOSES, and it is the whole document that falls through it.
+    // A document step holds the WHOLE document and only the two gestures push
+    // one, so an ordinary edit of the panel — a body drawn, a digit committed, a
+    // node deleted, a role flipped — used to leave the step behind it standing.
+    // Drag a part, draw a body, press the chord meaning "take back the drag":
+    // the body went with it, and the save that followed posted the older
+    // document over the newer one on the hub. No redo, no toast, and nothing on
+    // the page to recover the drawing from.
+    vi.useFakeTimers()
+    onTestFinished(() => vi.useRealTimers())
+    const fetching = vi.fn(async () => ({ status: 200, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetching)
+    onTestFinished(() => vi.unstubAllGlobals())
+    const { c } = drawing()
+
+    drag(c, '/model/plate', [3, 0, 0])
+    expect(c.history, 'the premise: the drag left a step').toHaveLength(1)
+
+    // An edit made in the panel, through the door every one of them takes and
+    // recording nothing — which is exactly what makes the step above stale.
+    c.computed().proposalOps.find((op) => op.key === 'box').onClick()
+    expect(bodies(c.state.proposal), 'the premise: the panel drew a body')
+      .toHaveLength(2)
+
+    c.undoStep()
+    vi.runAllTimers()
+
+    expect(bodies(c.state.proposal), 'the chord took back a body no step described')
+      .toHaveLength(2)
+    expect(c.history, 'the stale step was still on the stack').toEqual([])
+    // AND THE HUB IS NOT HANDED THE OLD DOCUMENT, which is the half that
+    // outlives the page: the drawing would be gone from the record too, and back
+    // on this page at the next reload.
+    const sent = JSON.parse(fetching.mock.calls.at(-1)[1].body)
+    expect(bodies(sent.doc), 'the hub was posted the document from before the body')
+      .toHaveLength(2)
+  })
+
+  it('leaves the visibility steps standing when the document is written', () => {
+    // WHAT THE INVALIDATION IS NOT ABOUT. A hide is other state entirely and
+    // `setVisibility` is the one door to it, so a body drawn in the panel makes
+    // nothing a visibility step claims untrue. Dropping those as well would be a
+    // page that forgets the reader hid a part because they typed a number
+    // afterwards.
+    const { c } = drawing()
+
+    row(c, '/model/plate').onVis(click)
+    expect(c.state.hidden, 'the premise: the eye hid a part')
+      .toEqual(['/model/plate'])
+
+    c.computed().proposalOps.find((op) => op.key === 'box').onClick()
+    c.undoStep()
+
+    expect(c.state.hidden, 'the document write took the hide off the stack too')
+      .toEqual([])
+  })
+
+  it('is not taken away by merely opening the panel', () => {
+    // OPENING THE SHEET IS NOT AN EDIT, and the invalidation must not read it as
+    // one. `toggleProposal` re-stages by pushing the document it already had
+    // back through the door, which records no step — so a rule that went by "a
+    // write happened" rather than "the document changed" would quietly stop the
+    // chord undoing a drag the moment the reader opened the panel to look at the
+    // row that drag had just made. Nothing on screen would say why.
+    //
+    // TWICE, because the gesture leaves the sheet OPEN by itself (`recordGesture`
+    // opens it to show the row it just made), and it is the OPENING that pushes
+    // the document through the door — shutting only writes display state. So the
+    // sequence below is the one a reader actually makes: drag, put the sheet
+    // away, open it again.
+    const { c, el } = drawing()
+
+    drag(c, '/model/plate', [3, 0, 0])
+    expect(c.history, 'the premise: the drag left a step').toHaveLength(1)
+
+    c.toggleProposal()
+    expect(c.state.proposalOpen, 'the premise: the first call shut the sheet')
+      .toBe(false)
+    c.toggleProposal()
+    expect(c.state.proposalOpen, 'the premise: the second call opened it again')
+      .toBe(true)
+    expect(c.history, 'opening the sheet was read as an edit and dropped the step')
+      .toHaveLength(1)
+
+    c.undoStep()
+
+    expect(c.state.proposal).toEqual(drawn())
+    expect(handed(el), 'the part was left standing where the drag put it')
+      .toEqual([])
+  })
+
+  it('has nothing to put back once the proposal is deleted', async () => {
+    // `removeProposal` asks with `confirm()`, deletes the record on the hub,
+    // clears the page and disarms everything it had armed. A document step
+    // survives all of that: pressing the chord afterwards restored the drawing
+    // AND — a debounce later, because an undo is an edit and is saved like one —
+    // recreated on the hub the very record the reader had just been asked about
+    // and confirmed deleting. The method's own promise is that nothing this page
+    // had armed survives the delete.
+    vi.useFakeTimers()
+    onTestFinished(() => vi.useRealTimers())
+    const fetching = vi.fn(async () => ({ status: 200, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetching)
+    onTestFinished(() => vi.unstubAllGlobals())
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const { c } = drawing({ stored: true })
+
+    drag(c, '/model/plate', [3, 0, 0])
+    await c.removeProposal()
+    expect(c.state.proposal.nodes, 'the premise: the delete cleared the page')
+      .toEqual([])
+
+    c.undoStep()
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(c.state.proposal.nodes, 'the chord put the deleted drawing back')
+      .toEqual([])
+    expect(fetching.mock.calls.map((call) => call[1].method),
+           'the chord wrote the deleted record back to the hub')
+      .toEqual(['DELETE'])
   })
 })
 
