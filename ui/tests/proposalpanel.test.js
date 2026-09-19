@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 
 import HammerolaViewer, { PROPOSAL_BRANCH } from '../src/HammerolaViewer.jsx'
 import { MOVED, PLACE, PROPOSALMOVE } from '../src/events.js'
-import { indexTree } from '../src/hub.js'
+import { indexTree, PAGE } from '../src/hub.js'
 import {
   addNode, DIM_OPS, dropMoves, emptyProposal, moves, proposalText, removeNode,
 } from '../src/proposal.js'
@@ -34,6 +34,22 @@ import { treeFromShapes } from '../src/viewport/parts.js'
 import { collect, texts, titles } from './eltree.js'
 
 const REV = 'e05f73ba91b263b8517147e338d23e868533c6a034a342ad5926abb6edcb7b40'
+// WHICH BUILD THIS PAGE IS SHOWING, off its meta.json — the half of the answer
+// that moves on the local slot, where `commit` is the constant `dev` for every
+// build it ever holds (SPEC 7.6). A stored proposal carries the same stamp, and
+// the two being equal is what says its move nodes still name the parts they were
+// measured against.
+const STAMP = '2026-09-18T18:00:00.123Z'
+const ELSEWHERE = '2026-09-19T09:30:00.456Z'
+
+// AND WHICH VIEW OF IT, which is the other half of the same answer and not a
+// detail of it: a view is a separate tree of references with its own grouping
+// (`src/cadbuild/views.py`), while `published` is IDENTICAL across the views of
+// one build. So a move measured in `ANOTHER_VIEW` names a different part — or
+// the same part in a different layout — on the view below, and the record
+// carries both. `VIEW` is the one every fixture page here is showing.
+const VIEW = 'assembled'
+const ANOTHER_VIEW = 'exploded'
 
 const click = { stopPropagation() {}, preventDefault() {} }
 
@@ -95,7 +111,7 @@ const withBlock = () => addNode(emptyProposal(), BLOCK);
  * is element.test.js's subject.
  */
 function panel({ token = 'sekrit', proposal, open = true, narrow = false,
-                 served = true } = {}) {
+                 served = true, stored = null, stands = false } = {}) {
   stampProposal(served)
   const el = {
     setOverlay: vi.fn(), clearOverlay: vi.fn(), setMoves: vi.fn(),
@@ -119,6 +135,13 @@ function panel({ token = 'sekrit', proposal, open = true, narrow = false,
   // one of them already carries — a state the panel cannot reach, in which
   // `updateNode` edits two nodes at once.
   c._proposalSeq = proposal ? proposal.nodes.length : 0
+  // A PAGE WHOSE BUILD IS ALREADY ON SCREEN, which is what the tree below and
+  // the element above already say and what every test here but the cold loads
+  // assumes. `adoptProposal` reads it: the moves of a stored document may only
+  // be put back once the model event that would have dropped them has passed
+  // (`onModel`), so the tests that are about a RELOAD clear this and hand the
+  // page its build afterwards.
+  c._modelSeen = true
   c.host = { current: el }
   c.sync = vi.fn()
   c.toast = vi.fn()
@@ -129,14 +152,15 @@ function panel({ token = 'sekrit', proposal, open = true, narrow = false,
   })
   c.state = {
     meta: {
-      project: 'fixture', title: 'Fixture', commit: REV, built: '', parts: {},
-      views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
+      project: 'fixture', title: 'Fixture', commit: REV, published: STAMP,
+      built: '', parts: {},
+      views: [{ id: VIEW, name: VIEW, file: 'a.json',
                 parts: [], gzip: 1000 }],
     },
     builds: null,
     tree: indexTree({ id: '/model', name: 'model', children: [] }),
     error: null, viewError: null, pending: null, swapping: false,
-    view: 'assembled', tool: null, held: false,
+    view: VIEW, tool: null, held: false,
     sel: null, selName: '', hidden: [], ghost: [], expanded: {},
     secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
     secFace: null, secPop: false,
@@ -147,6 +171,18 @@ function panel({ token = 'sekrit', proposal, open = true, narrow = false,
     measure: null, toast: null,
     proposal: proposal || emptyProposal(), proposalOpen: open, proposalError: null,
     proposalDraft: null, proposalOff: false,
+    // WHAT THE HUB SAID WHEN THE PAGE ASKED FOR THE STORED DOCUMENT, and `null`
+    // is "it has not answered yet" — which is the state a page mounts in and
+    // the one in which nothing may be written back. So a fixture that says
+    // nothing else is a panel whose edits stay on this side, which is what
+    // every test written before the document was stored anywhere assumes; the
+    // ones that are ABOUT the save say `stored` for themselves.
+    //
+    // `proposalStands` IS THE OTHER HALF and is a different question — does what
+    // the hub holds say anything, which is what a comment points the agent at.
+    // It is false on a page that has not learned otherwise, and only the tests
+    // about the announcement set it.
+    proposalHeld: stored, proposalStands: stands,
     token, tokenPop: false, tokenDraft: '',
     theme: 'light', tabs: [], narrow, treeOpen: false,
   }
@@ -158,7 +194,7 @@ function panel({ token = 'sekrit', proposal, open = true, narrow = false,
  * event reaches the handler `componentDidMount` built rather than one a test
  * called by hand. The helper, and the name, are repeats.test.js's.
  *
- * The two fetches the mount starts are stubbed: there is no hub here, and what
+ * The three fetches the mount starts are stubbed: there is no hub here, and what
  * these tests are about begins after the page is listening.
  */
 function mounted(over = {}) {
@@ -166,6 +202,7 @@ function mounted(over = {}) {
   const { c, el } = panel(over)
   c.load = vi.fn(async () => {})
   c.loadFeed = vi.fn(async () => {})
+  c.loadProposal = vi.fn(async () => {})
   c.componentDidMount()
   onTestFinished(() => {
     c.componentWillUnmount()
@@ -3687,5 +3724,837 @@ describe('another revision opening', () => {
     const { state } = c.leaveBuild(true)
 
     expect('proposal' in state.composer).toBe(false)
+  })
+})
+
+// -- and what survives closing the tab ----------------------------------------
+//
+// The document used to be held in page state and written nowhere, so a reload
+// lost all of it. The hub keeps ONE per project now, read and written under the
+// same EDIT_TOKEN the rest of this page is behind, and deleted only when
+// somebody says so. Three claims, and each of them has a way of failing
+// silently: a load that adopts over live edits, a save that fires before the
+// load has answered and destroys what it was about to read, and a delete that
+// clears one side of the pair.
+
+describe('the stored proposal', () => {
+  /** Each call answered by the next response; the last one stands for the rest. */
+  function answering(...responses) {
+    const fetching = vi.fn(async () => (responses.length > 1
+      ? responses.shift() : responses[0]))
+    vi.stubGlobal('fetch', fetching)
+    return fetching
+  }
+
+  const ok = (record) => ({ status: 200, json: async () => record })
+
+  /** One stored record, in the shape the hub's GET answers with. */
+  const stored = (over = {}) => ({
+    pid: PAGE.pid, doc: withBlock(), text: proposalText(withBlock()),
+    published: STAMP, view: VIEW, saved: '2026-09-19T09:00:00Z', ...over,
+  })
+
+  /** A body and a part of the build dragged, which is the pair that parts ways. */
+  const withMove = () => addNode(withBlock(), {
+    id: 'm2', role: 'move', paths: ['/model/plate'], name: 'plate',
+    delta: [3, 0, 0], turn: [0, 0, 0],
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  // -- reading it ------------------------------------------------------------
+
+  describe('read when the token arrives', () => {
+    it('is asked for with the token and adopted onto the model', async () => {
+      const fetching = answering(ok(stored()))
+      const { c, el } = panel({ stored: null })
+
+      await c.loadProposal()
+
+      expect(fetching).toHaveBeenCalledWith(
+        `/api/v1/proposals/${PAGE.pid}`,
+        { headers: { Authorization: 'Bearer sekrit' } })
+      // THROUGH `setProposal`, which is what puts the bodies over the model:
+      // adopting into state alone would leave the branch listing rows for
+      // geometry nothing had staged.
+      expect(c.state.proposal.nodes.map((node) => node.name)).toEqual(['korpus'])
+      expect(overlay(el)).toEqual(['korpus'])
+      expect(c.state.proposalHeld).toBe(true)
+      // AND THAT IT SAYS SOMETHING, which is the other half and a different
+      // question: the record's `text` is what a comment points the agent at.
+      expect(c.state.proposalStands).toBe(true)
+    })
+
+    it('learns there is a record that says nothing at all', async () => {
+      // A DOCUMENT TICKED OFF TO THE LAST NODE is stored with `text: null` (the
+      // hub writes what this page sent), and the comment must not point an agent
+      // at a proposal that would hand it a heading and nothing else. The RECORD
+      // is still there, which is the half the save gate reads.
+      answering(ok(stored({ text: null })))
+      const { c } = panel({ stored: null })
+
+      await c.loadProposal()
+
+      expect(c.state.proposalHeld).toBe(true)
+      expect(c.state.proposalStands).toBe(false)
+    })
+
+    it('leaves a document the reader has already drawn exactly alone', async () => {
+      // THE FETCH LANDS WHENEVER IT LANDS, and by then there may be a body on
+      // screen. The reader's own work outranks a document they have not seen —
+      // and this is the one door the arrangement has no way to undo, since the
+      // adoption is not an edit anybody could take back.
+      answering(ok(stored({
+        doc: addNode(emptyProposal(), { ...BLOCK, id: 's1', name: 'motor' }),
+      })))
+      const { c } = panel({ proposal: withBlock(), stored: null })
+
+      await c.loadProposal()
+
+      expect(c.state.proposal.nodes.map((node) => node.name)).toEqual(['korpus'])
+      // AND IT STAYS UNANSWERED, which is the state that means "do not write":
+      // this page read a record it never showed, so it has not earned the right
+      // to post its own document over it.
+      expect(c.state.proposalHeld).toBeNull()
+      // ...while the page still learns there IS one to read, which is what the
+      // comment then tells the agent — that is about the HUB and is unchanged.
+      expect(c.state.proposalStands).toBe(true)
+    })
+
+    it('tells the reader once that what they are drawing is not being saved',
+       async () => {
+      // A SILENT REFUSAL LEAVES SOMEBODY DRAWING INTO A PAGE THAT SAVES
+      // NOTHING. The record is spent on the first call, so this cannot repeat
+      // however many times the adoption is attempted afterwards.
+      answering(ok(stored()))
+      const { c } = panel({ proposal: withBlock(), stored: null })
+
+      await c.loadProposal()
+      c.adoptProposal()
+      c.adoptProposal()
+
+      expect(c.toast).toHaveBeenCalledTimes(1)
+      expect(c.toast.mock.calls[0][0]).toMatch(/stored proposal/)
+      expect(c.toast.mock.calls[0][0]).toMatch(/not being saved/)
+    })
+
+    it('drops the moves of one stored on another build, and keeps the bodies', async () => {
+      // A MOVE'S `paths` ARE PATHS IN ONE REVISION'S TREE — `/model/pin(2)`, a
+      // number the tessellator hands out — and a rebuild renumbers them, so a
+      // stored move re-applied on a different build can displace a DIFFERENT
+      // part. The bodies are kept for the reason `dropMoves` gives: a motor the
+      // model has to clear is as true of one build as of another.
+      answering(ok(stored({ doc: withMove(), published: ELSEWHERE })))
+      const { c, el } = panel({ stored: null })
+
+      await c.loadProposal()
+
+      expect(c.state.proposal.nodes.map((node) => node.name)).toEqual(['korpus'])
+      expect(moves(c.state.proposal)).toEqual([])
+      expect(pushed(el)).toEqual([])
+    })
+
+    it('keeps them where the stored build and view are the ones on screen',
+       async () => {
+      answering(ok(stored({ doc: withMove(), published: STAMP, view: VIEW })))
+      const { c, el } = panel({ stored: null })
+
+      await c.loadProposal()
+
+      expect(moves(c.state.proposal)).toHaveLength(1)
+      expect(pushed(el)).toEqual([
+        { paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] },
+      ])
+    })
+
+    it('and not where they were taken in another view of the same build',
+       async () => {
+      // THE BUILD ALONE DOES NOT SETTLE IT. `published` is one number for the
+      // whole build and is identical across its views, while a view is a
+      // separate tree of references with its own grouping — so `/model/plate`
+      // over there is a different part, or the same part in a different layout.
+      // Within a session `onModel` already drops every move on a view switch
+      // (`dropMoves`: "a rebuild, or another revision, or another view"); a tab
+      // pressed later does not move the address, so without this a reader who
+      // switched view, dragged parts and reloaded came back on the default view
+      // with those moves re-applied to the wrong tree.
+      answering(ok(stored({ doc: withMove(), published: STAMP,
+                            view: ANOTHER_VIEW })))
+      const { c, el } = panel({ stored: null })
+
+      await c.loadProposal()
+
+      expect(c.state.proposal.nodes.map((node) => node.name)).toEqual(['korpus'])
+      expect(moves(c.state.proposal)).toEqual([])
+      expect(pushed(el)).toEqual([])
+    })
+
+    it('nor for a record that names no view at all', async () => {
+      // The gate is "both match", not "neither disagrees": a record with no view
+      // on it cannot say which tree its paths were numbered in, and the bodies
+      // are what survives not knowing.
+      answering(ok(stored({ doc: withMove(), published: STAMP, view: null })))
+      const { c } = panel({ stored: null })
+
+      await c.loadProposal()
+
+      expect(moves(c.state.proposal)).toEqual([])
+    })
+
+    it('reads a 404 as "there is nothing stored here yet"', async () => {
+      answering({ status: 404, json: async () => ({}) })
+      const { c } = panel({ stored: null })
+
+      await c.loadProposal()
+
+      expect(c.state.proposal.nodes).toEqual([])
+      // ANSWERED, which is what opens the door to writing: there is nothing
+      // left for a save to overwrite.
+      expect(c.state.proposalHeld).toBe(false)
+      expect(c.toast).not.toHaveBeenCalled()
+    })
+
+    it('learns nothing at all from a hub it could not reach', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }))
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const { c } = panel({ stored: null })
+
+      await expect(c.loadProposal()).resolves.toBeUndefined()
+
+      expect(c.toast).toHaveBeenCalledWith('Could not reach the hub')
+      // AND THE FIELD STAYS NULL, which is the whole of the protection: a page
+      // that does not know what is stored may not write over it.
+      expect(c.state.proposalHeld).toBeNull()
+    })
+
+    it('says so and keeps the page as it was when the hub refuses the token', async () => {
+      answering({ status: 401, json: async () => ({}) })
+      const { c } = panel({ proposal: withBlock(), stored: null })
+
+      await c.loadProposal()
+
+      expect(c.toast).toHaveBeenCalledWith('The hub refused the token')
+      expect(c.state.proposal.nodes).toHaveLength(1)
+      expect(c.state.proposalHeld).toBeNull()
+    })
+
+  })
+
+  // -- read into a page that is still coming up ------------------------------
+  //
+  // THE COLD RELOAD IS THE CASE THE WHOLE `published` RULE WAS WRITTEN FOR, and
+  // it is the one where the answer lands in the middle of the page opening: one
+  // fetch, against the four a build takes to reach the screen. Two things the
+  // adoption needs are still in flight when it does. `meta` carries the stamp
+  // that says whether the stored moves describe THIS model, and a `meta` that
+  // has not landed reads as "some other build" — so every reload came back
+  // without them. And the first model event DROPS the moves of the build that
+  // lands, so a document adopted ahead of it is stripped a moment later by a
+  // line that cannot tell it apart from a rebuild. Either one alone is the whole
+  // feature quietly doing nothing.
+
+  describe('read while the build is still on its way', () => {
+    /** The build landing: the event `onModel` is the page's handler for. */
+    const lands = (c) => c.onModel({
+      tree: { id: '/model', name: 'model', children: [] },
+      view: 'assembled', live: false,
+    })
+
+    /**
+     * A page as it is before meta.json and the first view have answered, and
+     * `arrive()` for the moment they have.
+     *
+     * NO ELEMENT EITHER, because both doors to the viewport are a bare early
+     * return while it has not upgraded — a document adopted in that window is
+     * pushed at nothing and the model comes up bare with the branch listing rows
+     * over it.
+     */
+    function coming() {
+      const { c, el } = panel({ stored: null })
+      const meta = c.state.meta
+      c.state = { ...c.state, meta: null }
+      c._modelSeen = false
+      c.host.current = null
+      const arrive = () => {
+        c.host.current = el
+        c.state = { ...c.state, meta }
+      }
+      return { c, el, arrive }
+    }
+
+    it('keeps the moves through a reload of the same build', async () => {
+      answering(ok(stored({ doc: withMove(), published: STAMP })))
+      const { c, el, arrive } = coming()
+
+      await c.loadProposal()
+
+      // NOTHING IS ADOPTED YET, and nothing may be written either: until the
+      // record is on the page the load still reads as unanswered.
+      expect(c.state.proposal.nodes).toEqual([])
+      expect(c.state.proposalHeld).toBeNull()
+      expect(el.setOverlay).not.toHaveBeenCalled()
+
+      arrive()
+      lands(c)
+
+      expect(c.state.proposal.nodes.map((node) => node.name))
+        .toEqual(['korpus', 'plate'])
+      expect(moves(c.state.proposal)).toHaveLength(1)
+      expect(overlay(el)).toEqual(['korpus'])
+      expect(pushed(el)).toEqual([
+        { paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] },
+      ])
+      expect(c.state.proposalHeld).toBe(true)
+    })
+
+    it('and does not lose them to the build event that lands behind it', async () => {
+      // THE OTHER HALF ON ITS OWN: meta was in when the record arrived, so the
+      // stamp read as this build — and the model event a moment later dropped
+      // every move anyway, because that is what a build landing does to them.
+      answering(ok(stored({ doc: withMove(), published: STAMP })))
+      const { c } = panel({ stored: null })
+      c._modelSeen = false
+
+      await c.loadProposal()
+      lands(c)
+
+      expect(moves(c.state.proposal)).toHaveLength(1)
+    })
+
+    it('restores the bodies alone where the reload is another build', async () => {
+      // THE RULE ITSELF IS UNCHANGED, and this is the half that was accidentally
+      // right: a move's paths are numbered by the tessellator of ONE build, so
+      // re-applying them on another can displace a different part.
+      answering(ok(stored({ doc: withMove(), published: ELSEWHERE })))
+      const { c, el, arrive } = coming()
+
+      await c.loadProposal()
+      arrive()
+      lands(c)
+
+      expect(c.state.proposal.nodes.map((node) => node.name)).toEqual(['korpus'])
+      expect(moves(c.state.proposal)).toEqual([])
+      expect(overlay(el)).toEqual(['korpus'])
+      expect(pushed(el)).toEqual([])
+    })
+
+    it('leaves a reader who drew something first with their own document', async () => {
+      // THE WAIT IS ONE MORE REASON there may be a body on screen by the time
+      // the record can be taken, and their own work still outranks a document
+      // they have not seen. The record is spent either way: the hub is not asked
+      // twice, and the page learns there IS one to read.
+      answering(ok(stored()))
+      const { c, arrive } = coming()
+
+      await c.loadProposal()
+      c.setProposal(addNode(emptyProposal(), { ...BLOCK, id: 's1', name: 'motor' }))
+      arrive()
+      lands(c)
+
+      expect(c.state.proposal.nodes.map((node) => node.name)).toEqual(['motor'])
+      expect(c.state.proposalHeld).toBeNull()
+      expect(c.state.proposalStands).toBe(true)
+    })
+
+    it('and the edit they make next does not destroy the record they never saw',
+       async () => {
+      // THE WHOLE POINT OF LEAVING THE FLAG DOWN. A reader opens a page whose
+      // hub holds a ten-node proposal, presses `+ box` before the first model
+      // event lands, and the page declines the record — correctly, for the
+      // screen. With the flag raised anyway and the memo empty, the debounce
+      // 800 ms after their next edit posted the page's own document over it and
+      // the hub held one box.
+      vi.useFakeTimers()
+      onTestFinished(() => vi.useRealTimers())
+      const fetching = answering(ok(stored()))
+      const { c, arrive } = coming()
+
+      await c.loadProposal()
+      c.setProposal(addNode(emptyProposal(), { ...BLOCK, id: 's1', name: 'motor' }))
+      arrive()
+      lands(c)
+      expect(c.toast, 'the premise: the record was declined')
+        .toHaveBeenCalledTimes(1)
+
+      c.setProposal(addNode(emptyProposal(), { ...BLOCK, id: 's1', size: [9, 9, 9] }))
+      await vi.advanceTimersByTimeAsync(5000)
+
+      // One call, and it is the GET this test started with.
+      expect(fetching).toHaveBeenCalledTimes(1)
+      expect(fetching.mock.calls[0][1].method).toBeUndefined()
+    })
+
+    it('and a token pasted a second time does not cry wolf over its own work',
+       async () => {
+      // `loadProposal` RUNS AGAIN ON EVERY `tokenSave`, not only the first. A
+      // reader who re-pastes a token they already had brings back a fresh
+      // record, and by then the document on screen is the one this page adopted
+      // and has been saving all along. Taking the refusal branch there tells
+      // them their drawing is not being saved when it is — and the natural
+      // answer to that alarm is the branch's `×`, which would lose it for real.
+      answering(ok(stored()), ok(stored()))
+      const { c, arrive } = coming()
+
+      await c.loadProposal()
+      arrive()
+      lands(c)
+      expect(c.state.proposalHeld, 'the premise: the record was adopted').toBe(true)
+      expect(c.toast).not.toHaveBeenCalled()
+
+      await c.loadProposal()
+
+      expect(c.toast).not.toHaveBeenCalled()
+      expect(c.state.proposalHeld).toBe(true)
+    })
+
+    it('but a record with nothing in it is not work, and does not shut the door',
+       async () => {
+      // THE CORNER THE REFUSAL ABOVE OPENS IF IT ASKS ONLY ABOUT THE PAGE. The
+      // hub legitimately holds a document with no nodes — `saveProposal` writes
+      // one when a reader deletes their last body — and there is nothing in it
+      // to protect. Declined for that, the reader would go on drawing into a
+      // page that had quietly decided never to save again, with the branch's `×`
+      // the only way back. Nor may the empty document be taken over what they
+      // have drawn: that clears the screen to no purpose.
+      vi.useFakeTimers()
+      onTestFinished(() => vi.useRealTimers())
+      const fetching = answering(ok(stored({ doc: emptyProposal(), text: null })))
+      const { c, arrive } = coming()
+
+      await c.loadProposal()
+      c.setProposal(addNode(emptyProposal(), { ...BLOCK, id: 's1', name: 'motor' }))
+      arrive()
+      lands(c)
+
+      expect(c.state.proposal.nodes.map((node) => node.name)).toEqual(['motor'])
+      expect(c.toast, 'nothing was declined, so nothing is announced')
+        .not.toHaveBeenCalled()
+      expect(c.state.proposalHeld).toBe(true)
+
+      c.setProposal(addNode(emptyProposal(), { ...BLOCK, id: 's1', size: [9, 9, 9] }))
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(2)
+      expect(fetching.mock.calls[1][1].method).toBe('POST')
+    })
+
+    it('and writes nothing back for having read it, on another build least of all',
+       async () => {
+      // WHAT A PAGE THAT ONLY OPENED THE SHEET MUST NOT COST. `setProposal` is
+      // the save's door, and opening the sheet calls it with the document the
+      // page already had — so an adoption that left the memo empty would be
+      // followed by a post. On this build that is a request saying nothing; on
+      // ANOTHER it is the record rewritten with this page's stamp and without
+      // the moves `dropMoves` took out for display, and the reader's moves are
+      // then gone from the hub with no way back.
+      //
+      // The harder half is the one measured here: a different build, where the
+      // document on the page is honestly not the document on the hub.
+      vi.useFakeTimers()
+      try {
+        const fetching = answering(ok(stored({ doc: withMove(),
+                                               published: ELSEWHERE })))
+        const { c, arrive } = coming()
+
+        await c.loadProposal()
+        arrive()
+        lands(c)
+        expect(fetching, 'the premise: the read happened').toHaveBeenCalledTimes(1)
+
+        // SHUT AND OPENED AGAIN, because it is the OPENING that calls the door
+        // (`toggleProposal` re-stages what it already had, and only that way
+        // round); this fixture starts with the sheet already up.
+        c.toggleProposal()
+        c.toggleProposal()
+        expect(c.state.proposalOpen, 'the premise: the sheet is open again')
+          .toBe(true)
+        await vi.advanceTimersByTimeAsync(5000)
+
+        expect(fetching).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('records exactly the body a save of the same document would have sent',
+       async () => {
+      // TWO CALLERS OF ONE BUILDER, held equal here rather than asserted in a
+      // comment. `saveProposal` sends that body and `adoptProposal` records it as
+      // already sent; spelled out separately they would agree until a field was
+      // added to one of them, and then the memo would never match, every opening
+      // of the sheet would post, and the test above would be the only thing that
+      // noticed. This is the same assertion one layer down, where the failure
+      // says what is wrong instead of counting requests.
+      answering(ok(stored({ doc: withMove(), published: ELSEWHERE })))
+      const { c, arrive } = coming()
+
+      await c.loadProposal()
+      arrive()
+      lands(c)
+
+      expect(c._proposalSent)
+        .toBe(JSON.stringify(c.proposalPayload(c.state.proposal)))
+    })
+  })
+
+  // -- writing it ------------------------------------------------------------
+
+  describe('written back after the edits stop', () => {
+    // THE CLOCK IS THIS BLOCK'S SUBJECT rather than its background: the save is
+    // debounced off the one door every edit comes through, so every test here
+    // has to be able to say when the typing stopped.
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    /** The body of the nth POST, parsed. */
+    const posted = (fetching, at = 0) => JSON.parse(fetching.mock.calls[at][1].body)
+
+    it('writes nothing at all until the load has answered', async () => {
+      // WITHOUT THIS GUARD the page mounts holding an empty document, the reader
+      // opens the panel, the debounce fires — and the proposal they stored last
+      // week is destroyed by a page that had not read it yet.
+      const fetching = answering(ok(stored()))
+      const { c } = panel({ stored: null })
+
+      c.setProposal(withBlock())
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).not.toHaveBeenCalled()
+    })
+
+    it('does not write back the document it has just adopted', async () => {
+      // THE ADOPTION IS NOT AN EDIT, and it comes through the one door every
+      // edit does — so the order inside `adoptProposal` is what keeps a page
+      // that has just read a record from immediately re-stamping it with this
+      // build and with whatever `dropMoves` took out on the way in.
+      const fetching = answering(ok(stored({ doc: withMove(),
+                                             published: ELSEWHERE })),
+                                 { status: 200, json: async () => ({}) })
+      const { c } = panel({ stored: null })
+
+      await c.loadProposal()
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(1)
+      expect(c.state.proposalHeld).toBe(true)
+    })
+
+    it('writes the document, its projection and the build and view it stands on',
+       async () => {
+      const fetching = answering({ status: 200, json: async () => ({}) })
+      const { c } = panel({ stored: false })
+
+      c.setProposal(withBlock())
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(1)
+      const [url, sent] = fetching.mock.calls[0]
+      expect(url).toBe(`/api/v1/proposals/${PAGE.pid}`)
+      expect(sent.method).toBe('POST')
+      expect(sent.headers.Authorization).toBe('Bearer sekrit')
+      expect(posted(fetching)).toEqual({
+        doc: c.state.proposal,
+        // THE PROJECTION TRAVELS WITH IT, because it is what an agent reads:
+        // rendering it on the far side would be a second copy of `proposalText`.
+        text: proposalText(withBlock()),
+        // BOTH HALVES OF WHERE THE MOVES WERE MEASURED, because the build alone
+        // is the same number in every view of it.
+        published: STAMP,
+        view: VIEW,
+      })
+    })
+
+    it('is one write for a run of edits rather than one per keystroke', async () => {
+      const fetching = answering({ status: 200, json: async () => ({}) })
+      const { c } = panel({ proposal: withBlock(), stored: false })
+
+      type(sizeFields(c)[0], '21')
+      await vi.advanceTimersByTimeAsync(200)
+      type(sizeFields(c)[1], '22')
+      await vi.advanceTimersByTimeAsync(200)
+      type(sizeFields(c)[2], '23')
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(1)
+      expect(posted(fetching).doc.nodes[0].size).toEqual([21, 22, 23])
+    })
+
+    it('says nothing twice: a panel merely opened is not an edit', async () => {
+      // `toggleProposal` calls the one door with the document it already had,
+      // deliberately (it re-stages), and so does the adoption in `loadProposal`.
+      // Neither is a change, and a request per opening is a request that says
+      // nothing.
+      const fetching = answering({ status: 200, json: async () => ({}) })
+      const { c } = panel({ proposal: withBlock(), stored: false, open: false })
+
+      c.setProposal(withBlock())
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(fetching).toHaveBeenCalledTimes(1)
+
+      c.toggleProposal()
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(1)
+    })
+
+    it('and a document put back the way it was disarms the write in flight', async () => {
+      // THE SKIP HAS TO REACH THE ARMED TIMER, which is why the pending save is
+      // cancelled before the payload is compared: a reader who edits and then
+      // undoes back to the stored document would otherwise have the
+      // intermediate one posted by a timer nothing disarmed.
+      const fetching = answering({ status: 200, json: async () => ({}) })
+      const { c } = panel({ proposal: withBlock(), stored: false })
+
+      c.setProposal(withBlock())
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(fetching).toHaveBeenCalledTimes(1)
+
+      c.setProposal(addNode(withBlock(), { ...BLOCK, id: 'n2', name: 'motor' }))
+      c.setProposal(withBlock())
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(1)
+    })
+
+    it('writes nothing for a page with no token', async () => {
+      // The panel is hidden without one, but the branch of the tree outlives the
+      // token and `tokenClear` works right beside this door.
+      const fetching = answering({ status: 200, json: async () => ({}) })
+      const { c } = panel({ token: null, stored: false })
+
+      c.setProposal(withBlock())
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).not.toHaveBeenCalled()
+    })
+
+    // -- and what an empty document is worth ---------------------------------
+
+    it('creates no record for a document with nothing in it', async () => {
+      // OPENING THE PANEL calls the one door with the document the page mounted
+      // with, which on a project nobody has drawn on is the empty one — and a
+      // record whose document has no nodes is a file on the volume for a reader
+      // who has said nothing, one per project anybody ever opens the panel on.
+      const fetching = answering({ status: 200, json: async () => ({}) })
+      const { c } = panel({ stored: false, open: false })
+
+      c.toggleProposal()
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).not.toHaveBeenCalled()
+      expect(c.state.proposalHeld).toBe(false)
+    })
+
+    it('stores one ticked off to the last node, which is work somebody did', async () => {
+      // THE TEST IS `isEmpty` AND NOT `sendsNothing`: this document has a body
+      // in it — sizes, a name, a position — and the reader has only said "do not
+      // send it yet". Refusing to store that would lose the drawing to a tick.
+      const fetching = answering({ status: 200, json: async () => ({}) })
+      const { c } = panel({ stored: false })
+
+      c.setProposal(addNode(emptyProposal(), { ...BLOCK, skip: true }))
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(1)
+      // AND THE PROJECTION IS NULL, which is the hub's word for "this one says
+      // nothing" — the same fact the comment's pointer is gated on.
+      expect(posted(fetching).text).toBeNull()
+      expect(posted(fetching).doc.nodes).toHaveLength(1)
+    })
+
+    it('stores a part of the build dragged, which does not come through the door',
+       async () => {
+      // THE ONE EDIT THAT IS NOT MADE IN THE PANEL. `hmr:moved` writes the
+      // document with a functional updater — a patch landing after a swap would
+      // put back every node the swap took out — so it never reaches
+      // `setProposal`, which is where the save hangs. Left at that, the reader
+      // drags a part, sees the row, reloads and the row is gone; and the one kind
+      // of node the `published`/`view` stamps exist to bring back would be the
+      // only kind that never got stored. The asymmetry was the tell: deleting a
+      // move through its `×` saved, making one did not.
+      const fetching = answering({ status: 200, json: async () => ({}) })
+      const { c } = mounted({ stored: false })
+
+      drag('/model/plate', [3, 0, 0])
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(1)
+      expect(fetching.mock.calls[0][1].method).toBe('POST')
+      const sent = posted(fetching).doc.nodes.filter((n) => n.role === 'move')
+      expect(sent).toHaveLength(1)
+      expect(sent[0].delta).toEqual([3, 0, 0])
+      expect(posted(fetching).text).toContain('move "plate" by (3, 0, 0)')
+    })
+
+    it('goes on mirroring a record the hub holds when the reader empties it', async () => {
+      // THE RECORD MIRRORS THE PAGE once there is one: a reader who deletes
+      // their last body means it, and a stored document that outlived the page
+      // showing none would come back on the next reload.
+      const fetching = answering({ status: 200, json: async () => ({}) })
+      const { c } = panel({ proposal: withBlock(), stored: true })
+
+      c.setProposal(emptyProposal())
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(1)
+      expect(posted(fetching).doc.nodes).toEqual([])
+    })
+
+    // -- and what the hub says back ------------------------------------------
+
+    it('posts the next edit again when the hub refused the last one', async () => {
+      // THE PAYLOAD IS RECORDED AS SENT BEFORE THE REQUEST, so a refusal that
+      // nothing reads leaves the memo claiming the hub holds a document it never
+      // took — and the edit is lost until the reader happens to make another one
+      // that differs from it. Reading the answer and forgetting the memo is the
+      // whole of the retry.
+      const fetching = answering({ status: 401, json: async () => ({}) },
+                                 { status: 200, json: async () => ({}) })
+      const { c } = panel({ stored: false })
+
+      c.setProposal(withBlock())
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(fetching).toHaveBeenCalledTimes(1)
+      // NOTHING MOVED ON THIS SIDE EITHER: both flags describe the hub, and the
+      // hub took nothing.
+      expect(c.state.proposalHeld).toBe(false)
+      expect(c.state.proposalStands).toBe(false)
+
+      // THE SAME DOCUMENT, which is the case that used to be skipped: a size
+      // nudged and put back, or the panel reopened.
+      c.setProposal(withBlock())
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(2)
+      expect(c.state.proposalHeld).toBe(true)
+    })
+
+    it('and when the connection dropped, which the hub never saw at all', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      onTestFinished(() => vi.restoreAllMocks())
+      const fetching = vi.fn()
+        .mockImplementationOnce(async () => { throw new TypeError('Failed to fetch') })
+        .mockImplementation(async () => ({ status: 200, json: async () => ({}) }))
+      vi.stubGlobal('fetch', fetching)
+      const { c } = panel({ stored: false })
+
+      c.setProposal(withBlock())
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(fetching).toHaveBeenCalledTimes(1)
+
+      c.setProposal(withBlock())
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(2)
+    })
+
+    it('raises what the comment will say when a save lands', async () => {
+      // THE ANNOUNCEMENT HAS TO BE CURRENT, not as of the load: a reader who
+      // draws a proposal and then writes a comment in the same session gets no
+      // pointer at all if nothing revises the flag after this page's own writes.
+      const fetching = answering({ status: 200, json: async () => ({}) })
+      const { c } = panel({ stored: false })
+
+      c.setProposal(withBlock())
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(1)
+      expect(c.state.proposalStands).toBe(true)
+      expect(c.state.proposalHeld).toBe(true)
+    })
+
+    it('and lowers it again where what is left would send nothing', async () => {
+      // The other direction, and the reason this is not simply "a record
+      // exists": everything in the document is ticked off, so the record is
+      // still there and there is nothing in it for an agent to read.
+      answering({ status: 200, json: async () => ({}) })
+      const { c } = panel({ proposal: withBlock(), stored: true, stands: true })
+
+      c.setProposal(addNode(emptyProposal(), { ...BLOCK, skip: true }))
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(c.state.proposalStands).toBe(false)
+      expect(c.state.proposalHeld).toBe(true)
+    })
+  })
+
+  // -- deleting it -----------------------------------------------------------
+
+  describe('deleted from the branch\'s header', () => {
+    it('is offered beside the eye and the master tick', () => {
+      const { c } = panel({ proposal: withBlock() })
+      const v = c.computed()
+
+      expect(typeof v.proposalRemove).toBe('function')
+      expect(v.proposalRemoveTitle).toContain('delete')
+    })
+
+    it('asks first, and a refusal leaves both sides standing', async () => {
+      // The document is persisted work now, and one misclick must not be the
+      // whole of it — which is why this `×` interrupts where the row's does not.
+      const fetching = answering({ status: 200, json: async () => ({}) })
+      const asked = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      const { c } = panel({ proposal: withBlock(), stored: true })
+
+      await c.removeProposal()
+
+      expect(asked).toHaveBeenCalled()
+      expect(fetching).not.toHaveBeenCalled()
+      expect(c.state.proposal.nodes).toHaveLength(1)
+      expect(c.state.proposalHeld).toBe(true)
+    })
+
+    it('clears the record and the page together', async () => {
+      const fetching = answering({ status: 200, json: async () => ({ removed: true }) })
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const { c, el } = panel({ proposal: withBlock(), stored: true, stands: true })
+
+      await c.removeProposal()
+
+      expect(fetching).toHaveBeenCalledWith(
+        `/api/v1/proposals/${PAGE.pid}`,
+        { method: 'DELETE', headers: { Authorization: 'Bearer sekrit' } })
+      expect(c.state.proposal.nodes).toEqual([])
+      expect(c.state.proposalHeld).toBe(false)
+      // AND THE COMMENT STOPS POINTING AT IT, which is the half that outlives
+      // this panel: a pointer to a document the hub no longer holds is an agent
+      // sent to read nothing.
+      expect(c.state.proposalStands).toBe(false)
+      // AND THE MODEL WITH IT, because the page is cleared through the same one
+      // door every other edit goes through.
+      expect(el.clearOverlay).toHaveBeenCalled()
+    })
+
+    it('cancels the save the clearing itself armed', async () => {
+      // `setProposal(emptyProposal())` arms a write like any other edit, and an
+      // empty document posted a beat after the DELETE would put the record
+      // straight back.
+      vi.useFakeTimers()
+      onTestFinished(() => vi.useRealTimers())
+      const fetching = answering({ status: 200, json: async () => ({ removed: true }) })
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const { c } = panel({ proposal: withBlock(), stored: true })
+
+      await c.removeProposal()
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(fetching).toHaveBeenCalledTimes(1)
+      expect(fetching.mock.calls[0][1].method).toBe('DELETE')
+    })
+
+    it('leaves the page alone when the hub would not delete it', async () => {
+      const fetching = answering({ status: 401, json: async () => ({}) })
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const { c } = panel({ proposal: withBlock(), stored: true })
+
+      await c.removeProposal()
+
+      expect(fetching).toHaveBeenCalledTimes(1)
+      expect(c.toast).toHaveBeenCalledWith('The hub refused the token')
+      expect(c.state.proposal.nodes).toHaveLength(1)
+      expect(c.state.proposalHeld).toBe(true)
+    })
   })
 })

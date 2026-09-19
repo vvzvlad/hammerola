@@ -78,15 +78,17 @@
 // what "exclude from the code being sent" asks for.
 //
 // IT IS A FIELD OF THE DOCUMENT AND NOT OF THE INTERFACE, which is the half
-// worth saying, and the reason is what the document ALREADY survives rather
-// than anything it might one day: a reader who ticked eight of ten nodes off has
-// done work that a re-render must not throw away, and the tick has to ride
-// through `dropMoves`, through every functional updater that rebuilds the node
-// list, and through the revision swap, which re-projects the attachment from the
-// document it carried across. Nothing here claims it survives a RELOAD — this
-// document is held in page state and is not written anywhere, so a reload loses
-// all of it; when that changes, the tick goes wherever the rest of it goes,
-// which is the point. A document written before this field existed simply has
+// worth saying, and the reason is what the document survives: a reader who
+// ticked eight of ten nodes off has done work that a re-render must not throw
+// away, and the tick has to ride through `dropMoves`, through every functional
+// updater that rebuilds the node list, and through the revision swap, which
+// re-projects the attachment from the document it carried across. AND THROUGH A
+// RELOAD, which this paragraph used to say was the one thing it did not do: the
+// hub keeps one of these per project now, read and written under the same
+// EDIT_TOKEN as everything else (`loadProposal` and `saveProposal` in
+// HammerolaViewer.jsx), and what travels there is the DOCUMENT — so the tick
+// went where the rest of it went, which is what being a field of the document
+// promised it would. A document written before this field existed simply has
 // no such field on its nodes, and reads as not skipped — every test here is a
 // falsy read, so there is nothing to migrate.
 const MOVE = 'move'

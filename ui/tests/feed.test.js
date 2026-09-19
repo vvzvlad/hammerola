@@ -130,6 +130,11 @@ function page({ feed = [], token = 'sekrit', partPoint, watch, ...over } = {}) {
     // does it reads this.
     proposal: emptyProposal(), proposalOpen: false, proposalOff: false,
     proposalError: null, proposalDraft: null,
+    // Whether the hub holds a proposal for this project that SAYS something, as
+    // `loadProposal` learned it and this page's own saves have kept it since.
+    // `sendComment` reads it to decide whether to tell the agent there is one to
+    // read, so the default here is the page that has nothing to point at.
+    proposalStands: false,
     token, tokenPop: false, tokenDraft: '',
     theme: 'light', tabs: [], narrow: false, treeOpen: false,
     ...over,
@@ -306,6 +311,62 @@ describe('a comment that was just filed', () => {
     // would split the one-line facts above it away from the sentence they
     // belong to.
     expect(sent.text.indexOf('proposal')).toBeGreaterThan(sent.text.indexOf('measured:'))
+  })
+
+  it('points at the stored proposal where the reader attached none', async () => {
+    // THE DOCUMENT OUTLIVES THE PAGE NOW — the hub keeps one per project — so a
+    // comment written without it attached goes to an agent that has no way of
+    // knowing there is one to read. The page already asked for it when the token
+    // arrived (`loadProposal`), so this costs no second request.
+    const fetching = answering({ status: 201 }, served([]))
+    const c = page({
+      proposalStands: true,
+      composer: { part: '', partId: null, key: null, p: null,
+                  text: 'too thin', photo: null },
+    })
+
+    await c.sendComment()
+
+    const sent = JSON.parse(fetching.mock.calls[0][1].body.get('comment'))
+    expect(sent.text).toContain('a proposal stands on this project')
+    expect(sent.text).toContain('hammerola proposal')
+  })
+
+  it('says nothing about it when the proposal is right there in the comment', async () => {
+    // With the block attached, a pointer to the same document is noise.
+    const fetching = answering({ status: 201 }, served([]))
+    const c = page({
+      proposalStands: true,
+      composer: { part: '', partId: null, key: null, p: null,
+                  text: 'too thin', photo: null,
+                  proposal: 'units: mm\n\nresult = union(solid) - union(hole)' },
+    })
+
+    await c.sendComment()
+
+    const sent = JSON.parse(fetching.mock.calls[0][1].body.get('comment'))
+    expect(sent.text).toContain('units: mm')
+    expect(sent.text).not.toContain('hammerola proposal')
+  })
+
+  it('says nothing about it where the hub holds no proposal at all', async () => {
+    // Including the page that never got an answer: `proposalStands` is false
+    // until `loadProposal` or a save of this page's own says otherwise, and a
+    // page that does not know must not tell the agent there is something to
+    // read. It is the same false either way, which is the half `proposalHeld`
+    // keeps apart: a load that has not answered may not WRITE, while what it may
+    // not do here is CLAIM.
+    const fetching = answering({ status: 201 }, served([]))
+    const c = page({
+      proposalStands: false,
+      composer: { part: '', partId: null, key: null, p: null,
+                  text: 'too thin', photo: null },
+    })
+
+    await c.sendComment()
+
+    const sent = JSON.parse(fetching.mock.calls[0][1].body.get('comment'))
+    expect(sent.text).toBe('too thin')
   })
 
   it('leaves the queue alone when the hub refused it', async () => {

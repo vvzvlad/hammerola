@@ -129,8 +129,8 @@ import {
 // — a part's colour is model content, like the colours the hub pushes in a view
 // file, and this file paints no part.
 import {
-  addNode, bodies, dropMoves, emptyProposal, firstFree, moveNodes, moves,
-  removeNode, proposalText, sendsNothing, updateNode,
+  addNode, bodies, dropMoves, emptyProposal, firstFree, isEmpty, moveNodes,
+  moves, removeNode, proposalText, sendsNothing, updateNode,
 } from './proposal.js';
 import { buildProposal } from './proposalgeom.js';
 import {
@@ -321,6 +321,15 @@ const HOLD_KEY_LABEL = 'C';
 // that a single click of an arrow reads as an immediate answer. `nudgeProposal`
 // says what this buys and what it costs.
 const NUDGE_QUIET_MS = 100;
+
+// HOW LONG THE PROPOSAL HAS TO STAND STILL before it is written to the hub.
+// Every edit made in the panel comes through `setProposal`, and a drag of a body
+// is a run of them — so a save per edit would be a request per frame of a
+// gesture. Long enough that a sentence being typed into a field is one write at
+// the end of it, short enough that a reader who says something and closes the
+// tab has already been saved. `saveProposal` says what the guards around it are
+// for, and who calls it.
+const PROPOSAL_SAVE_MS = 800;
 
 // -- whether this hub serves the proposal panel at all ------------------------
 //
@@ -1165,6 +1174,36 @@ export default class HammerolaViewer extends React.Component {
       // has to go and find.
       proposal: emptyProposal(), proposalOpen: false, proposalError: null,
       proposalDraft: null, proposalOff: false,
+      // WHAT THE HUB HOLDS, in two fields with one reader each — because the two
+      // questions asked of it are different questions, and one field answering
+      // both was wrong for both. `proposalHeld` is about the RECORD and is read
+      // by `saveProposal` alone; `proposalStands` is about what is IN it and is
+      // read by `sendComment` alone.
+      //
+      // `proposalHeld` — is there a record for this project, and do we know yet:
+      //
+      //   * `null` — `loadProposal` has not answered. Nothing is written in this
+      //     state, which is the guard that keeps a page that has not read the
+      //     stored document from overwriting it with the empty one it mounted
+      //     with. A LOAD THAT FAILED LEAVES IT NULL, deliberately: nothing was
+      //     learned, so nothing may be written over. AND SO DOES A RECORD THIS
+      //     PAGE DECLINED TO ADOPT (`adoptProposal`, where the reader had
+      //     already drawn something): the page read a document it never showed,
+      //     and "do not write" is exactly what it has to go on meaning;
+      //   * `false` — asked, and there is nothing stored (a 404, or the record
+      //     deleted from the branch's own `×`). A document with nothing in it is
+      //     not written in this state either: an empty page would otherwise
+      //     CREATE a record the moment the panel was opened;
+      //   * `true` — a record is on the hub, because one was read or one was
+      //     written.
+      //
+      // `proposalStands` — and it says something: the record's `text` is not
+      // null, which is the hub's own word for a document that is neither empty
+      // nor ticked off to the last node. `sendComment` tells the agent there is
+      // one to read, where the reader did not attach it themselves — so it has
+      // to be CURRENT rather than as of the load, and every write moves it: a
+      // save raises or lowers it, the delete lowers it.
+      proposalHeld: null, proposalStands: false,
       // -- who the reader is
       // No project id: the secret is one string for the whole hub since step 0,
       // so keying it per project stored N copies of it (see store.js).
@@ -1327,7 +1366,10 @@ export default class HammerolaViewer extends React.Component {
     // The queue takes the token, so a reader without one asks for nothing. The
     // other door is `tokenSave`, where a reader who has just entered one is in
     // exactly this position.
-    if (this.state.token) this.loadFeed();
+    //
+    // AND THE STORED PROPOSAL WITH IT, behind the same token and through the
+    // same two doors: `loadProposal` says why those two and no others.
+    if (this.state.token) { this.loadFeed(); this.loadProposal(); }
 
     this._h = {
       [PICK]: (e) => this.onPick(e.detail),
@@ -1712,6 +1754,20 @@ export default class HammerolaViewer extends React.Component {
           const done = this.state.proposal || emptyProposal();
           if (opened) this.stageProposal(done);
           else this.proposalMoves(done);
+          // AND IT IS SAVED FROM HERE, because this gesture does not go through
+          // `setProposal` and that is the only other door the save hangs off.
+          // Dragging a part of the build is the reader's own edit — it puts a
+          // node in the document and a line in the projection the agent reads —
+          // so a page that stored everything BUT this would lose the one kind of
+          // node the `published`/`view` stamps exist to bring back, and would
+          // lose it silently: the row is on screen, the record does not have it.
+          //
+          // THE COMMITTED DOCUMENT AND NOT THE UPDATER'S, for the reason the two
+          // pushes above take it from here as well — another patch can be batched
+          // behind this one, and the one that matters is `onModel`'s `dropMoves`.
+          // Saving what this edit WOULD have committed could write a move the
+          // committed document no longer holds.
+          this.saveProposal(done);
         });
       },
       [PROPOSALMOVE]: (e) => {
@@ -1964,6 +2020,9 @@ export default class HammerolaViewer extends React.Component {
     // And the nudge still waiting for the arrows to stop, which would otherwise
     // wake up and commit a number into a panel that is gone.
     clearTimeout(this._nudge);
+    // And the proposal's save, for the same reason one step further out: it
+    // would wake up and POST on behalf of a page nobody is looking at.
+    clearTimeout(this._proposalSave);
     // The deferred swap goes with them: it holds `this` and would come back on a
     // component that is gone, to `setState` on it.
     clearTimeout(this._swap);
@@ -2870,6 +2929,21 @@ export default class HammerolaViewer extends React.Component {
       // instead, which is another build opening and the same operation.
       if (!d.live || this._refit) this.captureHome();
       this._refit = false;
+      // AND THE STORED DOCUMENT IS ADOPTED HERE, in the callback and not in the
+      // updater above, because this is the first instant at which both of the
+      // things the adoption needs are true: a view has rendered, so `meta` is
+      // in, and the `dropMoves` a few lines up has already run. Adopted any
+      // earlier, the moves the reader stored against THIS build would be wiped
+      // by that very line a moment later — which is what a cold reload used to
+      // do to every one of them. `adoptProposal` asks for both rather than
+      // trusting that order, since it is also called from the other side.
+      //
+      // THE FETCH IS NOT MOVED HERE, only the adoption: `loadProposal` still
+      // asks the hub where the token arrives, and `adoptProposal` is whichever
+      // of the two lands last performing it. ONE SHOT — it spends the record —
+      // and the re-stage it causes comes straight back through here.
+      this._modelSeen = true;
+      this.adoptProposal();
       // The rejoined ids have to reach the viewport, and a state event is the
       // only way there — but every model event needs this one now, rejoin or
       // not: the tree that has just landed is what the comment pins hang on, so
@@ -3685,10 +3759,25 @@ export default class HammerolaViewer extends React.Component {
    * NOTHING TO DRAW IS NOT AN ERROR: a document with no bodies in it — a panel
    * just opened, the last body deleted — builds a payload with no parts in it,
    * and an empty overlay in the tree is worse than no overlay at all.
+   *
+   * AND IT IS WHERE THE DOCUMENT IS WRITTEN TO THE HUB, which is nearly the
+   * whole story and not quite all of it. Debounced and guarded — `saveProposal`
+   * carries the argument — and every edit made in the PANEL comes through here,
+   * so none of them can slip past.
+   *
+   * THE ONE EDIT THAT DOES NOT IS THE `hmr:moved` GESTURE, and it calls
+   * `saveProposal` itself from its own completion callback. It has to write
+   * `state.proposal` with a functional updater rather than through this door —
+   * the reason is at the handler, and it is about a patch landing after a swap —
+   * but it IS an edit the reader made: dragging a part of the build puts a node
+   * in the document and a line in the projection an agent reads. `onModel`'s
+   * `dropMoves` is the other writer and is not an edit at all; it takes nodes
+   * away because the build they described has gone, and saves nothing.
    */
   setProposal(doc) {
     this.setState({ proposal: doc, ...this.selectionAfter(doc) });
     this.stageProposal(doc);
+    this.saveProposal(doc);
   }
 
   /**
@@ -4502,6 +4591,397 @@ export default class HammerolaViewer extends React.Component {
     this.set({ feed: (body && body.comments) || [] });
   }
 
+  /**
+   * The project's stored proposal, fetched — one document per project, behind
+   * the same EDIT_TOKEN everything else on this page is behind.
+   *
+   * CALLED FROM EXACTLY TWO PLACES, and the one it is deliberately NOT called
+   * from is the point. `loadFeed` is refetched quietly after every comment is
+   * sent, and a refetch that re-adopted the stored document would stamp on
+   * whatever the reader has edited since — so this is asked where the TOKEN
+   * arrives (`componentDidMount` and `tokenSave`) and nowhere else. Its
+   * neighbour's shape otherwise: never thrown out of, a fixed sentence rather
+   * than the hub's own, and the document the page already has left standing on
+   * every failure.
+   *
+   * WHAT IT DOES WITH THE ANSWER IS NOT HERE. The record is put down on
+   * `_proposalRecord` and `adoptProposal` is asked to take it, which it does at
+   * the first moment the page is in a state to — see there for why that moment
+   * is not this one.
+   */
+  async loadProposal() {
+    let response = null;
+    try {
+      response = await fetch(
+        `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`,
+        { headers: { Authorization: `Bearer ${this.state.token}` } });
+    } catch (error) {
+      console.error('proposal', error);
+      this.toast('Could not reach the hub');
+      return;
+    }
+    // A PROJECT WITH NOTHING STORED IS NOT A FAILURE, and it is the answer that
+    // opens the door to saving: there is nothing left to overwrite. Nothing to
+    // adopt either, so this one needs no scene and no build and is answered on
+    // the spot.
+    if (response.status === 404) {
+      this.setState({ proposalHeld: false, proposalStands: false });
+      return;
+    }
+    if (response.status !== 200) {
+      this.toast(response.status === 401
+        ? 'The hub refused the token'
+        : 'Could not load the proposal');
+      return;
+    }
+    let body = null;
+    try {
+      body = await response.json();
+    } catch (error) {
+      console.error('proposal', error);
+      this.toast('Could not load the proposal');
+      return;
+    }
+    this._proposalRecord = body || {};
+    this.adoptProposal();
+  }
+
+  /**
+   * The record the hub answered with, put on the page — at the first moment the
+   * page can take it, which is not the moment it arrived.
+   *
+   * TWO THINGS HAVE TO BE TRUE, and the fetch is racing both of them.
+   *
+   * `meta` HAS TO BE IN, because whether the stored moves may be kept is
+   * decided by comparing the record's build stamp and view against this page's,
+   * and a `meta` that has not landed reads as "some other build" — which
+   * silently dropped the moves of every cold reload, the one case the stamp was
+   * put there for. It lands with builds.json, one fetch behind this one, and
+   * `state.view` is set in the same patch, so one wait covers both.
+   *
+   * AND THE FIRST MODEL EVENT HAS TO HAVE PASSED. `onModel` drops the moves of
+   * every build that lands (`dropMoves`, and the note there says why), so a
+   * document adopted before the build reaches the screen has its moves taken
+   * out from under it a moment later. The same event is where this interface
+   * learns a scene is up, which the two doors to the viewport need
+   * (`proposalMoves`, `proposalOverlay` are a bare early return without one).
+   *
+   * SO WHICHEVER LANDS LAST PERFORMS IT: this is called from `onModel`'s
+   * callback and from `loadProposal`, and the one that finds the other's half
+   * already in place is the one that adopts. No flag of its own and no timer —
+   * the record on `_proposalRecord` IS the "not yet taken" state, and it is
+   * spent here. `tokenSave`'s door needs no wait at all: a reader typing a token
+   * into a page has meta and a scene already, so the call from `loadProposal`
+   * adopts on the spot.
+   *
+   * ADOPTED ONLY INTO AN EMPTY DOCUMENT (`isEmpty`). The wait above is one more
+   * reason the reader may have drawn something by now, and their own work
+   * outranks a document they have not seen. The record is spent either way: the
+   * hub is not asked twice.
+   *
+   * AND A PAGE THAT DECLINED IT MAY NOT WRITE. `proposalHeld` is left at `null`,
+   * which already means "do not write", because this page has read a record it
+   * never showed, and raising the flag would let the reader's very next edit
+   * post their own document straight over it. That is the whole of the guard: a
+   * page that would not take the record has not earned the right to destroy it.
+   * `proposalStands` is raised all the same, because it is about what the HUB
+   * holds and what the hub holds is unchanged.
+   *
+   * ONE TOAST GOES WITH THE REFUSAL, because the alternative is a reader drawing
+   * into a page that is quietly saving nothing.
+   *
+   * ONLY ON A PAGE THAT HAS NEVER ADOPTED (`proposalHeld !== true`), and that
+   * clause is not belt and braces. `loadProposal` runs again on EVERY
+   * `tokenSave`, not only the first — a reader who re-pastes a token they
+   * already had brings back a fresh record — and by then the document on screen
+   * is one this page adopted and has been saving all along. Without the clause
+   * that second pass takes the refusal branch and says "your drawing is not
+   * being saved" to a reader whose drawing is being saved perfectly well; the
+   * natural answer to that alarm is the branch's `×`, which would lose it for
+   * real. Such a pass re-reads what the hub holds and does nothing else.
+   *
+   * AND THE MOVES ARE DROPPED WHERE THE STORED BUILD AND VIEW ARE NOT THIS
+   * PAGE'S — BOTH, not the build alone. A move's `paths` are paths in ONE
+   * revision's tree as ONE view groups it — `/model/pin(2)`, a number the
+   * tessellator hands out — so a rebuild renumbers them and another view is a
+   * separate tree of references altogether (`src/cadbuild/views.py`); either
+   * way a stored move re-applied here can displace a DIFFERENT part. `published`
+   * is IDENTICAL across the views of one build, so the build alone would let a
+   * reader who switched view, dragged parts and reloaded come back on the
+   * default view with those moves on the wrong tree — while within one session
+   * `onModel` drops them on every switch. `dropMoves` is that rule already
+   * written down, in those three words (ui/src/proposal.js); the BODIES are
+   * kept, because a motor the model has to clear is as true of one build and
+   * one view as of another.
+   *
+   * THROUGH `setProposal`, so the bodies reach the model the way every other
+   * edit does — and BEFORE `proposalHeld` is raised, so the save hanging off
+   * that door reads the load as unanswered and writes nothing. An adoption is
+   * not an edit, and the record must not be re-stamped by the page that has
+   * just read it; the order below is the whole of how that is arranged.
+   */
+  adoptProposal() {
+    const record = this._proposalRecord;
+    if (!record || !this.state.meta || !this._modelSeen) return;
+    this._proposalRecord = null;
+    const doc = record.doc || null;
+    // `!!` AND NOT `!= null` on `text`, wherever it is read below: what the
+    // announcement claims is that there is something to read, and the hub writes
+    // `text` as null for a document that projects to nothing. An empty string is
+    // the same fact spelled differently.
+    // A RECORD WITH NOTHING IN IT IS NOT SOMETHING TO PROTECT, and that is why
+    // the refusal below asks about the STORED document and not only about the
+    // page's. The hub legitimately holds `{nodes: []}` — `saveProposal` writes it
+    // when a reader deletes their last body — and treating that as work worth
+    // declining for would leave the reader drawing into a page that has decided
+    // never to save, over a record that says nothing at all. Nothing is lost by
+    // writing over it, so the ordinary path takes it.
+    const worth = !!doc && !isEmpty(doc);
+    const bare = isEmpty(this.state.proposal || emptyProposal());
+    if (worth && !bare && this.state.proposalHeld !== true) {
+      this.setState({ proposalStands: !!record.text });
+      this.toast('This project has a stored proposal — your drawing is not '
+                 + 'being saved');
+      return;
+    }
+    // AND THE PAGE'S OWN DOCUMENT IS STILL NEVER OVERWRITTEN. The refusal above
+    // no longer covers this on its own: a record with nothing in it falls past
+    // it, and taking one over a reader who has drawn something would clear the
+    // screen with an empty document to no purpose at all.
+    if (doc && bare) {
+      const here = !!(record.published
+                      && record.published === this.state.meta.published
+                      && record.view
+                      && record.view === this.state.view);
+      const taken = here ? doc : dropMoves(doc);
+      this.setProposal(taken);
+      // WHAT WAS TAKEN COUNTS AS ALREADY SENT, and this line is the whole of
+      // what keeps a reader's stored moves from being destroyed by a page that
+      // merely opened the sheet. `setProposal` is the save's door, so the very
+      // next call through it — `toggleProposal` pushes the same document — would
+      // otherwise find an empty memo and post. On THIS build and view that is
+      // one request saying nothing; on any other it is the record rewritten with
+      // this page's stamps and without the moves `dropMoves` has just taken out
+      // for display, and those moves are then gone from the hub for good.
+      //
+      // Nothing is sent, and nothing is claimed about the hub beyond what it
+      // just told us: the memo only answers "has this exact document gone", and
+      // this exact document is where it came from. A real edit differs from it
+      // and posts as usual — including, on another build, the document without
+      // the moves, which is `dropMoves`'s own rule and not a loss this invents.
+      this._proposalSent = JSON.stringify(this.proposalPayload(taken));
+    }
+    this.setState({ proposalHeld: true, proposalStands: !!record.text });
+  }
+
+  /**
+   * The document written back to the hub, once the edits have stopped.
+   *
+   * HUNG OFF `setProposal`, the door every edit made IN THE PANEL comes through
+   * — and off ONE other place, the completion callback of the `hmr:moved`
+   * handler, which writes the document with a functional updater and therefore
+   * cannot use that door (`setProposal` says why it cannot). Those two are the
+   * whole inventory, and the second is named here rather than left to be
+   * rediscovered: the bug it fixes was born of the belief that the door was one,
+   * and a reader who still believes that will delete the call as a duplicate.
+   * `onModel`'s `dropMoves` is the third writer of the document and is not an
+   * edit at all — it takes nodes away because the build they described has gone,
+   * and saves nothing.
+   *
+   * FOUR GUARDS, AND EVERY ONE IS LOAD-BEARING.
+   *
+   * NOTHING IS SAVED UNTIL THE LOAD HAS RESOLVED (`proposalHeld` is still
+   * null). Without it the page mounts with an empty document, the reader opens
+   * the panel — which calls this door with that same empty document — the
+   * debounce fires, and the proposal they stored last week is destroyed by a
+   * page that had not read it yet. A PAGE THAT DECLINED THE RECORD IS THE SAME
+   * STATE AND IS HELD THERE ON PURPOSE (`adoptProposal`): it read a document it
+   * never showed, so it may not write over it either.
+   *
+   * NO TOKEN, NO SAVE. The panel is hidden without one, but the branch of the
+   * tree outlives the token and `tokenClear` works right beside this door; a
+   * page that has stopped being allowed to edit must not go on writing.
+   *
+   * AND AN EMPTY DOCUMENT DOES NOT CREATE A RECORD. Opening the panel on a
+   * project with nothing stored calls this door with the document the page
+   * mounted with, and a record whose document has no nodes in it is a file on
+   * the volume for a reader who has said nothing — one per project anybody ever
+   * opens the panel on. `isEmpty` AND NOT `sendsNothing`: a document ticked off
+   * to the last node is work somebody did, and it is stored like any other.
+   * ONCE THE HUB HOLDS ONE, emptying the page goes on saving — the record
+   * mirrors what is on screen, and a reader who deletes their last body means
+   * it.
+   *
+   * AND A PAYLOAD IDENTICAL TO THE LAST ONE SENT IS NOT AN EDIT. Opening the
+   * sheet calls `setProposal` with the document it already had (`toggleProposal`
+   * says why), and a reader who nudges a size and puts it back has made no
+   * change either — a request per panel opening is a request that says nothing.
+   * THE ADOPTION IS NOT WHAT THIS GUARD CATCHES, though it comes through the
+   * same door: it is refused a line above, by a `proposalHeld` that
+   * `adoptProposal` deliberately raises only afterwards.
+   *
+   * THE PENDING SAVE IS CANCELLED FIRST, whichever way this call then goes. A
+   * skip has to reach the armed timer too: a reader who edits and then undoes
+   * back to the stored document would otherwise have the intermediate document
+   * posted by a timer nothing disarmed.
+   */
+  saveProposal(doc) {
+    clearTimeout(this._proposalSave);
+    // UNDEFINED IS READ AS NULL HERE, for the reason `openTabs` in `computed()`
+    // carries its `|| []`: every test file in ui/tests spells the state out by
+    // hand, and a fixture written before this field existed has to be a page
+    // that does not write rather than one that does.
+    const held = this.state.proposalHeld;
+    if (held === null || held === undefined || !this.state.token) return;
+    if (!held && isEmpty(doc)) return;
+    const payload = this.proposalPayload(doc);
+    const body = JSON.stringify(payload);
+    if (body === this._proposalSent) return;
+    // WHAT THE RECORD WILL SAY, carried to the post rather than re-derived
+    // there: the payload is a string by then, and the announcement `sendComment`
+    // makes is about this exact fact.
+    this._proposalSave = setTimeout(() => this.postProposal(body, !!payload.text),
+                                    PROPOSAL_SAVE_MS);
+  }
+
+  /**
+   * The body a save of this document would send, as an object.
+   *
+   * ONE BUILDER AND TWO CALLERS, and the second caller is why it is a method
+   * rather than four lines inside `saveProposal`. That one SENDS it;
+   * `adoptProposal` records it as already sent without sending anything, so that
+   * taking a document off the hub is not immediately followed by writing it back.
+   * Spelled out in both places the two would agree until somebody adds a field to
+   * one of them, and the cost of disagreeing is silent on both sides: a post that
+   * says nothing new, or a stored proposal overwritten by a page that only opened
+   * a panel. `ui/tests/proposalpanel.test.js` holds them equal.
+   *
+   * AN OBJECT AND NOT THE STRING, because `saveProposal` needs `text` again after
+   * building it — the announcement flag rides to `postProposal` beside the body,
+   * and re-reading it out of the serialised form would be parsing what this just
+   * wrote.
+   */
+  proposalPayload(doc) {
+    return {
+      doc,
+      text: sendsNothing(doc) ? null : proposalText(doc),
+      // BOTH HALVES OF WHERE THE MOVES WERE MEASURED, and neither identifies it
+      // alone: `published` is one number for the whole build and is IDENTICAL
+      // across its views, while a view is a separate tree of references with its
+      // own grouping (`src/cadbuild/views.py`), so `/model/pin(2)` in another
+      // view is a different part or the same part in a different layout.
+      // `adoptProposal` requires both to match before it puts the moves back —
+      // the rule `dropMoves` already states for a build landing on this page.
+      published: (this.state.meta && this.state.meta.published) || null,
+      view: this.state.view || null,
+    };
+  }
+
+  /**
+   * That write, made. SILENT ON BOTH SIDES: a save nobody asked for should not
+   * put a toast over the one the reader's own action raised, and there is no
+   * indicator for it anywhere — this page's copy is the one being edited, so
+   * what the hub holds is behind it by at most one debounce.
+   *
+   * THE PAYLOAD IS RECORDED AS SENT BEFORE THE REQUEST rather than after it:
+   * what the memo above answers is "has this exact document already gone", and
+   * two identical posts racing is the thing it is there to prevent.
+   *
+   * AND FORGOTTEN AGAIN IF IT DID NOT LAND. A 401, a 413, a hub that went away
+   * mid-request — the memo would go on claiming the hub holds this document,
+   * and the edit would be lost until the reader happened to make another one
+   * that differed from it. Clearing it is the whole of the retry: the next edit
+   * posts, whatever it is, so a moment's failure heals itself and a permanent
+   * one costs one request per edit rather than a timer nobody can see. SILENT
+   * STILL — nothing here was asked for by the reader, and this page's copy is
+   * the one being worked on.
+   *
+   * THE TWO FLAGS MOVE ON SUCCESS ONLY, for the same reason: what they describe
+   * is the hub's side, and a request that did not arrive changed nothing there.
+   */
+  async postProposal(body, says) {
+    this._proposalSent = body;
+    let response = null;
+    try {
+      response = await fetch(`/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.state.token}`,
+          'Content-Type': 'application/json',
+        },
+        body,
+      });
+    } catch (error) {
+      console.error('proposal', error);
+    }
+    if (!response || response.status !== 200) {
+      this._proposalSent = null;
+      return;
+    }
+    this.setState({ proposalHeld: true, proposalStands: says });
+  }
+
+  /**
+   * The stored proposal, deleted — the record on the hub and the document on the
+   * page, together.
+   *
+   * IT ASKS FIRST, with the browser's own `confirm()`, which is a thing this
+   * page does nowhere else and is deliberate: every other `×` here takes back
+   * one node of a document that is being edited on screen, while this one is the
+   * whole of work that has survived reloads. A misclick on the row beside it
+   * costs one body; a misclick on this one used to cost everything there was.
+   *
+   * THE PAGE IS CLEARED THROUGH `setProposal`, so the bodies come off the model
+   * and the branch empties the way they do for every other edit. NO SAVE
+   * FOLLOWS IT, AND WHAT MAKES THAT TRUE IS THE CANCEL — not the order of the
+   * lines. The tempting deduction is that the flags are lowered first and
+   * `saveProposal` then refuses an empty document with no record behind it; in
+   * this browser it is false, because React batches `setState` inside a promise
+   * continuation, so that door still reads `proposalHeld` as `true` and arms a
+   * timer. The `clearTimeout` below is what disarms it, and it is stated as its
+   * own promise: NOTHING THIS PAGE HAD ARMED SURVIVES THE DELETE, an edit made a
+   * second before the `×` included. (The test fixture's `setState` is
+   * synchronous, so the suite cannot tell the two readings apart — which is
+   * exactly why the right one is written down.) What the lowered flags DO buy is
+   * the next edit: with the record gone they stop it recreating one by accident.
+   * The memo goes with them, so a reader who rebuilds the same document by hand
+   * is not skipped for matching a payload the hub no longer holds.
+   */
+  async removeProposal() {
+    // BOTH HALVES ARE NAMED IN THE QUESTION, because the `×` takes both and the
+    // reader who most needs to know is the one for whom they differ: a page that
+    // declined the stored record is drawing something the hub has never seen, and
+    // this control looks from there like a way to clear the way for it.
+    if (!window.confirm(
+      'Delete the proposal — the stored one and the drawing on this page?')) {
+      return;
+    }
+    let response = null;
+    try {
+      response = await fetch(
+        `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${this.state.token}` },
+        });
+    } catch (error) {
+      console.error('proposal', error);
+      this.toast('Could not reach the hub');
+      return;
+    }
+    if (response.status !== 200) {
+      this.toast(response.status === 401
+        ? 'The hub refused the token'
+        : 'Could not delete the proposal');
+      return;
+    }
+    this.setState({ proposalHeld: false, proposalStands: false });
+    this.setProposal(emptyProposal());
+    clearTimeout(this._proposalSave);
+    this._proposalSent = null;
+    this.toast('The proposal is deleted');
+  }
+
   async sendComment() {
     const c = this.state.composer;
     const meta = this.state.meta;
@@ -4554,6 +5034,20 @@ export default class HammerolaViewer extends React.Component {
       if (c.proposal) {
         extra.push('proposal — a rough body to design against or to follow, '
                    + `not in the model:\n${c.proposal}`);
+      }
+      // AND WHERE THE DOCUMENT IS STORED BUT NOT ATTACHED, a pointer to it. The
+      // two are exclusive by construction — with the block right there, a line
+      // saying where to find the same thing is noise — so this being third
+      // never puts a one-line fact below the block that spans lines.
+      //
+      // OFF WHAT THE PAGE ALREADY KNOWS and not off a second request:
+      // `proposalStands` is the load's answer kept current by this page's own
+      // writes, so a reader who draws a proposal and then writes a comment in
+      // the same session is announced as well as one who stored it last week —
+      // and one who has just deleted theirs is not.
+      if (this.state.proposalStands && !c.proposal) {
+        extra.push('a proposal stands on this project and is not attached here '
+                   + '— `hammerola proposal` reads it');
       }
 
       const form = new FormData();
@@ -6506,6 +7000,12 @@ export default class HammerolaViewer extends React.Component {
                         proposalOff: false },
                       () => {
                         this.loadFeed();
+                        // AND THE STORED PROPOSAL, which is behind the same
+                        // token: this is the second of the two doors the token
+                        // arrives through, and `loadProposal` says why there is
+                        // no third. From the callback for the reason the feed
+                        // is: the request reads `this.state.token`.
+                        this.loadProposal();
                         this.stageProposal(this.state.proposal || emptyProposal());
                       });
         this.toast('Editing is on in this browser');
@@ -7037,6 +7537,14 @@ export default class HammerolaViewer extends React.Component {
                                     : 'hold all of it back from the agent',
       proposalHeadName: PROPOSAL_BRANCH,
       proposalHeadNameStyle: `white-space:nowrap;padding-right:4px;font:600 12px ${MONO};color:var(--text)`,
+      // THE WHOLE THING, DELETED — the record on the hub and the document on the
+      // page together, which is the one control here that reaches past this
+      // browser. It asks before it does it; `removeProposal` says why this `×`
+      // and no other one on the page is allowed to interrupt.
+      proposalRemove: stop(() => this.removeProposal().catch((error) => {
+        console.error('proposal', error);
+      })),
+      proposalRemoveTitle: 'delete the whole proposal, here and on the hub',
       // HOW MANY STATEMENTS ARE IN IT, bodies and moves together, in the place a
       // group of the parts tree carries how many parts are under it.
       proposalCount: String(doc.nodes.length),
@@ -7795,6 +8303,12 @@ export default class HammerolaViewer extends React.Component {
                   </span>
                   <span onClick={v.proposalToggle} style={css(v.proposalHeadNameStyle)}>{v.proposalHeadName}</span>
                   <span style={css(v.proposalCountStyle)}>{v.proposalCount}</span>
+                  {/* THE HEADER'S OWN `×`, drawn exactly as a row's is: same
+                      glyph, same faint ink, one level up. A row's takes one node
+                      back out of a document being edited; this one takes the
+                      whole document, and the hub's copy of it, which is why it
+                      is the only control on this page that asks first. */}
+                  <span onClick={v.proposalRemove} title={v.proposalRemoveTitle} style={css('color:var(--text-faint);cursor:pointer')}>&#10005;</span>
                 </div>
                 {v.proposalRows.map((row) => (
                   <div key={row.key} style={css('display:flex;flex-direction:column;align-items:flex-start')}>
