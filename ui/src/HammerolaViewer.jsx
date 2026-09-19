@@ -97,10 +97,11 @@ import {
   PLACE, PIN, MODEL, ERROR, TOOL, VIEWPORT_TAG,
 } from './events.js';
 import {
-  PAGE, ASSEMBLED_VIEW_ID, COMPARE_GROUPS, JOB_DONE,
-  JOB_FAILED, anchorFor, compareBase, isPointerPage, buildKey, countedName,
-  compareView, indexTree, loadCompareReport, loadJob, loadMeta, loadBuilds,
-  pageFrom, rereadPage, rowsByKey, shortId, startCompare, mb,
+  PAGE, ASSEMBLED_VIEW_ID, COMPARE_GROUPS, HUB_UNREACHABLE, JOB_DONE,
+  JOB_FAILED, anchorFor, askHub, compareBase, isPointerPage, buildKey,
+  countedName, compareView, hubBody, hubTrouble, indexTree, loadCompareReport,
+  loadJob, loadMeta, loadBuilds, pageFrom, rereadPage, rowsByKey, shortId,
+  startCompare, mb,
 } from './hub.js';
 // `readTheme`/`writeTheme` COME FROM HERE AND NOT FROM THE VIEWPORT, which is
 // the last step of the move issue #35 made: the theme stopped being the colour
@@ -4931,29 +4932,19 @@ export default class HammerolaViewer extends React.Component {
    * one that stays, and the refetch behind it is silent.
    */
   async loadFeed(quiet = false) {
-    let response = null;
-    try {
-      response = await fetch(
-        `/api/v1/comments?project=${encodeURIComponent(PAGE.pid)}`,
-        { headers: { Authorization: `Bearer ${this.state.token}` } });
-    } catch (error) {
+    const { response, error } = await askHub(
+      `/api/v1/comments?project=${encodeURIComponent(PAGE.pid)}`,
+      this.state.token);
+    if (error) {
       console.error('feed', error);
-      if (!quiet) this.toast('Could not reach the hub');
+      if (!quiet) this.toast(HUB_UNREACHABLE);
       return;
     }
-    if (response.status !== 200) {
-      if (!quiet) {
-        this.toast(response.status === 401
-          ? 'The hub refused the token'
-          : 'Could not load the comments');
-      }
-      return;
-    }
-    let body = null;
-    try {
-      body = await response.json();
-    } catch (error) {
-      console.error('feed', error);
+    const said = hubTrouble(response, 200, 'Could not load the comments');
+    if (said) { if (!quiet) this.toast(said); return; }
+    const { body, error: unread } = await hubBody(response);
+    if (unread) {
+      console.error('feed', unread);
       if (!quiet) this.toast('Could not load the comments');
       return;
     }
@@ -4979,35 +4970,26 @@ export default class HammerolaViewer extends React.Component {
    * is not this one.
    */
   async loadProposal() {
-    let response = null;
-    try {
-      response = await fetch(
-        `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`,
-        { headers: { Authorization: `Bearer ${this.state.token}` } });
-    } catch (error) {
+    const { response, error } = await askHub(
+      `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`, this.state.token);
+    if (error) {
       console.error('proposal', error);
-      this.toast('Could not reach the hub');
+      this.toast(HUB_UNREACHABLE);
       return;
     }
     // A PROJECT WITH NOTHING STORED IS NOT A FAILURE, and it is the answer that
     // opens the door to saving: there is nothing left to overwrite. Nothing to
     // adopt either, so this one needs no scene and no build and is answered on
-    // the spot.
+    // the spot. Read BEFORE the sentence below, which would call it one.
     if (response.status === 404) {
       this.setState({ proposalHeld: false, proposalStands: false });
       return;
     }
-    if (response.status !== 200) {
-      this.toast(response.status === 401
-        ? 'The hub refused the token'
-        : 'Could not load the proposal');
-      return;
-    }
-    let body = null;
-    try {
-      body = await response.json();
-    } catch (error) {
-      console.error('proposal', error);
+    const said = hubTrouble(response, 200, 'Could not load the proposal');
+    if (said) { this.toast(said); return; }
+    const { body, error: unread } = await hubBody(response);
+    if (unread) {
+      console.error('proposal', unread);
       this.toast('Could not load the proposal');
       return;
     }
@@ -5270,19 +5252,13 @@ export default class HammerolaViewer extends React.Component {
    */
   async postProposal(body, says) {
     this._proposalSent = body;
-    let response = null;
-    try {
-      response = await fetch(`/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.state.token}`,
-          'Content-Type': 'application/json',
-        },
-        body,
-      });
-    } catch (error) {
-      console.error('proposal', error);
-    }
+    // NO `hubTrouble` HERE, and that is the silence above rather than an
+    // oversight: this one has no sentence to choose between, so a 401 and a
+    // hub that went away take the same path out.
+    const { response, error } = await askHub(
+      `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`, this.state.token,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    if (error) console.error('proposal', error);
     if (!response || response.status !== 200) {
       this._proposalSent = null;
       return;
@@ -5332,25 +5308,16 @@ export default class HammerolaViewer extends React.Component {
       'Delete the proposal — the stored one and the drawing on this page?')) {
       return;
     }
-    let response = null;
-    try {
-      response = await fetch(
-        `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${this.state.token}` },
-        });
-    } catch (error) {
+    const { response, error } = await askHub(
+      `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`, this.state.token,
+      { method: 'DELETE' });
+    if (error) {
       console.error('proposal', error);
-      this.toast('Could not reach the hub');
+      this.toast(HUB_UNREACHABLE);
       return;
     }
-    if (response.status !== 200) {
-      this.toast(response.status === 401
-        ? 'The hub refused the token'
-        : 'Could not delete the proposal');
-      return;
-    }
+    const said = hubTrouble(response, 200, 'Could not delete the proposal');
+    if (said) { this.toast(said); return; }
     this.setState({ proposalHeld: false, proposalStands: false });
     this.setProposal(emptyProposal());
     clearTimeout(this._proposalSave);
@@ -5470,33 +5437,29 @@ export default class HammerolaViewer extends React.Component {
         form.append('shot', shot, named('shot', shot));
       }
 
-      // Required by the hub since step 0, and checked there before the body is
-      // parsed at all — so this header is what makes the request a comment rather
-      // than a 401.
-      const headers = { Authorization: `Bearer ${this.state.token}` };
-
-      let response = null;
-      try {
-        response = await fetch(`/api/v1/comments/${PAGE.pid}/${meta.commit}`,
-                               { method: 'POST', body: form, headers });
-      } catch (error) {
+      // The token `askHub` sends has been required by the hub since step 0, and
+      // is checked there before the body is parsed at all — so it is what makes
+      // this a comment rather than a 401, with the whole upload already spent.
+      const { response, error } = await askHub(
+        `/api/v1/comments/${PAGE.pid}/${meta.commit}`, this.state.token,
+        { method: 'POST', body: form });
+      if (error) {
         console.error('comment', error);
-        this.toast('Could not reach the hub');
+        this.toast(HUB_UNREACHABLE);
         return;
       }
-      if (response.status !== 201) {
-        // Fixed sentences rather than the hub's own message: nothing on this page
-        // should be in the habit of putting a response body on the screen.
-        const said = {
-          401: 'The hub refused the token',
-          404: 'This build is no longer available',
-          413: 'Too large — try a smaller photo',
-          422: 'The hub refused this comment. Is the photo a JPEG, PNG or WebP?',
-          429: 'Too many comments from here. Try again in a few minutes.',
-        }[response.status];
-        this.toast(said || 'Could not send the comment');
-        return;
-      }
+      // FIXED SENTENCES RATHER THAN THE HUB'S OWN MESSAGE: nothing on this page
+      // should be in the habit of putting a response body on the screen. The
+      // longest list on this page, because this is the request that can be
+      // refused for reasons the reader can act on; 401 is not among them here,
+      // since `hubTrouble` answers it with the same sentence it always does.
+      const said = hubTrouble(response, 201, {
+        404: 'This build is no longer available',
+        413: 'Too large — try a smaller photo',
+        422: 'The hub refused this comment. Is the photo a JPEG, PNG or WebP?',
+        429: 'Too many comments from here. Try again in a few minutes.',
+      }[response.status] || 'Could not send the comment');
+      if (said) { this.toast(said); return; }
 
       // THE QUEUE IS REFETCHED RATHER THAN GUESSED AT. This page used to append a
       // row of its own making — its own id, its own label, `just now` — because it
@@ -5537,23 +5500,16 @@ export default class HammerolaViewer extends React.Component {
    */
   async resolveComment(id) {
     if (!id || this.viewer()) return;
-    let response = null;
-    try {
-      response = await fetch(`/api/v1/comments/${encodeURIComponent(id)}/resolve`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${this.state.token}` },
-      });
-    } catch (error) {
+    const { response, error } = await askHub(
+      `/api/v1/comments/${encodeURIComponent(id)}/resolve`, this.state.token,
+      { method: 'POST' });
+    if (error) {
       console.error('resolve', error);
-      this.toast('Could not reach the hub');
+      this.toast(HUB_UNREACHABLE);
       return;
     }
-    if (response.status !== 200) {
-      this.toast(response.status === 401
-        ? 'The hub refused the token'
-        : 'Could not mark it processed');
-      return;
-    }
+    const said = hubTrouble(response, 200, 'Could not mark it processed');
+    if (said) { this.toast(said); return; }
     this.toast('Marked processed');
     await this.loadFeed(true);
   }
