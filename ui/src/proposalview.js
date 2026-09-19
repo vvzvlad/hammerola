@@ -12,12 +12,16 @@
  * rest — which are methods of the component because what they write is its
  * state and what they push is its viewport. The other half is the handful of
  * locals `computed()` works out once for every section that needs them: the
- * tree and the sets the eyes are drawn from, the two flags (`narrow`,
- * `compared`) every panel on the page asks about, and the little icon builders
- * the parts tree and this branch draw the SAME controls with. Nothing here is
- * recomputed, deliberately — a second answer to "is a comparison up" is two
- * panels free to disagree about it.
+ * tree and the sets the eyes are drawn from, and the two flags (`narrow`,
+ * `compared`) every panel on the page asks about. Nothing here is recomputed,
+ * deliberately — a second answer to "is a comparison up" is two panels free to
+ * disagree about it. The controls the parts tree and this branch draw the SAME
+ * icons with are imported from ui/src/panelstyle.js by both.
  */
+import {
+  INDEX_MONO, LINK, POP_SHADOW_HIGH, SWATCH, eyeDot, eyeOuter, ghostIcon, popover,
+  skipIcon,
+} from './panelstyle.js';
 import {
   addNode, bodies, emptyProposal, firstFree, proposalText, removeNode,
   sendsNothing, updateNode,
@@ -28,9 +32,7 @@ export function proposalView(s, deps) {
   const {
     // -- what `computed()` has already worked out
     tree, overlayPath, hiddenSet, ghostSet, selRow, compared, narrow, viewer,
-    popSheet, branchOpen, PROPOSAL_BRANCH,
-    // -- the controls the parts tree and this branch are both drawn with
-    eyeOuter, eyeDot, ghostIcon, skipIcon, stop, menuAt,
+    branchOpen, PROPOSAL_BRANCH, stop, menuAt,
     // -- the page's own doors
     node: nodeAt, nextSeq, set, setState, setVisibility, toggle,
     typeProposal, commitProposal, nudgeProposal, setProposal, skipProposal,
@@ -410,8 +412,7 @@ export function proposalView(s, deps) {
       marksStyle: 'display:flex;align-items:center;flex:none'
         + (leaves.length ? '' : ';visibility:hidden'),
       eyeOuter: eyeOuter(eye), eyeDot: eyeDot(eye), ghostIcon: ghostIcon(ghosted),
-      dotStyle: 'width:9px;height:9px;border-radius:3px;flex:none;margin:0 4px 0 2px;background:'
-        + ((marks && marks.color) || 'transparent'),
+      dotStyle: SWATCH + ((marks && marks.color) || 'transparent'),
       // WHAT KIND OF STATEMENT THIS ROW IS, said in the word rather than left
       // to be inferred. A move's row used to be an indented name with three
       // invisible boxes in front of it — nothing on it said this was a part
@@ -423,7 +424,7 @@ export function proposalView(s, deps) {
       // child React renders as nothing and every reading of the tree still
       // reports, which is a blank where a reader of a test expects silence.
       kind: isMove ? 'move' : null,
-      kindStyle: `flex:none;font:400 10px ${MONO};color:var(--text-faint);padding:0 2px`,
+      kindStyle: INDEX_MONO,
       // EXCLUDED FROM WHAT IS SENT, and from nothing else: the node stays in
       // the document, the body stays over the model, the part stays where the
       // move puts it. `!node.skip` is the whole of the read, which is what
@@ -594,8 +595,10 @@ export function proposalView(s, deps) {
       // by leaving the markup out of the tree entirely (`v.proposalOn` in
       // `render`). Spelling the flag here as well would be a second gate that
       // can never fire, sitting on a node that is not there to style.
-      proposalPanelStyle: (narrow ? popSheet : 'position:absolute;right:16px;top:52px;width:330px;')
-        + 'max-height:calc(100% - 110px);overflow:auto;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 12px 40px var(--shadow);z-index:15;display:' + (s.proposalOpen ? 'block' : 'none'),
+      proposalPanelStyle: popover({
+        narrow, anchor: 'right:16px;top:52px', width: '330px',
+        lead: 'max-height:calc(100% - 110px);overflow:auto;',
+        radius: '10px', pad: '13px 14px', shadow: POP_SHADOW_HIGH, z: 15, open: s.proposalOpen }),
       proposalClose: stop(() => toggleProposal()),
 
       // EVERY OP `SIZES` CAN DRAW, read off that table rather than listed again
@@ -688,7 +691,7 @@ export function proposalView(s, deps) {
       // HOW MANY STATEMENTS ARE IN IT, bodies and moves together, in the place a
       // group of the parts tree carries how many parts are under it.
       proposalCount: String(doc.nodes.length),
-      proposalCountStyle: `flex:none;font:400 10px ${MONO};color:var(--text-faint);padding:0 2px`,
+      proposalCountStyle: INDEX_MONO,
       // EMPTIED BY THE CARET rather than hidden by a style, which is how the
       // parts tree collapses a group too: a collapsed branch emits no rows.
       proposalRows: branchOpen ? proposalRows : [],
@@ -731,7 +734,7 @@ export function proposalView(s, deps) {
       // further on: a document whose every node is ticked off projects to a
       // heading and a `result =` line, and a link that attached THAT would send
       // the agent a proposal the reader had just finished withholding.
-      proposalAddStyle: 'cursor:pointer;text-decoration:underline'
+      proposalAddStyle: LINK
         + (viewer || sendsNothing(doc) || s.proposalError ? ';display:none' : ''),
       // THE TEXT AND NOT THE DOCUMENT, taken at the moment the link is pressed.
       // `proposalText` is the projection the agent reads — a few aligned lines

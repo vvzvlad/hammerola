@@ -7,6 +7,7 @@
  * second tally worked out up there could disagree with the list it is about.
  */
 import { anchorFor, rowsByKey, stamp } from './hub.js';
+import { ON_ACCENT } from './panelstyle.js';
 import { MONO } from './style.jsx';
 
 export function feedView(s, deps) {
@@ -76,7 +77,7 @@ export function feedView(s, deps) {
       // `--line-strong` keeps a silhouette against a white canvas. Same badge,
       // two backdrops, two weights — which is why they were two literals before
       // they were two roles.
-      pinStyle: `width:20px;height:20px;border-radius:10px 10px 10px 3px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO};` + (resolved ? 'background:var(--chip-bg);color:var(--text-muted)' : 'background:var(--accent);color:var(--text-on-accent)'),
+      pinStyle: `width:20px;height:20px;border-radius:10px 10px 10px 3px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO};` + (resolved ? 'background:var(--chip-bg);color:var(--text-muted)' : ON_ACCENT),
       // An orphan is the one anchor state that is news about the model rather
       // than about where the pin went, so it is the one that is coloured.
       saysStyle: `margin-top:6px;font:400 10.5px/1.5 ${MONO};color:`

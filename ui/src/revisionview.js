@@ -13,6 +13,7 @@
  * Lifting the line would take the check with it.
  */
 import { PAGE, shortId, stamp } from './hub.js';
+import { BLANK_BOX, HIDDEN, IDLE, ON_ACCENT_EDGE } from './panelstyle.js';
 import { MONO, SANS } from './style.jsx';
 
 export function revisionView(s, info, deps) {
@@ -61,7 +62,7 @@ export function revisionView(s, info, deps) {
     return {
       key: r.id,
       head: r.head || '',
-      headStyle: r.head ? `padding:7px 14px 3px;font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.09em` : 'display:none',
+      headStyle: r.head ? `padding:7px 14px 3px;font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.09em` : HIDDEN,
       id: r.pointer ? r.id : shortId(r.id),
       date: r.date,
       // IN THE PLACE THE SPACER USED TO HOLD, which is what keeps the row one
@@ -73,14 +74,14 @@ export function revisionView(s, info, deps) {
       messageStyle: `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 11.5px ${SANS};color:var(--text-muted)`,
       idStyle: `font:600 12px ${MONO};color:` + (current ? 'var(--accent-text)' : r.pointer ? 'var(--note)' : 'var(--text)'),
       badge: current && !r.badge ? 'viewing' : r.badge,
-      badgeStyle: `font:500 10.5px ${MONO};` + (r.pointer ? 'color:var(--text-muted)' : (current || r.badge) ? 'padding:2px 6px;border-radius:4px;background:var(--accent-bg);color:var(--accent-text)' : 'display:none'),
+      badgeStyle: `font:500 10.5px ${MONO};` + (r.pointer ? 'color:var(--text-muted)' : (current || r.badge) ? 'padding:2px 6px;border-radius:4px;background:var(--accent-bg);color:var(--accent-text)' : HIDDEN),
       // THE SOFT TINT AND NOT THE FULL ONE, because this row says "you are
       // here" and the tree's selected row a few pixels away says "you picked
       // this" — two markers the reader tells apart by weight rather than by
       // hue. One tint for both makes the picker shout and takes the
       // difference away; `--accent-bg-soft` is what the row was drawn in
       // before the palette existed, said as a role.
-      style: 'display:flex;align-items:center;gap:4px;padding:7px 14px 7px 10px;' + (current ? 'background:var(--accent-bg-soft);' : '') + 'cursor:default',
+      style: 'display:flex;align-items:center;gap:4px;padding:7px 14px 7px 10px;' + (current ? 'background:var(--accent-bg-soft);' : '') + IDLE,
       // NO TICK ON A ROW THAT NAMES NO COMMIT, which is the `dev` slot and
       // only it. A comparison is cached under the names it was asked with, so
       // both ends have to be permanent addresses, and the slot has none by
@@ -89,7 +90,7 @@ export function revisionView(s, info, deps) {
       // error; this is it given honestly, on the row. The box keeps its space
       // so that the rows below still line up under one another.
       cmpMark: inCmp ? '✓' : '',
-      cmpStyle: `width:16px;height:16px;border-radius:4px;flex:none;margin-right:6px;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO};cursor:pointer;` + (inCmp ? 'background:var(--accent);color:var(--text-on-accent);border:1px solid var(--accent-strong)' : 'border:1px solid var(--line-strong);background:var(--card-bg);color:transparent') + (commit ? '' : ';visibility:hidden;cursor:default'),
+      cmpStyle: `width:16px;height:16px;border-radius:4px;flex:none;margin-right:6px;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO};cursor:pointer;` + (inCmp ? ON_ACCENT_EDGE : BLANK_BOX) + (commit ? '' : ';visibility:hidden;cursor:default'),
       onCmp: !commit ? undefined : stop(() => {
         let picked = s.cmp.includes(commit) ? s.cmp.filter((x) => x !== commit) : s.cmp.concat(commit);
         if (picked.length > 2) picked = picked.slice(-2);

@@ -19,11 +19,12 @@
  * every `not compared` row.
  */
 import { DIFF_COLOURS, shortId } from './hub.js';
+import { tab } from './panelstyle.js';
 import { MONO, SANS } from './style.jsx';
 
 export function comparePanel(s, deps) {
   const {
-    tab, stop,
+    stop,
     compareRows, compareSummary, statusChip, rowReason, mm3,
     NOT_COMPARED, NOT_COMPARED_WHY,
     set, leaveCompare, compareRevisions,

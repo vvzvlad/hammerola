@@ -18,21 +18,25 @@
  * viewport. `threads`, `openCount`, `revRows` and `downloadGroups` are the four
  * panels' own answers, built by the modules beside this one and drawn by
  * controls that live up here — the rail's count on the comments button, the
- * picker's rows inside the header's menu. And `narrow`, `popSheet` and `tab`
- * are the three answers every panel on the page shares: which layout this is,
- * what a popover becomes at phone width, and how a chosen pill is drawn.
+ * picker's rows inside the header's menu. And `narrow` is the answer every
+ * panel on the page shares: which layout this is. What a popover becomes at
+ * phone width and how a chosen pill is drawn are `popover` and `tab` in
+ * ui/src/panelstyle.js, imported rather than handed over.
  */
 import {
   PAGE, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
+import {
+  ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, TAB_OFF, TAB_ON, btn, popover, tab,
+} from './panelstyle.js';
 import { dropMoves, emptyProposal } from './proposal.js';
 import { clearToken, writeToken } from './store.js';
-import { HEADER_BG, HEADER_LINE, MONO, SANS } from './style.jsx';
+import { MONO, SANS } from './style.jsx';
 
 export function chromeView(s, props, deps) {
   const {
     // -- what `computed()` has already worked out
-    meta, viewer, narrow, popSheet, tab, stop, proposalOn,
+    meta, viewer, narrow, stop, proposalOn,
     // -- the other panels' answers, drawn by controls that live up here
     revRows, downloadGroups, threads, openCount,
     // -- the lookups and constants that stay beside the component
@@ -45,16 +49,6 @@ export function chromeView(s, props, deps) {
   } = deps;
 
   const cmpReady = s.cmp.length === 2;
-
-  // `off` is a THIRD state, beside resting and active, and it is not `hide`:
-  // the button stays where the reader left it and stops working, which is what
-  // a control that is out of service FOR NOW has to look like — the argument
-  // `bannerSwitchStyle` makes at length, and the two properties
-  // `compareBtnStyle` already spells an unpressable button with. Last in the
-  // string, so its `color` and `cursor` beat the resting pair above (`css`
-  // keeps the last spelling of a property), and `pointer-events:none` is the
-  // half that actually refuses the click.
-  const btn = (active, hide, off) => `display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:6px;font:500 12px ${SANS};cursor:pointer;border:1px solid ` + (active ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'transparent;color:var(--text-soft)') + (hide ? ';display:none' : '') + (off ? ';color:var(--text-faint);cursor:default;pointer-events:none' : '');
 
   // WHICH TOOL IS REALLY IN FORCE DOWN HERE, which is not always `s.tool`:
   // opening a comparison does not disarm one (the three handlers guard
@@ -112,7 +106,7 @@ export function chromeView(s, props, deps) {
     // — read the rule there, the argument is written out in full.
     headerStyle: 'min-height:50px;flex:none;display:flex;flex-wrap:wrap;align-items:center;'
       + 'gap:6px 12px;padding:0 16px;'
-      + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE};position:relative;z-index:30`,
+      + `${HEADER_BAR};position:relative;z-index:30`,
 
     // WHAT THE HEADER LETS GO OF FIRST, and each of these is chosen because
     // the page still says it somewhere else. The wordmark sits beside a mark
@@ -155,14 +149,15 @@ export function chromeView(s, props, deps) {
     slotDate: meta ? stamp(meta.built) : '',
     revToggle: stop(() => setState({ revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false })),
     revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid var(--line);background:var(--card-bg);border-radius:6px;cursor:pointer',
-    revMenuStyle: (narrow ? popSheet : 'position:absolute;left:0;top:40px;width:430px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);z-index:40;display:' + (s.revOpen ? 'block' : 'none'),
+    revMenuStyle: popover({
+      narrow, anchor: 'left:0;top:40px', width: '430px', radius: '9px', z: 40, open: s.revOpen }),
     revRows,
     revEmpty: revRows.length === 0,
     // SHORTENED, like every other place this site prints a revision. A commit
     // is the digest of its sources (SPEC 7.7), so `s.cmp` holds 64 characters
     // per side and this label is a button in a 430px menu.
     cmpLabel: cmpReady ? `${shortId(s.cmp[0])} → ${shortId(s.cmp[1])}` : '',
-    compareBtnStyle: `padding:7px 14px;border-radius:6px;font:600 12px ${SANS};cursor:pointer;` + (cmpReady ? 'background:var(--accent);color:var(--text-on-accent)' : 'background:var(--sunken-bg);color:var(--text-faint);pointer-events:none'),
+    compareBtnStyle: `padding:7px 14px;border-radius:6px;font:600 12px ${SANS};cursor:pointer;` + (cmpReady ? ON_ACCENT : 'background:var(--sunken-bg);color:var(--text-faint);pointer-events:none'),
     startCompare: stop(() => compareRevisions(s.cmp)),
 
     statusChipStyle: `display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:6px;font:500 11.5px ${SANS};` + status.style,
@@ -178,7 +173,9 @@ export function chromeView(s, props, deps) {
     // wrapped, is no longer at the window's right edge: a 250px menu then
     // starts off the left of a 390px screen and is cut off by the root's
     // `overflow:hidden` with nothing to scroll.
-    dlMenuStyle: (narrow ? popSheet : 'position:absolute;right:0;top:40px;width:250px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;z-index:40;display:' + (s.dlOpen ? 'block' : 'none'),
+    dlMenuStyle: popover({
+      narrow, anchor: 'right:0;top:40px', width: '250px', radius: '9px',
+      tail: 'padding:6px 0;', z: 40, open: s.dlOpen }),
 
     // -- the token: the whole customer/viewer split, in one control
     viewer,
@@ -186,7 +183,9 @@ export function chromeView(s, props, deps) {
       tokenPop: !s.tokenPop, tokenDraft: '', revOpen: false, dlOpen: false, viewsOpen: false })),
     tokenBtnStyle: btn(false) + ';border:1px solid ' + (viewer ? 'var(--line);background:var(--card-bg)' : 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)'),
     tokenLabel: viewer ? 'View only' : 'Editing on',
-    tokenPopStyle: (narrow ? popSheet : 'position:absolute;right:0;top:40px;width:320px;') + 'background:var(--card-bg);border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:0 10px 34px var(--shadow);z-index:40;display:' + (s.tokenPop ? 'block' : 'none'),
+    tokenPopStyle: popover({
+      narrow, anchor: 'right:0;top:40px', width: '320px', radius: '10px',
+      pad: '13px 14px', z: 40, open: s.tokenPop }),
     tokenDraft: s.tokenDraft,
     tokenType: (e) => setState({ tokenDraft: e.target.value }),
     tokenSave: stop(() => {
@@ -306,7 +305,7 @@ export function chromeView(s, props, deps) {
     // the dark value it is 9.89:1 — so the resting pill came out CLEARER
     // than the live one, exactly backwards, in half the interface.
     railCountStyle: 'min-width:17px;height:17px;padding:0 5px;border-radius:9px;'
-      + (openCount ? 'background:var(--accent);color:var(--text-on-accent)'
+      + (openCount ? ON_ACCENT
                    : 'background:var(--chip-bg);color:var(--text-soft)')
       + `;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO}`,
     openCount,
@@ -381,7 +380,7 @@ export function chromeView(s, props, deps) {
     // a second row instead of losing its tail.
     tabsShown: openTabs.length > 1,
     tabsStyle: 'flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:5px 12px;'
-      + `background:${HEADER_BG};border-bottom:1px solid ${HEADER_LINE}`,
+      + HEADER_BAR,
     tabs: openTabs.map((t) => ({
       key: t.pid,
       // The pointer-less URL, exactly what a card on the front page links at:
@@ -397,7 +396,7 @@ export function chromeView(s, props, deps) {
       // Capped and ellipsised like the header's title: a model named after its
       // whole assembly must not be able to push the page wider than the
       // window, and ten of them must not push the strip off the side.
-      labelStyle: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
+      labelStyle: ELLIPSIS,
       // BOTH CALLS, and `preventDefault` is the one that does the work here:
       // the ✕ sits INSIDE the anchor, so stopping React's synthetic bubbling
       // leaves the browser's own navigation entirely untouched and closing a
@@ -427,7 +426,7 @@ export function chromeView(s, props, deps) {
       // than like a pill: in a column it is the highlight that says which one
       // is on, and a pill's raised card in a list reads as a stray button.
       rowStyle: `display:flex;align-items:center;gap:10px;padding:7px 14px;font:400 12px ${SANS};cursor:pointer;`
-        + (s.view === v.id ? 'color:var(--accent-text);background:var(--accent-bg)' : 'color:var(--text)'),
+        + (s.view === v.id ? 'color:var(--accent-text);background:var(--accent-bg)' : INK),
       // CLOSES THE MENU WHATEVER `showView` DOES WITH THE CLICK — it returns
       // without touching a thing when the view asked for is the one already
       // on screen, and a menu left standing open on the row you just pressed
@@ -444,11 +443,11 @@ export function chromeView(s, props, deps) {
     // A view's name is the model's own sentence and can be any length; the
     // button is in a toolbar that must not grow past the window (`viewBtnStyle`
     // caps it), so the name is cut rather than allowed to push.
-    viewLabelStyle: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
+    viewLabelStyle: ELLIPSIS,
     viewsToggle: stop(() => setState({
       viewsOpen: !s.viewsOpen, revOpen: false, dlOpen: false, tokenPop: false, menu: null })),
     viewBtnStyle: `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
-      + (s.viewsOpen ? 'background:var(--card-bg);color:var(--text);box-shadow:0 1px 2px var(--shadow-soft)' : 'color:var(--text-soft)'),
+      + (s.viewsOpen ? TAB_ON : TAB_OFF),
     // OPENS UPWARDS, unlike every other popover on this page: the toolbar it
     // hangs off floats at the BOTTOM of the model, so a menu measured from
     // the top of its button would be drawn off the bottom edge of the window.
