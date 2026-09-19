@@ -56,32 +56,22 @@ which is the same line `src/comments.py` draws:
     them, and the bad number would surface as a 500 on a request that had
     already been accepted. This is not a defence against anybody: it is our own
     drag arithmetic producing a number that cannot be read back — the hazard
-    `comments.py:191-211` records for a camera — so it is refused at the door
-    with a 422 instead.
+    `comments._numbers` records for a camera — so it is refused at the door
+    with a 422 instead. Named rather than cited by line: the line numbers this
+    used to give had already drifted off the function by twenty lines.
 """
 
 import json
 import threading
-import unicodedata
 from pathlib import Path
 
 from loguru import logger
 
 from src.errors import ProposalError
+from src.records import (WIP_PREFIX, check_body_printable, one_line,
+                         sweep_leftovers)
 from src.safeio import read_regular_text
 from src.store import SAFE_ID, atomic_write_bytes, utcnow_iso
-
-# One line of a JSON field, which here is `published` — a build stamp
-# (`store.published_stamp`, 24 characters) or a commit name — and `view`, the
-# id of one view of that build. The ceiling is generous because nothing depends
-# on either exact value: it is here so that a hand-written request cannot put a
-# novel in a field the queue prints on one line.
-MAX_FIELD_CHARS = 200
-
-# Temp-file prefix left behind by an interrupted write, swept at startup. The
-# same prefix `store` and the comment queue use, so one sweep rule covers all
-# three trees.
-WIP_PREFIX = ".wip-"
 
 
 # -- the request body -------------------------------------------------------
@@ -126,38 +116,21 @@ def parse_body(body: bytes) -> dict:
     return raw
 
 
-def _one_line(value, field: str) -> str:
-    """A printable single-line string, or a ProposalError naming the field."""
-    if not isinstance(value, str):
-        raise ProposalError(422, f"`{field}` must be a string")
-    if len(value) > MAX_FIELD_CHARS:
-        raise ProposalError(
-            422, f"`{field}` is longer than {MAX_FIELD_CHARS} characters")
-    for char in value:
-        if unicodedata.category(char).startswith("C"):
-            raise ProposalError(
-                422, f"`{field}` contains a non-printable character")
-    return value
-
-
 def _body_text(value) -> str:
     """The projection: several lines allowed, control characters not.
 
-    `comments._body_text`'s rule, and deliberately NOT `_one_line`'s. Newline
-    and tab have to survive — the projection is a table the panel aligned into
-    columns, so a single-line check would refuse every multi-line document and
-    the browser's save would start failing silently. Everything else in Unicode
-    category C goes, U+202E included: this is the one field of the record that
-    `hammerola proposal` prints straight into the agent's terminal, where that
-    codepoint reverses the text around it.
+    `records.check_body_printable`, which the comment queue shares, and
+    deliberately NOT `records.one_line`. Newline and tab have to survive — the
+    projection is a table the panel aligned into columns, so a single-line check
+    would refuse every multi-line document and the browser's save would start
+    failing silently. Everything else in Unicode category C goes, U+202E
+    included: this is the one field of the record that `hammerola proposal`
+    prints straight into the agent's terminal, where that codepoint reverses the
+    text around it.
     """
     if not isinstance(value, str):
         raise ProposalError(422, "`text` must be a string or null")
-    for char in value:
-        if char in "\n\t":
-            continue
-        if unicodedata.category(char).startswith("C"):
-            raise ProposalError(422, "`text` contains a non-printable character")
+    check_body_printable(value, ProposalError)
     return value
 
 
@@ -184,10 +157,10 @@ def validate_payload(raw: dict) -> dict:
         text = _body_text(text)
     published = raw.get("published")
     if published is not None:
-        published = _one_line(published, "published")
+        published = one_line(published, "published", ProposalError)
     view = raw.get("view")
     if view is not None:
-        view = _one_line(view, "view")
+        view = one_line(view, "view", ProposalError)
     return {"doc": doc, "text": text, "published": published, "view": view}
 
 
@@ -203,22 +176,9 @@ class ProposalStore:
         self.root = Path(data_dir).resolve() / "proposals"
         self._lock = threading.Lock()
         self.root.mkdir(parents=True, exist_ok=True)
-        self._sweep_leftovers()
-
-    # -- startup bookkeeping ------------------------------------------------
-    def _sweep_leftovers(self) -> None:
-        """Drop temp files an earlier run died in the middle of writing.
-
-        They are dot-prefixed, so nothing lists or serves them and nothing else
-        would ever notice they are there.
-        """
-        for path in self.root.glob(f"{WIP_PREFIX}*"):
-            try:
-                path.unlink()
-            except OSError as error:
-                logger.warning(f"could not sweep leftover {path}: {error}")
-                continue
-            logger.info(f"swept leftover {path}")
+        # One file per project, flat, so the leftovers of an interrupted write
+        # sit in the root itself.
+        sweep_leftovers(self.root, f"{WIP_PREFIX}*")
 
     # -- reading ------------------------------------------------------------
     def _path_of(self, pid: str) -> Path | None:

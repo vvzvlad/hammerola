@@ -277,7 +277,7 @@ MAX_CONCURRENT_PUBLISHES = 4
 
 # Ceiling on the body of a resolve, which is one optional `note`. Not an env var:
 # it is behind EDIT_TOKEN, the note itself is capped at a couple of hundred
-# characters by `comments.MAX_FIELD_CHARS`, and this only exists so the endpoint
+# characters by `records.MAX_FIELD_CHARS`, and this only exists so the endpoint
 # cannot be handed a megabyte to parse.
 MAX_RESOLVE_BODY_BYTES = 8 * 1024
 
