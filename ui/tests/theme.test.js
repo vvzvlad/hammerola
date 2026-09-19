@@ -33,10 +33,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
-import { makeComponent } from './component.js'
 import { DEFAULT_THEME, readTheme, writeTheme } from '../src/store.js'
 import * as viewport from '../src/viewport/options.js'
 import { displayOptions } from '../src/viewport/options.js'
+import { makeComponent } from './component.js'
 
 const THEME_COOKIE = 'hammerola.theme'
 

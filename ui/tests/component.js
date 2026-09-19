@@ -3,9 +3,8 @@
 // Nothing here renders through the DOM. A component is the real prototype with
 // a state object written by hand — `Object.create(Klass.prototype)` and then
 // the fields `componentDidMount` would have set — and its methods are called
-// directly. That is deliberate and is not what this file changes: what it
-// changes is that the same forty-line state literal used to be written out in
-// nineteen files, so one new field on the page was an edit in nineteen places.
+// directly. That is deliberate and stays as it was; one fixture for the whole
+// directory instead of one per file is the whole of what this module is (#102).
 //
 // WHAT THE DEFAULT STATE REPRESENTS: an ordinary build, opened by its owner.
 // One printable part with an STL, one view with that part in it, a tree of one
@@ -34,10 +33,12 @@ import { vi } from 'vitest'
 import { indexTree } from '../src/hub.js'
 import { HmrViewport } from '../src/viewport/element.js'
 
-// -- the canvas every viewport test measures against ---------------------------
+// -- the canvas the viewport tests measure against -----------------------------
 // 800x600 at the origin: jsdom computes no layout, so the rect a fixture hands
 // back is the only one there is, and a fixture whose container and canvas are
-// the same rect is what the page actually does (the two cancel).
+// the same rect is what the page actually does (the two cancel). NOT every such
+// test: `camera.test.js` keeps an offset rect of its own, precisely so that a
+// forgotten `rect.left` subtraction in `canvasXY` cannot cancel itself out.
 export const RECT = { left: 0, top: 0, width: 800, height: 600 }
 
 // -- the two waits, which are NOT the same wait --------------------------------
@@ -172,8 +173,10 @@ export function makeComponent(Klass, { state = {}, setState = mergeState, ...fie
  * a real DOM method on a prototype chain that reaches HTMLElement, and it
  * refuses to run on an object the DOM never built.
  *
- * Everything in `overrides` is set on the instance, after the defaults, so the
- * scene the library stands in (`fakeViewport`) is spread in there.
+ * Everything in `overrides` is set on the instance AFTER the defaults, so the
+ * scene the library stands in (`fakeViewport`) is spread in there — and would
+ * win over the six above if it ever began returning `box` or `dispatchEvent`.
+ * It returns none of them, which is what makes that order safe to write down.
  */
 export function makeViewport(overrides = {}) {
   const vp = Object.create(HmrViewport.prototype)
