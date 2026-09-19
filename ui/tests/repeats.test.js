@@ -646,12 +646,18 @@ describe('the Move row of the part menu', () => {
     // The sentence the button used to raise. A drag is a STATEMENT to the agent
     // and the model is untouched, so the part is back where the build put it on
     // the next rebuild — which nothing else on the screen says.
+    //
+    // AND IT NAMES BOTH HALVES OF THE WIDGET, which is what merging the tools
+    // left it owing. One manipulator stands on the part — arrows, plane quads
+    // and an origin that slide it, coloured discs that turn it — and the Turn
+    // row raises this very sentence, so a reader coming in through either door
+    // is told about the whole of it.
     const { c, row } = moveOn('/model/pin')
 
     row.onClick(click)
 
     expect(c.toast).toHaveBeenCalledWith(
-      'Drag a part — it snaps back on the next rebuild')
+      'Drag it to slide, a coloured disc to turn — it snaps back on the next rebuild')
   })
 
   it('arms rather than toggles, unlike the button it replaced', () => {
@@ -879,6 +885,13 @@ describe('the part the section plane says it is cut from', () => {
     // BARE, on the same ground as the placed point: the plane lies on one face
     // of one solid, so `pin ×3` here would tally parts nothing was aimed at.
     expect(c.computed().secSub).toBe('pin · +3.0 mm')
+    // AND THE TOOL IS PUT DOWN, which is not this test's subject and had no test
+    // of its own anywhere. Four comments in the viewport rest their reasoning on
+    // it — `concludeMove` exists to avoid it, and it is why the manipulator's
+    // two layers end a live canvas gesture at different points in their press
+    // handlers (viewport/rings.js, viewport/gizmo.js). A cut announced is a cut
+    // placed, and the tool that placed it has done its one job.
+    expect(c.state.tool, 'answering hmr:face left the tool armed').toBeNull()
   })
 
   it('falls back to the reported name for a path no row claims', () => {

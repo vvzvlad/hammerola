@@ -6280,6 +6280,28 @@ export default class HammerolaViewer extends React.Component {
     });
 
     /**
+     * What arming the manipulator on `id` says, which is ONE sentence because
+     * there is one widget.
+     *
+     * Two rows arm it — Move and Turn — and they used to raise two sentences
+     * because they armed two tools. Now there is a single manipulator round the
+     * part (`viewport/gizmo.js` and `viewport/rings.js`): an origin dot and
+     * three arrows and three plane quads that slide it, and three coloured
+     * discs that turn it, all at once. A sentence naming only one half would
+     * leave the reader who came in through that row never looking for the
+     * other, which is the whole of what merging the tools was for.
+     *
+     * THE TAIL IS STILL TWO SENTENCES, and it has to be: a part of the BUILD
+     * moves as a statement to the agent and the model is untouched, so the next
+     * rebuild puts it back; a body of the PROPOSAL moves as an edit of the
+     * document the reader is authoring, so it stays. One tail would be false on
+     * one of them.
+     */
+    const armedSaid = (id) => (this.proposalBody(id)
+      ? 'Drag it to slide, a coloured disc to turn — the proposal keeps the body where you put it'
+      : 'Drag it to slide, a coloured disc to turn — it snaps back on the next rebuild');
+
+    /**
      * This part's files — the row-menu half of the header's Downloads menu.
      *
      * Three rows and not a submenu: one click cannot sensibly deliver three
@@ -6469,19 +6491,27 @@ export default class HammerolaViewer extends React.Component {
         ...(viewer || narrow || mNode.isNode || !proposalPanelOn() ? [] : [
           mi('Move', '', () => {
             this.set({ sel: mNode.id, selName: mNode.name, tool: 'move' });
-            this.toast(this.proposalBody(mNode.id)
-              ? 'Drag the body — the proposal keeps it where you put it'
-              : 'Drag a part — it snaps back on the next rebuild');
+            this.toast(armedSaid(mNode.id));
           }),
-          // TURN ARMS A TOOL NOW, and everything about this row follows from
-          // that. It used to arm nothing, because a displacement had a gesture
-          // — the hand says "about here" better than a field does — and a turn
-          // had none: it was three numbers, and the place a part's three
-          // numbers are typed is its row in the proposal's branch. There are
-          // turn handles round the part now (viewport/rings.js), so the row does what
-          // the one above it does, in the same two writes and for the same
-          // reason: the armed tool turns what is SELECTED, and neither door
+          // TURN ARMS THE SAME TOOL THE ROW ABOVE DOES, and there is nothing
+          // left in `tool` to tell the two apart with. It used to arm nothing,
+          // because a displacement had a gesture — the hand says "about here"
+          // better than a field does — and a turn had none: it was three
+          // numbers, typed into the row in the proposal's branch. Then it armed
+          // a `turn` tool of its own, and the reader had to put a part down
+          // before they could turn it. The widget is one manipulator now —
+          // arrows, quads and an origin in viewport/gizmo.js, rotation handles
+          // in viewport/rings.js, all of it answering to `move` — so this row
+          // arms that, in the same two writes as the one above and for the same
+          // reason: the armed tool works on what is SELECTED, and neither door
           // into this menu writes `sel`.
+          //
+          // WHICH LEAVES IT A ROW WORTH KEEPING, and that is not obvious from
+          // the line itself. Everything ELSE it does is still its own — the
+          // node it mints, the panel it opens — and those are what a reader who
+          // means "exactly 90 degrees" came to this row for. What it no longer
+          // does is promise a different gesture from Move, because there is no
+          // longer a different gesture to promise.
           //
           // GATED EXACTLY AS MOVE IS, and the extra gate this row used to carry
           // is gone with the reason for it. It excluded a BODY OF THE PROPOSAL,
@@ -6518,13 +6548,13 @@ export default class HammerolaViewer extends React.Component {
           // `reconcileMoves` leaves a part standing exactly where it is.
           mi('Turn', '', () => {
             const body = this.proposalBody(mNode.id);
-            this.set({ sel: mNode.id, selName: mNode.name, tool: 'turn' });
-            // A COLOURED DOT AND NOT A RING, which is what the widget now puts
-            // under the hand: the press is taken by the handle, and the arc
-            // drawn through it is a picture the trackball still owns.
-            this.toast(body
-              ? 'Drag a coloured dot — the proposal keeps the body as you turn it'
-              : 'Drag a coloured dot — it snaps back on the next rebuild');
+            this.set({ sel: mNode.id, selName: mNode.name, tool: 'move' });
+            // THE SAME SENTENCE THE ROW ABOVE RAISES, because it is the same
+            // widget and one of them would otherwise be describing half of it:
+            // a reader who came in through Turn and was told only about the
+            // discs would never find the arrows, and one who came in through
+            // Move and was told only "drag it" would never find the discs.
+            this.toast(armedSaid(mNode.id));
             // NO NODE FOR A BODY, which is the one thing left of the gate this
             // row used to sit inside: a body's pose is its own `rot` and a move
             // node about it would be the contradiction described above. The
@@ -7750,18 +7780,21 @@ export default class HammerolaViewer extends React.Component {
         // `it` and not `a part`: this tool is armed on a body of the proposal
         // just as readily as on a part of the build, and the row that arms it
         // already says which of the two the reader is in.
-        : armed === 'move' ? 'drag it · esc to stop'
-        // THE HANDLE AND NOT THE THING, because this gesture is the one on this
-        // page whose target is the WIDGET rather than the model: a press
-        // anywhere else still orbits (`onDown` in viewport/tools.js), so a hint
-        // reading `drag it` would send the reader to grab the part.
         //
-        // AND NOT `a ring` EITHER, which it said until the handles were rebuilt:
-        // there is no full ring on screen at rest any more, and a press on the
-        // arc that is drawn goes to the trackball — so the old wording named the
-        // one part of the widget that does nothing, which is the same mistake as
-        // `drag it` made one step closer in.
-        : armed === 'turn' ? 'drag a coloured dot · esc to stop'
+        // AND BOTH HALVES OF THE WIDGET IN ONE LINE, because there is one tool
+        // now and this is the only place on the page that describes it while it
+        // is in force. `drag it` alone was true and incomplete — it slides and
+        // says nothing about turning — and the `turn` line that used to stand
+        // under this one described the other half of the same widget as though
+        // it were a second tool. A reader told half of it never goes looking
+        // for the rest.
+        //
+        // THE DISC AND NOT THE RING, which is the one piece of aim this has
+        // room for: the press is taken by the coloured handle, and the arc
+        // drawn through it is a picture the trackball still owns (`rings.js`),
+        // so naming the ring would send the reader to grab the one part of the
+        // widget that does nothing.
+        : armed === 'move' ? 'drag it to slide, a coloured disc to turn · esc to stop'
         : armed === 'cut' ? 'click a face to place the section plane'
         : `drag — orbit · wheel — zoom · hold ${HOLD_KEY_LABEL} — section`,
 

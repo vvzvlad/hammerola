@@ -1,5 +1,19 @@
-// The turn tool's handles: three of them round the selected part, one per world
-// axis, each dragged to turn the part about THAT AXIS ONLY.
+// The move tool's rotation handles: three of them round the selected part, one
+// per world axis, each dragged to turn the part about THAT AXIS ONLY.
+//
+// THE SAME TOOL THE AXIS ARROWS ANSWER TO, which is the one thing about this
+// file that is not its own. Fusion's manipulator is ONE widget under one command
+// (`TriadCommandInput`): an origin, three arrows, three plane quads and three
+// rotation handles, all at once. There was a second tool here, `turn`, and it
+// meant the reader had to put a part down before they could turn it. The two
+// layers still cannot steal each other's presses — the arrows take theirs on
+// their own elements, this one declines anything whose target is not the canvas.
+//
+// WHAT THE MERGE DID COST IS IN `onDown`, and it is not the name in `held`. Both
+// halves stand on the part at once now, so three gestures can be live where one
+// could be before: this layer's, the arrows', and the canvas drag underneath
+// them. Each press therefore ends the other two. Read `onDown` before believing
+// anything about this file is simple.
 //
 // ONE DISC PER AXIS IS WHAT THE READER ACTUALLY SEES AND PRESSES, and that is
 // the answer to the two things three full circles got wrong. They DROWNED in
@@ -463,8 +477,9 @@ function bodyOrigin(vp, path) {
  *
  * IN THIS FILE AND NOT BESIDE IT, which is the one deliberate difference.
  * `moveRecord` was lifted into tools.js because TWO gestures make one — the
- * canvas drag and the axis arrows — and a second hand-written copy is how they
- * would start disagreeing about what a drag means. There is one gesture that
+ * canvas drag and the manipulator's own press, whichever of its seven pieces it
+ * landed on — and a second hand-written copy is how they would start
+ * disagreeing about what a drag means. There is one gesture that
  * turns, so its record belongs where it is used; the day a second one appears,
  * this moves.
  *
@@ -708,13 +723,14 @@ export function createRings(vp) {
    * The selection these rings stand for, or null when there is nothing to put
    * them round.
    *
-   * `held` IN gizmo.js, ASKED ABOUT THE OTHER TOOL, and it has to be the same
-   * question: rings offering a turn that the press would then refuse are a
-   * promise the widget cannot keep. So the Turn tool has to be in force,
-   * something has to be selected, and every selected path has to be one the
-   * scene can move — with the extra clause a gesture on the reader's own
-   * drawing carries, that a proposal body is grabbable only when the panel can
-   * name it (`overlayBody`).
+   * `held` IN gizmo.js, ASKED ABOUT THE SAME TOOL, and it has to be the same
+   * question twice over: rings offering a turn that the press would then refuse
+   * are a promise the widget cannot keep, and two halves of ONE widget that
+   * appeared on different conditions would be a widget with a piece missing. So
+   * the Move tool has to be in force, something has to be selected, and every
+   * selected path has to be one the scene can move — with the extra clause a
+   * gesture on the reader's own drawing carries, that a proposal body is
+   * grabbable only when the panel can name it (`overlayBody`).
    *
    * MIXED SELECTIONS ARE REFUSED WHOLE by the `some` and then `every` below,
    * which is tools.js's line: one overlay path makes this a proposal gesture,
@@ -729,7 +745,7 @@ export function createRings(vp) {
    * stop by itself when the reader disarms the tool or clears the selection.
    */
   const held = () => {
-    if (vp.activeTool !== "turn") return null;
+    if (vp.activeTool !== "move") return null;
     const paths = Array.isArray(vp.state.selected) ? vp.state.selected : [];
     if (!paths.length) return null;
     const proposal = paths.some((path) => vp.isOverlay(path));
@@ -867,7 +883,7 @@ export function createRings(vp) {
    * render loop and offers no post-render hook, and the trackball's `change`
    * event misses every frame a live swap, a visibility change or a gesture of
    * this very widget redraws. A loop that stops on its own costs nothing on the
-   * ordinary page, which has no Turn tool armed.
+   * ordinary page, which has no Move tool armed.
    *
    * THE INVARIANT THAT MAKES `refresh` ENOUGH: while a ring is on screen a
    * frame is always pending, because the only thing that shows one is `place`,
@@ -1064,6 +1080,32 @@ export function createRings(vp) {
     // standing at an angle no node claims. BEFORE the hit test, because that is
     // true of a press that misses the rings as well.
     stop();
+    // AND THE ARROWS' GESTURE WITH IT, which is new with the merge and is the
+    // same sentence about the other layer. Until the tools were merged the
+    // CROSS case could not arise: this layer wanted `turn` and gizmo.js wanted
+    // `move`, so only one of the two was ever alive to be interrupted. They
+    // answer to one tool now, so a finger on an arrow followed by a finger on a
+    // disc leaves TWO live drags — both `onMove`s on the window, neither
+    // filtering by pointer id, each calling `movePart` with its own snapshot of
+    // the other's half of the node (`turnRecord.delta` here, `moveRecord.turn`
+    // there). They overwrite each other frame by frame and both report at the
+    // release. `gizmo.js`'s own `onDown` carries the argument at length.
+    //
+    // ALSO ON A PRESS THAT MISSES EVERY DISC, for the reason the line above is
+    // here rather than below the hit test: this is the reader putting a second
+    // finger on the MODEL while an arrow is still held, which strands that drag
+    // exactly as a press on a disc would.
+    //
+    // BEFORE `turnRecord` IS BUILT, which is what makes the hand-over clean:
+    // concluding the arrow's drag leaves its offset standing in `vp.moved`, and
+    // `turnRecord` reads that field for the `delta` it carries through — so the
+    // turn about to start begins from where the slide actually ended.
+    //
+    // NO CHECK THAT THE NEIGHBOUR IS THERE: `element.js` builds the arrows and
+    // then this layer inside ONE synchronous `connectedCallback`, so no press
+    // can be dispatched between the two lines, and its `destroy()` leaves both
+    // fields standing while taking both layers' listeners away.
+    vp.gizmo.endDrag();
     const sel = held();
     if (!sel) return;
     // MEASURED ONCE AND HELD FOR THE WHOLE GESTURE, exactly as `onDown` in
@@ -1087,6 +1129,41 @@ export function createRings(vp) {
     // and a tools.js gesture underneath.
     event.stopPropagation();
     event.preventDefault();
+    // AND THE CANVAS GESTURE, WHICH IS THE THIRD THING THAT CAN BE LIVE. The
+    // complete list, since the `endDrag` above reads as if it were the whole of
+    // it: this layer's own drag (`stop()`), the arrows' (`vp.gizmo.endDrag()`),
+    // the canvas gesture in tools.js (this line), and the section grip's, which
+    // is deliberately left alone because it drives the clipping PLANE and
+    // nothing it writes is anything this reads. `gizmo.js`'s `onDown` carries
+    // the argument at length.
+    //
+    // HERE AND NOT BESIDE THE `endDrag` ABOVE, which is the one place the two
+    // layers' answers differ and the difference is exactly the line above this
+    // one. tools.js concludes its own previous press at the head of its
+    // `onDown`, and that listener DOES see every press aimed at the canvas — so
+    // a press that misses every disc needs nothing from this line: it goes
+    // straight on and tools.js ends the live gesture itself. It is
+    // `stopPropagation` that opens the hole, by taking the press away before
+    // that listener runs, and the hole is therefore exactly as wide as the
+    // presses this layer keeps.
+    //
+    // AND MOVING IT UP WOULD BE WORSE THAN REDUNDANT. `endGesture` CONCLUDES,
+    // and concluding a cut means `reportCut`, which the interface answers by
+    // disarming the armed tool — which is why tools.js's own `onDown` calls
+    // `concludeMove` and not `conclude`. Called before the hit test, this would
+    // do that on EVERY canvas press with a cut drag still live, including the
+    // ordinary ones this layer declines.
+    //
+    // BEFORE `turnRecord` IS BUILT, for the same reason the `endDrag` above is:
+    // concluding the canvas drag leaves its offset standing in `vp.moved`, and
+    // `turnRecord` reads that field for the `delta` it carries through.
+    //
+    // `vp.endGesture` IS ALWAYS A FUNCTION HERE. `installTools` assigns it in
+    // the same synchronous `connectedCallback` that builds this layer, and
+    // although its teardown nulls it — which `vp.gizmo` is not — that teardown
+    // runs inside `destroy()`, in the same synchronous block that takes this
+    // layer's window listeners away.
+    vp.endGesture();
     drag = {
       axis: aim.axis,
       ring: aim.ring,

@@ -261,9 +261,9 @@ export function reportMove(vp, move) {
  * this is a drag of the reader's own drawing rather than of the build.
  *
  * MODULE-LEVEL AND EXPORTED because two gestures make one of these now — the
- * canvas drag below and the axis arrows (gizmo.js) — and every field is a
- * decision with a reason, which is exactly the kind of thing a second hand-made
- * copy gets subtly wrong.
+ * canvas drag below and the manipulator's own press (gizmo.js), whichever of its
+ * seven pieces it landed on — and every field is a decision with a reason, which
+ * is exactly the kind of thing a second hand-made copy gets subtly wrong.
  *
  * WHAT THE PROPOSAL DRAG CARRIES INSTEAD OF `vp.moved`, and both fields
  * are the gesture's own and die with it. `body` is the name the panel drew
@@ -336,6 +336,101 @@ export function moveRecord(vp, paths, ndc, anchor, proposal) {
     body: proposal ? vp.overlayBody(anchor) : null,
     homes: proposal ? paths.map((path) => groupHome(vp.viewer, path)) : null,
   };
+}
+
+/** One pointermove while a part is being dragged FREELY — no axis and no plane,
+ *  the delta the hand spans in the plane of the screen.
+ *
+ * MODULE-LEVEL AND EXPORTED for `moveRecord`'s reason, one gesture later. TWO
+ * THINGS CALL IT — the canvas drag below and the origin dot at the centre of the
+ * manipulator (gizmo.js) — while two more are built from the same displacement
+ * and then put it on their own geometry rather than calling this at all: an
+ * arrow takes the nearest point of its line, and a quad meets the cursor's ray
+ * with its plane. Four gestures, one displacement, two callers.
+ *
+ * THE DOT IS A SECOND DOOR to the gesture and not a second copy of it: what it
+ * buys is that a reader
+ * with the widget under their hand need not go and find the part to move it
+ * freely, and what it must not buy is a second opinion about what a free drag
+ * means.
+ *
+ * `press.move` IS NOW AN ARGUMENT, which is the whole of what lifting it cost:
+ * it closed over the live press and nothing else.
+ */
+export function dragPart(vp, d, event) {
+  const viewer = vp.viewer;
+  const g = internals(viewer);
+  if (!g) return;
+  const ndc = ndcAt(g.canvas, event);
+  if (!ndc) return;
+  const b = cameraBasis(viewer, g);
+  if (!b) return;
+  // The world vector a screen displacement spans, exactly as the swipe pan
+  // computes it: the difference of the two ends' offsets. Under ortho that is
+  // depth-free, so a part slides in the plane of the screen and never towards
+  // or away from the reader — which is what "show me where" means with a mouse.
+  //
+  // THE TURN IS NOT IN THIS GESTURE. A move node carries one now (`turn` in
+  // ui/src/proposal.js), and it is typed into the row's own fields in the
+  // proposal branch of the tree rather than dragged: the hand does one thing
+  // here, and the turn the part is already standing at is carried along
+  // untouched (`d.turn` below — the record is an argument now, as the docblock
+  // says, so there is no `press` in this scope to read it off).
+  const from = ndcOffset(g, b.eye, b.view, d.ndc[0], d.ndc[1]);
+  const to = ndcOffset(g, b.eye, b.view, ndc[0], ndc[1]);
+  if (!from || !to) return;
+  const step = niceStep(viewer);
+  const delta = [
+    snap(d.base[0] + to[0] - from[0], step),
+    snap(d.base[1] + to[1] - from[1], step),
+    snap(d.base[2] + to[2] - from[2], step),
+  ];
+  if (delta[0] === d.last[0] && delta[1] === d.last[1]
+      && delta[2] === d.last[2]) return;
+  d.last = delta;
+  // A BODY OF THE PROPOSAL GOES NO FURTHER THAN THE SCREEN while the hand is
+  // down. It is moved so the reader can see where they are putting it, and
+  // NOTHING IS RECORDED for it: `vp.moved` is re-applied after every re-stage
+  // (`restageMoves`) and the panel re-stages on the next edit, so a delta left
+  // there would be added on top of the position the document will by then
+  // carry, and the body would walk away by twice the distance. No move node
+  // either — `hmr:moved` is the interface's statement about a part of the
+  // BUILD, and this body is in no build. The release is what reaches the panel
+  // (`reportProposalMove`), and the stage that follows is what really puts the
+  // body where it now stands.
+  if (d.body) {
+    nudgePart(vp, d.paths, d.homes, delta);
+    return;
+  }
+  // A PART OF THE BUILD ALSO GOES NO FURTHER THAN THE SCREEN while the hand is
+  // down, and unlike the body above it leaves `vp.moved` behind — which is the
+  // whole difference between the two: the offset is real, the scene is holding
+  // it, and the release is what tells the interface (`reportModelMove`). The
+  // report used to go out from here, on every snap step, and that is what the
+  // panel opening on a recorded move turned into a broken drag: the overlay
+  // changed, `restage()` called `show()`, and `show()` ended this very gesture
+  // one step in.
+  //
+  // A GRAB OUTSIDE A STANDING SELECTION NEVER REACHES THIS LINE: `onDown`
+  // answers it with `null`, so the press degrades to a rotation and no part is
+  // moved at all.
+  //
+  // `stood` IS THE LAST DELTA THAT LANDED, and it is a second field rather
+  // than `last` because `movePart` can refuse — a path whose group has gone,
+  // or a `position.set` that throws part way down a row (parts.js says why
+  // neither is unwound). `last` has to advance whatever happens, or a step
+  // that fails is retried on every pointermove for the rest of the gesture.
+  //
+  // IT IS NOT "WHERE THE PARTS ARE", and the difference matters in exactly the
+  // case it exists for: a refusal that threw half way down a row leaves the
+  // paths before the throw at the NEWER delta and the rest at this one, so no
+  // single number describes the scene. What this holds is the last offset the
+  // whole gesture is known to have reached, which is the truest thing there is
+  // to announce — and `reconcileMoves` is what settles the stragglers, since
+  // it walks `vp.moved` and writes every path the document's offset is not
+  // already standing at. Reporting per step made the distinction for free: a
+  // failed step simply emitted nothing.
+  if (movePart(vp, d.paths, delta, d.turn)) d.stood = delta;
 }
 
 export function installTools(vp) {
@@ -516,83 +611,6 @@ export function installTools(vp) {
     emit(vp, EVENT_MEASURE, answer);
   };
 
-  /** One pointermove while a part is being dragged. */
-  const dragPart = (event) => {
-    const d = press.move;
-    const viewer = vp.viewer;
-    const g = internals(viewer);
-    if (!g) return;
-    const ndc = ndcAt(g.canvas, event);
-    if (!ndc) return;
-    const b = cameraBasis(viewer, g);
-    if (!b) return;
-    // The world vector a screen displacement spans, exactly as the swipe pan
-    // computes it: the difference of the two ends' offsets. Under ortho that is
-    // depth-free, so a part slides in the plane of the screen and never towards
-    // or away from the reader — which is what "show me where" means with a mouse.
-    //
-    // THE TURN IS NOT IN THIS GESTURE. A move node carries one now (`turn` in
-    // ui/src/proposal.js), and it is typed into the row's own fields in the
-    // proposal branch of the tree rather than dragged: the hand does one thing
-    // here, and the turn the part is already standing at is carried along
-    // untouched (`press.move.turn` below).
-    const from = ndcOffset(g, b.eye, b.view, d.ndc[0], d.ndc[1]);
-    const to = ndcOffset(g, b.eye, b.view, ndc[0], ndc[1]);
-    if (!from || !to) return;
-    const step = niceStep(viewer);
-    const delta = [
-      snap(d.base[0] + to[0] - from[0], step),
-      snap(d.base[1] + to[1] - from[1], step),
-      snap(d.base[2] + to[2] - from[2], step),
-    ];
-    if (delta[0] === d.last[0] && delta[1] === d.last[1]
-        && delta[2] === d.last[2]) return;
-    d.last = delta;
-    // A BODY OF THE PROPOSAL GOES NO FURTHER THAN THE SCREEN while the hand is
-    // down. It is moved so the reader can see where they are putting it, and
-    // NOTHING IS RECORDED for it: `vp.moved` is re-applied after every re-stage
-    // (`restageMoves`) and the panel re-stages on the next edit, so a delta left
-    // there would be added on top of the position the document will by then
-    // carry, and the body would walk away by twice the distance. No move node
-    // either — `hmr:moved` is the interface's statement about a part of the
-    // BUILD, and this body is in no build. The release is what reaches the panel
-    // (`reportProposalMove`), and the stage that follows is what really puts the
-    // body where it now stands.
-    if (d.body) {
-      nudgePart(vp, d.paths, d.homes, delta);
-      return;
-    }
-    // A PART OF THE BUILD ALSO GOES NO FURTHER THAN THE SCREEN while the hand is
-    // down, and unlike the body above it leaves `vp.moved` behind — which is the
-    // whole difference between the two: the offset is real, the scene is holding
-    // it, and the release is what tells the interface (`reportModelMove`). The
-    // report used to go out from here, on every snap step, and that is what the
-    // panel opening on a recorded move turned into a broken drag: the overlay
-    // changed, `restage()` called `show()`, and `show()` ended this very gesture
-    // one step in.
-    //
-    // A GRAB OUTSIDE A STANDING SELECTION NEVER REACHES THIS LINE: `onDown`
-    // answers it with `null`, so the press degrades to a rotation and no part is
-    // moved at all.
-    //
-    // `stood` IS THE LAST DELTA THAT LANDED, and it is a second field rather
-    // than `last` because `movePart` can refuse — a path whose group has gone,
-    // or a `position.set` that throws part way down a row (parts.js says why
-    // neither is unwound). `last` has to advance whatever happens, or a step
-    // that fails is retried on every pointermove for the rest of the gesture.
-    //
-    // IT IS NOT "WHERE THE PARTS ARE", and the difference matters in exactly the
-    // case it exists for: a refusal that threw half way down a row leaves the
-    // paths before the throw at the NEWER delta and the rest at this one, so no
-    // single number describes the scene. What this holds is the last offset the
-    // whole gesture is known to have reached, which is the truest thing there is
-    // to announce — and `reconcileMoves` is what settles the stragglers, since
-    // it walks `vp.moved` and writes every path the document's offset is not
-    // already standing at. Reporting per step made the distinction for free: a
-    // failed step simply emitted nothing.
-    if (movePart(vp, d.paths, delta, d.turn)) d.stood = delta;
-  };
-
   function onMove(event) {
     if (!press) return;
     if (!press.moved
@@ -618,7 +636,7 @@ export function installTools(vp) {
       dragSection(vp, g, press.axis, dx, dy);
       return;
     }
-    if (press.tool === "move" && press.move) dragPart(event);
+    if (press.tool === "move" && press.move) dragPart(vp, press.move, event);
   }
 
   /**
@@ -804,25 +822,14 @@ export function installTools(vp) {
     };
     watch();
     if (!tool) return;
-    // THE TURN TOOL OWNS NO PRESS ON THIS ELEMENT, and saying so is what keeps
-    // the model turnable while it is armed. Its gesture is on the rings
-    // (rings.js), which take their press in a capture-phase listener on the
-    // WINDOW and stop it there — so a press that reaches this listener is one
-    // that missed every DISC, and it belongs to the trackball exactly as it
-    // would with no tool armed. The disc and not the ring: the arc drawn through
-    // a handle is a picture rather than a target, and a press on it arrives here
-    // like any other miss. Left to fall through, it would be swallowed by
-    // the two lines at the foot of this function, and a reader who armed the
-    // tool that turns a PART would find they could no longer turn the VIEW.
-    //
-    // DEGRADED AND NOT DROPPED, which is the Move tool's own answer to a press
-    // it cannot use: `press.tool = null` leaves a click selecting and a drag
-    // rotating, so the reader reaches the part they meant to turn without
-    // leaving the tool first.
-    if (tool === "turn") {
-      press.tool = null;
-      return;
-    }
+    // THE RINGS OWN NO PRESS ON THIS ELEMENT, and there is no branch here for
+    // them. They answer to `move` along with the arrows now — one widget, one
+    // tool — and they take their press in a capture-phase listener on the
+    // WINDOW, which runs before this one and stops what it wants there. So a
+    // press that reaches this line under `move` is one that missed every DISC,
+    // and it goes on to mean exactly what a press under this tool has always
+    // meant: the part under the cursor is grabbed, and anything else degrades
+    // to a pick and a rotation below.
     if (tool === "move") {
       const at = canvasXY(g.canvas, event);
       const hit = at ? pickEntity(g, at[0], at[1]) : null;

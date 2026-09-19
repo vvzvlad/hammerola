@@ -169,25 +169,43 @@ describe('which branch a click takes', () => {
     expect(emitted(vp)).not.toContain(EVENT_PICK)
   })
 
-  it('leaves the press alone entirely while the TURN tool is armed', () => {
-    // THE TURN TOOL OWNS NO PRESS ON THIS ELEMENT. Its gesture is on the rings
-    // (viewport/rings.js), which take theirs in a capture-phase listener on the
-    // WINDOW and stop it there — so a press that reaches this listener is one
-    // that missed every ring, and it belongs to the trackball exactly as it
-    // would with no tool armed.
-    //
-    // WHAT THE MISSING LINE COSTS is silent and total: every other armed tool
-    // falls through to the two lines at the foot of `onDown`, which take the
-    // press away from the controls. A reader who armed the tool that turns a
-    // PART would find they could no longer turn the VIEW.
+  it('has no branch left for the retired turn value', () => {
+    // `turn` WAS A TOOL AND HAD A BRANCH HERE — `press.tool = null`, because
+    // its whole gesture was on the rings and every press that reached this
+    // listener had missed one. The rings answer to `move` now, so the value
+    // never arrives and the branch is gone; what is pinned is that its absence
+    // costs nothing, because an unknown tool falls past every branch and
+    // reaches the two lines at the foot of `onDown` exactly as `comment` does.
     const vp = toolViewport({ tool: 'turn' })
+    const event = pointerDown(vp)
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(event.stopPropagation).toHaveBeenCalled()
+
+    pointerUp()
+    expect(emitted(vp)).toEqual([EVENT_PICK])
+    expect(faceNormalAt).not.toHaveBeenCalled()
+  })
+
+  it('leaves the press alone when the move tool has nothing to grab', () => {
+    // THE WIDGET OWNS ITS OWN PRESSES AND NOTHING ELSE, and this is the line
+    // that keeps the model turnable while it is armed. The arrows, the quads
+    // and the origin dot take theirs on their own elements, which are siblings
+    // of this one; the rotation handles take theirs off the canvas in a capture
+    // listener on the WINDOW and stop it there. So a press that reaches HERE is
+    // one that missed every piece of the widget, and with nothing under it to
+    // grab it belongs to the trackball exactly as it would with no tool armed.
+    //
+    // WHAT THE MISSING LINE WOULD COST is silent and total: every other armed
+    // tool falls through to the two lines at the foot of `onDown`, which take
+    // the press away from the controls. A reader who armed the tool that moves
+    // a PART would find they could no longer turn the VIEW.
+    const vp = toolViewport({ tool: 'move' })
     const event = pointerDown(vp)
     expect(event.preventDefault).not.toHaveBeenCalled()
     expect(event.stopPropagation).not.toHaveBeenCalled()
 
-    // AND IT DEGRADES RATHER THAN BEING DROPPED, which is the Move tool's own
-    // answer to a press it cannot use: a click still selects, so the reader
-    // reaches the part they meant to turn without leaving the tool first.
+    // AND IT DEGRADES RATHER THAN BEING DROPPED: a click still selects, so the
+    // reader reaches the part they meant without leaving the tool first.
     pointerUp()
     expect(emitted(vp)).toEqual([EVENT_PICK])
     expect(faceNormalAt).not.toHaveBeenCalled()

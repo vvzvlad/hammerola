@@ -1,20 +1,33 @@
-// ui/src/viewport/gizmo.js — the move tool's axis arrows.
+// ui/src/viewport/gizmo.js — the move tool's manipulator: an origin dot, three
+// axis arrows and three plane quads. Its fourth piece, the rotation handles,
+// is rings.js and has its own file beside this one.
 //
 // There is no GPU here and nothing below looks at a pixel, the same discipline
 // handle.test.js keeps beside it. What IS assertable is everything that decides
-// whether the reader can see and use the arrows at all: WHERE they are put (a
-// projection, in px, of the selected part's centre), WHICH WAY each one points
+// whether the reader can see and use the widget at all: WHERE it is put (a
+// projection, in px, of the selected part's centre), WHICH WAY each arrow points
 // (the screen direction of its world axis), HOW LONG it is drawn (the
-// foreshortening of that axis against the camera's projection axis), WHEN an
-// arrow is taken off the screen — an axis seen end-on, and four different
-// reasons for the whole widget — and what one whole drag does to the part and
-// says at the end of it.
+// foreshortening of that axis against the camera's projection axis), WHICH PLANE
+// each quad lies in and how far out it stands, WHEN a piece is taken off the
+// screen — an axis seen end-on, a plane seen edge-on, and four different reasons
+// for the whole widget — and what one whole drag does to the part and says at the
+// end of it.
 //
 // THE ONE CLAIM THIS FILE EXISTS FOR is that a drag is CONSTRAINED: the free
 // drag (tools.js) turns a screen gesture into a world displacement on all three
-// axes at once, and an arrow takes the component along its own and drops the
-// rest. Every drag below therefore travels diagonally, and the assertion is
-// about what did NOT move.
+// axes at once, and each piece puts that displacement back on its own geometry.
+// Every drag below therefore travels diagonally, and the assertion is about what
+// did NOT move. The origin dot is the exception that says what the other two are
+// measured against: it drops nothing at all.
+//
+// AND THE TWO CONSTRUCTIONS ARE NOT ONE, which is the thing the quad tests are
+// really guarding. An arrow takes the NEAREST POINT of its line, because a line
+// and the ray through the cursor do not meet in three dimensions. A quad takes
+// the point where that ray CUTS its plane, because a plane and a ray do — so
+// only the quad can promise that the part follows the pointer, and the
+// orthogonal projection that would be the arrow's answer read backwards is a
+// DIFFERENT and wrong one for it. Face-on the two agree exactly, so every claim
+// about the difference is made on an oblique camera.
 //
 // The arithmetic the angles and distances are checked against does not come from
 // the module: this fake camera puts 20 px on a world unit along both screen axes
@@ -28,7 +41,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HmrViewport } from '../src/viewport/element.js'
 import { EVENT_MOVED, EVENT_PROPOSALMOVE } from '../src/viewport/events.js'
 import { createGizmo } from '../src/viewport/gizmo.js'
-import { CLICK_PX, GIZMO_MIN_SCALE, GIZMO_PX } from '../src/viewport/options.js'
+import {
+  CLICK_PX, GIZMO_DOT_PX, GIZMO_MIN_SCALE, GIZMO_PLANE_GAP_PX, GIZMO_PLANE_PX,
+  GIZMO_PX,
+} from '../src/viewport/options.js'
 import {
   fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
 } from './fakes.js'
@@ -36,6 +52,19 @@ import {
 const RECT = { left: 0, top: 0, width: 800, height: 600 }
 
 const PART = '/Group/plate'
+
+/** Looking down the diagonal, where EVERY piece of the widget is open enough to
+ *  be drawn and to be dragged.
+ *
+ * Square on — the default camera below — the Z arrow is end-on and two of the
+ * three quads are edge-on, which is the right answer and the wrong fixture for
+ * anything about a quad. The one quad that survives there is the one whose
+ * plane FACES the reader, and that is the single camera where every candidate
+ * construction agrees: the hand cannot produce a component along the held axis
+ * at all, so no correction of any kind is applied and a drag would pass with
+ * the plane arithmetic missing altogether. rings.test.js takes the same basis
+ * for the same reason. */
+const OBLIQUE = { right: [1, -1, 0], up: [1, 1, -2], forward: [-1, -1, -1] }
 
 // -- the rAF loop, driven by hand ---------------------------------------------
 // Same shape as handle.test.js: the module's loop re-arms itself from inside the
@@ -72,7 +101,9 @@ afterEach(() => {
 
 /** A solid whose world centre is `at`, as `partCentre` reads one: a bounding box
  *  computed off the tessellation and an identity `matrixWorld`. */
-const solid = (name, at = [0, 0, 45]) => fakeShapeSolid(name, {
+const PART_AT = [0, 0, 45]
+
+const solid = (name, at = PART_AT) => fakeShapeSolid(name, {
   positions: [at[0] - 5, at[1] - 5, at[2] - 5, at[0] + 5, at[1] + 5, at[2] + 5],
   index: [0, 1, 2],
 })
@@ -110,11 +141,33 @@ function scene({
   vp.overlayParts = overlay || []
   vp.box = { getBoundingClientRect: () => ({ ...RECT }) }
   vp.dispatchEvent = vi.fn()
+  // THE OTHER HALF OF THE WIDGET, as `element.js` hangs it on the element.
+  // A press on any piece ends the rotation handles' gesture as well as this
+  // layer's — one tool means both layers can be live at once, and two live
+  // drags on one part overwrite each other (`onDown`). A stub here because this
+  // file is about the arrows; `rings.test.js` runs the real pair against each
+  // other.
+  vp.rings = { refresh: vi.fn(), endDrag: vi.fn(), destroy: vi.fn() }
+  // AND THE DOOR ONTO THE CANVAS GESTURE, which `installTools` publishes on the
+  // element. A press on a piece ends that too: this layer is a sibling of
+  // `vp.box`, so tools.js's own `onDown` never sees the press and never
+  // concludes what it had running.
+  vp.endGesture = vi.fn()
   const gizmo = createGizmo(vp)
   gizmos.push(gizmo)
+  vp.gizmo = gizmo
   gizmo.refresh()
-  const [x, y, z] = gizmo.root.children
-  return { viewer, vp, groups, gizmo, x, y, z }
+  // SEVEN PIECES IN THE ORDER THE MODULE BUILDS THEM: the three arrows, then
+  // the three quads, then the origin dot. The order is not decoration — these
+  // are siblings with no `z-index`, so the last built wins a press where two
+  // overlap, and the filled shapes have to come after the arrows' mostly-empty
+  // boxes.
+  //
+  // A QUAD IS NAMED FOR THE PLANE IT LIES IN and the module indexes it by the
+  // axis it is NORMAL to, which are the two ways of saying the same thing: the
+  // quad at index 0 holds X still and lies in YZ.
+  const [x, y, z, planeYZ, planeZX, planeXY, dot] = gizmo.root.children
+  return { viewer, vp, groups, gizmo, x, y, z, planeYZ, planeZX, planeXY, dot }
 }
 
 /** Wake the loop and let one frame of it run. */
@@ -154,7 +207,25 @@ const inkOf = (arrow) => {
   return Number(match[1]) / GIZMO_PX
 }
 
-/** A press on one arrow, with both refusals watched. */
+/** How light a piece's own fill is, as the sum of its three channels — which is
+ *  all "the casing is the light one" needs, and it needs no second copy of the
+ *  hexes. rings.test.js reads its own construction the same way. */
+const brightness = (el) => {
+  const match = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(el.style.backgroundColor)
+  expect(match, `no colour in ${el.style.backgroundColor}`).toBeTruthy()
+  return Number(match[1]) + Number(match[2]) + Number(match[3])
+}
+
+/** The six numbers of the matrix a quad was placed with: the two columns are
+ *  the plane's two world axes as the screen sees them, scaled to the quad's own
+ *  side, and the translation is its near corner. */
+const matrixOf = (quad) => {
+  const match = /matrix\(([^)]*)\)/.exec(quad.style.transform)
+  expect(match, `no matrix in ${quad.style.transform}`).toBeTruthy()
+  return match[1].split(',').map(Number)
+}
+
+/** A press on one piece of the widget, with both refusals watched. */
 function grab(arrow, [clientX, clientY]) {
   const event = new MouseEvent('pointerdown', {
     clientX, clientY, bubbles: true, cancelable: true,
@@ -199,6 +270,89 @@ const dragDiagonally = () => {
   pointerMove([300, 160])
 }
 
+/**
+ * That same drag as a WORLD displacement under the oblique camera, rebuilt from
+ * the basis this file declares rather than read back off the module: 10 world
+ * units along `right` and -3 along `up`, at the 20 px to the world unit the
+ * fixture's camera gives.
+ *
+ * `dragDiagonally`'s `[10, -3, 0]` is the SQUARE-ON camera's answer, and the
+ * whole point of taking it obliquely is that this one has all three components
+ * — so a quad that failed to hold its normal axis, or a dot that constrained
+ * anything at all, would show.
+ */
+const unit = (v) => v.map((c) => c / Math.hypot(...v))
+const RIGHT = unit(OBLIQUE.right)
+const UP = unit(OBLIQUE.up)
+/** The direction every pixel of this ortho canvas looks along. The module takes
+ *  it from `cameraBasis().view`, which points from the eye at the target; which
+ *  end of the axis it names makes no difference to anything below, because it
+ *  enters the plane construction once above the line and once below it. */
+const VIEW = unit(OBLIQUE.forward)
+/** The scalar product, spelled out here so nothing below borrows the
+ *  module's. `scalar` and not `dot`, which is taken: the origin dot is one of
+ *  the seven pieces `scene()` hands back, and two different things under one
+ *  name in one file is how the wrong one gets read. */
+const scalar = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0)
+const OBLIQUE_WORLD = RIGHT.map((v, i) => v * 10 + UP[i] * -3)
+
+/** Where a world displacement lands ON THE SCREEN, in px — rebuilt from the
+ *  basis the test declares rather than read back off the module, exactly as the
+ *  oblique arrow drag above rebuilds its own answer. 20 px to the world unit on
+ *  both screen axes (400 px per 20 halfW, 300 px per 15 halfH), whatever the
+ *  basis, and screen y runs DOWN. */
+const onScreen = (v, right = RIGHT, up = UP) =>
+  [20 * scalar(v, right), -20 * scalar(v, up)]
+
+/**
+ * A camera that sees the XY quad — the plane normal to Z — at exactly `face` of
+ * itself, which is the quantity `place` floors on and the quantity
+ * `acrossPlane` divides by.
+ *
+ * `|view . z|` IS `face` BY CONSTRUCTION: the view axis is tilted out of the XY
+ * plane by that cosine and the screen basis is completed round it. The eye is
+ * put one `depth`-safe step back along the view axis from the part, so the
+ * widget lands mid-canvas and inside the far plane whatever `face` is asked for
+ * — a fixture that let the part drift to an ndc z past 1 would be testing
+ * `projectPoint`'s cull instead of this floor.
+ */
+const facingZ = (face) => {
+  const side = Math.sqrt(1 - face * face)
+  const forward = [0, -side, -face]
+  return orthoCamera({
+    forward,
+    right: [1, 0, 0],
+    up: [0, face, -side],
+    eye: PART_AT.map((v, i) => v - forward[i] * 15),
+  })
+}
+
+/**
+ * The displacement a QUAD drag should produce: the point where the ray through
+ * the moved cursor cuts the plane through the point the drag started from,
+ * `w - view (w.n)/(view.n)`.
+ *
+ * WRITTEN OUT HERE AND NOT IMPORTED, which is the whole value of it: the module
+ * has its own copy and this is the independent statement of what that copy is
+ * supposed to compute.
+ */
+const intoPlane = (normal) => OBLIQUE_WORLD.map((v, i) =>
+  v - VIEW[i] * (scalar(OBLIQUE_WORLD, normal) / scalar(VIEW, normal)))
+
+/** What the ORTHOGONAL projection would have produced instead — the nearest
+ *  point of the plane rather than the one under the cursor. Kept so the tests
+ *  below can show the gap rather than assert it by absence. */
+const ontoPlane = (normal) => OBLIQUE_WORLD.map((v, i) =>
+  v - normal[i] * scalar(OBLIQUE_WORLD, normal))
+
+/** What `snap` lands on at the fixture's default grid of 100. */
+const STEP = 0.5
+const round = (v) => Math.round(v / STEP) * STEP
+
+/** The snapped delta a quad drag lands on, with the held axis left at zero. */
+const heldAt = (normal) => intoPlane(normal)
+  .map((v, i) => (normal[i] ? 0 : round(v)))
+
 describe('when there is nothing to put arrows on', () => {
   it('draws nothing while no tool is armed', () => {
     // The arrows are the MOVE TOOL's, and a widget offering a drag the press
@@ -210,6 +364,17 @@ describe('when there is nothing to put arrows on', () => {
     vp.state = { ...vp.state, tool: null }
     drawn(gizmo)
     expect(shown(x)).toBe(false)
+  })
+
+  it('draws nothing for the retired tool value', () => {
+    // `turn` WAS A TOOL AND IS NOT ONE ANY MORE. It armed the rotation handles
+    // alone, so the reader had to swap tools between the two halves of one
+    // widget; both halves answer to `move` now. Nothing must be left answering
+    // to the old value — a widget that came up under a name the interface no
+    // longer writes would be unreachable and invisible in one move.
+    const { gizmo, x, planeXY, dot } = scene({ tool: 'turn' })
+    drawn(gizmo)
+    expect([x, planeXY, dot].map(shown)).toEqual([false, false, false])
   })
 
   it('draws nothing while the hold key has the cut up', () => {
@@ -262,6 +427,22 @@ describe('when there is nothing to put arrows on', () => {
     dragDiagonally()
 
     expect(vp.moved.size).toBe(0)
+  })
+})
+
+describe('what the one tool puts on the part', () => {
+  it('puts every piece of the widget up under the one tool', () => {
+    // FUSION'S TRIAD IS ONE COMMAND — an origin, three arrows, three plane
+    // quads and three rotation handles at once — and this is the half of it
+    // that lives here. The handles are the other half and stand up under the
+    // same tool; rings.test.js pins the two layers together.
+    //
+    // DOWN THE DIAGONAL, because square on the count would be about the camera:
+    // the Z arrow is end-on and two quads are edge-on there, correctly.
+    const { gizmo } = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(gizmo)
+
+    expect([...gizmo.root.children].filter(shown)).toHaveLength(7)
   })
 })
 
@@ -386,6 +567,135 @@ describe('how long they are drawn', () => {
     // `GIZMO_HIT_PX`, against a shaft of two.
     expect(oblique.x.style.height).toBe(square.x.style.height)
     expect(oblique.x.style.pointerEvents).toBe('auto')
+  })
+})
+
+describe('where the quads are drawn', () => {
+  it('lies in its own plane, spanned by the two arrows that bound it', () => {
+    // A QUAD IS A SQUARE IN ITS PLANE, and a square under a linear map is what
+    // a CSS `matrix()` draws — so the two columns are the plane's two world
+    // axes as the screen sees them and nothing else can be. Square on, X reads
+    // 20 px right per world unit and Y reads 20 px UP, i.e. -20 in screen
+    // pixels, and both are unforeshortened: the XY quad's columns are therefore
+    // the plain `(1, 0)` and `(0, -1)`, which the module scales by the quad's
+    // own side through the box it puts them on.
+    const { gizmo, planeXY } = scene()
+    drawn(gizmo)
+
+    expect(planeXY.style.left).toBe('400px')
+    expect(planeXY.style.top).toBe('300px')
+    expect(planeXY.style.width).toBe(`${GIZMO_PLANE_PX}px`)
+    expect(planeXY.style.transformOrigin).toBe('0 0')
+
+    const [ax, ay, bx, by, tx, ty] = matrixOf(planeXY)
+    expect([ax, ay]).toEqual([1, 0])
+    expect([bx, by]).toEqual([0, -1])
+    // THE NEAR CORNER STANDS OFF ALONG BOTH, which is what keeps the quad clear
+    // of the blot where the three shafts cross.
+    expect(tx).toBeCloseTo(GIZMO_PLANE_GAP_PX, 9)
+    expect(ty).toBeCloseTo(-GIZMO_PLANE_GAP_PX, 9)
+    // AND WELL INSIDE THE ARROWHEADS, which is the other half of the
+    // placement: corner plus side has to stay under one arrow's reach.
+    expect(GIZMO_PLANE_GAP_PX + GIZMO_PLANE_PX).toBeLessThan(GIZMO_PX)
+  })
+
+  it('foreshortens with the two arrows it stands between', () => {
+    // The quad is world geometry and has to be drawn like it: down the diagonal
+    // each axis keeps `sqrt(2/3)` of itself, so each column of the matrix is
+    // that long. Read as a LENGTH rather than as two numbers, because the
+    // direction is the camera's business and the proportion is the claim.
+    const { gizmo, planeXY } = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(gizmo)
+
+    const [ax, ay, bx, by] = matrixOf(planeXY)
+    expect(Math.hypot(ax, ay)).toBeCloseTo(Math.sqrt(2 / 3), 9)
+    expect(Math.hypot(bx, by)).toBeCloseTo(Math.sqrt(2 / 3), 9)
+  })
+
+  it('takes a plane seen edge-on off the screen entirely', () => {
+    // THE ARROWS' OWN FLOOR, asked about the complementary quantity, and the
+    // two answers are complementary too: looking straight down Z, the Z arrow
+    // is gone and the XY quad is at its widest, while the two quads whose
+    // planes contain Z are edge-on and go.
+    //
+    // FOR BOTH REASONS AT ONCE, which is what makes this floor worth two tests.
+    // A square seen edge-on is a LINE lying across the two arrows that span it,
+    // ready to take the presses meant for them; and its drag divides by
+    // `view . n`, which is the very quantity this floors on, so the case below
+    // pins that the hiding is also the fence.
+    const { gizmo, z, planeYZ, planeZX, planeXY } = scene()
+    drawn(gizmo)
+
+    expect(shown(z), 'the premise: the Z arrow is the end-on one').toBe(false)
+    expect(shown(planeXY), 'and its own plane is square to the reader').toBe(true)
+    expect([shown(planeYZ), shown(planeZX)]).toEqual([false, false])
+  })
+
+  it('draws all three on an oblique camera', () => {
+    // A third of the way round from every axis: each plane keeps `1/sqrt(3)` of
+    // itself, which is clear of the floor — so what is pinned is that three
+    // quads really can stand at once rather than the threshold.
+    const { gizmo, planeYZ, planeZX, planeXY } = scene({
+      camera: orthoCamera(OBLIQUE),
+    })
+    drawn(gizmo)
+
+    expect([planeYZ, planeZX, planeXY].map(shown)).toEqual([true, true, true])
+    expect(1 / Math.sqrt(3)).toBeGreaterThan(GIZMO_MIN_SCALE)
+  })
+})
+
+describe('where the dot is drawn', () => {
+  it('draws the dot at the centre, at a size of its own', () => {
+    // NO MATRIX ON THIS ONE, which is the whole of what "free" means here: it
+    // stands for a gesture with no axis and no plane in it, so there is nothing
+    // about the camera for it to foreshorten to. It is centred on the part
+    // rather than standing off it, so the transform is the one `translate` and
+    // never changes.
+    const square = scene()
+    drawn(square.gizmo)
+    const oblique = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(oblique.gizmo)
+
+    expect(square.dot.style.left).toBe('400px')
+    expect(square.dot.style.top).toBe('300px')
+    expect(square.dot.style.width).toBe(`${GIZMO_DOT_PX}px`)
+    expect(square.dot.style.transform).toBe('translate(-50%,-50%)')
+    expect(oblique.dot.style.transform).toBe(square.dot.style.transform)
+    expect(oblique.dot.style.width).toBe(square.dot.style.width)
+  })
+})
+
+describe('how the two new pieces are made legible', () => {
+  it('carries a casing and a rim where the arrows carry a halo', () => {
+    // THE DECISION THIS PINS. The arrows wear a `filter` halo, which works on a
+    // box whose lengths are its own. A quad is drawn under the projection's own
+    // 2x2 matrix and a filter is computed in the element's OWN space before
+    // that matrix touches it — `rings.js` makes the same argument pointing the
+    // other way, where a ring's matrix would blow a 1 px glow up to a hundred —
+    // so a halo would thin away exactly as the quad turned edge-on, which is
+    // where it is wanted. And both new pieces are FILLED shapes ten pixels
+    // across, where 1 px of soft glow is a hairline round a block of one
+    // colour, rather than 2 px shafts that are nearly all edge.
+    //
+    // SO BOTH TAKE THE RINGS' CONSTRUCTION: a light casing inside a dark rim,
+    // as three filled boxes so that one transform carries all three.
+    const { gizmo, x, planeXY, dot } = scene()
+    drawn(gizmo)
+
+    expect(x.style.filter, 'the arrow keeps its halo').toContain('drop-shadow')
+    for (const piece of [planeXY, dot]) {
+      expect(piece.style.filter).toBe('')
+      expect(piece.style.boxShadow).toBe('')
+      // Rim outside casing outside ink, each one box inside the last.
+      expect(piece.children).toHaveLength(1)
+      const casing = piece.firstElementChild
+      expect(casing.children).toHaveLength(1)
+      const ink = casing.firstElementChild
+      expect(ink.children).toHaveLength(0)
+      expect(brightness(casing)).toBeGreaterThan(brightness(piece))
+      expect(brightness(casing)).toBeGreaterThan(brightness(ink))
+    }
   })
 })
 
@@ -698,5 +1008,302 @@ describe('one whole drag', () => {
     // Ten world units at 20 px each, and nothing has been reported yet.
     expect(details(vp, EVENT_MOVED)).toEqual([])
     expect(x.style.left).toBe('600px')
+  })
+})
+
+describe('one whole drag of a quad', () => {
+  it('keeps the grabbed point under the cursor on an oblique plane', () => {
+    // THE CLAIM THE WHOLE CONSTRUCTION EXISTS FOR, and the only one that tells
+    // the two candidate formulas apart. Under an ortho camera every pixel looks
+    // along one fixed direction, so the displacement that leaves the grabbed
+    // point under the pointer AND in the plane is where the ray through the
+    // moved cursor cuts the plane through where the drag began. The orthogonal
+    // projection `w - n(w.n)` answers a different question — the nearest point
+    // of the plane to where a free drag would have gone — and lags the hand by
+    // whatever it threw away.
+    //
+    // SO THE ASSERTION IS ABOUT THE SCREEN AND NOT ABOUT THE HELD AXIS. Both
+    // formulas hold the normal axis perfectly; only one of them puts the part
+    // back under the cursor, so a test that checked the held axis alone would
+    // pass on either.
+    //
+    // AND THE FACE-ON CASE CANNOT CATCH IT. Square on to a plane the normal IS
+    // the view direction, so `view (w.n)/(view.n)` reduces to `n (w.n)` and the
+    // two formulas are the same expression — and worse, a screen-plane
+    // displacement then has no component along the normal at all, so both
+    // corrections are zero and the two agree on the answer as well as on the
+    // arithmetic. Only an oblique plane separates them.
+    const { gizmo, groups, planeXY } = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(gizmo)
+
+    grab(planeXY, [100, 100])
+    dragDiagonally()   // 200 px right and 60 px down, from the press
+
+    // HOW CLOSE IS CLOSE ENOUGH: `snap` can move each of the plane's two world
+    // coordinates by half a step, which at 20 px to the world unit is at most
+    // `STEP * 20` px on the screen once both are counted. Nothing else stands
+    // between the hand and the part.
+    const slack = STEP * 20
+    const went = onScreen(at(groups[PART]))
+    expect(Math.abs(went[0] - 200)).toBeLessThan(slack)
+    expect(Math.abs(went[1] - 60)).toBeLessThan(slack)
+
+    // AND THE OLD ANSWER IS NOWHERE NEAR IT — about 40 px adrift up the screen,
+    // three times the whole slack, which is what this test would have caught.
+    const ortho = onScreen(ontoPlane([0, 0, 1]).map(round))
+    expect(Math.abs(ortho[1] - 60)).toBeGreaterThan(3 * slack)
+  })
+
+  it('is fenced against its own divisor by the very floor that hides it', () => {
+    // KEEP THESE TWO IN STEP, which is why it is a test and not a sentence in a
+    // comment. `acrossPlane` divides by `view . n` and adds no guard of its
+    // own; what makes that safe is that `place` hides a quad below
+    // `GIZMO_MIN_SCALE` of `face`, and `face` IS `|view . n|`. They are one
+    // number today. Floor `place` on something else — the projected area in px,
+    // the way `RING_MIN_PX` does for a ring — and the division loses its fence
+    // in silence, with every other test in this file still green.
+    //
+    // SO THE TRANSITION IS PINNED AT THE FLOOR ITSELF, a hundredth either side:
+    // above it the quad is on screen and can be pressed, below it there is
+    // nothing to press and the small divisors are unreachable.
+    const camera = facingZ(GIZMO_MIN_SCALE + 0.01)
+    const above = scene({ camera })
+    drawn(above.gizmo)
+    expect(shown(above.planeXY)).toBe(true)
+
+    const below = scene({ camera: facingZ(GIZMO_MIN_SCALE - 0.01) })
+    drawn(below.gizmo)
+    expect(shown(below.planeXY)).toBe(false)
+
+    // AND THE WORST DRAG STILL REACHABLE IS AN ORDINARY ONE. At the floor the
+    // divisor is a fifth and the factor five, so the correction along the view
+    // axis is large and perfectly finite — and the part still lands under the
+    // cursor, which is the whole claim holding at the one camera where it is
+    // under most strain.
+    grab(above.planeXY, [100, 100])
+    dragDiagonally()
+
+    const went = onScreen(at(above.groups[PART]), camera.right, camera.up)
+    expect(went.every(Number.isFinite), 'the divisor blew up').toBe(true)
+    expect(Math.abs(went[0] - 200)).toBeLessThan(STEP * 20)
+    expect(Math.abs(went[1] - 60)).toBeLessThan(STEP * 20)
+    // And the axis the plane holds is still held, at the very edge of the fence.
+    expect(at(above.groups[PART])[2]).toBe(0)
+  })
+
+  it('moves the part on the plane`s two axes and holds the third', async () => {
+    // THE CONSTRAINT ITSELF, beside the tracking above: whatever the two axes
+    // of the plane do, the third does not move at all.
+    //
+    // THE PREMISE IS THAT THERE WAS SOMETHING TO HOLD. Square on to the screen
+    // the hand cannot produce a Z component in the first place, so this camera
+    // is what makes the claim mean anything.
+    expect(Math.abs(OBLIQUE_WORLD[2]), 'the drag really does reach Z')
+      .toBeGreaterThan(STEP)
+
+    const { gizmo, groups, planeXY } = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(gizmo)
+
+    grab(planeXY, [100, 100])
+    dragDiagonally()
+
+    expect(at(groups[PART])).toEqual(heldAt([0, 0, 1]))
+  })
+
+  it('takes the same two axes for whichever plane was grabbed', async () => {
+    // ONE QUAD PER PLANE AND EACH ONE ITS OWN, which a single quad could not
+    // show: the YZ quad has to hold X exactly as the XY quad holds Z, and each
+    // meets the cursor's ray with its OWN plane. The same gesture drives both.
+    const yz = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(yz.gizmo)
+    grab(yz.planeYZ, [100, 100])
+    dragDiagonally()
+
+    expect(at(yz.groups[PART])).toEqual(heldAt([1, 0, 0]))
+
+    const zx = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(zx.gizmo)
+    grab(zx.planeZX, [100, 100])
+    dragDiagonally()
+
+    expect(at(zx.groups[PART])).toEqual(heldAt([0, 1, 0]))
+  })
+
+  it('leaves the axis it holds exactly as it found it', () => {
+    // AN OFFSET ALREADY STANDING NEED NOT BE ON THIS GRID, which is the arrows'
+    // own rule and the reason the held axis is handed through rather than
+    // passed to `snap` with nothing added to it. The number arrives from the
+    // proposal document, whose `delta.<axis>` fields the reader types by hand:
+    // rounded here, a drag on the XY plane would report a Z the reader wrote as
+    // 12.34 coming back as 12.5, as part of a gesture that never touched it.
+    const { vp, gizmo, groups, planeXY } = scene({
+      camera: orthoCamera(OBLIQUE), gridSize: 20,
+    })
+    drawn(gizmo)
+    vp.moved.set(PART, { delta: [0, 0, 12.34], turn: [0, 0, 0] })
+
+    grab(planeXY, [100, 100])
+    dragDiagonally()
+
+    expect(at(groups[PART])[2]).toBe(12.34)
+  })
+
+  it('says where the part ended up in the same sentence an arrow does', async () => {
+    // ONE VOCABULARY FOR ONE DOCUMENT. A quad's drag ends in the same
+    // `reportMove` the arrows and the canvas drag end in, so what reaches the
+    // panel is a move node like any other — the same `delta`, the same paths,
+    // the same build stamp, once, and only when the hand comes off.
+    const { vp, gizmo, planeXY } = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(gizmo)
+
+    grab(planeXY, [100, 100])
+    dragDiagonally()
+    await settled()
+    expect(details(vp, EVENT_MOVED), 'it spoke mid-drag').toEqual([])
+
+    pointerUp([300, 160])
+    await settled()
+
+    const reports = details(vp, EVENT_MOVED)
+    expect(reports).toHaveLength(1)
+    expect(reports[0].delta).toEqual(heldAt([0, 0, 1]))
+    expect(reports[0].paths).toEqual([PART])
+    expect(reports[0].build).toBe('build-1')
+    expect(vp.moved.get(PART))
+      .toEqual({ delta: heldAt([0, 0, 1]), turn: [0, 0, 0] })
+  })
+})
+
+describe('one whole drag of the origin dot', () => {
+  it('moves the part on all three axes at once', async () => {
+    // THE ONE PIECE THAT CONSTRAINS NOTHING, and it is what the other two are
+    // measured against: the same gesture that an arrow reduces to one number
+    // and a quad to two comes through here as all three.
+    const { gizmo, groups, dot } = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(gizmo)
+
+    grab(dot, [100, 100])
+    dragDiagonally()
+
+    expect(at(groups[PART])).toEqual(OBLIQUE_WORLD.map(round))
+    // And every component really was its own: a widget that quietly held one
+    // would pass the line above on a camera that put a zero there.
+    for (const v of OBLIQUE_WORLD) expect(Math.abs(v)).toBeGreaterThan(STEP)
+  })
+
+  it('is the free drag itself and not a second copy of it', async () => {
+    // A SECOND DOOR TO `dragPart` IN tools.js — the very function a press on
+    // the part runs — so the two cannot round differently, record differently
+    // or report differently. The proof this file can give is that the answer is
+    // the one the FREE drag gives and not the one any projection would: square
+    // on, the hand spans `[10, -3, 0]` and nothing is dropped from it.
+    const { vp, gizmo, groups, dot } = scene()
+    drawn(gizmo)
+
+    grab(dot, [100, 100])
+    dragDiagonally()
+    pointerUp([300, 160])
+    await settled()
+
+    expect(at(groups[PART])).toEqual([10, -3, 0])
+    expect(details(vp, EVENT_MOVED)[0].delta).toEqual([10, -3, 0])
+  })
+
+  it('edits the panel`s document for a body the proposal staged', async () => {
+    // THE SECOND MEANING OF THE SAME GESTURE, reached through the same
+    // `reportMove`: a body of the proposal moves for the eye alone, nothing is
+    // recorded for it, and the release names the body to the panel. It is the
+    // arrows' case asked of the piece that goes through tools.js's own
+    // function, so a dot wired to anything else would show here.
+    const BODY = '/Group/proposal/plate'
+    const { vp, gizmo, groups, dot } = scene({
+      selected: [BODY],
+      groups: { [BODY]: solid(BODY) },
+      overlay: [{ name: 'plate' }],
+    })
+    drawn(gizmo)
+
+    grab(dot, [100, 100])
+    dragDiagonally()
+    pointerUp([300, 160])
+    await settled()
+
+    const [report] = details(vp, EVENT_PROPOSALMOVE)
+    expect(report.name).toBe('plate')
+    expect(report.delta).toEqual([10, -3, 0])
+    expect(at(groups[BODY])).toEqual([10, -3, 0])
+    expect(vp.moved.size, 'an offset was written for it').toBe(0)
+    expect(details(vp, EVENT_MOVED)).toEqual([])
+  })
+})
+
+describe('a press that misses every piece', () => {
+  it('is left for the trackball, which is what keeps the view turnable', () => {
+    // THE WIDGET OWNS ITS OWN PIECES AND NOTHING ELSE. The layer covers the
+    // whole canvas, so it declines presses wholesale and each piece takes its
+    // own back — which is what lets a press between the arrows reach the canvas
+    // underneath, where tools.js decides between grabbing the part and handing
+    // the gesture to the controls. Without the split the reader would arm the
+    // tool that moves a PART and lose the ability to turn the VIEW.
+    //
+    // IT IS ALSO WHAT LEAVES THE ROTATION HANDLES THEIRS. They read the press
+    // off the canvas in a window listener, so a press this layer swallowed
+    // would never get to them — one widget, two layers, and this line is the
+    // only thing keeping them out of each other's way.
+    const { vp, gizmo, groups } = scene()
+    drawn(gizmo)
+
+    expect(gizmo.root.style.pointerEvents).toBe('none')
+    for (const piece of gizmo.root.children) {
+      expect(piece.style.pointerEvents).toBe('auto')
+    }
+
+    // And a press that really does land on the layer rather than on a piece
+    // starts nothing: no gesture, no refusals taken from anybody else.
+    const event = new MouseEvent('pointerdown', {
+      clientX: 100, clientY: 100, bubbles: true, cancelable: true,
+    })
+    vi.spyOn(event, 'stopPropagation')
+    vi.spyOn(event, 'preventDefault')
+    gizmo.root.dispatchEvent(event)
+    dragDiagonally()
+
+    expect(event.stopPropagation).not.toHaveBeenCalled()
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(at(groups[PART])).toEqual([0, 0, 0])
+    expect(vp.moved.size).toBe(0)
+  })
+})
+
+describe('a press that this layer does take', () => {
+  it('ends every other gesture that could be live', () => {
+    // THREE THINGS CAN BE RUNNING WHEN A PIECE IS PRESSED, and until the tools
+    // were merged only the first could: this layer's own drag, the rotation
+    // handles' drag, and the canvas gesture in tools.js. All three write the
+    // same part through `movePart`, which sets position AND orientation
+    // together from its own snapshot of the other's half — so any two of them
+    // live at once overwrite each other frame by frame and both report at the
+    // release.
+    //
+    // THE CANVAS ONE IS THE ONE A PRESS HERE CANNOT OTHERWISE REACH. tools.js
+    // concludes its own previous press at the head of its `onDown`, but that
+    // listener is on `vp.box` and this layer is a SIBLING of it, so a press on
+    // a piece is not on its path at all. A finger on the part and then a finger
+    // on an arrow leaves the free drag live, measuring from the first finger's
+    // ndc to wherever the second one now is.
+    //
+    // THE SECTION GRIP IS THE FOURTH AND IS DELIBERATELY NOT ENDED: it drives
+    // the clipping plane, and nothing it writes is anything this reads.
+    const { vp, x, planeXY, dot } = scene()
+    drawn(vp.gizmo)
+
+    for (const piece of [x, planeXY, dot]) {
+      vp.rings.endDrag.mockClear()
+      vp.endGesture.mockClear()
+      grab(piece, [100, 100])
+      pointerUp([100, 100])
+      expect(vp.rings.endDrag, 'the handles were left running').toHaveBeenCalled()
+      expect(vp.endGesture, 'the canvas drag was left running').toHaveBeenCalled()
+    }
   })
 })

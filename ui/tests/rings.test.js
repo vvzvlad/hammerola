@@ -1,4 +1,4 @@
-// ui/src/viewport/rings.js — the turn tool's three rings.
+// ui/src/viewport/rings.js — the move tool's three rotation handles.
 //
 // There is no GPU here and nothing below looks at a pixel, the same discipline
 // gizmo.test.js and handle.test.js keep beside it. What IS assertable is
@@ -45,7 +45,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { HmrViewport } from '../src/viewport/element.js'
-import { EVENT_PROPOSALTURN, EVENT_TURNED } from '../src/viewport/events.js'
+import {
+  EVENT_MOVED, EVENT_PROPOSALTURN, EVENT_TURNED,
+} from '../src/viewport/events.js'
 import { createGizmo } from '../src/viewport/gizmo.js'
 import { createRings } from '../src/viewport/rings.js'
 import { cross3 } from '../src/viewport/math.js'
@@ -112,8 +114,13 @@ const solid = (name, at = [0, 0, 45]) => fakeShapeSolid(name, {
 })
 
 /**
- * A viewport with the Turn tool armed over a movable part, and the rings
+ * A viewport with the Move tool armed over a movable part, and the rings
  * installed over it.
+ *
+ * `move` AND NOT A TOOL OF THEIR OWN, which is the whole of what the merge
+ * changed in this file. The rings are one half of a single manipulator — the
+ * arrows, the plane quads and the origin dot are the other — and both halves
+ * answer to the tool that puts the widget on the part.
  *
  * Built on the real prototype so `activeTool`, `isOverlay` and `overlayBody` are
  * the element's own — a fake that re-implemented them would let this file agree
@@ -131,7 +138,7 @@ const solid = (name, at = [0, 0, 45]) => fakeShapeSolid(name, {
  */
 function scene({
   selected = [PART], groups = { [PART]: solid(PART) }, camera, gridSize = 100,
-  tool = 'turn', overlay = null,
+  tool = 'move', overlay = null,
 } = {}) {
   const viewer = fakeViewer({
     camera: camera || orthoCamera(), rect: RECT, groups, gridSize,
@@ -155,8 +162,19 @@ function scene({
   vp.overlayParts = overlay || []
   vp.box = { getBoundingClientRect: () => ({ ...RECT }) }
   vp.dispatchEvent = vi.fn()
+  // THE OTHER HALF OF THE WIDGET, as `element.js` hangs it on the element. A
+  // press on the canvas ends the arrows' gesture as well as this layer's — one
+  // tool means both can be live at once, and two live drags on one part
+  // overwrite each other (`onDown`). A stub by default, replaced with the real
+  // layer by the tests that run the pair against each other.
+  vp.gizmo = { refresh: vi.fn(), endDrag: vi.fn(), destroy: vi.fn() }
+  // AND THE DOOR ONTO THE CANVAS GESTURE, which `installTools` publishes on the
+  // element. A press this layer KEEPS ends that too, because `stopPropagation`
+  // is what stops tools.js's own `onDown` concluding it.
+  vp.endGesture = vi.fn()
   const rings = createRings(vp)
   layers.push(rings)
+  vp.rings = rings
   rings.refresh()
   const [x, y, z] = rings.root.children
   return { viewer, vp, groups, canvas, rings, x, y, z }
@@ -384,18 +402,21 @@ describe('when there is nothing to put rings round', () => {
   it('draws nothing while no tool is armed', () => {
     const { vp, rings, z } = scene()
     drawn(rings)
-    expect(shown(z), 'the premise: it is on screen with Turn armed').toBe(true)
+    expect(shown(z), 'the premise: it is on screen with Move armed').toBe(true)
 
     vp.state = { ...vp.state, tool: null }
     drawn(rings)
     expect(shown(z)).toBe(false)
   })
 
-  it('draws nothing while the MOVE tool is the one armed', () => {
-    // The two widgets stand on the same point and answer to different tools, so
-    // rings up under Move would be offering a gesture the press is not for —
-    // three handles standing round the arrows that ARE.
-    const { rings, z } = scene({ tool: 'move' })
+  it('draws nothing for the retired tool value', () => {
+    // `turn` WAS A TOOL AND IS NOT ONE ANY MORE. The rings were its whole
+    // gesture, so a reader who wanted to slide a part and then turn it had to
+    // swap tools between the two halves of one widget. Both halves answer to
+    // `move` now, and this pins that nothing is left behind answering to the
+    // old value — a widget that came up under a name the interface no longer
+    // writes would be unreachable and invisible in one move.
+    const { rings, z } = scene({ tool: 'turn' })
     drawn(rings)
     expect(shown(z)).toBe(false)
   })
@@ -630,11 +651,16 @@ describe('how a ring is drawn', () => {
     // grey beside arrows in colour would be worse than either.
     const { vp, rings } = scene()
     drawn(rings)
-    const gizmo = createGizmo({ ...vp, state: { ...vp.state, tool: 'move' } })
+    const gizmo = createGizmo(vp)
     gizmo.refresh()
     runFrames()
 
-    const arrows = [...gizmo.root.children].map(
+    // THE FIRST THREE CHILDREN ARE THE ARROWS, which is the order that layer
+    // builds in — arrows, then the three plane quads, then the origin dot. The
+    // shaft is an arrow's own first child and carries the axis ink; a quad's is
+    // its white casing and the dot's is the same, so the slice is what keeps
+    // this about the triad rather than about the construction.
+    const arrows = [...gizmo.root.children].slice(0, 3).map(
       (arrow) => arrow.firstElementChild.style.backgroundColor)
     expect(arrows.filter(Boolean)).toHaveLength(3)
     const groups = [...rings.root.children]
@@ -761,6 +787,180 @@ describe('what takes the press', () => {
     const event = press(canvas, AT_DISC)
     expect(event.stopPropagation).toHaveBeenCalled()
     expect(event.preventDefault).toHaveBeenCalled()
+  })
+
+  it('declines one that landed on a piece of the arrows` layer instead', () => {
+    // THE CLAIM THAT LETS ONE TOOL DRIVE TWO LAYERS, checked rather than
+    // assumed. Both are on screen at once now, they stand on the same point,
+    // and they take their presses by completely different means: an arrow, a
+    // quad and the origin dot are BOXES and take theirs on their own elements,
+    // while this layer takes none at all and reads the canvas's own press in a
+    // capture listener on the window. Capture runs from the window DOWN, so
+    // this listener sees a press aimed at an arrow BEFORE the arrow does — and
+    // the single line that keeps it from stealing it is `event.target !==
+    // g.canvas`.
+    //
+    // SO THE SAME PIXEL IS PRESSED TWICE, which is the only way to show it: at
+    // the Z disc's own position, once at the arrow and once at the canvas. The
+    // first has to slide the part and turn nothing; the second has to turn it.
+    const { vp, rings, canvas } = scene()
+    drawn(rings)
+    const gizmo = createGizmo(vp)
+    layers.push(gizmo)
+    // IN THE DOCUMENT, because a press dispatched at a detached element never
+    // reaches the window listener this test is about.
+    document.body.appendChild(gizmo.root)
+    gizmo.refresh()
+    runFrames()
+
+    const arrow = gizmo.root.firstElementChild
+    arrow.dispatchEvent(new MouseEvent('pointerdown', {
+      clientX: AT_DISC[0], clientY: AT_DISC[1], bubbles: true, cancelable: true,
+    }))
+    pointerMove([AT_DISC[0] + 200, AT_DISC[1] + 60])
+
+    const said = vp.moved.get(PART)
+    expect(said, 'the arrow took its own press').toBeTruthy()
+    expect(said.turn, 'and the rings did not take it too').toEqual([0, 0, 0])
+    expect(said.delta[0]).not.toBe(0)
+
+    // And the same point on the CANVAS is still the disc's, so the rings have
+    // lost nothing by sharing the reach.
+    const other = scene()
+    drawn(other.rings)
+    press(other.canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
+    expect(other.vp.moved.get(PART).turn).not.toEqual([0, 0, 0])
+  })
+
+  it('ends the other layer`s drag, and is ended by it, either way round', async () => {
+    // TWO LIVE GESTURES ON ONE PART, which is what the merge made possible and
+    // neither layer defended against. Both `onDown`s already conclude their OWN
+    // previous gesture, so a second pointer is treated as real input here; what
+    // could not happen before was the CROSS case — this layer wanted `turn` and
+    // the arrows wanted `move`, so only one was ever alive to be interrupted.
+    //
+    // AND TWO ARE WORSE THAN A STALE ONE. Both `onMove`s are on the window and
+    // neither filters by pointer id, so both run on every move; each then calls
+    // `movePart`, which writes position AND orientation together from its own
+    // snapshot of the other's half — so left alone they overwrite each other
+    // frame by frame and both report at the release.
+    //
+    // CONCLUDED AND NOT ABANDONED, which is `concludeMove`'s argument: the part
+    // is standing where the reader left it and only the document can be wrong
+    // about that. So each direction below asserts the report went out, and then
+    // that the interrupted layer really has let go — the field it was writing
+    // stops moving while the field the new gesture writes goes on.
+    const both = () => {
+      const s = scene()
+      drawn(s.rings)
+      const gizmo = createGizmo(s.vp)
+      layers.push(gizmo)
+      s.vp.gizmo = gizmo
+      // IN THE DOCUMENT, or a press dispatched at an arrow never reaches the
+      // window listener this layer reads its own presses in.
+      document.body.appendChild(gizmo.root)
+      gizmo.refresh()
+      runFrames()
+      return { ...s, gizmo, arrow: gizmo.root.firstElementChild }
+    }
+    const pressArrow = (arrow, [clientX, clientY]) => arrow.dispatchEvent(
+      new MouseEvent('pointerdown', {
+        clientX, clientY, bubbles: true, cancelable: true,
+      }))
+
+    // A TURN IN PROGRESS, INTERRUPTED BY A PRESS ON AN ARROW.
+    const a = both()
+    press(a.canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
+    const turned = a.vp.moved.get(PART).turn
+    expect(turned, 'the premise: the part really is being turned')
+      .not.toEqual([0, 0, 0])
+
+    pressArrow(a.arrow, [100, 100])
+    await settled()
+    expect(details(a.vp, EVENT_TURNED), 'the turn was dropped rather than said')
+      .toHaveLength(1)
+
+    pointerMove([300, 160])
+    // The handles have let go — the angle stands where the hand left it — while
+    // the arrow that took over is writing the offset.
+    expect(a.vp.moved.get(PART).turn).toEqual(turned)
+    expect(a.vp.moved.get(PART).delta).not.toEqual([0, 0, 0])
+
+    // AND THE SAME THING THE OTHER WAY ROUND: a slide in progress, interrupted
+    // by a press on a disc.
+    const b = both()
+    pressArrow(b.arrow, [100, 100])
+    pointerMove([300, 160])
+    const slid = b.vp.moved.get(PART).delta
+    expect(slid, 'the premise: the part really is being slid').not.toEqual([0, 0, 0])
+
+    press(b.canvas, AT_DISC)
+    await settled()
+    expect(details(b.vp, EVENT_MOVED), 'the slide was dropped rather than said')
+      .toHaveLength(1)
+
+    pointerMove(AT_QUARTER)
+    // The arrow has let go, and the offset it left behind is carried through the
+    // turn rather than straightened — `turnRecord` reads it off `vp.moved`,
+    // which the conclusion above had already written.
+    expect(b.vp.moved.get(PART).delta).toEqual(slid)
+    expect(b.vp.moved.get(PART).turn).not.toEqual([0, 0, 0])
+
+    // AND ON A PRESS THAT MISSES EVERY DISC, which the module states as a rule
+    // and nothing checked: the `endDrag` is taken BEFORE the hit test, so a
+    // second finger landing on the bare model ends the arrow's drag exactly as
+    // one landing on a handle does. It is the same reader stranding the same
+    // gesture. Moved below the hit test, everything else in this file stays
+    // green.
+    const c = both()
+    pressArrow(c.arrow, [100, 100])
+    pointerMove([300, 160])
+    expect(c.vp.moved.get(PART).delta, 'the premise: a slide is running')
+      .not.toEqual([0, 0, 0])
+
+    press(c.canvas, AT_CURVE)
+    await settled()
+    expect(details(c.vp, EVENT_MOVED), 'the slide was dropped rather than said')
+      .toHaveLength(1)
+
+    const left = c.vp.moved.get(PART).delta
+    pointerMove([500, 300])
+    expect(c.vp.moved.get(PART).delta, 'the arrow was still listening')
+      .toEqual(left)
+  })
+
+  it('hands the canvas gesture on only for a press it actually keeps', async () => {
+    // THE THIRD THING THAT CAN BE LIVE, and the one neither layer can end by
+    // itself. tools.js concludes its own previous press at the head of its
+    // `onDown` — and that listener sees every press aimed at the canvas, so a
+    // press this layer DECLINES needs nothing from us. What opens the hole is
+    // `stopPropagation`: a press this layer KEEPS never reaches that listener,
+    // so the free drag a first finger started stays live, and then both
+    // `onMove`s run on every move with `dragPart` measuring from the first
+    // finger's ndc to wherever the second one is.
+    //
+    // SO THE CALL BELONGS TO THE KEPT PRESS ALONE, and that is what this pins
+    // rather than merely that the call exists. `endGesture` CONCLUDES, and
+    // concluding a cut means `reportCut`, which the interface answers by
+    // disarming the armed tool — which is exactly why tools.js's own `onDown`
+    // calls `concludeMove` and not `conclude`. Hoisted above the hit test to
+    // sit beside the `endDrag`, this would do that on every ordinary canvas
+    // press with a cut still live.
+    const taken = scene()
+    drawn(taken.rings)
+    press(taken.canvas, AT_DISC)
+    expect(taken.vp.endGesture).toHaveBeenCalled()
+
+    const missed = scene()
+    drawn(missed.rings)
+    press(missed.canvas, AT_CURVE)
+    expect(missed.vp.endGesture).not.toHaveBeenCalled()
+    // And the press really did go on to whatever is behind this layer, which is
+    // what makes tools.js's own conclusion the right one to rely on.
+    const event = press(missed.canvas, AT_CURVE)
+    expect(event.stopPropagation).not.toHaveBeenCalled()
   })
 
   it('takes a press to the disc`s edge and refuses one past it', () => {
@@ -1527,5 +1727,114 @@ describe('the two rings the default camera cannot show, and the far side', () =>
     expectSends(
       facing(made.groups[PART]),
       after(quaternionOf([30, 0, 0]), quaternionOf([0, 0, 90])))
+  })
+})
+
+// -- the two halves of one widget ---------------------------------------------
+
+describe('what puts the widget on the part', () => {
+  it('stands on the part beside the arrows, under the one tool', () => {
+    // THE MERGE ITSELF, and it is assertable only with both layers up: Fusion's
+    // triad is one widget carrying an origin, three arrows, three plane quads
+    // and three rotation handles at once, and the reader must not have to put a
+    // part down before they may turn it.
+    //
+    // DOWN THE DIAGONAL, which is the one camera where every piece of both
+    // layers is open enough to be drawn — square on, the Z arrow is end-on and
+    // two of the three quads are edge-on, so a count taken there would be about
+    // the camera rather than about the merge.
+    const { vp, rings, x, y, z } = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(rings)
+    const gizmo = createGizmo(vp)
+    layers.push(gizmo)
+    gizmo.refresh()
+    runFrames()
+
+    // Seven pieces on the arrows' layer — three arrows, three quads, the dot —
+    // and the three handles standing among them rather than instead of them.
+    expect([...gizmo.root.children].filter((el) => el.style.display !== 'none'))
+      .toHaveLength(7)
+    expect([x, y, z].map(shown)).toEqual([true, true, true])
+  })
+
+  it('shows both halves or neither, over every refusal either one makes', () => {
+    // ONE WIDGET AND THEREFORE ONE CONDITION. `held()` in this file and `held()`
+    // in gizmo.js are the same body character for character, and both files say
+    // in prose that they have to be: two halves of one manipulator that came up
+    // on different conditions would be a widget with a piece missing — rotation
+    // handles round a part the arrows have refused to stand on, or the reverse.
+    //
+    // WHICH IS A SENTENCE IN A COMMENT UNTIL IT IS A TEST. Every refusal below
+    // is already covered in ONE of the two files, separately, so either half
+    // could drift — a clause dropped here, a clause added there — and the suite
+    // would stay green while the widget came up in pieces. This is the only
+    // place both factories answer the same question about the same viewport.
+    //
+    // DOWN THE DIAGONAL, where the widget is whole: every arrow, every quad and
+    // every handle is open enough to be drawn, so "up" is an exact count and a
+    // half-drawn widget is not mistaken for a hidden one.
+    const BODY = '/Group/proposal/plate'
+    const GROUP = '/Group/proposal'
+
+    const bothOn = (over, tweak) => {
+      const s = scene({ camera: orthoCamera(OBLIQUE), ...over })
+      const gizmo = createGizmo(s.vp)
+      layers.push(gizmo)
+      s.vp.gizmo = gizmo
+      if (tweak) tweak(s.vp)
+      s.rings.refresh()
+      gizmo.refresh()
+      runFrames()
+      return [
+        [...gizmo.root.children].filter(shown).length,
+        [...s.rings.root.children].filter(shown).length,
+      ]
+    }
+
+    // `[arrows, handles]` when the widget is whole: three arrows, three plane
+    // quads and the origin dot on one layer, three rotation handles on the
+    // other.
+    const WHOLE = [7, 3]
+    const GONE = [0, 0]
+
+    const cases = [
+      ['a movable part under the move tool', {}, null, WHOLE],
+      ['a body of the proposal the panel can name', {
+        selected: [BODY],
+        groups: { [BODY]: solid(BODY) },
+        overlay: [{ name: 'plate' }],
+      }, null, WHOLE],
+
+      ['no tool armed', { tool: null }, null, GONE],
+      ['the retired turn value', { tool: 'turn' }, null, GONE],
+      ['some other tool armed', { tool: 'measure' }, null, GONE],
+      ['the hold key holding the cut up', {},
+       (vp) => { vp.holdActive = true }, GONE],
+      ['an empty selection', { selected: [] }, null, GONE],
+      ['a selection that is not a list', {}, (vp) => {
+        vp.state = { ...vp.state, selected: null }
+      }, GONE],
+      ['a path the scene cannot move', { selected: [PART, '/Group/gone'] },
+       null, GONE],
+      // The overlay's own group node: the scene CAN move it, so this is refused
+      // by the clause about naming alone — `overlayBody` answers null for it,
+      // and a body the panel cannot name is a body no report could be about.
+      ['a proposal body the panel cannot name', {
+        selected: [GROUP],
+        groups: { [GROUP]: solid(GROUP) },
+        overlay: [{ name: 'plate' }],
+      }, null, GONE],
+      // One overlay path makes the whole gesture a proposal one, and then a
+      // part of the build has no body name and is not grabbable into it.
+      ['a mixed selection', {
+        selected: [BODY, PART],
+        groups: { [BODY]: solid(BODY), [PART]: solid(PART) },
+        overlay: [{ name: 'plate' }],
+      }, null, GONE],
+    ]
+
+    for (const [name, over, tweak, want] of cases) {
+      expect(bothOn(over, tweak), name).toEqual(want)
+    }
   })
 })
