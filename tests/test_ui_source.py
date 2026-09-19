@@ -168,7 +168,7 @@ def page_sources() -> list[Path]:
 
 
 def strip_comments(source: str) -> str:
-    """Source with `//` and `/* */` comments removed.
+    r"""Source with `//` and `/* */` comments removed.
 
     Comments are where this file's rules are ALLOWED to be broken: a URL named in
     a sentence explaining why it is not fetched is not a fetch, and `innerHTML`
@@ -538,9 +538,14 @@ def test_every_meta_field_the_ui_reads_is_one_render_writes():
     written = (set(re.findall(r'"(\w+)":', render))
                | set(re.findall(r'\[\s*"(\w+)"\s*\]\s*=', render)))
     read_by_ui = set()
-    # `page_sources()` and not COMPONENT alone: `meta.title`, `meta.project`,
-    # `meta.built` and `meta.views` are read in `chromeview.js` since #103.
-    for path in page_sources() + [UI / "hub.js"]:
+    # EVERY FILE UNDER ui/src, and deliberately NOT `page_sources()`. This check
+    # was scoped to the component and hub.js, lost four fields to `chromeview.js`
+    # when the panels moved, and was then put on the derived page set — which is
+    # a dependency it does not need. "No `meta.x` anywhere that render.py does
+    # not write" is strictly stronger, needs no derivation to be right, and
+    # passes today with nothing excused. Only the colour rule is genuinely about
+    # this page rather than about the tree.
+    for path in ALL_UI_FILES:
         # `meta.json` is the FILE the fields come out of, not one of them, and it
         # is spelled the same way a field access is. Dropped by name rather than
         # by excluding the word `json`, so a field genuinely called `json` would
