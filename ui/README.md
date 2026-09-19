@@ -126,10 +126,18 @@ symptom otherwise is a green gate and a 404 in the browser.
 ## What is in here
 
 `src/HammerolaViewer.jsx` is the build page — the tree, the panels and every
-gesture the reader has on a build. `src/HammerolaEntry.jsx` is the front page and
-the project page. `src/viewport/` is the imperative half: one custom element
-(`<hmr-viewport>`) around the vendored `three-cad-viewer`, and the modules that
-draw on top of it — the manipulators, the section plane, the view cube, the
-picking. `docs/ui-brief.md` says what the interface is FOR; `docs/viewer-api.md`
-says which of the vendored viewer's surface is public and which of it the
-viewport reaches into at its own risk.
+gesture the reader has on a build. Its view model is cut into one module per
+panel beside it — `chromeview`, `proposalview`, `rowmenu`, `compareview`,
+`revisionview`, `feedview`, `downloadsview` — each exporting the keys that
+`computed()` hands to `render()` (#103). `src/panelstyle.js` holds the inline
+style strings more than one of them spells, `src/style.jsx` the ones both pages
+do (#104).
+`src/HammerolaEntry.jsx` is the front page and the project page.
+`src/viewport/` is the imperative half: one custom element (`<hmr-viewport>`)
+around the vendored `three-cad-viewer`, and the modules that draw on top of it —
+the manipulators, the section plane, the view cube, the picking; `layer.js` and
+`drag.js` are the overlay and the pointer loop the four manipulators share
+(#101). In `tests/`, `component.js` builds the page and viewport fixtures the
+test files share (#102) and `fakes.js` the scene under them. `docs/ui-brief.md` says what the
+interface is FOR; `docs/viewer-api.md` says which of the vendored viewer's
+surface is public and which of it the viewport reaches into at its own risk.
