@@ -95,9 +95,10 @@ const HALO = "drop-shadow(0 0 1px #fff) drop-shadow(0 1px 2px rgba(20,24,28,.45)
  * AND WHY THESE TWO PIECES DO NOT SIMPLY WEAR `HALO`, which is the arrows'
  * answer and is right there. Two reasons, one apiece. The quad is drawn under
  * the projection's own 2x2 matrix, and a `filter` is computed in the element's
- * OWN space before that matrix touches it — `rings.js` makes this argument at
- * its `circle`, where a ring's matrix would blow a 1 px glow up to a hundred;
- * here the matrix squashes rather than magnifies, so the same cause spends the
+ * OWN space before that matrix touches it — `rings.js` makes the same argument
+ * at its `circle`, where a ring's matrix used to blow a 1 px glow up to a
+ * hundred and, since its unit changed, squashes one exactly as this does;
+ * either way the matrix spends the
  * halo instead of smearing it, and the glow thins away exactly on the quad
  * turning edge-on, which is where it would be wanted. The dot has no matrix at
  * all and a halo would work on it — but a halo is an EDGE treatment sized for a

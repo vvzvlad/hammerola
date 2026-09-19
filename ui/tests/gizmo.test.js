@@ -671,9 +671,10 @@ describe('how the two new pieces are made legible', () => {
     // THE DECISION THIS PINS. The arrows wear a `filter` halo, which works on a
     // box whose lengths are its own. A quad is drawn under the projection's own
     // 2x2 matrix and a filter is computed in the element's OWN space before
-    // that matrix touches it — `rings.js` makes the same argument pointing the
-    // other way, where a ring's matrix would blow a 1 px glow up to a hundred —
-    // so a halo would thin away exactly as the quad turned edge-on, which is
+    // that matrix touches it — `rings.js` makes the same argument at its own
+    // `circle`, where a ring's matrix used to blow a 1 px glow up to a hundred
+    // and now squashes one exactly as this does — so a halo would thin away
+    // exactly as the quad turned edge-on, which is
     // where it is wanted. And both new pieces are FILLED shapes ten pixels
     // across, where 1 px of soft glow is a hairline round a block of one
     // colour, rather than 2 px shafts that are nearly all edge.
