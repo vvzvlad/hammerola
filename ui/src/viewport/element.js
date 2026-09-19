@@ -345,8 +345,9 @@ export class HmrViewport extends HTMLElement {
     // out and something else takes over. The arrows and the rings are never on
     // screen together — one is the Move tool's and the other the Turn tool's —
     // so there is no press for the order to decide between; and this layer
-    // takes no presses at all (`rings.js` says why a div cannot be an
-    // elliptical target), so it could not win one if there were. What the
+    // takes no presses at all (`rings.js` says why: a div is a filled box, so a
+    // handle that could take a press would take the corners of its square with
+    // it), so it could not win one if there were. What the
     // order buys here is only that the rings are PAINTED over the grip where a
     // cut happens to stand behind them, which is the same answer the arrows get
     // and for the same reason: the widget the reader armed is the one they are

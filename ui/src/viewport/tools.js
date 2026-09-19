@@ -808,8 +808,10 @@ export function installTools(vp) {
     // the model turnable while it is armed. Its gesture is on the rings
     // (rings.js), which take their press in a capture-phase listener on the
     // WINDOW and stop it there — so a press that reaches this listener is one
-    // that missed every ring, and it belongs to the trackball exactly as it
-    // would with no tool armed. Left to fall through, it would be swallowed by
+    // that missed every DISC, and it belongs to the trackball exactly as it
+    // would with no tool armed. The disc and not the ring: the arc drawn through
+    // a handle is a picture rather than a target, and a press on it arrives here
+    // like any other miss. Left to fall through, it would be swallowed by
     // the two lines at the foot of this function, and a reader who armed the
     // tool that turns a PART would find they could no longer turn the VIEW.
     //

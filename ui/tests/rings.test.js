@@ -5,9 +5,20 @@
 // everything that decides whether the reader can see and use the rings at all:
 // WHERE they are put (a projection, in px, of the selected part's centre), the
 // SHAPE each one is drawn as (the 2x2 matrix that turns a unit circle into the
-// projected ellipse), WHEN one is taken off the screen — a ring seen edge-on,
-// and five different reasons for the whole widget — WHICH ring a press lands
-// on, and what one whole drag does to the part and says at the end of it.
+// projected ellipse), HOW MUCH of it is drawn — an arc through the handle at
+// rest, the whole circle under the cursor — WHEN one is taken off the screen
+// (a ring seen edge-on, and five different reasons for the whole widget),
+// WHICH ring a press lands on, and what one whole drag does to the part and
+// says at the end of it.
+//
+// THE PRESS BELONGS TO THE DISC, which is what most of the middle of this file
+// is now about. Three full circles of one radius about one point cross six
+// times and knot where they meet, so the reader could not hit the axis they
+// meant; the module answers with one compact handle per axis, at the parameter
+// bisecting its ring's two world axes, and takes the press THERE and nowhere
+// else. So the two halves of that are pinned: a press on the curve away from
+// the handle is left for the trackball, and the three handles land in three
+// different places under one camera.
 //
 // THE ONE CLAIM THIS FILE EXISTS FOR IS THE SIGN. A ring can be drawn perfectly,
 // hit perfectly and read perfectly and still turn the part the wrong way: the
@@ -27,9 +38,9 @@
 //
 // The arithmetic is not taken from the module. This fake camera puts 20 px on a
 // world unit along both screen axes (400 px per 20 halfW across, 300 px per 15
-// halfH up), so the ring radius `RING_PX / 20` is 3.2 world units, world +X
-// reads as +64 px across the screen and world +Y as -64 px up it — which makes
-// the Z ring, seen square on, the circle `matrix(64, 0, 0, -64, 0, 0)`.
+// halfH up), so the ring radius `RING_PX / 20` is 5.25 world units, world +X
+// reads as +105 px across the screen and world +Y as -105 px up it — which
+// makes the Z ring, seen square on, the circle `matrix(105, 0, 0, -105, 0, 0)`.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -40,7 +51,8 @@ import { createRings } from '../src/viewport/rings.js'
 import { cross3 } from '../src/viewport/math.js'
 import { after, quaternionOf, turned } from '../src/viewport/parts.js'
 import {
-  CLICK_PX, RING_HIT_PX, RING_PX, RING_SHAFT_PX,
+  CLICK_PX, RING_ARC_DEG, RING_CASE_PX, RING_DISC_PX, RING_PX, RING_RIM_PX,
+  RING_SHAFT_PX,
 } from '../src/viewport/options.js'
 import {
   fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
@@ -110,8 +122,8 @@ const solid = (name, at = [0, 0, 45]) => fakeShapeSolid(name, {
  * THE CANVAS IS A REAL NODE HERE, which is the one thing this fixture does that
  * gizmo.test.js's does not have to. An arrow takes its own press, so that file
  * dispatches at the arrow; this layer takes NO press at all (a div is a filled
- * box however round it is made, and a target would swallow every press inside
- * the ring) and reads the canvas's own press in the capture phase instead. So
+ * box however round it is made, so three handles would take the presses aimed
+ * past their corners) and reads the canvas's own press in the capture phase. So
  * the press has to be an event the DOM really dispatched at the canvas, and the
  * fake's canvas is a plain object. The rect is stubbed onto it because jsdom
  * computes no layout — the same rect as `box`, so the two cancel exactly as
@@ -158,6 +170,30 @@ const drawn = (rings) => {
 
 const shown = (ring) => ring.style.display !== 'none'
 
+/** One of the six circles an axis is drawn out of, by name.
+ *
+ * THE OUTERMOST OF THEM IS THE AXIS'S OWN ELEMENT — the arc's dark rim — and
+ * the other five are laid inside it, in ITS coordinates, so that one matrix
+ * moves the whole widget (`build` in rings.js). Which is why everything below
+ * that asks where a ring is asks the group itself: the matrix it carries is the
+ * ring's own `(a, b)`, and the five children are boxes in local pixels that the
+ * browser puts through it.
+ *
+ * `pieces` IN rings.js IS THE ORDER, outermost first: the curve's dark rim, its
+ * white casing and its ink, then the disc's three the same way round. Named
+ * here rather than indexed at the call sites, because `children[3]` in an
+ * assertion about a casing is a test nobody can check by reading.
+ */
+const AT = { arcCase: 0, arc: 1, discRim: 2, discCase: 3, disc: 4 }
+const piece = (group, name) =>
+  (name === 'arcRim' ? group : group.children[AT[name]])
+
+/** A circle's radius and its stroke, in pixels at the ring's widest point.
+ *  Both are written in LOCAL pixels, which the matrix multiplies by `RING_PX`
+ *  — so both come back out by multiplying by it here. */
+const radiusOf = (el) => (Number.parseFloat(el.style.width) / 2) * RING_PX
+const bandOf = (el) => Number.parseFloat(el.style.borderTopWidth) * RING_PX
+
 /** The four numbers of the matrix the module wrote: `[a.x, a.y, b.x, b.y]`.
  *
  * READ AS TWO COLUMNS AND NOT AS FOUR NUMBERS, which is what several of the
@@ -185,11 +221,16 @@ const expectMatrix = (ring, wanted) => {
   got.forEach((value, at) => expect(value).toBeCloseTo(wanted[at], 9))
 }
 
-/** Where the module put the ring on the layer, in pixels. NOT assumed to be the
- *  middle of the canvas: a part sits where the camera puts it, and only a
+/** Where the module put one circle on the layer, in pixels. NOT assumed to be
+ *  the middle of the canvas: a part sits where the camera puts it, and only a
  *  camera looking straight at the part's centre puts it there. */
 const centreOf = (ring) => [Number.parseFloat(ring.style.left),
                             Number.parseFloat(ring.style.top)]
+
+/** The same, against a hand-worked answer — a projection's worth of floating
+ *  point away from it, exactly as `expectMatrix` allows for. */
+const expectSpot = (ring, wanted) => centreOf(ring)
+  .forEach((value, at) => expect(value).toBeCloseTo(wanted[at], 6))
 
 /** A point ON one ring's drawn curve, at the ring's own circle-space angle `t`.
  *
@@ -207,10 +248,55 @@ const onRing = (ring, t) => {
           C[1] + Math.cos(t) * ay + Math.sin(t) * by]
 }
 
-/** Circle-space angles halfway between two crossings, where exactly one ring is
- *  under the pointer: the three rings meet at the six world axes, which are
- *  every multiple of `pi/2` in each ring's own parametrisation. */
-const CLEAR_OF_CROSSINGS = Math.PI / 4
+/** Where each ring carries its disc, in its own circle space: the bisector of
+ *  the two world axes spanning its plane, which is 45 degrees from `u` towards
+ *  `v`. Hand-worked like everything else here — the module's own `DISC_AT`.
+ *
+ * WHICH IS ALSO HALFWAY BETWEEN TWO CROSSINGS, and that is the point of it:
+ * the three rings meet at the six world axes, every multiple of `pi/2` in each
+ * ring's own parametrisation, so a handle at 45 degrees is as far from its
+ * neighbours as the circle allows. */
+const DISC_T = Math.PI / 4
+
+/** The middle of one axis's disc, in canvas pixels: the point of its own curve
+ *  at `DISC_T`, read off the matrix the module wrote so that a press there
+ *  lands on the handle whatever the camera has done to the picture. */
+const onDisc = (group) => onRing(group, DISC_T)
+
+/** How far a canvas point is from one axis's disc, IN THAT RING'S OWN PLANE and
+ *  in units of the disc's own radius — under 1 is a point on the handle.
+ *
+ * THE INVERSE OF THE SAME 2x2, hand-worked here as everything else in this file
+ * is: inverting the basis is what undoes the camera (`circleSpace`), and a disc
+ * that is a circle in the ring's plane is a circle again once it has been
+ * undone. It exists for one test — the one where two handles overlap, where
+ * "both of them really do answer" is the premise the assertion rests on and
+ * cannot be read off the picture. */
+const intoDisc = (group, point) => {
+  const [ax, ay, bx, by] = matrixOf(group)
+  const C = centreOf(group)
+  const det = ax * by - ay * bx
+  const dx = point[0] - C[0]
+  const dy = point[1] - C[1]
+  const x = (by * dx - bx * dy) / det
+  const y = (ax * dy - ay * dx) / det
+  return Math.hypot(x - Math.cos(DISC_T), y - Math.sin(DISC_T))
+    / (RING_DISC_PX / 2 / RING_PX)
+}
+
+/** What one axis is masked with. At rest it carries the conic fade — which
+ *  reaches the five circles inside it, the mask being a property of the whole
+ *  subtree — and under the cursor it is drawn whole. */
+const fade = (group) => group.style.maskImage
+const faded = (group) => fade(group).startsWith('conic-gradient')
+
+/** How light the disc's own ink is, as the sum of its three channels — which is
+ *  all "the disc lightens" needs, and it needs no second copy of the hexes. */
+const brightness = (el) => {
+  const match = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(el.style.backgroundColor)
+  expect(match, `no colour in ${el.style.backgroundColor}`).toBeTruthy()
+  return Number(match[1]) + Number(match[2]) + Number(match[3])
+}
 
 /** A press on the canvas, with both refusals watched. */
 function press(canvas, [clientX, clientY], button = 0) {
@@ -224,9 +310,27 @@ function press(canvas, [clientX, clientY], button = 0) {
 }
 
 /** The rest of the gesture. It goes to the WINDOW, which is where the press put
- *  the listeners — a drag that starts on a ring can end anywhere. */
+ *  the listeners — a drag that starts on a ring can end anywhere, and a move
+ *  the reader made over their own toolbar still carries the drag.
+ *
+ * WHICH IS ALSO A MOVE OVER SOMETHING THAT IS NOT THE CANVAS, and the tests
+ * below lean on that: the layer reads the same `event.target` for a hover that
+ * `onDown` reads for a press, so a move dispatched anywhere else is a cursor
+ * standing over some other widget. `hoverAt` is the one that says otherwise. */
 const pointerMove = ([clientX, clientY]) =>
   window.dispatchEvent(new MouseEvent('pointermove', { clientX, clientY }))
+
+/** The cursor standing over the CANVAS at a point, which is what a hover is.
+ *
+ * DISPATCHED AT THE CANVAS AND NOT AT THE WINDOW, because a hover is a promise
+ * that pressing here will turn this axis — and the press is taken only off the
+ * canvas (`onDown`). It still reaches the layer's listener, which is on the
+ * window in the CAPTURE phase: capture runs from the window down whatever the
+ * event was dispatched at. */
+const hoverAt = (canvas, [clientX, clientY]) =>
+  canvas.dispatchEvent(new MouseEvent('pointermove', {
+    clientX, clientY, bubbles: true,
+  }))
 const pointerUp = ([clientX, clientY]) =>
   window.dispatchEvent(new MouseEvent('pointerup', { clientX, clientY }))
 const pointerCancel = () =>
@@ -251,12 +355,30 @@ const settled = () => Promise.resolve()
 
 // The Z ring, seen square on: a circle of `RING_PX` about the middle of an
 // 800x600 canvas. Its `u` is world +X, which the camera puts to the RIGHT, and
-// its `v` is world +Y, which the camera puts UP — i.e. towards a smaller y.
+// its `v` is world +Y, which the camera puts UP — i.e. towards a smaller y. So
+// the point of that curve at circle-space angle `t` is the one below, worked
+// out here rather than read back off the module.
 const CENTRE = [400, 300]
-const AT_X = [400 + RING_PX, 300]
-const AT_Y = [400, 300 - RING_PX]
-const AT_MINUS_X = [400 - RING_PX, 300]
-const AT_MINUS_Y = [400, 300 + RING_PX]
+const onZ = (t) => [400 + RING_PX * Math.cos(t), 300 - RING_PX * Math.sin(t)]
+
+/** The Z ring's disc, and the curve a quarter turn back from it — which is
+ *  where the handle is NOT, and is what a press has to be refused at. */
+const AT_DISC = onZ(DISC_T)
+const AT_CURVE = onZ(DISC_T - Math.PI / 2)
+
+/** Where a hand that grabbed that disc carries it: a quarter, a half and three
+ *  quarters of a turn along the ring's own circle.
+ *
+ * THE SAME THREE ANGLES THE DRAGS BELOW ALWAYS SWEPT, and that is deliberate.
+ * They used to be the world axes themselves, because the press was taken
+ * anywhere on the curve and starting at +X was as good as anywhere; the press
+ * is the disc's now, so every one of them is measured from `DISC_T` instead.
+ * The angles SWEPT are unchanged, so every turn reported below is the number it
+ * was before the widget was rebuilt — which is the assertion that says the
+ * arithmetic in circle space was left alone. */
+const AT_QUARTER = onZ(DISC_T + Math.PI / 2)
+const AT_HALF = onZ(DISC_T + Math.PI)
+const AT_THREE_QUARTERS = onZ(DISC_T + (3 * Math.PI) / 2)
 
 describe('when there is nothing to put rings round', () => {
   it('draws nothing while no tool is armed', () => {
@@ -272,7 +394,7 @@ describe('when there is nothing to put rings round', () => {
   it('draws nothing while the MOVE tool is the one armed', () => {
     // The two widgets stand on the same point and answer to different tools, so
     // rings up under Move would be offering a gesture the press is not for —
-    // and they would be drawn across the arrows that ARE.
+    // three handles standing round the arrows that ARE.
     const { rings, z } = scene({ tool: 'move' })
     drawn(rings)
     expect(shown(z)).toBe(false)
@@ -335,13 +457,13 @@ describe('when there is nothing to put rings round', () => {
   it('takes no gesture from a ring the next frame would remove', () => {
     // Both halves of the module have to agree about what is grabbable — `place`
     // takes the ring off and the press takes no gesture — or a press would land
-    // on a ring that is on screen only until the next frame.
+    // on a handle that is on screen only until the next frame.
     const { vp, rings, canvas } = scene()
     drawn(rings)
     vp.state = { ...vp.state, selected: [] }
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
+    press(canvas, AT_DISC)
+    pointerMove(onZ(DISC_T + Math.PI / 2))
 
     expect(vp.moved.size).toBe(0)
   })
@@ -374,16 +496,23 @@ describe('how a ring is drawn', () => {
   })
 
   it('is a unit circle under the projection`s own 2x2 matrix', () => {
-    // THE WHOLE OF THE DRAWING. The div is two pixels across with
+    // THE WHOLE OF THE DRAWING. The ink is a box two pixels across with
     // `border-radius: 50%`, so its edge is the unit circle, and the matrix maps
     // that circle onto `cos t * a + sin t * b` — which IS the projection of the
-    // world circle. Square on to Z: `u` is world +X at 64 px to the right, `v`
-    // is world +Y at 64 px UP, and up the screen is a NEGATIVE y.
+    // world circle. Square on to Z: `u` is world +X at 105 px to the right, `v`
+    // is world +Y at 105 px UP, and up the screen is a NEGATIVE y.
+    //
+    // THE MATRIX IS ON THE AXIS AND THE CIRCLE IS INSIDE IT, which is the one
+    // thing to keep straight about this widget's DOM: the local pixel that
+    // matrix multiplies by `RING_PX` is the unit every box inside is written
+    // in, so the sizes below are read against it rather than against the
+    // screen.
     const { rings, z } = scene()
     drawn(rings)
 
-    expect(z.style.width).toBe('2px')
-    expect(z.style.height).toBe('2px')
+    expect(piece(z, 'arc').style.width).toBe('2px')
+    expect(piece(z, 'arc').style.height).toBe('2px')
+    expect(piece(z, 'arc').style.borderRadius).toBe('50%')
     expect(z.style.borderRadius).toBe('50%')
     expectMatrix(z, [RING_PX, 0, 0, -RING_PX])
   })
@@ -404,23 +533,101 @@ describe('how a ring is drawn', () => {
   })
 
   it('draws its line thin enough for the matrix to make it RING_SHAFT_PX', () => {
-    // The border is in the SAME local units the circle is, so the matrix
-    // multiplies it by `RING_PX` along with everything else. `box-sizing` keeps
-    // the outer edge exactly on the unit circle, so the ring's size does not
-    // depend on how heavy its line is.
+    // The border is written in the SAME local pixels the boxes are, so the
+    // matrix multiplies it by `RING_PX` along with everything else.
+    // `box-sizing` keeps each outer edge exactly on the circle its own `r`
+    // names, so the ring's size does not depend on how heavy its line is — and
+    // the six circles of one axis stay concentric.
     const { rings, z } = scene()
     drawn(rings)
 
-    expect(z.style.boxSizing).toBe('border-box')
-    expect(Number.parseFloat(z.style.borderTopWidth) * RING_PX)
-      .toBeCloseTo(RING_SHAFT_PX, 9)
+    expect(piece(z, 'arc').style.boxSizing).toBe('border-box')
+    expect(bandOf(piece(z, 'arc'))).toBeCloseTo(RING_SHAFT_PX, 9)
+  })
+
+  it('carries its disc ON the curve, squashed exactly as the ring is', () => {
+    // THE HANDLE IS A CIRCLE IN THE RING'S OWN PLANE and not a dot on the
+    // screen, which is what makes it possible to say it is ON the curve at
+    // all. It is a box inside the axis's own element, so the ring's matrix
+    // reaches it like everything else: it flattens with its ring instead of
+    // floating over it as a perfect circle, and it is carried out to the
+    // handle's place by an offset in the ring's OWN coordinates — `(cos, sin)`
+    // of the parameter that bisects the ring's two world axes.
+    const { rings, z } = scene()
+    drawn(rings)
+
+    // The curve's own circles sit in the middle of the axis, which is where
+    // the part is.
+    expectSpot(z, CENTRE)
+    const middle = Number.parseFloat(piece(z, 'arc').style.left)
+    expect(Number.parseFloat(piece(z, 'arc').style.top)).toBeCloseTo(middle, 9)
+    // And the disc's three are one local unit of the curve away along the
+    // bisector — all three on that same point rather than beside each other.
+    for (const name of ['discRim', 'discCase', 'disc']) {
+      const el = piece(z, name)
+      expect(Number.parseFloat(el.style.left) - middle, name)
+        .toBeCloseTo(Math.cos(DISC_T), 9)
+      expect(Number.parseFloat(el.style.top) - middle, name)
+        .toBeCloseTo(Math.sin(DISC_T), 9)
+    }
+    // Which, square on to Z where nothing is flattened, is a disc
+    // `RING_DISC_PX` across standing on the curve at that parameter.
+    expect(radiusOf(piece(z, 'discRim'))).toBeCloseTo(RING_DISC_PX / 2, 9)
+    expect(onRing(z, DISC_T)).toEqual(AT_DISC)
+  })
+
+  it('lays a white casing inside a dark rim round both', () => {
+    // FUSION'S CONSTRUCTION AND NOT ITS PALETTE (options.js, `RING_CASE_PX`).
+    // The complaint this answers is that the rings drowned in the geometry: a
+    // red ring on a red part is invisible whatever red it is, and the canvas
+    // under it is white or near-black depending on the reader's own answer. A
+    // light casing inside a dark rim is legible against every one of those, and
+    // it is GEOMETRY — concentric circles of their own — because `filter` and
+    // `box-shadow` are computed in the element's own space and would come back
+    // multiplied by the radius.
+    const { rings, z } = scene()
+    drawn(rings)
+
+    // The curve: three bands about one circle, the ink's outer edge on
+    // `RING_PX` and each of the other two standing that much further out.
+    const radius = (name) => radiusOf(piece(z, name))
+    expect(radius('arc')).toBeCloseTo(RING_PX, 9)
+    expect(radius('arcCase')).toBeCloseTo(RING_PX + RING_CASE_PX, 9)
+    expect(radius('arcRim')).toBeCloseTo(RING_PX + RING_CASE_PX + RING_RIM_PX, 9)
+    // And each band is wide enough to show its own width on BOTH sides of the
+    // ink, which is what a casing on a line means.
+    expect(bandOf(piece(z, 'arcCase')))
+      .toBeCloseTo(RING_SHAFT_PX + 2 * RING_CASE_PX, 9)
+    expect(bandOf(piece(z, 'arcRim')))
+      .toBeCloseTo(RING_SHAFT_PX + 2 * (RING_CASE_PX + RING_RIM_PX), 9)
+
+    // The disc: three FILLED circles instead, the widest of them the handle's
+    // whole width, so the rim is a boundary and the casing a band inside it.
+    expect(radius('discRim')).toBeCloseTo(RING_DISC_PX / 2, 9)
+    expect(radius('discCase')).toBeCloseTo(RING_DISC_PX / 2 - RING_RIM_PX, 9)
+    expect(radius('disc'))
+      .toBeCloseTo(RING_DISC_PX / 2 - RING_RIM_PX - RING_CASE_PX, 9)
+    for (const name of ['discRim', 'discCase', 'disc']) {
+      expect(piece(z, name).style.borderTopWidth, name).toBe('')
+    }
+
+    // The two construction inks are one pair for the whole widget: whatever the
+    // axis, the casing is the light one and the rim is the dark one.
+    const paint = (name) => piece(z, name).style.borderTopColor
+      || piece(z, name).style.backgroundColor
+    expect(paint('arcCase')).toBe(paint('discCase'))
+    expect(paint('arcRim')).toBe(paint('discRim'))
+    expect(brightness(piece(z, 'discCase')))
+      .toBeGreaterThan(brightness(piece(z, 'discRim')))
   })
 
   it('spells its three axes in the inks the move arrows use', () => {
     // ONE TRIAD AND NOT TWO. Red, green and blue for X, Y and Z is the
     // convention every CAD tool the reader has used, and the two widgets stand
     // on the same point — so a ring that disagreed with the arrow for the same
-    // axis would be saying they were about different things.
+    // axis would be saying they were about different things. Fusion's own
+    // handles are grey and we deliberately do not copy that: half a widget in
+    // grey beside arrows in colour would be worse than either.
     const { vp, rings } = scene()
     drawn(rings)
     const gizmo = createGizmo({ ...vp, state: { ...vp.state, tool: 'move' } })
@@ -430,7 +637,12 @@ describe('how a ring is drawn', () => {
     const arrows = [...gizmo.root.children].map(
       (arrow) => arrow.firstElementChild.style.backgroundColor)
     expect(arrows.filter(Boolean)).toHaveLength(3)
-    expect([...rings.root.children].map((ring) => ring.style.borderTopColor))
+    const groups = [...rings.root.children]
+    expect(groups.map((group) => piece(group, 'arc').style.borderTopColor))
+      .toEqual(arrows)
+    // And the disc is the same ink as the arc it sits on, so the handle says
+    // which axis it is before anything is hovered.
+    expect(groups.map((group) => piece(group, 'disc').style.backgroundColor))
       .toEqual(arrows)
     gizmo.destroy()
   })
@@ -438,11 +650,14 @@ describe('how a ring is drawn', () => {
 
 describe('which rings are drawn at all', () => {
   it('takes the two rings the reader is looking edge-on off the screen', () => {
-    // A ring seen edge-on is a line: it cannot be read, it cannot be aimed at —
-    // every pixel inside it is within the hit tolerance of the curve — and its
-    // 2x2 basis is singular, so neither the hit test nor the angle the drag is
-    // measured in has an answer. Looking straight down Z, the X and Y rings are
-    // exactly that.
+    // A ring seen edge-on is a line, and so is its DISC — which is squashed
+    // exactly as the ring is, so what is left to press is a sliver a hand
+    // cannot aim at. `GIZMO_MIN_SCALE`'s rule, one widget over: a control the
+    // reader can see and cannot use is worse than no control, and turning the
+    // model a little brings it back. (Its 2x2 basis is singular as well, so the
+    // angle the drag is measured in has no answer either — true, and not what
+    // sets the floor; `RING_MIN_PX` carries that argument.) Looking straight
+    // down Z, the X and Y rings are exactly that.
     const { rings, x, y, z } = scene()
     drawn(rings)
 
@@ -481,8 +696,9 @@ describe('the pair of axes each ring spans', () => {
     // there is a right-handed turn about `+k` only while `u x v` IS `+k`. Both
     // orders draw the same ellipse, and the matrix the module writes is the one
     // thing outside it that can still tell them apart: square on to Z, `u` is
-    // world +X (the first column, 64 px right) and `v` is world +Y (the second,
-    // 64 px up). X cross Y is Z, and the part turns the way the hand went.
+    // world +X (the first column, 105 px right) and `v` is world +Y (the
+    // second, 105 px up). X cross Y is Z, and the part turns the way the hand
+    // went.
     const { rings, z } = scene()
     drawn(rings)
     const [ax, ay, bx, by] = matrixOf(z)
@@ -498,8 +714,8 @@ describe('the pair of axes each ring spans', () => {
   })
 })
 
-describe('which ring a press lands on', () => {
-  it('leaves a press that missed every ring completely alone', () => {
+describe('what takes the press', () => {
+  it('leaves a press that missed every disc completely alone', () => {
     // THE PRICE OF A LAYER THAT TAKES NO PRESSES, and what it buys: the press
     // goes on to the tools' own listener and to the trackball behind it, so the
     // reader can still orbit, pick and open the part menu with the tool armed.
@@ -512,34 +728,60 @@ describe('which ring a press lands on', () => {
     expect(event.stopPropagation).not.toHaveBeenCalled()
     expect(event.preventDefault).not.toHaveBeenCalled()
 
-    pointerMove(AT_Y)
+    pointerMove(onZ(DISC_T + Math.PI / 2))
     expect(at(groups[PART])).toEqual([0, 0, 0])
     expect(facing(groups[PART])).toEqual([0, 0, 0, 1])
     expect(vp.moved.size).toBe(0)
   })
 
-  it('takes a press that landed on the curve, from the trackball with it', () => {
+  it('leaves a press on the CURVE, away from the disc, alone as well', () => {
+    // THE CURVE IS NOT A TARGET ANY MORE, which is the whole of the answer to
+    // "you cannot hit the axis you mean": a ring is 660 px of circumference and
+    // three of them cross six times, so a press on the curve was a press the
+    // module had to guess an axis for. Now the drawn arc is a sign saying which
+    // way the part will go and the disc is the thing to press — and everything
+    // else about that ring goes back to the trackball, which is what the reader
+    // means by dragging over the model.
+    const { vp, rings, canvas, groups } = scene()
+    drawn(rings)
+
+    const event = press(canvas, AT_CURVE)
+    expect(event.stopPropagation).not.toHaveBeenCalled()
+    expect(event.preventDefault).not.toHaveBeenCalled()
+
+    pointerMove(onZ(DISC_T))
+    expect(facing(groups[PART])).toEqual([0, 0, 0, 1])
+    expect(vp.moved.size).toBe(0)
+  })
+
+  it('takes a press that landed on the disc, from the trackball with it', () => {
     const { rings, canvas } = scene()
     drawn(rings)
 
-    const event = press(canvas, AT_X)
+    const event = press(canvas, AT_DISC)
     expect(event.stopPropagation).toHaveBeenCalled()
     expect(event.preventDefault).toHaveBeenCalled()
   })
 
-  it('takes a press within the tolerance and refuses one past it', () => {
+  it('takes a press to the disc`s edge and refuses one past it', () => {
+    // THE TARGET IS AS WIDE AS WHAT IS DRAWN, which is what replaced the old
+    // curve test's invented tolerance: the disc is `RING_DISC_PX` across and
+    // the hit test is the distance to its centre, measured in the ring's own
+    // plane. Square on to Z that plane is the screen, so the edge is exactly
+    // half of `RING_DISC_PX` away in any direction.
+    const half = RING_DISC_PX / 2
     const { vp, rings, canvas } = scene()
     drawn(rings)
 
-    press(canvas, [400 + RING_PX + RING_HIT_PX - 1, 300])
-    pointerMove(AT_Y)
-    expect(vp.moved.size, 'inside the tolerance').toBe(1)
+    press(canvas, [AT_DISC[0] + half - 1, AT_DISC[1]])
+    pointerMove(onZ(DISC_T + Math.PI / 2))
+    expect(vp.moved.size, 'inside the disc').toBe(1)
 
     const far = scene()
     drawn(far.rings)
-    press(far.canvas, [400 + RING_PX + RING_HIT_PX + 1, 300])
-    pointerMove(AT_Y)
-    expect(far.vp.moved.size, 'past it').toBe(0)
+    press(far.canvas, [AT_DISC[0] + half + 1, AT_DISC[1]])
+    pointerMove(onZ(DISC_T + Math.PI / 2))
+    expect(far.vp.moved.size, 'past its edge').toBe(0)
   })
 
   it('ignores every button but the primary one', () => {
@@ -548,69 +790,132 @@ describe('which ring a press lands on', () => {
     const { vp, rings, canvas, groups } = scene()
     drawn(rings)
 
-    const event = press(canvas, AT_X, 2)
+    const event = press(canvas, AT_DISC, 2)
     // Not even the refusals: a press this one does not want is a press it has
     // no business taking away from anybody else.
     expect(event.preventDefault).not.toHaveBeenCalled()
 
-    pointerMove(AT_Y)
+    pointerMove(onZ(DISC_T + Math.PI / 2))
     expect(facing(groups[PART])).toEqual([0, 0, 0, 1])
     expect(details(vp, EVENT_TURNED)).toEqual([])
   })
 
-  it('takes the nearer of two rings that are both hit', () => {
-    // THREE RINGS CROSS AT SIX POINTS, one per world axis, and near a crossing
-    // both answers are honest — the tolerance is eight pixels and the two
-    // curves are inside it of each other. What decides is the distance to each
-    // curve, so two presses a few pixels apart on either side of one crossing
-    // have to come back as two different axes. Built off the matrices the
-    // module itself wrote, so the points really are ON the curves.
-    const oblique = () => {
-      const made = scene({ camera: orthoCamera(OBLIQUE) })
+  it('puts the three discs in three different places under one camera', () => {
+    // THE SEPARATION IS THE WIDGET'S WHOLE CLAIM. Three circles of one radius
+    // about one point are indistinguishable near their crossings; three
+    // handles, each at the bisector of its own ring's two world axes, are 60
+    // degrees apart in the world and land in three different corners of the
+    // picture. Looking down the diagonal — the camera where all three rings are
+    // equally open — no two of them are within a disc's width of each other,
+    // so there is no press that could be meant for two axes.
+    const { rings, x, y, z } = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(rings)
+
+    const discs = [x, y, z].map(onDisc)
+    for (const [first, second] of [[0, 1], [0, 2], [1, 2]]) {
+      const apart = Math.hypot(discs[first][0] - discs[second][0],
+                               discs[first][1] - discs[second][1])
+      expect(apart, `${'XYZ'[first]} and ${'XYZ'[second]}`)
+        .toBeGreaterThan(RING_DISC_PX)
+    }
+  })
+
+  it('takes the nearer of two discs that are both hit', () => {
+    // TWO HANDLES CAN LAND ON ONE POINT, and that is the tie `aimAt` breaks.
+    // What it takes is a camera looking down the DIFFERENCE of two handles'
+    // world directions — `h_X - h_Z` is `(Z - X)/sqrt2`, so down `(1, 0, -1)` —
+    // and this one looks a tenth of the way off it: the two discs come out a
+    // few pixels apart, overlapping, and a press between them is honestly on
+    // both. Near such a press both answers are true and only the distance to
+    // each handle's own centre says which one the hand was aiming at.
+    //
+    // THE THIRD RING IS GONE WHILE THEY OVERLAP, which is not a coincidence and
+    // is what bounds this to two: that difference is square on to the third
+    // axis — `(Z - X)` to Y — so a camera looking down it lies in the third
+    // ring's own plane, and `RING_MIN_PX` has already taken that ring off the
+    // screen. With all three up the handles are `RING_PX * GIZMO_MIN_SCALE`
+    // apart at the very least, which is wider than a disc.
+    const aimed = () => {
+      const made = scene({ camera: orthoCamera({
+        forward: [1, 0.1, -1], right: [1, 0, 1], up: [0.1, -2, -0.1],
+      }) })
       drawn(made.rings)
       return made
     }
-    const step = (4 * Math.PI) / 180
 
-    const first = oblique()
-    // The Z ring's `u` is world +X, and the Y ring's `v` is world +X too — so
-    // the two curves cross where both are at their own +X, and four degrees to
-    // either side of it is a pair of points four pixels apart.
-    const onZ = onRing(first.z, step)
-    const onY = onRing(first.y, Math.PI / 2 + step)
-    expect(Math.hypot(onZ[0] - onY[0], onZ[1] - onY[1]))
-      .toBeLessThan(RING_HIT_PX)
+    const first = aimed()
+    expect(shown(first.y), 'the third ring is edge-on and gone').toBe(false)
+    const onX = onDisc(first.x)
+    const onZ = onDisc(first.z)
+    const apart = Math.hypot(onX[0] - onZ[0], onX[1] - onZ[1])
+    expect(apart, 'the premise: the two handles overlap')
+      .toBeLessThan(RING_DISC_PX / 2)
 
-    press(first.canvas, onZ)
-    pointerMove([onZ[0] + 40, onZ[1] + 40])
-    pointerUp([onZ[0] + 40, onZ[1] + 40])
+    // Two presses either side of the midpoint, two pixels along the line
+    // joining the centres: each is nearer one handle and on both of them.
+    const mid = [(onX[0] + onZ[0]) / 2, (onX[1] + onZ[1]) / 2]
+    const step = [(2 * (onX[0] - onZ[0])) / apart,
+                  (2 * (onX[1] - onZ[1])) / apart]
+    const nearX = [mid[0] + step[0], mid[1] + step[1]]
+    const nearZ = [mid[0] - step[0], mid[1] - step[1]]
+    for (const point of [nearX, nearZ]) {
+      expect(intoDisc(first.x, point), 'off the X handle').toBeLessThan(1)
+      expect(intoDisc(first.z, point), 'off the Z handle').toBeLessThan(1)
+    }
 
-    const second = oblique()
-    press(second.canvas, onY)
-    pointerMove([onY[0] + 40, onY[1] + 40])
-    pointerUp([onY[0] + 40, onY[1] + 40])
+    // One turn each, on its own scene — a second gesture on the first would
+    // write a second angle into the same triple and there would be no reading
+    // the axis back out of it.
+    const spun = (made) => made.vp.moved.get(PART).turn
+      .findIndex((angle) => angle !== 0)
+    const drag = (made, from) => {
+      press(made.canvas, from)
+      pointerMove([from[0] + 40, from[1] + 40])
+      pointerUp([from[0] + 40, from[1] + 40])
+    }
 
-    // One turn each, about two different axes — and the axis is read off which
-    // of the three angles the gesture wrote.
-    const spun = (vp) => vp.moved.get(PART).turn.findIndex((angle) => angle !== 0)
-    expect(spun(first.vp), 'the press on the Z ring').toBe(2)
-    expect(spun(second.vp), 'the press on the Y ring').toBe(1)
+    drag(first, nearX)
+    const second = aimed()
+    drag(second, nearZ)
+
+    expect(spun(first), 'the press nearer the X handle').toBe(0)
+    expect(spun(second), 'the press nearer the Z handle').toBe(2)
+  })
+
+  it('turns about the axis whose disc was pressed, and no other', () => {
+    // The other half of the same claim, and the one that says the separation is
+    // the MODULE's and not this file's arithmetic: each of the three handles,
+    // pressed where it is drawn, starts a turn about its own axis.
+    for (const axis of [0, 1, 2]) {
+      const made = scene({ camera: orthoCamera(OBLIQUE) })
+      drawn(made.rings)
+      const group = made.rings.root.children[axis]
+
+      press(made.canvas, onDisc(group))
+      pointerMove(onRing(group, DISC_T + Math.PI / 2))
+      pointerUp(onRing(group, DISC_T + Math.PI / 2))
+
+      const turn = made.vp.moved.get(PART).turn
+      expect(turn.findIndex((angle) => angle !== 0),
+             `the ${'XYZ'[axis]} disc`).toBe(axis)
+    }
   })
 })
 
 describe('one whole drag', () => {
   it('turns the part about the axis grabbed, the way the hand went', async () => {
     // THE CLAIM THIS FILE EXISTS FOR. The camera looks down -Z with +X to the
-    // right and +Y up, so a hand carried from the ring's +X point to its +Y
-    // point goes anticlockwise on the screen — which about +Z is a POSITIVE
+    // right and +Y up, so a hand carried from the Z ring's disc — up and to the
+    // right of the part, on the bisector of +X and +Y — a quarter turn along
+    // the curve goes anticlockwise on the screen, which about +Z is a POSITIVE
     // quarter turn, right-handed. A sign taken off a screen-space `atan2`
     // instead would be the other one, and would look every bit as plausible.
     const { vp, rings, canvas, groups } = scene()
     drawn(rings)
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
-    pointerUp(AT_Y)
+    press(canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
+    pointerUp(AT_QUARTER)
     await settled()
 
     expect(vp.moved.get(PART)).toEqual({ delta: [0, 0, 0], turn: [0, 0, 90] })
@@ -634,8 +939,8 @@ describe('one whole drag', () => {
     const { rings, canvas, groups } = scene()
     drawn(rings)
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
+    press(canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
 
     expect(at(groups[PART])).toEqual([0, 0, 0])
   })
@@ -648,12 +953,12 @@ describe('one whole drag', () => {
     const { vp, rings, canvas } = scene()
     drawn(rings)
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
+    press(canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
     await settled()
     expect(details(vp, EVENT_TURNED), 'it spoke mid-drag').toEqual([])
 
-    pointerUp(AT_Y)
+    pointerUp(AT_QUARTER)
     await settled()
 
     const reports = details(vp, EVENT_TURNED)
@@ -664,7 +969,7 @@ describe('one whole drag', () => {
 
     // And the gesture really ended: the window listeners went with it, so a
     // pointer that moves on past the release turns no part.
-    pointerMove(AT_MINUS_X)
+    pointerMove(AT_HALF)
     expect(vp.moved.get(PART).turn).toEqual([0, 0, 90])
   })
 
@@ -681,11 +986,11 @@ describe('one whole drag', () => {
     const { vp, rings, canvas, groups } = scene()
     drawn(rings)
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
-    pointerMove(AT_MINUS_X)
-    pointerMove(AT_MINUS_Y)
-    pointerUp(AT_MINUS_Y)
+    press(canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
+    pointerMove(AT_HALF)
+    pointerMove(AT_THREE_QUARTERS)
+    pointerUp(AT_THREE_QUARTERS)
     await settled()
 
     expect(details(vp, EVENT_TURNED)[0].turn).toEqual([0, 0, -90])
@@ -705,10 +1010,9 @@ describe('one whole drag', () => {
     const { vp, rings, canvas } = scene()
     drawn(rings)
 
-    press(canvas, AT_X)
+    press(canvas, AT_DISC)
     // A tenth of a radian along the curve, which is 5.729... degrees.
-    const t = 0.1
-    pointerMove([400 + RING_PX * Math.cos(t), 300 - RING_PX * Math.sin(t)])
+    pointerMove(onZ(DISC_T + 0.1))
     pointerUp(CENTRE)
     await settled()
 
@@ -724,9 +1028,9 @@ describe('one whole drag', () => {
     drawn(rings)
     vp.moved.set(PART, { delta: [0, 0, 0], turn: [12.3, 0, 0] })
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
-    pointerUp(AT_Y)
+    press(canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
+    pointerUp(AT_QUARTER)
     await settled()
 
     expect(details(vp, EVENT_TURNED)[0].turn).toEqual([12.3, 0, 90])
@@ -741,9 +1045,9 @@ describe('one whole drag', () => {
     drawn(rings)
     vp.moved.set(PART, { delta: [1, 2, 3], turn: [0, 0, 0] })
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
-    pointerUp(AT_Y)
+    press(canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
+    pointerUp(AT_QUARTER)
     await settled()
 
     expect(vp.moved.get(PART)).toEqual({ delta: [1, 2, 3], turn: [0, 0, 90] })
@@ -756,8 +1060,8 @@ describe('one whole drag', () => {
     const { vp, rings, canvas } = scene()
     drawn(rings)
 
-    press(canvas, AT_X)
-    pointerUp(AT_X)
+    press(canvas, AT_DISC)
+    pointerUp(AT_DISC)
     await settled()
 
     expect(details(vp, EVENT_TURNED)).toEqual([])
@@ -773,19 +1077,32 @@ describe('one whole drag', () => {
     const { vp, rings, canvas, groups } = scene()
     drawn(rings)
 
-    press(canvas, AT_X)
-    pointerMove([AT_X[0] + CLICK_PX - 1, AT_X[1] + CLICK_PX - 1])
+    press(canvas, AT_DISC)
+    pointerMove([AT_DISC[0] + CLICK_PX - 1, AT_DISC[1] + CLICK_PX - 1])
     expect(facing(groups[PART]), 'still a click').toEqual([0, 0, 0, 1])
-    pointerUp([AT_X[0] + CLICK_PX - 1, AT_X[1] + CLICK_PX - 1])
+    pointerUp([AT_DISC[0] + CLICK_PX - 1, AT_DISC[1] + CLICK_PX - 1])
     await settled()
     expect(details(vp, EVENT_TURNED)).toEqual([])
 
-    // And one pixel past it the same gesture is a drag, carrying the whole
-    // travel from the PRESS rather than from where the threshold was crossed.
-    press(canvas, AT_X)
-    pointerMove([AT_X[0], AT_X[1] + CLICK_PX])
-    expect(vp.moved.get(PART).turn).toEqual(
-      [0, 0, Math.round((-Math.atan2(CLICK_PX, RING_PX) * 180) / Math.PI)])
+    // And exactly one pixel further the same gesture IS a drag: `CLICK_PX` of
+    // travel on either axis is the boundary, so a move of exactly that much is
+    // past it.
+    //
+    // CARRYING THE WHOLE TRAVEL FROM THE PRESS, not from where the threshold
+    // was crossed, which is the other half and the one a refused event could
+    // quietly break: the twitch above must not have advanced the angle this
+    // sweep is measured against. Straight down the screen from the handle, the
+    // curve at that point is `atan2` of the two circle-space coordinates the
+    // press and the travel make — a degree and a half of the ring, backwards,
+    // where an angle that had crept forward with the twitch would answer plus
+    // one.
+    press(canvas, AT_DISC)
+    pointerMove([AT_DISC[0] + CLICK_PX - 1, AT_DISC[1] + CLICK_PX - 1])
+    pointerMove([AT_DISC[0], AT_DISC[1] + CLICK_PX])
+    const swept = Math.atan2(Math.SQRT1_2 - CLICK_PX / RING_PX, Math.SQRT1_2)
+      - DISC_T
+    expect(vp.moved.get(PART).turn)
+      .toEqual([0, 0, Math.round((swept * 180) / Math.PI)])
   })
 
   it('is concluded when the pointer is taken away', async () => {
@@ -797,15 +1114,15 @@ describe('one whole drag', () => {
     const { vp, rings, canvas } = scene()
     drawn(rings)
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
+    press(canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
     pointerCancel()
     await settled()
 
     expect(details(vp, EVENT_TURNED)).toHaveLength(1)
 
     // And it really ended.
-    pointerMove(AT_MINUS_X)
+    pointerMove(AT_HALF)
     expect(details(vp, EVENT_TURNED)).toHaveLength(1)
   })
 
@@ -817,8 +1134,8 @@ describe('one whole drag', () => {
     const { vp, rings, canvas } = scene()
     drawn(rings)
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
+    press(canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
 
     rings.endDrag()
     expect(details(vp, EVENT_TURNED), 'the report went out inside the render')
@@ -828,7 +1145,7 @@ describe('one whole drag', () => {
     expect(details(vp, EVENT_TURNED)).toHaveLength(1)
 
     // And the release that never came cannot report a second time.
-    pointerUp(AT_Y)
+    pointerUp(AT_QUARTER)
     await settled()
     expect(details(vp, EVENT_TURNED)).toHaveLength(1)
   })
@@ -837,13 +1154,13 @@ describe('one whole drag', () => {
     const { vp, rings, canvas } = scene()
     drawn(rings)
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
-    press(canvas, AT_Y)
+    press(canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
+    press(canvas, AT_QUARTER)
     await settled()
 
     expect(details(vp, EVENT_TURNED)).toHaveLength(1)
-    pointerUp(AT_Y)
+    pointerUp(AT_QUARTER)
   })
 
   it('edits the panel`s document for a body the proposal staged', async () => {
@@ -872,9 +1189,9 @@ describe('one whole drag', () => {
     expect(shown(rings.root.children[2]),
            'the premise: a body is grabbable like any part').toBe(true)
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
-    pointerUp(AT_Y)
+    press(canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
+    pointerUp(AT_QUARTER)
     await settled()
 
     const [report] = details(vp, EVENT_PROPOSALTURN)
@@ -913,9 +1230,9 @@ describe('one whole drag', () => {
     })
     drawn(rings)
 
-    press(canvas, AT_X)
-    pointerMove(AT_Y)
-    pointerUp(AT_Y)
+    press(canvas, AT_DISC)
+    pointerMove(AT_QUARTER)
+    pointerUp(AT_QUARTER)
     await settled()
 
     // WHERE A WORLD POINT OF THE BODY ENDS UP is `position + q·p`, which is what
@@ -939,14 +1256,170 @@ describe('one whole drag', () => {
     const { vp, rings, canvas, viewer } = scene()
     drawn(rings)
 
-    press(canvas, AT_X)
+    press(canvas, AT_DISC)
     // The camera rolls a quarter turn under the live gesture. Measured again,
     // the pointer below would land somewhere else entirely on the new ellipse.
     viewer.model.right = [0, 1, 0]
     viewer.model.up = [-1, 0, 0]
-    pointerMove(AT_Y)
+    pointerMove(AT_QUARTER)
 
     expect(vp.moved.get(PART).turn).toEqual([0, 0, 90])
+  })
+})
+
+describe('what the cursor says about which axis is about to turn', () => {
+  /** All three rings open, and the pointer put somewhere with a frame drawn
+   *  after it — which is the order the module reads them in: `onMove` records
+   *  where the cursor is and `place` asks about it once a frame. */
+  const watching = (where) => {
+    const made = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(made.rings)
+    if (where) hoverAt(made.canvas, where(made))
+    drawn(made.rings)
+    return made
+  }
+
+  it('draws no full circle at rest', () => {
+    // THE COMPLAINT THIS ANSWERS. Three closed curves of one radius, drawn
+    // round a part in three colours the part may itself be painted, are three
+    // things to look past rather than a control — and the reader who wants to
+    // turn something needs to be shown WHERE to press, not the entire orbit of
+    // every axis at once. So at rest each ring is an arc through its own
+    // handle, faded out at both ends. One mask carries it for the whole axis,
+    // which is what keeps the three circles of the curve in step: an ink that
+    // stopped at the arc while its casing ran on round would be a white circle
+    // with a coloured segment in it.
+    const { x, y, z } = watching(null)
+
+    for (const group of [x, y, z]) {
+      expect(shown(group), 'the premise: all three are up').toBe(true)
+      expect(faded(group)).toBe(true)
+      // It runs out at `RING_ARC_DEG` either side of the handle, which is
+      // twice that from end to end, and there is nothing after it: what a
+      // conic gradient does past its last stop is hold that stop's colour, and
+      // that colour has to be the transparent one.
+      expect(fade(group)).toContain(`${2 * RING_ARC_DEG}deg`)
+      expect(fade(group).endsWith(`0) ${2 * RING_ARC_DEG}deg)`)).toBe(true)
+    }
+  })
+
+  it('fades over the ring`s own circle, measured from the handle`s angle', () => {
+    // THE TWO NUMBERS IN THAT GRADIENT THAT NOTHING ELSE WOULD CATCH, read back
+    // into the ring's own parametrisation rather than compared as text.
+    //
+    // THE `from` ANGLE is a conversion: CSS measures a conic gradient from
+    // twelve o'clock and runs it clockwise, which in an element's own axes — y
+    // downwards — is 90 degrees ahead of the circle-space angle `(cos t, sin t)`
+    // names. Lose that 90 and the arc is drawn a quarter of the way round from
+    // the handle it is supposed to run through, which is a widget pointing at
+    // nothing.
+    //
+    // THE PLATEAU is the other: the mask reaches the whole subtree, the disc
+    // included, so the ink has to be at full alpha across the handle's own
+    // width or the rim that holds the handle against the model goes
+    // translucent. That width is `asin` of the disc's radius in the ring's own
+    // units — the half-angle the handle subtends at the ring's centre.
+    const { z } = watching(null)
+    const stops = [...fade(z).matchAll(/([-\d.]+)deg/g)].map((m) => Number(m[1]))
+    expect(stops, 'from, and four stops').toHaveLength(5)
+
+    const [from, ...offsets] = stops
+    const degrees = (radians) => (radians * 180) / Math.PI
+    // Where each stop lands on the ring's own circle, in degrees.
+    const circle = offsets.map((offset) => from + offset - 90)
+    const handle = degrees(DISC_T)
+    const half = degrees(Math.asin(RING_DISC_PX / 2 / RING_PX))
+
+    expect(circle[0]).toBeCloseTo(handle - RING_ARC_DEG, 6)
+    expect(circle[1]).toBeCloseTo(handle - half, 6)
+    expect(circle[2]).toBeCloseTo(handle + half, 6)
+    expect(circle[3]).toBeCloseTo(handle + RING_ARC_DEG, 6)
+  })
+
+  it('draws the whole circle of the ring under the cursor, and of no other', () => {
+    // THE FULL CIRCLE IS HOVER FEEDBACK, which is what it is for: the disc says
+    // where to press and the circle that appears under the cursor says what
+    // pressing there will DO — the plane the part is about to turn in, shown
+    // before the reader has committed to anything.
+    const { x, y, z } = watching((made) => onDisc(made.z))
+
+    expect(fade(z)).toBe('none')
+    for (const group of [x, y]) {
+      expect(faded(group), 'a neighbour was lit too').toBe(true)
+    }
+  })
+
+  it('lightens the disc it is on, and puts it back when the cursor leaves', () => {
+    // Fusion's own second half of the same signal, and the one a reader takes
+    // in without looking away from the handle they are aiming at. It changes
+    // how light the ink is and not WHICH ink it is, because the colour is the
+    // thing the handle exists to say.
+    const made = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(made.rings)
+    const disc = piece(made.z, 'disc')
+    const rest = brightness(disc)
+    const neighbour = brightness(piece(made.x, 'disc'))
+
+    hoverAt(made.canvas, onDisc(made.z))
+    drawn(made.rings)
+    expect(brightness(disc)).toBeGreaterThan(rest)
+    expect(brightness(piece(made.x, 'disc')), 'a neighbour lightened too')
+      .toBe(neighbour)
+
+    // And it goes back when the cursor leaves for the middle of the widget,
+    // where the part is and no handle is — still over the canvas, so this is
+    // the handle being left rather than the canvas being left.
+    hoverAt(made.canvas, centreOf(made.z))
+    drawn(made.rings)
+    expect(brightness(disc)).toBe(rest)
+    expect(faded(made.z), 'and the circle went back to an arc').toBe(true)
+  })
+
+  it('keeps the ring it is TURNING lit wherever the pointer has gone', () => {
+    // A DRAG OWNS THE LIGHT FOR AS LONG AS IT RUNS. The pointer leaves the disc
+    // immediately — turning the part is exactly the act of carrying the hand
+    // away from where it pressed — so a widget that lit only what the cursor
+    // was over would go back to a faded arc under the hand holding it, which
+    // reads as the gesture having ended.
+    const made = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(made.rings)
+
+    press(made.canvas, onDisc(made.z))
+    // Right across the widget and onto another axis's handle.
+    pointerMove(onDisc(made.x))
+    drawn(made.rings)
+
+    expect(fade(made.z), 'the ring being turned').toBe('none')
+    expect(faded(made.x), 'the ring the pointer happens to be over').toBe(true)
+    pointerUp(onDisc(made.x))
+  })
+
+  it('says nothing about a disc the press would not reach', () => {
+    // A LIGHT IS A PROMISE THAT PRESSING HERE TURNS THIS AXIS, and this layer
+    // is the one widget on the page that cannot keep that promise by itself:
+    // it takes no press of its own (`pointer-events: none`) and reads the
+    // canvas's instead, so a press that lands on the toolbar, on a comment pin
+    // or on the view cube goes to THOSE and turns nothing. A disc lying under
+    // one of them is under the cursor geometrically and is not pressable —
+    // and at a radius of 105 px this widget reaches further into that chrome
+    // than it did at 64.
+    const made = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(made.rings)
+    const chrome = document.createElement('div')
+    document.body.appendChild(chrome)
+
+    // The very point that would light the Z ring, arriving from something else.
+    chrome.dispatchEvent(new MouseEvent('pointermove', {
+      clientX: onDisc(made.z)[0], clientY: onDisc(made.z)[1], bubbles: true,
+    }))
+    drawn(made.rings)
+    expect(faded(made.z), 'a disc under other chrome was offered').toBe(true)
+
+    // The premise, and the whole of the difference: the same point, reached
+    // over the canvas, is a hover.
+    hoverAt(made.canvas, onDisc(made.z))
+    drawn(made.rings)
+    expect(fade(made.z)).toBe('none')
   })
 })
 
@@ -960,15 +1433,14 @@ describe('the two rings the default camera cannot show, and the far side', () =>
   // projection runs the curve round the screen the other way.
 
   /** One whole drag on one ring, swept by `radians` in the ring's own plane,
-   *  starting clear of the six crossings. The press point is on the curve the
-   *  module drew; the rest of the gesture is read in circle space, so where it
-   *  passes is not the point. */
+   *  starting at its disc. The press point is the handle the module drew, built
+   *  off its own matrix; the rest of the gesture is read in circle space, so
+   *  where it passes is not the point. */
   const sweep = async (made, axis, radians) => {
     const ring = made.rings.root.children[axis]
-    const from = CLEAR_OF_CROSSINGS
-    press(made.canvas, onRing(ring, from))
-    pointerMove(onRing(ring, from + radians))
-    pointerUp(onRing(ring, from + radians))
+    press(made.canvas, onRing(ring, DISC_T))
+    pointerMove(onRing(ring, DISC_T + radians))
+    pointerUp(onRing(ring, DISC_T + radians))
     await settled()
     // THE LATEST REPORT AND NOT THE FIRST: a second gesture on the same scene
     // is exactly what one of the tests below is about, and the dispatch spy

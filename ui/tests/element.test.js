@@ -1577,10 +1577,12 @@ describe('the widgets connectedCallback puts on the page', () => {
 
   it('takes the rings down when the element leaves the document', () => {
     // MORE THAN THE OTHER THREE OWE, which is why this is its own case: the
-    // rings keep a capture-phase `pointerdown` on the WINDOW for the whole life
-    // of the layer rather than only while a gesture runs, because they take no
-    // press on an element of their own. Left behind it would answer for a
-    // viewport that is gone — on every press of whatever page came next.
+    // rings keep capture-phase listeners on the WINDOW for the whole life of the
+    // layer rather than only while a gesture runs — a `pointerdown`, because
+    // they take no press on an element of their own, and a `pointermove`, which
+    // is what lights the handle the cursor is over before it is pressed. Left
+    // behind they would answer for a viewport that is gone — on every press and
+    // every mouse movement over whatever page came next.
     const el = mount()
     expect(ringsIn(el)).toBeTruthy()
     el.destroy()

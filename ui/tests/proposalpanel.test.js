@@ -3653,11 +3653,17 @@ describe('Turn, in a part\'s own menu', () => {
 
     expect(c.state.tool).toBe('turn')
     expect(c.state.sel).toBe('/model/plate')
-    expect(c.toast.mock.calls.map(([text]) => text).join('')).toContain('ring')
+    expect(c.toast.mock.calls.map(([text]) => text).join('')).toContain('dot')
     // AND THE STRIP SAYS WHERE TO AIM. This is the one gesture on the page whose
     // target is the WIDGET rather than the model — a press anywhere else still
     // orbits — so `drag it` would send the reader to grab the part.
-    expect(c.computed().hintText).toContain('ring')
+    //
+    // `dot` AND NOT `ring`, which both of these said until the handles were
+    // rebuilt: there is no full ring on screen at rest any more, and a press on
+    // the arc that IS drawn goes to the trackball. Naming the ring sent the
+    // reader to grab the one part of the widget that does nothing — `drag it`'s
+    // own mistake, one step closer in.
+    expect(c.computed().hintText).toContain('dot')
   })
 
   it('mints a row at no offset and no turn, and opens the panel on it', () => {

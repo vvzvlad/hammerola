@@ -6478,7 +6478,7 @@ export default class HammerolaViewer extends React.Component {
           // — the hand says "about here" better than a field does — and a turn
           // had none: it was three numbers, and the place a part's three
           // numbers are typed is its row in the proposal's branch. There are
-          // rings round the part now (viewport/rings.js), so the row does what
+          // turn handles round the part now (viewport/rings.js), so the row does what
           // the one above it does, in the same two writes and for the same
           // reason: the armed tool turns what is SELECTED, and neither door
           // into this menu writes `sel`.
@@ -6496,7 +6496,7 @@ export default class HammerolaViewer extends React.Component {
           // the build's alone.
           //
           // AND IT GOES ON MAKING THE ROW, which is the half that is easy to
-          // read as leftover and is not. A ring says "about this much" and a
+          // read as leftover and is not. A gesture says "about this much" and a
           // field says "exactly 90", and a reader who wants the second has
           // nowhere to type it until some node claims the part. So the row
           // still mints one for a part nothing has claimed yet and still opens
@@ -6519,9 +6519,12 @@ export default class HammerolaViewer extends React.Component {
           mi('Turn', '', () => {
             const body = this.proposalBody(mNode.id);
             this.set({ sel: mNode.id, selName: mNode.name, tool: 'turn' });
+            // A COLOURED DOT AND NOT A RING, which is what the widget now puts
+            // under the hand: the press is taken by the handle, and the arc
+            // drawn through it is a picture the trackball still owns.
             this.toast(body
-              ? 'Drag a ring — the proposal keeps the body as you turn it'
-              : 'Drag a ring — it snaps back on the next rebuild');
+              ? 'Drag a coloured dot — the proposal keeps the body as you turn it'
+              : 'Drag a coloured dot — it snaps back on the next rebuild');
             // NO NODE FOR A BODY, which is the one thing left of the gate this
             // row used to sit inside: a body's pose is its own `rot` and a move
             // node about it would be the contradiction described above. The
@@ -7748,11 +7751,17 @@ export default class HammerolaViewer extends React.Component {
         // just as readily as on a part of the build, and the row that arms it
         // already says which of the two the reader is in.
         : armed === 'move' ? 'drag it · esc to stop'
-        // THE RINGS AND NOT THE THING, because this gesture is the one on this
+        // THE HANDLE AND NOT THE THING, because this gesture is the one on this
         // page whose target is the WIDGET rather than the model: a press
         // anywhere else still orbits (`onDown` in viewport/tools.js), so a hint
         // reading `drag it` would send the reader to grab the part.
-        : armed === 'turn' ? 'drag a ring · esc to stop'
+        //
+        // AND NOT `a ring` EITHER, which it said until the handles were rebuilt:
+        // there is no full ring on screen at rest any more, and a press on the
+        // arc that is drawn goes to the trackball — so the old wording named the
+        // one part of the widget that does nothing, which is the same mistake as
+        // `drag it` made one step closer in.
+        : armed === 'turn' ? 'drag a coloured dot · esc to stop'
         : armed === 'cut' ? 'click a face to place the section plane'
         : `drag — orbit · wheel — zoom · hold ${HOLD_KEY_LABEL} — section`,
 

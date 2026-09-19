@@ -1,5 +1,19 @@
-// The turn tool's rings: three of them round the selected part, one per world
+// The turn tool's handles: three of them round the selected part, one per world
 // axis, each dragged to turn the part about THAT AXIS ONLY.
+//
+// ONE DISC PER AXIS IS WHAT THE READER ACTUALLY SEES AND PRESSES, and that is
+// the answer to the two things three full circles got wrong. They DROWNED in
+// the geometry — three closed curves of one radius, in three colours a part may
+// perfectly well be painted — and they could not be AIMED AT, because circles
+// of one radius about one centre cross six times and knot where they meet. So:
+// each axis carries a compact disc sitting on its own circle, at the parameter
+// that bisects the two world axes spanning the ring's plane, which puts the
+// three of them in three different corners of the widget; at rest a short arc
+// fades out either side of the disc and no full circle is drawn at all; and the
+// whole circle appears under the cursor, which is how the reader learns which
+// axis they are about to turn BEFORE they press. Fusion's manipulator, measured
+// off its own sprites — the radius, the disc, the span of the arc and the
+// construction are its numbers (options.js), the three inks are ours.
 //
 // WHY IT EXISTS. A part could always be turned — a move node of the proposal
 // carries three degrees beside its offset (ui/src/proposal.js) — and the only
@@ -18,16 +32,34 @@
 // genuinely easier, this being a curve, and it is still not worth it:
 // `tests/test_ui_source.py` waves the SVG namespace through as an identifier
 // that merely looks like a URL and then pins that exemption to the single
-// `const SVG_NS` in viewcube.js. An ellipse costs one div here, so the price of
-// keeping that pin is three elements.
+// `const SVG_NS` in viewcube.js. THE PRICE OF KEEPING THAT PIN IS NOW EIGHTEEN
+// ELEMENTS — six per axis, an ellipse each — where the widget that drew three
+// bare circles paid three, and that is worth saying out loud because it is the
+// weight on this side of the trade. What holds it up is that the eighteen are
+// built ONCE and the frame moves THREE of them (`build`): the casing, the rim
+// and the disc are static boxes inside the axis's own element, so the running
+// cost is three transforms a frame — one per axis — which is what an SVG would
+// have to write as well.
 //
-// THREE DIVS AND NOT THREE POLYLINES, which is the whole trick of this file. A
-// world circle seen under an orthographic camera projects to an ELLIPSE, and an
-// ellipse is what a CSS `matrix()` does to a circle — so each ring is one
-// 2x2-pixel round div under the projection's own 2x2 matrix, and the browser
+// ROUND DIVS AND NOT POLYLINES, which is the whole trick of this file. A world
+// circle seen under an orthographic camera projects to an ELLIPSE, and an
+// ellipse is what a CSS `matrix()` does to a circle — so every piece of this
+// widget is a round div under the projection's own 2x2 matrix, and the browser
 // draws the curve. Chopping the circle into a run of segments would be sixty
 // elements per ring, re-laid-out sixty times a second, to approximate something
 // the compositor renders exactly.
+//
+// THE SIX ARE SIX SIZES AND NOT SIX COPIES OF ONE BOX, which is worth being
+// exact about because the arithmetic below reads as if they were: only the ink
+// of the curve is the 2 px square that maps to `RING_PX`. Its casing is 2.038,
+// its rim 2.057, and the disc's three are 0.190, 0.171 and 0.133 — every one of
+// them `2 * r / RING_PX` of a local pixel, which is the one rule (`circle`).
+//
+// AND THE DISC IS DRAWN THE SAME WAY, off the same matrix, because it is a
+// circle in the RING'S OWN PLANE rather than a dot on the screen. It is
+// therefore squashed exactly as its ring is: the handle lies on the curve
+// instead of floating over it, and a ring turned away says so by flattening its
+// handle with itself.
 //
 // EVERY ANGLE THE DRAG PRODUCES IS MEASURED IN CIRCLE SPACE, which is the other
 // half of the trick and the half that decides whether this widget turns the
@@ -41,7 +73,8 @@ import {
   groupFacing, groupHome, movableGroup, movePart, nudgeTurn, partCentre,
 } from "./parts.js";
 import {
-  CLICK_PX, RING_HIT_PX, RING_MIN_PX, RING_PX, RING_SHAFT_PX,
+  CLICK_PX, RING_ARC_DEG, RING_CASE_PX, RING_DISC_PX, RING_MIN_PX, RING_PX,
+  RING_RIM_PX, RING_SHAFT_PX,
 } from "./options.js";
 import { turnedFrom } from "../proposal.js";
 
@@ -63,12 +96,124 @@ import { turnedFrom } from "../proposal.js";
  * in this document. Taken the other way round every ring would turn its part
  * backwards, and nothing on screen would say so; `rings.test.js` pins the pair
  * with `cross3` and then pins where the part actually ends up.
+ *
+ * `lit` IS THE SAME INK LIGHTENED, and it is the whole of what a disc does
+ * under the cursor. Fusion lightens the handle the pointer is on, which says
+ * "this is the one you are about to take" in the one channel a reader does not
+ * have to look away to read — and it says it without changing the axis's
+ * COLOUR, which is the thing the reader is meant to be reading off it.
  */
 const AXES = [
-  { world: [1, 0, 0], ink: "#c93a31" },
-  { world: [0, 1, 0], ink: "#2e8b40" },
-  { world: [0, 0, 1], ink: "#2d66c7" },
+  { world: [1, 0, 0], ink: "#c93a31", lit: "#dc7f79" },
+  { world: [0, 1, 0], ink: "#2e8b40", lit: "#77b483" },
+  { world: [0, 0, 1], ink: "#2d66c7", lit: "#769cdb" },
 ];
+
+/** The two inks the CONSTRUCTION is made of, which are not a palette either.
+ *
+ * The white is the one the grip and the arrows halo themselves with and the
+ * dark is the one they shadow themselves with (`HALO` in gizmo.js, which spells
+ * it `rgba(20,24,28,…)` — the same three bytes). Both are here as geometry
+ * rather than as a filter, for the reason `casing` below gives, but they are
+ * the same two answers to the same question: this widget stands ON the model,
+ * over whatever colour the part happens to be and on either canvas.
+ */
+const CASING = "#fff";
+const RIM = "#14181c";
+
+/** Where on its own circle each ring carries its disc, as a circle-space angle.
+ *
+ * THE BISECTOR OF THE RING'S TWO WORLD AXES — 45 degrees from `u` towards `v`,
+ * which for the X ring (whose circle lies in YZ) is the direction of `+Y +Z`.
+ * The three come out 60 degrees apart in the world, and under any camera that
+ * shows all three rings they land in three different corners of the widget:
+ * that separation is the whole of "you can hit the axis you mean". Put at a
+ * world axis instead, two discs would sit on top of each other at every one of
+ * the six points where the rings themselves cross.
+ */
+const DISC_AT = Math.PI / 4;
+const DISC_U = Math.cos(DISC_AT);
+const DISC_V = Math.sin(DISC_AT);
+
+/** The disc's radius in the RING'S OWN units, where the ring itself is 1.
+ *
+ * Which is what makes the hit test one subtraction: circle space is the ring's
+ * plane with its radius divided out, so a disc that is a circle in that plane
+ * is a circle HERE, however the camera has squashed both on the way to the
+ * screen. `RING_DISC_PX` is a width at the ring's widest point and `RING_PX` is
+ * the radius at that same point, so the ratio carries no camera in it.
+ */
+const DISC_R = RING_DISC_PX / 2 / RING_PX;
+
+/** The angular half-width of the disc, seen from the ring's own centre. */
+const DISC_DEG = Math.asin(DISC_R) * (180 / Math.PI);
+
+/** The at-rest fade, as one conic gradient in the ring's own space.
+ *
+ * A MASK AND NOT A SECOND SET OF ELEMENTS, and it is the one thing the matrix
+ * does not spoil. Every length written on these divs is multiplied by the
+ * radius on its way to the screen — which is why the casing is geometry and not
+ * a `filter` — but a conic gradient is measured in ANGLES about the element's
+ * own centre, and the element's own space is the circle the matrix maps to the
+ * ellipse. So the fade runs over the ring's own parametrisation: `RING_ARC_DEG`
+ * either side of the disc OF THE CIRCLE, not of the picture, and a ring seen at
+ * an angle fades over the same stretch of itself as one seen square on.
+ *
+ * `from` PUTS ZERO AT THE HANDLE'S OWN ANGLE, less the half-span. CSS measures
+ * a conic gradient from twelve o'clock and runs it clockwise, which in the
+ * element's own axes — y downwards — is 90 degrees ahead of the circle-space
+ * angle `cos t, sin t` names. Hence the `+ 90`.
+ *
+ * FULL ACROSS THE HANDLE'S OWN WIDTH AND NOT ONLY AT ITS CENTRE, which is the
+ * one stop that is not Fusion's. A mask applies to an element's whole SUBTREE,
+ * and the disc is drawn inside the circle it sits on (`build`), so a fade that
+ * started falling at the handle's midpoint would take about a tenth of the
+ * handle's own edges with it — a translucent rim on the very thing the rim
+ * exists to make solid. `DISC_DEG` is exactly how wide the disc is in this
+ * gradient's own units, so the ramp starts where the handle ends.
+ */
+const FADE = "conic-gradient(from "
+  + `${DISC_AT * (180 / Math.PI) + 90 - RING_ARC_DEG}deg,`
+  + `rgba(0,0,0,0) 0deg,`
+  + `#000 ${RING_ARC_DEG - DISC_DEG}deg,#000 ${RING_ARC_DEG + DISC_DEG}deg,`
+  + `rgba(0,0,0,0) ${2 * RING_ARC_DEG}deg)`;
+
+/**
+ * The six circles one axis is drawn out of, OUTERMOST FIRST — `{r, band, ink,
+ * disc}` with `r` the radius in pixels at the ring's widest point, `band` the
+ * width of the stroke for the three that are curves, and `disc` marking the
+ * three that stand on the handle instead of on the centre.
+ *
+ * WHICH IS ALSO THE ORDER THEY ARE PAINTED IN, and the two have to agree: the
+ * first of them is the element the other five live inside (`build`), and a
+ * parent paints under its children whatever anybody's `z-index` says. So the
+ * dark rim is first because it is the bottom of the stack — rim, casing, ink,
+ * and then the disc's own three over all of them.
+ *
+ * THE CURVE'S THREE SHARE AN OUTER EDGE SCHEME rather than a centre line: the
+ * ink's outer edge is `RING_PX` exactly — which is what lets the rest of this
+ * file go on saying the ring's widest point IS `RING_PX` — and the casing and
+ * the rim stand that much outside and inside it, so each is a wider band about
+ * the same circle.
+ *
+ * THE DISC'S THREE ARE FILLED and not stroked, which is the difference between
+ * a handle and a hoop: a light fill inside a white casing inside a dark rim is
+ * the thing that reads on a body of its own colour, and it is Fusion's own
+ * construction (options.js, `RING_CASE_PX`).
+ */
+const pieces = ({ ink }) => {
+  const half = RING_DISC_PX / 2;
+  return [
+    { r: RING_PX + RING_CASE_PX + RING_RIM_PX, ink: RIM,
+      band: RING_SHAFT_PX + 2 * (RING_CASE_PX + RING_RIM_PX) },
+    { r: RING_PX + RING_CASE_PX, ink: CASING,
+      band: RING_SHAFT_PX + 2 * RING_CASE_PX },
+    { r: RING_PX, ink, band: RING_SHAFT_PX },
+    { r: half, ink: RIM, disc: true },
+    { r: half - RING_RIM_PX, ink: CASING, disc: true },
+    { r: half - RING_RIM_PX - RING_CASE_PX, ink, disc: true },
+  ];
+};
 
 /** Half a turn, in radians — the wrap `onMove` unwinds a step across. */
 const HALF_TURN = Math.PI;
@@ -185,8 +330,10 @@ function frameAt(g, rect, box, at) {
     const b = [v[0] * radius, v[1] * radius];
     // A RING SEEN EDGE-ON IS GONE, not flattened — `RING_MIN_PX` carries the
     // argument, and it is `GIZMO_MIN_SCALE`'s: a control the reader can see and
-    // cannot use is worse than no control. Here it is also the two divisions
-    // below going singular.
+    // cannot use is worse than no control. What is unusable now is the DISC,
+    // which flattens with its ring; the old reason (a sliver of curve lying
+    // across the other two and swallowing their presses) went with the curve
+    // hit test. Here it is also the two divisions below going singular.
     return minorOf(a, b) < RING_MIN_PX ? null : { a, b };
   });
   return { C: [C[0], C[1]], rings };
@@ -224,45 +371,64 @@ function circleSpace(ring, C, point) {
   return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null;
 }
 
+/** Where one ring's disc stands on this layer, in pixels. */
+function discAt(ring, C) {
+  return [C[0] + DISC_U * ring.a[0] + DISC_V * ring.b[0],
+          C[1] + DISC_U * ring.a[1] + DISC_V * ring.b[1]];
+}
+
 /**
- * Did this press land ON one ring's curve, and where — `{theta, away}` in
- * radians and pixels, or null.
+ * Which ring's DISC this point is on, and where on that ring's circle it landed
+ * — `{axis, ring, theta}` — or null for a point on no disc at all.
  *
- * THE HIT TEST IS OURS AND IS ANALYTIC, because the library's picker answers
- * about parts and has never heard of this layer, and because the browser's own
- * hit testing cannot answer it either: a div is a filled box however round its
- * corners are made, so an element that could take the press would take every
- * press INSIDE the ring with it — over the part, which is where the reader
- * grabs to orbit. Hence `pointer-events: none` on the whole layer, unlike the
- * three widgets beside it, and hence this.
+ * THE HIT TEST IS OURS, because the library's picker answers about parts and
+ * has never heard of this layer, and because the browser's own hit testing
+ * cannot answer it either: a div is a filled box however round its corners are
+ * made, so an element that could take the press would take the whole square
+ * about the disc with it — and the corners of that square are presses the
+ * reader aimed PAST the handle, at the very reach where they grab to orbit.
+ * Hence
+ * `pointer-events: none` on the whole layer, unlike the three widgets beside
+ * it, and hence this.
  *
- * THE ELLIPSE'S OWN POINT AT THAT ANGLE, and the distance to THAT. The obvious
- * test — is the pointer's radius in circle space near 1 — measures in circle
- * units, which are pixels stretched by however much the projection squashed the
- * ring: on a ring seen nearly edge-on it would accept a press a hand's breadth
- * away along the flat direction. Measured back on the screen, the tolerance is
- * `RING_HIT_PX` of real PIXELS.
+ * AND IT IS ONE SUBTRACTION, which is the dividend of putting the target on the
+ * curve rather than making it BE the curve. In circle space the ring is the
+ * unit circle and the disc is a circle of `DISC_R` about `(DISC_U, DISC_V)`, so
+ * "is the pointer on the disc" is a distance between two points — exact, with
+ * no tolerance to invent and none of the old curve test's one-sided error. The
+ * camera is already divided out, so a ring the projection has squashed is
+ * grabbed exactly where it is drawn.
  *
- * OF THE PIXELS TO ONE PARTICULAR POINT, AND NOT TO THE NEAREST ONE, which is
- * the limit of that and is worth stating rather than implying. The point
- * compared against is the ellipse's at the SAME circle-space angle the press
- * came back as, which is the nearest point only on a ring seen square on. On an
- * oblique one it lies off to the side, so the measured distance is longer than
- * the real gap to the curve and the ring is harder to grab than `RING_HIT_PX`
- * promises: on `a = (64, 0)`, `b = (0, 12)` a press 5.5 px from the drawn curve
- * measures past 8 and is refused. THE ERROR IS ALL ONE WAY — this test never
- * accepts a press the true distance would refuse — so what it costs is a
- * flattened ring that wants aiming at, and not a press stolen from the orbit
- * underneath. The true distance is the root of a quartic; this is one `atan2`.
+ * THE NEARER OF TWO DISCS THAT BOTH ANSWER, and it is a real case rather than a
+ * formality: two rings seen from a camera that puts their handles' world
+ * directions on one line of sight draw their discs in the same place. Measured
+ * in PIXELS from each disc's own centre, because circle-space distances on two
+ * different rings are two different units and cannot be compared.
+ *
+ * AND IT IS ONLY EVER TWO, which is worth writing down because it bounds the
+ * damage. The difference of two handles' world directions is perpendicular to
+ * the THIRD axis — `h_Y - h_Z` is `(Z - Y)/sqrt2`, square on to X — so a camera
+ * looking down that difference, which is what it takes to make two discs
+ * coincide, is a camera in the third ring's own plane: that ring is edge-on and
+ * `RING_MIN_PX` has already taken it off the screen. With all three rings up
+ * the discs are at least `RING_PX * GIZMO_MIN_SCALE` apart, which is wider than
+ * a disc, so the tie-break decides between two overlapping handles and never
+ * among three.
  */
-function onCurve(ring, C, point) {
-  const p = circleSpace(ring, C, point);
-  if (!p) return null;
-  const theta = Math.atan2(p[1], p[0]);
-  const ex = C[0] + Math.cos(theta) * ring.a[0] + Math.sin(theta) * ring.b[0];
-  const ey = C[1] + Math.cos(theta) * ring.a[1] + Math.sin(theta) * ring.b[1];
-  const away = Math.hypot(point[0] - ex, point[1] - ey);
-  return away <= RING_HIT_PX ? { theta, away } : null;
+function aimAt(frameOf, point) {
+  let best = null;
+  frameOf.rings.forEach((ring, k) => {
+    if (!ring) return;
+    const p = circleSpace(ring, frameOf.C, point);
+    if (!p) return;
+    if (Math.hypot(p[0] - DISC_U, p[1] - DISC_V) > DISC_R) return;
+    const [dx, dy] = discAt(ring, frameOf.C);
+    const away = Math.hypot(point[0] - dx, point[1] - dy);
+    if (!best || away < best.away) {
+      best = { axis: k, ring, away, theta: Math.atan2(p[1], p[0]) };
+    }
+  });
+  return best;
 }
 
 /**
@@ -411,11 +577,12 @@ export function createRings(vp) {
   // `pointer-events: none` ON THE LAYER AND NOWHERE BACK ON, which is where
   // this widget parts company with the overlay, the view cube, the section grip
   // and the axis arrows. All four put `auto` on the thing they want pressed,
-  // because all four are pressed on a BOX. A ring is a curve with a hole in it:
-  // a div is a filled box however round its corners are, so a target here would
-  // swallow every press over the part it is drawn round — the orbit, the pick
-  // and the part menu with it. So nothing on this layer takes a press, and the
-  // press is read off the CANVAS in the capture phase instead (`onDown`).
+  // because all four are pressed on a BOX. Nothing here is a box: the curves
+  // are curves, and a disc is a round hole in a square element whose corners
+  // would take presses the reader aimed past it — three squares of them, at the
+  // very reach where the reader grabs to orbit. So nothing on this layer takes
+  // a press, and the press is read off the CANVAS in the capture phase instead
+  // (`onDown`), where it can be measured against the disc itself.
   //
   // NO CLASS NAME, for the view cube's and the gizmo's reason: a class is a
   // promise the interface's stylesheet keeps a rule for it
@@ -425,51 +592,92 @@ export function createRings(vp) {
   root.style.cssText =
     "position:absolute;inset:0;overflow:hidden;pointer-events:none";
 
-  /** One ring: a two-pixel circle for the projection's matrix to work on. */
-  const build = ({ ink }) => {
+  /** One of the six circles: a round box in LOCAL PIXELS, for the ring's own
+   *  matrix to work on.
+   *
+   * A BOX OF `2 * r / RING_PX` AND NOT A UNIT ONE, which is the whole of how
+   * six circles of six sizes share one matrix. That matrix sends one local
+   * pixel to `RING_PX` screen pixels at the ring's widest point (`frameAt`
+   * picks the world radius to make it so), and `border-radius: 50%` makes a
+   * box's edge the circle inscribed in it — so a box this wide comes out as a
+   * circle of `r` screen pixels, and a border of `band / RING_PX` comes out as
+   * `band` of them.
+   *
+   * AND THINNER EVERYWHERE ELSE, WHICH IS CORRECT. The same matrix that turns
+   * the circle into an ellipse squashes the border with it, so the ring is
+   * drawn finest where it is turning away from the reader. That is what a real
+   * ring looks like seen at an angle; an outline of uniform weight would be a
+   * lie about the shape, and the reader would lose the one cue that says which
+   * way the ring is facing — which is the cue that says which way the part will
+   * turn.
+   *
+   * `box-sizing: border-box` so the border grows INWARDS and the outer edge
+   * stays exactly the circle `r` names: with the default every one of these
+   * would be drawn a few per cent larger than its `r`, which is a widget whose
+   * size depends on how thick its line is — and the bands would no longer be
+   * concentric.
+   *
+   * NO HALO AND NO SHADOW, unlike the grip and the arrows, for a reason of the
+   * geometry rather than of the palette: `filter` and `box-shadow` are computed
+   * in the element's OWN space, so a one-pixel glow would be multiplied by the
+   * same `RING_PX` every other length here is and come back as a hundred pixels
+   * of smudge. What stands in for it is geometry — the casing and the rim of
+   * `pieces` are circles of their own, divided by `RING_PX` on the way in, and
+   * they land at the width they say.
+   */
+  const circle = ({ r, band, ink }) => {
     const div = document.createElement("div");
-    // A UNIT CIRCLE, and every number in this rule is in service of that. The
-    // box is 2 px square with `border-radius: 50%`, so its edge is a circle of
-    // radius ONE about its own centre — and `matrix(a.x, a.y, b.x, b.y, 0, 0)`
-    // is precisely the map sending `(cos t, sin t)` to `cos t * a + sin t * b`,
-    // which is the projected ring. `translate(-50%,-50%)` comes first in the
-    // list and therefore applies LAST, shifting the whole transformed circle by
-    // half the untransformed box so that its centre lands on `C` rather than
-    // its corner.
-    //
-    // THE LINE IS A FRACTION OF A PIXEL because the matrix is about to multiply
-    // it by `RING_PX`: `RING_SHAFT_PX / RING_PX` of the local unit comes out as
-    // `RING_SHAFT_PX` on the screen at the ring's widest point.
-    //
-    // AND THINNER EVERYWHERE ELSE, WHICH IS CORRECT. The same matrix that turns
-    // the circle into an ellipse squashes the border with it, so the ring is
-    // drawn finest where it is turning away from the reader. That is what a
-    // real ring looks like seen at an angle; an outline of uniform weight would
-    // be a lie about the shape, and the reader would lose the one cue that says
-    // which way the ring is facing — which is the cue that says which way the
-    // part will turn.
-    //
-    // `box-sizing: border-box` so the border grows INWARDS and the outer edge
-    // stays exactly the unit circle: with the default the ring would be drawn a
-    // few per cent larger than `RING_PX`, which is a widget whose size depends
-    // on how thick its line is.
-    //
-    // NO HALO, unlike the grip and the arrows, and for a reason of the geometry
-    // rather than of the palette: `filter` and `box-shadow` are computed in the
-    // element's OWN space, so a one-pixel glow on a two-pixel box would be
-    // multiplied by the same `RING_PX` the border is and come back as sixty
-    // pixels of smudge. What stands in for it is the shape: a closed curve the
-    // width of the widget reads on either canvas where a two-pixel shaft would
-    // not.
-    div.style.cssText = "position:absolute;left:0;top:0;display:none;"
-      + "box-sizing:border-box;width:2px;height:2px;border-radius:50%;"
-      + `border:${RING_SHAFT_PX / RING_PX}px solid ${ink};`
-      + "transform-origin:50% 50%";
-    root.appendChild(div);
+    const size = (2 * r) / RING_PX;
+    div.style.cssText = "position:absolute;box-sizing:border-box;"
+      + `width:${size}px;height:${size}px;border-radius:50%;`
+      + (band ? `border:${band / RING_PX}px solid ${ink}`
+              : `background:${ink}`);
     return div;
   };
 
-  const rings = AXES.map((axis) => ({ axis, div: build(axis) }));
+  /** One axis: the outermost of its six circles, with the other five inside it.
+   *
+   * ONE MATRIX FOR THE WHOLE WIDGET, which is what the nesting buys and it is
+   * worth the indirection. Every circle of an axis lives in the same plane, so
+   * the parent's matrix is the only projection any of them needs: a child is a
+   * plain box at a plain offset in the parent's own local pixels, and the
+   * browser composes. `place` then moves ONE element per axis per frame instead
+   * of six, and everything below is written once, here.
+   *
+   * THE DARK RIM IS THE PARENT, because a parent paints under its children
+   * whatever anybody's `z-index` says (CSS 2.1 §E.2: a negative `z-index` child
+   * still comes after the parent's own background) and the rim is the bottom of
+   * the stack. `pieces` is in that order for this reason.
+   *
+   * THE OFFSETS ARE IN THE PARENT'S PADDING BOX, which is its border box less
+   * the rim's own band — so the centre of the parent, which is where the curves
+   * belong, is `middle` from the corner rather than half the box.
+   * `translate(-50%,-50%)` then pulls each child back by half of ITSELF, and
+   * the disc's three are carried out to the handle by the one offset the ring's
+   * own coordinates name: `(DISC_U, DISC_V)` local pixels.
+   */
+  const build = (axis) => {
+    const [rim, ...rest] = pieces(axis);
+    const group = circle(rim);
+    // THE FADE IS THE RESTING STATE and the mask is how it is taken off again:
+    // a ring under the cursor is drawn whole by setting this to `none`
+    // (`light`), which is one write and no elements built or thrown away.
+    group.style.cssText += ";left:0;top:0;display:none;"
+      + `transform-origin:50% 50%;mask-image:${FADE}`;
+    const middle = (rim.r - rim.band) / RING_PX;
+    for (const part of rest) {
+      const div = circle(part);
+      div.style.left = `${middle + (part.disc ? DISC_U : 0)}px`;
+      div.style.top = `${middle + (part.disc ? DISC_V : 0)}px`;
+      div.style.transform = "translate(-50%,-50%)";
+      group.appendChild(div);
+    }
+    root.appendChild(group);
+    // The one that lightens: the disc's ink, which `pieces` puts last.
+    return { axis, group, face: group.lastElementChild };
+  };
+
+  const rings = AXES.map(build);
 
   let frame = 0;
   // The gesture in progress: which ring it is on, the frame it was measured
@@ -477,6 +685,24 @@ export function createRings(vp) {
   // has gone since, the record it is applying, and whether the pointer has
   // travelled far enough to be a drag at all. Null between gestures.
   let drag = null;
+  // Where the cursor was last seen, in client pixels, and whether it was over
+  // the CANVAS when it was — the two things `place` needs to decide whether the
+  // reader is hovering a disc.
+  //
+  // MUTATED IN PLACE rather than replaced, because `onMove` now runs on every
+  // pointer move over the page for the whole life of this layer. The honest
+  // accounting is that this saves the smaller half: the same handler asks
+  // `internals()` for the canvas, which builds an object of nine keys, so a
+  // reader doing nothing but moving the mouse already pays more garbage than
+  // the pair would cost. It is kept because a pair that is read once a frame
+  // and written many times a second is the one thing here with no reason to be
+  // allocated at all, not because it is what makes this handler cheap.
+  const pointer = [0, 0];
+  let over = false;
+  // Which axis is currently drawn lit — its circle whole and its disc pale — or
+  // -1 for none. Held so that `light` can be a no-op on the frames where
+  // nothing changed, which is nearly all of them.
+  let lit = -1;
 
   /**
    * The selection these rings stand for, or null when there is nothing to put
@@ -515,7 +741,32 @@ export function createRings(vp) {
   const wanted = () => !!held();
 
   const hide = () => {
-    for (const ring of rings) ring.div.style.display = "none";
+    for (const ring of rings) ring.group.style.display = "none";
+  };
+
+  /** Draw axis `k` as the one the reader is about to turn, and the other two at
+   *  rest. -1 lights none of them.
+   *
+   * THE WHOLE CIRCLE IS THE HOVER FEEDBACK, which is the second half of the
+   * answer to "you cannot hit the axis you mean": the disc says where to press
+   * and the circle that appears under the cursor says what pressing there will
+   * DO — the plane the part is about to turn in, drawn before the reader has
+   * committed to anything. Taking the mask off is all it costs, because the
+   * circle is already there, faded away to nothing everywhere but the arc.
+   *
+   * ONLY WHEN IT CHANGES, and that is the point of `lit`. This is called once
+   * per frame and would otherwise write six styles sixty times a second to say
+   * what the DOM already holds — a widget nobody is hovering must cost nothing
+   * beyond the hit test that establishes nobody is hovering it.
+   */
+  const light = (k) => {
+    if (k === lit) return;
+    lit = k;
+    rings.forEach((ring, at) => {
+      const on = at === k;
+      ring.group.style.maskImage = on ? "none" : FADE;
+      ring.face.style.background = on ? ring.axis.lit : ring.axis.ink;
+    });
   };
 
   /** Measure the three ellipses against the scene as it stands, or null.
@@ -553,25 +804,52 @@ export function createRings(vp) {
     return frameOf ? { ...frameOf, box } : null;
   };
 
+  /** Which axis the cursor is on right now, or -1.
+   *
+   * THE FRAME THE WIDGET WAS JUST DRAWN FROM, which is why this is asked here
+   * and not in `onMove`: the answer needs the three ellipses, and measuring
+   * them costs a `getBoundingClientRect` and a walk of the camera. Asked off
+   * the frame that is being drawn anyway, a hover is three inversions of a 2x2
+   * matrix — and asked in the move handler it would be that whole measurement,
+   * on every pointer event, for a cursor that is usually nowhere near a disc.
+   */
+  const hovered = (frameOf) => {
+    if (!over) return -1;
+    const aim = aimAt(frameOf, [pointer[0] - frameOf.box.left,
+                                pointer[1] - frameOf.box.top]);
+    return aim ? aim.axis : -1;
+  };
+
   /** Put the three rings round the part, or take them off the screen. */
   const place = () => {
     const sel = held();
     const frameOf = sel ? measure(sel) : null;
     if (!frameOf) {
       hide();
+      light(-1);
       return;
     }
+    // A DRAG OWNS THE LIGHT FOR AS LONG AS IT RUNS, whatever the pointer is
+    // over — and the pointer leaves the disc immediately, because turning the
+    // part is exactly the act of carrying the hand away from where it pressed.
+    // A ring that went back to a faded arc under the hand holding it would be
+    // saying the gesture had ended.
+    light(drag ? drag.axis : hovered(frameOf));
     rings.forEach((ring, k) => {
       const ellipse = frameOf.rings[k];
       if (!ellipse) {
-        ring.div.style.display = "none";
+        ring.group.style.display = "none";
         return;
       }
+      // ONE ELEMENT, AND THE OTHER FIVE COME WITH IT. `translate(-50%,-50%)`
+      // is first in the list and therefore applies LAST, shifting the whole
+      // transformed axis by half the untransformed box so that the ring's
+      // centre lands on `C` rather than its corner.
       const { a, b } = ellipse;
-      ring.div.style.display = "";
-      ring.div.style.left = `${frameOf.C[0]}px`;
-      ring.div.style.top = `${frameOf.C[1]}px`;
-      ring.div.style.transform = "translate(-50%,-50%) "
+      ring.group.style.display = "";
+      ring.group.style.left = `${frameOf.C[0]}px`;
+      ring.group.style.top = `${frameOf.C[1]}px`;
+      ring.group.style.transform = "translate(-50%,-50%) "
         + `matrix(${a[0]},${a[1]},${b[0]},${b[1]},0,0)`;
     });
   };
@@ -606,10 +884,17 @@ export function createRings(vp) {
    * The listeners are on the WINDOW and in the capture phase for the reason
    * tools.js's `watch` gives: a drag that starts on a ring can perfectly well
    * end anywhere, and a release missed here strands the gesture forever.
+   *
+   * `pointermove` IS NOT ONE OF THEM ANY MORE. It is on the window for the
+   * whole life of the layer, beside `pointerdown`, because it now answers two
+   * questions rather than one: where the hand has carried a live drag, and
+   * where the cursor is standing when there is no drag at all — which is what
+   * says whether a disc is being hovered. One listener and one handler rather
+   * than a second of each, so there is one place where this layer learns where
+   * the pointer is.
    */
   const finish = () => {
     drag = null;
-    removeEventListener("pointermove", onMove, true);
     removeEventListener("pointerup", onUp, true);
     removeEventListener("pointercancel", onCancel, true);
   };
@@ -635,6 +920,26 @@ export function createRings(vp) {
   };
 
   function onMove(event) {
+    // WHERE THE CURSOR IS, ON EVERY MOVE AND NOT ONLY DURING A GESTURE. The
+    // hover this feeds is read once a frame by `place`, off the frame it has
+    // just measured, so all this handler owes it is the position — and it must
+    // be taken before the early return below, because the frames where nothing
+    // is being dragged are exactly the frames a hover is for.
+    //
+    // AND WHETHER THE PRESS IT PROMISES COULD LAND, which is `onDown`'s own
+    // guard asked one event earlier and is the whole reason this line is here.
+    // A hover is a promise that pressing HERE turns THIS axis; `onDown` takes a
+    // press only off the canvas, because the toolbar, a comment pin and the
+    // view cube are boxes that take their own. A disc lying under one of those
+    // is geometrically under the cursor and is not pressable, so lighting it
+    // would be the widget offering a gesture that then goes somewhere else and
+    // turns nothing — and at `RING_PX` the reach of this widget covers more of
+    // that chrome than it used to. The target is the same test, so the two
+    // cannot disagree.
+    pointer[0] = event.clientX;
+    pointer[1] = event.clientY;
+    const g = internals(vp.viewer);
+    over = !!g && event.target === g.canvas;
     if (!drag) return;
     // A CLICK IS NOT A ONE-PIXEL DRAG, and the canvas gesture spells the same
     // rule out: until the pointer has travelled `CLICK_PX` this press is still
@@ -730,11 +1035,11 @@ export function createRings(vp) {
   }
 
   /**
-   * A press on the canvas, taken only if it landed on a ring.
+   * A press on the canvas, taken only if it landed on a ring's DISC.
    *
    * ON THE WINDOW AND IN THE CAPTURE PHASE, which is the price of a layer that
    * takes no presses of its own — and it buys the one thing a target would not:
-   * a press that MISSES every ring is left completely alone, so it goes on to
+   * a press that MISSES every disc is left completely alone, so it goes on to
    * the tools' own listener and to the trackball behind it, and the reader can
    * still orbit, pick and open the part menu with the tool armed. Capture on
    * the window runs before the capture-phase listener tools.js puts on the
@@ -770,18 +1075,11 @@ export function createRings(vp) {
     if (!frameOf) return;
     const point = [event.clientX - frameOf.box.left,
                    event.clientY - frameOf.box.top];
-    // THE NEARER OF TWO RINGS THAT ARE BOTH HIT, by the same distance the hit
-    // was decided on. Three rings cross at six points and near a crossing both
-    // answers are honest, so the tie is broken by the only thing that says
-    // which one the hand was aiming at.
-    let aim = null;
-    frameOf.rings.forEach((ring, k) => {
-      if (!ring) return;
-      const hit = onCurve(ring, frameOf.C, point);
-      if (hit && (!aim || hit.away < aim.away)) {
-        aim = { axis: k, ring, theta: hit.theta, away: hit.away };
-      }
-    });
+    // THE DISC AND NOT THE CURVE, which is the same question `hovered` asks and
+    // has to be: the reader presses the thing that lit up under the cursor, so
+    // one function answers both or the widget promises one axis and turns
+    // another.
+    const aim = aimAt(frameOf, point);
     if (!aim) return;
     // Only now is the press ours. `preventDefault` suppresses the compatibility
     // mouse events, so this press cannot turn into a double-click somewhere
@@ -801,12 +1099,12 @@ export function createRings(vp) {
       turn: turnRecord(vp, sel.paths, sel.paths[0], sel.proposal),
       moved: false,
     };
-    addEventListener("pointermove", onMove, true);
     addEventListener("pointerup", onUp, true);
     addEventListener("pointercancel", onCancel, true);
   }
 
   addEventListener("pointerdown", onDown, true);
+  addEventListener("pointermove", onMove, true);
 
   /** End a drag the reader has not let go of, because the scene is going away.
    *
@@ -836,11 +1134,13 @@ export function createRings(vp) {
       // goes with it, so the pose there would be to report is one nothing is
       // left standing at — the same fifth ending tools.js's teardown takes.
       finish();
-      // AND THE PRESS LISTENER WITH IT, which the three above are not: this one
-      // is on the window for the whole life of the layer rather than for the
-      // length of a gesture, so a viewport unmounted with no drag in progress
-      // would still leave it there holding a scene that is gone.
+      // AND THE TWO LIFELONG LISTENERS WITH IT, which the two above are not:
+      // these are on the window for the whole life of the layer rather than for
+      // the length of a gesture, so a viewport unmounted with no drag in
+      // progress would still leave them there holding a scene that is gone —
+      // and the move one would go on recording a cursor for nobody.
       removeEventListener("pointerdown", onDown, true);
+      removeEventListener("pointermove", onMove, true);
       root.remove();
     },
   };

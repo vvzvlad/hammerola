@@ -349,17 +349,29 @@ export const GIZMO_MIN_SCALE = 0.2;
  *
  * THEIR OWN NUMBERS AGAIN, and here the case is easier than it was for the
  * arrows: a ring is not an arrow at all. What it is drawn with — a radius, a
- * line, a tolerance, and a floor on how flat it may be seen before it goes —
- * has no member in common with a shaft and a head, so there is nothing to
- * share even before the argument about sharing. */
+ * line, a disc to take the press, an arc round it, a casing that keeps both
+ * legible, and a floor on how flat it may be seen before it goes — has no
+ * member in common with a shaft and a head, so there is nothing to share even
+ * before the argument about sharing. */
 
 /** The ring's radius ON THE SCREEN: the semi-axis of the ellipse at its widest.
  *
- * THE SAME REACH AS AN ARROW OF THE MOVE TOOL, and that is the whole of the
- * choice. The two widgets stand on the same point — the selected part's centre
- * — and never at the same time, so a reader who has learned to aim at one has
- * learned the size of the other; a ring noticeably larger or smaller would say
- * the two tools were about different things.
+ * FUSION'S OWN NUMBER, measured off its installed manipulator sprites rather
+ * than remembered, and it is deliberately NOT the arrows' 64 the way this
+ * constant used to be. The two widgets stand on the same point and never at the
+ * same time, but this one is no longer a hoop the reader aims the curve of: the
+ * press is taken by a disc sitting on the circle (`RING_DISC_PX`).
+ *
+ * AND IT DOES NOT PUT THE WIDGET OUTSIDE THE ARROWS' REACH, which is the
+ * tempting thing to say about a radius bigger than `GIZMO_PX` and is false. Only
+ * the WIDEST point of a ring is this far out; a handle sits wherever its own
+ * circle carries it, at `RING_PX` times the sine of the angle between its axis
+ * and the direction of view. Down the diagonal — the pose this project's own
+ * fixtures take — every ring's narrow direction is exactly where its handle
+ * stands, so all three discs come in to about 61 px, inside the arrows' 64, and
+ * at the `RING_MIN_PX` floor a handle is 21 px from the centre. What keeps the
+ * two widgets from fighting is not distance: it is that only a disc takes a
+ * press here, and everything a press misses goes to the trackball.
  *
  * WHY IT IS THE WIDEST POINT and not "the radius". A world circle seen at an
  * angle projects to an ellipse, and under an ortho camera the plane of any such
@@ -368,7 +380,67 @@ export const GIZMO_MIN_SCALE = 0.2;
  * px-per-world-unit. That direction is this many pixels for all three rings,
  * whatever the camera is doing, which is what makes one number enough.
  */
-export const RING_PX = 64;
+export const RING_PX = 105;
+
+/** The disc handle's width at that same widest point — the one thing on a ring
+ *  that takes a press.
+ *
+ * FUSION'S NUMBER AGAIN, and the pair is the whole answer to "you cannot hit the
+ * axis you mean". Three circles of one radius cross each other six times and
+ * knot at the centre, so a curve is something a hand has to be told how to aim
+ * at; a 20 px disc is aimed at the way a button is. It also replaces the
+ * tolerance the old curve test needed (`RING_HIT_PX`, deleted with it) — there
+ * is nothing left to invent a tolerance for, because the target is now as wide
+ * as what is drawn.
+ *
+ * A CIRCLE IN THE RING'S OWN PLANE and not a dot on the screen, which
+ * `rings.js` draws with the ring's own matrix: the disc is squashed exactly as
+ * its ring is, so it lies ON the curve instead of floating over it, and a ring
+ * turned nearly edge-on says so by flattening its handle along with itself. */
+export const RING_DISC_PX = 20;
+
+/** Half the arc drawn through the disc AT REST, in degrees of the ring's own
+ *  circle — the ink fading to nothing at both ends.
+ *
+ * MEASURED, not chosen: it is the span Fusion's own at-rest sprite covers. What
+ * it buys is the complaint about the rings drowning in the geometry. Three full
+ * circles were three closed curves of one size lying across the part and across
+ * each other; ±57 degrees through each handle is a third as much ink and it
+ * points along the way the part will go. IT STILL REACHES THE CROSSINGS — the
+ * handle sits at 45 degrees of its circle and the two rings it meets cross it at
+ * 0 and 90, which are 45 away, well inside this span. What is left of the ink
+ * there is about a fifth, and that is the whole difference: the three curves
+ * still meet, as three circles about one centre must, but they meet as a hint
+ * rather than as the knot the reader could not aim into. The full circle is what
+ * HOVER says (`rings.js`), which is when the reader is asking about one axis
+ * rather than looking at a part. */
+export const RING_ARC_DEG = 57;
+
+/** The white casing carried by everything this widget draws, in px at the
+ *  widest point.
+ *
+ * FUSION'S CONSTRUCTION AND NOT ITS PALETTE, and the difference is deliberate:
+ * its handles are grey and ours keep the RGB triad `gizmo.js` spells (half a
+ * widget in grey beside arrows in colour would be worse than either). What we
+ * take is the LEGIBILITY MECHANISM — a light casing inside a dark rim — because
+ * it is construction rather than colour, and it is the only kind that works: a
+ * red disc on a red part is invisible whatever red it is, and the two canvases
+ * this interface runs on (`readTheme`) rule out picking an ink that carries on
+ * both.
+ *
+ * NOT A GLOW, which `rings.js` says at the element and is the reason this is a
+ * length here rather than a `filter`: every one of these circles is a box about
+ * two pixels across under a matrix that multiplies lengths by the radius — the
+ * ink exactly two, the casings and rims a little over or well under — so a 1 px
+ * shadow comes back as a hundred px of smudge. A casing made of geometry is
+ * divided by the radius on the way in and lands at the size it says. */
+export const RING_CASE_PX = 2;
+
+/** The dark rim outside that casing. A hairline, because it is doing the
+ *  opposite job: the white casing is what holds the ink against dark geometry,
+ *  and this is what holds the CASING against the light canvas — which needs a
+ *  boundary and not a band. */
+export const RING_RIM_PX = 1;
 
 /** The ring's line at that widest point, and thinner everywhere else.
  *
@@ -384,33 +456,38 @@ export const RING_PX = 64;
  */
 export const RING_SHAFT_PX = 2;
 
-/** How far from the drawn curve a press still counts as being on it.
- *
- * The tolerance of an ANALYTIC hit test rather than the height of a box: there
- * is no element to press here (`rings.js` says why a div cannot be the target),
- * so this is the whole of what makes a 2 px line hittable. Between the arrows'
- * half-height of 7 and the grip's 9, which is the range a hand aims to.
- */
-export const RING_HIT_PX = 8;
-
 /** How flat a ring may be seen before it is TAKEN OFF THE SCREEN rather than
  *  floored — the minor semi-axis of its projected ellipse, in pixels.
  *
- * `GIZMO_MIN_SCALE`'s decision, one widget over, and the arithmetic that sets
- * the floor is different enough to be worth writing down. A ring seen edge-on
- * does not merely become hard to see: its 2x2 basis goes singular, so the
- * circle-space angle the drag is measured in — and the hit test that finds the
- * ring in the first place — are both divisions by nothing.
+ * SET BY THE DISC NOW, and the number moved with the reason. The old floor was
+ * the hit tolerance: under it, every pixel inside the ellipse was within
+ * `RING_HIT_PX` of the curve, so a flattened ring stopped being a hoop and
+ * became a filled sliver stealing presses from the two rings behind it. That
+ * argument is gone with the curve test — the press is taken by a disc, which
+ * lands in one place and steals nothing — and what is left is the handle
+ * itself: the disc is squashed exactly as its ring is (`rings.js`), so at this
+ * floor it is `RING_DISC_PX * RING_MIN_PX / RING_PX` across at its narrowest,
+ * which is four pixels of target lying along a line.
  *
- * AT LEAST `RING_HIT_PX`, which is the part that is easy to get backwards. With
- * a minor axis under the tolerance every pixel INSIDE the ellipse is within
- * `RING_HIT_PX` of the curve, so the ring stops being a hoop to aim at and
- * becomes a filled sliver lying across the two rings behind it — and it is the
- * one the reader cannot see. 12 is that floor with enough left over to read as
- * a curve rather than as a line; the reader turns the model a little and the
- * ring comes back.
+ * SO THE RING STILL GOES, for `GIZMO_MIN_SCALE`'s reason rather than for the
+ * old one: a control the reader can see and cannot aim at is worse than no
+ * control, and the remedy is the same — turn the model a little and the ring
+ * comes back. The basis going singular is still true and still fatal to the
+ * circle-space angle the drag is measured in, but it was never the binding
+ * constraint and is not what sets this number.
+ *
+ * 21 IS `RING_PX * GIZMO_MIN_SCALE`, which is arithmetic rather than sharing:
+ * a ring's major semi-axis is always `RING_PX` (`rings.js` says why), so a
+ * floor in pixels and the arrows' floor as a FRACTION are the same statement
+ * about how far a widget may be FORESHORTENED — to a fifth, which is 11.5
+ * degrees of tilt either way. What that tilt is measured FROM is not the same
+ * for the two, and the sentence is wrong if it is left to look as though it
+ * were: an arrow collapses as its axis approaches the axis of view, while a
+ * ring is at its widest exactly then and collapses as its axis approaches the
+ * PLANE OF THE SCREEN. They stay separate constants because they are floors on
+ * different widgets measured off different quantities.
  */
-export const RING_MIN_PX = 12;
+export const RING_MIN_PX = 21;
 
 /** How long after the last press or wheel the viewport still counts as busy.
  *
