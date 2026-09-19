@@ -14,10 +14,12 @@ module of its own rather than a function beside any one of them:
 
 THOSE THREE ARE THE CALLERS OF THE NAME RULE, and they are not everyone who
 imports this file. One PIECE of it travels further: `first_nonprintable`, the
-category-C scan, has three readers of its own — `unservable_reason` below,
-`render._plain_text` of every displayed field, and `_clean_title` in
+category-C scan, has four readers of its own — `unservable_reason` below,
+`render._plain_text` of every displayed field, `_clean_title` in
 hammerola/project.py of a project TITLE, which asks what a file may be called
-at no point. That is why the scan is public and carries a docstring of its own,
+at no point, and `src/records.py`, which is the one that answers at a DOOR: a
+422 on the comment and proposal write paths rather than a refusal to show
+something already stored. That is why the scan is public and carries a docstring of its own,
 and it is also what widens the stdlib rule further down from one verb to every
 command the tool has.
 
@@ -83,11 +85,15 @@ from typing import Optional
 def first_nonprintable(value: str):
     """The first character Unicode files under C, or None if there is none.
 
-    A function of its own because three different answers are built out of one
+    A function of its own because four different answers are built out of one
     loop: a ValueError naming a field (`_plain_text` in src/render.py), a reason
-    a FILE NAME cannot be served (`unservable_reason`, below), and a refusal of
+    a FILE NAME cannot be served (`unservable_reason`, below), a refusal of
     a project title on the author's own machine (`_clean_title` in
-    hammerola/project.py). Written out three times, the three would be free to
+    hammerola/project.py), and a 422 at the comment and proposal write doors
+    (`one_line` and `check_body_printable` in src/records.py) — the only reader
+    that refuses bytes on the way IN rather than declining to show what is
+    already stored, so it is the one whose radius reaches a live
+    request. Written out four times, they would be free to
     disagree about what "printable" means — and they did: the client spelled it
     `ord(char) < 0x20 or ord(char) == 0x7F`, which is a SUBSET of category Cc —
     the C0 controls and DEL, 33 of the 65, but not C1 (U+0080-U+009F) — while

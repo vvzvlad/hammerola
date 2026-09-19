@@ -29,11 +29,12 @@ from loguru import logger
 from hammerola.buildnames import first_nonprintable
 from src.errors import HttpRefusal
 
-# One line of a JSON field: a comment's view id, part name and resolve note, a
-# proposal's `published` stamp and its `view`. Generous enough for a nested part
-# path like `/assembly/bracket/screw_3`, short enough that a queue entry stays
-# readable — it is here so that a hand-written request cannot put a novel in a
-# field that is printed on one line.
+# One line of a JSON field. Named exhaustively, so the count below is checkable
+# from here: a comment's `view`, `part`, `key` and resolve `note`, a proposal's
+# `published` and `view`. Generous enough for a nested part path like
+# `/assembly/bracket/screw_3`, short enough that a queue entry stays readable —
+# it is here so that a hand-written request cannot put a novel in a field that
+# is printed on one line.
 MAX_FIELD_CHARS = 200
 
 # Temp-file prefix left behind by an interrupted write, swept at startup. The
@@ -44,7 +45,7 @@ WIP_PREFIX = ".wip-"
 def one_line(value, field: str, error: type[HttpRefusal]) -> str:
     """A printable single-line string, or an `error` naming the field.
 
-    ONE LENGTH FOR ALL FIVE FIELDS, and no parameter for it: both copies this
+    ONE LENGTH FOR ALL SIX FIELDS, and no parameter for it: both copies this
     replaced hard-coded the same 200, every caller wants that, and a limit
     nobody passes differently is a knob that only makes the two doors free to
     drift apart again — which is the thing this module exists to stop.

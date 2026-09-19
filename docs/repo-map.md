@@ -95,7 +95,8 @@
   refused published with a 201 into an immutable directory and 404'd on every GET
   (issue #53). `first_nonprintable` is shared wider than that rule:
   `render._plain_text` and `hammerola/project.py::_clean_title` hold displayed text
-  to it too. STDLIB ONLY, and it lives in the client package for that reason — see
+  to it too, and `src/records.py` answers 422 with it at the comment and proposal
+  write doors. STDLIB ONLY, and it lives in the client package for that reason — see
   the module's own docstring for why it could live in none of the three callers,
   and `tests/test_buildnames.py` plus `tests/client/test_stdlib_only.py` for what
   holds both rules. `store.SAFE_COMPONENT` is deliberately NOT here: that is the

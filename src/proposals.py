@@ -57,8 +57,7 @@ which is the same line `src/comments.py` draws:
     already been accepted. This is not a defence against anybody: it is our own
     drag arithmetic producing a number that cannot be read back — the hazard
     `comments._numbers` records for a camera — so it is refused at the door
-    with a 422 instead. Named rather than cited by line: the line numbers this
-    used to give had already drifted off the function by twenty lines.
+    with a 422 instead.
 """
 
 import json
