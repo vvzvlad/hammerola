@@ -4,8 +4,9 @@
 // gizmo.test.js and handle.test.js keep beside it. What IS assertable is
 // everything that decides whether the reader can see and use the rings at all:
 // WHERE they are put (a projection, in px, of the selected part's centre), the
-// SHAPE each one is drawn as (the 2x2 matrix that turns a unit circle into the
-// projected ellipse), HOW MUCH of it is drawn — an arc through the handle at
+// SHAPE each one is drawn as (the 2x2 matrix carrying the ring's shape — its
+// projected axes divided by `RING_PX`, so its widest direction is exactly 1),
+// HOW MUCH of it is drawn — an arc through the handle at
 // rest, the whole circle under the cursor — WHEN one is taken off the screen
 // (a ring seen edge-on, and five different reasons for the whole widget),
 // WHICH ring a press lands on, and what one whole drag does to the part and
@@ -40,7 +41,20 @@
 // world unit along both screen axes (400 px per 20 halfW across, 300 px per 15
 // halfH up), so the ring radius `RING_PX / 20` is 5.25 world units, world +X
 // reads as +105 px across the screen and world +Y as -105 px up it — which
-// makes the Z ring, seen square on, the circle `matrix(105, 0, 0, -105, 0, 0)`.
+// makes the Z ring, seen square on, the circle spanned by `(105, 0)` and
+// `(0, -105)`.
+//
+// WHICH THE MODULE WRITES AS `matrix(1, 0, 0, -1)`, and THAT is the one thing
+// about this file's arithmetic that is not just projection. The matrix carries
+// the ring's SHAPE and no size: its columns are those two screen vectors
+// divided by `RING_PX`, so its widest direction is exactly 1, and the six boxes
+// inside the element carry their own real pixel sizes instead. The other way
+// round — unit boxes under a matrix `RING_PX` long — is what the module used to
+// do and is exactly the bug: a border-width is resolved to DEVICE pixels before
+// the transform, so a 2 px stroke written as 0.019 was rounded up to the device
+// minimum and then magnified by 105. Everything below that wants a SCREEN
+// vector therefore goes through `axesOf` rather than `matrixOf`, and the two
+// lengths the module writes are read back as the pixels they are.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -173,8 +187,8 @@ const shown = (ring) => ring.style.display !== 'none'
  * the other five are laid inside it, in ITS coordinates, so that one matrix
  * moves the whole widget (`build` in rings.js). Which is why everything below
  * that asks where a ring is asks the group itself: the matrix it carries is the
- * ring's own `(a, b)`, and the five children are boxes in local pixels that the
- * browser puts through it.
+ * ring's own `(a, b)` divided by `RING_PX`, and the five children are boxes of
+ * their own real size that the browser puts through it.
  *
  * `pieces` IN rings.js IS THE ORDER, outermost first: the curve's dark rim, its
  * white casing and its ink, then the disc's three the same way round. Named
@@ -185,11 +199,11 @@ const AT = { arcCase: 0, arc: 1, discRim: 2, discCase: 3, disc: 4 }
 const piece = (group, name) =>
   (name === 'arcRim' ? group : group.children[AT[name]])
 
-/** A circle's radius and its stroke, in pixels at the ring's widest point.
- *  Both are written in LOCAL pixels, which the matrix multiplies by `RING_PX`
- *  — so both come back out by multiplying by it here. */
-const radiusOf = (el) => (Number.parseFloat(el.style.width) / 2) * RING_PX
-const bandOf = (el) => Number.parseFloat(el.style.borderTopWidth) * RING_PX
+/** A circle's radius and its stroke, IN SCREEN PIXELS at the ring's widest
+ *  point — which is also exactly what the module wrote, because the box is its
+ *  real size and the matrix's widest direction is 1. */
+const radiusOf = (el) => Number.parseFloat(el.style.width) / 2
+const bandOf = (el) => Number.parseFloat(el.style.borderTopWidth)
 
 /** The four numbers of the matrix the module wrote: `[a.x, a.y, b.x, b.y]`.
  *
@@ -198,6 +212,10 @@ const bandOf = (el) => Number.parseFloat(el.style.borderTopWidth) * RING_PX
  * axis lands on the screen and the second is where its `v` does, so the ORDER
  * of the two is the handedness of the whole gesture. Swap them and exactly the
  * same ellipse is drawn.
+ *
+ * AND THEY ARE A SHAPE RATHER THAN A SIZE: both columns are divided by
+ * `RING_PX`, so the widest direction of this 2x2 is exactly 1. `axesOf` is what
+ * turns it back into the pair of screen vectors the ring really spans.
  */
 const matrixOf = (ring) => {
   const match = /matrix\(([^)]+)\)/.exec(ring.style.transform)
@@ -210,11 +228,16 @@ const matrixOf = (ring) => {
   return numbers.slice(0, 4)
 }
 
-/** The same four, checked against a hand-worked answer rather than compared —
+/** The two SCREEN vectors one ring's ellipse is spanned by, as four numbers —
+ *  the shape above at the size the module draws it, which is the unit every
+ *  press point and every hand-worked answer in this file is written in. */
+const axesOf = (ring) => matrixOf(ring).map((value) => value * RING_PX)
+
+/** Those four, checked against a hand-worked answer rather than compared —
  *  every one of them is the end of a chain of projections, so `-0` and a part
  *  in 10^-14 are the shapes an exact comparison would fail on. */
-const expectMatrix = (ring, wanted) => {
-  const got = matrixOf(ring)
+const expectAxes = (ring, wanted) => {
+  const got = axesOf(ring)
   got.forEach((value, at) => expect(value).toBeCloseTo(wanted[at], 9))
 }
 
@@ -239,7 +262,7 @@ const expectSpot = (ring, wanted) => centreOf(ring)
  * positive quarter turn about that ring's own axis whatever the camera is
  * doing to the picture. */
 const onRing = (ring, t) => {
-  const [ax, ay, bx, by] = matrixOf(ring)
+  const [ax, ay, bx, by] = axesOf(ring)
   const C = centreOf(ring)
   return [C[0] + Math.cos(t) * ax + Math.sin(t) * bx,
           C[1] + Math.cos(t) * ay + Math.sin(t) * by]
@@ -270,7 +293,7 @@ const onDisc = (group) => onRing(group, DISC_T)
  * "both of them really do answer" is the premise the assertion rests on and
  * cannot be read off the picture. */
 const intoDisc = (group, point) => {
-  const [ax, ay, bx, by] = matrixOf(group)
+  const [ax, ay, bx, by] = axesOf(group)
   const C = centreOf(group)
   const det = ax * by - ay * bx
   const dx = point[0] - C[0]
@@ -491,26 +514,78 @@ describe('how a ring is drawn', () => {
     expect(z.style.top).toBe('300px')
   })
 
-  it('is a unit circle under the projection`s own 2x2 matrix', () => {
-    // THE WHOLE OF THE DRAWING. The ink is a box two pixels across with
-    // `border-radius: 50%`, so its edge is the unit circle, and the matrix maps
-    // that circle onto `cos t * a + sin t * b` — which IS the projection of the
-    // world circle. Square on to Z: `u` is world +X at 105 px to the right, `v`
-    // is world +Y at 105 px UP, and up the screen is a NEGATIVE y.
+  it('is a circle of its own size under the projection`s own 2x2 matrix', () => {
+    // THE WHOLE OF THE DRAWING. The ink is a box `2 * RING_PX` across with
+    // `border-radius: 50%`, so its edge is the circle of `RING_PX`, and the
+    // matrix maps that circle onto `cos t * a + sin t * b` — which IS the
+    // projection of the world circle. Square on to Z: `u` is world +X at 105 px
+    // to the right, `v` is world +Y at 105 px UP, and up the screen is a
+    // NEGATIVE y.
     //
-    // THE MATRIX IS ON THE AXIS AND THE CIRCLE IS INSIDE IT, which is the one
-    // thing to keep straight about this widget's DOM: the local pixel that
-    // matrix multiplies by `RING_PX` is the unit every box inside is written
-    // in, so the sizes below are read against it rather than against the
-    // screen.
+    // THE MATRIX IS ON THE AXIS AND THE CIRCLES ARE INSIDE IT, which is the one
+    // thing to keep straight about this widget's DOM — and the matrix carries
+    // the SHAPE ONLY. Its widest direction is exactly 1, so every box inside is
+    // written in screen pixels and the sizes below are read as they stand.
     const { rings, z } = scene()
     drawn(rings)
 
-    expect(piece(z, 'arc').style.width).toBe('2px')
-    expect(piece(z, 'arc').style.height).toBe('2px')
+    expect(piece(z, 'arc').style.width).toBe(`${2 * RING_PX}px`)
+    expect(piece(z, 'arc').style.height).toBe(`${2 * RING_PX}px`)
     expect(piece(z, 'arc').style.borderRadius).toBe('50%')
     expect(z.style.borderRadius).toBe('50%')
-    expectMatrix(z, [RING_PX, 0, 0, -RING_PX])
+    expectAxes(z, [RING_PX, 0, 0, -RING_PX])
+    // And the size really is in the boxes rather than in the matrix: square on,
+    // the shape is the identity with the screen's y flipped.
+    matrixOf(z).forEach((value, at) =>
+      expect(value).toBeCloseTo([1, 0, 0, -1][at], 9))
+  })
+
+  it('writes a matrix whose widest direction is exactly one', () => {
+    // THE DEFINING PROPERTY OF THE UNIT, and the invariant that keeps every
+    // length in the module a real pixel: the two columns are the ring's own
+    // screen vectors divided by `RING_PX`, whose widest combination is
+    // `RING_PX` by construction — so the largest singular value of this 2x2 is
+    // 1, and a border written as `2px` is drawn two pixels wide at the ring's
+    // widest point rather than two hundred.
+    //
+    // ON EVERY RING OF THREE CAMERAS, because "exactly one" is a claim about
+    // the matrix rather than about one arrangement: square on, where two rings
+    // are edge-on and gone; down the diagonal, where all three are squashed the
+    // same; and a third pose where the two that remain are squashed HARDER than
+    // the diagonal squashes them and the third has gone under the floor. (Those
+    // two are mirror images and so are squashed alike — the camera is here for
+    // the second minor axis, not for three different ones.) It is a
+    // property of the projection — the plane of any ring meets the plane of the
+    // screen in a line, so every ring has a direction square on to the reader
+    // — which is the same sentence `frameAt` leans on to say the widest point
+    // of all three is `RING_PX`.
+    const cameras = [
+      null,
+      OBLIQUE,
+      { forward: [1, 0.1, -1], right: [1, 0, 1], up: [0.1, -2, -0.1] },
+    ]
+    // COUNTED, because the loop below skips a ring that is off the screen and a
+    // pose where every ring had gone would otherwise assert nothing at all and
+    // still pass. One ring square on, three down the diagonal, two on the third.
+    let seen = 0
+    for (const camera of cameras) {
+      const { rings, x, y, z } = scene(
+        camera ? { camera: orthoCamera(camera) } : {})
+      drawn(rings)
+      for (const ring of [x, y, z]) {
+        if (!shown(ring)) continue
+        seen += 1
+        const [ax, ay, bx, by] = matrixOf(ring)
+        const A = ax * ax + ay * ay
+        const B = bx * bx + by * by
+        const C = ax * bx + ay * by
+        const half = (A + B) / 2
+        const widest = Math.sqrt(half + Math.hypot((A - B) / 2, C))
+        expect(widest).toBeCloseTo(1, 9)
+      }
+    }
+    expect(seen, 'a camera stopped showing its rings and the loop went quiet')
+      .toBe(6)
   })
 
   it('reads at the same pixel size however far away the part is', () => {
@@ -521,16 +596,17 @@ describe('how a ring is drawn', () => {
     // at half the world radius and comes out exactly as big.
     const near = scene({ camera: orthoCamera({ zoom: 2 }) })
     drawn(near.rings)
-    expectMatrix(near.z, [RING_PX, 0, 0, -RING_PX])
+    expectAxes(near.z, [RING_PX, 0, 0, -RING_PX])
 
     const far = scene({ camera: orthoCamera({ zoom: 0.25 }) })
     drawn(far.rings)
-    expectMatrix(far.z, [RING_PX, 0, 0, -RING_PX])
+    expectAxes(far.z, [RING_PX, 0, 0, -RING_PX])
   })
 
-  it('draws its line thin enough for the matrix to make it RING_SHAFT_PX', () => {
-    // The border is written in the SAME local pixels the boxes are, so the
-    // matrix multiplies it by `RING_PX` along with everything else.
+  it('draws its line RING_SHAFT_PX wide, in pixels the browser can draw', () => {
+    // The border is written in the SAME pixels the boxes are, and they are the
+    // screen's — so the number the module writes IS the width at the ring's
+    // widest point, with nothing for the browser to round up on the way.
     // `box-sizing` keeps each outer edge exactly on the circle its own `r`
     // names, so the ring's size does not depend on how heavy its line is — and
     // the six circles of one axis stay concentric.
@@ -557,14 +633,21 @@ describe('how a ring is drawn', () => {
     expectSpot(z, CENTRE)
     const middle = Number.parseFloat(piece(z, 'arc').style.left)
     expect(Number.parseFloat(piece(z, 'arc').style.top)).toBeCloseTo(middle, 9)
-    // And the disc's three are one local unit of the curve away along the
-    // bisector — all three on that same point rather than beside each other.
+    // And the disc's three are one radius of the curve away along the bisector
+    // — all three on that same point rather than beside each other.
+    //
+    // `* RING_PX` BECAUSE THIS OFFSET IS A POINT OF THE UNIT CIRCLE, which is
+    // the one place the module has to convert between its two units: the hit
+    // test names the handle in CIRCLE SPACE, where the ring is 1, and this box
+    // is measured in screen pixels. `(cos, sin)` of the bisector times the
+    // radius is that conversion, and it is what puts the drawn disc on the
+    // circle the press is measured against.
     for (const name of ['discRim', 'discCase', 'disc']) {
       const el = piece(z, name)
       expect(Number.parseFloat(el.style.left) - middle, name)
-        .toBeCloseTo(Math.cos(DISC_T), 9)
+        .toBeCloseTo(Math.cos(DISC_T) * RING_PX, 9)
       expect(Number.parseFloat(el.style.top) - middle, name)
-        .toBeCloseTo(Math.sin(DISC_T), 9)
+        .toBeCloseTo(Math.sin(DISC_T) * RING_PX, 9)
     }
     // Which, square on to Z where nothing is flattened, is a disc
     // `RING_DISC_PX` across standing on the curve at that parameter.
@@ -578,9 +661,9 @@ describe('how a ring is drawn', () => {
     // red ring on a red part is invisible whatever red it is, and the canvas
     // under it is white or near-black depending on the reader's own answer. A
     // light casing inside a dark rim is legible against every one of those, and
-    // it is GEOMETRY — concentric circles of their own — because `filter` and
-    // `box-shadow` are computed in the element's own space and would come back
-    // multiplied by the radius.
+    // it is GEOMETRY — concentric circles of their own, with `box-sizing`
+    // holding each outer edge on the circle its own `r` names — rather than a
+    // `filter` or a `box-shadow` round the ink.
     const { rings, z } = scene()
     drawn(rings)
 
@@ -615,6 +698,56 @@ describe('how a ring is drawn', () => {
     expect(paint('arcRim')).toBe(paint('discRim'))
     expect(brightness(piece(z, 'discCase')))
       .toBeGreaterThan(brightness(piece(z, 'discRim')))
+  })
+
+  it('writes no length a browser would have to round up to a pixel', () => {
+    // THE ONE THE SUITE DID NOT HAVE WHILE THE WIDGET WAS VISIBLY BROKEN, and
+    // the reason it did not is exactly why it is written this way round. Every
+    // assertion above reads a number back THROUGH the unit and compares it with
+    // a constant, so all of them stayed green while the module asked for a
+    // border of 0.019 px: the ratio was right and the picture was a black blob.
+    //
+    // BECAUSE CSS RESOLVES A LENGTH TO DEVICE PIXELS BEFORE THE TRANSFORM. A
+    // border-width below the device minimum is rounded UP to it — half a CSS
+    // pixel at 2x — and the matrix then magnifies THAT by the radius, so two
+    // pixels asked for came back as about fifty and the dark rim, the widest
+    // band of the three, filled most of its own disc. There is no ratio to read
+    // that back out of; the only thing that says it cannot happen is that every
+    // length the module writes is a whole pixel or more to begin with.
+    //
+    // EVERY CIRCLE OF EVERY AXIS, under a camera that shows all three, and both
+    // kinds of length: the box each is drawn as and the band of the three that
+    // are strokes. One pixel is the floor rather than the answer — the widths
+    // themselves are pinned above — so this stays true if the construction is
+    // ever retuned and stops being true the moment somebody divides by a radius
+    // again.
+    const { rings, x, y, z } = scene({ camera: orthoCamera(OBLIQUE) })
+    drawn(rings)
+
+    const sides = ['Top', 'Right', 'Bottom', 'Left']
+    for (const [axis, group] of [['X', x], ['Y', y], ['Z', z]]) {
+      expect(shown(group), `the premise: the ${axis} ring is up`).toBe(true)
+      const circles = [group, ...group.children]
+      expect(circles, `six circles on ${axis}`).toHaveLength(6)
+      circles.forEach((el, k) => {
+        const where = `${axis}[${k}]`
+        for (const box of ['width', 'height']) {
+          expect(Number.parseFloat(el.style[box]), `${where} ${box}`)
+            .toBeGreaterThanOrEqual(1)
+        }
+        // A FILLED CIRCLE HAS NO BAND AT ALL, which is not the same statement
+        // as a band of zero and must not be read as one: `pieces` marks the
+        // disc's three as fills, and an empty string parses to NaN — which
+        // compares false against the floor and would pass this test by
+        // accident if it were not told apart here.
+        for (const side of sides) {
+          const band = el.style[`border${side}Width`]
+          if (band === '') continue
+          expect(Number.parseFloat(band), `${where} border${side}`)
+            .toBeGreaterThanOrEqual(1)
+        }
+      })
+    }
   })
 
   it('spells its three axes in the inks the move arrows use', () => {
@@ -678,7 +811,7 @@ describe('which rings are drawn at all', () => {
 
     for (const ring of [x, y, z]) {
       expect(shown(ring)).toBe(true)
-      const [ax, ay, bx, by] = matrixOf(ring)
+      const [ax, ay, bx, by] = axesOf(ring)
       const A = ax * ax + ay * ay
       const B = bx * bx + by * by
       const C = ax * bx + ay * by
@@ -702,7 +835,7 @@ describe('the pair of axes each ring spans', () => {
     // went.
     const { rings, z } = scene()
     drawn(rings)
-    const [ax, ay, bx, by] = matrixOf(z)
+    const [ax, ay, bx, by] = axesOf(z)
 
     // The world vectors those two screen columns are the projection of, at this
     // camera's 20 px to the world unit and with the screen's y counted down.
@@ -1663,7 +1796,7 @@ describe('the two rings the default camera cannot show, and the far side', () =>
     // The premise, and the whole of what "from behind" means here: world +X is
     // drawn to the LEFT and +Y still up, so the ring runs round the screen the
     // opposite way from the one every drag above went.
-    expectMatrix(made.rings.root.children[2], [-RING_PX, 0, 0, -RING_PX])
+    expectAxes(made.rings.root.children[2], [-RING_PX, 0, 0, -RING_PX])
 
     const turn = await sweep(made, 2, Math.PI / 2)
 

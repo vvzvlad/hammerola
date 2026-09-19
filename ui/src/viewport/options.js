@@ -408,9 +408,11 @@ export const GIZMO_DOT_PX = 12;
  * pixels across, where a 1 px glow is a hairline round a block of one colour.
  * The quad has a second reason of its own, which `gizmo.js` gives at the
  * element: it is drawn under a projection matrix, and a `filter` is computed in
- * the element's own space — the same argument `rings.js` makes, pointing the
- * other way, since the ring's matrix MAGNIFIES a glow where the quad's
- * collapses one. */
+ * the element's own space, so the glow is squashed with the shape rather than
+ * drawn round it. `RING_CASE_PX` now reaches the same answer by the same road —
+ * its matrix used to MAGNIFY a glow and no longer does, so what is left there
+ * is what is left here: geometry gives an exact edge and a filter an
+ * approximate one. */
 export const GIZMO_CASE_PX = 2;
 
 /** The dark rim outside that casing, in px.
@@ -520,12 +522,20 @@ export const RING_ARC_DEG = 57;
  * this interface runs on (`readTheme`) rule out picking an ink that carries on
  * both.
  *
- * NOT A GLOW, which `rings.js` says at the element and is the reason this is a
- * length here rather than a `filter`: every one of these circles is a box about
- * two pixels across under a matrix that multiplies lengths by the radius — the
- * ink exactly two, the casings and rims a little over or well under — so a 1 px
- * shadow comes back as a hundred px of smudge. A casing made of geometry is
- * divided by the radius on the way in and lands at the size it says. */
+ * NOT A GLOW, and the reason for that has CHANGED — which is worth writing down
+ * rather than leaving a true conclusion resting on a dead argument. It used to
+ * be arithmetic: every circle was a box about two pixels across under a matrix
+ * that multiplied lengths by the radius, so a 1 px shadow came back as a hundred
+ * px of smudge. That matrix no longer scales — it carries the ellipse's SHAPE
+ * and nothing else (`rings.js`, and the bug that forced it: a border written as
+ * a fraction of a pixel is rounded UP to the device minimum before any transform
+ * and then magnified, which drew a two-pixel line fifty pixels wide). A filter
+ * would now land at about the size it says.
+ *
+ * What is left is a smaller reason and a real one: `pieces` keeps six circles
+ * CONCENTRIC with exact outer edges, which is what makes the casing a band of a
+ * known width rather than a glow of an approximate one, and what lets the rest
+ * of this file go on saying the ring's widest point is exactly `RING_PX`. */
 export const RING_CASE_PX = 2;
 
 /** The dark rim outside that casing. A hairline, because it is doing the
@@ -541,9 +551,9 @@ export const RING_RIM_PX = 1;
  * into blots.
  *
  * IT IS A LENGTH AT ONE PLACE ON THE CURVE rather than a width the whole ring
- * has, and `rings.js` says why at the element: the ellipse is drawn by putting
- * a unit circle under the projection's own 2x2 matrix, so the line foreshortens
- * with everything else. A ring seen at an angle is thinner where it is turning
+ * has, and `rings.js` says why at the element: the ellipse is drawn by putting a
+ * circle of `RING_PX` under the ring's own 2x2, whose widest direction is
+ * exactly 1, so the line foreshortens with everything else. A ring seen at an angle is thinner where it is turning
  * away, which is what a real ring looks like.
  */
 export const RING_SHAFT_PX = 2;

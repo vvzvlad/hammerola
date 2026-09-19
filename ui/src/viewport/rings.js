@@ -64,10 +64,26 @@
 // the compositor renders exactly.
 //
 // THE SIX ARE SIX SIZES AND NOT SIX COPIES OF ONE BOX, which is worth being
-// exact about because the arithmetic below reads as if they were: only the ink
-// of the curve is the 2 px square that maps to `RING_PX`. Its casing is 2.038,
-// its rim 2.057, and the disc's three are 0.190, 0.171 and 0.133 — every one of
-// them `2 * r / RING_PX` of a local pixel, which is the one rule (`circle`).
+// exact about because the arithmetic below reads as if they were: the ink of
+// the curve is a box of 210 px, its casing 214 and its rim 216, and the disc's
+// three are 20, 18 and 14 — every one of them `2 * r` SCREEN PIXELS, which is
+// the one rule (`circle`).
+//
+// ONE LOCAL PIXEL IS ONE SCREEN PIXEL, AND IT HAS TO BE, which is why those are
+// the sizes rather than the fractions they read as. The tempting way round is
+// the other one: give the ink a 2 px box, let the matrix carry the radius, and
+// write every length as `something / RING_PX`. That is correct arithmetic and a
+// BLACK BLOB in a browser. A border-width is resolved to DEVICE pixels BEFORE
+// the transform and the device minimum is one of them, so the rim's 8 px asked
+// for as 0.076 is rounded UP to half a CSS pixel at 2x — and the matrix then
+// magnifies THAT by 105. Eight pixels asked for, about fifty drawn; and the
+// rim, being the outermost and widest of the three bands, fills most of its own
+// disc. So the element's box is its REAL size and the matrix carries only the
+// SHAPE: its columns are `a / RING_PX` and `b / RING_PX`, whose widest
+// direction is exactly 1, so the widest point of the ring is still `RING_PX`
+// and nothing about WHERE anything is drawn changes. Borders are then plain
+// pixel widths with nothing for the browser to round, and they still foreshorten
+// with the ellipse in its narrow direction, which `circle` argues is correct.
 //
 // AND THE DISC IS DRAWN THE SAME WAY, off the same matrix, because it is a
 // circle in the RING'S OWN PLANE rather than a dot on the screen. It is
@@ -146,6 +162,13 @@ const RIM = "#14181c";
  * that separation is the whole of "you can hit the axis you mean". Put at a
  * world axis instead, two discs would sit on top of each other at every one of
  * the six points where the rings themselves cross.
+ *
+ * A POINT OF THE UNIT CIRCLE AND NOT A LENGTH, which is a distinction this file
+ * did not have to make while one local pixel WAS `RING_PX` screen pixels and the
+ * two readings came to the same number. The pair is read twice: `aimAt` and
+ * `discAt` want it in CIRCLE SPACE, where the ring is the unit circle, and
+ * `build` wants it as an offset inside an element whose box is now its real size
+ * in screen pixels — so that one, and only that one, multiplies by `RING_PX`.
  */
 const DISC_AT = Math.PI / 4;
 const DISC_U = Math.cos(DISC_AT);
@@ -158,6 +181,14 @@ const DISC_V = Math.sin(DISC_AT);
  * is a circle HERE, however the camera has squashed both on the way to the
  * screen. `RING_DISC_PX` is a width at the ring's widest point and `RING_PX` is
  * the radius at that same point, so the ratio carries no camera in it.
+ *
+ * AND IT IS NOT A LENGTH `circle` COULD USE, which is `DISC_AT`'s trap said
+ * again because it is the one thing about the change of unit that could go
+ * wrong silently: circle space and the element's own pixels were ONE unit until
+ * the boxes became their real size, and this side did not move with them. The
+ * press is measured against the ring and never against a box, so nothing here
+ * changed — and `rings.test.js` pins that the drawn disc and the hit test still
+ * name the same circle.
  */
 const DISC_R = RING_DISC_PX / 2 / RING_PX;
 
@@ -167,13 +198,21 @@ const DISC_DEG = Math.asin(DISC_R) * (180 / Math.PI);
 /** The at-rest fade, as one conic gradient in the ring's own space.
  *
  * A MASK AND NOT A SECOND SET OF ELEMENTS, and it is the one thing the matrix
- * does not spoil. Every length written on these divs is multiplied by the
- * radius on its way to the screen — which is why the casing is geometry and not
- * a `filter` — but a conic gradient is measured in ANGLES about the element's
- * own centre, and the element's own space is the circle the matrix maps to the
- * ellipse. So the fade runs over the ring's own parametrisation: `RING_ARC_DEG`
- * either side of the disc OF THE CIRCLE, not of the picture, and a ring seen at
- * an angle fades over the same stretch of itself as one seen square on.
+ * does not spoil. Every length written on these divs is squashed by the matrix
+ * in the ring's narrow direction, but a conic gradient is measured in ANGLES
+ * about the element's own centre, and the element's own space is the circle the
+ * matrix maps to the ellipse. So the fade runs over the ring's own
+ * parametrisation: `RING_ARC_DEG` either side of the disc OF THE CIRCLE, not of
+ * the picture, and a ring seen at an angle fades over the same stretch of
+ * itself as one seen square on.
+ *
+ * AND NOTHING IN IT IS A LENGTH, which is what let the unit under the rest of
+ * this file change without a character of this one moving. The four stops and
+ * the `from` are angles; the one thing that could have been a length is the
+ * gradient's own CENTRE, and that is the centre of the mask painting area —
+ * `mask-origin` and `mask-clip` are both the BORDER BOX by default, which is
+ * also what `transform-origin: 50% 50%` names, so it is the centre the ellipse
+ * is drawn about whatever size the box is.
  *
  * `from` PUTS ZERO AT THE HANDLE'S OWN ANGLE, less the half-span. CSS measures
  * a conic gradient from twelve o'clock and runs it clockwise, which in the
@@ -586,16 +625,22 @@ export function createRings(vp) {
   const layer = createLayer({ wanted, place });
   const { root } = layer;
 
-  /** One of the six circles: a round box in LOCAL PIXELS, for the ring's own
-   *  matrix to work on.
+  /** One of the six circles: a round box of its own REAL SIZE, for the ring's
+   *  own matrix to work on.
    *
-   * A BOX OF `2 * r / RING_PX` AND NOT A UNIT ONE, which is the whole of how
-   * six circles of six sizes share one matrix. That matrix sends one local
-   * pixel to `RING_PX` screen pixels at the ring's widest point (`frameAt`
-   * picks the world radius to make it so), and `border-radius: 50%` makes a
-   * box's edge the circle inscribed in it — so a box this wide comes out as a
-   * circle of `r` screen pixels, and a border of `band / RING_PX` comes out as
-   * `band` of them.
+   * A BOX OF `2 * r` AND NOT A UNIT ONE, which is the whole of how six circles
+   * of six sizes share one matrix. That matrix carries the SHAPE and no
+   * magnitude — its widest direction is exactly 1 (`place`) — and
+   * `border-radius: 50%` makes a box's edge the circle inscribed in it, so a
+   * box this wide comes out as a circle of `r` screen pixels at the ring's
+   * widest point and a border of `band` comes out `band` wide there.
+   *
+   * AND THE PIXEL IT IS WRITTEN IN IS A REAL ONE, which is why the matrix is
+   * that way round rather than carrying the radius with unit boxes inside it.
+   * The head of this file has the measurement: a border-width is resolved to
+   * DEVICE pixels BEFORE the transform, so a stroke asked for in fractions of
+   * `RING_PX` is rounded up to the device minimum and then magnified by the
+   * radius — two pixels asked for and about fifty drawn.
    *
    * AND THINNER EVERYWHERE ELSE, WHICH IS CORRECT. The same matrix that turns
    * the circle into an ellipse squashes the border with it, so the ring is
@@ -611,20 +656,25 @@ export function createRings(vp) {
    * size depends on how thick its line is — and the bands would no longer be
    * concentric.
    *
-   * NO HALO AND NO SHADOW, unlike the grip and the arrows, for a reason of the
-   * geometry rather than of the palette: `filter` and `box-shadow` are computed
-   * in the element's OWN space, so a one-pixel glow would be multiplied by the
-   * same `RING_PX` every other length here is and come back as a hundred pixels
-   * of smudge. What stands in for it is geometry — the casing and the rim of
-   * `pieces` are circles of their own, divided by `RING_PX` on the way in, and
-   * they land at the width they say.
+   * NO HALO AND NO SHADOW, unlike the grip and the arrows, and the reason has
+   * CHANGED with the unit rather than survived it — which is worth writing down,
+   * because a true conclusion left standing on a dead reason is how the next
+   * reader inherits the dead one. It used
+   * to be arithmetic: `filter` and `box-shadow` are computed in the element's
+   * OWN space, so at one local pixel to `RING_PX` a one-pixel glow came back as
+   * a hundred pixels of smudge. That is gone; the element's space is screen
+   * pixels now. What is left is that the casing and the rim ARE geometry and
+   * have to stay it — `pieces` makes them concentric circles with `box-sizing`
+   * holding each outer edge exactly on the circle its own `r` names, which is
+   * what keeps the six in step — and a glow would be a second, softer edge
+   * beside an exact one.
    */
   const circle = ({ r, band, ink }) => {
     const div = document.createElement("div");
-    const size = (2 * r) / RING_PX;
+    const size = 2 * r;
     div.style.cssText = "position:absolute;box-sizing:border-box;"
       + `width:${size}px;height:${size}px;border-radius:50%;`
-      + (band ? `border:${band / RING_PX}px solid ${ink}`
+      + (band ? `border:${band}px solid ${ink}`
               : `background:${ink}`);
     return div;
   };
@@ -634,9 +684,9 @@ export function createRings(vp) {
    * ONE MATRIX FOR THE WHOLE WIDGET, which is what the nesting buys and it is
    * worth the indirection. Every circle of an axis lives in the same plane, so
    * the parent's matrix is the only projection any of them needs: a child is a
-   * plain box at a plain offset in the parent's own local pixels, and the
-   * browser composes. `place` then moves ONE element per axis per frame instead
-   * of six, and everything below is written once, here.
+   * plain box at a plain offset in the parent's own pixels, and the browser
+   * composes. `place` then moves ONE element per axis per frame instead of six,
+   * and everything below is written once, here.
    *
    * THE DARK RIM IS THE PARENT, because a parent paints under its children
    * whatever anybody's `z-index` says (CSS 2.1 §E.2: a negative `z-index` child
@@ -648,7 +698,10 @@ export function createRings(vp) {
    * belong, is `middle` from the corner rather than half the box.
    * `translate(-50%,-50%)` then pulls each child back by half of ITSELF, and
    * the disc's three are carried out to the handle by the one offset the ring's
-   * own coordinates name: `(DISC_U, DISC_V)` local pixels.
+   * own coordinates name — `(DISC_U, DISC_V)`, which is a point of the UNIT
+   * circle and is therefore multiplied by `RING_PX` to become a length in this
+   * element's own pixels. That multiplication is the ONE place the change of
+   * unit reaches something that is not a box or a band.
    */
   const build = (axis) => {
     const [rim, ...rest] = pieces(axis);
@@ -658,11 +711,11 @@ export function createRings(vp) {
     // (`light`), which is one write and no elements built or thrown away.
     group.style.cssText += ";left:0;top:0;display:none;"
       + `transform-origin:50% 50%;mask-image:${FADE}`;
-    const middle = (rim.r - rim.band) / RING_PX;
+    const middle = rim.r - rim.band;
     for (const part of rest) {
       const div = circle(part);
-      div.style.left = `${middle + (part.disc ? DISC_U : 0)}px`;
-      div.style.top = `${middle + (part.disc ? DISC_V : 0)}px`;
+      div.style.left = `${middle + (part.disc ? DISC_U * RING_PX : 0)}px`;
+      div.style.top = `${middle + (part.disc ? DISC_V * RING_PX : 0)}px`;
       div.style.transform = "translate(-50%,-50%)";
       group.appendChild(div);
     }
@@ -827,13 +880,25 @@ export function createRings(vp) {
       // ONE ELEMENT, AND THE OTHER FIVE COME WITH IT. `translate(-50%,-50%)`
       // is first in the list and therefore applies LAST, shifting the whole
       // transformed axis by half the untransformed box so that the ring's
-      // centre lands on `C` rather than its corner.
+      // centre lands on `C` rather than its corner. With `transform-origin`
+      // at the middle the two cancel exactly, whatever the box measures: a
+      // point of it lands at `C + M * (point - centre)`, which is why the
+      // change of unit moved nothing on the screen.
+      //
+      // THE COLUMNS ARE DIVIDED BY `RING_PX`, and that division is the whole
+      // of the unit. `a` and `b` are the screen vectors the ring's two world
+      // axes span, whose widest combination IS `RING_PX` by construction
+      // (`frameAt` picks the world radius to make it so) — so divided, the
+      // matrix's widest direction is exactly 1, it carries shape and no size,
+      // and every box and band inside it is the number of screen pixels it
+      // says. The head of this file says what the other way round cost.
       const { a, b } = ellipse;
       ring.group.style.display = "";
       ring.group.style.left = `${frameOf.C[0]}px`;
       ring.group.style.top = `${frameOf.C[1]}px`;
       ring.group.style.transform = "translate(-50%,-50%) "
-        + `matrix(${a[0]},${a[1]},${b[0]},${b[1]},0,0)`;
+        + `matrix(${a[0] / RING_PX},${a[1] / RING_PX},`
+        + `${b[0] / RING_PX},${b[1] / RING_PX},0,0)`;
     });
   }
 
