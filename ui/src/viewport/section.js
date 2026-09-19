@@ -485,10 +485,11 @@ export function sectionGripAxis(viewer, g, point) {
  * THE DISTANCE IS SIGNED ALONG THE NORMAL IN FORCE, which is the frame the
  * library's own slider counts in — and NOT the frame `sectionOffset` answers in.
  * A flip turns the normal in force over without moving the plane, so on a
- * flipped cut the two disagree in sign for the same physical movement. Nothing
- * reads this today: the one caller (`tools.js`, `onMove`) discards it, and what
- * the interface is shown after a drag comes from `sectionOffset` at `onUp`. A
- * second caller has to decide which of the two frames it means.
+ * flipped cut the two disagree in sign for the same physical movement. Both
+ * callers on the drag path (`tools.js` and `handle.js`, in `onMove`) discard the
+ * number, and what the interface is shown after a drag comes from
+ * `sectionOffset` at `onUp`. A caller that starts USING it has to decide which
+ * of the two frames it means; `section.test.js` asserts the value itself.
  */
 export function dragSection(vp, g, axis, dx, dy) {
   const viewer = vp.viewer;

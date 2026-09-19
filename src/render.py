@@ -62,15 +62,12 @@ MAX_TEXT = 200
 # push, which is the other half of accepting a document whose size the sender
 # chooses.
 #
-# IT WAS CALLED `MAX_NOTES` AND COUNTED THE PARTS THAT CARRIED A NOTE, back
-# when notes were a flat map of their own. Issue #75 moved the note inside the
-# record it is about, so there is no count of notes left to take — and the
-# records WITHOUT one are exactly what a note-shaped ceiling could not see: a
-# catalogue of a hundred thousand bought screws costs the same megabytes and
-# carries no note at all. Renamed on both sides of the wire at once
-# (`cadbuild.hubspec.MAX_PARTS`), because a ceiling whose name says notes and
-# whose job is the catalogue is a number nobody can reason about; the two are
-# held equal by tests/cadbuild/test_naming.py.
+# IT COUNTS RECORDS, NOT NOTES, and the difference is the whole reason for the
+# number: the records without a note are exactly what a note-shaped ceiling
+# cannot see, and a catalogue of a hundred thousand bought screws costs the same
+# megabytes while carrying no note at all. Spelled the same on both sides of the
+# wire (`cadbuild.hubspec.MAX_PARTS`), held equal by
+# tests/cadbuild/test_naming.py.
 #
 # WHAT IT DOES NOT BOUND is the number of FILES the catalogue points at — that
 # is `_spend_file_budget` below, and it is a different bound from a different

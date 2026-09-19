@@ -43,190 +43,49 @@
   pass then leaves a state the hub was never in. Creation order used to be
   stored that way; it is now stored nowhere at all, because retention was its
   only reader
-- `hammerola/` — the OTHER side of the wire: the `hammerola` command an author
-  runs in a model's directory (issue #26). `build` publishes the `dev`
-  slot, `commit` publishes an immutable revision; both pack the
-  source tree, POST it, poll the job from step 5 and print the build log. THE
-  REVISION IS NAMED BY THE HUB, not by the client and not by git (SPEC §7.7):
+- `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs
+  in a model's directory (issue #26). `build` fills the `dev` slot, `commit`
+  publishes an immutable revision; around them sit `login`, `create`, `status`,
+  `source`, `artifacts`, `diff`, `log`, `comments`, `proposal`, `rename`, `rm`,
+  `skill` and `update`. The verb table with what each one may and may not do is the
+  docstring of `hammerola/cli.py`, next to the parser that defines them — read it
+  there rather than here.
+  IT IS IN THIS REPOSITORY ON PURPOSE: the client and the hub share one contract —
+  the archive shape, the path alphabet, the ceilings, the codes, the job states —
+  and publication once broke precisely because the two halves lived in two
+  repositories where no test could see both. `tests/client/` drives the real hub
+  over a real socket, and `tests/client/test_limits.py` compares the client's copy
+  of the ceilings (`hammerola/limits.py`) against `src/store.py` and
+  `src/settings.py`.
+  STDLIB ONLY, every module of it: the tool runs under whatever python3 a laptop
+  has, so it imports nothing from `requirements.txt` and talks HTTP with
+  `urllib.request`. `tests/client/test_stdlib_only.py` enforces it, since the test
+  environment has every dependency installed and would never notice on its own.
+  THE REVISION IS NAMED BY THE HUB, not by the client and not by git (SPEC §7.7):
   the id is the digest of the sources, so `commit` means "publish a version of
-  this" and a directory that is not a repository publishes exactly like one that
-  is. git is touched once, afterwards: `gitsuggest` prints a `git commit` line
-  that RECORDS what was published, for a person to run or ignore — the tool
-  never stages and never commits. It is
-  in THIS repository on purpose — the client and the hub share one contract (the
-  archive shape, the path alphabet, the ceilings, the codes, the job states), and
-  publication broke precisely because the two halves used to live in two
-  repositories where no test could see both. `tests/client/` now drives the real
-  hub over a real socket, and `tests/client/test_limits.py` compares the client's
-  copy of the ceilings (`hammerola/limits.py`) against `src/store.py` and
-  `src/settings.py`. STDLIB ONLY, every module of it: the tool runs under
-  whatever python3 a laptop has, so it imports nothing from `requirements.txt` —
-  not loguru, not pydantic, not `src.store`, not `src.cadbuild` — and talks HTTP
-  with `urllib.request`; `tests/client/test_stdlib_only.py` is what enforces
-  that, since the test environment has every dependency installed and would
-  never notice on its own. Around the two publishing verbs sit the rest:
-  `login` (`setup.py`, writes the machine's `KEY=value`
-  file 0600 after checking the password against the hub — ONE secret for the
-  whole system, `EDIT_TOKEN`, no second key for comments), `create`
-  (`project.py`, mints the
-  twelve hex characters of SPEC §3.1 and refuses to write over an existing id.
-  It writes a THIRD key, `project` — the latin slug the hub publishes under,
-  taken from the author's DIRECTORY and, failing that, from the brackets of the
-  title. That key exists because this is the only machine where the question has
-  an answer: on the hub a push is unpacked into `.src-<uuid4 hex>`, so a build
-  that worked the name out for itself put a card called
-  `.src-89fb7abdeb1d48b5985bcb519850b284` on the front page. It is ABSENT rather
-  than empty when neither source yields a slug — a missing key lets the hub
-  answer with the project id, while `""` is a file asserting the project has no
-  name. BOTH NAMES IT WRITES ARE HELD TO `limits.MAX_TEXT_CHARS`, because the
-  directory's name can become either of them and a path component may be 255
-  characters; they are held to it DIFFERENTLY, and that asymmetry is the
-  decision: an over-long slug is passed over (the title's brackets are asked
-  next, and the id stands behind them), while an over-long title stops the
-  command — nothing to fall through to but a name nobody chose. WHICH of the two
-  fires follows from that, and it is never both: with no `--title` the title IS
-  the directory's name, so the title's ceiling stops the command before the slug
-  is asked at all; the slug's ceiling fires only when a `--title` WAS given and
-  the directory alone is over-long, and then the brackets answer instead. `create` also
-  prints a `note:` when the directory and the title's brackets name two
-  different slugs: the directory wins silently, and this is the only machine
-  that can see both. Nothing changes the key afterwards: `rename` moves the
-  TITLE, and a directory renamed later leaves the file saying what it said;
-  `setup.py` then unpacks the starter template beside it, fetching it from
-  `/start` — the one family of routes this tool asks for with NO token, and
-  that is a property of the ROUTE and not of this command: `skill` asks the
-  same way, for the manifest and for the instructions themselves, because the
-  reader of them may not have a token yet. The id is still minted locally and
-  `--no-template` is what keeps that true offline; the download is fetched and
-  its collisions are checked BEFORE anything is written, so a failure leaves
-  the directory untouched rather than holding a permanent id and no model),
-  `status` (`status.py`, assembled out of `builds.json` and the dev slot's own
-  `meta.json`, i.e. what the project page already fetches), `comments`
-  (`queue.py`, the queue, its `resolve` and `files`, which brings a comment's
-  photo and the viewer's frame down into `.hammerola/comments/` — the listing
-  names that command where it used to print the URL, because the route serving
-  an attachment is behind `EDIT_TOKEN` and a reader handed the URL could only
-  open it by taking the secret out of the configuration), `skill` (`skill.py`,
-  the version installed on this machine against the one the hub serves, and
-  `skill update`, which writes the hub's copy over it and refuses a document it
-  cannot read a version out of — what this fetches goes into the agent's skills
-  directory, so it is parsed before it lands there), and the six added once the
-  hub began keeping a revision's sources (issue #17): `source` and `log`
-  (`sources.py`), `artifacts` (`artifacts.py`), `diff` (`revdiff.py`), `rename`
-  and `rm` (`admin.py`, over the two routes `src/app.py` grew for them). FOUR
-  OF THOSE ARE SHAPED BY WHAT THEY MAY NOT DO, and the shape is the decision:
-  `source` and `artifacts` are two verbs because the code is behind the secret
-  and the artefacts are public; `source` unpacks into a directory of its own and
-  writes over the working copy only behind a flag AND a clean git tree; `rename`
-  moves the TITLE and there is no way to rename an id, because every permanent
-  URL is built from it; `rm` removes the project whole and never one build, and
-  asks for the id to be typed first. What each of those fetches lands under
-  `.hammerola/` in the project — hidden, so `pack` drops it and the next push
-  cannot publish a copy of an older push. `skill` IS THE ONE VERB HERE THAT ASKS
-  ABOUT THE MACHINE AND NOT ABOUT A PROJECT: every other command addresses a
-  project or a revision, while this one reads a file in the home directory of
-  whoever ran it (`~/.claude/skills/hammerola/SKILL.md` unless `--path` says
-  otherwise), needs no project directory and presents no secret — `/start` is
-  public precisely because the reader of the instructions may not have one yet.
-  Nothing checks that version automatically, and that is a decision rather than
-  an unfinished half: no ordinary command says a word about the skill, because
-  this tool cannot know which copy an agent is actually reading. `update`
-  (`update.py`, issue #77) is the same shape one level down and differs in what
-  it writes: the RUNNING PROGRAM rather than a document, so what comes back is
-  checked before it lands (a zipapp is a shebang and a zip, and it has to state
-  a version) and lands through a temporary file beside the target wearing the
-  target's own mode — the execute bit included — and an `os.replace`. There is
-  no `--path`: the file it writes is the one it is running from, which is the
-  archive `hammerola/update.py` was imported out of, and a copy running from a
-  checkout or from site-packages is told to use git or pip instead. What it
-  PRINTS is the point of the verb — `changelog.py` rides inside the archive with
-  the code it describes, so the old client reads the entries out of what it just
-  downloaded and prints those strictly between its own version and the new one;
-  reading its own copy would print nothing, always. The version both halves
-  compare is `hammerola.VERSION`, which the hub repeats in its manifest as
-  `client_version` and which `build` and `commit` — and no other verb, because
-  the check costs a round trip and only a WRITE can go wrong — refuse to publish
-  from when the hub's is higher. Three things are of a different
-  kind and are worth knowing before reaching for them: "the last build
-  job" cannot be shown at all, because a job is addressable only by its id and
-  job order is stored nowhere (see `src/jobs.py`); `hammerola log dev` IS
-  answered, and not out of the store — a log is kept per revision and the slot
-  is not addressed by one, so nothing is stored under its name, but since issue
-  #79 the slot's meta.json carries a `job` field naming the build that filled
-  it, and the command reads that build's log through `/api/v1/jobs/<id>/log`.
-  Both kinds of push fill the slot, so the header says which one this was: a
-  `build`, or the commit that copied itself in (issue #78). The slot still has
-  no SOURCE — `hammerola source dev` refuses as it always did, and its refusal
-  names the log as the half that no longer needs a commit; and the comment
-  routes check the same `EDIT_TOKEN` as everything else — the hub's second
-  variable went away in step 0, along with the client's sentence explaining a
-  401 that meant "this deployment set its other variable differently"
-- `hammerola/buildnames.py` — what a build file may be CALLED, and the one place that
-  decides it. Three sides ask the question and they live in three different
-  worlds: the file server, of every request for
-  `/project/<pid>/<commit>/<name>` (`app._safe_name`); the declaration, of every
-  name a push names in `meta.json` (`render._check_declared_file`, from all six
-  of the places a pointer can sit — a view's `file`, its `overview`, its
-  `preview` and its `card`, and a catalogue record's exported `files` and its
-  own `preview`);
-  and the client, of every name the hub hands back before it writes that name to
-  the author's disk (`hammerola/artifacts.py`). Before this module the rule was
-  written out inline in all three, and no two copies agreed: the server refused a
-  leading dot, the declaration accepted one, the client had a third and weaker
-  approximation. That is the failure it exists to end, and it is silent — a name
-  the declaration takes and the server refuses publishes with a 201 into an
-  IMMUTABLE directory under a year of cache and then 404s on every GET, so the
-  build is accepted and impossible to open, from a push that can never be taken
-  back (issue #53). ONE PIECE OF IT IS SHARED WIDER THAN THAT RULE:
-  `first_nonprintable`, the category-C scan, is also what `render._plain_text`
-  holds every displayed field to and what `hammerola/project.py::_clean_title`
-  refuses a project title with. It is public for that last caller, which arrived
-  after spelling the scan itself as `ord(char) < 0x20 or ord(char) == 0x7F` — a
-  SUBSET of category Cc (the C0 controls and DEL, not the C1 block
-  U+0080–U+009F), so U+202E passed `hammerola create` and killed the build.
-  THAT IMPORT ALSO SETS THE BLAST RADIUS of the stdlib rule below:
-  `hammerola/project.py` is imported by `admin`, `artifacts`, `cli`, `queue`,
-  `revdiff`, `setup`, `sources` and `status`, so a dependency added to
-  `buildnames` fails EVERY `hammerola` command at import time — not just the one
-  verb that reads a build's file names.
-  IT IS A MODULE OF ITS OWN because none of the three could
-  host it: the import edge runs `app → store → render`, so `render` may import
-  neither `app` nor `store` — which also closes `store.py`, the obvious address
-  next door to `SAFE_COMPONENT` — and the client is stdlib-only and may not
-  import the service at all. STDLIB ONLY for that last reason, and it LIVES IN
-  the client package beside `hammerola/metricsdiff.py` and
-  `hammerola/projectslug.py` — three modules, all shared for the same reason and
-  all held to the same rule. They used to sit in `src/` and travel into the
-  zipapp through a list named `onboarding.CLIENT_EXTRA_MODULES`; that list is
-  gone, and they moved here when the tool got a distribution name, because an
-  installed `hammerola` that imported `src.buildnames` would have to ship `src`
-  — which is the very name that may not be installed onto a laptop. WHAT ENFORCES
-  the stdlib rule is TWO tests, and they are not the same rule:
-  `tests/test_buildnames.py::test_the_shared_module_imports_nothing_but_the_standard_library`
-  names this file and allows the standard library and nothing else, while
-  `tests/client/test_stdlib_only.py::test_every_client_module_imports_only_the_standard_library`
-  reaches it by walking `onboarding.client_members()` — which is now simply
-  every module of `hammerola/` — and allows `hammerola` on top of the standard
-  library, since the modules it sweeps are the ones that import each other.
-  `test_every_client_module_imports_only_the_standard_library` IS WHAT CLOSES
-  `src` ACROSS THE WHOLE PACKAGE, and it has to be named rather than numbered,
-  because the other test closes it by a rule that is stricter still — it allows
-  no first-party name at all — over the ONE file it names.
-  `test_the_client_never_reaches_into_the_service_or_the_build_half` beside it
-  looks at two halves of `src` only, so it cannot fail while the sweep above
-  passes — it is kept for the NAMES of those halves and their reasons, and is
-  not a safety net under it.
-  Both read the syntax tree rather than importing, so an import buried inside a
-  function is caught too. THE ZIPAPP DOES NOT CATCH IT:
-  `onboarding._refuse_unimportable` refuses on what
-  `_import_closure` reports MISSING, and that walk skips every import whose
-  module is not `hammerola` or `hammerola.*` outright. A `numpy` added here therefore enters
-  no closure, refuses nothing and is served with a 200 — and the laptop that
-  downloaded it is exactly what breaks. `store.SAFE_COMPONENT` deliberately did
-  NOT move in beside it: that is a different rule about a different door — the
-  alphabet each COMPONENT of an archive member's path is held to on the way IN,
-  capped at 128 characters — where this one is about the name of a file a build
-  already wrote, on the way out
+  this", and a directory that is not a repository publishes exactly like one that
+  is. git is touched once, afterwards: `gitsuggest` PRINTS a `git commit` line for
+  a person to run or ignore — the tool never stages and never commits.
+  Two things are worth knowing before reaching for them: "the last build job"
+  cannot be shown at all, because a job is addressable only by its id and job order
+  is stored nowhere (see `src/jobs.py`); and `hammerola source dev` refuses, while
+  `hammerola log dev` is answered — the slot's `meta.json` carries a `job` field
+  naming the build that filled it (issue #79)
+- `hammerola/buildnames.py` — what a build file may be CALLED, and the ONE place
+  that decides it. Three sides ask: the file server (`app._safe_name`), the
+  declaration of every name a push names in `meta.json`
+  (`render._check_declared_file`), and the client, before it writes a name the hub
+  handed back (`hammerola/artifacts.py`). Before this module each of the three had
+  its own rule and no two agreed — a name the declaration took and the server
+  refused published with a 201 into an immutable directory and 404'd on every GET
+  (issue #53). `first_nonprintable` is shared wider than that rule:
+  `render._plain_text` and `hammerola/project.py::_clean_title` hold displayed text
+  to it too. STDLIB ONLY, and it lives in the client package for that reason — see
+  the module's own docstring for why it could live in none of the three callers,
+  and `tests/test_buildnames.py` plus `tests/client/test_stdlib_only.py` for what
+  holds both rules. `store.SAFE_COMPONENT` is deliberately NOT here: that is the
+  alphabet of a path component on the way IN, this is the name of a file on the
+  way OUT
 - `hammerola/metricsdiff.py` — reading `metrics.json`: what a build measured, and what
   moved between two of them. It is NOT a copy of anything and that is the point:
   the document has one writer (the build) and two readers — `cadbuild.metrics`,
@@ -476,7 +335,7 @@
   `make test` work on a machine with no node at all. The output path is written
   in five files that never import each other, and `tests/test_ui_bundle.py` is
   what keeps them in step; `ui/README.md` has the layout and the pins
-- `ci/smoke.py` — the gate between build and publish: eight checks (a)–(h) the
+- `ci/smoke.py` — the gate between build and publish: nine checks (a)–(i) the
   test suite structurally cannot make, because it runs against a checkout and
   never looks at the artefact. (b) proves the startup guard fires and NAMES the
   missing variable. It used to prove more — that the guard names EVERY missing

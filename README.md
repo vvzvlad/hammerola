@@ -182,6 +182,7 @@ hammerola source <revision>      # the code a revision was built from
 hammerola artifacts <revision>   # its STEP/STL/3MF
 hammerola diff <rev> <rev>       # what moved, in geometry and in source
 hammerola comments               # notes left on this project's builds
+hammerola proposal               # the edit the viewer's reader proposed, as code
 hammerola rename "New title"     # the title, never the id
 hammerola skill                  # is the installed agent skill current?
 hammerola skill update           # write the hub's copy over it
@@ -471,3 +472,5 @@ build, which is the one thing the image is there for.
 | `docs/repo-map.md` | What every directory and every load-bearing file in this repository is for. |
 | `docs/SPEC.md` | The requirements, the facts that were verified the hard way, and the work plan. |
 | `ui/README.md` | The browser interface: its layout, its pins, and why it is built twice. |
+| `docs/ui-brief.md` | What the interface is FOR: the reading the panels are built around, and the vocabulary they use. |
+| `docs/viewer-api.md` | The vendored `three-cad-viewer`: what of it is a public API, and what the viewport reaches into at its own risk. |

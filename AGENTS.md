@@ -79,21 +79,18 @@ branch (`main`, `develop`) — it makes every `git push <remote> <branch>` ambig
 
 ## Conventions
 
-Правила целиком, без обоснований — **почему** каждое из них такое, читай в
-`docs/conventions.md`, и читай до того, как соберёшься одно из них нарушить или
-«упростить»: почти каждое записано после того, как сломалось молча.
+**Полный список — `docs/conventions.md`, и там же обоснование каждого правила.**
+Читай его до того, как соберёшься одно из них нарушить или «упростить»: почти
+каждое записано после того, как сломалось молча. Ниже — только те, которые нужны
+в каждой работе, и те, чьё нарушение не видно ни в одном прогоне.
 
-- One name for the project everywhere — repo, directory, compose service,
-  `container_name`, stack, image — spelled with underscores. `docs/conventions.md`.
+Каждый день:
+
 - Commit messages are written in English: conventional-commit subject, body
   explaining WHY. Code comments are in English. The user-facing interface
   (UI text, CLI output, logs) is in English too.
-- All mutable state goes under `data/`. All config comes from ENV / `.env`.
-- Credentials and addresses of our own services go ONLY into `.env`, read through
-  `Settings`; no default/example credentials in code; missing ENV var → fail at
-  startup. A default address is allowed ONLY for public third-party APIs.
-- In compose, configuration lives in the service's own `environment:` or in a file
-  that TRAVELS with the stack — never an absolute host path in `env_file:`.
+- All mutable state goes under `data/`. All config comes from ENV / `.env`;
+  missing ENV var → fail at startup, no default credentials in code.
 - All repeated actions go through `make` targets. Python always runs inside the
   local `.venv`, invoked as `$(VENV)/bin/python -m pip` / `-m pytest` — never
   `.venv/bin/pip` or `.venv/bin/pytest`.
@@ -101,35 +98,19 @@ branch (`main`, `develop`) — it makes every `git push <remote> <branch>` ambig
 - **An assertion about how the code behaves, which has to stay true, belongs in a
   TEST rather than in a comment or a document.** When you catch yourself writing
   "keep X and Y in step", that sentence is the specification for a test.
-- Runtime dependencies are pinned with `==`, and a dependency the code imports
-  DIRECTLY is named in `requirements.txt` even when it arrives through an extra.
-  Comment a requirement with what BREAKS without it.
 - Module-level mutable state (singleton, cache, registry) gets an autouse fixture
   asserting it is clean BOTH before and after each test.
+
+Ломается молча — прогон этого не покажет:
+
 - Between building the image and publishing it there is a GATE — `ci/smoke.py`,
   its own step in both workflows. Add new checks THERE. It counts its own
   verdicts: update the declared count deliberately, never to match a run.
-- `docker login` runs AFTER the gate, and the `docker logout` under `if: always()`
-  stays. Do not reorder those steps.
 - Exactly six `run:` bodies are BYTE-IDENTICAL between the two workflows and move
   in lockstep; `tests/test_workflow_steps.py` hashes them. The BUILD step and the
   IMAGE-cleanup step deliberately differ — do not "fix" them.
 - Every container CI starts is `--name`d, and EVERY removal carries `-v` — in both
   workflows and in `remove_container()` in `ci/smoke.py`.
-- CI installs no Python on the runner: pytest runs inside `python:3.11-slim` with
-  the workspace streamed in as a tar. No `actions/setup-python`, no bind mount.
-- `ci/smoke.py` publishes no ports and never talks to `127.0.0.1` — observe
-  containers through `docker exec`.
-- `concurrency:` serialises a branch's runs but does NOT guarantee an image per
-  commit, and it requires Gitea >= 1.26 — an older instance ignores it silently.
-- No `EXPOSE` in the Dockerfile — Traefik publishes via compose labels.
-- The container runs as non-root `app` (uid 1000): the entrypoint drops privileges
-  with gosu. Do not add a `USER` directive and do not remove the entrypoint.
-- One auto-update label, `io.portainer.update.enable`, read by OUR Portainer build.
-  Do not add watchtower-family keys. What the label buys is a property of the
-  CONTROL PLANE that owns the host — check ownership, do not memorise a host list.
-- Do not add `io.portainer.autoheal.enable` without deciding to: it can MASK the
-  auto-update's rollback gate.
 - The healthcheck's timings are part of the deploy mechanism, `start_period`
   included. Dropping the healthcheck disables the rollback gate rather than
   passing it.

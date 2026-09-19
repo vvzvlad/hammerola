@@ -11,9 +11,10 @@ import { outlineChild, refreshSectionOutline } from "./outline.js";
 // now live in `math.js`, because `ui/src/proposal.js` needs them and must not
 // reach the viewer: this file imports `internals.js` and `outline.js`, so an
 // import from here would drag the whole viewport behind a module whose promise
-// is that a document can be built and projected with no browser near it. Every
-// caller that had them from this file — `element.js`, `rings.js`, the tests —
-// goes on doing so, because a turn is still this file's subject.
+// is that a document can be built and projected with no browser near it. The
+// re-export is kept because a turn is still this file's subject; the only
+// consumer left is `tests/rings.test.js`, and every module that needs the four
+// takes them from `math.js` directly.
 export { after, anglesOf, quaternionOf, turned };
 
 /**
