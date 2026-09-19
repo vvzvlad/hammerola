@@ -343,6 +343,75 @@ export const GIZMO_HIT_PX = 14;
  */
 export const GIZMO_MIN_SCALE = 0.2;
 
+/* The turn tool's rings (rings.js). CSS PIXELS for the third time, and for the
+ * reason the two families above give: a widget that stood at a size in WORLD
+ * units would be a thread round a 200 mm part and a hoop round a 2 mm one.
+ *
+ * THEIR OWN NUMBERS AGAIN, and here the case is easier than it was for the
+ * arrows: a ring is not an arrow at all. What it is drawn with — a radius, a
+ * line, a tolerance, and a floor on how flat it may be seen before it goes —
+ * has no member in common with a shaft and a head, so there is nothing to
+ * share even before the argument about sharing. */
+
+/** The ring's radius ON THE SCREEN: the semi-axis of the ellipse at its widest.
+ *
+ * THE SAME REACH AS AN ARROW OF THE MOVE TOOL, and that is the whole of the
+ * choice. The two widgets stand on the same point — the selected part's centre
+ * — and never at the same time, so a reader who has learned to aim at one has
+ * learned the size of the other; a ring noticeably larger or smaller would say
+ * the two tools were about different things.
+ *
+ * WHY IT IS THE WIDEST POINT and not "the radius". A world circle seen at an
+ * angle projects to an ellipse, and under an ortho camera the plane of any such
+ * circle meets the plane of the screen in a line — so one direction of every
+ * ring is always square on to the reader and always projects at the full
+ * px-per-world-unit. That direction is this many pixels for all three rings,
+ * whatever the camera is doing, which is what makes one number enough.
+ */
+export const RING_PX = 64;
+
+/** The ring's line at that widest point, and thinner everywhere else.
+ *
+ * The same weight as the arrows' shaft, for the same reason it is not the
+ * grip's: three of these cross the part and a heavier line turns the crossings
+ * into blots.
+ *
+ * IT IS A LENGTH AT ONE PLACE ON THE CURVE rather than a width the whole ring
+ * has, and `rings.js` says why at the element: the ellipse is drawn by putting
+ * a unit circle under the projection's own 2x2 matrix, so the line foreshortens
+ * with everything else. A ring seen at an angle is thinner where it is turning
+ * away, which is what a real ring looks like.
+ */
+export const RING_SHAFT_PX = 2;
+
+/** How far from the drawn curve a press still counts as being on it.
+ *
+ * The tolerance of an ANALYTIC hit test rather than the height of a box: there
+ * is no element to press here (`rings.js` says why a div cannot be the target),
+ * so this is the whole of what makes a 2 px line hittable. Between the arrows'
+ * half-height of 7 and the grip's 9, which is the range a hand aims to.
+ */
+export const RING_HIT_PX = 8;
+
+/** How flat a ring may be seen before it is TAKEN OFF THE SCREEN rather than
+ *  floored — the minor semi-axis of its projected ellipse, in pixels.
+ *
+ * `GIZMO_MIN_SCALE`'s decision, one widget over, and the arithmetic that sets
+ * the floor is different enough to be worth writing down. A ring seen edge-on
+ * does not merely become hard to see: its 2x2 basis goes singular, so the
+ * circle-space angle the drag is measured in — and the hit test that finds the
+ * ring in the first place — are both divisions by nothing.
+ *
+ * AT LEAST `RING_HIT_PX`, which is the part that is easy to get backwards. With
+ * a minor axis under the tolerance every pixel INSIDE the ellipse is within
+ * `RING_HIT_PX` of the curve, so the ring stops being a hoop to aim at and
+ * becomes a filled sliver lying across the two rings behind it — and it is the
+ * one the reader cannot see. 12 is that floor with enough left over to read as
+ * a curve rather than as a line; the reader turns the model a little and the
+ * ring comes back.
+ */
+export const RING_MIN_PX = 12;
+
 /** How long after the last press or wheel the viewport still counts as busy.
  *
  * A live swap re-renders the scene and re-seats the camera; doing that between a

@@ -3,9 +3,18 @@
 // the tree it draws (ui-brief block 3).
 
 import { internals } from "./internals.js";
-import { finite3 } from "./math.js";
+import { after, anglesOf, finite3, quaternionOf, turned } from "./math.js";
 import { GHOST_OPACITY } from "./options.js";
 import { outlineChild, refreshSectionOutline } from "./outline.js";
+
+// RE-EXPORTED RATHER THAN MOVED OUT OF SIGHT. The four are pure arithmetic and
+// now live in `math.js`, because `ui/src/proposal.js` needs them and must not
+// reach the viewer: this file imports `internals.js` and `outline.js`, so an
+// import from here would drag the whole viewport behind a module whose promise
+// is that a document can be built and projected with no browser near it. Every
+// caller that had them from this file — `element.js`, `rings.js`, the tests —
+// goes on doing so, because a turn is still this file's subject.
+export { after, anglesOf, quaternionOf, turned };
 
 /**
  * The part tree, built from the VIEW FILE rather than from the library.
@@ -279,8 +288,6 @@ function facing(vp, path, group) {
 /** A turn of nothing — what a move with no `turn` on it is read as. */
 const NO_TURN = [0, 0, 0];
 
-const DEGREES = Math.PI / 180;
-
 /**
  * Where a part's group was TURNED ABOUT before anything turned it: the world
  * centre of its box, remembered on first touch beside `partHome`.
@@ -303,58 +310,30 @@ function pivot(vp, path) {
 }
 
 /**
- * Three Euler angles in DEGREES as one quaternion, `[x, y, z, w]`.
+ * Where a group has to STAND and which way it has to FACE for its part to be
+ * turned by `q` about `centre` and then offset by `delta` — given `base`, the
+ * position the group had before anything touched it, and `pose`, the
+ * orientation the build gave it.
  *
- * THE ORDER IS THE ONE A BODY'S `rot` MEANS, because the two halves of the
- * document have to mean the same thing by the same three numbers. A body is
- * turned by jscad (`placed` in proposalgeom.js → `transforms.rotate` →
- * `mat4.fromTaitBryanRotation`), which builds `Rz · Ry · Rx` — the three angles
- * applied about the FIXED axes in the order x, then y, then z, which is the same
- * rotation as the intrinsic z-y-x an aircraft's yaw-pitch-roll is named for. So
- * the quaternion is `qz ⊗ qy ⊗ qx`, in that order.
- *
- * BY HAND, because three.js is not a dependency of this bundle — the same reason
- * `partCentre` multiplies out `matrixWorld.elements` for itself.
+ * THE ONE COPY OF THE ARITHMETIC, and that is the whole reason it is a function
+ * of five arguments rather than six lines inside the loop that needed it first.
+ * `movePart` below derives it in full; `nudgeTurn` beside it has to reach the
+ * same answer for a body the document places, from a base and a pose the CALLER
+ * is holding instead of from the memos. Two hand-written copies of a line like
+ * `centre - q·(centre - base)` would not fail — they would drift, and the
+ * symptom is a body that swings about a point half a millimetre from the one
+ * the part beside it turns about.
  */
-export function quaternionOf(turn) {
-  const half = turn.map((angle) => (angle * DEGREES) / 2);
-  const [cx, cy, cz] = half.map(Math.cos);
-  const [sx, sy, sz] = half.map(Math.sin);
-  return [
-    sx * cy * cz - cx * sy * sz,
-    cx * sy * cz + sx * cy * sz,
-    cx * cy * sz - sx * sy * cz,
-    cx * cy * cz + sx * sy * sz,
-  ];
-}
-
-/** `a` applied AFTER `b`: the Hamilton product `a ⊗ b`, in `[x, y, z, w]`. */
-function after(a, b) {
-  const [ax, ay, az, aw] = a;
-  const [bx, by, bz, bw] = b;
-  return [
-    aw * bx + ax * bw + ay * bz - az * by,
-    aw * by - ax * bz + ay * bw + az * bx,
-    aw * bz + ax * by - ay * bx + az * bw,
-    aw * bw - ax * bx - ay * by - az * bz,
-  ];
-}
-
-/** The vector `v` turned by `q` — `v + 2q_w(q_v × v) + 2q_v × (q_v × v)`.
- *
- *  EXPORTED FOR THE SAME REASON `quaternionOf` IS: it is the pair of primitives
- *  the turn is built out of, and the composed quaternion this file writes onto a
- *  group can only be checked by asking where it sends a point. */
-export function turned(q, v) {
-  const [qx, qy, qz, qw] = q;
-  const tx = 2 * (qy * v[2] - qz * v[1]);
-  const ty = 2 * (qz * v[0] - qx * v[2]);
-  const tz = 2 * (qx * v[1] - qy * v[0]);
-  return [
-    v[0] + qw * tx + qy * tz - qz * ty,
-    v[1] + qw * ty + qz * tx - qx * tz,
-    v[2] + qw * tz + qx * ty - qy * tx,
-  ];
+function seated(q, base, pose, centre, delta) {
+  const back = turned(q, [
+    centre[0] - base[0], centre[1] - base[1], centre[2] - base[2],
+  ]);
+  return {
+    position: [centre[0] - back[0] + delta[0],
+               centre[1] - back[1] + delta[1],
+               centre[2] - back[2] + delta[2]],
+    quaternion: after(q, pose),
+  };
 }
 
 /** The group of one part, if it can be moved at all. */
@@ -382,6 +361,23 @@ export function movableGroup(viewer, path) {
 export function groupHome(viewer, path) {
   const group = movableGroup(viewer, path);
   return group ? [group.position.x, group.position.y, group.position.z] : null;
+}
+
+/** Which way one part's group FACES right now, as `[x, y, z, w]`, or null.
+ *
+ * `groupHome` above for the other half of a placement, and it exists for that
+ * function's reason read one field over: `facing()` memoises into
+ * `vp.partFacing` because "put it back" has to know which way back WAS, and the
+ * gesture that turns a body of the proposal has nothing to put back — the
+ * document says which way the body faces, and it is re-staged out of it. A pose
+ * remembered across a re-stage is a pose that has moved.
+ */
+export function groupFacing(viewer, path) {
+  const group = movableGroup(viewer, path);
+  return group
+    ? [group.quaternion.x, group.quaternion.y, group.quaternion.z,
+       group.quaternion.w]
+    : null;
 }
 
 /**
@@ -571,15 +567,9 @@ export function movePart(vp, paths, delta, turn) {
       // already narrowed to a turn of nothing — and at a turn of nothing the
       // pivot cancels out of the line below whatever it is.
       const centre = centres[at] || base;
-      const back = turned(q, [
-        centre[0] - base[0], centre[1] - base[1], centre[2] - base[2],
-      ]);
-      const faced = after(q, pose);
-      groups[at].position.set(
-        centre[0] - back[0] + delta[0],
-        centre[1] - back[1] + delta[1],
-        centre[2] - back[2] + delta[2]);
-      groups[at].quaternion.set(faced[0], faced[1], faced[2], faced[3]);
+      const seat = seated(q, base, pose, centre, delta);
+      groups[at].position.set(...seat.position);
+      groups[at].quaternion.set(...seat.quaternion);
       vp.moved.set(path, { delta, turn: spin });
     });
     vp.viewer.update(true, false);
@@ -641,6 +631,79 @@ export function nudgePart(vp, paths, homes, delta) {
     console.warn("nudge", error);
     return false;
   }
+  redrawCut(vp);
+  return true;
+}
+
+/**
+ * Turn a group about a centre THE CALLER HOLDS, remembering nothing at all.
+ *
+ * `nudgePart` above for the other half of a placement, and every word of that
+ * function's argument applies here unchanged: this is for a body the PROPOSAL
+ * staged over the model, so nothing may be written into `vp.moved`, into
+ * `vp.partHome`, into `vp.partPivot` or into `vp.partFacing`. The document says
+ * which way the body faces and the re-stage that follows the release is what
+ * really turns it; this is live feedback and nothing else.
+ *
+ * `seats` IS ONE RECORD PER PATH — `{home, pose, centre}`, all three taken at
+ * the press and held for the length of the gesture. Three parallel arrays would
+ * have been `nudgePart`'s spelling, and one array of three-field records is
+ * what keeps a caller from lining up the wrong pose against the wrong home on a
+ * row of five copies.
+ *
+ * NO `delta`, AND THAT IS NOT A SIMPLIFICATION. This gesture turns and does not
+ * slide, so the offset it passes on to `seated` is zero — and a body's home is
+ * read fresh at every press, so there is no standing displacement to preserve
+ * either. A body that was dragged a moment ago is already at its new `at` in
+ * the document, and `home` is where that put it.
+ *
+ * `centre` IS THE BODY'S OWN ORIGIN AND NOT THE CENTRE OF ITS BOX, because the
+ * preview's job is to show what will happen and what will happen is the
+ * document's rotation. `placed` in ui/src/proposalgeom.js rotates a body in its
+ * OWN coordinates and only then carries it to `at`, so `at` is the single world
+ * point a change of `rot` leaves where it is; turned about anything else, the
+ * body swings under the hand and then jumps to the document's answer on
+ * release. The box's centre is the wrong point for every op that is not centred
+ * on its own origin — an extrusion runs its profile UP from `z = 0`, so its box
+ * centre sits at `h/2` whatever the profile is, and a quarter turn taken about
+ * that instead moves the body by `sqrt(2)·h/2`: 14 mm on a 20 mm extrusion and
+ * 70 mm on a 100 mm one. The number itself comes off the payload the panel
+ * built (`bodyOrigin` in viewport/rings.js), which is the only place it exists
+ * on this side.
+ */
+export function nudgeTurn(vp, paths, seats, turn) {
+  const list = Array.isArray(paths) ? paths : [];
+  const spin = Array.isArray(turn) ? turn : NO_TURN;
+  if (!list.length || !finite3(spin)) return false;
+  const groups = list.map((path) => movableGroup(vp.viewer, path));
+  if (groups.some((group) => !group)) return false;
+  // ALL THREE OR THE WHOLE GESTURE IS REFUSED, which is `movePart`'s rule about
+  // a part whose centre the scene cannot give: a body turned about some other
+  // point is worse than a body that did not turn.
+  const held = Array.isArray(seats) ? seats : [];
+  if (held.length !== list.length
+      || held.some((seat) => !seat || !finite3(seat.home) || !finite3(seat.centre)
+                   || !Array.isArray(seat.pose) || seat.pose.length !== 4)) {
+    return false;
+  }
+  const q = quaternionOf(spin);
+  try {
+    groups.forEach((group, at) => {
+      // `[0, 0, 0]` FOR THE OFFSET, which is the paragraph above said in the
+      // one argument that could have carried it: this gesture turns, and does
+      // not slide.
+      const seat = seated(q, held[at].home, held[at].pose, held[at].centre,
+                          [0, 0, 0]);
+      group.position.set(...seat.position);
+      group.quaternion.set(...seat.quaternion);
+    });
+    vp.viewer.update(true, false);
+  } catch (error) {
+    console.warn("nudge turn", error);
+    return false;
+  }
+  // The contour the body carried round under the plane with it — `nudgePart`
+  // ends in the same call and says why a staged body is an ordinary solid.
   redrawCut(vp);
   return true;
 }

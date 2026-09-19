@@ -23,7 +23,9 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import HammerolaViewer, { PROPOSAL_BRANCH } from '../src/HammerolaViewer.jsx'
-import { MOVED, PLACE, PROPOSALMOVE } from '../src/events.js'
+import {
+  MOVED, PLACE, PROPOSALMOVE, PROPOSALTURN, TURNED,
+} from '../src/events.js'
 import { indexTree, PAGE } from '../src/hub.js'
 import {
   addNode, DIM_OPS, dropMoves, emptyProposal, moves, proposalText, removeNode,
@@ -89,6 +91,24 @@ const drag = (path, delta, over = {}) => window.dispatchEvent(
     detail: {
       id: path, name: path.split('/').filter(Boolean).pop(), paths: [path],
       count: 1, build: REV, delta, ...over,
+    },
+  }))
+
+/**
+ * The same part TURNED with the rings, exactly as the viewport reports one: the
+ * same fields as a drag with three DEGREES where the offset was.
+ *
+ * TWO EVENTS AND ONE SENTENCE, which is what the pair of helpers is here to
+ * make visible. The two gestures say opposite halves of one node — a drag says
+ * where the part should be and nothing about which way it should face, a ring
+ * the other way round — so the interface reads them through one method and the
+ * difference between these two lines is the whole of the difference.
+ */
+const spin = (path, turn, over = {}) => window.dispatchEvent(
+  new CustomEvent(TURNED, {
+    detail: {
+      id: path, name: path.split('/').filter(Boolean).pop(), paths: [path],
+      count: 1, build: REV, turn, ...over,
     },
   }))
 
@@ -1088,9 +1108,10 @@ describe('the proposal as a branch of the tree', () => {
     const said = c.computed().menuItems.map((m) => m.label)
     expect(said).toContain('Isolate')
     expect(said).toContain('Move')
-    // Turn is the one row a body is right to be refused — it would mint a move
-    // node naming an overlay path, contradicting the body's own `rot°`.
-    expect(said).not.toContain('Turn')
+    // AND TURN BESIDE IT, which it did not have while that row minted a node
+    // rather than arming a gesture — see the case further down, where the whole
+    // of what changed is written out.
+    expect(said).toContain('Turn')
   })
 
   it('gives a move row no menu at all', () => {
@@ -2998,6 +3019,197 @@ describe('a part of the build dragged in the scene', () => {
 
 // -- and the row it gets in the tree -------------------------------------------
 
+describe('a part of the build turned in the scene', () => {
+  // THE OTHER HALF OF THE SAME NODE. A move node has carried three degrees
+  // beside its offset since it was first written, and the only way to say them
+  // was to type them into the row; there are rings round the part now
+  // (ui/src/viewport/rings.js) and they end HERE — `hmr:turned`, naming the
+  // paths and the whole turn from the pose the build gives them.
+  //
+  // WHAT THE TWO GESTURES SHARE is everything except which field they are
+  // about: one method reads both (`recordGesture`), so the rules this describe
+  // is spot-checking — one node per part, matched by intersection, the field
+  // the gesture did not touch carried across, a gesture home dropping the node
+  // — are the ones the drag's own describe above pins at length. WHAT IS HERE
+  // is that they read the same both ways round, which is the whole claim of
+  // there being one method.
+  //
+  // WHERE THE OTHER HALF IS TESTED: the gesture itself, the sign it turns in
+  // and what it refuses, is ui/tests/rings.test.js.
+
+  it('records the turn beside the bodies, and prints it in the projection', () => {
+    const { c } = mounted({ proposal: withBlock() })
+
+    spin('/model/plate', [0, 0, 90])
+
+    expect(moves(c.state.proposal)).toEqual([{
+      id: 'm2', role: 'move', paths: ['/model/plate'], name: 'plate',
+      // A TURN SAYS NOTHING ABOUT WHERE, so the node it mints starts at no
+      // offset — the mirror of the drag's own note one describe up.
+      delta: [0, 0, 0],
+      turn: [0, 0, 90],
+    }])
+    expect(proposalText(c.state.proposal))
+      .toContain('move "plate" by (0, 0, 0) turned (0, 0, 90)')
+  })
+
+  it('lands as an ordinary edit, the same one the row`s fields make', () => {
+    // THE WHOLE POINT OF THE GESTURE. What the ring produces has to be
+    // indistinguishable from the three numbers typed into `turn°` — same node,
+    // same fields, same push at the viewport — or the panel would be showing
+    // one thing and the agent reading another.
+    const typed = mounted({ proposal: withBlock() })
+    drag('/model/plate', [1, 0, 0])
+    type(moveRows(typed.c)[0].groups[1].fields[2], '90')
+
+    const dragged = mounted({ proposal: withBlock() })
+    drag('/model/plate', [1, 0, 0])
+    spin('/model/plate', [0, 0, 90])
+
+    expect(moves(dragged.c.state.proposal)[0])
+      .toEqual(moves(typed.c.state.proposal)[0])
+    expect(pushed(dragged.el)).toEqual(pushed(typed.el))
+  })
+
+  it('leaves the offset the part is already standing at alone', () => {
+    // A TURN MUST NOT SEND A PART HOME, which is the same rule the drag obeys
+    // about a turn and is why the two are one method: the node this gesture
+    // covers is EDITED, and the patch names one field.
+    const { c, el } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, -1])
+
+    spin('/model/plate', [0, 45, 0])
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(moves(c.state.proposal)[0].delta).toEqual([3, 0, -1])
+    expect(pushed(el)).toEqual([{
+      paths: ['/model/plate'], delta: [3, 0, -1], turn: [0, 45, 0],
+    }])
+  })
+
+  it('takes a minted node`s offset from the nodes its paths touched', () => {
+    // The mirror of the drag carrying a turn across. A copy taken OUT of a
+    // displaced row is not superseding that row's node — it still stands and
+    // still claims the copies left behind — so a node minted at no offset would
+    // send the one part the reader is holding home.
+    const { c } = mounted({ proposal: withBlock() })
+    const row = ['/model/pin', '/model/pin(2)']
+    drag('/model/pin', [3, 0, 0], { paths: row, count: 2 })
+
+    spin('/model/pin', [0, 0, 90])
+
+    const after = moves(c.state.proposal)
+    expect(after).toHaveLength(2)
+    expect(after[0].paths).toEqual(['/model/pin(2)'])
+    expect(after[1]).toMatchObject({
+      paths: ['/model/pin'], delta: [3, 0, 0], turn: [0, 0, 90],
+    })
+  })
+
+  it('drops the node when the part is turned back square and stands home', () => {
+    // A GESTURE THAT PUTS ITS OWN ANSWER BACK TO NOTHING IS A RETRACTION, and
+    // for a ring that is a part turned square again — with no displacement left
+    // on the node, there is nothing for it to say. Kept, it would print
+    // `move "plate" by (0, 0, 0)` for the agent to puzzle over.
+    const { c } = mounted({ proposal: withBlock() })
+    spin('/model/plate', [0, 0, 90])
+    expect(moves(c.state.proposal)).toHaveLength(1)
+
+    spin('/model/plate', [0, 0, 0])
+
+    expect(moves(c.state.proposal)).toEqual([])
+  })
+
+  it('keeps it when the part is turned back square but stands displaced', () => {
+    // THE OTHER HALF OF THE SAME RULE, and the one a naive reading gets wrong:
+    // the part is still somewhere the build does not put it, so the sentence is
+    // still true and the row is still what puts it back.
+    const { c } = mounted({ proposal: withBlock() })
+    drag('/model/plate', [3, 0, 0])
+    spin('/model/plate', [0, 0, 90])
+
+    spin('/model/plate', [0, 0, 0])
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(moves(c.state.proposal)[0]).toMatchObject({
+      delta: [3, 0, 0], turn: [0, 0, 0],
+    })
+  })
+
+  it('drops a report measured on a build that has left', () => {
+    // The viewport defers this event by a microtask so it cannot be raised from
+    // inside a render, and a rebuild landing mid-gesture reaches `onModel`
+    // first — so the report can arrive describing an assembly that is no longer
+    // on screen. The stamp is what turns it away, and it is the same stamp for
+    // both gestures because it is the same line.
+    const { c } = mounted({ proposal: withBlock() })
+
+    spin('/model/plate', [0, 0, 90], { build: 'some-other-build' })
+
+    expect(moves(c.state.proposal)).toEqual([])
+  })
+})
+
+describe('a body turned in the scene', () => {
+  // THE SECOND MEANING OF THE RINGS, exactly as `hmr:proposalmove` is the
+  // second meaning of a drag: a body is the reader's own drawing, so turning
+  // one is an ordinary edit of the `rot` fields rather than a statement about
+  // the model.
+  //
+  // COMPOSED AND NOT SET, which is the one place the two events genuinely
+  // differ in shape. The viewport knows the pose the BUILD gives a part and
+  // reports the whole turn from it; a body's pose lives in this document, which
+  // the viewport has never read, so what it can say is how far this one gesture
+  // took the body — and `turnNodes` composes that onto the pose it took it
+  // from. The composition itself is pinned in proposal.test.js, where the cases
+  // an addition gets wrong are; what these ask is that the panel goes through
+  // that door at all.
+
+  const fire = (name, turn) => window.dispatchEvent(
+    new CustomEvent(PROPOSALTURN, { detail: { name, turn } }))
+
+  /** Every body's orientation, in document order. */
+  const poses = (c) => c.state.proposal.nodes.map((node) => node.rot)
+
+  it('puts the gesture`s own turn onto the body`s rot', () => {
+    const { c, el } = mounted({ proposal: withBlock() })
+
+    fire('korpus', [0, 0, 30])
+    fire('korpus', [0, 0, 15])
+
+    expect(poses(c)).toEqual([[0, 0, 45]])
+    // And the body on the model is staged out of the document that says so.
+    expect(overlay(el)).toEqual(['korpus'])
+    expect(bodyRows(c)[0].groups[2].fields.map((f) => f.value))
+      .toEqual(['0', '0', '45'])
+  })
+
+  it('rounds the answer to a place somebody could have typed', () => {
+    // `tidy` is the document's rule and it is applied where the ARITHMETIC is,
+    // which for a body is this composition: a reader who typed 42.3 and then
+    // turned the body by one degree must not find 43.300000000000004 in a field
+    // they are looking at — and `atan2`, which the composition comes back
+    // through, hands over a dozen digits nobody asked for.
+    const { c } = mounted({
+      proposal: addNode(emptyProposal(), { ...BLOCK, rot: [42.3, 0, 0] }),
+    })
+
+    fire('korpus', [1, 0, 0])
+
+    expect(poses(c)).toEqual([[43.3, 0, 0]])
+  })
+
+  it('writes no move node, and turns nothing for a name no body answers to', () => {
+    const { c } = mounted({ proposal: withBlock() })
+
+    fire('korpus', [0, 0, 30])
+    fire('nothing-of-the-sort', [0, 0, 30])
+
+    expect(moves(c.state.proposal)).toEqual([])
+    expect(poses(c)).toEqual([[0, 0, 30]])
+  })
+})
+
 describe('the row a move is drawn as', () => {
   // WHY THERE HAS TO BE ONE AT ALL: a dragged part goes home by having its entry
   // DELETED, and a row nobody can see is an entry nobody can delete. It is in the
@@ -3308,28 +3520,42 @@ describe('a proposal body as the part a task is filed against', () => {
     expect(labelsOn('/model/proposal')).not.toContain('Move')
   })
 
-  it('is offered NO Turn row, because it has a rot° row of its own', () => {
-    // THE ONE ROW OF THE TWO THAT A BODY MUST NOT HAVE. Move is offered because
-    // the DRAG is re-routed at the press — the viewport tells the two gestures
-    // apart and sends a body's on `hmr:proposalmove`, which edits the `at`
-    // beside that very `rot` — and there is no such routing for a row that
-    // MINTS A NODE. Turn on a body would put a move node on an overlay path: a
-    // second way to turn the same body, contradicting the fields three rows up
-    // the same panel, and printing `move "korpus" turned (…)` about a body that
-    // is in no build for the agent to read beside its own `rot (…)`.
-    const labelsOn = (id) => {
+  it('is offered Turn, and it mints no node for a body', () => {
+    // THE ROW A BODY USED TO BE REFUSED, AND WHY IT IS NOT ANY MORE. Turn armed
+    // NOTHING while a turn had no gesture: all it could do was mint a move node
+    // and open the panel, and a move node on an overlay path is a second way to
+    // turn a body that already has a `rot°` three rows up the same sheet —
+    // `move "korpus" turned (…)` printed for the agent beside its own
+    // `rot (…)`. There are rings now (viewport/rings.js), and the gesture is
+    // re-routed at the press exactly as the drag is: a body's turn goes out on
+    // `hmr:proposalturn` and edits that very `rot`. So the tool is armed on
+    // either kind of object.
+    //
+    // WHAT IS STILL THE BUILD'S ALONE is the node: the item makes a row for a
+    // part nothing has claimed yet, so that an exact angle has somewhere to be
+    // typed, and a body needs none because its own row is already there.
+    const menuOn = (id) => {
       const { c, el } = panel({ proposal: withBlock() })
       staging(el)
       c.state = { ...c.state, tree: indexTree(STAGED), menu: { id, x: 0, y: 0 } }
-      return c.computed().menuItems.map((m) => m.label)
+      return { c, items: c.computed().menuItems }
     }
+    const labelsOn = (id) => menuOn(id).items.map((m) => m.label)
 
-    expect(labelsOn('/model/proposal/korpus')).toContain('Move')
-    expect(labelsOn('/model/proposal/korpus')).not.toContain('Turn')
-    // AND THE BUILD'S OWN PARTS KEEP BOTH, so what is withheld is the body's
-    // case and not the row.
+    expect(labelsOn('/model/proposal/korpus')).toEqual(
+      expect.arrayContaining(['Move', 'Turn']))
     expect(labelsOn('/model/plate')).toEqual(
       expect.arrayContaining(['Move', 'Turn']))
+
+    // The tool is armed on the body and the document is left exactly as it was
+    // — one node, the body the fixture put there, and no move beside it.
+    const { c, items } = menuOn('/model/proposal/korpus')
+    const before = c.state.proposal.nodes.length
+    items.find((m) => m.label === 'Turn')
+      .onClick({ stopPropagation() {}, preventDefault() {} })
+    expect(c.state.tool).toBe('turn')
+    expect(c.state.proposal.nodes).toHaveLength(before)
+    expect(moves(c.state.proposal)).toEqual([])
   })
 
   it('is told apart from a build part by the sentence the row raises', () => {
@@ -3361,10 +3587,15 @@ describe('a proposal body as the part a task is filed against', () => {
 // -- the row that makes a move where no drag has been --------------------------
 
 describe('Turn, in a part\'s own menu', () => {
-  // A DISPLACEMENT HAS A GESTURE AND A TURN HAS NONE. The hand says "about here"
-  // better than a field does, and there is no such hand for three angles — so a
-  // part nobody has dragged has no row in the panel, and therefore nowhere to
-  // type them. This row is what makes the row exist.
+  // THIS ROW DOES TWO THINGS AND USED TO DO ONE. It arms the turn tool on the
+  // object it names, exactly as Move arms its own — there are rings round the
+  // part now (ui/src/viewport/rings.js), and an armed tool turns what is
+  // SELECTED, which neither door into this menu writes.
+  //
+  // AND IT GOES ON MAKING THE ROW, which is what it did when a turn had no
+  // gesture at all: a ring says "about this much" and a field says "exactly
+  // 90", and a part nobody has dragged has no row in the panel and therefore
+  // nowhere to type the second.
 
   const STAGED = {
     id: '/model',
@@ -3409,6 +3640,24 @@ describe('Turn, in a part\'s own menu', () => {
       const said = labels(menu('/model/plate', over).c)
       expect(said.includes('Turn')).toBe(said.includes('Move'))
     }
+  })
+
+  it('arms the turn tool on the object the row names, and says so', () => {
+    // THE SELECTION AND THE TOOL IN ONE WRITE, which is what makes the row mean
+    // what it says: the armed tool turns what is SELECTED, and a right-click on
+    // a row does not select. Chosen while another object stood selected, this
+    // would otherwise have put the rings round that one.
+    const { c } = menu('/model/plate')
+
+    choose(c, 'Turn')
+
+    expect(c.state.tool).toBe('turn')
+    expect(c.state.sel).toBe('/model/plate')
+    expect(c.toast.mock.calls.map(([text]) => text).join('')).toContain('ring')
+    // AND THE STRIP SAYS WHERE TO AIM. This is the one gesture on the page whose
+    // target is the WIDGET rather than the model — a press anywhere else still
+    // orbits — so `drag it` would send the reader to grab the part.
+    expect(c.computed().hintText).toContain('ring')
   })
 
   it('mints a row at no offset and no turn, and opens the panel on it', () => {

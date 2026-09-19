@@ -38,6 +38,8 @@ import {
   EVENT_MEASURE as MEASURE,
   EVENT_MOVED as MOVED,
   EVENT_PROPOSALMOVE as PROPOSALMOVE,
+  EVENT_TURNED as TURNED,
+  EVENT_PROPOSALTURN as PROPOSALTURN,
   EVENT_PLACE as PLACE,
   EVENT_PIN as PIN,
   EVENT_MODEL as MODEL,
@@ -60,6 +62,14 @@ import {
  *            sent once, on the release, like the one above; `name` is the body
  *            it was drawn under, and it names the one node of the document that
  *            moves
+ *   TURNED   {id, name, paths, count, build, turn: [x, y, z]}  -- a part was
+ *            turned with the rings; the same shape as MOVED and the same four
+ *            endings, with three DEGREES about the three axes in place of the
+ *            offset. Cumulative from the pose the build gives the part
+ *   PROPOSALTURN {name, turn: [x, y, z]}  -- a body of the PROPOSAL was turned;
+ *            `turn` is how far this gesture took it, to be added to the body's
+ *            own `rot`, because the document is where a body's pose lives and
+ *            the viewport has never read it
  *   PLACE    {id, name, p: [x, y, z]}       -- a point was picked for a comment
  *   PIN      {id}                           -- a comment pin was clicked
  *   MODEL    {view, buildKey, tree, live}   -- a view finished rendering
@@ -80,13 +90,13 @@ import {
  * reader to SEE that a cut is on -- which this side can only do if it is told.
  */
 export {
-  STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, PLACE, PIN, MODEL, ERROR,
-  TOOL,
+  STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, TURNED, PROPOSALTURN,
+  PLACE, PIN, MODEL, ERROR, TOOL,
 };
 
 /** Every event the viewport sends us, in one list — see componentDidMount. */
-export const UP_EVENTS = [PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, PLACE,
-                          PIN, MODEL, ERROR, TOOL];
+export const UP_EVENTS = [PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE,
+                          TURNED, PROPOSALTURN, PLACE, PIN, MODEL, ERROR, TOOL];
 
 /** The custom element the adapter registers, under the adapter's own name for it.
  *

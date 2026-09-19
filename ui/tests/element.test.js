@@ -144,6 +144,10 @@ function element(state = {}, viewer = fakeViewer()) {
   // owes them the same wake-up and the same end, and they are stubbed for the
   // same reason.
   vp.gizmo = { refresh: vi.fn(), endDrag: vi.fn() }
+  // And the turn tool's rings, which are the third widget of that shape: a loop
+  // that stops itself, a gesture on a layer no other listener can see, and the
+  // same two things owed by the element.
+  vp.rings = { refresh: vi.fn(), endDrag: vi.fn() }
   // The up-events go through `dispatchEvent`, which is a real DOM method on a
   // real element and refuses to run on an object the DOM never built — the same
   // reason the note above `calledWithViewport` gives about `getAttributeNames`.
@@ -364,6 +368,18 @@ describe('reconcile', () => {
     vp.reconcile()
     vp.reconcile()
     expect(vp.handle.refresh).toHaveBeenCalledTimes(2)
+  })
+
+  it('wakes the turn rings on every pass', () => {
+    // THE SAME HOLE AS THE TWO ABOVE, and the widest of the three: arming Turn
+    // from a row's menu is one `hmr:state` carrying a tool and a selection at
+    // once, and this line is the only thing that draws the rings when it lands.
+    // Delete it and the rings appear after the hold key has been pressed and
+    // let go — the one other wake-up there is — with the whole suite green.
+    const vp = element({ tool: 'turn', selected: ['/Group/plate'] })
+    vp.reconcile()
+    vp.reconcile()
+    expect(vp.rings.refresh).toHaveBeenCalledTimes(2)
   })
 
   it('wakes the axis arrows on every pass', () => {
@@ -789,6 +805,22 @@ describe('show', () => {
     expect(types).toContain(EVENT_MODEL)
     expect(vp.gizmo.endDrag).toHaveBeenCalledTimes(1)
     expect(vp.gizmo.endDrag.mock.invocationCallOrder[0])
+      .toBeLessThan(viewer.render.mock.invocationCallOrder[0])
+  })
+
+  it('ends a drag of a turn ring before it replaces the scene', async () => {
+    // The fourth gesture that can be live when a build lands, and the one
+    // nothing else can see at all: the press was taken in a window listener the
+    // rings own, so neither `endGesture` nor the idle clock knows there is a
+    // hand down. Unconcluded, the part stands TURNED in `vp.moved` with nothing
+    // in the document claiming it, and the next push straightens it.
+    const { vp, viewer } = rendering()
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+
+    const types = vp.dispatchEvent.mock.calls.map(([event]) => event.type)
+    expect(types).toContain(EVENT_MODEL)
+    expect(vp.rings.endDrag).toHaveBeenCalledTimes(1)
+    expect(vp.rings.endDrag.mock.invocationCallOrder[0])
       .toBeLessThan(viewer.render.mock.invocationCallOrder[0])
   })
 
@@ -1518,6 +1550,43 @@ describe('the widgets connectedCallback puts on the page', () => {
     expect(gripIn(el)).toBeUndefined()
   })
 
+  /** The turn rings' layer, found the way the two above are found — by the one
+   *  thing distinctive about what it holds. A ring is a round div, and nothing
+   *  else the viewport puts on the page is; it carries no class name either. */
+  const ringsIn = (el) => [...el.children].find(
+    (child) => child.firstElementChild
+      && child.firstElementChild.style.borderRadius === '50%')
+
+  it('mounts the turn rings, after the axis arrows', () => {
+    // THE SAME HOLE, ONE WIDGET FURTHER ON: delete the two lines in
+    // `element.js` that create and append this layer and nothing anywhere else
+    // goes red — the rings are simply not on the page, and the only way left to
+    // turn a part is to type three numbers into the panel, which is the state
+    // this whole feature was written out of.
+    const el = mount()
+    const rings = ringsIn(el)
+    expect(rings).toBeTruthy()
+    expect(rings.children).toHaveLength(3)
+
+    // AFTER the arrows. Nothing is decided by it — the two are never on screen
+    // together and this layer takes no press at all — beyond which is painted
+    // over the other where a cut leaves the grip standing behind both.
+    const kids = [...el.children]
+    expect(kids.indexOf(rings)).toBeGreaterThan(kids.indexOf(gripIn(el)))
+  })
+
+  it('takes the rings down when the element leaves the document', () => {
+    // MORE THAN THE OTHER THREE OWE, which is why this is its own case: the
+    // rings keep a capture-phase `pointerdown` on the WINDOW for the whole life
+    // of the layer rather than only while a gesture runs, because they take no
+    // press on an element of their own. Left behind it would answer for a
+    // viewport that is gone — on every press of whatever page came next.
+    const el = mount()
+    expect(ringsIn(el)).toBeTruthy()
+    el.destroy()
+    expect(ringsIn(el)).toBeUndefined()
+  })
+
   it('wakes the axis arrows when the hold key lets go of the cut', () => {
     // THE ARROWS OTHERWISE NEVER COME BACK. They are drawn while `activeTool` is
     // `move`, so the hold key takes them off and the gizmo's loop — which stops
@@ -1537,6 +1606,23 @@ describe('the widgets connectedCallback puts on the page', () => {
     dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyC', key: 'c' }))
     expect(el.activeTool).toBe('move')
     expect(gizmo.refresh).toHaveBeenCalled()
+  })
+
+  it('wakes the turn rings when the hold key lets go of the cut', () => {
+    // THE SAME SILENCE ONE TOOL OVER. The rings' loop stops on exactly the
+    // conditions the arrows' does, asked about `turn`, so the hold key takes
+    // them off and nothing puts them back: the release emits `hmr:tool` alone
+    // and the interface answers it with a local `setState`, never a push.
+    const el = mount()
+    el.state = { ...el.state, tool: 'turn' }
+    const rings = { refresh: vi.fn(), endDrag: vi.fn(), destroy: vi.fn() }
+    el.rings = rings
+    dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyC', key: 'c' }))
+    expect(el.activeTool).toBe('cut')
+    expect(rings.refresh).not.toHaveBeenCalled()
+    dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyC', key: 'c' }))
+    expect(el.activeTool).toBe('turn')
+    expect(rings.refresh).toHaveBeenCalled()
   })
 
   it('lets the remembered view document go with everything else', () => {

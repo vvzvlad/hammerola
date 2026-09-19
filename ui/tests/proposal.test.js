@@ -15,11 +15,11 @@
 // notice.
 
 import { describe, expect, it } from 'vitest'
-import { geometries, measurements } from '@jscad/modeling'
+import { geometries, measurements, transforms } from '@jscad/modeling'
 
 import {
   addNode, bodies, dropMoves, emptyProposal, isEmpty, moveNodes, moves,
-  removeNode, proposalText, sendsNothing, tidy, updateNode,
+  removeNode, proposalText, sendsNothing, tidy, turnNodes, updateNode,
 } from '../src/proposal.js'
 import { buildProposal } from '../src/proposalgeom.js'
 
@@ -192,6 +192,64 @@ describe('the immutable helpers', () => {
     // panel names the one body that was dragged, and nothing else may shift.
     expect(moveNodes(doc, ['n1', 'n2', 'n3'], [1, 0, 0]).nodes.map((n) => n.at[0]))
       .toEqual([1, 1, 16.5])
+  })
+})
+
+describe('turnNodes', () => {
+  // A TURN IS COMPOSED ONTO `rot` AND NOT ADDED TO IT, which is the one thing
+  // this door does that `moveNodes` beside it does not have to think about: an
+  // offset is three independent numbers and an orientation is not. `placed`
+  // reads `rot` as `Rz·Ry·Rx`, so adding to the x field is a turn about world x
+  // only while y and z are both zero — and the gesture that produces these
+  // numbers is a ring the reader grabbed, which promises a turn about THAT
+  // world axis whatever the body was already standing at.
+
+  /** Where the document's own kernel sends a point for a body at `rot` —
+   *  `transforms.rotate` is what `placed` in proposalgeom.js turns one with, so
+   *  this is the rotation the reader will actually be shown. */
+  const spun = (rot, point) => [...geometries.geom3.toPolygons(transforms.rotate(
+    rot.map((angle) => (angle * Math.PI) / 180),
+    geometries.geom3.create([geometries.poly3.create([point, [0, 0, 0], [0, 0, 1]])]),
+  ))[0].vertices[0]]
+
+  const turned1 = (rot, turn) =>
+    turnNodes(just({ ...KORPUS, rot }), ['n1'], turn).nodes[0].rot
+
+  it('composes the turn onto the pose the body was standing at', () => {
+    // THE CASE THE ADDITION GETS WRONG, and it is the reader's SECOND gesture
+    // on any body rather than an exotic one: a body standing at a quarter turn
+    // about z, grabbed by the x ring and swept thirty degrees. Added, the three
+    // fields read `(30, 0, 90)` and the body turns about world Y.
+    expect(turned1([0, 0, 90], [30, 0, 0])).toEqual([0, -30, 90])
+
+    // AND THE ANSWER IS CHECKED AS A ROTATION rather than as three numbers,
+    // through the kernel that will really build the body: the point the body
+    // stood at, turned thirty about world x, is where the new `rot` puts it.
+    const point = [7, -3, 11]
+    const wanted = spun([30, 0, 0], spun([0, 0, 90], point))
+    spun(turned1([0, 0, 90], [30, 0, 0]), point)
+      .forEach((value, axis) => expect(value).toBeCloseTo(wanted[axis], 9))
+  })
+
+  it('is an addition where the addition happens to be right', () => {
+    // ABOUT ONE AXIS FROM SQUARE, and about the OUTERMOST axis from anywhere:
+    // those are the cases where the two agree, and the panel's own tests lean
+    // on them. Said here so that "composed" is not read as "different answer".
+    expect(turned1([0, 0, 0], [0, 0, 30])).toEqual([0, 0, 30])
+    expect(turned1([0, 0, 30], [0, 0, 15])).toEqual([0, 0, 45])
+    expect(turned1([42.3, 0, 0], [0, 0, 90])).toEqual([42.3, 0, 90])
+  })
+
+  it('rounds to a place somebody could have typed, and names only its own', () => {
+    // `atan2` comes back with a dozen digits no hand put there, and every
+    // number here is drawn in a field and printed in the projection an agent
+    // reads. `tidy` is applied where the arithmetic is, which is this sum.
+    expect(turned1([42.3, 0, 0], [1, 0, 0])).toEqual([43.3, 0, 0])
+    // EVERY NAMED NODE AND ONLY THOSE, the rule `moveNodes` keeps: the panel
+    // names the one body the ring was on.
+    const doc = turnNodes(motor(), ['n2'], [0, 0, 90])
+    expect(doc.nodes.map((node) => node.rot))
+      .toEqual([[0, 0, 0], [0, 0, 90], [0, 45, 0]])
   })
 })
 
@@ -574,6 +632,28 @@ describe('buildProposal', () => {
     expect(hole.alpha).toBeLessThan(1)
     expect(hole.color).not.toBe(payload.parts[0].color)
     expect(hole.shape.vertices.length).toBeGreaterThan(0)
+  })
+
+  it('carries every body`s own origin, which the mesh cannot say', () => {
+    // THE ONE FIELD ON A PART THAT THE VIEWER NEVER READS. `placed` rotates a
+    // body in its OWN coordinates and only then carries it to `at`, so `at` is
+    // the single world point a change of `rot` leaves where it is — and the
+    // mesh handed over has all of that baked into its vertices under an
+    // identity `loc`, which leaves the scene no way to answer for it. The
+    // viewport turns a body under the reader's hand about this point, because
+    // it is the point the DOCUMENT will turn it about; about the centre of the
+    // body's box instead, a quarter turn of a 100 mm extrusion previews 70 mm
+    // from where it lands.
+    const payload = buildProposal(motor())
+    const origins = Object.fromEntries(
+      payload.parts.map((part) => [part.name, part.origin]))
+    expect(origins).toEqual({
+      korpus: [0, 0, 0], val: [0, 0, 42], krepezh1: [15.5, 15.5, 36],
+    })
+    // A COPY AND NOT THE NODE'S OWN ARRAY, the rule every helper in this module
+    // keeps: the payload is handed to the viewport and outlives the edit that
+    // built it.
+    expect(payload.parts[1].origin).not.toBe(motor().nodes[1].at)
   })
 
   it('answers for a document with nothing in it', () => {

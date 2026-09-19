@@ -12,10 +12,24 @@
 // a constraint the agent can design against instead of a sentence like "it is
 // about four centimetres".
 //
-// PURE, AND WITH NO GEOMETRY IN IT. Every helper returns a new document and this
-// module imports nothing at all; the kernel lives next door in proposalgeom.js.
-// So the document can be built, edited, projected and compared with no meshes
-// computed and no browser anywhere near it.
+// PURE, AND WITH NO GEOMETRY IN IT. Every helper returns a new document and the
+// kernel lives next door in proposalgeom.js, so the document can be built,
+// edited, projected and compared with no meshes computed and no browser
+// anywhere near it.
+//
+// THE ONE IMPORT is the pair that reads three angles as a rotation and back
+// (`quaternionOf`/`anglesOf` in viewport/math.js — `math.js` and NOT the
+// `parts.js` that re-exports them, which is the whole of keeping the promise
+// above: `math.js` imports nothing at all, while `parts.js` reaches the viewer
+// through `internals.js`, so taking them from there would put the entire
+// viewport behind this module), and it is here because
+// `turnNodes` COMPOSES a turn onto a body's `rot` rather than adding to it —
+// see `turnedFrom` for why it cannot be an addition. That is arithmetic on the
+// document's own three numbers and not geometry: nothing it reaches builds a
+// mesh, touches the page or runs at import time, so the sentence above still
+// holds. What it buys is that the viewport's preview and this document compute
+// the SAME orientation out of the same line, instead of two spellings of one
+// intent drifting apart.
 //
 // A DIMENSION IS A NUMBER, and that is the whole of the language. There is no
 // expression syntax, no name to stand in for a number, and there is deliberately
@@ -91,6 +105,9 @@
 // promised it would. A document written before this field existed simply has
 // no such field on its nodes, and reads as not skipped — every test here is a
 // falsy read, so there is nothing to migrate.
+
+import { after, anglesOf, quaternionOf } from './viewport/math.js'
+
 const MOVE = 'move'
 
 /** A document with nothing in it — the state a freshly opened panel is in. */
@@ -191,11 +208,12 @@ export function updateNode(doc, id, patch) {
  * is a property of the DOCUMENT rather than of one writer.
  *
  * IT IS APPLIED WHERE THE ARITHMETIC IS, and that is the rule for who calls it.
- * There are two such places and they are on opposite sides of the event wire:
- * `moveNodes` below, which ADDS a delta to a body's `at`, and `snap` in
- * viewport/tools.js, which multiplies a step back out — the second of those is
- * why this is exported at all, and it is the one import the viewport takes from
- * this module. Nothing rounds a number a second time on its way past: the
+ * There are three such places: `moveNodes` below, which ADDS a delta to a
+ * body's `at`; `turnedFrom` beside it, which COMPOSES a turn onto a body's
+ * `rot` and gets a dozen digits of `atan2` back for it; and `snap` in
+ * viewport/tools.js, which multiplies a step back out — that last one is on the
+ * far side of the event wire, and is why this is exported at all.
+ * Nothing rounds a number a second time on its way past: the
  * `hmr:moved` handler writes the delta it was handed exactly as `snap` made it,
  * because a rounding there would be two places having to agree about a value
  * neither of them computed.
@@ -226,11 +244,79 @@ export function tidy(value) {
  * reader is looking at, on the first drag of a body they had placed by hand.
  */
 export function moveNodes(doc, ids, delta) {
+  return patched(doc, ids, (node) => ({
+    at: node.at.map((value, axis) => tidy(value + delta[axis])),
+  }))
+}
+
+/**
+ * Where three angles stand once `applied` has been turned about the WORLD axes
+ * on top of them.
+ *
+ * WHAT "TURNED BY" MEANS, IN ONE PLACE, and it is one place because two sides
+ * have to agree: `turnNodes` below writes it into a body's `rot`, and the
+ * viewport's rings compute the pose they put under the reader's hand out of
+ * this very function (`onMove` in viewport/rings.js). Two hand-written copies
+ * would not fail — they would drift, and the drift is a body that turns one way
+ * while the hand is down and lands facing another when it comes off.
+ *
+ * ADDING THE ANGLE TO ONE OF THE THREE IS NOT IT. `rot` is read as `Rz·Ry·Rx`
+ * (`quaternionOf` in viewport/math.js), so adding to the x field is a turn
+ * about world x only while y and z are both zero. A body standing at
+ * `(0, 0, 90)` and given 30 on x by addition turns about world Y — and it is
+ * the second gesture on any body that finds it, which is exactly the way a bug
+ * goes unnoticed. Composed as a rotation and brought back through `anglesOf`,
+ * the answer is the turn the reader asked for, whatever the body was standing
+ * at.
+ *
+ * THE THREE FIELDS WILL NOT READ AS WHOLE DEGREES AFTERWARDS, and that is the
+ * honest half of the trade rather than a rounding that got away: the gesture is
+ * a whole number of degrees about the axis the hand grabbed, and the three
+ * numbers that PRODUCE that orientation are whatever they are — 30 about x on
+ * top of `(0, 0, 90)` is `(0, -30, 90)`. Every CAD tool answers the same way,
+ * and the alternative — three fields that stay round — cannot describe the
+ * turn at all.
+ *
+ * ROUNDED (`tidy`) BECAUSE THE ARITHMETIC IS HERE, which is the rule
+ * `moveNodes` keeps one field over: `atan2` comes back with a dozen digits no
+ * hand put there, and every number this document holds is drawn in a field and
+ * printed in the projection an agent reads.
+ */
+export function turnedFrom(standing, applied) {
+  return anglesOf(after(quaternionOf(applied), quaternionOf(standing))).map(tidy)
+}
+
+/**
+ * Those nodes turned by `turn`, three degrees about the three WORLD axes.
+ *
+ * `moveNodes` ONE FIELD OVER, and it is a separate door for the reason the two
+ * events behind them are separate names: the viewport tells a drag of a body
+ * from a turn of one at the press and says which it was, so neither door has to
+ * ask. `rot` is where a body's own pose lives (the head of this file says why
+ * it is spelled differently from a move's `turn`).
+ *
+ * COMPOSED AND NOT SET, which is what makes the gesture repeatable: the
+ * viewport has never read this document, so what it can honestly report about a
+ * body is how far this one gesture took it, and the pose it took it FROM is
+ * here. A part of the BUILD is the other way round — the viewport knows the
+ * pose the build gave it, so it reports the whole turn and the node is
+ * replaced.
+ *
+ * AND COMPOSED RATHER THAN ADDED, which is a different word for a different
+ * sum: `turnedFrom` above is the whole of it.
+ */
+export function turnNodes(doc, ids, turn) {
+  return patched(doc, ids, (node) => ({ rot: turnedFrom(node.rot, turn) }))
+}
+
+/** Those nodes with `edit`'s answer merged into them, and every other one left
+ *  alone — the one copy of the walk the two doors above share. */
+function patched(doc, ids, edit) {
   const wanted = new Set(ids)
   return {
     ...doc,
     nodes: doc.nodes.map((node) => (wanted.has(node.id)
-      ? { ...node, at: node.at.map((value, axis) => tidy(value + delta[axis])) }
+      ? { ...node, ...edit(node) }
       : node)),
   }
 }

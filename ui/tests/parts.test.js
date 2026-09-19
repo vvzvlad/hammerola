@@ -25,8 +25,9 @@ import { geometries, transforms } from '@jscad/modeling'
 import { internals } from '../src/viewport/internals.js'
 import { GHOST_OPACITY, renderOptions } from '../src/viewport/options.js'
 import {
-  applyGhost, applyHidden, applySelected, movePart, movableGroup, partCentre,
-  quaternionOf, reconcileMoves, restageMoves, statesOf, treeFromShapes, turned,
+  anglesOf, applyGhost, applyHidden, applySelected, movePart, movableGroup,
+  partCentre, quaternionOf, reconcileMoves, restageMoves, statesOf,
+  treeFromShapes, turned,
 } from '../src/viewport/parts.js'
 import {
   fakeGroup, fakeMatrix, fakeShapeSolid, fakeViewer, fakeViewport,
@@ -851,6 +852,85 @@ function jscadTurn(angles, point) {
   const spun = transforms.rotate(angles.map((angle) => (angle * Math.PI) / 180), solid)
   return [...geometries.geom3.toPolygons(spun)[0].vertices[0]]
 }
+
+describe('anglesOf', () => {
+  // `quaternionOf` READ BACKWARDS, and the two are a pair: whichever order one
+  // composes in, the other has to take apart in. What needs the inverse is a
+  // GESTURE — a ring says "this much about world x", which has to be composed
+  // onto the pose the part is already standing at and then written back into
+  // the three angles a node stores. Adding to one of the three is a turn about
+  // that world axis only while every angle outer to it is zero.
+
+  /** The three world axes, sent through a rotation: where a quaternion puts
+   *  them is the whole of what it IS, and the only thing a spelling of the
+   *  angles cannot lie about. */
+  const sends = (angles) => [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    .flatMap((v) => jscadTurn(angles, v))
+
+  // Orientations with nothing round about them, so no accident of symmetry can
+  // make a wrong order come out right: one per axis, two mixed, one past the
+  // half turn, and one with the middle angle steep enough to be interesting
+  // without being locked.
+  const POSES = [
+    [0, 0, 0], [37, 0, 0], [0, 37, 0], [0, 0, 37], [37, 22, -61],
+    [-140, 12, 170], [5, 89, -5], [12.5, -71.25, 44.75],
+  ]
+
+  it('gives back angles that mean the same rotation', () => {
+    // MEASURED THROUGH THE KERNEL, which is what makes this a test of the
+    // ORDER and not of this file against itself: `transforms.rotate` is what
+    // `placed` in proposalgeom.js turns a body's `rot` with, so a decomposition
+    // written for some other convention comes back describing a different part.
+    for (const pose of POSES) {
+      const back = anglesOf(quaternionOf(pose))
+      sends(back).forEach((value, at) => expect(value, `${pose}`)
+        .toBeCloseTo(sends(pose)[at], 9))
+    }
+  })
+
+  it('answers in the canonical ranges, and never with a negative zero', () => {
+    // THE MIDDLE ANGLE COMES OUT OF `asin` AND THE OTHER TWO OUT OF `atan2`, so
+    // this is the range the pair can spell at all — which is also why a gesture
+    // that goes three quarters round reads back as a quarter the other way.
+    for (const pose of POSES) {
+      const [x, y, z] = anglesOf(quaternionOf(pose))
+      expect(Math.abs(y), `${pose}`).toBeLessThanOrEqual(90)
+      expect(Math.abs(x), `${pose}`).toBeLessThanOrEqual(180)
+      expect(Math.abs(z), `${pose}`).toBeLessThanOrEqual(180)
+    }
+    // `-0` is a number nobody types, and these are compared field by field
+    // against numbers people did.
+    expect(anglesOf([0, 0, 0, 1])).toEqual([0, 0, 0])
+    for (const angle of anglesOf(quaternionOf([0, 0, 90]))) {
+      expect(Object.is(angle, -0)).toBe(false)
+    }
+  })
+
+  it('puts a locked orientation`s whole outer turn on x, and z at nothing', () => {
+    // GIMBAL LOCK IS A CONVENTION AND NOT AN ERROR. At `y = ±90` the outer turn
+    // and the inner one are about the same world axis, so only their sum (at
+    // -90) or their difference (at +90) is a fact about the rotation and
+    // neither angle alone is. THE CONVENTION IS `z = 0`, the whole of it read
+    // back as `x` — pinned here because it is a choice, and because the
+    // alternative spellings are all equally true and would all read as a bug.
+    // `toBeCloseTo` because this hands back raw radians turned into degrees:
+    // the rounding to a place somebody could have typed is `tidy`'s, applied
+    // where the arithmetic is (`turnedFrom` in ui/src/proposal.js).
+    const locked = (pose) => anglesOf(quaternionOf(pose))
+    locked([10, 90, 25]).forEach((angle, at) =>
+      expect(angle).toBeCloseTo([-15, 90, 0][at], 9))
+    locked([10, -90, 25]).forEach((angle, at) =>
+      expect(angle).toBeCloseTo([35, -90, 0][at], 9))
+    // And it is still the same rotation, which is the half the convention is
+    // free to choose and this is not.
+    for (const pose of [[10, 90, 25], [10, -90, 25], [45, -90, 45]]) {
+      const back = anglesOf(quaternionOf(pose))
+      expect(back[2], `${pose}`).toBe(0)
+      sends(back).forEach((value, at) => expect(value, `${pose}`)
+        .toBeCloseTo(sends(pose)[at], 9))
+    }
+  })
+})
 
 describe('movePart, turning', () => {
   /** One tessellated part standing where the build put it, ready to be turned.

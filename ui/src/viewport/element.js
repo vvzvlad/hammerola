@@ -33,6 +33,7 @@ import { installWheel, initialPointingDevice, setPointingDevice } from "./wheel.
 import { createOverlay } from "./overlay.js";
 import { createGizmo } from "./gizmo.js";
 import { createHandle } from "./handle.js";
+import { createRings } from "./rings.js";
 import { createViewCube } from "./viewcube.js";
 import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
@@ -340,6 +341,19 @@ export class HmrViewport extends HTMLElement {
     this.gizmo = createGizmo(this);
     this.appendChild(this.gizmo.root);
 
+    // AND THE TURN RINGS LAST, where the rule the three blocks above apply runs
+    // out and something else takes over. The arrows and the rings are never on
+    // screen together — one is the Move tool's and the other the Turn tool's —
+    // so there is no press for the order to decide between; and this layer
+    // takes no presses at all (`rings.js` says why a div cannot be an
+    // elliptical target), so it could not win one if there were. What the
+    // order buys here is only that the rings are PAINTED over the grip where a
+    // cut happens to stand behind them, which is the same answer the arrows get
+    // and for the same reason: the widget the reader armed is the one they are
+    // looking at.
+    this.rings = createRings(this);
+    this.appendChild(this.rings.root);
+
     setPointingDevice(this, initialPointingDevice(), false);
 
     this.teardown = [
@@ -388,6 +402,11 @@ export class HmrViewport extends HTMLElement {
         // frame already queued sees `activeTool` is now the cut, takes the
         // arrows off and lets itself stop.
         this.gizmo.refresh();
+        // AND THE RINGS FOR THE SAME REASON, whichever of the two tools the
+        // reader had armed when the key went down: both loops stop when there
+        // is nothing to draw, and this release is the one event that can bring
+        // either back without an `hmr:state` behind it.
+        this.rings.refresh();
       },
       onEscape: () => emit(this, EVENT_TOOL, { tool: null, held: false, escape: true }),
     }));
@@ -437,6 +456,10 @@ export class HmrViewport extends HTMLElement {
     if (this.viewcube) this.viewcube.destroy();
     if (this.handle) this.handle.destroy();
     if (this.gizmo) this.gizmo.destroy();
+    // AND THE RINGS, which own one thing the other three do not: a
+    // capture-phase `pointerdown` on the window that lives as long as the
+    // layer. Left behind it would answer for a scene that is gone.
+    if (this.rings) this.rings.destroy();
     try {
       if (this.viewer) this.viewer.dispose();
     } catch (error) {
@@ -712,6 +735,12 @@ export class HmrViewport extends HTMLElement {
       // `this.moved` with nothing in the document claiming it, and the next push
       // would send it home under the reader's hand.
       this.gizmo.endDrag();
+      // And a drag of a RING is a FOURTH, on a layer whose press was taken in a
+      // window listener of its own — which the idle clock cannot see either.
+      // Concluded for the same reason, one field of the node over: the part
+      // stands turned in `this.moved` with nothing claiming it, and the next
+      // push straightens it under the reader's hand.
+      this.rings.endDrag();
 
       const keep = live ? captureLive(this) : null;
       const [w, h] = sized(this);
@@ -924,6 +953,11 @@ export class HmrViewport extends HTMLElement {
     // the Move tool is down or nothing is selected — both of which arrive as
     // state, i.e. here. Same wake-up, same reason.
     this.gizmo.refresh();
+    // And the turn rings, whose loop stops on exactly the same two conditions
+    // asked about the other tool. Arming Turn from a row's menu is one
+    // `hmr:state` carrying a tool and a selection at once, and this is the line
+    // that draws the rings when it lands.
+    this.rings.refresh();
   }
 
   /** The library's notification channel. */

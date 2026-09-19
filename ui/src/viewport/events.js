@@ -90,6 +90,38 @@ export const EVENT_MOVED = "hmr:moved";
  */
 export const EVENT_PROPOSALMOVE = "hmr:proposalmove";
 
+/** Up: a part was TURNED with the rings; `turn` is three degrees about the
+ *  three axes, measured from the way the build leaves the part standing.
+ *
+ * THE DRAG'S TWIN AND NOT A FLAG ON IT, and the reason is the same one that
+ * keeps `hmr:proposalmove` a separate name below: the two gestures answer
+ * different questions about the same node, and a handler that had to ask which
+ * of them it was looking at would be one place deciding what two events already
+ * say. A drag says WHERE the part should be and nothing whatever about which
+ * way it should face; this says which way it should face and nothing about
+ * where it should be. The other field of the node is carried across untouched
+ * either way, which is exactly what the pair of names buys.
+ *
+ * CUMULATIVE, like `hmr:moved`'s `delta`: every press starts from the angles
+ * already standing, so this describes the whole turn from the build's own pose
+ * rather than the last gesture's share of it. The node is replaced, never added
+ * to.
+ */
+export const EVENT_TURNED = "hmr:turned";
+
+/** Up: a body of the PROPOSAL was turned with the rings; `turn` is how far it
+ *  went, in three degrees.
+ *
+ * THE SECOND MEANING OF THE SAME GESTURE, the way `hmr:proposalmove` is the
+ * second meaning of a drag, and it carries the same asymmetry for the same
+ * reason. A part of the build is displaced and turned from where the BUILD puts
+ * it, and the viewport knows that pose, so it reports the whole of it. A body
+ * of the proposal is placed and turned by the DOCUMENT, which the viewport has
+ * never seen — so what it can honestly say is how much further the hand took
+ * it, and the panel adds that to the body's own `rot`.
+ */
+export const EVENT_PROPOSALTURN = "hmr:proposalturn";
+
 /** Up: a point on the model was picked as a comment anchor. */
 export const EVENT_PLACE = "hmr:place";
 
@@ -128,8 +160,8 @@ export const EVENT_TOOL = "hmr:tool";
 /** Every name this module owns, for the tests and for a quick audit. */
 export const EVENTS_UP = [
   EVENT_PICK, EVENT_MENU, EVENT_FACE, EVENT_MEASURE, EVENT_MOVED,
-  EVENT_PROPOSALMOVE, EVENT_PLACE, EVENT_PIN, EVENT_MODEL, EVENT_ERROR,
-  EVENT_TOOL,
+  EVENT_PROPOSALMOVE, EVENT_TURNED, EVENT_PROPOSALTURN, EVENT_PLACE, EVENT_PIN,
+  EVENT_MODEL, EVENT_ERROR, EVENT_TOOL,
 ];
 
 /**

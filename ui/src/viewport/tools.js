@@ -73,8 +73,14 @@ export function niceStep(viewer) {
  * `tidy` IS THE DOCUMENT'S OWN RULE and is imported rather than copied, because
  * copying it is exactly the disagreement above written a second time. The
  * viewport reaching into `ui/src/` for it is not new ground — `options.js` takes
- * `readTheme` from `../store.js` — and `proposal.js` imports nothing at all, so
- * nothing of the interface comes with it.
+ * `readTheme` from `../store.js` — and `proposal.js` reaches only
+ * `viewport/math.js`, which imports nothing at all, so nothing of the interface
+ * comes with it. It used to import nothing whatever, and this sentence said so;
+ * composing a turn gave it that one dependency, and the shape of it is the
+ * whole point — `math.js` is a leaf, `parts.js` re-exports the same helpers and
+ * reaches the viewer, and taking them from there made `proposal.js` throw
+ * `location is not defined` outside a browser. `tests/test_ui_source.py` pins
+ * the leaf so this paragraph cannot go stale again in silence.
  *
  * EXPORTED FOR THE REASON `niceStep` IS, and the disagreement it describes is
  * exactly what a second copy of this line would produce.
@@ -768,6 +774,23 @@ export function installTools(vp) {
     };
     watch();
     if (!tool) return;
+    // THE TURN TOOL OWNS NO PRESS ON THIS ELEMENT, and saying so is what keeps
+    // the model turnable while it is armed. Its gesture is on the rings
+    // (rings.js), which take their press in a capture-phase listener on the
+    // WINDOW and stop it there — so a press that reaches this listener is one
+    // that missed every ring, and it belongs to the trackball exactly as it
+    // would with no tool armed. Left to fall through, it would be swallowed by
+    // the two lines at the foot of this function, and a reader who armed the
+    // tool that turns a PART would find they could no longer turn the VIEW.
+    //
+    // DEGRADED AND NOT DROPPED, which is the Move tool's own answer to a press
+    // it cannot use: `press.tool = null` leaves a click selecting and a drag
+    // rotating, so the reader reaches the part they meant to turn without
+    // leaving the tool first.
+    if (tool === "turn") {
+      press.tool = null;
+      return;
+    }
     if (tool === "move") {
       const at = canvasXY(g.canvas, event);
       const hit = at ? pickEntity(g, at[0], at[1]) : null;

@@ -164,7 +164,18 @@ function mesh(geom) {
 // proposal body is in no catalogue at all. Filled in with the name, it made the
 // row offer a reader's note, stored under whatever real catalogue key the name
 // happened to collide with.
-function part(name, geom, color, alpha) {
+//
+// `origin` IS THE ONE FIELD HERE THAT THE VIEWER ITSELF NEVER READS, and it is
+// on the part because nothing else can answer for it. `placed` above rotates a
+// body in its OWN coordinates and only then carries it to `at`, so `at` is the
+// world point a change of `rot` leaves exactly where it is — and the mesh
+// handed over has all of that baked into its vertices under an identity `loc`,
+// which leaves the scene with no way to say where the body's own origin went.
+// The viewport needs it to turn a body under the reader's hand about the point
+// the DOCUMENT will turn it about (`bodyOrigin` in viewport/rings.js); read off
+// the box instead, a quarter turn of a 100 mm extrusion previewed 70 mm away
+// from where it lands.
+function part(name, geom, color, alpha, at) {
   return {
     id: `/${ROOT}/${name}`,
     type: 'shapes',
@@ -174,6 +185,7 @@ function part(name, geom, color, alpha) {
     alpha,
     state: [1, 1],
     loc: origin(),
+    origin: [...at],
     shape: mesh(geom),
   }
 }
@@ -213,10 +225,10 @@ export function buildProposal(doc) {
     normal_len: 0,
     parts: [
       ...solids.map((node, index) => part(
-        node.name, solidGeoms[index], RESULT_COLOR, 1,
+        node.name, solidGeoms[index], RESULT_COLOR, 1, node.at,
       )),
       ...holes.map((node, index) => part(
-        node.name, holeGeoms[index], HOLE_COLOR, HOLE_ALPHA,
+        node.name, holeGeoms[index], HOLE_COLOR, HOLE_ALPHA, node.at,
       )),
     ],
   }

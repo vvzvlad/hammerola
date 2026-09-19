@@ -1328,3 +1328,48 @@ def test_the_project_list_chooses_its_body_from_that_table():
     # to find, which is this file's own oldest failure mode.
     assert seen, ("HammerolaEntry.jsx names no view at all — defaultProps has to say "
                   "which one the page opens on")
+
+
+def test_the_document_module_reaches_no_module_that_reaches_the_viewer():
+    """`ui/src/proposal.js` stays loadable with no browser anywhere near it.
+
+    That promise is the first paragraph of the module's own header, and it is
+    what lets a proposal be built, edited, projected and compared as plain data.
+    It held for free while the module imported nothing at all; it stopped being
+    free when `turnNodes` had to COMPOSE a turn rather than add to it, which
+    needs `quaternionOf`/`anglesOf`.
+
+    THE PAIR IS TAKEN FROM `viewport/math.js` AND NOT FROM `viewport/parts.js`,
+    which re-exports it. That is the whole of the check, and it is not a
+    preference: `math.js` imports nothing, while `parts.js` imports
+    `internals.js`, which reads `location` at module scope — so the version of
+    this import that reaches `parts.js` does not merely look untidy, it makes
+    `proposal.js` throw `location is not defined` the moment anything loads it
+    outside a browser. Measured, not assumed.
+
+    WHAT IS CHECKED IS THE WHOLE OF `viewport/`, one module deep, rather than
+    the one name that broke. The next helper this module needs will be reached
+    for the same way, and a rule that named only `parts.js` would wave it
+    through.
+    """
+    source = strip_comments(read(UI / "proposal.js"))
+    reached = set(re.findall(r"""from\s+['"]\./viewport/([\w.-]+)['"]""", source))
+    # `math.js` is the one module of the viewport that imports nothing at all,
+    # which is exactly what makes it safe to reach from here. Anything else is
+    # a module with a module graph behind it.
+    stray = sorted(reached - {"math.js"})
+    assert not stray, (
+        f"ui/src/proposal.js imports {stray} out of the viewport. Only "
+        "`viewport/math.js` may be reached from here: everything else in that "
+        "directory leads to `internals.js` and the viewer, and this module "
+        "promises in its own header that a document can be handled with no "
+        "browser near it")
+    # THROUGH `strip_comments` LIKE THE READ ABOVE IT. This file writes long
+    # comment blocks, and a line inside one that happens to begin with the word
+    # `import` would fail this on nothing at all.
+    assert not re.search(r"""^\s*import\s""",
+                         strip_comments(read(UI / "viewport" / "math.js")),
+                         flags=re.M), (
+        "ui/src/viewport/math.js has grown an import, so it is no longer the "
+        "leaf `proposal.js` is allowed to reach through — either keep it a "
+        "leaf, or move the arithmetic `proposal.js` needs somewhere that is")
