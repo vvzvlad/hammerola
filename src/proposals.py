@@ -67,6 +67,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from src.errors import ProposalError
 from src.safeio import read_regular_text
 from src.store import SAFE_ID, atomic_write_bytes, utcnow_iso
 
@@ -81,15 +82,6 @@ MAX_FIELD_CHARS = 200
 # same prefix `store` and the comment queue use, so one sweep rule covers all
 # three trees.
 WIP_PREFIX = ".wip-"
-
-
-class ProposalError(Exception):
-    """A refusal that carries the HTTP status it must be answered with."""
-
-    def __init__(self, status: int, message: str):
-        super().__init__(message)
-        self.status = status
-        self.message = message
 
 
 # -- the request body -------------------------------------------------------

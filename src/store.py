@@ -108,6 +108,7 @@ from loguru import logger
 # second copy of the string is exactly the drift that module exists to prevent.
 from hammerola.metricsdiff import METRICS_NAME
 from src import render
+from src.errors import PublishError
 from src.safeio import open_regular, read_regular_text
 
 # Identifiers that arrive in the URL. No dot at all: that keeps a build directory
@@ -692,20 +693,6 @@ LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, UPLOAD_PREFIX,
 # leftover wastes space, a swept-out source loses a build, and only one of those
 # two is worth being close about.
 LEFTOVER_MAX_AGE_SECONDS = 4 * 3600
-
-
-class PublishError(Exception):
-    """A publish that must be answered with a specific HTTP status.
-
-    Carries the status so app.py does not have to classify failures a second
-    time, and a message that is safe to hand back to the pusher — a 422 exists so
-    that the person who pushed can see WHICH file was missing.
-    """
-
-    def __init__(self, status: int, message: str):
-        super().__init__(message)
-        self.status = status
-        self.message = message
 
 
 @dataclass(frozen=True)

@@ -69,6 +69,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from src.errors import CommentError
 from src.safeio import read_regular_text
 from src.store import SAFE_ID, atomic_write_bytes, utcnow_iso
 
@@ -105,15 +106,6 @@ MAX_VECTOR_LEN = 4
 # Temp-file prefix left behind by an interrupted write, swept at startup. The same
 # prefix `store` uses, so one sweep rule covers both trees.
 WIP_PREFIX = ".wip-"
-
-
-class CommentError(Exception):
-    """A refusal that carries the HTTP status it must be answered with."""
-
-    def __init__(self, status: int, message: str):
-        super().__init__(message)
-        self.status = status
-        self.message = message
 
 
 # -- attachments ------------------------------------------------------------
