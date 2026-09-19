@@ -12,6 +12,8 @@
     comments                  the project's comment queue
     comments resolve <id>     close one, with an optional note
     comments files <id>       save its photo and frame to disk
+    proposal                  the rough body a person drew over the model
+    proposal rm               remove it — asks for the project id to be typed
     skill                     the agent instructions: this machine's, and the hub's
     skill update              write the hub's copy over the installed one
     update                    write the hub's copy of THIS TOOL over itself
@@ -22,9 +24,9 @@ WHERE THE WORK LIVES. This module parses, dispatches and owns the publishing
 flow (`build` and `commit`, which are one operation with one thing varying);
 every other verb is a module, because none of them shares anything with
 publishing but the configuration: `setup.py` (login, create), `status.py`,
-`queue.py` (the comment queue), `sources.py` (source, log), `artifacts.py`,
-`revdiff.py` (diff), `admin.py` (rename, rm), `skill.py` (skill, skill update),
-`update.py` (update).
+`queue.py` (the comment queue), `proposal.py` (the stored proposal),
+`sources.py` (source, log), `artifacts.py`, `revdiff.py` (diff), `admin.py`
+(rename, rm), `skill.py` (skill, skill update), `update.py` (update).
 Every one of them RAISES on refusal rather than printing and exiting, so there
 is exactly one place in the tool that decides what a failure looks like — `main`
 below.
@@ -93,8 +95,8 @@ import argparse
 import sys
 from datetime import datetime
 
-from hammerola import (admin, artifacts, config, gitsuggest, project, queue,
-                       revdiff, setup, skill, sources, status, update)
+from hammerola import (admin, artifacts, config, gitsuggest, project, proposal,
+                       queue, revdiff, setup, skill, sources, status, update)
 from hammerola.errors import ClientError
 from hammerola.hub import (JOB_TIMEOUT, SLOW_BUILD_SECONDS, UNAUTHORIZED, Hub,
                            HubError, quoted)
@@ -262,6 +264,32 @@ def build_parser() -> argparse.ArgumentParser:
     attachments.add_argument(
         "-o", "--output", metavar="DIR", default=None,
         help="write here instead of into `.hammerola/comments`")
+
+    drawing = commands.add_parser(
+        "proposal",
+        help="the rough body somebody drew over this model in the browser — "
+             "the motor it has to clear, the wall it bolts to — as numbers to "
+             "design against. One per project, and it is never resolved")
+    # A sub-subcommand rather than a `--rm` flag, exactly as `comments resolve`
+    # is one: reading and DESTROYING are two acts, and a flag that turns a read
+    # into a deletion is the shape of a mistake nobody catches in review.
+    # Optional, so `hammerola proposal` on its own still reads.
+    proposal_commands = drawing.add_subparsers(dest="proposal_command")
+    forget = proposal_commands.add_parser(
+        "rm",
+        help="remove the stored proposal. The project id has to be typed at "
+             "the prompt, and this cannot be undone: somebody drew it by hand, "
+             "the hub keeps no copy, and it is in no build")
+    # `--yes` LIVES ON `rm` ALONE, and `proposal` itself takes no flag at all —
+    # which is the only reason the SUPPRESS trap documented on `skill update`
+    # below does not arise here. A subparser parses into a namespace of its own
+    # and then copies EVERY key of it onto the parent's, defaults included, so a
+    # flag spelled on both would be silently decided by the inner one. Anything
+    # added to `proposal` itself means reading that comment first.
+    forget.add_argument(
+        "--yes", action="store_true",
+        help="do not ask. Without it the project id has to be typed at the "
+             "prompt — nothing can bring the proposal back")
 
     # ASKED FOR BY NAME OR NOT AT ALL. Nothing else in this tool looks at the
     # agent's skills directory, and nothing else prints a word about the
@@ -715,6 +743,7 @@ HANDLERS = {
     "diff": revdiff.run,
     "log": sources.run_log,
     "comments": queue.run,
+    "proposal": proposal.run,
     "skill": skill.run,
     "update": update.run,
     "rename": admin.rename,

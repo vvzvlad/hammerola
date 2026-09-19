@@ -32,9 +32,9 @@ tidying tool (issue #26).
 
 IT ASKS BEFORE IT DOES IT. Not a y/n — the id has to be typed, because a y/n is
 answered by reflex and this cannot be undone: the hub keeps no copy, and the
-builds, the comment queue and the stored code of every revision go together.
-`--yes` exists for a script, and it is the flag a person should have to think
-about typing.
+builds, the comment queue, the PROPOSAL somebody drew over the model and the
+stored code of every revision go together. `--yes` exists for a script, and it
+is the flag a person should have to think about typing.
 
 NOTHING LOCAL IS DELETED, ever. `rm` is a command about the hub; the checkout on
 the disk belongs to whoever is running it, and a tool that removed a directory
@@ -55,8 +55,9 @@ _NOTHING_TO_READ = (
     "to read.\n"
     "  Pass `--yes` to remove without being asked — but read what it removes "
     "first: the\n"
-    "  builds, the comment queue and the stored code of every revision, with no "
-    "copy kept.")
+    "  builds, the comment queue, the proposal and the stored code of every "
+    "revision, with no\n"
+    "  copy kept.")
 
 
 def _hub(root) -> Hub:
@@ -115,6 +116,15 @@ def remove(args) -> int:
         print(f"  {len(builds)} published revisions"
               f"{', a dev slot' if picker.get('has_dev') else ''}"
               f", their comment queue, and the stored code of each revision")
+    # NAMED ON BOTH ARMS, and outside the `else` for a reason: a proposal is
+    # stored per PROJECT and the route that writes it never asks whether
+    # anything was published, so an id the hub lists no builds under can still
+    # have somebody's drawing behind it. The inventory in front of an
+    # irreversible confirmation is the one thing that has to be complete — this
+    # is what `_confirm` exists to make somebody read.
+    print("  and the proposal drawn over this project, if somebody drew one: "
+          "no build contains it,\n"
+          "  so nothing can bring it back.")
     print("  this cannot be undone: the hub keeps no copy, and the permanent "
           "URLs stop resolving.")
 
@@ -122,9 +132,14 @@ def remove(args) -> int:
 
     removed = hub.remove_project(pid)
     print(f"removed {pid}")
+    # The proposal is a boolean rather than a count — there is one per project
+    # at most (`src/proposals.py`) — so it is reported as the fact it is. Said
+    # in both directions, because "no proposal" is an answer somebody who just
+    # confirmed a removal that named one is owed.
     print(f"  {removed.get('builds', 0)} builds, "
           f"{removed.get('comments', 0)} comments, "
-          f"{removed.get('sources', 0)} stored source trees")
+          f"{removed.get('sources', 0)} stored source trees, and "
+          f"{'the proposal' if removed.get('proposal') else 'no proposal'}")
     # The stored code is addressed by the digest of a source tree rather than by
     # project (SPEC 7.8), so a tree published in two projects is one directory
     # serving both. The hub removes only what nothing else points at, and the

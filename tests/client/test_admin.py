@@ -290,6 +290,41 @@ def test_rm_removes_the_project_after_the_id_is_typed(hub, model, capsys,
     assert "removed demo0001" in out
 
 
+def test_rm_reports_the_proposal_it_took_with_the_project(hub, model, capsys,
+                                                          monkeypatch):
+    """The report counts what went, and the proposal is part of what went.
+
+    It is a boolean rather than a count — one per project at most — so it is
+    reported as the fact it is, in both directions: somebody who just confirmed
+    a removal that NAMED a proposal is owed the answer to whether there was one.
+    """
+    publish(model, capsys)
+    assert hub.proposal("demo0001", method="POST", payload={
+        "doc": {"version": 1, "units": "mm", "nodes": []},
+        "text": "units: mm\nmotor  42 × 42 × 20",
+        "published": None, "view": None,
+    }).status_code == 200
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: "demo0001")
+    assert run(model, "rm") == 0
+    out = capsys.readouterr().out
+
+    report = out.split("removed demo0001", 1)[1]
+    assert "the proposal" in report
+    assert hub.proposal("demo0001").status_code == 404
+
+
+def test_rm_says_there_was_no_proposal_when_there_was_none(hub, model, capsys,
+                                                           monkeypatch):
+    publish(model, capsys)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "demo0001")
+
+    assert run(model, "rm") == 0
+
+    assert "no proposal" in capsys.readouterr().out.split("removed demo0001",
+                                                          1)[1]
+
+
 def test_rm_does_nothing_until_the_id_is_typed(hub, model, capsys, monkeypatch):
     """Not a y/n: a y/n is answered by reflex, and this cannot be undone."""
     revision = publish(model, capsys)
@@ -324,7 +359,11 @@ def test_rm_with_nothing_to_read_refuses_rather_than_assuming_yes(hub, model,
 
     monkeypatch.setattr("builtins.input", eof)
     assert run(model, "rm") == 1
-    assert "--yes" in capsys.readouterr().err
+    said = capsys.readouterr().err
+    assert "--yes" in said
+    # THE TEXT THAT TELLS SOMEBODY WHAT THEY ARE SKIPPING has to name everything
+    # the flag removes unread, the proposal included.
+    assert "proposal" in said
     assert hub.project_dir("demo0001").is_dir()
 
 
@@ -361,6 +400,13 @@ def test_rm_says_what_it_is_about_to_remove_before_asking(hub, model, capsys):
     out = capsys.readouterr().out
     assert "about to remove demo0001" in out
     assert "1 published revisions" in out
+    # AND THE PROPOSAL, which the hub removes with the rest of it
+    # (`removed["proposal"]` in src/app.py). It is somebody's own drawing, no
+    # build contains it and the hub keeps no copy, so a prompt that did not name
+    # it was asking for a confirmation of something smaller than what happens.
+    # Named whether or not one was ever stored: this is printed before anything
+    # is asked of the hub about it.
+    assert "proposal" in out
     assert "cannot be undone" in out
     assert "project id" in asked["prompt"]
 

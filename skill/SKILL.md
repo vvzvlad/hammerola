@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part", "CadQuery", "STL".
-version: 16
+version: 17
 ---
 
 # hammerola
@@ -1245,6 +1245,34 @@ route serving it is behind the same secret as the queue, so fetching it any
 other way means handling the token yourself, and nothing you run needs to. Like
 any complaint it becomes an assertion in `checks()` before the next push into
 that area, so the same wrongness cannot come back quietly.
+
+## Proposals
+
+```sh
+hammerola proposal     # the standing proposal on this project, if there is one
+hammerola proposal rm  # remove it — asks for the project id, so ask the owner
+```
+
+A proposal is a rough body a **person** drew over the model in the browser: the
+motor the bracket has to clear, the wall it bolts to, a bought part it holds, or
+an example of the layout they want. It reaches you as a few aligned lines of
+numbers — what each thing is, how big, where it sits, and which parts of your
+model they dragged and by how much — because that is a constraint you can design
+against and "it is about four centimetres" is not. It is a STATEMENT and not an
+edit: none of it is in the model, nothing was built from it, and none of it is
+code to paste. There is one per project and it stands, so read it when you start
+the same way you read the queue — a comment saying "make it clear the motor"
+usually means the motor is drawn in the proposal with its size on it. Unlike a
+comment it is never resolved: it describes the world around the part and stays
+true after you have satisfied it, which is why a comment may tell you it is
+there.
+
+`hammerola proposal rm` cannot be undone and the hub keeps no copy — somebody
+drew it by hand and it is in no build. It asks for the project id on the
+terminal, which is a prompt you cannot answer: that is deliberate, and it means
+the decision is not yours. Ask the owner. Do not remove one because it looks
+stale, because the work it describes is done, or to tidy up — nothing you do to
+the model obliges it to go.
 
 ## Talking to the person
 

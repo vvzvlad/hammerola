@@ -61,6 +61,10 @@ and `comments` are spelled out of what the browser already fetches:
                                           metrics.json.
     GET  /api/v1/comments?project=<pid>   Bearer -> `{"comments": [...]}`
     POST /api/v1/comments/<id>/resolve    Bearer, `{"note": ...}` -> the record
+    GET  /api/v1/proposals/<pid>          Bearer -> `{"pid", "doc", "text",
+                                          "published", "view", "saved"}` — the
+                                          one proposal a project has, and 404
+                                          when nobody has drawn one over it
 
 And the one route this tool asks for with NO token at all, because it is read by
 somebody who does not have one yet:
@@ -80,6 +84,10 @@ The code of a revision, and the two routes that unmake something:
     GET    /api/v1/sources/<revision>/log Bearer -> what that build printed
     POST   /api/v1/projects/<pid>/title   Bearer, `{"title": ...}` -> renames
     DELETE /api/v1/projects/<pid>         Bearer -> removes the project whole
+    DELETE /api/v1/proposals/<pid>        Bearer -> `{"removed": true|false}`,
+                                          and 200 either way: the document is
+                                          gone, and the boolean is the only
+                                          thing that says whether there was one
 
 WHICH SIDE OF THE TOKEN A THING IS ON IS THE WHOLE REASON `source` AND
 `artifacts` ARE TWO VERBS. The build a revision produced is public — it is what
@@ -1246,6 +1254,56 @@ class Hub:
                 f"the hub answered HTTP {code} for the {kind} of {cid}: "
                 f"{quoted(raw)}")
         return raw
+
+    # -- the stored proposal -----------------------------------------------
+    def proposal(self, pid: str):
+        """The one proposal this project has, or None when it has none.
+
+        NONE AND NOT AN EXCEPTION for the 404, which is the reading `builds`
+        above gives its own: most projects have no proposal, because one exists
+        only after somebody drew it in the browser, so "there is none" is an
+        ANSWER to `hammerola proposal` and not a failure of it. Raising would
+        make the ordinary case an error the caller has to catch and turn back
+        into a sentence — and `cli.main` would print it on stderr with a
+        non-zero exit, which is what a script reads as "this command did not
+        work".
+
+        A 401 stays an exception, and the difference is not arbitrary: that is
+        the hub REFUSING TO ANSWER, so nothing has been learned about whether
+        there is a proposal. Reporting "there is none" for it would be a claim
+        this call cannot make.
+        """
+        code, raw = self._call(f"/api/v1/proposals/{urllib.parse.quote(pid)}")
+        if code == 401:
+            raise HubError(UNAUTHORIZED)
+        if code == 404:
+            return None
+        if code != 200:
+            raise HubError(
+                f"the hub answered HTTP {code} for the proposal of {pid}: "
+                f"{quoted(self._payload(code, raw).get('error', ''))}")
+        return self._payload(code, raw)
+
+    def remove_proposal(self, pid: str) -> bool:
+        """Put this project's proposal away. -> whether there was one.
+
+        THE HUB ANSWERS 200 EITHER WAY (`_handle_delete` in `src/app.py`): the
+        caller asked for the document to be gone and it is, whether or not
+        anything was stored, and the boolean is the only thing that tells the
+        two apart. So there is no 404 arm here to match the one above — this
+        route answers 404 only for an id that could never name a file at all,
+        which is a `project.json` nothing could publish from either, and that
+        falls through to the sentence below.
+        """
+        code, raw = self._call(
+            f"/api/v1/proposals/{urllib.parse.quote(pid)}", method="DELETE")
+        if code == 401:
+            raise HubError(UNAUTHORIZED)
+        if code != 200:
+            raise HubError(
+                f"the hub refused to remove the proposal of {pid} with HTTP "
+                f"{code}: {quoted(self._payload(code, raw).get('error', ''))}")
+        return bool(self._payload(code, raw).get("removed"))
 
     # -- getting started ---------------------------------------------------
     def start(self) -> dict:
