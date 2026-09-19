@@ -148,13 +148,15 @@ export function projectPoint(g, point) {
  * place.
  *
  * THE TWO RECTS ARE PASSED IN rather than measured here, and that is the whole
- * difference between this and a synchronous reflow per point: every caller
- * places several things in one frame and every one of them WRITES styles, so a
- * `getBoundingClientRect()` between two of them forces the browser to flush the
- * layout the previous write invalidated — inside a rAF loop that runs right
- * through a pinch. Neither rect can change between two placings of one frame
- * anyway: they are the canvas and the layer's own container, and nothing here
- * writes to either.
+ * difference between this and a synchronous reflow per point — for the callers
+ * that place several things in one frame. The pin overlay walks its pins and
+ * its label, the rotation handles project four points, and every placing WRITES
+ * styles, so a `getBoundingClientRect()` between two of them forces the browser
+ * to flush the layout the previous write invalidated, inside a rAF loop that
+ * runs right through a pinch. The section grip and the arrows project one point
+ * each and pay nothing either way. Neither rect can change between two placings
+ * of one frame anyway: they are the canvas and the layer's own container, and
+ * nothing here writes to either.
  *
  * THE CANVAS'S RECT GIVES THE PIXEL SIZE OF THE NDC CUBE and the container's is
  * what an absolutely-positioned child is placed against, so the difference of
