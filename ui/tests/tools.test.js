@@ -227,9 +227,9 @@ describe('who owns the press', () => {
   })
 })
 
-describe('the right button: a menu or a pan', () => {
-  const PLATE = { id: '/model/plate', name: 'plate', point: [1, 2, 3] }
+const PLATE = { id: '/model/plate', name: 'plate', point: [1, 2, 3] }
 
+describe('the right button: a menu or a pan', () => {
   it('asks for the part menu when the press did not travel', () => {
     const vp = toolViewport({ tool: null })
     pickEntity.mockReturnValueOnce(PLATE)
@@ -323,130 +323,6 @@ describe('the right button: a menu or a pan', () => {
     expect(faceNormalAt).not.toHaveBeenCalled()
   })
 
-  describe('with a section cut standing', () => {
-    // ISSUE #73. The stencil cap that closes a cut off carries no component id,
-    // so the picker reads straight through it to whatever lies behind — measured
-    // in a browser, the cut face of `plate` answered `reference_spacer`. The
-    // menu therefore asks about the cut face FIRST, and only while a cut stands.
-    //
-    // `pickEntity` is the mock this file already installs, and here it is the
-    // WITNESS: whether it was consulted at all is what says which of the two
-    // paths a press took.
-
-    // A 2 mm cube. It used to be the same tessellation `outline.test.js` uses
-    // and is no longer: that one was rewound outward when the contour started
-    // measuring the SIGNED area of a cut face, which three inward-facing
-    // triangles made come out as zero. Nothing here notices, and the copy is
-    // deliberately left as it was — `insideSection` counts ray crossings by
-    // parity, so which way a triangle faces cannot reach its answer, and a
-    // fixture that does not care is better evidence of that than one that was
-    // fixed to match.
-    const CUBE_POSITIONS = new Float32Array([
-      0, 0, 0, 2, 0, 0, 2, 2, 0, 0, 2, 0,
-      0, 0, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2,
-    ])
-    const CUBE_INDEX = new Uint32Array([
-      0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7,
-      0, 5, 4, 0, 1, 5, 3, 2, 6, 3, 6, 7,
-      0, 3, 7, 0, 7, 4, 1, 2, 6, 1, 6, 5,
-    ])
-    const RECT = { left: 0, top: 0, width: 800, height: 600 }
-
-    /** A viewport over one cube, looking down -Z, with the real cut laid on its
-     *  +z face. `standing` is the renderer's clipping flag: switched off, the
-     *  plane and the seed stay exactly where they are and nothing is cut — the
-     *  state `suspendSectionCut` leaves behind. */
-    function plateScene({ standing = true } = {}) {
-      const camera = orthoCamera({
-        eye: [0, 0, 80], right: [1, 0, 0], up: [0, 1, 0], forward: [0, 0, -1],
-      })
-      const solid = fakeShapeSolid('model|plate', {
-        positions: CUBE_POSITIONS, index: CUBE_INDEX,
-      })
-      const viewer = fakeViewer({
-        camera, groups: { '/model/plate': solid },
-        capUnits: fakeCapUnits([solid]), rect: RECT,
-      })
-      const vp = toolViewport({ tool: null }, viewer)
-      expect(placeSectionPlane(vp, internals(viewer), [0, 0, 1], [1, 1, 1]))
-        .toBe(true)
-      viewer.setLocalClipping(standing)
-      return { solid, viewer, vp }
-    }
-
-    /** The client pixel a world point sits under. The canvas is at the page
-     *  origin here, so the NDC the module's own `projectPoint` gives is the
-     *  whole of the conversion. */
-    function clientOver(vp, x, y) {
-      const [nx, ny] = projectPoint(internals(vp.viewer), [x, y, 0])
-      return [((nx + 1) / 2) * RECT.width, ((1 - ny) / 2) * RECT.height]
-    }
-
-    it('opens the menu on the part the cut belongs to, not on what lies behind', () => {
-      const { vp } = plateScene()
-      const at = clientOver(vp, 1, 1)
-
-      rightDown(vp, at)
-      pointerUp(at)
-
-      expect(details(vp, EVENT_MENU)).toEqual([
-        { id: '/model/plate', name: 'plate', x: at[0], y: at[1] },
-      ])
-      // And the picker was never asked. It is what used to answer here, and its
-      // answer was the part underneath.
-      expect(pickEntity).not.toHaveBeenCalled()
-    })
-
-    it('still closes the menu on empty space, cut or no cut', () => {
-      // The other side of the same branch, and the one that keeps the menu
-      // dismissable: a pixel the cut face does not cover falls through to the
-      // picker exactly as it always did, and a miss there is still `id: null`.
-      const { vp } = plateScene()
-      const at = clientOver(vp, 9, 9)
-
-      rightDown(vp, at)
-      pointerUp(at)
-
-      expect(pickEntity).toHaveBeenCalledTimes(1)
-      expect(details(vp, EVENT_MENU))
-        .toEqual([{ id: null, name: null, x: at[0], y: at[1] }])
-    })
-
-    it('leaves the same pixel entirely to the picker when no cut stands', () => {
-      // Nothing new runs without a cut on screen. The plane and the seed are
-      // exactly where the test above has them — `suspendSectionCut` keeps both,
-      // so that turning the cut back on needs no second click — and the very
-      // pixel that resolved to the cut face goes to `pickEntity` instead, whose
-      // answer is used unchanged.
-      const { vp } = plateScene({ standing: false })
-      pickEntity.mockReturnValue(PLATE)
-      const at = clientOver(vp, 1, 1)
-
-      rightDown(vp, at)
-      pointerUp(at)
-
-      expect(pickEntity).toHaveBeenCalledTimes(1)
-      expect(details(vp, EVENT_MENU)).toEqual([
-        { id: '/model/plate', name: 'plate', x: at[0], y: at[1] },
-      ])
-    })
-
-    it('leaves the plain pick alone — only the menu asks about the cut face', () => {
-      // The other four callers of `pickEntity` are about a point on a real
-      // surface, and a cap has no surface to measure, pin or drag. A left click
-      // on the cut face therefore still selects whatever the picker names.
-      const { vp } = plateScene()
-      const at = clientOver(vp, 1, 1)
-
-      pointerDown(vp, at)
-      pointerUp(at)
-
-      expect(pickEntity).toHaveBeenCalledTimes(1)
-      expect(details(vp, EVENT_PICK))
-        .toEqual([{ id: null, name: null, point: null }])
-    })
-  })
-
   it('keeps the browser\'s own menu off the canvas', () => {
     // Ours would otherwise open under the native one — and on every platform but
     // Windows the native one comes up on the PRESS, before the release that
@@ -455,6 +331,186 @@ describe('the right button: a menu or a pan', () => {
     const event = { preventDefault: vi.fn() }
     vp.box.on.contextmenu(event)
     expect(event.preventDefault).toHaveBeenCalled()
+  })
+})
+
+describe('with a section cut standing', () => {
+  // ISSUE #73. The stencil cap that closes a cut off carries no component id,
+  // so the picker reads straight through it to the part flush underneath —
+  // measured in a browser, the cut face of `plate` answered `reference_spacer`.
+  // BOTH BUTTONS therefore ask about the cut face FIRST, and only while a cut
+  // stands: the menu on the right and the plain selection on the left, through
+  // one resolver so that one pixel cannot name two parts. That is why this
+  // block sits at the top level rather than under either button's own.
+  //
+  // `pickEntity` is the mock this file already installs, and here it is the
+  // WITNESS: whether it was consulted at all is what says which of the two
+  // paths a press took.
+
+  // A 2 mm cube. It used to be the same tessellation `outline.test.js` uses
+  // and is no longer: that one was rewound outward when the contour started
+  // measuring the SIGNED area of a cut face, which three inward-facing
+  // triangles made come out as zero. Nothing here notices, and the copy is
+  // deliberately left as it was — `insideSection` counts ray crossings by
+  // parity, so which way a triangle faces cannot reach its answer, and a
+  // fixture that does not care is better evidence of that than one that was
+  // fixed to match.
+  const CUBE_POSITIONS = new Float32Array([
+    0, 0, 0, 2, 0, 0, 2, 2, 0, 0, 2, 0,
+    0, 0, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2,
+  ])
+  const CUBE_INDEX = new Uint32Array([
+    0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7,
+    0, 5, 4, 0, 1, 5, 3, 2, 6, 3, 6, 7,
+    0, 3, 7, 0, 7, 4, 1, 2, 6, 1, 6, 5,
+  ])
+  const RECT = { left: 0, top: 0, width: 800, height: 600 }
+
+  /** A viewport over one cube, looking down -Z, with the real cut laid on its
+   *  +z face. `standing` is the renderer's clipping flag: switched off, the
+   *  plane and the seed stay exactly where they are and nothing is cut — the
+   *  state `suspendSectionCut` leaves behind. */
+  function plateScene({ standing = true } = {}) {
+    const camera = orthoCamera({
+      eye: [0, 0, 80], right: [1, 0, 0], up: [0, 1, 0], forward: [0, 0, -1],
+    })
+    const solid = fakeShapeSolid('model|plate', {
+      positions: CUBE_POSITIONS, index: CUBE_INDEX,
+    })
+    const viewer = fakeViewer({
+      camera, groups: { '/model/plate': solid },
+      capUnits: fakeCapUnits([solid]), rect: RECT,
+    })
+    const vp = toolViewport({ tool: null }, viewer)
+    expect(placeSectionPlane(vp, internals(viewer), [0, 0, 1], [1, 1, 1]))
+      .toBe(true)
+    viewer.setLocalClipping(standing)
+    return { solid, viewer, vp }
+  }
+
+  /** The client pixel a world point sits under. The canvas is at the page
+   *  origin here, so the NDC the module's own `projectPoint` gives is the
+   *  whole of the conversion. */
+  function clientOver(vp, x, y) {
+    const [nx, ny] = projectPoint(internals(vp.viewer), [x, y, 0])
+    return [((nx + 1) / 2) * RECT.width, ((1 - ny) / 2) * RECT.height]
+  }
+
+  it('opens the menu on the part the cut belongs to, not on what lies behind', () => {
+    const { vp } = plateScene()
+    const at = clientOver(vp, 1, 1)
+
+    rightDown(vp, at)
+    pointerUp(at)
+
+    expect(details(vp, EVENT_MENU)).toEqual([
+      { id: '/model/plate', name: 'plate', x: at[0], y: at[1] },
+    ])
+    // And the picker was never asked. It is what used to answer here, and its
+    // answer was the part underneath.
+    expect(pickEntity).not.toHaveBeenCalled()
+  })
+
+  it('still closes the menu on empty space while a cut stands', () => {
+    // The other side of the same branch, and the one that keeps the menu
+    // dismissable: a pixel the cut face does not cover falls through to the
+    // picker exactly as it always did, and a miss there is still `id: null`.
+    const { vp } = plateScene()
+    const at = clientOver(vp, 9, 9)
+
+    rightDown(vp, at)
+    pointerUp(at)
+
+    expect(pickEntity).toHaveBeenCalledTimes(1)
+    expect(details(vp, EVENT_MENU))
+      .toEqual([{ id: null, name: null, x: at[0], y: at[1] }])
+  })
+
+  it('leaves the same pixel entirely to the picker when no cut stands', () => {
+    // Nothing new runs without a cut on screen. The plane and the seed are
+    // exactly where the test above has them — `suspendSectionCut` keeps both,
+    // so that turning the cut back on needs no second click — and the very
+    // pixel that resolved to the cut face goes to `pickEntity` instead, whose
+    // answer is used unchanged.
+    const { vp } = plateScene({ standing: false })
+    pickEntity.mockReturnValue(PLATE)
+    const at = clientOver(vp, 1, 1)
+
+    rightDown(vp, at)
+    pointerUp(at)
+
+    expect(pickEntity).toHaveBeenCalledTimes(1)
+    expect(details(vp, EVENT_MENU)).toEqual([
+      { id: '/model/plate', name: 'plate', x: at[0], y: at[1] },
+    ])
+  })
+
+  it('selects the part the cut belongs to, not what lies behind', () => {
+    // THE OTHER HALF OF THE SAME PIXEL. A right click here already named
+    // `plate` while a left click named the surface the cap hides — the part
+    // flush underneath, invisible at that pixel: two answers about one place,
+    // and the left one a part the reader cannot see. A selection is an IDENTITY and
+    // nothing more (`onPick` reads `id` and `name`), so the cap answers it as
+    // completely as the picker would; measure, comment and move are the ones
+    // that need a point on a real surface.
+    const { vp } = plateScene()
+    // WHAT LIES BEHIND, spelled out rather than left as an absent answer: with
+    // the picker mocked to null the test would pass on `null` too, and the
+    // failure a reverted correction produces would read "null instead of
+    // plate" rather than naming the part the reader was actually given.
+    pickEntity.mockReturnValue({
+      id: '/model/spacer', name: 'spacer', point: [1, 1, 0],
+    })
+    const at = clientOver(vp, 1, 1)
+
+    pointerDown(vp, at)
+    pointerUp(at)
+
+    const [pick] = details(vp, EVENT_PICK)
+    expect({ id: pick.id, name: pick.name })
+      .toEqual({ id: '/model/plate', name: 'plate' })
+    expect(pickEntity).not.toHaveBeenCalled()
+    // AND THE POINT IS ON THE CUT PLANE, asked of the plane itself rather
+    // than pinned to a literal: the cap stands a hair inside the solid, and a
+    // test carrying that offset as a number would be reporting the arithmetic
+    // back to itself. `onPick` reads no point, but a caller that ever does
+    // must not be handed the surface the picker would have read THROUGH.
+    expect(pick.point[0]).toBeCloseTo(1, 6)
+    expect(pick.point[1]).toBeCloseTo(1, 6)
+    const [px, py, pz] = pick.point
+    expect(internals(vp.viewer).plane.distanceToPoint({ x: px, y: py, z: pz }))
+      .toBeCloseTo(0, 6)
+  })
+
+  it('still deselects on empty space while a cut stands', () => {
+    // The road out. If the cap answered a pixel it does not cover, a reader
+    // standing in front of a cut could no longer put the selection down.
+    const { vp } = plateScene()
+    const at = clientOver(vp, 9, 9)
+
+    pointerDown(vp, at)
+    pointerUp(at)
+
+    expect(pickEntity).toHaveBeenCalledTimes(1)
+    expect(details(vp, EVENT_PICK))
+      .toEqual([{ id: null, name: null, point: null }])
+  })
+
+  it('leaves the pick entirely to the picker when no cut stands', () => {
+    // Nothing new runs without a cut on screen, the selection included: the
+    // plane and the seed are where they were, and the very pixel that
+    // resolved to the cut face goes to `pickEntity`, whose answer is used
+    // unchanged — the POINT included, which is the field the cap would have
+    // spelled differently.
+    const { vp } = plateScene({ standing: false })
+    pickEntity.mockReturnValue(PLATE)
+    const at = clientOver(vp, 1, 1)
+
+    pointerDown(vp, at)
+    pointerUp(at)
+
+    expect(pickEntity).toHaveBeenCalledTimes(1)
+    expect(details(vp, EVENT_PICK)).toEqual([PLATE])
   })
 })
 

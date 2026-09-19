@@ -128,8 +128,9 @@ function capOnScreen(unit, solid) {
  * registry — and the route of giving it one is closed, because the pick pass
  * replaces every material with its own (`scene.overrideMaterial`, :84897), which
  * kills the stencil that trims the quad to the part's silhouette and would paint
- * that id across the whole clipping rectangle. So a right-click on a cut face
- * used to open the menu for whatever lay BEHIND it — measured in a browser: the
+ * that id across the whole clipping rectangle. So a click on a cut face used to
+ * name whatever lay BEHIND it — the menu opened there, and so did the plain
+ * selection until they were put on one resolver — measured in a browser: the
  * cut face of `plate` answered `reference_spacer`, which sits flush underneath.
  *
  * WHAT REPLACES THE PICK IS GEOMETRY, and it needs no depth comparison against
@@ -155,8 +156,8 @@ function capOnScreen(unit, solid) {
  * which holds for a ghosted part too, where the surface shows the cap
  * through it rather than hiding it. That pose is one
  * Flip button or one orbit away, so it is not a corner: without the test the
- * menu opens on a part that is not under the cursor, which is issue #73 again
- * from the other side.
+ * menu opens — and the selection lands — on a part that is not under the
+ * cursor, which is issue #73 again from the other side.
  *
  * WHY THE RAY AND NOT THE EYE. "The eye is in the clipped half" sounds like the
  * same statement and is a different one, because AN ORTHO RAY DOES NOT START AT
@@ -190,10 +191,12 @@ function capOnScreen(unit, solid) {
  * library synthesised and there is no finer entity to name. `topo` is
  * synthetic for the same reason: nothing was looked up to produce it, and
  * "face" is written because a cut face is what the reader clicked. Both are
- * kept so the two resolvers hand the interface one shape; `tools.js` reads only
- * `id` and `name`, and a caller that ever wants to MEASURE what is under the
- * cursor must go to `pickEntity`, which is what the menu's four sibling callers
- * already do.
+ * kept so the two resolvers hand the interface one shape. `tools.js` reads `id`
+ * and `name`, and passes `point` on unread in the pick event — so the synthetic
+ * point DOES leave the viewport, and a reader of it there would be holding the
+ * cap's own plane rather than a surface of the model. A caller that wants to
+ * MEASURE what is under the cursor must go to `pickEntity`, which is what the
+ * three callers outside this one's pair — measure, comment, move — already do.
  */
 export function capOwnerAt(vp, g, ndc) {
   // A cut on screen is a seed AND the renderer's clipping flag: `suspendSectionCut`

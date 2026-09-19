@@ -621,6 +621,39 @@ export function installTools(vp) {
     if (press.tool === "move" && press.move) dragPart(event);
   }
 
+  /**
+   * What is under the cursor, with the CUT FACE asked about first.
+   *
+   * The stencil cap that closes a cut off carries no component id, so the picker
+   * reads straight through it to the next surface along the same ray — the part
+   * lying flush underneath, which at that pixel the reader cannot see at all
+   * (issue #73; `picking.js` says why it cannot be fixed at the picker, and
+   * carries the browser measurement: the cut face of `plate` answered
+   * `reference_spacer`).
+   *
+   * AND ONLY WHILE A CUT STANDS — with none, `capOwnerAt` returns before it does
+   * any work and this is the same line it always was.
+   *
+   * TWO CALLERS, WHICH IS WHY THIS IS A FUNCTION AND NOT A LINE WRITTEN TWICE.
+   * The menu and the plain selection ask the same question about the same pixel
+   * and must not answer it differently — a right click naming `plate` and a left
+   * click naming the part hidden under it is what the reader reported. A second
+   * hand-written copy is how the two would start disagreeing, which is the
+   * argument `moveRecord` makes further down for the same reason.
+   *
+   * THE OTHER THREE CALLERS OF `pickEntity` — measure, comment, move — are about
+   * a point on a REAL SURFACE: a distance, a pin, a grab. A cap is a quad the
+   * library synthesised and has no surface to measure, pin or drag, so they ask
+   * the picker directly and get the solid the ray truly reaches. A selection is
+   * an identity and nothing more (`onPick` reads `id` and `name`), and a menu is
+   * about a part rather than a place, so the cap answers both as completely as
+   * the picker would.
+   */
+  function entityAt(g, event, x, y) {
+    const ndc = ndcAt(g.canvas, event);
+    return (ndc && capOwnerAt(vp, g, ndc)) || pickEntity(g, x, y);
+  }
+
   function onUp(event) {
     const p = press;
     finish();
@@ -637,26 +670,16 @@ export function installTools(vp) {
     if (!at) return;
     const [x, y] = at;
     if (p.menu) {
-      // The same `pickEntity` the plain pick below uses, so the identifier is of
-      // the same kind and the interface looks it up in the same tree. On a CUT
-      // FACE it is not the same identifier a selection would produce — the cut
-      // face is asked about first, and the paragraph below says why only here.
+      // `entityAt` and not `pickEntity`: it is the same resolver the plain pick
+      // below takes, so the identifier is of the same kind, the interface looks
+      // it up in the same tree, and on a CUT FACE the two name one part. The
+      // whole of why the cut face is asked about first is written on `entityAt`.
       //
       // AND IT DOES NOT EMIT A PICK. The menu is about the part under the
       // cursor; the selection is about the part the reader chose. A tree row's
       // menu leaves the selection where it was, and one menu with two behaviours
       // is worse than either.
-      //
-      // THE CUT FACE IS ASKED ABOUT FIRST, and only while a cut stands — with
-      // none, `capOwnerAt` returns before it does any work and this is the same
-      // line it always was. The stencil cap that closes a cut off carries no
-      // component id, so the picker reads straight through it to whatever lies
-      // behind (picking.js says why that cannot be fixed at the picker), and the
-      // menu would open on the wrong part. HERE ONLY: the other four callers of
-      // `pickEntity` — measure, comment, move, plain selection — are about a
-      // point on a real surface, and a cap has no surface to measure or pin.
-      const ndc = ndcAt(g.canvas, event);
-      const entity = (ndc && capOwnerAt(vp, g, ndc)) || pickEntity(g, x, y);
+      const entity = entityAt(g, event, x, y);
       emit(vp, EVENT_MENU, {
         id: entity ? entity.id : null,
         name: entity ? entity.name : null,
@@ -676,8 +699,8 @@ export function installTools(vp) {
       measureAt(g, x, y);
       return;
     }
-    const entity = pickEntity(g, x, y);
     if (p.tool === "comment") {
+      const entity = pickEntity(g, x, y);
       if (!entity) return;
       emit(vp, EVENT_PLACE, {
         id: entity.id, name: entity.name, p: entity.point,
@@ -686,6 +709,13 @@ export function installTools(vp) {
     }
     // No tool: a plain selection, and the background is an answer too — it is
     // how a reader deselects.
+    //
+    // `entityAt` AND NOT `pickEntity`, the same resolver the menu takes, which
+    // is what makes a right click and a left click on one pixel name one part.
+    // Left to the picker, a left click on the cut face of the part the reader is
+    // looking INTO selected the surface the cap hides — the part flush
+    // underneath, invisible at that pixel. That function carries the rest.
+    const entity = entityAt(g, event, x, y);
     emit(vp, EVENT_PICK, entity
       ? { id: entity.id, name: entity.name, point: entity.point }
       : { id: null, name: null, point: null });
