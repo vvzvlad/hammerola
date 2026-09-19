@@ -405,6 +405,21 @@ export function partCentre(viewer, path) {
   const front = group && group.front;
   const geometry = front && front.geometry;
   if (!geometry || !front.matrixWorld || !front.matrixWorld.elements) return null;
+  // THE MATRIX IS REFRESHED BEFORE IT IS READ, exactly as `cameraBasis` refreshes
+  // the camera's and for the same one-line reason: `matrixWorld` is composed by a
+  // RENDER, and `movePart` moves a part by writing `group.position` — so between
+  // that write and the next frame the matrix still describes where the part was.
+  // The axis arrows stand on this point and run a rAF loop of their OWN, which is
+  // not the library's: without this they read the stale matrix whenever their
+  // frame beats the render, and trail the part across the screen by one frame.
+  //
+  // ASKED OF THE GROUP AND NOT OF `front`, which is the whole of getting it
+  // right. `updateMatrixWorld` composes an object's world matrix out of its
+  // PARENT's and then walks down; it never walks up. `movePart` writes the
+  // GROUP's position, so asking the child would multiply the child's own
+  // unchanged matrix by a parent matrix nobody had recomposed — the stale answer
+  // again, one level up. From the group it cascades into `front` on the way down.
+  if (typeof group.updateMatrixWorld === "function") group.updateMatrixWorld();
   try {
     if (!geometry.boundingBox
         && typeof geometry.computeBoundingBox === "function") {

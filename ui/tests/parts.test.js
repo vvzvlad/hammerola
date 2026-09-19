@@ -762,6 +762,45 @@ describe('partCentre', () => {
     expect(geometry.computeBoundingBox).toHaveBeenCalledTimes(1)
   })
 
+  it('has the group recompose its matrix before reading it', () => {
+    // WHY A SPY AND NOT A MOVED PART. `matrixWorld` is composed by a RENDER, and
+    // `movePart` moves a part by writing `group.position` — so between the write
+    // and the next frame the matrix still says where the part was. The axis
+    // arrows stand on this point and run a rAF loop that is not the library's:
+    // whenever their frame beats the render they read the stale matrix and trail
+    // the part across the screen by a frame, which is what a reader reported.
+    //
+    // What is asserted is therefore the ORDER — recompose, then read — and a spy
+    // states exactly that. Modelling the composition in the fake instead would
+    // mean reimplementing `Object3D.updateMatrixWorld` here, and a first attempt
+    // at it quietly broke five tests about turns: `movePart` writes an ABSOLUTE
+    // position already compensated for the pivot, so "the base plus the position"
+    // is not the matrix three.js would have built.
+    //
+    // OF THE GROUP AND NOT OF `front`: that method composes an object's world
+    // matrix out of its PARENT's and walks down, never up, and the position that
+    // moved is the group's.
+    const { solid, viewer } = scene()
+    const seen = []
+    solid.updateMatrixWorld = vi.fn(() => {
+      solid.front.matrixWorld.elements[12] = 40
+    })
+    const original = solid.front.matrixWorld.elements
+    Object.defineProperty(solid.front, 'matrixWorld', {
+      get() {
+        seen.push(solid.updateMatrixWorld.mock.calls.length)
+        return { elements: original }
+      },
+    })
+
+    expect(partCentre(viewer, PIN)).toEqual([BOX_CENTRE[0] + 40, 3, 0])
+    expect(solid.updateMatrixWorld).toHaveBeenCalledTimes(1)
+    // The read that produces the answer happens AFTER the recompose. The first
+    // entry is the guard above it, which only asks whether there is a matrix at
+    // all; the last is the one the arithmetic comes off.
+    expect(seen[seen.length - 1]).toBe(1)
+  })
+
   it('answers null for a path the scene draws no solid for', () => {
     expect(partCentre(scene().viewer, '/model/not a part')).toBeNull()
   })
