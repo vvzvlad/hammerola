@@ -23,10 +23,9 @@ there for the times the question is "what did we already answer".
 
 from pathlib import Path
 
-from hammerola import config, project
+from hammerola import project
 from hammerola.errors import ClientError
-from hammerola.hub import QUERY_TIMEOUT, Hub
-from hammerola.sources import scratch_dir
+from hammerola.sources import hub_for, scratch_dir
 
 # The statuses the hub filters on (SPEC 7A.2). `None` asks for every one.
 STATUS_OPEN = "open"
@@ -66,7 +65,7 @@ def read(args) -> int:
     """
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
-    hub = _hub(root)
+    hub = hub_for(root)
 
     status = None if getattr(args, "all", False) else STATUS_OPEN
     records = hub.comments(pid, status=status,
@@ -98,7 +97,7 @@ def resolve(args) -> int:
     whoever is closing an item is often not sitting in the model that produced
     it. `read` above needs a project because a QUEUE belongs to one.
     """
-    hub = _hub(None)
+    hub = hub_for(None)
     record = hub.resolve_comment(args.id, getattr(args, "note", None))
     print(f"resolved {record.get('id', args.id)} at {record.get('resolved')}")
     if record.get("note"):
@@ -119,7 +118,7 @@ def files(args) -> int:
     NO PROJECT IS LOOKED FOR, exactly as in `resolve` above and for the same
     reason: a comment id is unique across the hub.
     """
-    hub = _hub(None)
+    hub = hub_for(None)
     record = hub.comment(args.id)
     cid = record.get("id", args.id)
 
@@ -189,11 +188,6 @@ def _destination(args) -> Path:
     else:
         dest = scratch_dir(base, "comments")
     return dest if dest.is_absolute() else (base / dest).resolve()
-
-
-def _hub(root) -> Hub:
-    return Hub(config.hub_url(root), config.edit_token(root),
-               timeout=QUERY_TIMEOUT)
 
 
 def _print_comment(record: dict) -> None:

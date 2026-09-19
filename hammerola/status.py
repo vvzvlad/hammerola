@@ -31,10 +31,11 @@ THE THREE THINGS IT ANSWERS, in the order somebody asks them:
     builds    the revisions that exist, newest first
 """
 
-from hammerola import config, project
+from hammerola import project
 from hammerola.errors import ClientError
-from hammerola.hub import QUERY_TIMEOUT, Hub
+from hammerola.hub import Hub
 from hammerola.limits import DEV_SLOT
+from hammerola.sources import hub_for
 
 # How many revisions are listed before the tail is summarised. A project with a
 # year of history is a list nobody reads; the newest few plus a count is what
@@ -52,8 +53,7 @@ def run(args) -> int:
     # so a machine that cannot answer "as whom" is a machine that has not been
     # set up — and being told that here, by a command somebody runs first, is
     # better than being told it by the first push.
-    hub = Hub(config.hub_url(root), config.edit_token(root),
-              timeout=QUERY_TIMEOUT)
+    hub = hub_for(root)
 
     title = project.read_project_title(root)
     print(f"{pid}  {title or '(no title)'}")

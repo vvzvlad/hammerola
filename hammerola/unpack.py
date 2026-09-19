@@ -254,5 +254,5 @@ def check_name(name: str, where: str = "the archive",
             + (f" (the only exception is a file named "
                f"{', '.join(sorted(rules.hidden_leaves))})"
                if rules.hidden_leaves else "") + ".\n"
-            f"  Nothing was written — an archive naming a path like that "
-            f"did not come from a push this hub accepted.")
+            "  Nothing was written — an archive naming a path like that "
+            "did not come from a push this hub accepted.")

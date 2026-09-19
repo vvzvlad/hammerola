@@ -69,7 +69,6 @@ from pathlib import Path
 from hammerola.buildnames import unservable_reason
 from hammerola import project
 from hammerola.errors import ClientError
-from hammerola.hub import Hub
 from hammerola.limits import DEV_SLOT, SAFE_ID
 from hammerola.sources import LATEST, SHORT_ID_CHARS, hub_for, scratch_dir
 
