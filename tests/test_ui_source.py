@@ -92,6 +92,36 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+# `from './chromeview.js'` — a sibling module, as the interface imports one.
+SIBLING_IMPORT = re.compile(r"""from\s+['"]\./([\w.]+\.jsx?)['"]""")
+
+
+def page_sources() -> list[Path]:
+    """The build page's own source: the component and the modules it was cut into.
+
+    A module counts when the component imports it from `./` and NO OTHER file
+    under ui/src does — it exists to be part of this page, so what is written in
+    it is written on this page. Issue #103 cut seven such modules off a 9312-line
+    component, and every check scoped to the component by NAME quietly started
+    sweeping 1800 fewer lines the moment it landed.
+
+    DERIVED AND NOT LISTED, which is the point: a list would go stale in the
+    direction of checking less, silently, exactly as it just did. A module that
+    gains a second consumer drops out of here and becomes shared infrastructure,
+    which the checks over ALL_UI_FILES already cover.
+    """
+    others = [p for p in ALL_UI_FILES if p != COMPONENT]
+    mine = []
+    for name in sorted(set(SIBLING_IMPORT.findall(read(COMPONENT)))):
+        path = UI / name
+        if not path.is_file():
+            continue
+        needle = f"./{name}"
+        if not any(needle in read(other) for other in others):
+            mine.append(path)
+    return [COMPONENT] + mine
+
+
 def strip_comments(source: str) -> str:
     """Source with `//` and `/* */` comments removed.
 
@@ -436,7 +466,9 @@ def test_every_meta_field_the_ui_reads_is_one_render_writes():
     written = (set(re.findall(r'"(\w+)":', render))
                | set(re.findall(r'\[\s*"(\w+)"\s*\]\s*=', render)))
     read_by_ui = set()
-    for path in (COMPONENT, UI / "hub.js"):
+    # `page_sources()` and not COMPONENT alone: `meta.title`, `meta.project`,
+    # `meta.built` and `meta.views` are read in `chromeview.js` since #103.
+    for path in page_sources() + [UI / "hub.js"]:
         # `meta.json` is the FILE the fields come out of, not one of them, and it
         # is spelled the same way a field access is. Dropped by name rather than
         # by excluding the word `json`, so a field genuinely called `json` would
@@ -1068,17 +1100,35 @@ def test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own():
     the pushed model, which is the part's own colour and not the interface's to
     theme.
     """
-    source = CHARACTER_REFERENCE.sub("", strip_comments(read(COMPONENT)))
-    found = sorted({match.group(0) for match in COLOUR_LITERAL.finditer(source)})
-    assert not found, (
-        f"{COMPONENT.name} writes {found} rather than naming a role from "
-        f"static/_v/tokens.css. A value here is right in one theme and wrong in "
-        f"the other, and the page that is wrong still renders")
-    # Otherwise a file that stopped painting anything at all would pass by
+    # THE WHOLE PAGE AND NOT THE ONE FILE, via `page_sources`: the panels were
+    # cut into modules of their own (#103) and took their `css()` strings with
+    # them, so a sweep of the component alone would now pass over most of the
+    # colour this page draws.
+    # ONE EXEMPTION, AND IT IS STATED ON BOTH SIDES NOW. `proposalgeom.js`
+    # builds the geometry of the bodies the reader is proposing, and its two
+    # hexes colour MODEL PARTS — the same kind of value as the part colours the
+    # hub pushes in a view file, not interface chrome. Its own header says so
+    # and names this check; until #103 widened the sweep it sat outside by
+    # accident rather than by agreement, which is the weaker of the two.
+    excused = {"proposalgeom.js"}
+    whole = ""
+    for path in page_sources():
+        if path.name in excused:
+            continue
+        source = CHARACTER_REFERENCE.sub("", strip_comments(read(path)))
+        found = sorted({m.group(0) for m in COLOUR_LITERAL.finditer(source)})
+        assert not found, (
+            f"{path.name} writes {found} rather than naming a role from "
+            f"static/_v/tokens.css. A value here is right in one theme and "
+            f"wrong in the other, and the page that is wrong still renders")
+        whole += source
+    # Otherwise a page that stopped painting anything at all would pass by
     # having nothing to find, which is this module's own oldest failure mode.
-    assert re.search(r"var\(\s*--", source), (
-        f"{COMPONENT.name} spends no palette token at all — this check is "
-        f"sweeping a file that has stopped drawing")
+    # Asked of the page rather than of each file, because several of these
+    # modules legitimately draw nothing.
+    assert re.search(r"var\(\s*--", whole), (
+        "the build page spends no palette token at all — this check is "
+        "sweeping files that have stopped drawing")
 
 
 # A `css()` SOURCE FILE, CUT INTO DECLARATION-SIZED PIECES.
