@@ -2698,9 +2698,11 @@ const SOURCE = readFileSync(resolve(process.cwd(), 'src/HammerolaViewer.jsx'), '
  *
  * The three quote characters are tracked, so a `//` inside a string is not a
  * comment. Regex literals are NOT, and do not have to be: a `/` is read as a
- * comment only when the next character is `/` or `*`, and this file has no
- * regex containing either (no escaped slash anywhere in it). Newlines survive,
- * so offsets still land on the line they came from.
+ * comment only when the next character is `/` or `*`, and no regex in the three
+ * files this reads contains either. NOT "no escaped slash anywhere", which this
+ * said until the component grew `/^image\/([a-z0-9+.-]+)$/i` -- an escaped
+ * slash is harmless, since what would mis-strip is `//` or `/*` inside a
+ * pattern. Newlines survive, so offsets still land on the line they came from.
  */
 function stripComments(js) {
   let out = ''
