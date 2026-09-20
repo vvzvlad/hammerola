@@ -31,7 +31,8 @@ import {
 } from '../src/viewport/parts.js'
 import { HmrViewport } from '../src/viewport/element.js'
 import {
-  fakeGroup, fakeMatrix, fakeShapeSolid, fakeViewer, fakeViewport,
+  fakeCapUnits, fakeGroup, fakeMatrix, fakeShapeSolid, fakeSolidObject,
+  fakeViewer, fakeViewport,
 } from './fakes.js'
 import assembled from './fixtures/assembled.json'
 
@@ -478,6 +479,146 @@ describe('applySelected', () => {
 
     expect(highlight.clear).toHaveBeenCalled()
     expect(highlight.selectSolid).not.toHaveBeenCalled()
+  })
+})
+
+describe('applySelected and the cut face', () => {
+  // The colour each part's cut face carries, READ OUT OF THE FIXTURE: with
+  // `clipObjectColors` on (options.js) `setObjectColorCaps` writes every solid's
+  // own colour over its caps, so a cap's own colour IS the part's.
+  const CAP_COLORS = LEAVES.map(({ node }) => parseInt(node.color.slice(1), 16))
+
+  /**
+   * The fixture's scene with a cut standing over it: one solid per leaf, each
+   * capped on all three planes.
+   *
+   * `groups` holds the VERY OBJECTS the units were built over, because that
+   * identity is what the cap lookup matches on — the library writes the PIPE
+   * spelling of the path on the group itself and the selection speaks the SLASH
+   * one, so the two are deliberately not each other's transform here.
+   */
+  function cutScene() {
+    const solids = PATHS.map((path) => fakeSolidObject(path.replaceAll('/', '|')))
+    const groups = Object.fromEntries(PATHS.map((path, at) => [path, solids[at]]))
+    const viewer = fakeViewer({
+      states: statesFor(PATHS),
+      groups,
+      capUnits: fakeCapUnits(solids, { colors: CAP_COLORS }),
+    })
+    const g = internals(viewer)
+    return {
+      viewer,
+      units: g.clipping._capUnits,
+      tint: g.nestedGroup.highlight.uniforms.uHighlightSelectedColor.value,
+    }
+  }
+
+  /** The colours a part's cut faces are standing at, one per clip plane. */
+  const shownOn = (unit) => unit.capMeshes.map((cap) => cap.material.color.getHex())
+
+  /** What `shownOn` should answer for a part painted in one colour. */
+  const allOf = (unit, hex) => unit.capMeshes.map(() => hex)
+
+  it('is asked of a scene whose parts are not already the selection colour', () => {
+    // The premise of every test below: if the fixture is ever regenerated from a
+    // model painted in the library's own blue, they would all pass on a build
+    // that paints nothing at all.
+    const { tint } = cutScene()
+    expect(CAP_COLORS).not.toContain(tint.getHex())
+    expect(new Set(CAP_COLORS).size).toBe(CAP_COLORS.length)
+  })
+
+  it('paints the cut face of the selected part, which the highlight cannot reach',
+    () => {
+      // A cap carries no `componentId`, so `selectSolid` leaves it exactly as it
+      // was and the body tinted while the face it was cut open on did not.
+      const { viewer, units, tint } = cutScene()
+      applySelected(viewer, [PATHS[1]])
+
+      expect(shownOn(units[1])).toEqual(allOf(units[1], tint.getHex()))
+    })
+
+  it('paints it in the colour the library paints the body, not a copy of it', () => {
+    // Read off `uHighlightSelectedColor` rather than written out as a number, so
+    // a library that changes its blue moves the cut face with the body instead
+    // of leaving the two a shade apart.
+    const { viewer, units, tint } = cutScene()
+    tint.setHex(0x123456)
+    applySelected(viewer, [PATHS[1]])
+
+    expect(shownOn(units[1])).toEqual(allOf(units[1], 0x123456))
+  })
+
+  it('leaves every other part\'s cut face the colour it had', () => {
+    const { viewer, units } = cutScene()
+    applySelected(viewer, [PATHS[1]])
+
+    for (const [at, unit] of units.entries()) {
+      if (at === 1) continue
+      expect(shownOn(unit)).toEqual(allOf(unit, CAP_COLORS[at]))
+    }
+  })
+
+  it('puts a cut face back to ITS OWN colour when the selection moves on', () => {
+    // Its own, and not one colour remembered for the whole scene: every part is
+    // a different one here, so a single shared memo comes back wrong for three
+    // of the four.
+    const { viewer, units, tint } = cutScene()
+    applySelected(viewer, [PATHS[1]])
+    applySelected(viewer, [PATHS[2]])
+
+    expect(shownOn(units[1])).toEqual(allOf(units[1], CAP_COLORS[1]))
+    expect(shownOn(units[2])).toEqual(allOf(units[2], tint.getHex()))
+  })
+
+  it('remembers what the cap had BEFORE it paints, not after', () => {
+    // The same selection arrives more than once — `reconcile` re-applies it
+    // after every render, and `selectedPaths` mints a new array every time — so
+    // a memo taken on each pass would record the tint on the second one and the
+    // part would never come back.
+    const { viewer, units } = cutScene()
+    applySelected(viewer, [PATHS[1]])
+    applySelected(viewer, [PATHS[1]])
+    applySelected(viewer, [])
+
+    expect(shownOn(units[1])).toEqual(allOf(units[1], CAP_COLORS[1]))
+  })
+
+  it('paints every part of a row that stands for several solids', () => {
+    const { viewer, units, tint } = cutScene()
+    applySelected(viewer, [PATHS[0], PATHS[2]])
+
+    expect(shownOn(units[0])).toEqual(allOf(units[0], tint.getHex()))
+    expect(shownOn(units[2])).toEqual(allOf(units[2], tint.getHex()))
+    expect(shownOn(units[1])).toEqual(allOf(units[1], CAP_COLORS[1]))
+  })
+
+  it('still lights the body when the library has moved its cap units', () => {
+    // The promise the guard is there for: a reach into a private field of the
+    // library costs the selection this tint and NOTHING else — not the highlight
+    // on the body, and not the re-render that shows it.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { viewer } = cutScene()
+    const highlight = internals(viewer).nestedGroup.highlight
+    Object.defineProperty(internals(viewer).clipping, '_capUnits', {
+      get() { throw new Error('moved') },
+    })
+    applySelected(viewer, [PATHS[1]])
+
+    expect(highlight.selectSolid).toHaveBeenCalledWith(PATHS[1], true)
+    expect(viewer.update).toHaveBeenCalledTimes(1)
+    vi.restoreAllMocks()
+  })
+
+  it('leaves the cut faces alone when there is no cut in the scene', () => {
+    // `Clipping` starts `_capUnits` as `[]` and `_createStencils` fills it, so an
+    // empty array is a scene with no solids rather than a missing field.
+    const viewer = fakeViewer({ states: statesFor(PATHS) })
+    const highlight = internals(viewer).nestedGroup.highlight
+    applySelected(viewer, [PATHS[1]])
+
+    expect(highlight.selectSolid).toHaveBeenCalledWith(PATHS[1], true)
+    expect(viewer.update).toHaveBeenCalledTimes(1)
   })
 })
 

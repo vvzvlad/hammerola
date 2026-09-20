@@ -209,12 +209,60 @@ export function applyGhost(viewer, ghost) {
 }
 
 /**
+ * Paint the CUT FACES of the selected parts, and put every other one back.
+ *
+ * A CAP IS NOT IN THE SHADER'S STATE TEXTURE — it is a quad the library
+ * synthesises per (plane, solid) and carries no `componentId` — so `selectSolid`
+ * leaves it exactly as it was, and the selection used to stop at the cut. Units
+ * are matched BY GROUP IDENTITY for the reason `capOwnerAt` gives in picking.js.
+ * The tint is read off the library's own uniform so it cannot drift from the
+ * body's; the two are NOT shaded alike, because hatch.js replaces `gl_FragColor`
+ * on every cap and the cut face therefore carries this colour flat while the
+ * body's is lit. Its own guard, like `safeHatch`'s: every line here reaches into
+ * a private field of the library, and one that has moved must cost this tint and
+ * nothing else — the highlight on the body, and the re-render that shows it,
+ * belong to the caller.
+ */
+function paintCutFaces(g, list) {
+  try {
+    const units = g.clipping && g.clipping._capUnits;
+    const groups = g.nestedGroup && g.nestedGroup.groups;
+    const hl = g.nestedGroup && g.nestedGroup.highlight;
+    const uniform = hl && hl.uniforms && hl.uniforms.uHighlightSelectedColor;
+    const tint = uniform && uniform.value;
+    if (!Array.isArray(units) || !groups || !tint) return;
+    const chosen = new Set();
+    for (const path of list) if (path && groups[path]) chosen.add(groups[path]);
+    for (const unit of units) {
+      const caps = unit && unit.capMeshes;
+      if (!Array.isArray(caps)) continue;
+      const on = chosen.has(unit.solid);
+      for (const cap of caps) {
+        const material = cap && cap.material;
+        if (!material || !material.color) continue;
+        // MEMOISED, not recomputed from the solid's colour: that is only the
+        // cap's answer while `clipObjectColors` is on (options.js). It rides the
+        // material, so a scene rebuilt by `show()` starts clean and is repainted
+        // there — `applied.selected` is reset in the same pass.
+        if (!material.userData.capColor) {
+          material.userData.capColor = material.color.clone();
+        }
+        material.color.copy(on ? tint : material.userData.capColor);
+      }
+    }
+  } catch (error) {
+    console.warn("cut face tint", error);
+  }
+}
+
+/**
  * Apply the interface's `selected`.
  *
  * The shader highlight rather than a material change: `HighlightController` owns
  * a texture of per-object states, so nothing per-part is touched and nothing has
  * to be undone. It paints FACES only — deliberate on the library's side, edges
- * keep their own colour.
+ * keep their own colour. The one surface it cannot reach is the CUT FACE, which
+ * carries no component id and is painted by hand beside it; see `paintCutFaces`.
  *
  * `selectSolid` takes the same path key as `getStates`, and only a solid has
  * one; anything else needs the id-level API, which is not what a part selection
@@ -239,6 +287,8 @@ export function applySelected(viewer, selected) {
   try {
     hl.clear();
     for (const path of list) if (path) hl.selectSolid(path, true);
+    // BEFORE the re-render, so one frame shows both halves of the selection.
+    paintCutFaces(g, list);
     viewer.update(true, false);
   } catch (error) {
     console.warn("select", error);

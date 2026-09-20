@@ -58,6 +58,53 @@ const norm = (a) => {
   return [a[0] / l, a[1] / l, a[2] / l]
 }
 
+// -- colours, for the selection ------------------------------------------------
+//
+// Transcribed from static/_v/three-cad-viewer.esm.js, not invented: the two
+// highlight colours the `HighlightController` module declares (:84938-84940) and
+// hands its shader as uniforms, and the per-plane colours `Clipping` starts
+// every cap material at (`PLANE_COLORS`, :90890) before `setObjectColorCaps`
+// writes the solids' own over them.
+
+/** Highlight colour for a SELECTED component — `HIGHLIGHT_COLOR_SELECTED`. */
+export const HIGHLIGHT_COLOR_SELECTED = 0x53a0e3
+/** ...and for a hovered, not-selected one — `HIGHLIGHT_COLOR_HOVER`. */
+export const HIGHLIGHT_COLOR_HOVER = 0x89b9e3
+/** `PLANE_COLORS.light`, one per clip plane, in the library's own order. */
+export const PLANE_COLORS = [0xff0000, 0x00ff00, 0x0000ff]
+
+/**
+ * A `THREE.Color`, in the operations the viewport and the suite ask of one:
+ * `setHex`, `getHex`, `clone` and `copy`.
+ *
+ * Three's own `Color` converts sRGB to the renderer's working colour space on
+ * the way in and back on the way out, and this does not — deliberately, because
+ * nothing under test performs that conversion: the viewport copies one colour
+ * onto another and remembers what was there, and the channels only ever come
+ * back out through `getHex`. What the model DOES have to keep is that a `copy`
+ * writes into the colour it was called on rather than replacing it, since the
+ * library hands out the very `Color` object its uniform is bound to.
+ */
+function fakeColor(hex = 0xffffff) {
+  const color = { r: 1, g: 1, b: 1 }
+  color.setHex = (value) => {
+    color.r = ((value >> 16) & 255) / 255
+    color.g = ((value >> 8) & 255) / 255
+    color.b = (value & 255) / 255
+    return color
+  }
+  color.getHex = () => (Math.round(color.r * 255) << 16)
+    ^ (Math.round(color.g * 255) << 8) ^ Math.round(color.b * 255)
+  color.clone = () => fakeColor().copy(color)
+  color.copy = (other) => {
+    color.r = other.r
+    color.g = other.g
+    color.b = other.b
+    return color
+  }
+  return color.setHex(hex)
+}
+
 /**
  * A `Vector3` as the adapter uses one: it never constructs a vector, it borrows
  * the instance the library handed back and overwrites it (`eye.clone().set(...)`).
@@ -219,7 +266,19 @@ export function fakeViewer({
       // `_renderEdges` feeds them to `createEdgeMaterial`.
       width: rect.width,
       height: rect.height,
-      highlight: { clear: vi.fn(), selectSolid: vi.fn() },
+      // `HighlightController`: the two calls the selection pass makes, and the
+      // shared uniform objects its constructor builds (:85075-85082) — the
+      // selected colour is the one the patched fragment shader assigns to
+      // `diffuseColor.rgb`, and the cut-face tint is read off THIS object rather
+      // than off a number of its own.
+      highlight: {
+        clear: vi.fn(),
+        selectSolid: vi.fn(),
+        uniforms: {
+          uHighlightSelectedColor: { value: fakeColor(HIGHLIGHT_COLOR_SELECTED) },
+          uHighlightHoverColor: { value: fakeColor(HIGHLIGHT_COLOR_HOVER) },
+        },
+      },
     },
     display: {},
     controls: {},
@@ -331,14 +390,17 @@ export function fakeMatrix({ scale = [1, 1, 1], position = [0, 0, 0] } = {}) {
 }
 
 /** A cap material as the library builds one: a `MeshStandardMaterial` with
- *  three.js's default no-op `onBeforeCompile`, and the `userData` box every
- *  THREE material carries. */
-export function fakeCapMaterial() {
+ *  three.js's default no-op `onBeforeCompile`, the `userData` box every THREE
+ *  material carries, and the `color` the cap is filled with — which
+ *  `createStencilPlaneMaterial` is handed and `PlaneMesh`'s constructor then
+ *  `set`s a second time from its own `color` argument (:91070). */
+export function fakeCapMaterial(color = PLANE_COLORS[0]) {
   return {
     defines: { STANDARD: '' },
     needsUpdate: false,
     onBeforeCompile: function noop() {},
     userData: {},
+    color: fakeColor(color),
   }
 }
 
@@ -356,7 +418,7 @@ export function fakeCapMaterial() {
  *  `normal` is a THREE `Vector3` — read as `.x/.y/.z`, NOT as the array the
  *  slider-side model above uses. Same library, two shapes, depending on which
  *  side of `clipPlanes[i]` you stand on. */
-export function fakeCap(index, size, normal = [0, 0, 1]) {
+export function fakeCap(index, size, normal = [0, 0, 1], color = PLANE_COLORS[index]) {
   const [nx, ny, nz] = norm(normal)
   return {
     type: `StencilPlane-${index}-0`,
@@ -368,7 +430,7 @@ export function fakeCap(index, size, normal = [0, 0, 1]) {
     // a cap off the screen — so a cap that has not been culled starts true, the
     // way every Object3D does.
     visible: true,
-    material: fakeCapMaterial(),
+    material: fakeCapMaterial(color),
   }
 }
 
@@ -398,15 +460,22 @@ export function fakeSolidObject(name, { min = [0, 0, 0], max = [10, 10, 10], mat
  *  remain keep their own `index`. That is the case the cap lookup's comment is
  *  about: `capMeshes` is filled plane-major, so a unit the loop skipped for one
  *  plane has the rest shifted along, and reading `capMeshes[SECTION_INDEX]`
- *  would then hand back another plane's cap with nothing to say it had. */
+ *  would then hand back another plane's cap with nothing to say it had.
+ *
+ *  `colors` is one hex PER SOLID, which is the scene `clipObjectColors` builds:
+ *  `setObjectColorCaps(true)` writes each solid's own colour over every cap of
+ *  it, so caps differ by PART rather than by plane. Left out, the caps keep the
+ *  per-plane colours the constructor gave them. */
 export function fakeCapUnits(solids, {
-  size = 36, planes = [[0, 0, 1], [0, 1, 0], [1, 0, 0]], omit = [],
+  size = 36, planes = [[0, 0, 1], [0, 1, 0], [1, 0, 0]], omit = [], colors = null,
 } = {}) {
-  return solids.map((solid) => ({
+  return solids.map((solid, at) => ({
     solid,
     stencilGroups: [],
     capMeshes: planes
-      .map((n, i) => (omit.includes(i) ? null : fakeCap(i, size, n)))
+      .map((n, i) => (omit.includes(i)
+        ? null
+        : fakeCap(i, size, n, colors ? colors[at] : PLANE_COLORS[i])))
       .filter(Boolean),
     radiusPx: 0,
   }))
@@ -427,25 +496,6 @@ export function fakeCapUnits(solids, {
 // `WORLD_UNITS` is in `defines`, and the setter raises `needsUpdate` when — and
 // only when — the flag actually changes. `defines` rides `ShaderMaterial.copy`
 // as its own fresh object, so a clone starts wherever its donor stood.
-
-/** A `THREE.Color` as `LineMaterial.uniforms.diffuse.value` holds one. */
-function fakeColor(hex = 0xffffff) {
-  const color = { r: 1, g: 1, b: 1 }
-  color.setHex = (value) => {
-    color.r = ((value >> 16) & 255) / 255
-    color.g = ((value >> 8) & 255) / 255
-    color.b = (value & 255) / 255
-    return color
-  }
-  color.clone = () => {
-    const copy = fakeColor()
-    copy.r = color.r
-    copy.g = color.g
-    copy.b = color.b
-    return copy
-  }
-  return color.setHex(hex)
-}
 
 /** A `THREE.Vector2` as `LineMaterial.uniforms.resolution.value` holds one. */
 function fakeVector2(x = 0, y = 0) {
