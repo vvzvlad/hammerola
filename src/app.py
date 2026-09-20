@@ -186,12 +186,6 @@ OCTET_TYPE = "application/octet-stream"
 MARKDOWN_TYPE = "text/markdown; charset=utf-8"
 GZIP_TYPE = "application/gzip"
 
-# Only the vendored bundle may be cached forever: its name carries the library's
-# identity and it is replaced by a differently named file, never edited. Our own
-# `hammerola.js` and `site.css` DO change with the image under a stable name, so
-# an immutable year would leave people on the old page until 2027 after a deploy.
-VENDORED_ASSET_PREFIX = "three-cad-viewer."
-
 # The site icon, and the one asset with two URLs. The pages link it by its real
 # name; `/favicon.ico` serves the same file for the clients that never parsed any
 # HTML to find that link.
@@ -897,15 +891,44 @@ def make_handler(store: Store, comment_store: CommentStore,
                 info = os.fstat(handle.fileno())
                 if not stat.S_ISREG(info.st_mode):
                     return self._error(404, "not found", with_body=with_body)
-                # Only the vendored bundle gets the immutable year. Our own
-                # scripts and `site.css` change under a stable name with every
-                # image, so `immutable` on them would pin visitors to the page
-                # that shipped the day they first loaded the site.
-                cache = (CACHE_IMMUTABLE
-                         if path.name.startswith(VENDORED_ASSET_PREFIX)
-                         else CACHE_NONE)
+                # NOTHING under `static/_v/` gets the immutable year: every file
+                # here changes under a stable name with the image, and a year on
+                # such a name pins a reader to the page that shipped the day they
+                # first loaded the site, with no way to recall the cached copy.
+                # `three-cad-viewer.esm.js` used to be the exception, on the
+                # grounds that its name carried the library's identity and a new
+                # version would arrive as a new name. That stopped being true when
+                # the library was forked into `viewer/`: `make viewer` rewrites
+                # this exact name, so a patch to the viewer has to reach browsers
+                # the same way a patch to `hammerola.js` does.
+                #
+                # WHICH IS ONLY AFFORDABLE WITH THE VALIDATOR BELOW. `no-cache`
+                # means "ask before reusing", not "do not store" — but a reply
+                # carrying no validator gives the browser nothing to ask WITH, so
+                # it sends a plain GET and is handed the whole file again. This
+                # directory now holds 3.6 MB of viewer and three, and without an
+                # ETag every visit to a build page would refetch all of it. With
+                # one, the question costs a round trip and a 304, and the bytes
+                # move only when they actually changed.
+                #
+                # WEAK, and built from size and mtime rather than from the bytes:
+                # hashing 3.6 MB per request to save sending it is the wrong
+                # trade. A weak tag is all `no-cache` needs — it answers "is this
+                # the same representation", not "is it byte-identical" — and both
+                # halves move together here, because every file under this
+                # directory is written by `make ui`, `make viewer` or a COPY in
+                # the image build, each of which lands a fresh mtime. The worst
+                # a stale pair can cost is a refetch, never a wrong file.
+                etag = 'W/"{:x}-{:x}"'.format(info.st_size, info.st_mtime_ns)
+                # Browsers echo the tag they were given, so equality is the whole
+                # comparison: no list to split and no `*` to honour, both of which
+                # belong to requests this hub never receives.
+                if self.headers.get("If-None-Match") == etag:
+                    self._headers(304, content_type_for(path.name), 0,
+                                  CACHE_NONE, {"ETag": etag})
+                    return None
                 self._headers(200, content_type_for(path.name), info.st_size,
-                              cache)
+                              CACHE_NONE, {"ETag": etag})
                 if not with_body:
                     return None
                 while True:

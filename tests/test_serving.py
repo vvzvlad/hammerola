@@ -78,12 +78,71 @@ def test_latest_urls_are_not_cached(hub):
         assert hub.get(path).headers["Cache-Control"] == "no-cache", path
 
 
-def test_the_vendored_bundle_is_immutable(hub):
-    # Its name carries the library's identity: a new version arrives as a
-    # differently named file, this one is never edited in place.
-    r = hub.get("/_v/three-cad-viewer.css")
-    assert r.status_code == 200
-    assert r.headers["Cache-Control"] == IMMUTABLE
+def test_the_vendored_viewer_is_not_immutable(hub):
+    # It used to be, on the grounds that its name carried the library's identity
+    # and a new version would arrive under a new name. The fork in `viewer/` ended
+    # that: `make viewer` rewrites these exact names, so an immutable year would
+    # leave every returning reader on the viewer that shipped before the patch.
+    for path in ("/_v/three-cad-viewer.css", "/_v/three.module.js"):
+        r = hub.get(path)
+        assert r.status_code == 200, path
+        assert r.headers["Cache-Control"] == "no-cache", path
+
+
+def test_an_asset_revalidates_instead_of_being_sent_twice(hub):
+    """`no-cache` is only affordable because the reply carries a validator.
+
+    Without one the browser has nothing to make a conditional request WITH, so
+    every visit refetches the whole of `static/_v/` -- 3.6 MB of viewer and
+    three since the fork. This is the half that makes the header cheap, and it
+    is invisible in any single response, which is why it is asserted here.
+    """
+    for path in ("/_v/three.module.js", "/_v/pointer.js", "/_v/tokens.css"):
+        first = hub.get(path)
+        assert first.status_code == 200, path
+        etag = first.headers.get("ETag")
+        assert etag and etag.startswith('W/"'), path
+        again = hub.get(path, headers={"If-None-Match": etag})
+        assert again.status_code == 304, path
+        assert again.headers["ETag"] == etag, path
+        # A 304 carries no body: that is the entire saving.
+        assert not again.content, path
+        # A tag that no longer matches gets the file, not another 304 -- the
+        # check has to be able to say NO, or it would serve a stale copy for ever.
+        stale = hub.get(path, headers={"If-None-Match": 'W/"0-0"'})
+        assert stale.status_code == 200, path
+        assert stale.content, path
+
+
+def test_the_viewer_bundle_asks_the_hub_for_three_at_a_url_it_answers(hub):
+    """The joint between two files that never meet, checked from both sides.
+
+    `output.paths` in viewer/rollup.config.mjs writes the specifier INTO the
+    bundle; `_serve_asset` here decides which URL the hub answers. Nothing else
+    compares them. A typo in either survives `make viewer`, the whole suite and
+    the CI smoke gate -- which asks whether the file is in the image, not whether
+    anything points at it -- and fails only in a browser, as an empty canvas and
+    a console line nobody is watching. This is that comparison.
+    """
+    bundle = (STATIC_DIR / "_v" / "three-cad-viewer.esm.js").read_text(
+        encoding="utf-8", errors="replace")
+    found = re.findall(r"""from ['"](/_v/[^'"]+)['"]""", bundle)
+    assert found, "the bundle imports nothing from /_v/ -- is three still external?"
+    for url in sorted(set(found)):
+        r = hub.get(url)
+        assert r.status_code == 200, url
+        assert r.headers["Content-Type"].startswith("text/javascript"), url
+    # three.module.js then imports three.core.js by a RELATIVE path, which is why
+    # both names are flat under /_v/: `_safe_name` serves one path component, so
+    # `./three.core.js` resolves to a URL the hub can answer and a nested layout
+    # could not be reached at all.
+    module = (STATIC_DIR / "_v" / "three.module.js").read_text(
+        encoding="utf-8", errors="replace")
+    relative = re.findall(r"""from ['"](\./[^'"]+)['"]""", module)
+    assert relative, "three.module.js pulls nothing of its own"
+    for name in sorted(set(relative)):
+        r = hub.get("/_v/" + name[2:])
+        assert r.status_code == 200, name
 
 
 def test_our_own_assets_are_not_immutable(hub):
