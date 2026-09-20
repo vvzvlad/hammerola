@@ -273,6 +273,11 @@ export class HmrViewport extends HTMLElement {
     // and `facing` in parts.js).
     this.partPivot = new Map();
     this.partFacing = new Map();
+    // HOW COARSELY A DRAG OF EACH PATH ROUNDS, in millimetres, where the
+    // interface has said so for that part (`setSnapSteps`). A path with no
+    // entry rounds to the step the grid gives (`niceStep` in tools.js), which
+    // is every path until somebody asks for another one.
+    this.snapSteps = new Map();
     // THE IDS OF THE POINTERS CURRENTLY DOWN ON THE CANVAS, and not a flag: two
     // fingers on the glass are two presses, and one bit meant the first release
     // answered for the second — see `installIdleClock`, which is the only thing
@@ -802,6 +807,13 @@ export class HmrViewport extends HTMLElement {
         this.partHome.clear();
         this.partPivot.clear();
         this.partFacing.clear();
+        // AND THE SNAP STEPS GO WITH THE OFFSETS, for the offsets' own reason
+        // read one field over: a step is keyed by a PATH, and a path is only
+        // as stable as the build that minted it — the tessellator's numbering
+        // means `/model/pin(2)` can name a different part in the next build.
+        // Left standing, the hand would round to a number no row on the page
+        // shows and nothing can clear.
+        this.snapSteps.clear();
       }
 
       if (!this.viewer) {
@@ -1093,6 +1105,27 @@ export class HmrViewport extends HTMLElement {
    */
   setMoves(list) {
     reconcileMoves(this, Array.isArray(list) ? list : []);
+  }
+
+  /**
+   * How coarsely a drag rounds, per path: `{path, step}` per entry, in
+   * millimetres.
+   *
+   * THE WHOLE SET EVERY TIME, for the reason `setMoves` above takes one: an
+   * override is taken back by being LEFT OUT — the field is emptied and there
+   * is no other gesture for it — so a push has to be able to say what is no
+   * longer overridden as well as what is.
+   *
+   * A PATH WITH NO ENTRY IS THE ORDINARY CASE and not a gap: the manipulator
+   * falls back to `niceStep` (viewport/tools.js), which is the step every drag
+   * takes unless something here says otherwise.
+   *
+   * NOTHING ON SCREEN MOVES BECAUSE OF THIS — no reconcile, no re-stage. It is
+   * read at the next drag and nowhere else (`gizmo.js`).
+   */
+  setSnapSteps(list) {
+    this.snapSteps = new Map((Array.isArray(list) ? list : [])
+      .map((entry) => [entry.path, entry.step]));
   }
 
   /**

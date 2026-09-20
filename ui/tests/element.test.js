@@ -130,6 +130,11 @@ function element(state = {}, viewer = fakeViewer()) {
   vp.partHome = new Map()
   vp.partPivot = new Map()
   vp.partFacing = new Map()
+  // THE FIFTH MAP KEYED BY PATH, and it is here for the four above it: `show()`
+  // empties all five on a load, so a helper that left this one off would take
+  // every case through this file down at a `.clear()` rather than at whatever
+  // it asks about.
+  vp.snapSteps = new Map()
   vp.measurePicks = []
   vp.measureLabel = null
   vp.loadToken = 0
@@ -1317,6 +1322,45 @@ describe('the overlay laid over the model', () => {
     expect(viewer.render).toHaveBeenCalledTimes(staged)
   })
 
+  it('keeps the whole set of snap steps, and keeps only what the last push said', async () => {
+    // THE THIRD THING THE PROPOSAL PUSHES, and the only one the scene does not
+    // move for: a step is read at the next DRAG (viewport/gizmo.js). It is the
+    // whole set every time for `setMoves`' reason — a step is given back by
+    // being left out of the push, the field having been emptied — so what is
+    // asked here is that the second push does not merely add to the first.
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    const staged = viewer.render.mock.calls.length
+
+    vp.setSnapSteps([{ path: '/Group/plate', step: 0.5 },
+                     { path: '/Group/post', step: 5 }])
+
+    expect(vp.snapSteps.get('/Group/plate')).toBe(0.5)
+    expect(vp.snapSteps.get('/Group/post')).toBe(5)
+
+    vp.setSnapSteps([{ path: '/Group/post', step: 2 }])
+
+    expect(vp.snapSteps.get('/Group/post')).toBe(2)
+    expect(vp.snapSteps.has('/Group/plate'), 'the one left out went').toBe(false)
+    // NOTHING ON SCREEN ANSWERS THIS: no reconcile and no re-stage, which is
+    // what makes it safe to push on every edit of the document.
+    expect(viewer.render).toHaveBeenCalledTimes(staged)
+    expect(reconcileMoves).not.toHaveBeenCalled()
+  })
+
+  it('takes a sender with no snap steps to say as an empty set', async () => {
+    // Which is the state a document nobody has set a step in pushes, and it has
+    // to reach the map rather than being skipped: an empty list is what takes
+    // the last override back.
+    const { vp } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    vp.setSnapSteps([{ path: '/Group/plate', step: 0.5 }])
+
+    vp.setSnapSteps(null)
+
+    expect(vp.snapSteps.size).toBe(0)
+  })
+
   it('takes a sender that has nothing to say as an empty list', async () => {
     // Which is the state a document with no moves in it pushes, and it has to
     // reach the reconcile rather than being skipped: an empty list is what puts
@@ -1428,6 +1472,7 @@ describe('the overlay laid over the model', () => {
     vp.partHome.set('/Group/plate', [0, 0, 0])
     vp.partPivot.set('/Group/plate', [1, 1, 1])
     vp.partFacing.set('/Group/plate', [1, 0, 0, 0])
+    vp.snapSteps.set('/Group/plate', 0.2)
 
     await vp.setOverlay([body('result')])
 
@@ -1443,6 +1488,11 @@ describe('the overlay laid over the model', () => {
     // turned, composed onto a pose that already had the reader's turn in it.
     expect(vp.partPivot.get('/Group/plate')).toEqual([1, 1, 1])
     expect(vp.partFacing.get('/Group/plate')).toEqual([1, 0, 0, 0])
+    // AND SO DOES THE STEP THE READER SET FOR THAT PART. It is a fifth memo
+    // about the same scene, and the paths are the same ones: a re-stage that
+    // dropped it would coarsen the next drag back to the grid's own step in
+    // the middle of an edit, with nothing on screen saying why.
+    expect(vp.snapSteps.get('/Group/plate')).toBe(0.2)
     // AND THE OFFSETS ARE PUT BACK ON THE SCENE, which is not the same thing as
     // keeping the map: `clear()` disposed the ObjectGroups the drag was written
     // on and `render()` built new ones at the model's own positions, so a map
@@ -1460,6 +1510,7 @@ describe('the overlay laid over the model', () => {
     vp.partHome.set('/Group/plate', [0, 0, 0])
     vp.partPivot.set('/Group/plate', [1, 1, 1])
     vp.partFacing.set('/Group/plate', [1, 0, 0, 0])
+    vp.snapSteps.set('/Group/plate', 0.2)
 
     await vp.show(model(), { view: 'a', token: 0 })
 
@@ -1469,6 +1520,11 @@ describe('the overlay laid over the model', () => {
     expect(vp.partHome.size).toBe(0)
     expect(vp.partPivot.size).toBe(0)
     expect(vp.partFacing.size).toBe(0)
+    // A STEP IS KEYED BY PATH, and a path is only as stable as the build that
+    // minted it: the tessellator numbers the copies, so `/Group/pin(2)` can
+    // name a different part in the next build. Carried over, the hand would
+    // round to a number no row on the page shows and nothing can clear.
+    expect(vp.snapSteps.size).toBe(0)
     expect(restageMoves).not.toHaveBeenCalled()
   })
 

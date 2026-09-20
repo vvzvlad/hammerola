@@ -1347,6 +1347,41 @@ describe('one whole drag', () => {
     expect(stands(s.groups[PART])).toEqual([0.6, 0, 0])
   })
 
+  it('rounds to the step the interface set for THIS path, and to the grid without one', async () => {
+    // THE READER'S OWN ANSWER TO "too coarse", and the fallback under it. The
+    // map is the viewport's (`setSnapSteps` in element.js) and is keyed by
+    // path, so a step standing against another part says nothing about this
+    // one: the same 12 px of hand has to land on the grid's 0.1 there and on
+    // the half-millimetre here.
+    const away = scene({ gridSize: 20 })
+    away.vp.snapSteps.set('/model/elsewhere', 0.5)
+    rendered(away.viewer)
+    const spot = onArrow(away, 0)
+    press(away.canvas, spot)
+    pointerMove([spot[0] + 12, spot[1]])
+    pointerUp([spot[0] + 12, spot[1]])
+    await settled()
+
+    expect(stands(away.groups[PART]), 'the fallback is the grid`s own step')
+      .toEqual([0.6, 0, 0])
+
+    const fine = scene({ gridSize: 20 })
+    fine.vp.snapSteps.set(PART, 0.5)
+    rendered(fine.viewer)
+    const on = onArrow(fine, 0)
+    press(fine.canvas, on)
+    pointerMove([on[0] + 12, on[1]])
+    pointerUp([on[0] + 12, on[1]])
+    await settled()
+
+    // 0.6 of travel, rounded by halves: the number in the scene, in `vp.moved`
+    // and on the event is the one number, exactly as it is under the automatic
+    // step.
+    expect(stands(fine.groups[PART])).toEqual([0.5, 0, 0])
+    expect(fine.vp.moved.get(PART)).toEqual({ delta: [0.5, 0, 0], turn: [0, 0, 0] })
+    expect(details(fine.vp, EVENT_MOVED)[0].delta).toEqual([0.5, 0, 0])
+  })
+
   it('says nothing when the press never moved', async () => {
     // A bare click on an arrow is not a placement: reported, it would write a
     // node the document already has and open the panel to show the reader

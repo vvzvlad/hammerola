@@ -137,6 +137,10 @@ function panel({ token = 'sekrit', proposal, opsOpen = false, narrow = false,
   stampProposal(served)
   const el = {
     setOverlay: vi.fn(), clearOverlay: vi.fn(), setMoves: vi.fn(),
+    // The third door the proposal pushes at, and a spy for the reason the two
+    // beside it are: what the viewport DOES with a step — round a drag of that
+    // path by it — is gizmo.test.js's subject.
+    setSnapSteps: vi.fn(),
     // THE TWO QUESTIONS THIS PAGE ASKS THE ELEMENT BACK, and both are spies for
     // the reason the note above gives: what the viewport DOES with the parts,
     // these two answers included, is element.test.js's subject. `overlayBody`
@@ -176,7 +180,7 @@ function panel({ token = 'sekrit', proposal, opsOpen = false, narrow = false,
       // none of this has none of it under every test in the file, and this is
       // the file that is about it.
       proposal: proposal || emptyProposal(), proposalError: null,
-      proposalDraft: null, proposalOff: false, movesOff: [],
+      proposalDraft: null, proposalOff: false, movesOff: [], snapSteps: {},
       // The `Add primitive` menu in the toolbar, shut on every fixture but the
       // ones that are about it: it is a menu of the chrome's and nothing else on
       // this page reads it.
@@ -282,6 +286,13 @@ const numberNode = (f) => {
   const node = document.createElement('input')
   node.type = f.type
   node.step = String(f.step)
+  // `min` OUTRANKS THE VALUE AS THE STEP BASE, which is the platform's rule and
+  // not this fixture's taste: the base is `min` where there is one and the
+  // value attribute only otherwise. The snap step field is the one that has a
+  // `min`, so a node built without it steps from somewhere the panel's own
+  // field never does — `stepUp` from 0.25 lands on 1 with a base of 0 and on
+  // 1.25 with a base of 0.25.
+  if (f.min !== undefined) node.min = String(f.min)
   node.setAttribute('value', f.value)
   node.value = f.value
   return node
@@ -774,7 +785,8 @@ describe('the proposal as a branch of the tree', () => {
     expect(rows(c)[0].nameField.value).toBe('korpus')
     expect(rows(c)[0].op).toBe('box')
     expect(rows(c)[0].role).toBe('solid')
-    expect(rows(c)[0].groups.map((g) => g.label)).toEqual(['size', 'at', 'rot°'])
+    expect(rows(c)[0].groups.map((g) => g.label))
+      .toEqual(['size', 'at', 'rot°', 'step mm'])
   })
 
   it('keeps the fields open on a body whose name was just typed', () => {
@@ -1081,7 +1093,7 @@ describe('the proposal as a branch of the tree', () => {
     expect(css(rows(c)[0].ghostStyle).visibility).toBe('hidden')
     expect(rows(c)[0].dotStyle).toContain('transparent')
     expect(rows(c)[0].nameField).toBeNull()
-    expect(rows(c)[0].groups.map((g) => g.label)).toEqual(['by', 'turn°'])
+    expect(rows(c)[0].groups.map((g) => g.label)).toEqual(['by', 'turn°', 'step mm'])
   })
 
   it('says `move` before the name, so the row is not read as a body', () => {
@@ -1586,6 +1598,259 @@ describe('the proposal as a branch of the tree', () => {
     expect(said.indexOf('proposal')).toBeGreaterThan(said.indexOf('model'))
     // And the heading the removed sheet put over its list is gone with it.
     expect(said).not.toContain('BODIES AND MOVES')
+  })
+
+  // -- how coarsely the manipulator rounds, per row ---------------------------
+  //
+  // WHAT IT ANSWERS, in the reader's words: dragging by the arrows moves the
+  // part in steps that are too big. The step was the grid's alone (`niceStep`
+  // in viewport/tools.js) and it still is wherever nothing here says otherwise
+  // — what this adds is one field per row to say otherwise with.
+  //
+  // IT IS NOT IN THE DOCUMENT, which is the whole of where it lives: the agent
+  // reads the document and a rounding is nothing it can act on, so this is page
+  // state beside the eyes and reaches the scene through a door of its own.
+
+  describe('the step a drag of a row rounds to', () => {
+    /** The steps the viewport was last handed, in the shape the door takes. */
+    const steps = (el) => el.setSnapSteps.mock.calls.at(-1)[0]
+
+    /** The one step field of a row, whichever kind of row it is. */
+    const stepOf = (row) => row.groups.at(-1).fields[0]
+
+    it('is empty on every row that can be dragged, which is the automatic step', () => {
+      const { c, el } = mounted({ proposal: withBlock() })
+      stage(c, el, ['korpus'])
+      drag('/model/plate', [3, 0, 0])
+
+      for (const row of rows(c)) {
+        expect(row.groups.at(-1).label).toBe('step mm')
+        expect(stepOf(row).value).toBe('')
+        // The field says what an empty one means rather than leaving it to be
+        // read as a zero, which is what every other empty number here means.
+        expect(stepOf(row).placeholder).toBe('auto')
+        expect(stepOf(row).min).toBe(0)
+      }
+      // And nothing has been claimed of the viewport. THE LAST PUSH AND NOT
+      // "never pushed", which is the stronger statement and the one that stays
+      // true: the set travels whole, so every door that can change it says so
+      // by pushing — the gesture above is one of them — and what matters is
+      // that the set it named is empty. Every path there rounds to the grid's
+      // own step.
+      expect(steps(el)).toEqual([])
+    })
+
+    it('writes a body`s step against its node and pushes it as a SCENE path', () => {
+      // THE TRANSLATION THIS FEATURE TURNS ON. The row and the reader are
+      // looking at a node; the viewport reads the map at a drag, where all it
+      // holds is the path the overlay staged the body under.
+      const { c, el } = mounted({ proposal: withBlock() })
+      const at = stage(c, el, ['korpus'])
+
+      type(stepOf(bodyRows(c)[0]), '0.25')
+
+      expect(c.state.snapSteps).toEqual({ n1: 0.25 })
+      expect(steps(el)).toEqual([{ path: `${at}/korpus`, step: 0.25 }])
+      expect(stepOf(bodyRows(c)[0]).value).toBe('0.25')
+    })
+
+    it('names every path a move displaces, because one delta carries them all', () => {
+      const { c, el } = mounted({})
+      const row = ['/model/pin', '/model/pin(2)']
+      drag('/model/pin', [3, 0, 0], { paths: row, count: 2 })
+
+      type(stepOf(moveRows(c)[0]), '5')
+
+      expect(steps(el)).toEqual([
+        { path: '/model/pin', step: 5 }, { path: '/model/pin(2)', step: 5 },
+      ])
+    })
+
+    it('changes no document, and travels nowhere', () => {
+      // THE REASON IT IS PAGE STATE AT ALL: the document is what the agent
+      // reads with `hammerola proposal`, and how coarsely the hand that placed
+      // a part rounded is nothing it can act on.
+      const { c, el } = mounted({ proposal: withBlock() })
+      stage(c, el, ['korpus'])
+      const doc = c.state.proposal
+      const said = proposalText(doc)
+
+      type(stepOf(bodyRows(c)[0]), '0.25')
+
+      expect(c.state.proposal).toBe(doc)
+      expect(proposalText(c.state.proposal)).toBe(said)
+      expect(JSON.stringify(c.proposalPayload(c.state.proposal)))
+        .not.toContain('snapSteps')
+      // And no body was rebuilt for it: nothing about the geometry changed, so
+      // the scene was never staged again.
+      expect(el.setOverlay).not.toHaveBeenCalled()
+    })
+
+    it('goes back to the automatic step when the field is emptied', () => {
+      // THE ONLY GESTURE THERE IS FOR GIVING ONE BACK, which is why the door on
+      // the other side takes the whole set: the path simply stops being named.
+      const { c, el } = mounted({ proposal: withBlock() })
+      const at = stage(c, el, ['korpus'])
+      type(stepOf(bodyRows(c)[0]), '0.25')
+      expect(steps(el), 'the premise: the path really was named')
+        .toEqual([{ path: `${at}/korpus`, step: 0.25 }])
+
+      type(stepOf(bodyRows(c)[0]), '')
+
+      expect(c.state.snapSteps).toEqual({})
+      expect(steps(el)).toEqual([])
+      expect(stepOf(bodyRows(c)[0]).value).toBe('')
+    })
+
+    it('takes text the browser could not read, and a zero, the same way', () => {
+      // A lone `-` reads back as `""` with `badInput` set, and a zero is no step
+      // at all — both are the row saying nothing rather than the row asking for
+      // a step of none, which would divide the drag by zero.
+      const { c, el } = mounted({ proposal: withBlock() })
+      stage(c, el, ['korpus'])
+      const field = () => stepOf(bodyRows(c)[0])
+
+      type(field(), '0.25')
+      field().onChange({ target: { value: '-', validity: { badInput: true } } })
+      field().onBlur({ target: { value: '', validity: { badInput: true } } })
+
+      expect(c.state.snapSteps).toEqual({})
+
+      type(field(), '0.25')
+      type(field(), '0')
+
+      expect(c.state.snapSteps).toEqual({})
+      expect(steps(el)).toEqual([])
+    })
+
+    it('nudges by the platform`s own arrows, through the node`s `change`', () => {
+      // React drops the `change` the platform fires after a step of the spinner,
+      // so a field wired through `onChange` alone would move the number on
+      // screen and set no step at all. The clock is the nudge helper's: it runs
+      // out the run every held arrow is (`nudgeProposal`), which this field
+      // does not wait for.
+      vi.useFakeTimers()
+      onTestFinished(() => vi.useRealTimers())
+      const { c, el } = mounted({ proposal: withBlock() })
+      const at = stage(c, el, ['korpus'])
+
+      expect(nudge(stepOf(bodyRows(c)[0]))).toBe('1')
+
+      expect(c.state.snapSteps).toEqual({ n1: 1 })
+      expect(steps(el)).toEqual([{ path: `${at}/korpus`, step: 1 }])
+    })
+
+    it('is pushed again on every change of the document', () => {
+      // A RENAME GOES THROUGH `setProposal` → `stageProposal`, and the set has
+      // to travel with it: a body renamed is a body at another PATH, and a push
+      // still naming the old one would round a drag of nothing. Not every
+      // document change comes this way — the gesture and a build landing have
+      // their own pushes, tested below — so this is about this door alone.
+      const { c, el } = mounted({ proposal: withBlock() })
+      const at = stage(c, el, ['korpus'])
+      type(stepOf(bodyRows(c)[0]), '0.25')
+
+      type(bodyRows(c)[0].nameField, 'motor')
+
+      expect(steps(el)).toEqual([{ path: `${at}/motor`, step: 0.25 }])
+    })
+
+    it('drops the step of a node the document no longer holds', () => {
+      // THE RULE THE EYES OBEY, one field over: an entry is a node id and says
+      // nothing on its own, and the ids come round — `_proposalSeq` is not
+      // seeded past the ids an adopted document brought — so a step left
+      // standing would arrive on a node nobody set it for.
+      const { c, el } = mounted({ proposal: withBlock() })
+      stage(c, el, ['korpus'])
+      type(stepOf(bodyRows(c)[0]), '0.25')
+      expect(c.state.snapSteps, 'the premise: it really was set').toEqual({ n1: 0.25 })
+
+      rows(c)[0].onRemove(click)
+
+      expect(c.state.snapSteps).toEqual({})
+      expect(steps(el)).toEqual([])
+    })
+
+    it('drops it when a GESTURE takes the node away, and not only an edit', () => {
+      // THE DOOR THE REST OF THIS FEATURE DOES NOT PASS THROUGH, and the one
+      // the reader is actually standing at: the manipulator is what they
+      // complained about. A gesture commits inside its own functional updater
+      // and never reaches `setProposal`, so both the pruning and the push have
+      // to be there as well. Without them a retraction takes the node out — the
+      // row goes, and with it the only field that could clear the step — while
+      // the viewport goes on rounding the next drag of that same part to a
+      // number nothing on the page shows.
+      const { c, el } = mounted({})
+      drag('/model/plate', [3, 0, 0])
+      type(stepOf(moveRows(c)[0]), '0.2')
+      expect(steps(el), 'the premise: it really was pushed')
+        .toEqual([{ path: '/model/plate', step: 0.2 }])
+
+      // Straight back to where the build puts it, which is the gesture that
+      // deletes the node rather than editing it.
+      drag('/model/plate', [0, 0, 0])
+
+      expect(moveRows(c)).toEqual([])
+      expect(c.state.snapSteps).toEqual({})
+      expect(steps(el)).toEqual([])
+    })
+
+    it('leaves a body out until there is a scene to name a path in', () => {
+      // A BODY'S PATH IS SPELLED AGAINST THE OVERLAY'S GROUP, and the group is
+      // the VIEWPORT's to mint — so between a body being drawn and the scene
+      // coming back there is no path to push. The row exists and takes a step
+      // the whole time, because the row is drawn off the document alone.
+      //
+      // WHICH PUSH LANDS IT is the half worth pinning: a stage composes the
+      // bodies and the scene returns as a model event, so it arrives on
+      // `onModel`'s push and not on the stage's own.
+      const { c, el } = mounted({ proposal: withBlock() })
+
+      type(stepOf(bodyRows(c)[0]), '0.25')
+
+      // The page has it, and the push named nothing rather than throwing over
+      // the group it has no name for.
+      expect(c.state.snapSteps).toEqual({ n1: 0.25 })
+      expect(steps(el)).toEqual([])
+
+      // `land` AND NOT `stage`, which is the whole of what this case pins:
+      // `stage` writes the tree into state by hand and pushes nothing, while
+      // `land` delivers the same tree the way the viewport does. If the arrival
+      // were the stage's own push rather than the model event's, the set would
+      // come back empty here.
+      const at = land(c, el, ['korpus'])
+
+      expect(steps(el)).toEqual([{ path: `${at}/korpus`, step: 0.25 }])
+    })
+
+    it('is handed over again when a build lands, the viewport having dropped it', () => {
+      // THE MIRROR OF THE TWO DOORS ABOVE, and the case neither covers. A MOVE
+      // goes out with `dropMoves` when a rebuild lands, so its step goes with
+      // it; a BODY is the reader's own and crosses the rebuild with the rest of
+      // the document, so the page KEEPS its step — while the viewport clears
+      // its whole map on a load, a path being only as stable as the build that
+      // minted it. Nothing on that road stages, so without a push of its own
+      // the row would go on showing 0.25 while the hand rounded by the grid:
+      // a number on screen that nothing uses, and no way to tell from the row.
+      const { c, el } = mounted({ proposal: withBlock() })
+      const at = stage(c, el, ['korpus'])
+      type(stepOf(bodyRows(c)[0]), '0.25')
+      expect(steps(el), 'the premise: it really was pushed')
+        .toEqual([{ path: `${at}/korpus`, step: 0.25 }])
+
+      // THE CALLS ARE FORGOTTEN FIRST, and that is the whole of what makes this
+      // case fail when the push is taken out. `steps()` reads the LAST push,
+      // and the last push is the one the field made a line above — so without
+      // this the assertion below would hold over a model event that told the
+      // viewport nothing at all. Cleared, it can only pass on a push made
+      // BECAUSE the build landed, and `.at(-1)` throws when there was none.
+      el.setSnapSteps.mockClear()
+
+      c.onModel({ tree: sceneTree(['korpus']), view: 'assembled', live: true })
+
+      expect(c.state.snapSteps).toEqual({ n1: 0.25 })
+      expect(steps(el)).toEqual([{ path: `${at}/korpus`, step: 0.25 }])
+    })
   })
 })
 
@@ -2216,10 +2481,16 @@ describe('a number field', () => {
     const numbers = inputs.filter((el) => el.props.type === 'number')
 
     // The box's three sizes, three places and three turns; the cylinder's
-    // two numbers, its three places and its three turns.
-    expect(numbers).toHaveLength(17)
+    // two numbers, its three places and its three turns; and one snap step on
+    // each of the two rows, which is a number of millimetres like the rest.
+    expect(numbers).toHaveLength(19)
     expect(numbers.filter((el) => el.props.step === 15)).toHaveLength(6)
-    expect(numbers.filter((el) => el.props.step === 1)).toHaveLength(11)
+    expect(numbers.filter((el) => el.props.step === 1)).toHaveLength(13)
+    // AND THE STEP FIELDS ARE THE ONLY ONES THAT SAY `auto` WHEN THEY ARE EMPTY
+    // — every other number here shows what the document holds, and an empty one
+    // of those means zero.
+    expect(numbers.filter((el) => el.props.placeholder === 'auto')).toHaveLength(2)
+    expect(numbers.filter((el) => el.props.min === 0)).toHaveLength(2)
     // And the handler that carries a nudge into the document is on every one,
     // as is the one that keeps a wheel over a focused field from being an edit.
     expect(numbers.every((el) => typeof el.ref === 'function')).toBe(true)
@@ -3067,12 +3338,16 @@ describe('the row a move is drawn as', () => {
     // TWO ROWS OF THREE, exactly as a body's `at` and `rot°` are drawn, because
     // they are the same kind of number: the offset the drag left, and a turn
     // that has no gesture at all and could not be said any other way.
-    expect(rows(c)[0].groups.map((g) => g.label)).toEqual(['by', 'turn°'])
+    // THE SNAP STEP IS THE FOURTH AND IS NOT ONE OF THE NUMBERS: it is empty on
+    // a row nobody has set one on, which is the automatic step, and what it
+    // writes is the page's own map rather than the document.
+    expect(rows(c)[0].groups.map((g) => g.label)).toEqual(['by', 'turn°', 'step mm'])
     expect(rows(c)[0].groups.map((g) => g.fields.map((f) => f.value)))
-      .toEqual([['3.2', '0', '-1'], ['0', '0', '0']])
+      .toEqual([['3.2', '0', '-1'], ['0', '0', '0'], ['']])
     // AND THE ARROWS ARE THE PLATFORM'S OWN, stepped in the units of the row:
     // millimetres for the offset, and the body's own `STEP_DEG` for the turn.
-    expect(rows(c)[0].groups.map((g) => g.fields[0].type)).toEqual(['number', 'number'])
+    expect(rows(c)[0].groups.map((g) => g.fields[0].type))
+      .toEqual(['number', 'number', 'number'])
     expect(rows(c)[0].groups[0].fields[0].step)
       .toBe(bodyRows(c)[0].groups[1].fields[0].step)
     expect(rows(c)[0].groups[1].fields[0].step)
@@ -3221,6 +3496,32 @@ describe('the row a move is drawn as', () => {
     rows(built.c)[0].onVis(click)
     built.c.onModel({ tree: REBUILT, view: 'assembled', live: true })
     expect(built.c.state.movesOff).toEqual([])
+  })
+
+  it('forgets the snap steps at those same two doors', () => {
+    // THE TWIN OF THE CASE ABOVE FOR THE OTHER PER-NODE SWITCH, and it needs
+    // saying twice because the two are pruned by different rules: an eye may
+    // name a move node, a step may be on a body too. Both are keyed by a node
+    // id, so both come round the same way.
+    //
+    // THE VIEWPORT'S OWN HALF IS KEYED BY PATH, and that is cleared where the
+    // offsets are (`show()` in viewport/element.js): a path is only as stable
+    // as the build that minted it, so a step carried into the next build would
+    // round the hand on whatever part inherited the name.
+    const step = (c) => moveRows(c)[0].groups.at(-1).fields[0]
+
+    const leaving = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    type(step(leaving.c), '0.2')
+    expect(Object.keys(leaving.c.state.snapSteps), 'the premise: one was set')
+      .toHaveLength(1)
+    expect(leaving.c.leaveBuild(true).state.snapSteps).toEqual({})
+
+    const built = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    type(step(built.c), '0.2')
+    built.c.onModel({ tree: REBUILT, view: 'assembled', live: true })
+    expect(built.c.state.snapSteps).toEqual({})
   })
 
   it('keeps the shut eyes across a re-stage, which drops no node', () => {

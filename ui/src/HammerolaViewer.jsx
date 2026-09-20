@@ -504,6 +504,24 @@ function eyesKept(off, doc) {
   return off.filter((shut) => held.has(shut));
 }
 
+/**
+ * THE SNAP STEPS A DOCUMENT STILL HAS NODES FOR — `eyesKept` above by the same
+ * rule and for its reason, an entry keyed by a node id being a step on nothing
+ * once that node has gone, and the ids come round.
+ *
+ * OVER ALL THE NODES AND NOT THE MOVES ALONE, which is where it parts from
+ * `eyesKept`: a body of the proposal is dragged by the same manipulator, so it
+ * can carry a step of its own.
+ */
+function snapsKept(steps, doc) {
+  const held = new Set(doc.nodes.map((node) => node.id));
+  const kept = {};
+  for (const [id, step] of Object.entries(steps || {})) {
+    if (held.has(id)) kept[id] = step;
+  }
+  return kept;
+}
+
 // HOW MANY VIEWS STILL FIT AS A STRIP OF PILLS before the switcher becomes a
 // menu. The strip is a centred flex row that does NOT wrap, inside a root that
 // is `overflow:hidden` — so a row too wide for the window is neither scrollable
@@ -1377,8 +1395,18 @@ export default class HammerolaViewer extends React.Component {
       // which is not a thing to say with the eye shut — so that line prunes the
       // dead AND opens the node it wrote into, and is not a copy of `eyesKept`
       // to be tidied away.
+      //
+      // `snapSteps` IS THE OTHER PER-NODE SWITCH, and it is interface state for
+      // the eyes' own reason: a node id against how far ONE STEP of a drag of
+      // that row goes, in millimetres. The document says where a part stands,
+      // not how coarsely the hand that put it there rounded — there is nothing
+      // in it for an agent to act on — so this travels nowhere and is stored
+      // nowhere. Read at ONE door (`proposalSnaps`), EMPTY BY DEFAULT, which is
+      // the automatic step (`niceStep` in viewport/tools.js), and it keeps the
+      // eyes' rule over ALL the nodes rather than the moves alone (`snapsKept`):
+      // a body is dragged by the same manipulator as a part of the build.
       proposal: emptyProposal(), proposalError: null,
-      proposalDraft: null, proposalOff: false, movesOff: [],
+      proposalDraft: null, proposalOff: false, movesOff: [], snapSteps: {},
       // WHAT THE HUB HOLDS, in two fields with one reader each — because the two
       // questions asked of it are different questions, and one field answering
       // both was wrong for both. `proposalHeld` is about the RECORD and is read
@@ -2556,6 +2584,11 @@ export default class HammerolaViewer extends React.Component {
         // and `onModel` writes it for real when the new build lands. It holds
         // no move node, so the rule answers with an empty list.
         movesOff: eyesKept(this.state.movesOff, left),
+        // AND THE SNAP STEPS BY THE RULE OF THEIR OWN (`snapsKept`), asked of
+        // the same anticipated document. It holds no move node, so a step set
+        // on one goes; a body's survives, since a body is the reader's own and
+        // crosses the swap with the rest of the document.
+        snapSteps: snapsKept(this.state.snapSteps, left),
         // Whichever build was on offer, it has been answered — taken by
         // `takePending` or made irrelevant by `switchBuild` moving the road. The
         // BANNER is the callers' own business, because "taken" and "no longer
@@ -2995,7 +3028,14 @@ export default class HammerolaViewer extends React.Component {
       // nothing to raise for it: the row that says a part stands where the build
       // does not put it, and the `×` that sends it home, are in the branch of
       // the tree — drawn on the document alone, with no way to shut it.
-      return { proposal: next, movesOff: eyes };
+      // THE STEPS ARE PRUNED AGAINST THE RESULT AND NOT AGAINST `covered`,
+      // which is the difference between them and the eyes above: a gesture
+      // OPENS the eye of every node it writes, while a step is the reader's own
+      // choice about a node and outlives being dragged again — only an id whose
+      // node is gone goes. Two of the three branches above delete nodes and one
+      // keeps its id, so the document they produce is the only thing that knows
+      // which; `snapsKept` asks it.
+      return { proposal: next, movesOff: eyes, snapSteps: snapsKept(s.snapSteps, next) };
     }, () => {
       // THE OFFSETS AND NOT THE BODIES, which is the whole of what this
       // gesture changed. Staging would run `buildProposal` over every body
@@ -3023,6 +3063,14 @@ export default class HammerolaViewer extends React.Component {
       // anything.
       const done = this.state.proposal || emptyProposal();
       this.proposalMoves(done);
+      // AND THE STEPS WITH THEM, because this gesture DELETES move nodes — a
+      // retraction takes one out, a merge takes several — and the set the
+      // viewport holds is keyed by path. Pushed only from `stageProposal`, the
+      // entry of a node this gesture has just removed would go on rounding the
+      // next drag of that same part while the row that set it, and the field
+      // that could clear it, are both gone. `proposalSnaps` walks the live
+      // nodes, so the removed ones fall out of the set by themselves.
+      this.proposalSnaps(done);
       // AND IT IS SAVED FROM HERE, because this gesture does not go through
       // `setProposal` and that is the only other door the save hangs off.
       // Dragging or turning a part of the build is the reader's own edit — it
@@ -3234,6 +3282,12 @@ export default class HammerolaViewer extends React.Component {
         measure: null, proposal: dropMoves(s.proposal || emptyProposal()),
         movesOff: eyesKept(s.movesOff,
                            dropMoves(s.proposal || emptyProposal())),
+        // AND THE STEPS OF THOSE MOVES, by `snapsKept` — the same sentence one
+        // rule over. The viewport's own half of this is cleared where the other
+        // per-path maps are (`show()` in viewport/element.js), because a path
+        // is only as stable as the build that minted it.
+        snapSteps: snapsKept(s.snapSteps,
+                             dropMoves(s.proposal || emptyProposal())),
       }),
       // The reader's own collapses survive: part paths are the same across a
       // rebuild, and this is the tree they were reading a moment ago.
@@ -3278,6 +3332,20 @@ export default class HammerolaViewer extends React.Component {
       // and the re-stage it causes comes straight back through here.
       this._modelSeen = true;
       this.adoptProposal();
+      // AND THE SNAP STEPS ARE HANDED OVER AGAIN, because the element cleared
+      // its own half of them with the offsets when this scene loaded (`show()`
+      // in viewport/element.js) — a step is keyed by a path, and a path is only
+      // as stable as the build that minted it. The page's half is pruned in the
+      // patch above rather than cleared: a MOVE went with `dropMoves`, but a
+      // BODY is the reader's own and crosses a rebuild with the rest of the
+      // document, so its step has to cross with it. Nothing else pushes after a
+      // model event — `stageProposal` is not on this road — and without this
+      // line the row would go on showing a number the hand had stopped using.
+      //
+      // FROM THE TREE THAT HAS JUST LANDED, which is why it is here and not in
+      // the updater: a body's path is spelled against the overlay's group, and
+      // `proposalSnaps` reads that group out of `state.tree`.
+      this.proposalSnaps(this.state.proposal || emptyProposal());
       // The rejoined ids have to reach the viewport, and a state event is the
       // only way there — but every model event needs this one now, rejoin or
       // not: the tree that has just landed is what the comment pins hang on, so
@@ -4172,7 +4240,8 @@ export default class HammerolaViewer extends React.Component {
    * whole of the reasoning — including why dropping is what a caller that says
    * nothing gets.
    *
-   * AND THE SHUT EYES ARE PRUNED IN THE SAME WRITE (`eyesKept`), which is how
+   * AND THE SHUT EYES ARE PRUNED IN THE SAME WRITE (`eyesKept`), the snap steps
+   * beside them by a rule of their own (`snapsKept`), which is how
    * everything that comes through THIS door obeys the one rule without any of
    * it being named: the `×`, every edit made in a row's fields, a step taken
    * back and a document adopted from the hub. `movesOff` may hold only ids the
@@ -4194,6 +4263,7 @@ export default class HammerolaViewer extends React.Component {
       this.history = this.history.filter((step) => step.kind !== UNDO_DOCUMENT);
     }
     this.setState({ proposal: doc, movesOff: eyesKept(this.state.movesOff, doc),
+                    snapSteps: snapsKept(this.state.snapSteps, doc),
                     ...this.selectionAfter(doc) });
     this.stageProposal(doc);
     this.saveProposal(doc);
@@ -4312,6 +4382,16 @@ export default class HammerolaViewer extends React.Component {
     // scene), so the map is already the one this document describes by the time
     // `restageMoves` re-applies it onto the groups the re-stage built.
     this.proposalMoves(doc);
+    // BESIDE THE OFFSETS AND FOR THE SAME REASON: a node that has gone takes
+    // its step with it, and a node that has arrived — a body just drawn, a part
+    // just dragged — is a path the map should be able to name.
+    //
+    // NOT THE ONLY PLACE IT IS PUSHED FROM, and reading it as one is what left
+    // the feature half wired. `setProposal`'s docblock names the two document
+    // changes that never come through here: the gesture, which commits inside a
+    // functional updater and pushes both sets itself, and `onModel`'s
+    // `dropMoves`, whose viewport half is the map cleared in `show()`.
+    this.proposalSnaps(doc);
     // ON THE PARTS AND NOT ON THE NODES, which is what a document holding
     // nothing but moves made into a distinction: it has nodes and builds no
     // geometry at all, and an empty overlay in the tree is worse than no overlay
@@ -4354,8 +4434,15 @@ export default class HammerolaViewer extends React.Component {
    * DOCUMENT IS NOT TOUCHED — the nodes are still there, still drawn, still in
    * the projection — so opening the eye pushes them again and the parts go
    * straight back out. Read here and in `proposalOverlay` because those are the
-   * two doors to the viewport; every caller of either is covered by that,
-   * including the `hmr:moved` handler, which reaches this one on its own.
+   * two doors the eye has anything to say about; every caller of either is
+   * covered by that, including the `hmr:moved` handler, which reaches this one
+   * on its own.
+   *
+   * A THIRD DOOR EXISTS AND DOES NOT READ IT (`proposalSnaps`). What travels
+   * through it is a NUMBER and not geometry — how coarsely a drag of a path
+   * rounds — so there is nothing for an eye to take off the model: the row and
+   * its field stay on screen with the branch shut, and a part standing at home
+   * rounds by whatever the reader last asked for the moment they drag it again.
    *
    * AND A NODE WHOSE OWN EYE IS SHUT IS DROPPED THE SAME WAY (`movesOff`),
    * which is the per-node spelling of the line above and not a second
@@ -4374,6 +4461,49 @@ export default class HammerolaViewer extends React.Component {
       })));
     } catch (error) {
       console.error('proposal moves', error);
+    }
+  }
+
+  /**
+   * How coarsely a drag of each row rounds, handed to the viewport. A REF CALL
+   * for the reason `proposalMoves` above is one, and the WHOLE SET every time,
+   * because that is what the door on the other side takes (`setSnapSteps` in
+   * viewport/element.js): a step is given back by being left out.
+   *
+   * IN SCENE PATHS AND NOT IN NODE IDS, which is the whole of what this method
+   * does. The map is keyed by node because that is what the row and the reader
+   * are looking at; the viewport has no document and reads this at a drag,
+   * where all it holds is a path. A move contributes EVERY path it displaces —
+   * one delta carries the whole row — and a body the one path the overlay
+   * staged it under, which is the spelling `proposalRows` resolves it by.
+   *
+   * A BODY IS LEFT OUT WHILE NOTHING IS STAGED, there being no group yet for it
+   * to hang under and so no path to name. WHICH PUSH LANDS IT is worth naming
+   * rather than leaving as "the next one": a stage composes the bodies and the
+   * scene comes back as a MODEL EVENT, so the push that names the body is
+   * `onModel`'s — this file's own `stageProposal` pushes BEFORE `proposalOverlay`
+   * and is therefore the one that left it out.
+   */
+  proposalSnaps(doc) {
+    const el = this.el();
+    if (!el || typeof el.setSnapSteps !== 'function') return;
+    const steps = this.state.snapSteps || {};
+    const overlay = this.overlayRoot(this.state.tree);
+    const list = [];
+    for (const node of moves(doc)) {
+      if (steps[node.id] > 0) {
+        for (const path of node.paths) list.push({ path, step: steps[node.id] });
+      }
+    }
+    for (const node of bodies(doc)) {
+      if (overlay && steps[node.id] > 0) {
+        list.push({ path: `${overlay}/${node.name}`, step: steps[node.id] });
+      }
+    }
+    try {
+      el.setSnapSteps(list);
+    } catch (error) {
+      console.error('proposal steps', error);
     }
   }
 
@@ -4534,6 +4664,36 @@ export default class HammerolaViewer extends React.Component {
     this.setState({ proposalDraft: null });
     if (unread) return;
     this.setProposal(commit(text));
+  }
+
+  /**
+   * The step field of one row, finished with: how far one step of a drag of
+   * that node goes, or nothing and back to the automatic step.
+   *
+   * A DOOR OF ITS OWN AND NOT `commitProposal`, because no document is written
+   * here — `snapGroup` in proposalview.js carries that argument.
+   *
+   * AN EMPTY FIELD, TEXT THE BROWSER COULD NOT READ, AND A STEP OF NOTHING ARE
+   * ONE ANSWER — the entry goes and the drag rounds the way it does everywhere
+   * else (`niceStep` in viewport/tools.js). An empty field is the state the row
+   * is in until somebody asks for something else, so it cannot mean zero; and
+   * zero is no step at all.
+   *
+   * A FUNCTIONAL UPDATER, THEN THE CALLBACK: this is not the only writer — the
+   * gesture and `onModel` each prune the map in an updater of their own, and a
+   * copy taken off `this.state` before one of those landed would put the pruned
+   * entries back — and `proposalSnaps` reads the map off state once it has.
+   */
+  commitSnapStep(key, text, id, unread) {
+    const draft = this.state.proposalDraft;
+    if (!draft || draft.key !== key) return;
+    const step = unread ? 0 : Number(String(text).trim());
+    this.setState((s) => {
+      const next = { ...s.snapSteps };
+      if (Number.isFinite(step) && step > 0) next[id] = step;
+      else delete next[id];
+      return { proposalDraft: null, snapSteps: next };
+    }, () => this.proposalSnaps(this.state.proposal || emptyProposal()));
   }
 
   /**
@@ -6086,6 +6246,7 @@ export default class HammerolaViewer extends React.Component {
       toggle: this.toggle.bind(this),
       typeProposal: this.typeProposal.bind(this),
       commitProposal: this.commitProposal.bind(this),
+      commitSnapStep: this.commitSnapStep.bind(this),
       nudgeProposal: this.nudgeProposal.bind(this),
       setProposal: this.setProposal.bind(this),
       toggleProposalEye: this.toggleProposalEye.bind(this),
@@ -6888,9 +7049,15 @@ export default class HammerolaViewer extends React.Component {
                               no kind of number — does not. `ref` is how a nudge
                               of those arrows reaches the document; `field` in
                               `computed()` says why React leaves it no other way,
-                              and what `onWheel` is for. */}
+                              and what `onWheel` is for.
+                              `placeholder` AND `min` ARE THE SNAP STEP'S ALONE
+                              and are undefined on every other field, which React
+                              draws as the attribute being absent: an empty step
+                              field is the automatic one and has to say so, and no
+                              number of millimetres below zero means anything. */}
                           {g.fields.map((f) => (
                             <input key={f.key} type={f.type} step={f.step} ref={f.ref}
+                                   min={f.min} placeholder={f.placeholder}
                                    value={f.value} onChange={f.onChange} onBlur={f.onBlur}
                                    onKeyDown={f.onKeyDown} onWheel={f.onWheel} style={css(f.style)} />
                           ))}

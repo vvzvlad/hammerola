@@ -666,7 +666,14 @@ export function createGizmo(vp) {
     // THE STEP AND THE SNAP ARE tools.js's, so a move made with an arrow and
     // one made with a quad land on the same numbers in `vp.moved`, on the event
     // and in the proposal document — and so does a turn made with a disc.
-    const step = niceStep(viewer);
+    //
+    // UNLESS THE INTERFACE HAS SET ONE FOR THIS PATH (`setSnapSteps` in
+    // element.js), which is the reader saying that what the grid gives is too
+    // coarse for the part in their hand. Asked of the ANCHOR, the path the
+    // widget is drawn on: one gesture carries the whole row by one delta, so a
+    // step per copy would be several answers to one question.
+    const asked = vp.snapSteps.get(d.paths[0]);
+    const step = asked > 0 ? asked : niceStep(viewer);
     const delta = drag.piece.kind === "axis"
       ? alongAxis(d.base, world, drag.piece.world, drag.sine, step)
       : acrossPlane(d.base, world, drag.piece.world, drag.view, step);

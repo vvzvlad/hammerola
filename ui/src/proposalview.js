@@ -34,7 +34,7 @@ export function proposalView(s, deps) {
     branchOpen, PROPOSAL_BRANCH, stop, menuAt,
     // -- the page's own doors
     node: nodeAt, nextSeq, set, setState, setVisibility, toggle,
-    typeProposal, commitProposal, nudgeProposal, setProposal,
+    typeProposal, commitProposal, commitSnapStep, nudgeProposal, setProposal,
     toggleProposalEye, toggleMoveEye, removeProposal,
   } = deps;
 
@@ -48,6 +48,10 @@ export function proposalView(s, deps) {
   // once rather than per row, and `|| []` for the reason `doc` above has its
   // fallback.
   const movesOff = new Set(s.movesOff || []);
+  // HOW FAR ONE STEP OF A DRAG GOES ON EACH NODE, which is page state too —
+  // `snapSteps` in the page carries the argument — and read here for the field
+  // that sets it. `|| {}` for the reason `doc` above has its fallback.
+  const snapSteps = s.snapSteps || {};
 
   // EVERY DIMENSION AND EVERY PLACEMENT IS A NUMBER and nothing else — the
   // whole of the language `proposal.js` defines, with no expression syntax and
@@ -96,6 +100,11 @@ export function proposalView(s, deps) {
   const STEP_MM = 1;
   const STEP_DEG = 15;
 
+  // ONE BOX FOR EVERY FIELD OF THESE ROWS, the snap step's included: two
+  // spellings would be two kinds of input standing in one column, and the
+  // difference would read as a difference in what they take.
+  const fieldStyle = (width) => `width:${width};box-sizing:border-box;border:1px solid var(--line);border-radius:5px;outline:none;padding:3px 5px;font:400 11px ${MONO};color:var(--text);background:var(--card-bg)`;
+
   // One field of the panel: what it shows, and what typing in it does.
   // `commit` turns the raw text into the whole NEXT DOCUMENT, because that is
   // what `setProposal` takes — there is no partial write anywhere in here.
@@ -125,7 +134,7 @@ export function proposalView(s, deps) {
     value: s.proposalDraft && s.proposalDraft.key === key
       ? s.proposalDraft.text
       : String(value === undefined || value === null ? '' : value),
-    style: `width:${width};box-sizing:border-box;border:1px solid var(--line);border-radius:5px;outline:none;padding:3px 5px;font:400 11px ${MONO};color:var(--text);background:var(--card-bg)`,
+    style: fieldStyle(width),
     onChange: (e) => typeProposal(key, e.target.value),
     onBlur: (e) => commitProposal(key, e.target.value, commit, unread(e.target)),
     // ENTER IS THE OTHER HALF OF `change`, and it is here rather than left to
@@ -181,6 +190,55 @@ export function proposalView(s, deps) {
       }
     } : undefined,
   });
+
+  /**
+   * HOW FAR ONE STEP OF A DRAG OF THIS ROW GOES, in millimetres — the one field
+   * in these rows that is not about the document.
+   *
+   * A MAKER OF ITS OWN BESIDE `field` AND NOT A CALL OF IT. That one's `commit`
+   * is contracted to hand back the whole next DOCUMENT and everything else in
+   * the rows is built on it; this writes the page's own map instead
+   * (`commitSnapStep` in HammerolaViewer.jsx). Shared with it: the box, the
+   * wheel blur, the draft — keyed by field key, so it knows nothing about
+   * documents — and the `ref`, without which a step of the spinner moves the
+   * number and sets nothing (React drops the platform's `change`).
+   *
+   * EMPTY IS THE AUTOMATIC STEP and `placeholder` is where the row says so —
+   * an empty number field is the state every row starts in, so it cannot read
+   * as a zero.
+   */
+  const snapGroup = (node) => {
+    const key = `${node.id}.step`;
+    const held = snapSteps[node.id];
+    // NAMED FOR WHAT IT DOES AND NOT `commit`, which in this file means the
+    // function that hands back the next document.
+    const settle = (e) => commitSnapStep(key, e.target.value, node.id,
+                                         unread(e.target));
+    return {
+      key: 'snap',
+      // THE UNIT IS IN THE LABEL, as `turn°` and `rot°` carry theirs. This row
+      // stands directly under one of those two, and the rings a reader has just
+      // been turning snap in whole degrees — so a bare `step` reads as the step
+      // of a turn.
+      label: 'step mm',
+      fields: [{
+        key,
+        type: 'number',
+        step: STEP_MM,
+        min: 0,
+        placeholder: 'auto',
+        value: s.proposalDraft && s.proposalDraft.key === key
+          ? s.proposalDraft.text
+          : String(held === undefined || held === null ? '' : held),
+        style: fieldStyle('31%'),
+        onChange: (e) => typeProposal(key, e.target.value),
+        onBlur: settle,
+        onKeyDown: (e) => { if (e.key === 'Enter') settle(e); },
+        onWheel: (e) => e.target.blur(),
+        ref: (el) => { if (el) el.onchange = settle; },
+      }],
+    };
+  };
 
   // HOW EACH OP SPELLS ITS OWN SIZE, keyed the way `DIMS` in proposal.js and
   // `SHAPES` in proposalgeom.js are keyed — so an op that grows a dimension is
@@ -551,6 +609,10 @@ export function proposalView(s, deps) {
       // move's `by` is an offset from wherever the build puts the part rather
       // than a place in the document's own space, and `turn°` is the same
       // three degrees about the same three axes a body's `rot°` is.
+      //
+      // AND THE SNAP STEP LAST ON BOTH KINDS, because both kinds are dragged:
+      // a move IS a part of the build under the manipulator, and a body is one
+      // of the reader's own under the same one.
       groups: isMove ? [
         {
           key: 'delta',
@@ -570,6 +632,7 @@ export function proposalView(s, deps) {
                                 { turn: swap(node.turn, axis, num(raw)) }),
             '31%', STEP_DEG)),
         },
+        snapGroup(node),
       ] : [
         { key: 'dims', ...SIZES[node.op](node) },
         {
@@ -594,6 +657,7 @@ export function proposalView(s, deps) {
             (raw) => updateNode(doc, node.id, { rot: swap(node.rot, axis, num(raw)) }),
             '31%', STEP_DEG)),
         },
+        snapGroup(node),
       ],
     };
   });
