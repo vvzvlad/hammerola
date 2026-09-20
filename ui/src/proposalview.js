@@ -19,8 +19,8 @@
  * icons with are imported from ui/src/panelstyle.js by both.
  */
 import {
-  INDEX_MONO, LINK, POP_SHADOW_HIGH, SWATCH, eyeDot, eyeOuter, ghostIcon, popover,
-  skipIcon,
+  INDEX_MONO, LINK, POP_SHADOW_HIGH, SLOT_22, SWATCH, eyeDot, eyeOuter, ghostIcon,
+  popover, skipIcon,
 } from './panelstyle.js';
 import {
   addNode, bodies, emptyProposal, firstFree, proposalText, removeNode,
@@ -36,7 +36,7 @@ export function proposalView(s, deps) {
     // -- the page's own doors
     node: nodeAt, nextSeq, set, setState, setVisibility, toggle,
     typeProposal, commitProposal, nudgeProposal, setProposal, skipProposal,
-    toggleProposal, toggleProposalEye, removeProposal,
+    toggleProposal, toggleProposalEye, toggleMoveEye, removeProposal,
   } = deps;
 
   // `|| emptyProposal()` for the reason `openTabs` in chromeview.js carries its
@@ -44,6 +44,11 @@ export function proposalView(s, deps) {
   // field added here would otherwise take down the ones written before it
   // existed, at `.nodes.length`.
   const doc = s.proposal || emptyProposal();
+  // THE MOVE NODES WHOSE OWN EYE IS SHUT, which is page state and not the
+  // document's — `movesOff` in the page carries the argument. Read into a set
+  // once rather than per row, and `|| []` for the reason `doc` above has its
+  // fallback.
+  const movesOff = new Set(s.movesOff || []);
 
   // EVERY DIMENSION AND EVERY PLACEMENT IS A NUMBER and nothing else — the
   // whole of the language `proposal.js` defines, with no expression syntax and
@@ -369,14 +374,17 @@ export function proposalView(s, deps) {
     const selected = s.sel === node.id
       || (!!wanted && s.sel === wanted)
       || (!!scene && selRow === scene);
-    // THE EYE, THE GHOST SQUARE AND THE COLOUR ARE THE SCENE'S, so they are a
-    // BODY's alone — `marks` is the row they come off, and it is null for
-    // every move. A move draws NOTHING: it displaces a part the build already
-    // draws, and that part keeps its own row, its own eye and its own colour
-    // in the tree below, so a second set here would be two answers to one
-    // question about one part. Held apart from `scene`, which a move does
-    // have and needs — it is the row the sentence is ABOUT, and selecting the
-    // move is how the reader finds out which part that is.
+    // THE GHOST SQUARE AND THE COLOUR ARE THE SCENE'S, so they are a BODY's
+    // alone — `marks` is the row they come off, and it is null for every move.
+    // A move draws NOTHING: it displaces a part the build already draws, and
+    // that part keeps its own row, its own square and its own colour in the
+    // tree below, so a second set here would be two answers to one question
+    // about one part. THE EYE ON A MOVE ROW IS NOT ONE OF THOSE TWO and is
+    // worked out below from `movesOff` instead: it switches this page's own
+    // push off, which is a statement about the move and not about the
+    // geometry. Held apart from `scene`, which a move does have and needs —
+    // it is the row the sentence is ABOUT, and selecting the move is how the
+    // reader finds out which part that is.
     //
     // AND NULL FOR EVERY ROW WHILE A COMPARISON IS UP, which is the one place
     // this branch inherited a control the parts tree never had: that tree is
@@ -394,7 +402,15 @@ export function proposalView(s, deps) {
     const marks = isMove || compared ? null : scene;
     const leaves = marks ? marks.leaves : [];
     const visible = leaves.filter((id) => !hiddenSet.has(id)).length;
-    const eye = visible === 0 ? 'off' : visible === leaves.length ? 'on' : 'part';
+    // THE EYE IS THE ONE OF THE THREE A MOVE DOES HAVE, and it is a different
+    // control wearing the same glyph: a body's is the scene's, a tally of the
+    // leaves the tree hides, while a move's takes that one displacement off the
+    // model and leaves the node standing. TWO STATES AND NOT THREE for the
+    // reason the branch head's has two — there is nothing to tally, it is a
+    // switch — and `toggleMoveEye` holds the rest of the argument.
+    const moveOff = isMove && movesOff.has(node.id);
+    const eye = isMove ? (moveOff ? 'off' : 'on')
+      : visible === 0 ? 'off' : visible === leaves.length ? 'on' : 'part';
     const ghosted = leaves.length > 0 && leaves.every((id) => ghostSet.has(id));
     return {
       key: node.id,
@@ -410,9 +426,15 @@ export function proposalView(s, deps) {
       // two kinds of row stand in one column, and the browser gives a hidden
       // box no pointer events — there is nothing to press rather than a
       // control that answers nothing.
+      //
+      // A MOVE ROW KEEPS THE BOX, because its eye is a live control (above),
+      // and hides the ghost square inside it instead. The colour needs no
+      // clause: `marks` is null on such a row, so the swatch is already
+      // transparent and is the spacer that keeps the column.
       marksStyle: 'display:flex;align-items:center;flex:none'
-        + (leaves.length ? '' : ';visibility:hidden'),
+        + (leaves.length || isMove ? '' : ';visibility:hidden'),
       eyeOuter: eyeOuter(eye), eyeDot: eyeDot(eye), ghostIcon: ghostIcon(ghosted),
+      ghostStyle: SLOT_22 + (isMove ? ';visibility:hidden' : ''),
       dotStyle: SWATCH + ((marks && marks.color) || 'transparent'),
       // WHAT KIND OF STATEMENT THIS ROW IS, said in the word rather than left
       // to be inferred. A move's row used to be an indented name with three
@@ -436,11 +458,22 @@ export function proposalView(s, deps) {
                            : 'leave this out of the text sent to the agent',
       onSkip: stop(() => skipProposal(
         updateNode(doc, node.id, { skip: !node.skip }))),
+      // THE FAINT INK IS "THIS ROW IS NOT ON THE MODEL", which is as true of a
+      // move whose eye is shut as of a body whose leaves are all hidden — the
+      // part is standing where the build puts it, and the row says so in the
+      // same ink the bodies use.
       nameStyle: 'white-space:nowrap;cursor:pointer;padding-right:4px;font:400 12px ' + MONO
-        + ';color:' + (leaves.length && eye === 'off' ? 'var(--text-faint)' : 'var(--text)'),
+        + ';color:' + ((leaves.length || isMove) && eye === 'off'
+          ? 'var(--text-faint)' : 'var(--text)'),
       // The same two writers every row of the parts tree uses, and for the
       // same reason: a swap in flight is carrying these lists across BY NAME.
-      onVis: stop(() => setVisibility({ hidden: toggle(s.hidden, leaves) })),
+      //
+      // A MOVE'S EYE IS THE PAGE'S OWN SWITCH AND NOT ONE OF THEM. It writes
+      // no visibility at all: the node names paths of the BUILD, whose rows
+      // have their own eyes in the tree below, and hiding those is a different
+      // sentence from putting the part back where the build has it.
+      onVis: isMove ? stop(() => toggleMoveEye(node.id))
+        : stop(() => setVisibility({ hidden: toggle(s.hidden, leaves) })),
       onGhost: stop(() => setVisibility({ ghost: toggle(s.ghost, leaves) })),
       // THE ROW'S PLAIN NAME WHERE THE SCENE CAN ANSWER, and the node's own
       // only where it cannot. `measAdd` heads a composer with `selName` when

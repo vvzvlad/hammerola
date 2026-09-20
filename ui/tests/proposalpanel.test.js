@@ -175,7 +175,7 @@ function panel({ token = 'sekrit', proposal, open = true, narrow = false,
       // none of this has none of it under every test in the file, and this is
       // the file that is about it.
       proposal: proposal || emptyProposal(), proposalOpen: open, proposalError: null,
-      proposalDraft: null, proposalOff: false,
+      proposalDraft: null, proposalOff: false, movesOff: [],
       // WHAT THE HUB SAID WHEN THE PAGE ASKED FOR THE STORED DOCUMENT, and `null`
       // is "it has not answered yet" — which is the state a page mounts in and
       // the one in which nothing may be written back. So a fixture that says
@@ -1010,16 +1010,20 @@ describe('the proposal as a branch of the tree', () => {
     expect(css(rows(c)[0].fieldsStyle).display).toBe('block')
   })
 
-  it('gives a move row no eye, no ghost and no colour', () => {
-    // A move draws NOTHING. It displaces a part the build already draws, and
-    // that part keeps its own row, its own eye and its own colour in the tree
-    // below — two eyes over one part would be two answers to one question.
+  it('gives a move row an eye, and no ghost and no colour', () => {
+    // A move DRAWS nothing. It displaces a part the build already draws, and
+    // that part keeps its own row, its own square and its own colour in the
+    // tree below — a second set here would be two answers to one question.
+    // THE EYE IS THE EXCEPTION AND IS A DIFFERENT CONTROL: it takes that one
+    // displacement off the model and says nothing about the geometry, so the
+    // box stays visible for it while the square inside goes.
     const { c, el } = mounted({})
     stage(c, el, [])
     drag('/model/plate', [3, 0, 0])
 
     expect(rows(c)[0].move).toBe(true)
-    expect(css(rows(c)[0].marksStyle).visibility).toBe('hidden')
+    expect(css(rows(c)[0].marksStyle).visibility).toBeUndefined()
+    expect(css(rows(c)[0].ghostStyle).visibility).toBe('hidden')
     expect(rows(c)[0].dotStyle).toContain('transparent')
     expect(rows(c)[0].nameField).toBeNull()
     expect(rows(c)[0].groups.map((g) => g.label)).toEqual(['by', 'turn°'])
@@ -3311,6 +3315,217 @@ describe('the row a move is drawn as', () => {
     expect(rows(c).map((row) => row.name)).toEqual(['lid'])
     expect(pushed(el))
       .toEqual([{ paths: ['/model/lid'], delta: [0, 4, 0], turn: [0, 0, 0] }])
+  })
+
+  // -- the row's own eye: this one move off the model, and back on -------------
+  //
+  // THE `×` IS STILL THE ONLY THING THAT DELETES, which is the whole division
+  // between these two controls. The eye is a switch of the INTERFACE — the part
+  // stands where the build puts it and the node stays exactly where it was — so
+  // everything below asks both halves of that: what the viewport was handed, and
+  // what the document still says.
+
+  it('switches one move off the model, and leaves the others out there', () => {
+    const { c, el } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    drag('/model/lid', [0, 4, 0])
+
+    rows(c)[0].onVis(click)
+
+    // EXACTLY THAT ENTRY LEAVES THE PUSH, and the push is the whole mechanism:
+    // a path that stops appearing is a part `reconcileMoves` sends home.
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/lid'], delta: [0, 4, 0], turn: [0, 0, 0] }])
+    // The row is still there, and says which way its eye is — in the dot, and
+    // in the faint ink a hidden row of the tree is drawn in.
+    expect(rows(c).map((row) => row.name)).toEqual(['plate', 'lid'])
+    expect(rows(c)[0].eyeDot).not.toBe(rows(c)[1].eyeDot)
+    expect(rows(c)[0].nameStyle).toContain('var(--text-faint)')
+    expect(rows(c)[1].nameStyle).not.toContain('var(--text-faint)')
+  })
+
+  /** A build with the dragged part in it, for the two `onModel` cases below. */
+  const REBUILT = {
+    id: '/model',
+    name: 'model',
+    children: [{ id: '/model/plate', name: 'plate', key: 'plate', known: true }],
+  }
+
+  it('forgets the shut eyes when the nodes they name are dropped', () => {
+    // A SWITCH ON NOTHING IS WORSE THAN NO SWITCH. Each entry is a move node's
+    // id and says nothing on its own, so an id that outlives its node is a
+    // switch on nothing — and the moment that id comes round again it is a
+    // switch on the WRONG node, arriving already shut with nothing on screen
+    // saying why the part went home. Ids really do come round: the counter
+    // `recordGesture` mints them from starts at zero in every session and is
+    // not seeded past a document adopted from the hub.
+    //
+    // BOTH DOORS, because the nodes are dropped at both and neither is the
+    // other's caller: `leaveBuild` when a revision is left, and `onModel` when
+    // a rebuild that is not a re-stage lands.
+    const leaving = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    rows(leaving.c)[0].onVis(click)
+    expect(leaving.c.state.movesOff, 'the premise: the eye really shut')
+      .toHaveLength(1)
+    expect(leaving.c.leaveBuild(true).state.movesOff).toEqual([])
+
+    const built = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    rows(built.c)[0].onVis(click)
+    built.c.onModel({ tree: REBUILT, view: 'assembled', live: true })
+    expect(built.c.state.movesOff).toEqual([])
+  })
+
+  it('keeps the shut eyes across a re-stage, which drops no node', () => {
+    // THE SAME EVENT WITH `restage` SET IS THE OPPOSITE CASE — the bodies are
+    // laid down again and the move nodes stay, so a flag cleared here would
+    // put every switched-off part back out under the reader's hand for no
+    // reason they could see.
+    const { c, el } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    rows(c)[0].onVis(click)
+
+    c.onModel({ tree: REBUILT, view: 'assembled', live: true, restage: true })
+
+    expect(c.state.movesOff).toHaveLength(1)
+    expect(pushed(el)).toEqual([])
+  })
+
+  it('keeps the node in the document, and its line in what goes to the agent', () => {
+    // THE FLAG IS THIS PAGE'S AND TRAVELS NOWHERE: it is not in the document, so
+    // it is in neither the projection the agent reads nor the record the hub
+    // stores, and a second session opening this project sees the move applied.
+    const { c } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    const said = proposalText(c.state.proposal)
+
+    rows(c)[0].onVis(click)
+
+    expect(moves(c.state.proposal)).toHaveLength(1)
+    expect(proposalText(c.state.proposal)).toBe(said)
+    expect(said).toContain('move "plate" by (3, 0, 0)')
+    expect(JSON.stringify(c.proposalPayload(c.state.proposal)))
+      .not.toContain('movesOff')
+
+    c.computed().proposalAdd()
+
+    expect(c.state.composer.proposal).toContain('move "plate" by (3, 0, 0)')
+  })
+
+  it('puts the part back out where it was when the eye opens again', () => {
+    // NOTHING WAS LOST TO BE RESTORED. The viewport keeps the part's home, its
+    // pose and its pivot whichever way this switch is (`reconcileMoves`), so
+    // what goes out on the second press is the same offset against the same
+    // origin — which is what makes the eye a switch rather than an edit.
+    const { c, el } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    const out = pushed(el)
+
+    rows(c)[0].onVis(click)
+    expect(pushed(el)).toEqual([])
+
+    rows(c)[0].onVis(click)
+
+    expect(pushed(el)).toEqual(out)
+    expect(rows(c)[0].nameStyle).not.toContain('var(--text-faint)')
+  })
+
+  it('keeps its tick, which is the other statement and not this one', () => {
+    // TWO CONTROLS AND TWO DIFFERENT SENTENCES on one row, and neither is the
+    // other's spelling. The tick is about the TEXT — one line the agent is not
+    // shown — and leaves the part displaced; the eye is about the MODEL and
+    // leaves the line in the text. Pressed together they answer separately.
+    const { c, el } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+
+    rows(c)[0].onSkip(click)
+
+    expect(proposalText(c.state.proposal)).not.toContain('move "plate"')
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [3, 0, 0], turn: [0, 0, 0] }])
+
+    rows(c)[0].onVis(click)
+
+    expect(pushed(el)).toEqual([])
+    expect(moves(c.state.proposal)[0].skip).toBe(true)
+    expect(rows(c)[0].skipTitle).toBe('held back from the text sent to the agent')
+  })
+
+  it('opens the eye of the node a fresh gesture writes into', () => {
+    // THE VIEWPORT KNOWS NOTHING OF THE FLAG AND MUST NOT: with the eye shut
+    // the part stands where the build puts it, but it is an ordinary part of
+    // the scene and the manipulator moves it like any other. The release edits
+    // the node it covers IN PLACE, id and all, so an eye left shut would keep
+    // that id out of the very next push — the offset the reader had just made,
+    // written into the document and never on the model. A hand on a part says
+    // "it stands HERE", which is not a thing to say with the eye shut.
+    const { c, el } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    rows(c)[0].onVis(click)
+    expect(pushed(el), 'the premise: the eye really shut').toEqual([])
+
+    drag('/model/plate', [0, 5, 0])
+
+    // BOTH HALVES, because the defect showed as the two of them disagreeing:
+    // the document recording an offset the scene was never handed.
+    expect(moves(c.state.proposal).map((node) => node.delta)).toEqual([[0, 5, 0]])
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [0, 5, 0], turn: [0, 0, 0] }])
+    expect(c.state.movesOff).toEqual([])
+    expect(rows(c)[0].nameStyle).not.toContain('var(--text-faint)')
+  })
+
+  it('grabs a switched-off part with another, and sends neither home', () => {
+    // THE ASYMMETRY THAT MADE IT WORSE: a gesture covering ONE node edits it in
+    // place and keeps its id, while one covering TWO mints a fresh id and comes
+    // out right — so the same grab worked or did not depending on how many
+    // nodes it happened to overlap. Where it covered the shut one, the node
+    // stayed shut and took a part NOBODY switched off home with it: a collapsed
+    // `pin ×5` row, or plate and lid dragged together.
+    const { c, el } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    rows(c)[0].onVis(click)
+
+    drag('/model/plate', [0, 5, 0],
+         { paths: ['/model/plate', '/model/lid'], count: 2 })
+
+    expect(c.state.movesOff).toEqual([])
+    expect(pushed(el)).toEqual([
+      { paths: ['/model/plate', '/model/lid'], delta: [0, 5, 0],
+        turn: [0, 0, 0] },
+    ])
+  })
+
+  it('adopts a stored document with every eye open, whatever was shut here', () => {
+    // EVERY SESSION MINTS ITS IDS FROM ZERO, so `m1` shut on this page and `m1`
+    // in a document the hub hands back are two sentences about two different
+    // parts. The `×` is one of several doors a node leaves by — a retraction, a
+    // merge, an adoption — and no clear written at each of them stays complete,
+    // which is why the rule is that the list may name only nodes the document
+    // HAS, applied wherever the document is written.
+    const { c, el } = mounted({})
+    drag('/model/plate', [3, 0, 0])
+    rows(c)[0].onVis(click)
+    const shut = c.state.movesOff
+    expect(shut, 'the premise: an id was really shut').toHaveLength(1)
+
+    rows(c)[0].onRemove(click)
+    // The record `loadProposal` leaves on the page for the adoption to take;
+    // the fetch that fills it is the stored proposal's own subject, below.
+    c._proposalRecord = {
+      doc: addNode(emptyProposal(), {
+        id: shut[0], role: 'move', paths: ['/model/plate'], name: 'plate',
+        delta: [7, 0, 0], turn: [0, 0, 0],
+      }),
+      text: 'move "plate" by (7, 0, 0)', published: STAMP, view: VIEW,
+    }
+    c.adoptProposal()
+
+    expect(c.state.movesOff).toEqual([])
+    expect(pushed(el))
+      .toEqual([{ paths: ['/model/plate'], delta: [7, 0, 0], turn: [0, 0, 0] }])
+    expect(rows(c)[0].nameStyle).not.toContain('var(--text-faint)')
   })
 })
 

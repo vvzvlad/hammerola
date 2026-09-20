@@ -477,6 +477,32 @@ function stagedSelection(overlay, tree, s, compared) {
   return tree.nodes.has(path) ? { sel: path, selName: node.name } : null;
 }
 
+/**
+ * THE SHUT EYES A DOCUMENT STILL HAS NODES FOR — the one rule `movesOff` obeys,
+ * written once so that no door has to remember it (the constructor says what the
+ * list is). An entry is a move node's id and says nothing on its own, so one
+ * that outlives its node is a switch on nothing; and the ids are minted from a
+ * counter that starts at zero in every session (`recordGesture`), so that id
+ * comes round and arrives already shut over a part nobody switched off.
+ *
+ * CALLED IN THE SAME WRITE AS THE DOCUMENT, so the pair cannot come apart. Two
+ * of the three writers spend it — `setProposal`, whose docblock inventories
+ * everything that comes through it, and `onModel` where a rebuild drops the
+ * moves. The THIRD is `recordGesture`, which keeps the same rule with a line of
+ * its own because it has a second job there: a gesture on a part is the
+ * statement "it stands here", so it OPENS the eye of the node it wrote into
+ * rather than merely pruning the dead. `leaveBuild` spends it too, against the
+ * document it is handing on rather than one it writes.
+ *
+ * A MODULE FUNCTION for the reason `stagedSelection` above is one: the state
+ * updaters it is spread into stay pure functions of what they are handed.
+ */
+function eyesKept(off, doc) {
+  if (!off || !off.length) return [];
+  const held = new Set(moves(doc).map((node) => node.id));
+  return off.filter((shut) => held.has(shut));
+}
+
 // HOW MANY VIEWS STILL FIT AS A STRIP OF PILLS before the switcher becomes a
 // menu. The strip is a centred flex row that does NOT wrap, inside a root that
 // is `overflow:hidden` — so a row too wide for the window is neither scrollable
@@ -1322,8 +1348,27 @@ export default class HammerolaViewer extends React.Component {
       // (`proposalOverlay`, `proposalMoves`) and nowhere else. FALSE BY
       // DEFAULT, because a proposal that arrived invisible is one the reader
       // has to go and find.
+      //
+      // `movesOff` IS THAT ARGUMENT ONE ROW DOWN — the ids of the move nodes
+      // whose own eye is shut, and interface state for the same reason: the
+      // node stays in the document, in the branch and in the text the agent
+      // reads, so nothing about it travels or is stored and opening the eye
+      // brings the part back with no edit to undo. Read at ONE door
+      // (`proposalMoves`), because a move reaches the viewport through no
+      // other. EMPTY BY DEFAULT.
+      //
+      // AND IT MAY NAME ONLY MOVE NODES THE DOCUMENT STILL HAS. That is ONE
+      // rule rather than a list of the doors nodes leave by — the `×`, a
+      // retraction, a merge, a swap, a rebuild, a document adopted from the hub
+      // — and every writer of the document keeps it in the same write: two of
+      // the three through `eyesKept`, and `recordGesture` through a line of its
+      // own, which has a second job there. A GESTURE IS THE ONE THING THAT
+      // OPENS AN EYE (`recordGesture`): dragging a part says it stands here,
+      // which is not a thing to say with the eye shut — so that line prunes the
+      // dead AND opens the node it wrote into, and is not a copy of `eyesKept`
+      // to be tidied away.
       proposal: emptyProposal(), proposalOpen: false, proposalError: null,
-      proposalDraft: null, proposalOff: false,
+      proposalDraft: null, proposalOff: false, movesOff: [],
       // WHAT THE HUB HOLDS, in two fields with one reader each — because the two
       // questions asked of it are different questions, and one field answering
       // both was wrong for both. `proposalHeld` is about the RECORD and is read
@@ -2490,6 +2535,14 @@ export default class HammerolaViewer extends React.Component {
         // thing and are not here: they live in the proposal document now, and
         // `onModel` drops them when the build that lands is a different one.
         measure: null,
+        // AND THE EYES THE READER SHUT ON THOSE OFFSETS GO WITH THEM, by the
+        // one rule `movesOff` obeys everywhere: it may name only move nodes
+        // the document still has (`eyesKept`, and the constructor carries the
+        // argument). Asked of `left`, which is the document THE SWAP
+        // ESTABLISHES — the same anticipation the composer block below makes,
+        // and `onModel` writes it for real when the new build lands. It holds
+        // no move node, so the rule answers with an empty list.
+        movesOff: eyesKept(this.state.movesOff, left),
         // Whichever build was on offer, it has been answered — taken by
         // `takePending` or made irrelevant by `switchBuild` moving the road. The
         // BANNER is the callers' own business, because "taken" and "no longer
@@ -2935,6 +2988,24 @@ export default class HammerolaViewer extends React.Component {
       // event nobody declares.
       const patch = { paths, name };
       patch[said] = values;
+      // A GESTURE THAT WRITES INTO A MOVE NODE OPENS THAT NODE'S EYE. Dragging
+      // a part is the statement "it stands HERE", and with the eye shut the
+      // part stands where the BUILD puts it — so the statement is about nothing
+      // until the eye is open, and opening it is the honest reading of the
+      // hand. It is answered here because the viewport knows nothing of the
+      // flag and must not learn: `proposalMoves` is its one door, the
+      // manipulator moves a switched-off part like any other, and the single
+      // covered node is edited IN PLACE and keeps its id. Left shut, that id
+      // would take the offset the reader has just made straight back out of the
+      // next push — and where the gesture covered a node it shares with another
+      // part, send that part home too, which nobody asked for.
+      //
+      // `covered` IS ALSO EVERY NODE THE OTHER TWO BRANCHES DROP, so one line
+      // carries the rule `eyesKept` states as well: a retraction and a merge
+      // remove those nodes, and an id kept past its node is a switch on
+      // nothing. A minted id is fresh and cannot be on the list.
+      const wrote = new Set(covered.map((node) => node.id));
+      const eyes = (s.movesOff || []).filter((shut) => !wrote.has(shut));
       let next = null;
       if (retract) next = without();
       else if (covered.length === 1) {
@@ -2966,8 +3037,8 @@ export default class HammerolaViewer extends React.Component {
       // already had open, and the gesture left the part LESS out of place
       // than it found it.
       opened = !s.proposalOpen && !flat;
-      return opened ? { proposal: next, proposalOpen: true }
-                    : { proposal: next };
+      return opened ? { proposal: next, movesOff: eyes, proposalOpen: true }
+                    : { proposal: next, movesOff: eyes };
     }, () => {
       // THE BODIES ARE STAGED ONLY WHERE THE SHEET OPENED, and what that
       // costs has to be stated correctly because the obvious reading is
@@ -3208,8 +3279,18 @@ export default class HammerolaViewer extends React.Component {
       // and the drag away on the keystroke that changed a number in an
       // unrelated panel — blocks 6 and 7 cancelled by block 6's own
       // successor.
+      //
+      // THE PER-MOVE EYES ARE THE THIRD THING ON THAT LIST, and they ride with
+      // the nodes by the one rule `movesOff` obeys everywhere (`eyesKept`,
+      // argued at the constructor): it may name only move nodes the document
+      // still has, and the line below leaves it with none. Written as the rule
+      // rather than as the `[]` the rule answers here, so this site cannot
+      // drift from it; `dropMoves` is pure, so the second call answers as the
+      // first — the same trade `leaveBuild` names where it binds a local.
       ...(d.restage ? null : {
         measure: null, proposal: dropMoves(s.proposal || emptyProposal()),
+        movesOff: eyesKept(s.movesOff,
+                           dropMoves(s.proposal || emptyProposal())),
       }),
       // The reader's own collapses survive: part paths are the same across a
       // rebuild, and this is the tree they were reading a moment ago.
@@ -4146,6 +4227,19 @@ export default class HammerolaViewer extends React.Component {
    * `DROP_STEPS` and `KEEP_STEPS` are the argument, and the constants carry the
    * whole of the reasoning — including why dropping is what a caller that says
    * nothing gets.
+   *
+   * AND THE SHUT EYES ARE PRUNED IN THE SAME WRITE (`eyesKept`), which is how
+   * everything that comes through THIS door obeys the one rule without any of
+   * it being named: the `×`, every edit of the panel's fields, a step taken
+   * back and a document adopted from the hub. `movesOff` may hold only ids the
+   * document still has, and in the SAME patch as `proposal`, so the pair is
+   * always consistent with itself whatever lands around it.
+   *
+   * A RETRACTION AND A MERGE DO NOT COME THROUGH HERE. They are branches of
+   * `recordGesture`, which writes the document through its own updater and
+   * keeps the same rule with a line of its own — the one that also opens the
+   * eye of the node a gesture wrote into. That line is not a duplicate of this
+   * one and deleting it as though it were is the defect it was written for.
    */
   setProposal(doc, steps = DROP_STEPS) {
     // FIRST, so that nothing the write below reaches — `stageProposal` pushes at
@@ -4155,7 +4249,8 @@ export default class HammerolaViewer extends React.Component {
     if (steps !== KEEP_STEPS && doc !== this.state.proposal) {
       this.history = this.history.filter((step) => step.kind !== UNDO_DOCUMENT);
     }
-    this.setState({ proposal: doc, ...this.selectionAfter(doc) });
+    this.setState({ proposal: doc, movesOff: eyesKept(this.state.movesOff, doc),
+                    ...this.selectionAfter(doc) });
     this.stageProposal(doc);
     this.saveProposal(doc);
   }
@@ -4376,13 +4471,20 @@ export default class HammerolaViewer extends React.Component {
    * straight back out. Read here and in `proposalOverlay` because those are the
    * two doors to the viewport; every caller of either is covered by that,
    * including the `hmr:moved` handler, which reaches this one on its own.
+   *
+   * AND A NODE WHOSE OWN EYE IS SHUT IS DROPPED THE SAME WAY (`movesOff`),
+   * which is the per-node spelling of the line above and not a second
+   * mechanism: the push is what says which parts are displaced, so leaving one
+   * out of it is the whole of switching it off. The node is untouched —
+   * `toggleMoveEye` carries the rest.
    */
   proposalMoves(doc) {
     const el = this.el();
     if (!el || typeof el.setMoves !== 'function') return;
     const shown = this.state.proposalOff ? dropMoves(doc) : doc;
+    const off = new Set(this.state.movesOff || []);
     try {
-      el.setMoves(moves(shown).map((node) => ({
+      el.setMoves(moves(shown).filter((node) => !off.has(node.id)).map((node) => ({
         paths: node.paths, delta: node.delta, turn: node.turn,
       })));
     } catch (error) {
@@ -4503,6 +4605,33 @@ export default class HammerolaViewer extends React.Component {
   toggleProposalEye() {
     this.setState({ proposalOff: !this.state.proposalOff },
                   () => this.stageProposal(this.state.proposal || emptyProposal()));
+  }
+
+  /**
+   * ONE MOVE'S OWN EYE: that part back where the build puts it, or displaced
+   * again. The same kind of state as `proposalOff` above and for the same
+   * reason — it is a control of this interface, so the node stays in the
+   * document, the row stays in the branch, the projection goes on saying what
+   * it said, and the `×` remains the only thing that deletes any of it.
+   *
+   * NOTHING TO UNDO AND NOTHING TO RE-MEASURE. The viewport sends a part home
+   * because its path stopped appearing in the pushed list (`reconcileMoves`)
+   * and keeps that part's home, pose and pivot regardless, so the eye opened
+   * again re-applies the same delta against the same origin.
+   *
+   * `proposalMoves` ALONE and not `stageProposal`: a move displaces a part of
+   * the BUILD and composes no body, so there is nothing to rebuild and no
+   * overlay to lay down again. Through the callback, because that door reads
+   * the list off `this.state`.
+   *
+   * A FUNCTIONAL UPDATER for the reason the `hmr:moved` handler's is one: this
+   * is a read-modify-write of a field `onModel` patches functionally, and a
+   * build landing between a read of `this.state` and the object patch that
+   * followed it would put back an id that build had just taken out.
+   */
+  toggleMoveEye(id) {
+    this.setState((s) => ({ movesOff: this.toggle(s.movesOff || [], [id]) }),
+                  () => this.proposalMoves(this.state.proposal || emptyProposal()));
   }
 
   /**
@@ -6138,6 +6267,7 @@ export default class HammerolaViewer extends React.Component {
       skipProposal: this.skipProposal.bind(this),
       toggleProposal: this.toggleProposal.bind(this),
       toggleProposalEye: this.toggleProposalEye.bind(this),
+      toggleMoveEye: this.toggleMoveEye.bind(this),
       removeProposal: this.removeProposal.bind(this),
     });
 
@@ -6871,24 +7001,35 @@ export default class HammerolaViewer extends React.Component {
                         cannot place, which leaves the browser's own menu where
                         this page has nothing to put — see the row. */}
                     <div onContextMenu={row.onMenu} style={css(row.rowStyle)}>
-                      {/* The eye, the ghost square and the colour, in one box so
-                          that a MOVE — which draws nothing and has none of them
-                          — can drop all three at once and still line its name up
-                          with the bodies above it. */}
+                      {/* The eye, the ghost square and the colour, in one box
+                          that keeps the three columns' width whether or not
+                          anything is drawn in them — so the names of the two
+                          kinds of row stand in one line.
+                          A MOVE KEEPS ITS EYE AND NOT THE OTHER TWO, which is
+                          why the box is not hidden as one unit: the eye on
+                          such a row is a switch of this page's own (`onVis`
+                          reaches `toggleMoveEye`), while the square and the
+                          colour are the SCENE's and belong to the part's own
+                          row in the tree below. `ghostStyle` takes the square
+                          off; the colour comes off by itself, since a move has
+                          no row in the scene to take one from. */}
                       <span style={css(row.marksStyle)}>
                         <span onClick={row.onVis} title="show / hide" style={css(SLOT_24)}>
                           <span style={css(row.eyeOuter)}><span style={css(row.eyeDot)} /></span>
                         </span>
-                        <span onClick={row.onGhost} title="translucent" style={css(SLOT_22)}>
+                        <span onClick={row.onGhost} title="translucent" style={css(row.ghostStyle)}>
                           <span style={css(row.ghostIcon)} />
                         </span>
                         <span style={css(row.dotStyle)} />
                       </span>
                       {/* OUTSIDE THAT BOX, which is the whole reason it is not
                           in it: the box goes `visibility:hidden` on a row with
-                          nothing in the scene, and every move is such a row —
-                          while a move is a statement that can be held back
-                          exactly as a body can. */}
+                          nothing in the scene — a body the tree cannot place,
+                          and every row at all while a comparison is up — while
+                          being held back from the agent is a statement such a
+                          row can still make. A MOVE row is no longer one of
+                          them: its box stays visible to carry the eye, and it
+                          is the ghost square inside that goes instead. */}
                       <span onClick={row.onSkip} title={row.skipTitle} style={css(SLOT_22)}>
                         <span style={css(row.skipIcon)} />
                       </span>
