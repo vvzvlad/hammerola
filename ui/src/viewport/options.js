@@ -483,10 +483,11 @@ export const RING_PX = 105;
  * is nothing left to invent a tolerance for, because the target is now as wide
  * as what is drawn.
  *
- * A CIRCLE IN THE RING'S OWN PLANE and not a dot on the screen, which
- * `rings.js` draws with the ring's own matrix: the disc is squashed exactly as
- * its ring is, so it lies ON the curve instead of floating over it, and a ring
- * turned nearly edge-on says so by flattening its handle along with itself. */
+ * A CIRCLE IN THE RING'S OWN PLANE and not a dot on the screen, which `rings.js`
+ * now draws as exactly that — a flat disc standing on the circle, in the world
+ * plane the ring's axis is normal to. The camera squashes it with its ring, so
+ * it lies ON the curve instead of floating over it, and a ring turned nearly
+ * edge-on says so by flattening its handle along with itself. */
 export const RING_DISC_PX = 20;
 
 /** Half the arc drawn through the disc AT REST, in degrees of the ring's own
@@ -518,20 +519,13 @@ export const RING_ARC_DEG = 57;
  * this interface runs on (`readTheme`) rule out picking an ink that carries on
  * both.
  *
- * NOT A GLOW, and the reason for that has CHANGED — which is worth writing down
- * rather than leaving a true conclusion resting on a dead argument. It used to
- * be arithmetic: every circle was a box about two pixels across under a matrix
- * that multiplied lengths by the radius, so a 1 px shadow came back as a hundred
- * px of smudge. That matrix no longer scales — it carries the ellipse's SHAPE
- * and nothing else (`rings.js`, and the bug that forced it: a border written as
- * a fraction of a pixel is rounded UP to the device minimum before any transform
- * and then magnified, which drew a two-pixel line fifty pixels wide). A filter
- * would now land at about the size it says.
- *
- * What is left is a smaller reason and a real one: `pieces` keeps six circles
- * CONCENTRIC with exact outer edges, which is what makes the casing a band of a
- * known width rather than a glow of an approximate one, and what lets the rest
- * of this file go on saying the ring's widest point is exactly `RING_PX`. */
+ * NOT A GLOW, and there is nothing left for a glow to be: the widget is meshes
+ * in the scene now (`rings.js`), where a CSS filter has no meaning at all —
+ * which is the same place `HANDLE_CASE_PX` arrived at for the section grip. The
+ * casing is a second, slightly larger copy of the ink drawn underneath it, so
+ * it is a band of a known width rather than an edge of an approximate one, and
+ * that is what lets the rest of this file go on saying the ring's widest point
+ * is exactly `RING_PX`. */
 export const RING_CASE_PX = 2;
 
 /** The dark rim outside that casing. A hairline, because it is doing the
@@ -546,11 +540,17 @@ export const RING_RIM_PX = 1;
  * grip's: three of these cross the part and a heavier line turns the crossings
  * into blots.
  *
- * IT IS A LENGTH AT ONE PLACE ON THE CURVE rather than a width the whole ring
- * has, and `rings.js` says why at the element: the ellipse is drawn by putting a
- * circle of `RING_PX` under the ring's own 2x2, whose widest direction is
- * exactly 1, so the line foreshortens with everything else. A ring seen at an angle is thinner where it is turning
- * away, which is what a real ring looks like.
+ * IT IS NOW THE WIDTH THE WHOLE RING HAS, at every point of the curve and under
+ * every camera, which is a change from the flat widget and is worth stating
+ * because the old text's conclusion no longer follows from anything. Drawn flat
+ * the ring was an ellipse stroked by a CSS border under the projection's own
+ * 2x2, so the line really did thin where the ring turned away. A round tube
+ * does not: the solid is the circle grown by a ball of the tube's radius, an
+ * orthographic projection carries a sum like that to the sum of the
+ * projections, and the projected ball is a disc of the same radius whatever the
+ * camera does — so what lands on the canvas is the projected ellipse grown by
+ * that disc, 2 px wide all the way round. `RING_PX` still names the widest
+ * point exactly, because the ink's tube is centred half a shaft inside it.
  */
 export const RING_SHAFT_PX = 2;
 
@@ -570,9 +570,10 @@ export const RING_SHAFT_PX = 2;
  * SO THE RING STILL GOES, for `GIZMO_MIN_SCALE`'s reason rather than for the
  * old one: a control the reader can see and cannot aim at is worse than no
  * control, and the remedy is the same — turn the model a little and the ring
- * comes back. The basis going singular is still true and still fatal to the
- * circle-space angle the drag is measured in, but it was never the binding
- * constraint and is not what sets this number.
+ * comes back. The angle the drag is measured in has no such floor any more —
+ * it is where the pointer's ray meets the ring's own plane, and only a ray
+ * lying exactly IN that plane has no answer — so the handle is the whole of
+ * what sets this number.
  *
  * 21 IS `RING_PX * GIZMO_MIN_SCALE`, which is arithmetic rather than sharing:
  * a ring's major semi-axis is always `RING_PX` (`rings.js` says why), so a

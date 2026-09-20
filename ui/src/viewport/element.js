@@ -348,21 +348,19 @@ export class HmrViewport extends HTMLElement {
     this.gizmo = createGizmo(this);
     this.appendChild(this.gizmo.root);
 
-    // AND THE ROTATION HANDLES LAST, where the rule the two blocks above apply
-    // runs out and something else takes over. These are the other half of the
-    // very widget above — one manipulator answering to one tool, so the two
-    // layers are now always on screen TOGETHER — and yet there is still no
-    // press for the order to decide between, because this layer takes no
-    // presses at all (`rings.js` says why: a div is a filled box, so a handle
-    // that could take a press would take the corners of its square with it). It
-    // reads its own off the canvas instead, in a window listener that declines
-    // any target but the canvas, which is exactly what every element of the
-    // layer above is not. What the order buys here is PAINT, and against the
-    // layer directly above it is the EVERYDAY case now that both halves are up
-    // together: a disc crossing an arrowhead or a quad is drawn over it, and
-    // being last is the whole of why.
+    // AND THE ROTATION HANDLES ARE NOT IN THIS STACK EITHER, for the grip's
+    // reason: they are three circles standing in the world plane each one's
+    // axis spans, so they have no root to append (`scene3d.js`). Their two
+    // lifecycle lines are in `show()` beside the grip's.
+    //
+    // WHAT THAT COSTS IS PAINT, and it is worth naming because this line used
+    // to buy it. These are the other half of the very widget above — one
+    // manipulator answering to one tool, so both are always on screen together
+    // — and being the last layer put a knob crossing an arrowhead OVER it.
+    // Every layer above is drawn on top of the canvas these are drawn INSIDE,
+    // so the arrowhead wins that crossing until the arrows move into the scene
+    // as well.
     this.rings = createRings(this);
-    this.appendChild(this.rings.root);
 
     setPointingDevice(this, initialPointingDevice(), false);
 
@@ -412,11 +410,11 @@ export class HmrViewport extends HTMLElement {
         // frame already queued sees `activeTool` is now the cut, takes the
         // arrows off and lets itself stop.
         this.gizmo.refresh();
-        // AND THE ROTATION HANDLES FOR THE SAME REASON, on the same tool: two
-        // layers make one widget, both loops stop when there is nothing to
-        // draw, and this release is the one event that can bring either back
-        // without an `hmr:state` behind it. Two calls and not one because they
-        // are two loops, which is the whole of what keeping two files costs.
+        // AND THE ROTATION HANDLES FOR THE SAME REASON, on the same tool, with
+        // one word changed: these are in the scene, so what `refresh` asks the
+        // library for is a FRAME rather than a loop's next turn. The release is
+        // still the one event that can bring either half back without an
+        // `hmr:state` behind it.
         this.rings.refresh();
       },
       onEscape: () => emit(this, EVENT_TOOL, { tool: null, held: false, escape: true }),
@@ -751,8 +749,9 @@ export class HmrViewport extends HTMLElement {
       // `this.moved` with nothing in the document claiming it, and the next push
       // would send it home under the reader's hand.
       this.gizmo.endDrag();
-      // And a drag of a RING is a FOURTH, on a layer whose press was taken in a
-      // window listener of its own — which the idle clock cannot see either.
+      // And a drag of a RING is a FOURTH, on a widget in the scene whose press
+      // was taken in a window listener of its own — which the idle clock cannot
+      // see either.
       // Concluded for the same reason, one field of the node over: the part
       // stands turned in `this.moved` with nothing claiming it, and the next
       // push straightens it under the reader's hand.
@@ -811,6 +810,11 @@ export class HmrViewport extends HTMLElement {
         // model's — and the group is built once and kept, so nothing would ever
         // build them again. This is the only call site there is.
         this.handle.detach();
+        // AND THE ROTATION HANDLES, whose one group stands in the same scene
+        // and would go the same way for the same reason — built once, kept
+        // across every scene the reader loads, and nothing left to build them
+        // again.
+        this.rings.detach();
         this.viewer.clear();
       }
       this.viewer.render(scene, renderOptions, viewerOptions);
@@ -818,6 +822,7 @@ export class HmrViewport extends HTMLElement {
       // THREE.Scene from the one detached above. The namespace is handed over
       // here because this is where the page has it; the widget keeps it.
       this.handle.attach(library.THREE);
+      this.rings.attach(library.THREE);
       // Only now does the widget exist to be measured; the first pass asked for
       // the whole container, so re-fit it to what is left once its own chrome is
       // accounted for. A no-op on every later call.
@@ -980,10 +985,12 @@ export class HmrViewport extends HTMLElement {
     // the Move tool is down or nothing is selected — both of which arrive as
     // state, i.e. here. Same wake-up, same reason.
     this.gizmo.refresh();
-    // And the rotation handles, whose loop stops on exactly the same two
-    // conditions asked about the same tool. Arming Move or Turn from a row's
-    // menu is one `hmr:state` carrying a tool and a selection at once, and this
-    // is the line that draws them when it lands.
+    // And the rotation handles, which come and go on exactly the same two
+    // conditions asked about the same tool — placed by the library's render
+    // pass like the grip, so this asks for the frame that puts them on or takes
+    // them off. Arming Move from a row's menu is one `hmr:state` carrying a
+    // tool and a selection at once, and this is the line that draws them when
+    // it lands.
     this.rings.refresh();
   }
 

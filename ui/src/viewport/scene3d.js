@@ -303,19 +303,18 @@ export function createScene3D(vp, { wanted, build, place, press, cursor }) {
    * and a press it does not want is a press it has no business taking away from
    * anybody else.
    *
-   * IMMEDIATE, AND THAT WORD IS THE WHOLE DIFFERENCE FROM rings.js. `rings.js`
-   * takes its press on this very node, in this very phase, and `stopPropagation`
-   * does not reach a second listener on the SAME node — it only stops the event
-   * travelling onward. While this widget was a div, a press on it never had the
-   * canvas as its target and `rings.js` declined it on that ground alone; now
-   * that both read presses off the canvas, the same press would land on the grip
-   * AND start a rotation, which was not reachable before and is not a gesture
-   * anybody asked for. `stopImmediatePropagation` is what closes that, and
-   * which order decides: "immediate" silences only what was registered LATER, so
-   * the guarantee is really "the grip is built before the rings" in
-   * `element.js`. That is a fact about that file and not about either widget,
-   * which is why it is pinned on the source rather than here — see
-   * `tests/test_ui_source.py`. A listener carries nothing that says whose it is.
+   * IMMEDIATE, AND THAT WORD IS WHAT KEEPS TWO WIDGETS IN ONE SCENE APART.
+   * Every widget built here puts its `onDown` on this same node in this same
+   * phase, and `rings.js` puts a `handOver` of its own beside them;
+   * `stopPropagation` does not reach a second listener on the SAME node — it
+   * only stops the event travelling onward — so without the immediate form one
+   * press would be taken by the grip AND start a rotation, which is not a
+   * gesture anybody asked for. Which of the two keeps it is decided by ORDER,
+   * since "immediate" silences only what was registered LATER: the guarantee is
+   * really "the grip is built before the rings" in `element.js`. That is a fact
+   * about that file and not about either widget, which is why it is pinned on
+   * the source rather than here — see `tests/test_ui_source.py`. A listener
+   * carries nothing that says whose it is.
    */
   function onDown(event) {
     const g = wanted() ? internals(vp.viewer) : null;

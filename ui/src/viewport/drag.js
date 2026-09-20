@@ -20,7 +20,7 @@ import { CLICK_PX } from "./options.js";
  *
  * A HANDLER THAT IS NOT PASSED IS NOT LISTENED FOR, which is one caller's real
  * case rather than a convenience: `rings.js` keeps its `pointermove` on the
- * window for the whole life of the layer, because that handler answers where
+ * window for the whole life of the widget, because that handler answers where
  * the cursor is standing when there is no drag at all, so its press arms the
  * release and the cancel alone.
  */

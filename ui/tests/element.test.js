@@ -156,12 +156,16 @@ function element(state = {}, viewer = fakeViewer()) {
   // owes them the same wake-up and the same end, and they are stubbed for the
   // same reason.
   vp.gizmo = { refresh: vi.fn(), endDrag: vi.fn() }
-  // And the turn handles, which are the third widget of that shape: a loop that
-  // stops itself, a gesture on a layer no other listener can see, and the same
-  // two things owed by the element. Not a tool of their own any more — they are
-  // the other half of the widget the line above stubs, and both halves answer to
-  // `move` — but a separate LAYER still, so the element owes each its own call.
-  vp.rings = { refresh: vi.fn(), endDrag: vi.fn() }
+  // And the turn handles, which are the third widget of that shape: they come
+  // and go on the same two conditions, they keep a gesture no other listener
+  // can see, and the same things are owed them by the element. Not a tool of
+  // their own any more — they are the other half of the widget the line above
+  // stubs, and both halves answer to `move` — but a separate WIDGET still, so
+  // the element owes each its own call. Four stubs and not two, because these
+  // stand IN the scene like the grip: a swap detaches and re-attaches them.
+  vp.rings = {
+    refresh: vi.fn(), endDrag: vi.fn(), attach: vi.fn(), detach: vi.fn(),
+  }
   // The up-events go through `dispatchEvent`, which is a real DOM method on a
   // real element and refuses to run on an object the DOM never built — the same
   // reason the note above `calledWithViewport` gives about `getAttributeNames`.
@@ -1600,10 +1604,9 @@ describe('the widgets connectedCallback puts on the page', () => {
       expect(typeof el.handle[name], name).toBe('function')
     }
     // And no root of its own: what `connectedCallback` appends is the container
-    // the library renders into plus FOUR layers — the pins, the cube, the
-    // arrows and the rings — and a sixth child would be the grip built the way
-    // it used to be.
-    expect([...el.children]).toHaveLength(5)
+    // the library renders into plus THREE layers — the pins, the cube and the
+    // arrows — and a fifth child would be the grip built the way it used to be.
+    expect([...el.children]).toHaveLength(4)
   })
 
   it('takes the grip down too when the element leaves the document', () => {
@@ -1617,43 +1620,36 @@ describe('the widgets connectedCallback puts on the page', () => {
     expect(gone).toHaveBeenCalledTimes(1)
   })
 
-  /** The turn rings' layer, found the way the two above are found — by the one
-   *  thing distinctive about what it holds. A ring is a round div, and nothing
-   *  else the viewport puts on the page is; it carries no class name either. */
-  const ringsIn = (el) => [...el.children].find(
-    (child) => child.firstElementChild
-      && child.firstElementChild.style.borderRadius === '50%')
-
-  it('mounts the turn rings, after the axis arrows', () => {
-    // THE SAME HOLE, ONE WIDGET FURTHER ON: delete the two lines in
-    // `element.js` that create and append this layer and nothing anywhere else
-    // goes red — the rings are simply not on the page, and the only way left to
+  it('creates the turn rings, which are no layer either', () => {
+    // THE SAME HOLE, ONE WIDGET FURTHER ON, and now the same WIDTH of hole as
+    // the grip's: delete the line in `element.js` that creates the rings and
+    // nothing anywhere else goes red — they stand in the library's scene, so
+    // there is nothing on the page to find them by, and the only way left to
     // turn a part is to type three numbers into the panel, which is the state
-    // this whole feature was written out of.
+    // this whole feature was written out of. The field and the five calls the
+    // element makes on it are what is left to hold, and the arrows' layer being
+    // the LAST child is what says this one no longer appends a root.
     const el = mount()
-    const rings = ringsIn(el)
-    expect(rings).toBeTruthy()
-    expect(rings.children).toHaveLength(3)
-
-    // AFTER the arrows. Nothing is decided by it — the two are never on screen
-    // together and this layer takes no press at all — beyond which is painted
-    // over the other where they cross.
-    const kids = [...el.children]
-    expect(kids.indexOf(rings)).toBeGreaterThan(kids.indexOf(arrowsIn(el)))
+    expect(el.rings).toBeTruthy()
+    for (const name of ['refresh', 'attach', 'detach', 'endDrag', 'destroy']) {
+      expect(typeof el.rings[name], name).toBe('function')
+    }
+    expect([...el.children].at(-1)).toBe(arrowsIn(el))
   })
 
   it('takes the rings down when the element leaves the document', () => {
     // MORE THAN THE OTHER THREE OWE, which is why this is its own case: the
-    // rings keep capture-phase listeners on the WINDOW for the whole life of the
-    // layer rather than only while a gesture runs — a `pointerdown`, because
-    // they take no press on an element of their own, and a `pointermove`, which
-    // is what lights the handle the cursor is over before it is pressed. Left
-    // behind they would answer for a viewport that is gone — on every press and
-    // every mouse movement over whatever page came next.
+    // rings keep capture-phase listeners on the WINDOW for the whole life of
+    // the widget rather than only while a gesture runs — a `pointerdown`,
+    // because a press that misses every knob still strands the arrows' drag,
+    // and a `pointermove`, which is what lights the knob the cursor is over
+    // before it is pressed. Left behind they would answer for a viewport that
+    // is gone — on every press and every mouse movement over whatever page came
+    // next.
     const el = mount()
-    expect(ringsIn(el)).toBeTruthy()
+    const gone = vi.spyOn(el.rings, 'destroy')
     el.destroy()
-    expect(ringsIn(el)).toBeUndefined()
+    expect(gone).toHaveBeenCalledTimes(1)
   })
 
   it('wakes the axis arrows when the hold key lets go of the cut', () => {
@@ -1678,12 +1674,12 @@ describe('the widgets connectedCallback puts on the page', () => {
   })
 
   it('wakes the rotation handles when the hold key lets go of the cut', () => {
-    // THE SAME SILENCE ONE LAYER OVER. The handles' loop stops on exactly the
-    // conditions the arrows' does and on the same tool, so the hold key takes
-    // the whole widget off and nothing puts this half of it back: the release
-    // emits `hmr:tool` alone and the interface answers it with a local
-    // `setState`, never a push. Two calls and not one, because two layers make
-    // one widget and each keeps its own loop.
+    // THE SAME SILENCE ONE WIDGET OVER. The handles come off on exactly the
+    // conditions the arrows do and on the same tool, so the hold key takes the
+    // whole widget off and nothing puts this half of it back: the release emits
+    // `hmr:tool` alone and the interface answers it with a local `setState`,
+    // never a push. Two calls and not one, because two widgets make one
+    // manipulator and neither is drawn by the other's frame.
     const el = mount()
     el.state = { ...el.state, tool: 'move' }
     const rings = { refresh: vi.fn(), endDrag: vi.fn(), destroy: vi.fn() }

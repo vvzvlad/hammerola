@@ -3,17 +3,17 @@
 // with a camera that moves sixty times a second, and the teardown that stops
 // both.
 //
-// THREE LAYERS SHARE IT — the pin overlay (overlay.js), the axis arrows and
-// plane quads (gizmo.js) and the rotation handles (rings.js) — and they shared
-// it by transcription until this module existed: the same `cssText`, the same
-// `frame` variable, the same `draw`, the same `schedule` and the same
-// `cancelAnimationFrame` written out in four files. The fourth was the section
-// grip, which is a group of meshes in the scene now; `scene3d.js` is this
-// module's twin for widgets that live there, and there it is the RENDER that
-// places them rather than a loop.
+// TWO LAYERS SHARE IT — the pin overlay (overlay.js) and the axis arrows and
+// plane quads (gizmo.js) — and they shared it by transcription until this
+// module existed: the same `cssText`, the same `frame` variable, the same
+// `draw`, the same `schedule` and the same `cancelAnimationFrame` written out
+// in four files. Two of those four have left for the scene since — the section
+// grip and the rotation handles — and `scene3d.js` is this module's twin for
+// widgets that live there, where it is the RENDER that places them rather than
+// a loop.
 //
 // WHY THE LOOP IS A LOOP AT ALL, which is the one decision that lives here
-// rather than in a caller. The three layers above are divs over the canvas
+// rather than in a caller. The two layers above are divs over the canvas
 // rather than objects in the scene, and they are still driven from here; the
 // alternative for them would be re-projecting from the trackball's `change`
 // event — which fires on camera moves and NOT on the frames a live swap, a
@@ -44,11 +44,11 @@
  * against the white glow, and because this is a single filter over the whole
  * shape it follows a border triangle as well as a shaft.
  *
- * AN EDGE TREATMENT AND NOTHING ELSE, which is why the quads, the origin dot
- * and every circle of the rings decline it: a 1 px glow is contrast on a 2 px
- * shaft, where the ink is nearly all edge, and a hairline round a filled block
- * ten pixels across. `gizmo.js` (`CASING`) and `rings.js` (`circle`) carry the
- * rest of that argument, the second of them about a `filter` under a matrix.
+ * AN EDGE TREATMENT AND NOTHING ELSE, which is why the quads and the origin dot
+ * decline it: a 1 px glow is contrast on a 2 px shaft, where the ink is nearly
+ * all edge, and a hairline round a filled block ten pixels across. `gizmo.js`
+ * (`CASING`) carries the rest of that argument, and the two widgets in the
+ * scene answer it with geometry instead (`HANDLE_CASE_PX`, `RING_CASE_PX`).
  */
 export const HALO =
   "drop-shadow(0 0 1px #fff) drop-shadow(0 1px 2px rgba(20,24,28,.45))";
@@ -74,14 +74,13 @@ export function addPiece(parent, css) {
  *
  * `pointer-events: none` ON THE ROOT, and back on for whatever inside it is
  * meant to be pressed: the layer covers the whole canvas, so without this it
- * would swallow every press meant for the model — rotation included. `rings.js`
- * is the one layer that puts it back on nothing at all, and says why.
+ * would swallow every press meant for the model — rotation included.
  *
  * NO CLASS NAME HERE, for the view cube's reason: a class is a promise the
  * interface's stylesheet keeps a rule for it (tests/test_ui_source.py checks
- * exactly that), and three of the four layers are a legibility requirement over
- * two canvases rather than a palette the designer owns. The overlay, whose pins
- * ARE the designer's, sets its own on the root it is handed.
+ * exactly that), and the arrows are a legibility requirement over two canvases
+ * rather than a palette the designer owns. The overlay, whose pins ARE the
+ * designer's, sets its own on the root it is handed.
  */
 export function createLayer({ wanted, place }) {
   const root = document.createElement("div");
