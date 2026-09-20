@@ -401,7 +401,20 @@ export function proposalView(s, deps) {
       // ONE STEP IN FROM THE `proposal` HEAD, which is the indent the parts
       // tree spends on a depth of one (`node.depth * 16` in `emit`), because
       // this branch is read as a tree beside that one.
-      rowStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px 16px;border-radius:4px;background:'
+      // THE CARET'S COLUMN, STOOD OVER — 3 of padding, 20 of caret, 2 of gap,
+      // exactly what `proposalHeadStyle` spends before ITS eye. No row of this
+      // branch ever folds anything, so the column is empty on every one of
+      // them; it is here so the eye, the square, the tick and the name of a row
+      // each stand under the same thing in the head. It used to be a bare
+      // `margin-left:16px` — an indent belonging to nothing above it, which put
+      // every column 6px to the left of the one it answers to. The reader asked
+      // what the blank space in front of the eye was, and that was the honest
+      // answer: nothing.
+      //
+      // PADDING AND NOT MARGIN, so the row's own pill starts where the head's
+      // does instead of beginning 25px in. The row takes no click of its own
+      // (`onContextMenu` alone), so the column is not a target for anything.
+      rowStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 25px;margin:0 0 1px;border-radius:4px;background:'
         + (selected ? 'var(--accent-bg)' : 'var(--float-bg-soft)') + ';cursor:default',
       // DRAWN AS ABSENT RATHER THAN LEFT OUT on a row with nothing in the
       // scene: `visibility:hidden` keeps the boxes' width, so the names of the
@@ -514,7 +527,7 @@ export function proposalView(s, deps) {
       // for the open row would make what the branch can commit depend on what
       // is on screen.
       fieldsStyle: 'display:' + (selected ? 'block' : 'none')
-        + ';width:250px;box-sizing:border-box;margin:1px 0 5px 32px;padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--float-bg)',
+        + ';width:250px;box-sizing:border-box;margin:1px 0 5px 16px;padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--float-bg)',
       // A MOVE HAS NO NAME FIELD, NO OP AND NO ROLE. Its name is a row of the
       // BUILD's, resolved when the gesture landed and never chosen by the
       // reader; it draws no geometry, so there is no op to show and nothing
@@ -706,13 +719,12 @@ export function proposalView(s, deps) {
       // ("size values must be positive"). A zero builds in silence and draws
       // nothing, and nothing anywhere stops a minus being typed.
       proposalSays: s.proposalError || '',
-      // ONE STEP IN FROM THE HEAD, which is the indent a row of this branch
-      // carries, so the sentence lines up with the rows it is about. NOT with
-      // the field block under a selected row, which stands one step further in
-      // again (32px): the verdict is about the whole document rather than
-      // about whichever row happens to be open, and a left edge shared with
-      // the rows is what says so.
-      proposalSaysStyle: 'width:250px;box-sizing:border-box;margin:1px 0 5px 16px;padding:7px 9px;'
+      // FLUSH WITH THE HEAD AND WITH THE ROWS, which all start at the column's
+      // own left edge. NOT indented like the field block under a selected row
+      // (16px): the verdict is about the whole document rather than about
+      // whichever row happens to be open, and a left edge shared with the
+      // branch is what says so.
+      proposalSaysStyle: 'width:250px;box-sizing:border-box;margin:1px 0 5px;padding:7px 9px;'
         + `border:1px solid var(--danger-line);background:var(--danger-bg);border-radius:6px;font:400 10.5px/1.5 ${MONO};color:var(--danger);display:`
         + (s.proposalError ? 'block' : 'none'),
   };

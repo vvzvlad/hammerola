@@ -6786,9 +6786,11 @@ export default class HammerolaViewer extends React.Component {
                       ghost — there is nothing to make the whole proposal
                       translucent — so without this spacer the master tick lands
                       over the column of ghost squares, 31px to the left of the
-                      ticks it sets and clears. The eye above is off by 6px and
-                      still reads as the same control one level up; a tick over
-                      the wrong column does not. */}
+                      ticks it sets and clears, and a tick over the wrong column
+                      does not read as the same control one level up. With it,
+                      and with the caret column a row stands over
+                      (`rowStyle` in proposalview.js), every column of a row is
+                      exactly under the one it answers to. */}
                   <span style={css('width:22px;flex:none')} />
                   <span onClick={v.proposalSkipAll} title={v.proposalSkipTitle} style={css(SLOT_22)}>
                     <span style={css(v.proposalSkipIcon)} />

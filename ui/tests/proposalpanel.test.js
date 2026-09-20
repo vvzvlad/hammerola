@@ -528,6 +528,33 @@ describe('the Add primitive button', () => {
 // -- the branch of the tree the whole document is drawn in ---------------------
 
 describe('the proposal as a branch of the tree', () => {
+  it('stands every column of a row under the same column of the head', () => {
+    // A ROW SPENDS THE HEAD'S CARET COLUMN ON NOTHING — no row of this branch
+    // folds anything — and that is what lines the two up: the eye, the square,
+    // the tick and the name of a row each land under the control they answer
+    // to one level up. It used to be a bare `margin-left:16px`, an indent that
+    // belonged to nothing above it and put every column 6px to the left; the
+    // reader asked what the blank in front of the eye was for.
+    //
+    // ADDED UP FROM THE HEAD'S OWN THREE NUMBERS rather than compared against
+    // the 25 they make, so the day the caret grows this fails instead of
+    // drifting. And the MARGINS are asserted equal because that is the other
+    // half: a margin here would push the whole row in, columns and pill
+    // together, which is exactly what was wrong before.
+    const { c } = panel({ proposal: withBlock() })
+    const v = c.computed()
+    const head = css(v.proposalHeadStyle)
+    const leftOf = (style) => parseFloat(css(style).padding.split(/\s+/)[3])
+
+    const lead = leftOf(v.proposalHeadStyle)
+      + parseFloat(css(v.proposalCaretStyle).width)
+      + parseFloat(head.gap)
+
+    expect(leftOf(v.proposalRows[0].rowStyle)).toBe(lead)
+    expect(css(v.proposalRows[0].rowStyle).margin).toBe(head.margin)
+  })
+
+
   // WHERE THE DOCUMENT IS NOW. It used to be two lists inside the panel on the
   // right; it is a small tree of its own below the parts tree, and what was
   // asked for was "a separate proposal part of the tree with ALL the proposals
