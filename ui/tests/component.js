@@ -22,7 +22,7 @@
 // point of the test and belongs in the test's own file.
 //
 // Two GROUPS of fields are deliberately NOT in the default, although the real
-// component seeds both: the proposal document (`proposal`, `proposalOpen`, …)
+// component seeds both: the proposal document (`proposal`, `proposalError`, …)
 // and the comparison (`cmpPair`, `cmpStage`, …). Neither appears in the
 // fixtures of the pages that are about neither, and seeding them here would put
 // a document and a comparison under every test in the directory. The files that

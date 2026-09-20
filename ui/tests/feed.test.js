@@ -121,7 +121,7 @@ function page({ feed = [], token = 'sekrit', partPoint, watch, ...over } = {}) {
       // giving up the token takes the proposal off the model, and the push that
       // does it reads this. The shared default leaves it out, because a page
       // that is about none of this has no document under every test in the file.
-      proposal: emptyProposal(), proposalOpen: false, proposalOff: false,
+      proposal: emptyProposal(), proposalOff: false,
       proposalError: null, proposalDraft: null,
       // Whether the hub holds a proposal for this project that SAYS something, as
       // `loadProposal` learned it and this page's own saves have kept it since.
@@ -263,7 +263,7 @@ describe('a comment that was just filed', () => {
     expect(c.state.feed).toEqual([stored])
   })
 
-  it('carries the measurement and the proposal in the TEXT', async () => {
+  it('carries the measurement in the TEXT', async () => {
     // The hub's comment schema is CLOSED — `validate_payload` keeps seven keys
     // and drops everything else without a word, which is the quietest failure on
     // this page: the field reaches the hub, is discarded, and the sender sees a
@@ -275,8 +275,6 @@ describe('a comment that was just filed', () => {
         part: 'plate(2)', partId: '/model/plate', key: 'plate', p: null,
         text: 'must clear this', photo: null,
         meas: '2.4 mm',
-        proposal: 'units: mm\n\nsolid  box  "motor"  20 x 20 x 40  at (0, 0, 0)'
-          + '\n\nmove "plate" by (3, 0, 0)',
       },
     })
 
@@ -285,23 +283,14 @@ describe('a comment that was just filed', () => {
     const sent = JSON.parse(fetching.mock.calls[0][1].body.get('comment'))
     expect(sent.text).toContain('must clear this')
     expect(sent.text).toContain('measured: 2.4 mm')
-    expect(sent.text).toContain('solid  box  "motor"  20 x 20 x 40  at (0, 0, 0)')
-    // A PART THE READER DRAGGED IS NOT AN ATTACHMENT OF ITS OWN any more: it is
-    // a line of the projection, and it travels in the block below with the rest
-    // of the proposal.
-    expect(sent.text).toContain('move "plate" by (3, 0, 0)')
-    expect(sent.proposal).toBeUndefined()
-    // LAST, because it is the only one that spans lines: a block in the middle
-    // would split the one-line facts above it away from the sentence they
-    // belong to.
-    expect(sent.text.indexOf('proposal')).toBeGreaterThan(sent.text.indexOf('measured:'))
+    expect(sent.meas).toBeUndefined()
   })
 
-  it('points at the stored proposal where the reader attached none', async () => {
-    // THE DOCUMENT OUTLIVES THE PAGE NOW — the hub keeps one per project — so a
-    // comment written without it attached goes to an agent that has no way of
-    // knowing there is one to read. The page already asked for it when the token
-    // arrived (`loadProposal`), so this costs no second request.
+  it('points at the stored proposal, which it never copies into the comment', async () => {
+    // THE DOCUMENT LIVES ON THE HUB, one per project, and the agent reads it
+    // with `hammerola proposal` — so a comment says THAT there is one and never
+    // what it says. The page already asked for it when the token arrived
+    // (`loadProposal`), so this costs no second request.
     const fetching = answering({ status: 201 }, served([]))
     const c = page({
       proposalStands: true,
@@ -314,23 +303,10 @@ describe('a comment that was just filed', () => {
     const sent = JSON.parse(fetching.mock.calls[0][1].body.get('comment'))
     expect(sent.text).toContain('a proposal stands on this project')
     expect(sent.text).toContain('hammerola proposal')
-  })
-
-  it('says nothing about it when the proposal is right there in the comment', async () => {
-    // With the block attached, a pointer to the same document is noise.
-    const fetching = answering({ status: 201 }, served([]))
-    const c = page({
-      proposalStands: true,
-      composer: { part: '', partId: null, key: null, p: null,
-                  text: 'too thin', photo: null,
-                  proposal: 'units: mm\n\nresult = union(solid) - union(hole)' },
-    })
-
-    await c.sendComment()
-
-    const sent = JSON.parse(fetching.mock.calls[0][1].body.get('comment'))
-    expect(sent.text).toContain('units: mm')
-    expect(sent.text).not.toContain('hammerola proposal')
+    // The projection itself is not spliced in anywhere: there is no door on the
+    // page that puts it in a draft, and this is the end of the road it would
+    // have travelled down.
+    expect(sent.text).not.toContain('result =')
   })
 
   it('says nothing about it where the hub holds no proposal at all', async () => {

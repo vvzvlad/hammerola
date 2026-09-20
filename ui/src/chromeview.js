@@ -45,7 +45,6 @@ export function chromeView(s, props, deps) {
     set, setState, stateNow, toast, toolsOff, subtitle,
     applyTheme, closeTab, compareRevisions, fitView, saveFrame, showView,
     loadFeed, loadProposal, proposalMoves, proposalOverlay, stageProposal,
-    toggleProposal,
   } = deps;
 
   const cmpReady = s.cmp.length === 2;
@@ -227,10 +226,9 @@ export function chromeView(s, props, deps) {
       // The feed goes with it: it was fetched under a token this browser no
       // longer has, and a reader without one may not read the queue at all.
       //
-      // AND THE PROPOSAL PANEL, which is HIDDEN WITHOUT A TOKEN like Move
-      // — everything it produces leaves this page as a comment. Left open it
-      // is a panel the button no longer offers to reopen, with `add to
-      // comment` gone from under it.
+      // AND THE `Add primitive` MENU, whose button is HIDDEN WITHOUT A TOKEN
+      // like Move. Left open it is a card standing over the model with the
+      // button that takes it back no longer drawn.
       //
       // AND THE PROPOSAL COMES OFF THE MODEL, THROUGH THE EYE — which is a
       // different thing from the bare `proposalOverlay(null)` that stood here,
@@ -261,7 +259,7 @@ export function chromeView(s, props, deps) {
       // until some later edit happened to send a document.
       setState({ token: null, tokenPop: false, tokenDraft: '',
                       composer: null, notePop: null, feed: [],
-                      proposalOpen: false, proposalOff: true });
+                      opsOpen: false, proposalOff: true });
       proposalOverlay(null);
       proposalMoves(dropMoves(stateNow().proposal));
       set({ tool: null });
@@ -445,7 +443,10 @@ export function chromeView(s, props, deps) {
     // caps it), so the name is cut rather than allowed to push.
     viewLabelStyle: ELLIPSIS,
     viewsToggle: stop(() => setState({
-      viewsOpen: !s.viewsOpen, revOpen: false, dlOpen: false, tokenPop: false, menu: null })),
+      viewsOpen: !s.viewsOpen, revOpen: false, dlOpen: false, tokenPop: false, menu: null,
+      // The other menu in this toolbar, which opens upwards from a button a few
+      // pixels along: two of them at once would overlap.
+      opsOpen: false })),
     viewBtnStyle: `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
       + (s.viewsOpen ? TAB_ON : TAB_OFF),
     // OPENS UPWARDS, unlike every other popover on this page: the toolbar it
@@ -483,16 +484,16 @@ export function chromeView(s, props, deps) {
     viewMenuStyle: 'position:absolute;left:0;bottom:38px;width:260px;max-height:308px;overflow:auto;'
       + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
       + (s.viewsOpen ? 'block' : 'none'),
-    // THE LAYER THE WHOLE TOOLBAR SITS ON, raised for as long as the menu is
-    // open. While it is, the toolbar has to cover the overlays that share the
-    // model's area with it — the "This view did not render" card (14), the
-    // section panel (15) and the composer (16) — or a click on a row one of
+    // THE LAYER THE WHOLE TOOLBAR SITS ON, raised for as long as EITHER of its
+    // menus is open. While one is, the toolbar has to cover the overlays that
+    // share the model's area with it — the "This view did not render" card (14),
+    // the section panel (15) and the composer (16) — or a click on a row one of
     // them covers lands in the overlay instead. It stays UNDER the tree rail
     // on a narrow window (20) and under the header (30), which are the two
     // things that are allowed to cover the toolbar. Closed, it is 12 again,
     // so nothing else on the page ever sees a different order.
     toolbarStyle: 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:'
-      + (s.viewsOpen ? '17' : '12'),
+      + (s.viewsOpen || s.opsOpen ? '17' : '12'),
     // WHAT THE TOOLBAR KEEPS WHEN IT IS THE WIDTH OF A PHONE: the view tabs
     // and Fit, which are the two controls about LOOKING at the model. The
     // rest goes — Measure and Comment are gestures that want a pointer and a
@@ -533,46 +534,74 @@ export function chromeView(s, props, deps) {
     commentBtnStyle: btn(s.tool === 'comment', viewer, toolsOff()),
     // NOT ONE OF `s.tool`, and that is the whole difference between this
     // button and the two above it. Those two ARM A GESTURE on the canvas
-    // and the viewport is told which one; this one opens a panel of number
-    // fields and arms nothing of its own. The bodies it stages CAN be dragged
-    // — under the MOVE tool, armed from any part's row menu, because a staged
-    // body is a body in the scene like any other and one tool for moving
-    // things is better than two. What that drag means is the panel's business:
-    // it ends in `hmr:proposalmove` and writes the body's `at`, raising no
-    // chip. So this button is drawn like its neighbours and lit from its own
-    // flag.
+    // and the viewport is told which one; this one drops a menu of the
+    // primitives a body can be and arms nothing of its own. The bodies it adds
+    // CAN be dragged — under the MOVE tool, armed from any part's row menu,
+    // because a staged body is a body in the scene like any other and one tool
+    // for moving things is better than two. What that drag means is the
+    // document's business: it ends in `hmr:proposalmove` and writes the body's
+    // `at`, raising no chip. So this button is drawn like its neighbours and lit
+    // from its own flag.
+    //
+    // THE VIEW SWITCHER'S MENU AND NOT A THIRD PATTERN. It hangs off a button
+    // in this same toolbar, so it is built the way that one is: a flag of the
+    // page's own, a `stop()`ed toggle that shuts the other menus, a card
+    // measured UPWARDS from the button (`viewMenuStyle` says why a menu in this
+    // toolbar cannot be measured from the top), and `rootClick`/Escape to
+    // dismiss it. What is in the rows is `proposalOps` in ui/src/proposalview.js
+    // — read off the same table that gives each op its size fields.
     //
     // HIDDEN WITHOUT A TOKEN, like Move and unlike Measure: everything the
-    // proposal produces leaves this page as a comment, which is behind the
-    // token, so a reader who cannot comment has nowhere to send it.
+    // proposal produces is stored on the hub under the same token, so a reader
+    // who cannot edit has nowhere to put it.
     //
-    // AND ABSENT — not hidden — ON A HUB THAT DID NOT ASK FOR THE PANEL. That
+    // AND ABSENT — not hidden — ON A HUB THAT DID NOT ASK FOR THE FEATURE. That
     // is a DIFFERENT KIND of gate from the token above, and the difference is
     // who is being answered: the token is about this READER, who cannot use a
     // feature the hub does serve, and `display:none` is the right answer to
     // it. The flag is about this HUB, which never asked for the feature at
     // all (`proposalPanelOn`, decided before the page was sent) — and the right
-    // answer to that is no markup, so the button and the panel are wrapped in
+    // answer to that is no markup, so the button and its menu are wrapped in
     // `v.proposalOn` in `render` and the styles below say nothing about it.
     //
     // AND NOT TAKEN OUT OF SERVICE BY A COMPARISON, unlike all three. What
     // `toolsOff` guards is a task filed in the BUILD's terms against a scene
-    // that is not the build — a `/cmp/…` path in `partId`. This panel's own
-    // door posts no path at all (`proposalAdd` sends `partId: null`), and the
-    // body it describes is the reader's own claim about a motor or a wall,
-    // which is as true over a comparison as over a build.
+    // that is not the build — a `/cmp/…` path in `partId`. A body added here
+    // names no part of anything, and what it describes is the reader's own claim
+    // about a motor or a wall, which is as true over a comparison as over a
+    // build.
     //
-    // THE ROWS DO WRITE `sel`, THOUGH, and that is where the same hazard
-    // would have got in by another road: a row of the proposal's branch
+    // THE ROWS OF THE BRANCH DO WRITE `sel`, THOUGH, and that is where the same
+    // hazard would have got in by another road: a row of the proposal's branch
     // selects the path its body is staged under, and under a comparison that
     // path is the comparison's. So those rows select by the DOCUMENT's own
     // node id while one is up — the reasoning is on `path` in `proposalRows`,
     // and `measAdd` refuses such a value by its shape.
-    tProposal: () => toggleProposal(),
+    tProposal: stop(() => setState({
+      opsOpen: !s.opsOpen, revOpen: false, dlOpen: false, viewsOpen: false,
+      tokenPop: false, menu: null })),
     // THE FLAG ITSELF, because `render` is where it is spent: it decides
     // whether these two nodes exist, not how they look.
     proposalOn,
-    proposalBtnStyle: btn(s.proposalOpen, viewer, false),
+    proposalBtnStyle: btn(s.opsOpen, viewer, false),
+    // THE CARD, drawn exactly as the view switcher's is and for exactly the same
+    // reasons — upwards from the button, no `z-index` of its own (the toolbar is
+    // its own stacking context, so a value here would only sort this menu
+    // against the toolbar's other children), and no sheet on a narrow window
+    // (the button is one of the ones `showTools` takes away, and a `fixed` child
+    // of a `backdrop-filter` element clamps itself to that element anyway).
+    //
+    // NARROWER THAN THAT ONE because a row here is one word rather than a
+    // model's own sentence, and with no height cap for the same reason: the ops
+    // are this page's own table of three and not something a model declares.
+    proposalMenuStyle: 'position:absolute;left:0;bottom:38px;width:170px;'
+      + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
+      + (s.opsOpen ? 'block' : 'none'),
+    // The row the menu draws an op as, shaped like the view switcher's rows —
+    // which are shaped like the tree menu's items — except for the MONO, which
+    // is the ink the document's own words are printed in everywhere else.
+    proposalOpStyle: `display:flex;align-items:center;padding:7px 14px;font:400 11.5px ${MONO};cursor:pointer;`
+      + INK,
     fitView: () => fitView(),
     grabFrame: () => saveFrame(),
     // OFF `armed` AND NOT OFF `s.tool`, so the strip stops instructing the

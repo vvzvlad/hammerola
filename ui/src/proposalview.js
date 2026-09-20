@@ -1,5 +1,6 @@
 /**
- * The proposal panel, its branch of the tree, and the fields both are made of.
+ * The proposal's branch of the tree, the fields its rows are made of, and the
+ * list of primitives the toolbar's `Add primitive` menu is drawn from.
  *
  * ONE SECTION OF `computed()` IN THE BUILD PAGE, LIFTED WHOLE. It is a view
  * model and not a component: it is handed the page's state and a bag of the
@@ -8,35 +9,33 @@
  * block inside that method (issue #103).
  *
  * WHAT `deps` IS, and why the list is as long as it is. Half of it is the
- * page's own writers — `setProposal`, `skipProposal`, `typeProposal` and the
+ * page's own writers — `setProposal`, `typeProposal` and the
  * rest — which are methods of the component because what they write is its
  * state and what they push is its viewport. The other half is the handful of
  * locals `computed()` works out once for every section that needs them: the
- * tree and the sets the eyes are drawn from, and the two flags (`narrow`,
- * `compared`) every panel on the page asks about. Nothing here is recomputed,
+ * tree and the sets the eyes are drawn from, and `compared`, the answer every
+ * panel on the page asks about. Nothing here is recomputed,
  * deliberately — a second answer to "is a comparison up" is two panels free to
  * disagree about it. The controls the parts tree and this branch draw the SAME
  * icons with are imported from ui/src/panelstyle.js by both.
  */
 import {
-  INDEX_MONO, LINK, POP_SHADOW_HIGH, SLOT_22, SWATCH, eyeDot, eyeOuter, ghostIcon,
-  popover, skipIcon,
+  INDEX_MONO, SLOT_22, SWATCH, eyeDot, eyeOuter, ghostIcon, skipIcon,
 } from './panelstyle.js';
 import {
-  addNode, bodies, emptyProposal, firstFree, proposalText, removeNode,
-  sendsNothing, updateNode,
+  addNode, bodies, emptyProposal, firstFree, removeNode, updateNode,
 } from './proposal.js';
 import { MONO } from './style.jsx';
 
 export function proposalView(s, deps) {
   const {
     // -- what `computed()` has already worked out
-    tree, overlayPath, hiddenSet, ghostSet, selRow, compared, narrow, viewer,
+    tree, overlayPath, hiddenSet, ghostSet, selRow, compared,
     branchOpen, PROPOSAL_BRANCH, stop, menuAt,
     // -- the page's own doors
     node: nodeAt, nextSeq, set, setState, setVisibility, toggle,
-    typeProposal, commitProposal, nudgeProposal, setProposal, skipProposal,
-    toggleProposal, toggleProposalEye, toggleMoveEye, removeProposal,
+    typeProposal, commitProposal, nudgeProposal, setProposal,
+    toggleProposalEye, toggleMoveEye, removeProposal,
   } = deps;
 
   // `|| emptyProposal()` for the reason `openTabs` in chromeview.js carries its
@@ -137,10 +136,10 @@ export function proposalView(s, deps) {
     onKeyDown: (e) => {
       if (e.key === 'Enter') commitProposal(key, e.target.value, commit, unread(e.target));
     },
-    // THE WHEEL SCROLLS THE SHEET AND DOES NOT EDIT THE BODY. Over a FOCUSED
+    // THE WHEEL SCROLLS THE COLUMN AND DOES NOT EDIT THE BODY. Over a FOCUSED
     // number input the wheel is a step of the value in both Chrome and
-    // Firefox — `input`, `change` and all — and this panel is a tall sheet
-    // somebody scrolls through: the ordinary way to reach the body below the
+    // Firefox — `input`, `change` and all — and the column these rows open in
+    // is scrolled through: the ordinary way to reach the body below the
     // one just typed in is a wheel click with the cursor still standing on its
     // size field. That was ±1 mm per click of the wheel, ±15° in a `rot` row,
     // on a body nobody meant to touch; a text field had no such road.
@@ -253,9 +252,14 @@ export function proposalView(s, deps) {
   };
 
   const addBody = (op) => () => {
+    // THE MENU TAKES ITSELF DOWN ON THE PRESS, the way the view switcher's rows
+    // do (`viewTabs` in chromeview.js): a menu left standing open on the row
+    // just pressed is a control that ignored you. First, so that the write below
+    // cannot leave it open if anything in it throws.
+    setState({ opsOpen: false });
     // THE COUNTER IS THE PAGE'S AND NOT THIS MODULE'S, which is what keeps two
     // nodes from being minted under one id: `nextSeq` bumps the component's own
-    // `_proposalSeq` and hands back what it now stands at. This panel is the
+    // `_proposalSeq` and hands back what it now stands at. This menu is the
     // only door left that mints one — the row menu had a second until the
     // manipulator took that job.
     const seq = nextSeq();
@@ -274,9 +278,9 @@ export function proposalView(s, deps) {
   // THE WHOLE DOCUMENT IS ROWS AND THERE IS NO SECOND LIST. Every node gets
   // one — bodies and moves together, in the order the document holds them —
   // because they are the same kind of statement and the reader should have one
-  // place to look at what they have said. The panel keeps what is ABOUT the
-  // proposal rather than IN it: what it is for, the buttons that add a body,
-  // what the kernel thinks of it, and the door out to a comment.
+  // place to look at what they have said. What the kernel makes of it stands
+  // under the head of the branch (`proposalSays`); what ADDS a node is the
+  // toolbar's `Add primitive` menu, and nothing else is anywhere else.
   //
   // A BRANCH OF THE INTERFACE AND NOT OF THE SCENE, which is what makes it
   // possible at all. `render()` in the library takes ONE root shape object and
@@ -325,7 +329,7 @@ export function proposalView(s, deps) {
     // revision has — and `sel` outlives the comparison, because
     // `leaveCompare` does not clear it the way `leaveBuild` does. Written
     // there and left standing, such a path is what `measAdd` would post as the
-    // `partId` of a comment once the reader closed the panel and measured
+    // `partId` of a comment once the reader measured
     // something: a task filed against a string that resolves in no build, and
     // the exact class `toolsOff` refuses everywhere else. It is also the one
     // door of its kind now — `onPick` writes `cmpSel` under a comparison, the
@@ -434,7 +438,7 @@ export function proposalView(s, deps) {
       skipIcon: skipIcon(!!node.skip),
       skipTitle: node.skip ? 'held back from the text sent to the agent'
                            : 'leave this out of the text sent to the agent',
-      onSkip: stop(() => skipProposal(
+      onSkip: stop(() => setProposal(
         updateNode(doc, node.id, { skip: !node.skip }))),
       // THE FAINT INK IS "THIS ROW IS NOT ON THE MODEL", which is as true of a
       // move whose eye is shut as of a body whose leaves are all hidden — the
@@ -507,7 +511,7 @@ export function proposalView(s, deps) {
       // reader is looking at and the rest stay one line each. BUILT EITHER
       // WAY and hidden by the style, because a field carries a `ref` that
       // wires the browser's own `change` (`field` above): building them only
-      // for the open row would make what the panel can commit depend on what
+      // for the open row would make what the branch can commit depend on what
       // is on screen.
       fieldsStyle: 'display:' + (selected ? 'block' : 'none')
         + ';width:250px;box-sizing:border-box;margin:1px 0 5px 32px;padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--float-bg)',
@@ -591,40 +595,27 @@ export function proposalView(s, deps) {
   const allSkipped = doc.nodes.length > 0 && doc.nodes.every((node) => node.skip);
 
   return {
-      // -- the proposal panel ---------------------------------------------------
+      // -- the rows of the `Add primitive` menu ---------------------------------
       //
-      // CLAMPED ON NARROW like the section panel and the note editor, for the
-      // same reason and one more of its own: it is anchored to the right-hand
-      // edge of the model area, its own close cross is at the top of it, and it
-      // is the tallest panel on this page. The button that opens it is gone at
-      // phone width (`showTools`) — but the flag is not, so a window dragged
-      // narrower with the panel open would otherwise leave a sheet nothing could
-      // take back. `narrow.test.js` holds the list.
-      //
-      // AND IT SAYS NOTHING ABOUT `proposalOn`, which is the division these two
-      // gates keep: a style answers about THIS READER — open or closed, wide or
-      // narrow, token or none — while the hub's flag is answered one level up,
-      // by leaving the markup out of the tree entirely (`v.proposalOn` in
-      // `render`). Spelling the flag here as well would be a second gate that
-      // can never fire, sitting on a node that is not there to style.
-      proposalPanelStyle: popover({
-        narrow, anchor: 'right:16px;top:52px', width: '330px',
-        lead: 'max-height:calc(100% - 110px);overflow:auto;',
-        radius: '10px', pad: '13px 14px', shadow: POP_SHADOW_HIGH, z: 15, open: s.proposalOpen }),
-      proposalClose: stop(() => toggleProposal()),
-
       // EVERY OP `SIZES` CAN DRAW, read off that table rather than listed again
-      // beside it: a button for an op with no size row is a button that adds a
-      // body the panel cannot show, and a missing button is an op nothing can
+      // beside it: a row for an op with no size row is a row that adds a body
+      // whose numbers nothing can show, and a missing row is an op nothing can
       // reach. The ORDER is the table's, which is the order proposal.js tables
       // them in.
+      //
+      // THE ROWS ARE HERE AND THE MENU THEY HANG IN IS CHROME
+      // (`proposalMenuStyle` in chromeview.js), which is the same division the
+      // view switcher keeps: what the rows SAY is the document's business, where
+      // the card is drawn belongs to the toolbar it opens out of.
       proposalOps: Object.keys(SIZES).map((op) => ({
         key: op,
-        // THE OP'S OWN NAME, with nothing between it and the button. There used
-        // to be a spelling table here for the one op whose key read badly on a
+        // THE OP'S OWN NAME, with nothing between it and the row. There used to
+        // be a spelling table here for the one op whose key read badly on a
         // button; every op left is a solid whose name IS what the reader means
         // by it, so a table of one entry is a table to keep in step for nothing.
-        label: `+ ${op}`,
+        // No `+` either, now that the button above the menu says `Add primitive`
+        // and every row under it is one of the things it adds.
+        label: op,
         onClick: addBody(op),
       })),
 
@@ -632,18 +623,12 @@ export function proposalView(s, deps) {
       //
       // DRAWN OVER A DOCUMENT WITH SOMETHING IN IT, AND ON NOTHING ELSE. What
       // keeps the column quiet is the only condition left — a heading over
-      // nothing says less than the panel's own sentence about what a body is,
-      // which is where that explanation stayed.
+      // nothing says less than the empty column does.
       //
-      // IT USED TO ASK `s.proposalOpen` AS WELL, and that was the overlay's
-      // condition borrowed: closing the panel took the bodies off the model, so
-      // a branch left standing would have listed rows with an eye and a colour
-      // over geometry that had gone. It borrowed only half of it. The moves
-      // stayed applied — a part of the build standing where the reader dragged
-      // it — while the row that said so, and the `×` that puts it back, went off
-      // screen with the panel. The panel no longer touches the model at all
-      // (`toggleProposal`); what takes the proposal off it is this branch's own
-      // eye, which has to stay on screen to be pressed again.
+      // WHAT TAKES THE PROPOSAL OFF THE MODEL IS THIS BRANCH'S OWN EYE, and it
+      // is the only thing that does, which is why the branch is drawn on the
+      // document alone: a control that can put the bodies back has to stay on
+      // screen to be pressed again.
       proposalTreeStyle: 'padding:1px 0 6px;flex-direction:column;align-items:flex-start;display:'
         + (doc.nodes.length ? 'flex' : 'none'),
       // THE HEAD OF THE BRANCH, drawn as a group of the parts tree is drawn at
@@ -684,7 +669,7 @@ export function proposalView(s, deps) {
       // it would put the document in — so pressing it twice is a round trip, and
       // a branch with one node ticked off shows an empty master with a filled
       // row under it.
-      proposalSkipAll: stop(() => skipProposal({
+      proposalSkipAll: stop(() => setProposal({
         ...doc,
         nodes: doc.nodes.map((node) => ({ ...node, skip: !allSkipped })),
       })),
@@ -709,85 +694,26 @@ export function proposalView(s, deps) {
       // parts tree collapses a group too: a collapsed branch emits no rows.
       proposalRows: branchOpen ? proposalRows : [],
 
-      // The sentence that says what a proposal can be built out of, drawn in the
-      // panel above the buttons that add one and only while there is nothing in
-      // the document. It stands in for the branch rather than beside it: the
-      // branch is over in the tree column and is not drawn at all on an empty
-      // document, so this is the only thing on the page saying what would appear
-      // there — and a heading over empty space says less than one sentence does.
+      // THE KERNEL'S OWN SENTENCE ABOUT THE DOCUMENT AS IT STANDS, under the
+      // head of the branch and NOT among the rows — which is what keeps it on
+      // screen whether or not the caret has folded the branch away, since the
+      // caret empties `proposalRows`. It is the only thing on the page that says
+      // why a body has stopped following the numbers: the model does not blink
+      // out while a document is refused (`stageProposal`), so a refusal with
+      // nothing drawn for it changes nothing anybody can see.
       //
-      // ON THE WHOLE DOCUMENT and not on the bodies alone, so a proposal that
-      // holds nothing but a dragged part is not offered an explanation of what
-      // it is missing — it has something to say to the agent already.
-      proposalEmptyStyle: `font:400 10.5px/1.5 ${MONO};color:var(--text-muted);margin-bottom:9px;display:`
-        + (doc.nodes.length ? 'none' : 'block'),
-
-      // THE KERNEL'S OWN SENTENCE ABOUT THE DOCUMENT AS IT STANDS, in a box in
-      // the panel, where the reader is already looking. Drawn from `proposalError`
-      // through a key of its own rather than from the field directly, so the
-      // markup asks the panel what it has to say instead of naming the one
-      // source it comes from today.
+      // WHAT THE KERNEL REFUSES, measured rather than assumed: a NEGATIVE size
+      // ("size values must be positive"). A zero builds in silence and draws
+      // nothing, and nothing anywhere stops a minus being typed.
       proposalSays: s.proposalError || '',
-      proposalSaysStyle: `margin-top:9px;padding:7px 9px;border:1px solid var(--danger-line);background:var(--danger-bg);border-radius:6px;font:400 10.5px/1.5 ${MONO};color:var(--danger);display:`
+      // ONE STEP IN FROM THE HEAD, which is the indent a row of this branch
+      // carries, so the sentence lines up with the rows it is about. NOT with
+      // the field block under a selected row, which stands one step further in
+      // again (32px): the verdict is about the whole document rather than
+      // about whichever row happens to be open, and a left edge shared with
+      // the rows is what says so.
+      proposalSaysStyle: 'width:250px;box-sizing:border-box;margin:1px 0 5px 16px;padding:7px 9px;'
+        + `border:1px solid var(--danger-line);background:var(--danger-bg);border-radius:6px;font:400 10.5px/1.5 ${MONO};color:var(--danger);display:`
         + (s.proposalError ? 'block' : 'none'),
-
-      // THE SAME DOOR THE MEASUREMENT AND THE DRAG USE, and the same gate: the
-      // panel is already closed to a reader with no token, and this carries the
-      // gate anyway so the link cannot open a composer `composerStyle` keeps at
-      // `display:none`. Hidden on an empty proposal too — there is nothing to say.
-      //
-      // AND ON A DOCUMENT THE PANEL HAS ALREADY FLAGGED, which is the third
-      // condition and the one that was a defect rather than a decision. A
-      // document `setProposal` could not build is one the projection cannot be
-      // rendered off either, so the link stood over something that would throw
-      // inside a React handler: nothing opened, nothing was said, and the
-      // feature's only exit did nothing at all. The message for it is already on
-      // screen in the panel's error box; what is missing is the offer.
-      // `sendsNothing` AND NOT `isEmpty`, which is the same offer read one step
-      // further on: a document whose every node is ticked off projects to a
-      // heading and a `result =` line, and a link that attached THAT would send
-      // the agent a proposal the reader had just finished withholding.
-      proposalAddStyle: LINK
-        + (viewer || sendsNothing(doc) || s.proposalError ? ';display:none' : ''),
-      // THE TEXT AND NOT THE DOCUMENT, taken at the moment the link is pressed.
-      // `proposalText` is the projection the agent reads — a few aligned lines
-      // saying how big the thing is and where its features sit, and a block
-      // below them naming every part of the build the reader dragged — and it
-      // rides in the comment's TEXT like the measurement, because the hub's
-      // schema is closed and silently drops what it does not know
-      // (`sendComment`, and tests/test_ui_source.py holds it). A drag is no
-      // longer a passenger of its own beside the projection: it is a line
-      // inside it.
-      //
-      // `part` IS EMPTY, deliberately, where the other two doors fill it: a
-      // proposal is about a body that is in no build and no catalogue, so there is
-      // no row to name and no key to anchor to. The reader can still click a
-      // part afterwards and attach it.
-      //
-      // THE FLAG IS READ HERE TOO and not only in the style above, because the
-      // two answer different questions: one is whether to OFFER the link, the
-      // other is what happens when it is pressed anyway. A document the kernel
-      // would not build is not one to send an agent to design against — and
-      // where what it refused was an op no table knows, `proposalText` looks the
-      // same op up and throws, which in here is a React handler's throw: no
-      // composer, no message, nothing in the console the reader will ever see.
-      proposalAdd: () => {
-        if (s.proposalError) return;
-        set({
-          composer: {
-            part: '', partId: null, key: null,
-            p: null, text: '', photo: null,
-            // `attached` IS THE DRAFT'S ANSWER TO "was a proposal put on this
-            // one", and `proposal` is the text as it stands. Not `held`: this
-            // feature already spends "held back" on the OPPOSITE meaning — a node
-            // the reader is keeping out of the text — and the page has an `s.held`
-            // of its own for the section hold key. They part company
-            // the moment every node is ticked off: the text goes and the answer
-            // does not, which is what lets a tick be undone (`skipProposal`).
-            proposal: proposalText(doc), attached: true,
-          },
-          tool: null,
-        });
-      },
   };
 }

@@ -6,7 +6,7 @@
  * them is two rules that no longer have to agree. `style.jsx` holds what every
  * rule is made OF — `css()`, the font stacks, the four palette roles two
  * components import by name. This holds the rules THEMSELVES: the popover
- * recipe six panels share, the three controls (`btn`, `tab`, `chip`), the four
+ * recipe five panels share, the three controls (`btn`, `tab`, `chip`), the four
  * tree icons, and the declarations that were written out 2 to 19 times each.
  *
  * NOTHING HERE IS A CLASS OR A STYLESHEET, deliberately. Every rule on these
@@ -20,13 +20,13 @@
  * `computed()` answers with — `toBe('430px')`, `toContain('background:…')` —
  * so a declaration that comes out in a different ORDER, or with a space added,
  * is a changed rule even where the browser would paint the same pixels. The
- * two slots on `popover` below exist for exactly that.
+ * `tail` slot on `popover` below exists for exactly that.
  *
  * PUNCTUATION IS PART OF THE NAME, and a call site cannot see it. Most names
  * here are finished declarations and end in neither `;` nor `:` — whoever
  * continues them adds one. Six are PREFIXES that end in `;` and are meant to be
  * continued: `SWATCH`, `CARD`, `PILL`, `NOTE_BOX`, `DIALOG_BTN`, `BADGE_SANS`.
- * `popover`'s `lead` and `tail` are of the second kind and carry their own,
+ * `popover`'s `tail` is of the second kind and carries its own,
  * unlike its `pad`, `radius` and `shadow`, which are VALUES it punctuates: a
  * `tail` written without one runs into the property after it, and `css()` drops
  * the pair it cannot parse without saying anything.
@@ -54,22 +54,21 @@ const POP_SHADOW = '0 10px 34px var(--shadow)';
 export const POP_SHADOW_HIGH = '0 12px 40px var(--shadow)';
 
 /**
- * THE SIX POPOVERS OF THE BUILD PAGE, BUILT TO ONE RECIPE: the revision picker,
- * the downloads menu, the token control, the section control, the proposal
- * panel and the note box — each a card hung off its own control, each becoming
- * `popSheet` when narrow, each shown by its own flag. Six spellings of one
- * shape, which is six places for the card to drift apart.
- * `lead` AND `tail` ARE POSITIONS, NOT FEATURES. These strings are pinned as
- * text, so a declaration moved past another is a changed rule, and two of the
- * six carry one the common block would not put there: the proposal panel's
- * scroll clamp before the card's surface, the downloads menu's padding after
- * the shadow. One call site each, and the spelling the tests hold.
+ * THE FIVE POPOVERS OF THE BUILD PAGE, BUILT TO ONE RECIPE: the revision picker,
+ * the downloads menu, the token control, the section control and the note box —
+ * each a card hung off its own control, each becoming
+ * `popSheet` when narrow, each shown by its own flag. Five spellings of one
+ * shape, which is five places for the card to drift apart.
+ * `tail` IS A POSITION, NOT A FEATURE. The string is pinned as
+ * text, so a declaration moved past another is a changed rule, and one of the
+ * five carries a declaration the common block would not put there: the
+ * downloads menu's padding after the shadow. One call site, and the spelling
+ * the tests hold.
  */
 export function popover({
-  narrow, anchor, width, radius, z, open, lead = '', pad = '', shadow = POP_SHADOW, tail = '',
+  narrow, anchor, width, radius, z, open, pad = '', shadow = POP_SHADOW, tail = '',
 }) {
   return (narrow ? popSheet : `position:absolute;${anchor};width:${width};`)
-    + lead
     + `background:var(--card-bg);border:1px solid var(--line);border-radius:${radius};`
     + (pad ? `padding:${pad};` : '')
     + `box-shadow:${shadow};`

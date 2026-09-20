@@ -1427,7 +1427,7 @@ describe('Ctrl+Z over a gesture in the scene', () => {
     }
     const c = component({
       expanded: { '/model': true },
-      proposal, proposalOpen: true, proposalError: null,
+      proposal, proposalError: null,
       proposalDraft: null, proposalOff: false,
       proposalHeld: stored, proposalStands: false,
       ...over,
@@ -1757,31 +1757,24 @@ describe('Ctrl+Z over a gesture in the scene', () => {
       .toEqual([])
   })
 
-  it('is not taken away by merely opening the panel', () => {
-    // OPENING THE SHEET IS NOT AN EDIT, and the invalidation must not read it as
-    // one. `toggleProposal` re-stages by pushing the document it already had
-    // back through the door, which records no step — so a rule that went by "a
-    // write happened" rather than "the document changed" would quietly stop the
-    // chord undoing a drag the moment the reader opened the panel to look at the
-    // row that drag had just made. Nothing on screen would say why.
+  it('is not taken away by a write that hands the same document back', () => {
+    // A WRITE THAT CHANGES NOTHING IS NOT AN EDIT, and the invalidation must not
+    // read it as one: a door that re-stages by pushing `state.proposal` through
+    // untouched records no step, so a rule that went by "a write happened"
+    // rather than "the document changed" would quietly stop the chord undoing
+    // the drag the reader had just made. Nothing on screen would say why.
     //
-    // TWICE, because the gesture leaves the sheet OPEN by itself (`recordGesture`
-    // opens it to show the row it just made), and it is the OPENING that pushes
-    // the document through the door — shutting only writes display state. So the
-    // sequence below is the one a reader actually makes: drag, put the sheet
-    // away, open it again.
+    // IDENTITY IS THE WHOLE OF THE TEST (`DROP_STEPS` says why), which is what
+    // the call below is: the document the page is already holding, handed back
+    // to its own door.
     const { c, el } = drawing()
 
     drag(c, '/model/plate', [3, 0, 0])
     expect(c.history, 'the premise: the drag left a step').toHaveLength(1)
 
-    c.toggleProposal()
-    expect(c.state.proposalOpen, 'the premise: the first call shut the sheet')
-      .toBe(false)
-    c.toggleProposal()
-    expect(c.state.proposalOpen, 'the premise: the second call opened it again')
-      .toBe(true)
-    expect(c.history, 'opening the sheet was read as an edit and dropped the step')
+    c.setProposal(c.state.proposal)
+
+    expect(c.history, 'an unchanged document was read as an edit and dropped the step')
       .toHaveLength(1)
 
     c.undoStep()

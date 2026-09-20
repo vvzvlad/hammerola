@@ -136,11 +136,10 @@ function unskipped(doc) {
  * rather than through this module: a reader who ticked every node off must
  * still see the rows, or there is nothing left to untick. This one is about the
  * PROJECTION, and it is
- * what the two places that build the text gate on — `proposalAddStyle` offering
- * the link, and the revision swap re-rendering an attachment it already has.
- * Without it, both would attach a `proposal` block that says nothing but
- * `units:` and `result =`, which is the agent handed a heading and asked to
- * design against it.
+ * what the one place that builds the text gates on — `proposalPayload`, which
+ * stores the projection beside the document on the hub. Without it the record
+ * would carry a `proposal` block that says nothing but `units:` and `result =`,
+ * which is the agent handed a heading and asked to design against it.
  */
 export function sendsNothing(doc) {
   return isEmpty(unskipped(doc))

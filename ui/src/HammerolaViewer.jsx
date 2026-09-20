@@ -153,7 +153,7 @@ import { revisionView } from './revisionview.js';
 import { downloadsView, fileHref } from './downloadsview.js';
 import { feedView } from './feedview.js';
 import { comparePanel } from './compareview.js';
-// The rules this page and the front page both write: the popover recipe its six
+// The rules this page and the front page both write: the popover recipe its
 // panels share, the three controls, the tree's icons, and the declarations that
 // were spelled out once per call site.
 import {
@@ -353,7 +353,7 @@ const HOLD_KEY_LABEL = 'C';
 const NUDGE_QUIET_MS = 100;
 
 // HOW LONG THE PROPOSAL HAS TO STAND STILL before it is written to the hub.
-// Every edit made in the panel comes through `setProposal`, and a drag of a body
+// Every edit of the document comes through `setProposal`, and a drag of a body
 // is a run of them — so a save per edit would be a request per frame of a
 // gesture. Long enough that a sentence being typed into a field is one write at
 // the end of it, short enough that a reader who says something and closes the
@@ -426,8 +426,9 @@ export const SECTION_ROW = 'section';
  *
  * IT IS REACHABLE TWICE OVER. The ordinary way is the staging window: the branch
  * draws from `state.proposal` at once while `show()` waits on the library, so
- * every body row is sceneless for a moment after `+ box` and after each opening
- * of the panel. The deterministic way is a document the kernel refused — a new
+ * every body row is sceneless for a moment after a `box` picked out of the
+ * `Add primitive` menu and after a document adopted from the hub. The
+ * deterministic way is a document the kernel refused — a new
  * body that never reached the overlay, its row selected and being typed in, and
  * then the document repaired by something that does not touch `sel`, such as the
  * `×` on the body that broke it. The staging that follows would close the block
@@ -565,10 +566,18 @@ const UNDO_DOCUMENT = 'document';
 // entirely, and a document written under them makes nothing they claim untrue.
 //
 // AND A WRITE THAT HANDS THE SAME DOCUMENT BACK IS NOT AN EDIT, so it
-// invalidates nothing. `toggleProposal` is the caller that does it: opening the
-// sheet re-stages by pushing `state.proposal` through the door untouched. Drop
-// the steps for that too and a reader who drags a part and then merely OPENS the
-// panel has lost the chord over the drag, with nothing on screen saying why.
+// invalidates nothing: dropping the steps for such a write would take the chord
+// away from the drag the reader made just before it, with nothing on screen
+// saying why.
+//
+// NO DOOR ON THE PAGE TAKES THAT ROAD TODAY, and this says so rather than
+// arguing from one that does: the sheet whose opening used to re-stage by
+// pushing `state.proposal` through untouched is gone, and every living caller
+// builds its document. The branch is kept as the CONTRACT this method offers
+// its next caller — the safe direction for a mistake to fall in, one comparison
+// deep — and `revswitch.test.js` holds it to that by calling the method
+// directly. A branch nothing reaches is cheap; a `setProposal` that silently
+// eats an undo step the day somebody adds such a door is not.
 // Identity is the whole of the test and not a cheap stand-in for one: every edit
 // on this page BUILDS its document — `addNode`, `removeNode`, `updateNode`,
 // `commit`, `emptyProposal`, a spread — so the object can be the one already on
@@ -1278,7 +1287,14 @@ export default class HammerolaViewer extends React.Component {
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
       secFace: null, secPop: false,
-      revOpen: false, dlOpen: false, viewsOpen: false,
+      // `opsOpen` is the `Add primitive` menu in the floating toolbar, and it is
+      // one of these rather than one of the proposal's own fields below for the
+      // reason it is written beside `viewsOpen`: it is a menu of the chrome's,
+      // dismissed by `rootClick` and by Escape like the other menus of the
+      // chrome. NO COUNT OF THEM HERE — `chromeview.js` says why: a number in
+      // a sentence has been wrong twice already, because nothing fails when a
+      // menu is added beside it.
+      revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false,
       cmp: [], compare: false, diffShow: 'both',
       // -- the comparison, and it is FIVE fields rather than one because they
       // answer five different questions (issue #10).
@@ -1324,19 +1340,13 @@ export default class HammerolaViewer extends React.Component {
       // Nothing here is pushed, nothing is rebuilt from it, and the model on
       // screen is untouched by it.
       //
-      // A DOCUMENT AND A FLAG rather than one nullable field: the panel is a
-      // sheet of controls that opens and shuts, and shutting it must not throw
-      // the proposal away — a reader who shut it to look at something
-      // underneath comes back to what they had. The document is drawn in the
-      // tree's own column either way (`proposalTreeStyle`), so `proposalOpen`
-      // is about the SHEET and about nothing else.
-      //
       // `proposalError` is the KERNEL saying no: its own sentence about the
-      // document as it stands, drawn in the panel where the reader is already
-      // looking. The overlay is deliberately NOT cleared while it is set; see
-      // `setProposal`. `proposalDraft` is the one field the reader is typing
-      // in; see `computed`, where it is spent, and `commitProposal`, where it is
-      // turned into a document.
+      // document as it stands, drawn under the head of the branch where the
+      // reader is already looking (`proposalSays`, which also says what the
+      // kernel actually refuses). The overlay is deliberately NOT cleared while
+      // it is set; see `setProposal`. `proposalDraft` is the one field the
+      // reader is typing in; see `computed`, where it is spent, and
+      // `commitProposal`, where it is turned into a document.
       //
       // `proposalOff` IS THE BRANCH'S OWN EYE, and it is one boolean of
       // INTERFACE state rather than anything the document holds: it takes the
@@ -1367,7 +1377,7 @@ export default class HammerolaViewer extends React.Component {
       // which is not a thing to say with the eye shut — so that line prunes the
       // dead AND opens the node it wrote into, and is not a copy of `eyesKept`
       // to be tidied away.
-      proposal: emptyProposal(), proposalOpen: false, proposalError: null,
+      proposal: emptyProposal(), proposalError: null,
       proposalDraft: null, proposalOff: false, movesOff: [],
       // WHAT THE HUB HOLDS, in two fields with one reader each — because the two
       // questions asked of it are different questions, and one field answering
@@ -1388,7 +1398,7 @@ export default class HammerolaViewer extends React.Component {
       //   * `false` — asked, and there is nothing stored (a 404, or the record
       //     deleted from the branch's own `×`). A document with nothing in it is
       //     not written in this state either: an empty page would otherwise
-      //     CREATE a record the moment the panel was opened;
+      //     CREATE a record for a reader who has said nothing;
       //   * `true` — a record is on the hub, because one was read or one was
       //     written.
       //
@@ -1673,8 +1683,8 @@ export default class HammerolaViewer extends React.Component {
         // read off the other source of parts: the composer would be headed
         // `motor` and post `/<root>/proposal/motor` as the part to change, and the
         // motor is the thing the model has to fit rather than anything in it.
-        // The proposal's own door is `add to comment` in the panel, which posts
-        // the projection as text and names no part at all.
+        // The proposal travels by its own road — the record on the hub, which
+        // the agent reads with `hammerola proposal` — and names no part at all.
         if (this.proposalBody(e.detail && e.detail.id)) return;
         const d = e.detail || {};
         // THE ROW'S NAME, found by looking the picked PATH up — the door onto
@@ -1774,7 +1784,8 @@ export default class HammerolaViewer extends React.Component {
       }
       if (e.key !== 'Escape') return;
       this.set({ menu: null, secPop: false, revOpen: false, dlOpen: false,
-                 viewsOpen: false, notePop: null, tokenPop: false, tool: null });
+                 viewsOpen: false, opsOpen: false, notePop: null,
+                 tokenPop: false, tool: null });
     };
     window.addEventListener('keydown', this._kd);
 
@@ -1836,7 +1847,13 @@ export default class HammerolaViewer extends React.Component {
     this._mq = window.matchMedia ? window.matchMedia(NARROW) : null;
     if (this._mq) {
       this._narrow = (e) => (e.matches
-        ? this.set({ narrow: true, tool: null })
+        // `opsOpen` GOES WITH THE TOOL, and for the tool's own reason. The
+        // card itself is inside `showTools` and unmounts on its own, but
+        // `toolbarStyle` reads the flag to raise the bar to z-17 over the
+        // composer: left standing, a narrow window wears a toolbar lifted for
+        // a menu that is not on screen, and the first click anywhere is spent
+        // putting it down again.
+        ? this.set({ narrow: true, tool: null, opsOpen: false })
         : this.setState({ narrow: false }));
       this._mq.addEventListener('change', this._narrow);
     }
@@ -2491,13 +2508,9 @@ export default class HammerolaViewer extends React.Component {
     // which is a different thing to rejoin and not one the reader asked for.
     this.history = [];
     // WHAT OF THE PROPOSAL SURVIVES THE SWAP: the bodies, never the moves. It is
-    // bound here, one line from the state object below, because the draft's
-    // attachment asks two questions of the same document — whether anything is
-    // left to attach, and what it says — and a state object literal has nowhere
-    // to put a local. `dropMoves` is pure, so this is about writing the
-    // expression once and not about the two calls answering differently. The
-    // composer block at the foot of that object carries the rest of the
-    // argument.
+    // the document THE SWAP ESTABLISHES — `onModel` writes it for real when the
+    // new build lands — and the shut eyes are pruned against it below, by the
+    // one rule `movesOff` obeys everywhere.
     const left = dropMoves(this.state.proposal || emptyProposal());
 
     return {
@@ -2564,9 +2577,8 @@ export default class HammerolaViewer extends React.Component {
         // it is also still true of the revision now on screen often enough to be
         // worth keeping, and the reader can read it and decide. Everything else in
         // the draft is a coordinate this page took off geometry that has left:
-        // which solid was picked, where in space, a measurement between two faces,
-        // and — inside the attached projection rather than as a field of its own
-        // — a part dragged out of the assembly. `sendComment` posts to `meta.commit`
+        // which solid was picked, where in space, and a measurement between two
+        // faces. `sendComment` posts to `meta.commit`
         // — which is the NEW build's the moment this lands — so a draft carried
         // whole files every one of those as a fact about a build they were never
         // observed on, and the numbers among them go to an agent as a task.
@@ -2591,41 +2603,6 @@ export default class HammerolaViewer extends React.Component {
           ? {
             ...this.state.composer,
             part: '', partId: null, key: null, p: null, meas: null,
-            // THE ATTACHMENT FOLLOWS THE DOCUMENT, which is what makes the
-            // paragraph above true of it as well. The projection was captured
-            // as TEXT when `add to comment` was pressed, and a proposal is
-            // mostly bodies — the reader's own claim about a motor or a wall,
-            // as true of the revision arriving as of the one leaving. But it
-            // may also carry `move` lines, and those are deltas measured
-            // against where THIS build put a part: `dropMoves` takes them out
-            // of the document when the new build lands (`onModel`), and an
-            // attachment left as captured would hand the agent exactly the
-            // sentences the document has just stopped making.
-            //
-            // RE-RENDERED FROM THE DOCUMENT AS IT STANDS NOW, which is not the
-            // one the attachment was taken from and cannot be: the panel stays
-            // open and editable across a swap, so a body may have been added or
-            // deleted since `add to comment` was pressed, and those edits come
-            // across with this re-render. That divergence is the accepted price
-            // of stripping the move lines — the alternative is parsing them back
-            // out of a string the agent is meant to read, and the document is
-            // the only thing here that knows which lines are moves.
-            //
-            // A DOCUMENT WITH NOTHING LEFT TO SAY DROPS THE ATTACHMENT
-            // INSTEAD, because a move-only proposal has nothing left once the
-            // moves go, and what would be attached is a `proposal` block with
-            // no statement in it. `sendsNothing` is the same predicate
-            // `proposalAddStyle` refuses that state at the front door with, so
-            // the swap cannot post what the link would not offer — and it is
-            // that one rather than `isEmpty` because a node the reader ticked
-            // off travels no further than a node that is not there.
-            //
-            // ONLY WHERE THERE WAS ONE: writing this field unconditionally
-            // would attach a projection to a draft the reader never attached
-            // one to.
-            ...(this.state.composer.proposal
-              ? { proposal: sendsNothing(left) ? null : proposalText(left) }
-              : null),
           }
           : null,
         // The toast that `clearTimeout(this._tt)` above disarmed.
@@ -2799,7 +2776,7 @@ export default class HammerolaViewer extends React.Component {
     const name = countedName((row && row.name) || detail.name,
                              detail.count);
     // NOTHING IS ROUNDED HERE, and that is a decision rather than an omission.
-    // Every number this document holds is drawn in the panel and printed in the
+    // Every number this document holds is drawn in its row and printed in the
     // projection, so it has to be one somebody could have typed — but the
     // rounding belongs where the ARITHMETIC is, and there is none on this
     // line. `snap` in viewport/tools.js multiplies a step out and rounds its
@@ -2819,7 +2796,7 @@ export default class HammerolaViewer extends React.Component {
     // stay silent otherwise), so this is the reader taking the displacement — or
     // the rotation — back by hand, and the document says that by losing the
     // node rather than by carrying a `move "plate" by (0, 0, 0)` line into the
-    // projection for an agent to puzzle over and a row into the panel to be
+    // projection for an agent to puzzle over and a row into the branch to be
     // closed by a second gesture.
     //
     // OF THIS GESTURE'S OWN FIELD AND OF NOTHING ELSE, which is why this is
@@ -2828,7 +2805,7 @@ export default class HammerolaViewer extends React.Component {
     // position, so "put it back where it was" is an answer about where, and a
     // node that also says which way the part faces is not a node this gesture
     // has retracted. Dropped anyway, it would take a rotation the reader set in
-    // the panel and never mentioned — an answer to a question they did not ask,
+    // a row and never mentioned — an answer to a question they did not ask,
     // and one nothing on screen would explain. Read the two words the other way
     // round for a ring, which is the whole of what one function buys.
     const flat = values.every((value) => value === 0);
@@ -2847,7 +2824,7 @@ export default class HammerolaViewer extends React.Component {
     // drag of the same part arrives under a different first path. Matched on
     // that, the two gestures wrote two nodes claiming the same copy — two
     // contradictory `move` lines about one part in the projection, and two
-    // rows in the panel of which only one `×` appeared to do anything.
+    // rows in the branch of which only one `×` appeared to do anything.
     //
     // AND WHERE SEVERAL ARE COVERED WHOLE, ALL OF THEM GO. The reader
     // dragged two copies apart and has now dragged the row that holds both:
@@ -2881,7 +2858,6 @@ export default class HammerolaViewer extends React.Component {
     // rather than one to reason about every time it is read.
     this._proposalSeq += 1;
     const id = `m${this._proposalSeq}`;
-    let opened = false;
     this.setState((s) => {
       const doc = s.proposal || emptyProposal();
       const touching = moves(doc).filter(
@@ -2975,8 +2951,8 @@ export default class HammerolaViewer extends React.Component {
       // answers "something is turned here" and keeps a node — but the turns
       // disagree, so that node is minted at zero and says nothing at all:
       // `move "pin ×3" by (0, 0, 0)` in the projection, the very line the
-      // paragraph above refuses to write, and no panel opening to show the
-      // row it left behind (`opened` is off for a flat gesture). The parts
+      // paragraph above refuses to write, and a row in the branch saying
+      // nothing about the gesture that left it there. The parts
       // going home and straightening is the price of the disagreement and
       // is already decided; a sentence about them is not.
       const retract = flat && shared.every((value) => value === 0);
@@ -3015,52 +2991,20 @@ export default class HammerolaViewer extends React.Component {
         minted[kept] = shared;
         next = addNode(without(), minted);
       }
-      // THE PANEL COMES UP WITH THE MOVE, and what that is worth changed
-      // under this line rather than going away. It used to be the ONLY thing
-      // that said a part was now standing where the build does not put it:
-      // the row with the `×` was inside the sheet, so a reader who had it
-      // shut was shown the displacement once, here, and closing the sheet
-      // took the explanation away again. The branch of the parts tree now
-      // holds that row, outlives the sheet, and says it for as long as it is
-      // true. What is left is the SHEET's own half — what a proposal is, the
-      // buttons that add a body, the kernel's verdict and the door out to a
-      // comment — brought up at the moment a reader who never opened it has
-      // just made their first statement, both tools being armed from a part's
-      // own menu. Kept deliberately, and it is now a convenience rather than
-      // the thing that keeps the page honest.
-      //
-      // NOT FOR A GESTURE HOME, because there is nothing to show: it takes a
-      // displacement — or a rotation — AWAY, and a panel that jumps open to
-      // announce that would be answering "never mind" with a demand to look.
-      // `flat` and not `retract`, so that holds for a part that is still
-      // turned, or still displaced — the row it keeps is one the reader
-      // already had open, and the gesture left the part LESS out of place
-      // than it found it.
-      opened = !s.proposalOpen && !flat;
-      return opened ? { proposal: next, movesOff: eyes, proposalOpen: true }
-                    : { proposal: next, movesOff: eyes };
+      // A DISPLACEMENT IS ON SCREEN THE MOMENT IT IS MADE and this gesture has
+      // nothing to raise for it: the row that says a part stands where the build
+      // does not put it, and the `×` that sends it home, are in the branch of
+      // the tree — drawn on the document alone, with no way to shut it.
+      return { proposal: next, movesOff: eyes };
     }, () => {
-      // THE BODIES ARE STAGED ONLY WHERE THE SHEET OPENED, and what that
-      // costs has to be stated correctly because the obvious reading is
-      // wrong. Staging runs `buildProposal` over every body before it
-      // reaches any door — the CSG, 23 ms at four bodies and 81 at twelve,
-      // the measurement written out at `field` in `computed` — and
-      // `sameParts` in element.js does NOT save it: that guard spares the
-      // SCENE being disposed and rebuilt, one layer past the point where the
+      // THE OFFSETS AND NOT THE BODIES, which is the whole of what this
+      // gesture changed. Staging would run `buildProposal` over every body
+      // before it reached any door — the CSG, 23 ms at four bodies and 81 at
+      // twelve, the measurement written out at `field` in `computed` — and
+      // `sameParts` in element.js does NOT save that: it spares the SCENE
+      // being disposed and rebuilt, one layer past the point where the
       // geometry has already been computed. A move node changes no body, so
-      // on the `else` side that whole rebuild would buy nothing, which is
-      // why there is a branch here at all.
-      //
-      // THE REASON THE OPENING SIDE STAGES IS NO LONGER THE ORIGINAL ONE.
-      // It was that closing the sheet took the bodies OFF the model, so
-      // reopening had to put them back; closing stopped doing that when the
-      // branch of the tree took over saying what is on the model. What is
-      // left is belt and braces — in ordinary use the bodies are already
-      // staged, because every edit that put them in the document staged them
-      // and nothing has un-staged them since. Kept rather than removed: what
-      // an opening pushes at the viewport is a contract several tests are
-      // written against, and unpicking it is a change to this page nobody
-      // asked for.
+      // every one of those milliseconds would buy nothing.
       //
       // READ BACK OUT OF STATE AND NOT CARRIED FROM THE UPDATER, because the
       // updater's own result is what this edit WOULD have committed and not
@@ -3072,14 +3016,13 @@ export default class HammerolaViewer extends React.Component {
       // scene. By the time a completion callback runs, `this.state` is the
       // commit.
       //
-      // `stageProposal` AND NOT `setProposal` for the same reason the updater
+      // `proposalMoves` AND NOT `setProposal` for the same reason the updater
       // exists: the second writes `proposal` as an object patch, and an
       // object patch landing after a swap puts back every node the swap took
       // out. The document is already committed; only the scene is owed
       // anything.
       const done = this.state.proposal || emptyProposal();
-      if (opened) this.stageProposal(done);
-      else this.proposalMoves(done);
+      this.proposalMoves(done);
       // AND IT IS SAVED FROM HERE, because this gesture does not go through
       // `setProposal` and that is the only other door the save hangs off.
       // Dragging or turning a part of the build is the reader's own edit — it
@@ -3121,14 +3064,14 @@ export default class HammerolaViewer extends React.Component {
     // is nothing here to put back, because nothing of the build was touched.
     //
     // NOT GUARDED BY `toolsOff` unlike the method above, for the reason the
-    // panel itself is not: a proposal names no part of anything, so there is
+    // branch itself is not: a proposal names no part of anything, so there is
     // no `/cmp/…` path for it to file, and what it claims is as true over a
     // comparison as over a build.
     if (!Array.isArray(values) || values.length !== 3
         || !values.every(Number.isFinite)) return;
     const doc = this.state.proposal || emptyProposal();
     // ONE BODY ANSWERS, AND IT IS THE ONE UNDER THE CURSOR. The payload the
-    // panel builds offers the hand a part per body — every solid its own,
+    // proposal builds offers the hand a part per body — every solid its own,
     // every hole its own (proposalgeom.js) — so a gesture is about the single
     // node that part was built from, and the bodies beside it stay where the
     // document put them. That is the point of the hand at all: a proposal is
@@ -3166,13 +3109,13 @@ export default class HammerolaViewer extends React.Component {
     // that a draft can survive. Every other one is a button, and a real
     // click blurs the field and commits it on the way. A gesture does not: the
     // press is taken in the capture phase (`onDown` calls `preventDefault`),
-    // so the focus never leaves. Left standing, the panel would show typed
+    // so the focus never leaves. Left standing, the row would show typed
     // text over a body that has already moved — and the blur that came later
     // would commit that text back over the axis the hand had just written.
     this.setState({ proposalDraft: null });
     // AND `KEEP_STEPS`, because the step this edit is taken back by is the one
     // four lines up. That door drops the document steps behind a write that
-    // recorded none, which every ordinary edit of the panel is; this one has
+    // recorded none, which every ordinary edit made in a row is; this one has
     // just pushed its own, and dropping the rest would cut the stack down to
     // that one step: a second gesture on a body could never be walked back past
     // the first, and the press after would reach whatever visibility step lay
@@ -3272,7 +3215,7 @@ export default class HammerolaViewer extends React.Component {
       // as of the one that left.
       //
       // A RE-STAGE IS THE EXCEPTION, and it is the only one. The viewport
-      // composes the proposal panel's body over the SAME document it already
+      // composes the proposal's own body over the SAME document it already
       // had (viewport/element.js, `restage`), so no part moved, no face went
       // anywhere, and the viewport keeps its own halves of these two for
       // exactly that reason. Dropping them here would take the measurement
@@ -4159,14 +4102,15 @@ export default class HammerolaViewer extends React.Component {
   // -- the proposal -----------------------------------------------------------
 
   /**
-   * The document the panel now holds, and the body that follows from it.
+   * The document the proposal's branch now holds, and the body that follows
+   * from it.
    *
-   * THE ONE DOOR. Every edit in the panel — a digit, a role flipped, a body
+   * THE ONE DOOR. Every edit made in a row — a digit, a role flipped, a body
    * deleted, a body renamed — comes through here, so there is no arrangement in
-   * which the numbers in the panel and the shape over the model describe
+   * which the numbers in the rows and the shape over the model describe
    * different things.
    *
-   * ONE CALLER IS NOT AN EDIT MADE IN THE PANEL AND COMES THROUGH HERE ANYWAY:
+   * ONE CALLER IS NOT AN EDIT MADE IN A ROW AND COMES THROUGH HERE ANYWAY:
    * `undoStep`, taking back a gesture made in the SCENE — a part of the build
    * dragged or turned, a body of the proposal dragged or turned. It uses the
    * door because an undo needs BOTH halves of it. The scene: the bodies go back
@@ -4176,17 +4120,16 @@ export default class HammerolaViewer extends React.Component {
    * would hand the agent a statement the reader had withdrawn, and hand it back
    * to this very page on the next reload.
    *
-   * TWO OTHER THINGS WRITE `state.proposal`, AND NEITHER IS AN EDIT OF THE
-   * PANEL — the inventory is worth having complete, because each of them skips
+   * TWO OTHER THINGS WRITE `state.proposal`, AND NEITHER IS AN EDIT OF A
+   * BODY — the inventory is worth having complete, because each of them skips
    * a different half of this method and says why.
    *
    * The `hmr:moved` handler records a part of the BUILD dragged. It writes the
    * field through a functional updater and never through here, because
    * `onModel` patches the same field functionally and one object patch landing
    * after a swap would put back every node the swap took out. What it does reach
-   * for is the half below: `stageProposal` where the drag OPENED the panel, so
-   * the bodies go back over the model, and `proposalMoves` alone where the panel
-   * already stood open, because a move changes no body's geometry.
+   * for is the half below, and only the half: `proposalMoves` alone, because a
+   * move changes no body's geometry and re-staging would rebuild it for nothing.
    *
    * `onModel` drops the moves (`dropMoves`) when a build lands that is not the
    * one they were measured against. It writes the field directly and stages
@@ -4199,11 +4142,12 @@ export default class HammerolaViewer extends React.Component {
    * the digits after it still to come, which the kernel refuses outright —
    * and blanking the model at that moment would make the body flash away and
    * back on the way to a shape that is perfectly fine. The kernel's own sentence
-   * goes in the panel instead, where the reader is already looking, and the
-   * shape on screen stays the last one that meant something.
+   * goes under the branch head instead, a step in from the rows it is about, and
+   * the shape on screen stays the last one that meant something.
    *
-   * NOTHING TO DRAW IS NOT AN ERROR: a document with no bodies in it — a panel
-   * just opened, the last body deleted — builds a payload with no parts in it,
+   * NOTHING TO DRAW IS NOT AN ERROR: a document with no bodies in it — a project
+   * nobody has proposed anything on yet, the last body deleted — builds a
+   * payload with no parts in it,
    * and an empty overlay in the tree is worse than no overlay at all.
    *
    * AND IT IS WHERE THE DOCUMENT IS WRITTEN TO THE HUB, which is nearly the
@@ -4230,7 +4174,7 @@ export default class HammerolaViewer extends React.Component {
    *
    * AND THE SHUT EYES ARE PRUNED IN THE SAME WRITE (`eyesKept`), which is how
    * everything that comes through THIS door obeys the one rule without any of
-   * it being named: the `×`, every edit of the panel's fields, a step taken
+   * it being named: the `×`, every edit made in a row's fields, a step taken
    * back and a document adopted from the hub. `movesOff` may hold only ids the
    * document still has, and in the SAME patch as `proposal`, so the pair is
    * always consistent with itself whatever lands around it.
@@ -4256,54 +4200,6 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * A tick toggled — the one edit to the document that is ABOUT SENDING, and
-   * therefore the one that reaches into a draft already carrying the projection.
-   *
-   * THE ATTACHMENT IS A SNAPSHOT, AND STAYS ONE FOR EVERYTHING ELSE. `proposalAdd`
-   * takes the text at the moment the link is pressed, deliberately: a size the
-   * reader goes on adjusting afterwards is simply a later number, and a draft
-   * that rewrote itself under the cursor would be a worse answer than a stale
-   * one. A TICK IS NOT A LATER NUMBER. It says "this must not be sent", and a
-   * draft that carries the node anyway is the control doing the opposite of what
-   * it is labelled — reachable in two clicks, since the branch and the composer
-   * are on screen together.
-   *
-   * AND THE WHOLE ATTACHMENT GOES WHERE NOTHING SURVIVES, rather than a block
-   * with a heading and no statements under it. That is the same answer the
-   * revision swap already gives through the same predicate, so the two paths that
-   * can rewrite an attachment agree about the empty case.
-   *
-   * READ BEFORE `setProposal`'s UPDATE LANDS, which is safe because it is the
-   * composer that is read and `setProposal` does not touch it — the document is
-   * taken from the argument, not from the state.
-   *
-   * `attached` AND NOT `proposal`, which is what makes the tick a ROUND TRIP rather
-   * than a one-way door — the master's own note promises that pressing it twice
-   * gets you back where you were, and on a one-node document the first press
-   * takes the whole attachment off. Asked of `proposal`, this saw a draft with
-   * nothing attached and returned: the second press put the node back in the
-   * document and never in the draft, and the only way to re-attach was
-   * `proposalAdd`, which builds a WHOLE NEW composer and takes the reader's
-   * typed comment, photo and measurement chip with it.
-   *
-   * So the two questions are separated: `attached` is "this draft is one a
-   * proposal was attached to", written once by `proposalAdd` and cleared only by the
-   * reader taking the chip off by hand, while `proposal` is "and here is the
-   * text, as of now" — which the ticks are free to empty and fill again.
-   */
-  skipProposal(doc) {
-    const draft = this.state.composer;
-    this.setProposal(doc);
-    if (!draft || !draft.attached) return;
-    this.setState({
-      composer: {
-        ...draft,
-        proposal: sendsNothing(doc) ? null : proposalText(doc),
-      },
-    });
-  }
-
-  /**
    * The selection, moved onto a body's NEW SPELLING — or nothing to move.
    *
    * WHY IT HAS TO MOVE AT ALL. A body's row in the proposal's branch is selected
@@ -4317,7 +4213,7 @@ export default class HammerolaViewer extends React.Component {
    * HERE AND NOT INSIDE THE NAME FIELD'S `commit`, which is where it first looks
    * like it belongs. `field` in `computed()` states a contract — `commit` turns
    * the raw text into the whole NEXT DOCUMENT, and there is no partial write
-   * anywhere in the panel — and roughly twenty fields are built from it. A
+   * anywhere in the rows — and roughly twenty fields are built from it. A
    * `setState` inside one of them makes that promise false for all of them, and
    * a reader checking whether a commit is pure would have to open every call
    * site. This method is the one place the next document meets the one it
@@ -4373,16 +4269,22 @@ export default class HammerolaViewer extends React.Component {
    * The half of the door above that touches the SCENE, given a document that is
    * already the page's.
    *
-   * SPLIT OUT FOR ONE CALLER, and it is worth saying which and why rather than
-   * leaving it looking like tidiness. The `hmr:moved` handler writes its
-   * document inside a functional updater — it has to, because `onModel` patches
-   * the same field functionally and an object patch would overwrite a swap it
-   * never saw — and then has to stage the bodies, which only the panel OPENING
-   * needs. Reaching `setProposal` for that would write `proposal` a second time
-   * as an object patch, which is the very thing the updater exists to avoid: a
-   * `dropMoves` batched in between commits, and the second write puts the
-   * dropped nodes straight back. So the staging is available on its own, and the
-   * document it is handed is the COMMITTED one read back out of state.
+   * SPLIT OUT FROM `setProposal`, AND THE INVENTORY IS THE POINT. Three callers
+   * reach it: `setProposal` itself, `toggleProposalEye` and `tokenSet` in
+   * chromeview.js. The last two change no document at all — an eye and a token
+   * are this page's own state — so going through the door would write
+   * `proposal` a second time for nothing, and both read a flag `setState` has
+   * not landed yet, which is why each calls this from its own callback with the
+   * document read back out of state.
+   *
+   * THE HAZARD THAT MADE IT A METHOD IS STILL WORTH KNOWING, because it bounds
+   * what may be added here: a caller that writes `state.proposal` through a
+   * FUNCTIONAL updater — `hmr:moved` does, since `onModel` patches the same
+   * field functionally and an object patch would overwrite a swap it never
+   * saw — must not reach `setProposal` afterwards. That second write is an
+   * object patch, and a `dropMoves` batched in between commits with the dropped
+   * nodes put straight back by it. `hmr:moved` needs none of the staging and
+   * calls `proposalMoves` alone; the rule is for whoever needs both.
    *
    * `proposalError` IS STILL WRITTEN HERE, and that is not the same hazard: it
    * is derived from the document rather than being one, nothing merges into it,
@@ -4396,31 +4298,13 @@ export default class HammerolaViewer extends React.Component {
     } catch (failure) {
       error = String((failure && failure.message) || failure);
     }
-    // AND THE SHEET COMES UP TO SAY SO, because it is the only thing on the page
-    // that says anything. `proposalSays` is drawn inside the panel, while the
-    // FIELDS moved out into the branch of the tree and the branch now outlives
-    // the panel being shut — which is the state the whole move was made for. So
-    // a reader whose document stopped building with the sheet closed got a
-    // refusal that changed nothing on the model and printed nothing anywhere:
-    // the same muteness this
-    // file calls a defect a few hundred lines down ("nothing opened, nothing was
-    // said"). Opening on a refusal and not on every stage, so the sheet a reader
-    // deliberately shut stays shut while they are simply working.
-    //
-    // AND NOT AT ALL FOR A READER WITH NO TOKEN, which is a gate standing right
-    // beside this one that the first version of this line walked straight past.
-    // Giving up the token shuts the sheet and takes the button that reopens it
-    // away, and `tokenClear` calls a sheet left standing there a defect in so
-    // many words — while the branch now outlives that door too, and every
-    // control in it comes back through here. So a reader who had a refused
-    // document when they handed the token in, and then pressed anything at all,
-    // was given a sheet of editing buttons with no way to put it away. The
-    // verdict is for whoever can act on it.
-    this.setState({
-      proposalError: error,
-      ...(error && !this.state.proposalOpen && !this.viewer()
-        ? { proposalOpen: true } : null),
-    });
+    // AND THE BRANCH SAYS SO, WITH NOTHING TO OPEN FIRST. `proposalSays` hangs
+    // under the head of the branch, which is drawn on the document alone and
+    // survives the caret being folded — so the verdict is on screen the moment
+    // it is reached, for as long as it is true. It has to be: a refusal leaves
+    // the model exactly as it was, by design, so nothing else about the page
+    // changes when one happens.
+    this.setState({ proposalError: error });
     // THE OFFSETS ARE SETTLED BEFORE ANY RE-STAGE READS THEM, and that holds
     // whichever order these two lines are written in rather than because of it:
     // this push is synchronous, while `setOverlay` re-stages behind an `await`
@@ -4500,7 +4384,7 @@ export default class HammerolaViewer extends React.Component {
    * A REF CALL and not an event, like `snapshot()` and `getCamera()` beside it:
    * this answers to a person typing in a field, which is a gesture rather than a
    * state this side holds a second copy of. The element remembers what it was
-   * given, so a rebuild landing under an open panel puts the body back by
+   * given, so a rebuild landing under a staged proposal puts the body back by
    * itself — see `setOverlay` in viewport/element.js.
    *
    * THE BRANCH'S EYE IS READ HERE AND NOT AT THE CALLER (`proposalOff`), which
@@ -4519,59 +4403,6 @@ export default class HammerolaViewer extends React.Component {
     } catch (error) {
       console.error('proposal overlay', error);
     }
-  }
-
-  /**
-   * Open the sheet of controls, or shut it. THE MODEL IS NOT TOUCHED EITHER WAY.
-   *
-   * CLOSING USED TO CLEAR THE OVERLAY, and the argument for it was that the
-   * panel was the only thing on screen saying the body is not part of the model
-   * — no chip for it, because the panel it came out of was standing right there
-   * — so a closed panel with a body still over the model would be this page
-   * showing a shape nothing accounts for. THAT PREMISE IS GONE: the document is
-   * drawn as a branch of the tree now, a row per node with an eye, a colour and
-   * a `×` on it, and the branch stays on screen with the sheet shut
-   * (`proposalTreeStyle`). The bodies ARE accounted for, by the branch.
-   *
-   * IT WAS ALSO HALF A RULE, which is what made it a defect rather than a
-   * preference. Closing took the BODIES off and left every displaced part of the
-   * build exactly where the reader had dragged it — while hiding the branch that
-   * held those parts' rows. A part standing somewhere the model does not put it,
-   * with nothing on screen saying why and no `×` to put it back.
-   *
-   * WHAT DECIDES WHETHER THE PROPOSAL IS ON THE MODEL IS THE BRANCH'S EYE now
-   * (`toggleProposalEye`), and it decides it for both halves at once. One
-   * control, one meaning; this one is a sheet of controls opening and shutting.
-   *
-   * OPENING STILL RE-STAGES, and what that costs is worth stating correctly
-   * rather than waving at `sameParts`. The stage runs `buildProposal` over every
-   * body before it reaches any door — the CSG, 23 ms at four bodies and 81 at
-   * twelve — and `sameParts` in element.js does NOT save that: it spares the
-   * scene being disposed and rebuilt, one layer past the point where the
-   * geometry has already been computed. So opening the sheet over a document
-   * with bodies in it pays for a rebuild of geometry that is already on screen.
-   *
-   * IT IS KEPT ANYWAY, and deliberately, because taking it out is a change to
-   * this page's behaviour that nobody asked for and the suite has five separate
-   * assertions resting on: what an opening pushes at the viewport is a contract
-   * other things are written against. The honest note is that the cost is real
-   * and the call is now a belt-and-braces one; the drag path next door, which
-   * paid the same price on every gesture, is where it was actually worth
-   * removing (see the `hmr:moved` handler).
-   *
-   * AND IT HANDS THE DOCUMENT BACK BY IDENTITY, which is now load-bearing rather
-   * than incidental. The door drops the document steps for every write that
-   * records none, and this one writes nothing new — it re-stages. Rebuild the
-   * argument here (a spread, a clone, anything) and opening the sheet silently
-   * takes the chord away from the drag the reader made just before it.
-   */
-  toggleProposal() {
-    const open = !this.state.proposalOpen;
-    this.setState({
-      proposalOpen: open, proposalDraft: null, menu: null, revOpen: false,
-      dlOpen: false,
-    });
-    if (open) this.setProposal(this.state.proposal);
   }
 
   /**
@@ -4636,7 +4467,7 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * One field of the panel, being typed in. THE DRAFT AND NOTHING ELSE.
+   * One field of a proposal row, being typed in. THE DRAFT AND NOTHING ELSE.
    *
    * THE TEXT IS KEPT BESIDE THE DOCUMENT, and that is what `proposalDraft` is
    * for. These fields show the document, and the document holds numbers: a field
@@ -4647,8 +4478,8 @@ export default class HammerolaViewer extends React.Component {
    * because one field has the focus at a time, and the commit that ends the
    * typing is what drops it.
    *
-   * NO DOCUMENT IS BUILT HERE, which is the difference between this panel and a
-   * page that stutters. A keystroke that reached `setProposal` rebuilt the bodies,
+   * NO DOCUMENT IS BUILT HERE, which is the difference between this page and one
+   * that stutters. A keystroke that reached `setProposal` rebuilt the bodies,
    * handed them to the viewport, and had the whole scene disposed and rendered
    * again under a tree going back up to React — per character. `commitProposal`
    * is where a value is settled, and the browser already says when that is.
@@ -4681,7 +4512,7 @@ export default class HammerolaViewer extends React.Component {
    * focus leaves, the ones only tabbed through included, and re-committing the
    * text a field was already showing would be a whole scene staged for nothing —
    * `setOverlay` would catch it as equivalent, but the document would still be
-   * rebuilt and every part of the panel drawn again. The draft is the record of
+   * rebuilt and every row drawn again. The draft is the record of
    * having typed, so it is also the condition.
    *
    * AND TEXT THAT IS NOT A NUMBER LEAVES THE DOCUMENT AS IT WAS. `unread` is the
@@ -5253,10 +5084,10 @@ export default class HammerolaViewer extends React.Component {
       const taken = here ? doc : dropMoves(doc);
       this.setProposal(taken);
       // WHAT WAS TAKEN COUNTS AS ALREADY SENT, and this line is the whole of
-      // what keeps a reader's stored moves from being destroyed by a page that
-      // merely opened the sheet. `setProposal` is the save's door, so the very
-      // next call through it — `toggleProposal` pushes the same document — would
-      // otherwise find an empty memo and post. On THIS build and view that is
+      // what keeps a reader's stored moves from being destroyed by the next
+      // write this page makes. `setProposal` is the save's door, so the very
+      // next call through it would otherwise find an empty memo and post. On
+      // THIS build and view that is
       // one request saying nothing; on any other it is the record rewritten with
       // this page's stamps and without the moves `dropMoves` has just taken out
       // for display, and those moves are then gone from the hub for good.
@@ -5274,7 +5105,7 @@ export default class HammerolaViewer extends React.Component {
   /**
    * The document written back to the hub, once the edits have stopped.
    *
-   * HUNG OFF `setProposal`, the door every edit made IN THE PANEL comes through
+   * HUNG OFF `setProposal`, the door every edit of the document comes through
    * — and off ONE other place, the completion callback of the `hmr:moved`
    * handler, which writes the document with a functional updater and therefore
    * cannot use that door (`setProposal` says why it cannot). Those two are the
@@ -5288,31 +5119,30 @@ export default class HammerolaViewer extends React.Component {
    * FOUR GUARDS, AND EVERY ONE IS LOAD-BEARING.
    *
    * NOTHING IS SAVED UNTIL THE LOAD HAS RESOLVED (`proposalHeld` is still
-   * null). Without it the page mounts with an empty document, the reader opens
-   * the panel — which calls this door with that same empty document — the
-   * debounce fires, and the proposal they stored last week is destroyed by a
-   * page that had not read it yet. A PAGE THAT DECLINED THE RECORD IS THE SAME
+   * null). Without it the page mounts with an empty document, a write reaches
+   * this door with that same empty document, the debounce fires, and the
+   * proposal they stored last week is destroyed by a page that had not read it
+   * yet. A PAGE THAT DECLINED THE RECORD IS THE SAME
    * STATE AND IS HELD THERE ON PURPOSE (`adoptProposal`): it read a document it
    * never showed, so it may not write over it either.
    *
-   * NO TOKEN, NO SAVE. The panel is hidden without one, but the branch of the
-   * tree outlives the token and `tokenClear` works right beside this door; a
-   * page that has stopped being allowed to edit must not go on writing.
+   * NO TOKEN, NO SAVE. The button that adds a body is hidden without one, but
+   * the branch of the tree outlives the token and `tokenClear` works right
+   * beside this door; a page that has stopped being allowed to edit must not go
+   * on writing.
    *
-   * AND AN EMPTY DOCUMENT DOES NOT CREATE A RECORD. Opening the panel on a
-   * project with nothing stored calls this door with the document the page
-   * mounted with, and a record whose document has no nodes in it is a file on
-   * the volume for a reader who has said nothing — one per project anybody ever
-   * opens the panel on. `isEmpty` AND NOT `sendsNothing`: a document ticked off
+   * AND AN EMPTY DOCUMENT DOES NOT CREATE A RECORD. A record whose document has
+   * no nodes in it is a file on the volume for a reader who has said nothing —
+   * one per project this door is ever reached on with the document the page
+   * mounted with. `isEmpty` AND NOT `sendsNothing`: a document ticked off
    * to the last node is work somebody did, and it is stored like any other.
    * ONCE THE HUB HOLDS ONE, emptying the page goes on saving — the record
    * mirrors what is on screen, and a reader who deletes their last body means
    * it.
    *
-   * AND A PAYLOAD IDENTICAL TO THE LAST ONE SENT IS NOT AN EDIT. Opening the
-   * sheet calls `setProposal` with the document it already had (`toggleProposal`
-   * says why), and a reader who nudges a size and puts it back has made no
-   * change either — a request per panel opening is a request that says nothing.
+   * AND A PAYLOAD IDENTICAL TO THE LAST ONE SENT IS NOT AN EDIT. A reader who
+   * nudges a size and puts it back has made no change, and a request that says
+   * nothing is still a request.
    * THE ADOPTION IS NOT WHAT THIS GUARD CATCHES, though it comes through the
    * same door: it is refused a line above, by a `proposalHeld` that
    * `adoptProposal` deliberately raises only afterwards.
@@ -5350,8 +5180,8 @@ export default class HammerolaViewer extends React.Component {
    * taking a document off the hub is not immediately followed by writing it back.
    * Spelled out in both places the two would agree until somebody adds a field to
    * one of them, and the cost of disagreeing is silent on both sides: a post that
-   * says nothing new, or a stored proposal overwritten by a page that only opened
-   * a panel. `ui/tests/proposalpanel.test.js` holds them equal.
+   * says nothing new, or a stored proposal overwritten by a page that only read
+   * one. `ui/tests/proposalpanel.test.js` holds them equal.
    *
    * AN OBJECT AND NOT THE STRING, because `saveProposal` needs `text` again after
    * building it — the announcement flag rides to `postProposal` beside the body,
@@ -5510,32 +5340,24 @@ export default class HammerolaViewer extends React.Component {
     try {
       // The hub's comment schema is closed — src/comments.py keeps `text`, `view`,
       // `part`, `key`, `published`, `point` and `camera` and DROPS everything else
-      // without saying so — so the measurement and the proposal ride in the text,
-      // where the agent will actually read them, rather than in fields discarded
-      // on the way in. A DRAGGED PART IS NOT A THIRD ATTACHMENT any more: it is a
-      // line of the proposal's own projection, which is the block below.
-      //
-      // THE PROPOSAL IS THE ONE THAT SPANS LINES, and it goes last for that reason:
-      // it is a small table (`proposalText`), and a block in the middle would split
-      // the one-line facts above it away from the sentence they belong to.
+      // without saying so — so the measurement rides in the text, where the agent
+      // will actually read it, rather than in a field discarded on the way in.
       const extra = [];
       if (c.meas) extra.push(`measured: ${c.meas}`);
-      if (c.proposal) {
-        extra.push('proposal — a rough body to design against or to follow, '
-                   + `not in the model:\n${c.proposal}`);
-      }
-      // AND WHERE THE DOCUMENT IS STORED BUT NOT ATTACHED, a pointer to it. The
-      // two are exclusive by construction — with the block right there, a line
-      // saying where to find the same thing is noise — so this being third
-      // never puts a one-line fact below the block that spans lines.
+      // AND WHERE THE HUB HOLDS A PROPOSAL, a pointer to it. THE DOCUMENT IS NOT
+      // COPIED INTO THE COMMENT and there is no door that does it: the hub keeps
+      // one proposal per project and the client prints it straight into the
+      // agent's terminal (`hammerola proposal`), so a block spliced in here would
+      // be a second copy of something already in front of them — stale the moment
+      // the reader touched a number afterwards.
       //
       // OFF WHAT THE PAGE ALREADY KNOWS and not off a second request:
       // `proposalStands` is the load's answer kept current by this page's own
       // writes, so a reader who draws a proposal and then writes a comment in
       // the same session is announced as well as one who stored it last week —
       // and one who has just deleted theirs is not.
-      if (this.state.proposalStands && !c.proposal) {
-        extra.push('a proposal stands on this project and is not attached here '
+      if (this.state.proposalStands) {
+        extra.push('a proposal stands on this project '
                    + '— `hammerola proposal` reads it');
       }
 
@@ -6229,9 +6051,10 @@ export default class HammerolaViewer extends React.Component {
 
     // -- the proposal: a rough body in numbers, laid over the model -----------
     //
-    // WHETHER THIS HUB HAS THE PANEL AT ALL, asked once and spent in two
+    // WHETHER THIS HUB HAS THE PROPOSAL AT ALL, asked once and spent in two
     // places: `v.proposalOn`, which the chrome carries and `render()` wraps
-    // both the button and the panel in, and the row menu — which is handed the
+    // both the toolbar button and the tree's branch in, and the row menu —
+    // which is handed the
     // FUNCTION rather than this answer, for the reason written where that menu
     // is built. It is not state and nothing on this page can change it; see
     // `proposalPanelOn`, which says where the answer comes from.
@@ -6244,13 +6067,13 @@ export default class HammerolaViewer extends React.Component {
     // the tree are expressed over `tree.nodes` and say nothing about this one.
     const branchOpen = s.expanded[PROPOSAL_BRANCH] !== false;
 
-    // THE PANEL AND ITS BRANCH, BUILT NEXT DOOR — ui/src/proposalview.js, which
-    // says what this bag is. The doors are handed over rather than reached for:
-    // a module that held `this` would be a second copy of the component, and
-    // every one of these is a method whose whole job is to write the page's
+    // THE BRANCH AND THE MENU'S ROWS, BUILT NEXT DOOR — ui/src/proposalview.js,
+    // which says what this bag is. The doors are handed over rather than reached
+    // for: a module that held `this` would be a second copy of the component,
+    // and every one of these is a method whose whole job is to write the page's
     // state or push the viewport.
     const proposal = proposalView(s, {
-      tree, overlayPath, hiddenSet, ghostSet, selRow, compared, narrow, viewer,
+      tree, overlayPath, hiddenSet, ghostSet, selRow, compared,
       branchOpen, PROPOSAL_BRANCH, stop, menuAt,
       node: this.node.bind(this),
       // ONE COUNTER FOR THE WHOLE PAGE, which is what keeps two nodes from
@@ -6265,8 +6088,6 @@ export default class HammerolaViewer extends React.Component {
       commitProposal: this.commitProposal.bind(this),
       nudgeProposal: this.nudgeProposal.bind(this),
       setProposal: this.setProposal.bind(this),
-      skipProposal: this.skipProposal.bind(this),
-      toggleProposal: this.toggleProposal.bind(this),
       toggleProposalEye: this.toggleProposalEye.bind(this),
       toggleMoveEye: this.toggleMoveEye.bind(this),
       removeProposal: this.removeProposal.bind(this),
@@ -6311,11 +6132,10 @@ export default class HammerolaViewer extends React.Component {
       proposalMoves: this.proposalMoves.bind(this),
       proposalOverlay: this.proposalOverlay.bind(this),
       stageProposal: this.stageProposal.bind(this),
-      toggleProposal: this.toggleProposal.bind(this),
     });
 
     return {
-      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, tokenPop: false }),
+      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false, tokenPop: false }),
 
       // -- the page's chrome ---------------------------------------------------
       //
@@ -6396,10 +6216,10 @@ export default class HammerolaViewer extends React.Component {
       hatchBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;' + (s.hatch ? ON_ACCENT : BLANK_BOX),
       hatchMark: s.hatch ? '✓' : '',
 
-      // -- the proposal panel, and its branch of the tree -------------------
+      // -- the proposal's branch of the tree, and the menu's rows ------------
       //
-      // Both of them, and the fields they are made of, are `proposalView` in
-      // ui/src/proposalview.js: twenty-six keys that answer to nothing on
+      // Both of them, and the fields the rows are made of, are `proposalView` in
+      // ui/src/proposalview.js: twenty-one keys that answer to nothing on
       // this page but the document, the flags above and the doors handed to it.
       ...proposal,
 
@@ -6526,7 +6346,7 @@ export default class HammerolaViewer extends React.Component {
       // field that actually reaches the hub. `hmr:place` posts the exact solid
       // the point sits on (`/model/pin(2)`); this one posts `sel`, which the
       // pick handler resolved to the ROW, i.e. the first path of the run — or
-      // nothing at all, where that selection is a body of the proposal panel and
+      // nothing at all, where that selection is a body of the proposal and
       // the number goes to the agent unattached (the note below). That spread is
       // not a drift to be levelled: a point is anchored to the solid it was
       // placed on, a measurement is about the row, and each door posts the
@@ -6601,19 +6421,6 @@ export default class HammerolaViewer extends React.Component {
       compMeasChipStyle: 'display:' + (s.composer && s.composer.meas ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
       compMeasText: (s.composer && s.composer.meas) || '',
       compMeasRemove: stop(() => this.setState({ composer: { ...s.composer, meas: null } })),
-      // A CHIP AND NOT THE TEXTAREA. The measurement is one line and could have
-      // gone either way; the proposal is a small table, and dropped into the box
-      // it would bury the sentence the reader came here to write. It says it is
-      // attached, it can be taken off, and `sendComment` is what puts it in the
-      // comment.
-      compProposalChipStyle: 'display:' + (s.composer && s.composer.proposal ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
-      // BOTH HALVES, because this is the reader saying they do not want one on
-      // this draft at all — unlike a tick, which empties the text and can fill
-      // it again. Left holding `attached`, a draft the chip was taken off would grow
-      // its attachment back the next time anything in the branch was ticked.
-      compProposalRemove: stop(() => this.setState({
-        composer: { ...s.composer, proposal: null, attached: false },
-      })),
       compPhotoName: s.composer && s.composer.photo ? s.composer.photo.name : '',
       compPhoto: (e) => {
         const file = e.target.files && e.target.files[0];
@@ -6931,9 +6738,8 @@ export default class HammerolaViewer extends React.Component {
                 the document is a row here — the bodies they drew and the parts
                 of the build they displaced, in the order the document holds them
                 — and a selected row opens the numbers underneath itself. The
-                panel over on the right keeps what is ABOUT the proposal rather
-                than IN it: what it is for, the buttons that add a body, the
-                kernel's verdict, and the door out to a comment.
+                kernel's verdict stands under the head of the branch; what ADDS a
+                node is the `Add primitive` menu down in the toolbar.
 
                 BELOW THE PARTS AND NOT ABOVE THEM, which is about those opening
                 numbers and not about which list matters more. Selecting a row
@@ -6957,8 +6763,8 @@ export default class HammerolaViewer extends React.Component {
                 NOT INSIDE `treeShown` OR `notCompare`, unlike the parts tree
                 above it. The proposal is the reader's own claim about a motor or
                 a wall, which is as true over a comparison as over a build — the
-                panel is not taken out of service by one either — and it is the
-                only place the rows exist now that the panel has no list. */}
+                `Add primitive` menu stays live under one for the same reason —
+                and this branch is the only place the rows exist at all. */}
             {v.proposalOn && (
               <div style={css(v.proposalTreeStyle)}>
                 <div style={css(v.proposalHeadStyle)}>
@@ -6996,6 +6802,14 @@ export default class HammerolaViewer extends React.Component {
                       is the only control on this page that asks first. */}
                   <span onClick={v.proposalRemove} title={v.proposalRemoveTitle} style={css(FAINT_CLICK)}>&#10005;</span>
                 </div>
+                {/* WHAT THE KERNEL MAKES OF THE DOCUMENT AS IT STANDS
+                    (`proposalSays` in `computed`). Under the head and outside
+                    the rows, so it is there whether or not the caret has folded
+                    the branch away: while it is there the body over the model is
+                    the last one that BUILT rather than nothing at all — see
+                    `setProposal` — so this line is the only thing on the page
+                    that says why a body has stopped following the numbers. */}
+                <div style={css(v.proposalSaysStyle)}>{v.proposalSays}</div>
                 {v.proposalRows.map((row) => (
                   <div key={row.key} style={css('display:flex;flex-direction:column;align-items:flex-start')}>
                     {/* `onContextMenu` is null on a move and on a body the scene
@@ -7256,13 +7070,34 @@ export default class HammerolaViewer extends React.Component {
                       Comment
                     </div>
                     {/* A box drawn in the air beside the model — which is what
-                        this opens: a rough body in numbers, over the geometry
+                        this adds: a rough body in numbers, over the geometry
                         rather than in it. Absent, not hidden, on a hub that did
-                        not ask for it: see `proposalOn` in `computed()`. */}
+                        not ask for it: see `proposalOn` in `computed()`.
+
+                        THE WRAPPER IS `position:relative` FOR THE REASON THE
+                        VIEW SWITCHER'S IS: the toolbar carries a
+                        `backdrop-filter` and is therefore already a containing
+                        block for the menu (CSS Filter Effects 2, §2.1), so
+                        without it the card would be measured from the toolbar's
+                        whole box and start at its left end rather than at the
+                        button. */}
                     {v.proposalOn && (
-                      <div onClick={v.tProposal} style={css(v.proposalBtnStyle)}>
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
-                        Proposal
+                      <div style={css(RELATIVE)}>
+                        <div onClick={v.tProposal} style={css(v.proposalBtnStyle)}>
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
+                          Add primitive
+                        </div>
+                        {/* THE OPS THE DOCUMENT KNOWS, one row each, read off the
+                            same table that gives each of them its size fields
+                            (`proposalOps` in ui/src/proposalview.js). The click
+                            is stopped on the card so that pressing inside it
+                            does not reach `rootClick` and shut it under the
+                            press. */}
+                        <div onClick={(e) => e.stopPropagation()} style={css(v.proposalMenuStyle)}>
+                          {v.proposalOps.map((op) => (
+                            <div key={op.key} onClick={op.onClick} style={css(v.proposalOpStyle)}>{op.label}</div>
+                          ))}
+                        </div>
                       </div>
                     )}
                     <div style={css(RULE)} />
@@ -7387,7 +7222,6 @@ export default class HammerolaViewer extends React.Component {
                   camera frame &mdash; attached automatically
                 </span>
                 <span style={css(v.compMeasChipStyle)}>&#8596; {v.compMeasText} <span onClick={v.compMeasRemove} style={css(DIM_CLICK)}>&#10005;</span></span>
-                <span style={css(v.compProposalChipStyle)}>&#9634; proposal attached <span onClick={v.compProposalRemove} style={css(DIM_CLICK)}>&#10005;</span></span>
                 <label style={css(`padding:4px 8px;border:1px dashed var(--line-strong);border-radius:5px;font:400 10.5px ${MONO};color:var(--text-muted);cursor:pointer`)}>
                   {v.compPhotoName ? `photo: ${v.compPhotoName}` : '+ photo of the print'}
                   <input type="file" accept="image/jpeg,image/png,image/webp"
@@ -7423,71 +7257,6 @@ export default class HammerolaViewer extends React.Component {
                 <span style={css(`font:400 11.5px ${SANS};color:var(--text-soft)`)}>hatch the cut face</span>
               </div>
             </div>
-
-            {/* ── the proposal: a rough body the model has to fit, in numbers ──
-
-                THE DOCUMENT ITSELF IS NOT HERE ANY MORE. Every node of it is a
-                row in the proposal's own branch of the tree, over on the left,
-                where a selected row opens the very fields this panel used to
-                carry. What is left is everything ABOUT a proposal rather than IN
-                one: what it is for, the buttons that add a body, the sentence
-                that explains a document with nothing in it, what the kernel
-                makes of the one there is, and the door out to a comment.
-
-                NUMBERS AND ONE HAND. The fields are where a body is SIZED, and
-                they are the only way to say `20 x 20 x 20`; where it SITS can
-                also be dragged, with the Move tool over the body itself — the
-                gesture ends in `hmr:proposalmove` and writes the `at` fields the
-                reader is looking at, so the two ways of saying it are one thing
-                (`proposalgeom.js` for what is grabbable: every body on its own,
-                solids and holes alike, so a drag moves the one under the
-                cursor).
-
-                WHAT IS STILL NOT HERE is a gizmo, a handle of our own and
-                click-to-place. The library's id-picker answers about parts that
-                are IN THE SCENE (issue #90) — which a staged body is, and which
-                is why the drag needed no hit-testing of ours — while an empty
-                spot in space is not, so putting a new body where the cursor is
-                remains a separate piece of work. */}
-            {v.proposalOn && (
-              <div onClick={(e) => e.stopPropagation()} style={css(v.proposalPanelStyle)}>
-                <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:3px')}>
-                  <span style={css(HEAD_SANS)}>Proposal</span>
-                  <span style={css(FILL)} />
-                  <span onClick={v.proposalClose} style={css(FAINT_CLICK)}>&#10005;</span>
-                </div>
-                {/* Block 6's tone, one step on: a way to SHOW the agent what you
-                    want instead of describing it, and explicitly not an edit. */}
-                <div style={css(`font:400 10.5px/1.5 ${MONO};color:var(--text-muted);margin-bottom:11px`)}>
-                  a rough body for the agent to design against, or to follow &mdash; a
-                  motor to clear, a wall to bolt to, a bought part, an example of the
-                  layout you want. Nothing here changes the model and nothing is saved:
-                  the next rebuild forgets it.
-                </div>
-
-                <div style={css(v.proposalEmptyStyle)}>
-                  add a box, a cylinder or a sphere, then say how
-                  big it is and where it sits. Every measurement is a plain number
-                  &mdash; there is no arithmetic.
-                </div>
-                <div style={css('display:flex;flex-wrap:wrap;gap:5px')}>
-                  {v.proposalOps.map((op) => (
-                    <div key={op.key} onClick={op.onClick} style={css(`padding:4px 9px;border:1px dashed var(--line-strong);border-radius:5px;font:500 10.5px ${MONO};color:var(--text-soft);cursor:pointer`)}>{op.label}</div>
-                  ))}
-                </div>
-
-                {/* WHAT THE PANEL HAS TO SAY (`proposalSays` in `computed`): the
-                    kernel's own sentence about the document as it stands. While
-                    it is there the body over the model is the last one that
-                    BUILT rather than nothing at all — see `setProposal`. */}
-                <div style={css(v.proposalSaysStyle)}>{v.proposalSays}</div>
-
-                <div style={css('display:flex;align-items:center;gap:10px;margin-top:11px;padding-top:9px;border-top:1px solid var(--line-soft)')}>
-                  <span style={css(SPAN_MONO)}>result = union(solid) &minus; union(hole)</span>
-                  <span onClick={v.proposalAdd} style={css(v.proposalAddStyle)}>add to comment</span>
-                </div>
-              </div>
-            )}
 
             <div style={css(v.toastStyle)}>{v.toastText}</div>
           </div>

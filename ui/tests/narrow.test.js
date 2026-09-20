@@ -190,6 +190,22 @@ describe('which layout the page comes up in', () => {
     expect(c.sync).toHaveBeenCalled()
   })
 
+  it('puts the `Add primitive` menu away on the way in, and the layer with it', () => {
+    // THE CARD UNMOUNTS ON ITS OWN — its button is one of the ones `showTools`
+    // takes away — so this is about the FLAG, which nothing narrow can lower.
+    // `toolbarStyle` reads it to lift the whole bar to 17 over the composer, so
+    // a flag left standing leaves a phone wearing a toolbar raised for a menu
+    // that is not on screen. It heals on the first click anywhere, which is the
+    // click the reader meant for something else.
+    const { change } = fakeMatchMedia(false)
+    const c = mounted()
+
+    c.state.opsOpen = true
+    change(true)
+    expect(c.state.opsOpen).toBe(false)
+    expect(css(c.computed().toolbarStyle).zIndex).toBe('12')
+  })
+
   it('takes nothing away on the way back out', () => {
     // The wide direction adds buttons rather than removing them, so there is
     // nothing to put away — and a reader who rotated back to find their tool
@@ -561,33 +577,30 @@ describe('the popovers that become a sheet on a narrow page', () => {
   // phone has no Escape key — opened, they could only be dismissed by reloading
   // the page.
   //
-  // The proposal panel is the same case with one extra turn of the screw: its
-  // button is one of the ones narrow takes away (`showTools`), but the FLAG is
-  // not — a window dragged narrower with the panel open would leave a panel on
-  // screen with no button to close it and its own cross off the side.
-  //
   // What does not earn a place: `menuStyle`, already clamped by `menuAt`; the
   // composer, whose ✕ and Send sit at the right end of their rows behind
   // `flex:1` spacers while the panel itself is anchored `right:16px` — so it is
   // the composer's LEFT end that goes off screen, not its controls; and the
-  // view menu, which COULD NOT take this sheet even if it wanted one. It opens
+  // view menu and the `Add primitive` menu, NEITHER of which could take this
+  // sheet even if it wanted one. They open
   // inside the floating toolbar, and that toolbar's `backdrop-filter` makes it
   // a containing block for `fixed` descendants as well as `absolute` ones (CSS
   // Filter Effects 2, §2.1) — so a sheet there would clamp itself to the
-  // toolbar's box and come up over the button that opened it. It needs no clamp
+  // toolbar's box and come up over the button that opened it. They need no clamp
   // either: the toolbar is centred on the bottom edge and on a narrow window
-  // holds that button and Fit and nothing else, so 260px from the button's left
+  // holds the view button and Fit and nothing else — `Add primitive` is one of
+  // the ones `showTools` takes away — so 260px from the button's left
   // edge is inside the window. `viewmenu.test.js` holds that one.
   const sheets = (over) => {
     const v = component(over).computed()
     return [v.revMenuStyle, v.dlMenuStyle, v.tokenPopStyle,
-            v.secPopStyle, v.notePopStyle, v.proposalPanelStyle].map(css)
+            v.secPopStyle, v.notePopStyle].map(css)
   }
 
   it('are clamped to the window rather than to the control they hang off', () => {
     for (const wide of sheets({})) expect(wide.position).toBe('absolute')
     expect(sheets({}).map((s) => s.width))
-      .toEqual(['430px', '250px', '320px', '270px', '300px', '330px'])
+      .toEqual(['430px', '250px', '320px', '270px', '300px'])
 
     for (const narrow of sheets({ narrow: true })) {
       // `fixed` is the half that does the work: `left`/`right` resolve against
