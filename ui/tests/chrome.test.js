@@ -1174,9 +1174,12 @@ describe('the mark', () => {
   //
   // Three roots, and each exclusion is a file ALLOWED to hold the mark:
   // `style.jsx` draws it, `pointer.html` is the sanctioned copy this whole block
-  // compares, `three-cad-viewer.esm.js` is vendored, and `hammerola*` under
-  // static/_v is this bundle COMPILED (AGENTS.md), so it contains style.jsx by
-  // construction — the local one really does, which is why the exclusion is
+  // compares, `three-cad-viewer.esm.js` is the viewer library — built out of
+  // `viewer/` rather than written here — with `three.module.js` and
+  // `three.core.js` beside it, which are three's own npm builds and are in this
+  // directory at all because three is external to that bundle, and `hammerola*`
+  // under static/_v is this bundle COMPILED (AGENTS.md), so it contains
+  // style.jsx by construction — the local one really does, which is why the exclusion is
   // load-bearing rather than tidy. `brand/` is not a root at all for the same
   // reason `pointer.html` is excluded from one: it is the original, not a copy.
   //
@@ -1190,7 +1193,8 @@ describe('the mark', () => {
     ...tree('../../templates', 'templates',
       (name) => name.endsWith('.html') && name !== 'pointer.html'),
     ...tree('../../static/_v', 'static/_v', (name) => name.endsWith('.js')
-      && name !== 'three-cad-viewer.esm.js' && !name.startsWith('hammerola')),
+      && name !== 'three-cad-viewer.esm.js' && name !== 'three.module.js'
+      && name !== 'three.core.js' && !name.startsWith('hammerola')),
   ]
 
   it('searches every file that could hold a second copy', () => {

@@ -266,7 +266,14 @@ jobs:
         # with `detected dubious ownership` — an error, not a warning, so the by-hand
         # reproduction this command is also written for would fail on the very test the lines
         # above exist to make runnable.
+        # `viewer/node_modules` (108 MB) and `viewer/dist` are excluded for the same reason as
+        # `ui/node_modules`, and matter for the same by-hand run: a runner's checkout has
+        # neither -- both are gitignored and nothing in CI builds the viewer -- but a
+        # workstation that has run `make viewer` would push 110 MB of them down this pipe.
+        # A fence has to be COMPLETE to be correct, which is what makes a missing flag here
+        # worse than a missing path on the positive list below.
         tar -cf - --exclude=./.git/config --exclude=./.venv --exclude=./ui/node_modules \
+          --exclude=./viewer/node_modules --exclude=./viewer/dist \
           --exclude=./data --exclude=./.env --exclude=./.pytest_cache \
           --exclude=__pycache__ . \
           | docker run --rm -i --pull always --name "$TEST_NAME" \
@@ -337,14 +344,19 @@ jobs:
         # scope and a tar without it takes the whole file down as templates/ would, while
         # favicon.svg is reached only by walking static/_v for *.svg — so that test names it,
         # and a tar without it fails one test saying which drawing stopped being checked.)
-        # The eighth is the vendored viewer, for ui/tests/hatch.test.js: it checks that the
+        # The eighth is the viewer bundle, for ui/tests/hatch.test.js: it checks that the
         # three.js shader chunk the section hatch splices at is still in the shader it
         # patches. Nothing under ui/ can answer that, and nothing at runtime can either — a
         # chunk renamed upstream costs the page its hatch and NOTHING else, no error and no
         # warning and a section that is simply a flat fill again — so this is the only place
-        # it can be noticed. It costs 3.4 MB on stdin, next to the base image pulled and the
-        # dependency tree installed on either side of it.
-        # THE ONE FILE AND NOT static/_v: that directory also holds this project's OWN
+        # it can be noticed.
+        # The ninth and tenth are three's own two files, and they travel because three is no
+        # longer INSIDE that bundle: `make viewer` builds the library with `external: three`
+        # (issue #14), so ui/tests/hatch.test.js, picking.test.js and outline.test.js read
+        # three's source out of static/_v/three.module.js and static/_v/three.core.js rather
+        # than out of the viewer. The three of them cost 3.6 MB on stdin, next to the base
+        # image pulled and the dependency tree installed on either side of it.
+        # THESE THREE FILES AND NOT static/_v: that directory also holds this project's OWN
         # browser bundle (`hammerola*`), which is an output of the build rather than an input
         # to the suite. It is gitignored, so the runner's checkout has none — but a
         # workstation has whatever `make ui` last produced, and this command is written for
@@ -353,11 +365,12 @@ jobs:
         # needs one, as a deliberate edit here.
         # Naming what travels is strictly safer than any set of --exclude flags: `.env`,
         # `data/` and `.git/config` cannot travel because nothing travels that is not named.
-        # It is no longer the SMALLER option — the vendored 3.5 MB viewer that used to be the
-        # reason to name paths rather than exclude them is now itself on the line — so the
-        # argument for this shape is safety alone, and it is enough. That matters for the same
-        # reason it matters up there: this exact command is also what a developer runs BY HAND
-        # to reproduce a CI failure, in a checkout where all three are real.
+        # It is no longer the SMALLER option — the vendored viewer that used to be the reason
+        # to name paths rather than exclude them is now itself on the line, 3.6 MB of it once
+        # three's two files are counted — so the argument for this shape is safety alone, and
+        # it is enough. That matters for the same reason it matters up there: this exact
+        # command is also what a developer runs BY HAND to reproduce a CI failure, in a
+        # checkout where all three are real.
         # So add the path deliberately, and do NOT replace this with `.` and a fence of
         # exclusions: the fence has to be complete to be correct, and this list has to be
         # complete to be USABLE, which is the failure that announces itself. Be exact about
@@ -408,6 +421,7 @@ jobs:
         tar -cf - --exclude=./ui/node_modules --exclude=./ui/dist ./ui ./templates ./brand \
           ./static/_v/tokens.css ./static/_v/site.css ./static/_v/favicon.svg \
           ./static/_v/pointer.js ./static/_v/pointer_pref.js ./static/_v/three-cad-viewer.esm.js \
+          ./static/_v/three.module.js ./static/_v/three.core.js \
           | docker run --rm -i --pull always --name "$JS_NAME" \
           --memory=3g --memory-swap=3g \
           -e CI=true \

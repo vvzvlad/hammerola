@@ -556,12 +556,15 @@ def test_the_committed_page_scripts_never_build_markup_from_a_string():
     while checking less reads exactly like a check that passed.
     """
     directory = STATIC / "_v"
-    # The vendored viewer is third-party and DOES build markup from strings; it
-    # is not ours to hold to this rule, and it arrives as an audited drop
-    # (static/_v/PROVENANCE.md). The build artefact is not read for the reason
-    # the docstring gives. Both are named rather than guessed at, so that a
-    # second vendored file is a decision somebody makes here.
-    skipped = {"three-cad-viewer.esm.js"}
+    # The viewer library DOES build markup from strings; it is not a page script
+    # of ours and not ours to hold to this rule, and where it comes from is
+    # written down (static/_v/PROVENANCE.md). `three.module.js` and
+    # `three.core.js` are npm's builds of three, in this directory because the
+    # viewer bundle imports three by URL instead of carrying it — a library, not
+    # a page script, on the same grounds. The build artefact is not read for the
+    # reason the docstring gives. Each is named rather than guessed at, so that a
+    # further library file here is a decision somebody makes in this line.
+    skipped = {"three-cad-viewer.esm.js", "three.module.js", "three.core.js"}
     ours = sorted(path.name for path in directory.glob("*.js")
                   if path.name not in skipped
                   and not path.name.startswith("hammerola"))

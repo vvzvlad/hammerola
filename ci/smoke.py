@@ -226,10 +226,13 @@ EXCLUDED_PATHS = ["/app/tests", "/app/.env", "/app/.venv", "/app/src/__pycache__
 # The entries here are the ones whose absence has no other symptom: one template per page the
 # hub serves — the index at `/`, one build's page, and the pointer page at `/project/<pid>/`,
 # which `render.pointer_page_html()` serves as a PAGE rather than as a redirect — plus the
-# vendored viewer library. `three-cad-viewer.esm.js` is 3.5 MB and is fetched at RUNTIME by a
-# URL in the bundle (`VIEWER_MODULE_URL` in ui/src/viewport/library.js) rather than imported at
-# build time, so nothing in the image build can notice it is gone: the page renders an empty
-# canvas and says so only in the browser console, i.e. nowhere CI can look.
+# viewer library, which is THREE files and not one. `three-cad-viewer.esm.js` is
+# fetched at RUNTIME by a URL in the bundle (`VIEWER_MODULE_URL` in ui/src/viewport/library.js)
+# rather than imported at build time, and it in turn imports three by URL — three is external to
+# that build (issue #14), so it ships as `three.module.js`, which imports `three.core.js`. Every
+# one of the three is resolved by the BROWSER, so nothing in the image build can notice any of
+# them is gone: the page renders an empty canvas and says so only in the browser console, i.e.
+# nowhere CI can look.
 # Deliberately not the whole tree: this is a tripwire on the COPY lines, not an inventory, and a
 # list that had to be updated for every new asset would be edited to match the image rather than
 # the other way round. Templates ARE listed one per page, though, because each of the three is
@@ -243,6 +246,12 @@ REQUIRED_PATHS = [
     "/app/templates/build.html",
     "/app/templates/pointer.html",
     "/app/static/_v/three-cad-viewer.esm.js",
+    # three itself, which the row above imports by URL instead of carrying. Named here for
+    # the same reason as the bundle and with one extra: a browser that cannot fetch either of
+    # them fails the whole module graph, so the viewer is as dead without these two as it is
+    # without its own code, and neither absence reaches any log CI reads.
+    "/app/static/_v/three.module.js",
+    "/app/static/_v/three.core.js",
     # The palette — every colour the site paints with, and the one stylesheet all
     # three pages link (issue #35). It is a committed file under `static/`, so it
     # travels with the tree the row above proves is copied; it is named anyway

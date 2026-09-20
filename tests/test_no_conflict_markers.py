@@ -27,10 +27,16 @@ ROOT = Path(__file__).resolve().parent.parent
 # seven.
 MARKERS = re.compile(r"(?m)^(<{7} |={7}$|>{7} |\|{7} )")
 
-# The vendored viewer bundle is third-party minified JavaScript: it is not ours
-# to merge, and a false positive in 3.5 MB of one-liner would be unfixable here.
+# None of these is hand-written, so there is no merge for a marker inside one to
+# come out of. `three-cad-viewer.esm.js` and its stylesheet are OUR OWN build of
+# the fork in `viewer/`, rewritten wholesale by `make viewer` — the source they
+# are built from is tracked and swept like any other file here, which is where a
+# conflict would actually have to be resolved. `three.module.js` and
+# `three.core.js` are npm's builds of three, copied in unchanged: third-party,
+# and not ours to merge.
 SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", "data", "_out"}
-SKIP_FILES = {"three-cad-viewer.esm.js", "three-cad-viewer.css"}
+SKIP_FILES = {"three-cad-viewer.esm.js", "three-cad-viewer.css",
+              "three.module.js", "three.core.js"}
 
 
 def tracked_files():
