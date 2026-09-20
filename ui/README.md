@@ -136,8 +136,10 @@ do (#104).
 `src/viewport/` is the imperative half: one custom element (`<hmr-viewport>`)
 around the vendored `three-cad-viewer`, and the modules that draw on top of it —
 the manipulators, the section plane, the view cube, the picking; `layer.js` and
-`drag.js` are the overlay and the pointer loop the four manipulators share
-(#101). In `tests/`, `component.js` builds the page and viewport fixtures the
-test files share (#102) and `fakes.js` the scene under them. `docs/ui-brief.md` says what the
-interface is FOR; `docs/viewer-api.md` says which of the vendored viewer's
-surface is public and which of it the viewport reaches into at its own risk.
+`drag.js` are the overlay and the pointer loop the manipulators drawn over the
+canvas share (#101), and `scene3d.js` is `layer.js`'s twin for the ones that are
+objects IN the library's scene. In `tests/`, `component.js` builds the page and
+viewport fixtures the test files share (#102) and `fakes.js` the scene under
+them. `docs/ui-brief.md` says what the interface is FOR; `docs/viewer-api.md`
+says which of the vendored viewer's surface is public and which of it the
+viewport reaches into at its own risk.

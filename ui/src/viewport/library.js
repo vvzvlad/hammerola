@@ -40,7 +40,10 @@ export const VIEWER_MODULE_URL = "/_v/three-cad-viewer.esm.js";
 let pending = null;
 
 /**
- * `{ Viewer, Display }`, fetched once per page however many viewports ask.
+ * The library's module namespace, fetched once per page however many viewports
+ * ask: `Viewer` and `Display`, and `THREE` — three's own namespace, re-exported
+ * by the fork (issue #14), which is what the widgets in the scene are built out
+ * of (`scene3d.js`).
  *
  * The memo is dropped on failure rather than kept. A rejected module promise is
  * permanent inside the browser's own module map — a second `import()` of the

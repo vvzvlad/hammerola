@@ -156,9 +156,24 @@ export function orthoCamera({
     halfW, halfH, zoom, depth,
     // The object the adapter passes around as `g.cam`. `isOrthographicCamera`
     // is what gestureInternals() gates every camera gesture on.
+    //
+    // THE FRUSTUM IS FIVE GETTERS and not five numbers, because two of the
+    // fields they read are written DURING a test: `setCameraLocationSettings`
+    // moves the zoom, and the scale `scene3d.js` computes off `top`, `bottom`
+    // and `zoom` would then be measuring a camera that has been left behind.
+    // `OrthographicCamera` keeps these as the half-extents the projection
+    // divides by `zoom`, which is exactly what `project()` below does with
+    // `halfW` and `halfH`. `cam.right` is that half-width and NOT the basis
+    // vector of the same name one object out; they are different questions with
+    // three's spelling for both.
     cam: {
       isOrthographicCamera: true,
       updateMatrixWorld: vi.fn(),
+      get left() { return -camera.halfW },
+      get right() { return camera.halfW },
+      get top() { return camera.halfH },
+      get bottom() { return -camera.halfH },
+      get zoom() { return camera.zoom },
     },
     project(p) {
       const d = sub(p, camera.eye)
@@ -179,6 +194,49 @@ export function orthoCamera({
     },
   }
   return camera
+}
+
+/**
+ * Put a REAL `THREE.OrthographicCamera` in the place `getCamera()` answers with,
+ * at the pose the model above describes. Returns it.
+ *
+ * FOR THE RAYCASTER AND NOTHING ELSE. `scene3d.js` casts a ray with three's own
+ * `Raycaster`, which reads `matrixWorld` and `projectionMatrixInverse` off the
+ * camera it is handed — matrices the model above has no reason to carry, since
+ * every other reader of `g.cam` goes through `project`/`unproject` here.
+ *
+ * THE MODEL'S ARITHMETIC IS UNTOUCHED. `vector.project` compares the camera it
+ * is given against `camera.cam` and then answers with the model's own numbers,
+ * so swapping the object that identity points at leaves every projection in
+ * this directory exactly as it was — and the two agree about x and y, which is
+ * asserted in scene3d.test.js rather than assumed here.
+ *
+ * `three` is PASSED IN rather than imported: this file is imported by every test
+ * in the directory and three is two megabytes of parse per file that would never
+ * touch it.
+ *
+ * The basis is written straight onto the rotation rather than reached through
+ * `lookAt`, which would re-derive `right` from `up` and quietly straighten a
+ * camera a test has deliberately rolled. Near and far put the model's `depth`
+ * exactly in the middle of the frustum, which is where its own `unproject`
+ * places a point at z = 0.
+ */
+export function realCamera(three, camera) {
+  const cam = new three.OrthographicCamera(
+    -camera.halfW, camera.halfW, camera.halfH, -camera.halfH,
+    0.1, 2 * camera.depth)
+  cam.zoom = camera.zoom
+  cam.position.set(camera.eye[0], camera.eye[1], camera.eye[2])
+  // three's camera looks down its own -Z, so the third basis vector of its world
+  // matrix is the view direction REVERSED.
+  cam.quaternion.setFromRotationMatrix(new three.Matrix4().makeBasis(
+    new three.Vector3(...camera.right),
+    new three.Vector3(...camera.up),
+    new three.Vector3(...camera.forward).negate()))
+  cam.updateProjectionMatrix()
+  cam.updateMatrixWorld(true)
+  camera.cam = cam
+  return cam
 }
 
 /** A `THREE.Plane`: `distanceToPoint(p) = normal . p + constant`.
@@ -325,10 +383,24 @@ export function fakeViewer({
     }),
     setActiveTab: vi.fn(),
 
+    // -- the render ----------------------------------------------------------
+    // `Viewer.onBeforeRender` — hammerola's own addition to the fork
+    // (viewer/src/core/viewer.ts, listed in static/_v/PROVENANCE.md), called at
+    // the TOP of `update()`. It starts at null, exactly as the constructor
+    // leaves it, so a suite that never installs one sees the library it always
+    // saw.
+    onBeforeRender: null,
+
     // -- parts -------------------------------------------------------------
     getStates: vi.fn(() => ({ ...states })),
     setStates: vi.fn((next) => { states = { ...next } }),
-    update: vi.fn(),
+    // `Viewer.update`, in the one half a widget standing in the scene hangs off:
+    // it runs the hook above and then paints. There is no GPU here and nothing
+    // to paint with, so the spy's record IS the frame — which is what every
+    // `rendered()` in this directory means.
+    update: vi.fn(() => {
+      if (viewer.onBeforeRender) viewer.onBeforeRender()
+    }),
     dispose: vi.fn(),
   }
   return viewer

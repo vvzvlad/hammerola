@@ -1530,3 +1530,26 @@ def test_the_document_module_reaches_no_module_that_reaches_the_viewer():
         "ui/src/viewport/math.js has grown an import, so it is no longer the "
         "leaf `proposal.js` is allowed to reach through — either keep it a "
         "leaf, or move the arithmetic `proposal.js` needs somewhere that is")
+
+def test_the_section_grip_is_built_before_the_rotation_rings():
+    """One press cannot both slide the section and start a rotation.
+
+    Both widgets read their press off the CANVAS, in a capture-phase
+    `pointerdown` on the window: `scene3d.js` because a mesh has no element to
+    hang a listener on, `rings.js` because a ring is a curve and never had one
+    either. The grip refuses a press it takes with `stopImmediatePropagation`,
+    and that silences only listeners registered LATER on the same node -- so the
+    whole of the guarantee is the order these two are CONSTRUCTED in.
+
+    It is asserted here, on the source, because no listener carries anything
+    that says whose it is: they are anonymous closures on one node, for one
+    event, in one phase. Swap the two lines in `element.js` and both widgets'
+    own suites stay green while the gesture goes wrong on the page.
+    """
+    text = (VIEWPORT / "element.js").read_text(encoding="utf-8")
+    grip = text.index("createHandle(")
+    rings = text.index("createRings(")
+    assert grip < rings, (
+        "createRings is built before createHandle: a press on the section grip "
+        "would now also start a rotation"
+    )

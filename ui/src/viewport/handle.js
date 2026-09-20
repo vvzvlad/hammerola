@@ -1,4 +1,4 @@
-// The grip on the section plane: a double-headed arrow drawn over the canvas at
+// The grip on the section plane: a double-headed arrow standing on the cut, at
 // the point where the plane meets the face that was clicked, and dragged to
 // slide the plane along its own normal.
 //
@@ -7,105 +7,140 @@
 // found it were the ones who had been told. A gesture with no handle is a
 // gesture that is not there for most people.
 //
-// A DOM OVERLAY AND NOT AN OBJECT IN THE SCENE, for two reasons that are both
-// about the library rather than about taste. `viewer.clear()` deep-disposes
-// everything in the scene, so a gizmo living in it would have to be rebuilt
-// after every render, on a path that already has enough to get right; and its
-// hit testing would have to be written by hand against the picker, where the
-// browser does it here for nothing and throws in a cursor with it.
+// AN OBJECT IN THE SCENE AND NOT A DIV OVER IT, which is what makes the arrow
+// point along the plane's normal rather than along a picture of it. Drawn flat,
+// every question the widget asked was a question about the SCREEN — which way
+// the normal projects, how much of it survives the projection, what to do in the
+// zone where the answer collapses — and each of those had to be computed,
+// guarded and floored. A mesh lying on the plane is simply turned to the normal
+// once and projected by the camera like everything else, so all of that is gone
+// from this file. `scene3d.js` carries the half that is shared.
 //
-// A MODULE OF ITS OWN AND NOT PART OF overlay.js, though the rAF loop is the
-// same one — `createLayer` in layer.js, which both are built out of. Two things
-// differ and both are load-bearing: what this draws comes from the SECTION
-// rather than from `state.pins`, and it carries a live drag, which the
-// overlay's pins — a press, a click, nothing in between — do not.
-//
-// DRAWN OUT OF DIVS rather than out of an SVG, which is the one place this
-// departs from the view cube. The reason is a TEST and not the page's policy:
-// `tests/test_ui_source.py` scans the interface for absolute URLs, waves the SVG
-// namespace through as an identifier that merely looks like one — nothing ever
-// dereferences it, so the CSP has nothing to say about it either way — and then
-// pins that exemption to the single `const SVG_NS` in viewcube.js. A shaft and
-// two CSS border triangles need no namespace, and the shape is three
-// rectangles' worth of styling whichever way it is built.
+// A MODULE OF ITS OWN AND NOT PART OF overlay.js, though the four callbacks are
+// the same shape. Two things differ and both are load-bearing: what this draws
+// comes from the SECTION rather than from `state.pins`, and it carries a live
+// drag, which the overlay's pins — a press, a click, nothing in between — do
+// not.
 
 import { internals } from "./internals.js";
-import { spot } from "./camera.js";
 import { watchDrag } from "./drag.js";
-import { HALO, addPiece, createLayer } from "./layer.js";
+import { finite3 } from "./math.js";
+import { createScene3D, widgetMaterial } from "./scene3d.js";
 import { dragSection, sectionGripAxis, sectionOffset } from "./section.js";
 import { reportCut } from "./tools.js";
 import {
-  HANDLE_HEAD_PX, HANDLE_HIT_PX, HANDLE_MIN_SCALE, HANDLE_PX, HANDLE_SHAFT_PX,
+  HANDLE_CASE_PX, HANDLE_HEAD_PX, HANDLE_HIT_PX, HANDLE_PX,
+  HANDLE_SHAFT_PX,
 } from "./options.js";
 
-/** The arrow's ink, which `HALO` in layer.js is the other half of: one colour
- *  for both themes, carried on the dark canvas by the white glow. */
-const INK = "#2f353d";
+/** The arrow's ink: the grip's own dark, the same number the DOM layer drew it
+ *  in, as a hex the material takes rather than a CSS string. One colour for both
+ *  themes, which is what every widget over this canvas does — the canvas is
+ *  white or near-black depending on the reader's answer (`readTheme` in
+ *  ui/src/store.js), so a widget picks a colour that stands on either. */
+const INK = 0x2f353d;
+
+/** The casing under it: white, the same ink the rotation handles stand their
+ *  discs on (`CASING` in rings.js). It is what makes ONE dark colour honest on
+ *  a canvas that is white on one theme and near-black on the other. */
+const CASING = 0xffffff;
+
+/** How round the shaft and the heads are.
+ *
+ * Twelve is where a cylinder two pixels across stops reading as a polygon at
+ * any angle, and the whole widget is seven meshes: nothing here is worth an
+ * adaptive count.
+ */
+const SIDES = 12;
 
 export function createHandle(vp) {
-  // The root, the rAF loop and the teardown are `layer.js`'s, which the three
-  // other layers over the canvas are built out of as well. `wanted` and `place`
-  // are the declarations below, so the root exists before the arrow is put on
-  // it.
-  const layer = createLayer({ wanted, place });
-  const { root } = layer;
+  // The group, the place in the library's render pass, the pixel scale, the
+  // press and the teardown are `scene3d.js`'s. `wanted`, `build`, `place` and
+  // `onDown` are the declarations below; nothing is called until the first
+  // `attach` and the first frame the library draws after it.
+  const widget = createScene3D(vp, {
+    wanted, build, place, press: onDown, cursor: "grab",
+  });
 
-  // THE BOX IS THE TARGET AND THE INK INSIDE IT IS THINNER, which is the whole
-  // of the "fat enough to hit" requirement: the arrow is `HANDLE_HIT_PX` tall
-  // and takes presses over all of it, while what is drawn is a shaft of
-  // `HANDLE_SHAFT_PX`.
-  const arrow = document.createElement("div");
-  arrow.style.cssText = "position:absolute;left:0;top:0;display:none;"
-    + `width:${HANDLE_PX}px;height:${HANDLE_HIT_PX}px;`
-    + `pointer-events:auto;cursor:grab;filter:${HALO}`;
-  root.appendChild(arrow);
-
-  // THE INK FORESHORTENS AND THE BOX DOES NOT, and this wrapper is the seam
-  // between the two. The arrow lies along the plane's NORMAL, so a reader who
-  // has turned to look straight at the cut face is looking ALONG it: a real
-  // arrow would collapse towards its own end there, and that collapse is what
-  // tells the reader how the plane is standing. Drawn at its full length in
-  // every view, as it was, the widget says the same thing about every camera
-  // and so says nothing.
-  //
-  // The scale goes HERE and the rotation stays on `arrow`, which is what keeps
-  // the two independent: the outer box is the target, `HANDLE_PX` by
-  // `HANDLE_HIT_PX` with `pointer-events: auto`, and it is the same size
-  // wherever the model is turned. So the ink shrinks and the grab does not —
-  // the arrow must not become hard to hit exactly where the cut face is
-  // squarely in view, which is the same requirement `sectionGripAxis`'s
-  // fallback exists for.
-  const ink = document.createElement("div");
-  ink.style.cssText = "position:absolute;inset:0";
-  arrow.appendChild(ink);
-
-  // The shaft, between the two heads.
-  addPiece(ink, `left:${HANDLE_HEAD_PX}px;right:${HANDLE_HEAD_PX}px;top:50%;`
-    + `height:${HANDLE_SHAFT_PX}px;margin-top:${-HANDLE_SHAFT_PX / 2}px;`
-    + `background:${INK}`);
-  // The two heads, as CSS border triangles: a box of zero size whose remaining
-  // border is a wedge. As long as it is wide, so the arrow reads the same at
-  // every angle it is turned to ON THE SCREEN — not at every angle the MODEL
-  // can be turned to, which is the opposite of what the grip wants: the
-  // foreshortening below squeezes the heads along with the shaft, and a head
-  // seen nearly end-on is meant to be a sliver.
-  //
-  // THE BORDER AND THE EDGE ARE OPPOSITE SIDES, which is why they are two names:
-  // the border that is left standing is the one AWAY from the point, so a wedge
-  // made of `border-right` points LEFT and belongs at the left edge.
-  for (const border of ["right", "left"]) {
-    const edge = border === "right" ? "left" : "right";
-    addPiece(ink, `${edge}:0;top:50%;`
-      + `margin-top:${-HANDLE_HEAD_PX / 2}px;width:0;height:0;`
-      + `border-top:${HANDLE_HEAD_PX / 2}px solid transparent;`
-      + `border-bottom:${HANDLE_HEAD_PX / 2}px solid transparent;`
-      + `border-${border}:${HANDLE_HEAD_PX}px solid ${INK}`);
-  }
+  // The two vectors the orientation is computed with, kept rather than minted
+  // per frame: this runs once per frame the library draws, which during an orbit
+  // is every frame there is. Built with the group, because the namespace they
+  // come from arrives with it.
+  let up = null;
+  let aim = null;
 
   // The gesture in progress: the screen axis measured at its start, and where
   // the pointer was at the previous event. Null between gestures.
   let drag = null;
+
+  /**
+   * The arrow, in CSS pixels along +Y — the axis three gives a cylinder and a
+   * cone, so the orientation below is one rotation from +Y onto the plane's
+   * normal rather than two.
+   *
+   * TWO MATERIALS AND NOT SEVEN, because the arrow is two pieces of colour
+   * rather than seven shapes: every mesh of the ink shares one, every mesh of
+   * the casing shares the other, so the renderer sorts two programs and there
+   * are two things to keep in step. Nothing here ever tints one head and not the
+   * other.
+   *
+   * THE HEADS ARE AS LONG AS THEY ARE WIDE, which is `HANDLE_HEAD_PX`'s whole
+   * argument, and they sit at the ENDS: half the arrow's length minus half a
+   * head, so the outermost point of each is exactly `HANDLE_PX / 2` from the
+   * anchor. That is a promise about the INK: the casing stands `HANDLE_CASE_PX`
+   * outside it on every side, tips included, exactly as the rotation handles'
+   * rim stands outside `RING_PX`.
+   */
+  function build(three, group) {
+    up = new three.Vector3(0, 1, 0);
+    aim = new three.Vector3();
+    const ink = widgetMaterial(three, INK);
+    const casing = widgetMaterial(three, CASING);
+    // THE ARROW IS DRAWN TWICE, and the order is the whole of the contrast.
+    // `grow` is 0 for the ink and `HANDLE_CASE_PX` for the copy under it, whose
+    // `renderOrder` of -1 puts it first WITHIN this group -- three carries a
+    // group's own `renderOrder` down as the group order and sorts the subtree
+    // inside it, so the two numbers do not fight. With no depth test, first
+    // drawn is underneath, and a white body two pixels proud of a dark one is a
+    // rim. `options.js` says why a rim rather than a shadow.
+    for (const [grow, material, order] of
+      [[HANDLE_CASE_PX, casing, -1], [0, ink, 0]]) {
+      const shaft = new three.Mesh(
+        new three.CylinderGeometry(HANDLE_SHAFT_PX / 2 + grow,
+                                   HANDLE_SHAFT_PX / 2 + grow,
+                                   HANDLE_PX - 2 * HANDLE_HEAD_PX, SIDES),
+        material);
+      shaft.renderOrder = order;
+      group.add(shaft);
+      for (const end of [1, -1]) {
+        const head = new three.Mesh(
+          new three.ConeGeometry(HANDLE_HEAD_PX / 2 + grow,
+                                 HANDLE_HEAD_PX + 2 * grow, SIDES), material);
+        head.position.y = (end * (HANDLE_PX - HANDLE_HEAD_PX)) / 2;
+        // A cone points +Y, so the lower one is turned over. About Z because any
+        // axis across Y does it and Z is the one the shaft is not on.
+        if (end < 0) head.rotation.z = Math.PI;
+        head.renderOrder = order;
+        group.add(head);
+      }
+    }
+    // THE TARGET IS FAT AND THE INK IS THIN, which is the same requirement the
+    // DOM box carried and the reason `HANDLE_HIT_PX` survives the move: a hand
+    // cannot reliably hit a 2 px shaft. A cylinder of that diameter around the
+    // whole arrow is what the ray really meets.
+    //
+    // `visible = false` AND NOT a transparent material: three's raycaster tests
+    // an object's LAYERS and never its visibility (`intersect()` in three.core),
+    // so this is a mesh that is hit and never drawn — no second draw call, no
+    // blend, nothing for the renderer to sort. `scene3d.js` leans on the same
+    // reading one storey up, where it has to check `group.visible` by hand.
+    const target = new three.Mesh(
+      new three.CylinderGeometry(HANDLE_HIT_PX / 2, HANDLE_HIT_PX / 2,
+                                 HANDLE_PX, SIDES),
+      ink);
+    target.visible = false;
+    group.add(target);
+  }
 
   /**
    * Where the plane meets the face the reader clicked, in world coordinates.
@@ -134,90 +169,45 @@ export function createHandle(vp) {
 
   /** Whether there is a cut to put a handle on at all.
    *
-   * THE OTHER WAY THE HANDLE HIDES IS NOT IN HERE, on purpose: an anchor behind
-   * the camera is an answer about THIS FRAME, and it comes back the moment the
-   * model is turned. Stopping the loop on it would mean the handle never
-   * returned, since nothing outside calls `refresh` when the camera moves.
+   * THE OTHER WAYS THE GRIP LEAVES THE SCREEN ARE NOT IN HERE, on purpose: a
+   * camera that cannot be measured and a seed that cannot be read are answers
+   * about THIS FRAME, and a scene caught mid-swap has both again one render
+   * later. This question is the one `scene3d.js` asks before it reaches into the
+   * library at all, so it is about the cut and nothing else.
    */
   function wanted() {
     return !!(vp.sectionSeed && vp.state.cut);
   }
 
-  const hide = () => { arrow.style.display = "none"; };
-
-  /** Put the arrow where the plane is, or take it off the screen. */
-  function place() {
-    if (!wanted()) {
-      hide();
-      return;
-    }
-    const g = internals(vp.viewer);
-    if (!g) {
-      hide();
-      return;
-    }
+  /**
+   * Stand the arrow on the plane, or say there is nothing to stand.
+   *
+   * ALONG THE SEED'S NORMAL AND NOT THE PLANE'S. The two are the same direction
+   * up to a SIGN — `placeSectionPlane` turns the seed towards the camera and a
+   * flip turns the plane in force over without moving it — and the arrow is
+   * symmetric about its own middle, so the sign is invisible on screen. What
+   * that buys is a reading the module already takes for the anchor, instead of a
+   * second call into the library that can fail on its own.
+   *
+   * WHAT `finite3` IS AND IS NOT CHECKING, because the difference matters here.
+   * It catches NaN and Infinity, which is what a plane read mid-swap or a camera
+   * that cannot be measured produce, and `set` on a NaN leaves a group at no
+   * position at all. It does NOT catch a zero vector — `math.js` says so in as
+   * many words — and nothing here needs it to: `setFromUnitVectors` is the one
+   * call that would care, and the normal it is handed was made a unit vector at
+   * the seed: `placeSectionPlane` and `restoreSection` are the two functions
+   * that write `vp.sectionSeed`, and both run `unit3` before they do — which
+   * section.js states, together with the requirement on any third writer.
+   */
+  function place(group) {
+    const seed = vp.sectionSeed;
+    if (!seed || !finite3(seed.normal)) return false;
     const at = anchor();
-    // `sectionGripAxis` AND NOT `sectionAxis`, which is the whole of why the
-    // arrow no longer goes away under the reader. `sectionAxis` declines in the
-    // degenerate zone — the plane's normal pointing nearly AT or AWAY FROM the
-    // camera, i.e. the reader turned to look straight at the cut face — where
-    // the projected normal is a stub; the grip takes that function's vertical
-    // fallback there instead. Crossing the boundary SNAPS the arrow from its
-    // projected angle to vertical, once, and that is the whole of the trade:
-    // one snap at the boundary in place of an arrow that simply disappeared
-    // past it.
-    //
-    // Null is left, and it is no longer about the view at all: it means the
-    // scene cannot be measured — no clip plane, no eye, a canvas of no size —
-    // which is the `internals` case above arriving one function later.
-    const axis = sectionGripAxis(vp.viewer, g, at);
-    if (!axis) {
-      hide();
-      return;
-    }
-    const rect = g.canvas.getBoundingClientRect();
-    const box = vp.box.getBoundingClientRect();
-    const on = spot(g, rect, box, at);
-    // z > 1 is behind the camera's far plane, i.e. behind the reader — under an
-    // ortho projection a real case rather than a curiosity, exactly as the
-    // overlay's `place` says.
-    if (!on || on[2] > 1) {
-      hide();
-      return;
-    }
-    arrow.style.display = "";
-    arrow.style.left = `${on[0]}px`;
-    arrow.style.top = `${on[1]}px`;
-    // `sectionGripAxis` answers in canvas pixels per world unit along the clip
-    // normal, with `sy` counted DOWNWARDS — which is the direction CSS rotates
-    // in as well, so the angle of that vector is the angle of the arrow with
-    // nothing to flip. In the degenerate zone that vector is `{sx: 0, sy: +px}`,
-    // i.e. 90 degrees: a stable vertical arrow, dragged down to push the plane
-    // along its own normal. The arrow is centred on the anchor because the plane
-    // moves BOTH ways from there.
-    arrow.style.transform = "translate(-50%,-50%) "
-      + `rotate(${(Math.atan2(axis.sy, axis.sx) * 180) / Math.PI}deg)`;
-    // And the ink inside that box is drawn at the fraction of the normal the
-    // projection leaves — `scaleX`, i.e. along the arrow's OWN length, since the
-    // rotation above has already turned this wrapper's x onto it. The whole
-    // group scales, heads included: a real arrow seen end-on foreshortens its
-    // heads with its shaft, and shortening the shaft alone would draw a picture
-    // of something else.
-    //
-    // FLOORED SO IT CANNOT VANISH, at `HANDLE_MIN_SCALE` — about 8 px, a stub
-    // beside the cut. That floor is a legibility limit and must not be confused
-    // with the drag's `MIN_SINE`, which it happens to equal today: the guard is
-    // asked about the ray to the anchor and this is asked about the camera's
-    // projection axis, so a view can easily be past one and not the other.
-    //
-    // A NULL SINE IS FULL LENGTH, which is what this drew before it foreshortened
-    // at all: `foreshorten` answers null only for a camera it cannot read, and a
-    // widget left whole is visible and grabbable where one collapsed to its
-    // floor would be neither, on a scene nobody can measure anyway.
-    const scale = axis.sine === null
-      ? 1
-      : Math.max(axis.sine, HANDLE_MIN_SCALE);
-    ink.style.transform = `scaleX(${scale})`;
+    if (!finite3(at)) return false;
+    group.position.set(at[0], at[1], at[2]);
+    aim.set(seed.normal[0], seed.normal[1], seed.normal[2]);
+    group.quaternion.setFromUnitVectors(up, aim);
+    return true;
   }
 
   /** The window listeners this gesture is followed with, which `drag.js` says
@@ -227,8 +217,10 @@ export function createHandle(vp) {
   /** Let go of the gesture, wherever it ended. */
   const finish = () => {
     drag = null;
-    arrow.style.cursor = "grab";
     watch.disarm();
+    // The cursor goes back to answering the ray. Unconditional, because every
+    // ending there is comes through here.
+    widget.grabbed(false);
   };
 
   function onMove(event) {
@@ -252,9 +244,9 @@ export function createHandle(vp) {
     // ONLY IF IT ACTUALLY MOVED, which is the same rule the canvas drag applies
     // (`tools.js`, `if (p.moved)`) and it is not tidiness. `reportCut` emits
     // `hmr:face`, and the interface answers that by disarming whatever tool is
-    // up (`tool: null`, HammerolaViewer.jsx) — so a bare click on the arrow, or
-    // a press that missed the model and landed in this 56x18 box, would silently
-    // put down the measure or comment tool the reader was holding.
+    // up (`tool: null`, HammerolaViewer.jsx) — so a bare click on the arrow
+    // would silently put down the measure or comment tool the reader was
+    // holding.
     //
     // Once, at the end: the drag moves the library's slider sixty times a second
     // and the interface would re-render with it. Through the same function the
@@ -267,49 +259,45 @@ export function createHandle(vp) {
     finish();
   }
 
-  const onDown = (event) => {
-    // THE PRIMARY BUTTON AND NOTHING ELSE, and it is worth being exact about
-    // what that buys. A press on the arrow never reaches `vp.box` or the canvas
-    // in the first place — this layer is a SIBLING of the box — so neither the
-    // part menu nor the library's pan is reachable over these 56x18 px whatever
-    // this line does. What the filter buys is that a right-drag the reader
-    // meant as a pan, and a middle click, no longer move the plane. The native
-    // context menu still comes up over the grip, exactly as it does over the
-    // view cube: that is the price of any sibling layer, not a regression here.
-    if (event.button !== 0) return;
+  /**
+   * A press the ray found on the arrow. True when the grip has taken it, which
+   * is what `scene3d.js` suppresses the event on.
+   *
+   * THE PRIMARY BUTTON AND NOTHING ELSE. The press is taken off the CANVAS now,
+   * so what this refuses really does go on to everything behind it: a right-drag
+   * the reader meant as a pan is a pan, a right-click is the part menu over the
+   * face the arrow is standing on, and a middle click is whatever the trackball
+   * makes of it. Answering `false` rather than swallowing the event is the whole
+   * of that — see `onDown` in scene3d.js.
+   */
+  function onDown(event, g) {
+    if (event.button !== 0) return false;
     // A previous gesture is concluded before a new one begins, as `onDown` in
     // tools.js does it: a second pointer landing on the same arrow would
     // otherwise overwrite the anchor with its own position, and the first
     // finger's next move would read as a jump the width of the gap between them.
     finish();
-    // `stopPropagation` is belt and braces and nothing more, because this layer
-    // is a sibling of `vp.box`: no listener on that element — tools, orbit,
-    // pinch, the idle clock — is on this event's path at all, which is the same
-    // reading `viewcube.js` writes out for its own root. It stays for the day
-    // the layer moves inside the box. `preventDefault` is the half that matters
-    // on its own: it suppresses the compatibility mouse events, so this press
-    // cannot turn into a double-click somewhere else.
-    event.stopPropagation();
-    event.preventDefault();
-    if (!wanted()) return;
-    const g = internals(vp.viewer);
-    if (!g) return;
     // MEASURED ONCE AND HELD FOR THE WHOLE GESTURE, exactly as tools.js does it:
     // the camera cannot move under a press this one owns, and re-measuring per
     // frame would let the plane drift away from the hand.
     //
-    // THROUGH THE SAME FUNCTION `place` DRAWS FROM, so the arrow that is on
-    // screen is the arrow that drags: measured with `sectionAxis` instead, a
-    // press in the degenerate zone would land on a visible grip and then do
-    // nothing at all.
+    // THE SCREEN AXIS SURVIVES THE MOVE INTO THE SCENE, and it is the one thing
+    // that had to: the drag is a PIXEL delta and the plane moves in world units,
+    // so something has to say what a pixel is worth along the normal.
+    // `sectionGripAxis` is that, degenerate-zone fallback and all — a reader
+    // looking straight down the normal still drags the plane vertically, which
+    // is the gesture that was there before this widget was an object.
     const axis = sectionGripAxis(vp.viewer, g, anchor());
-    if (!axis) return;
+    if (!axis) return false;
     drag = { axis, x: event.clientX, y: event.clientY, moved: false };
-    arrow.style.cursor = "grabbing";
     watch.arm();
-  };
-
-  arrow.addEventListener("pointerdown", onDown);
+    // From here the canvas wears `grabbing` until `finish`, whatever the ray
+    // says: the hand carries the pointer off a 18 px cylinder within a few
+    // pixels of travel, and a cursor that went back to the default there would
+    // be saying the drag had ended.
+    widget.grabbed(true);
+    return true;
+  }
 
   /** End a drag the reader has not let go of, because the scene is going away.
    *
@@ -321,10 +309,11 @@ export function createHandle(vp) {
    * IT CONCLUDES RATHER THAN ABANDONS. A swap can arrive mid-drag: the interface
    * waits for the hand to come off the model but gives up after a deadline, and
    * that wait does not see this press at all — the idle clock listens on
-   * `vp.box`, and this layer is a sibling of it. So without this, `restoreSection`
-   * would subtract a `state.cutOffset` from before the drag out of a point the
-   * drag had already moved, and the seed would come back off the face that was
-   * clicked, with the interface printing a depth the plane has not been at since.
+   * `vp.box`, and this press is taken in a window listener of the widget's own.
+   * So without this, `restoreSection` would subtract a `state.cutOffset` from
+   * before the drag out of a point the drag had already moved, and the seed
+   * would come back off the face that was clicked, with the interface printing a
+   * depth the plane has not been at since.
    */
   const endDrag = () => {
     const held = drag;
@@ -333,14 +322,17 @@ export function createHandle(vp) {
   };
 
   return {
-    root,
-    refresh: layer.refresh,
+    refresh: widget.refresh,
+    // The two halves of the lifecycle, passed straight through to the one caller
+    // that knows when a scene is replaced: `show()` in element.js.
+    attach: widget.attach,
+    detach: widget.detach,
     endDrag,
     destroy() {
       // A viewport unmounted mid-drag would otherwise leave three capture-phase
       // listeners on the window holding a scene that is gone.
       finish();
-      layer.destroy();
+      widget.destroy();
     },
   };
 }

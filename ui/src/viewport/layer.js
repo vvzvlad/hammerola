@@ -3,32 +3,36 @@
 // with a camera that moves sixty times a second, and the teardown that stops
 // both.
 //
-// FOUR LAYERS SHARE IT — the pin overlay (overlay.js), the section grip
-// (handle.js), the axis arrows and plane quads (gizmo.js) and the rotation
-// handles (rings.js) — and they shared it by transcription until this module
-// existed: the same `cssText`, the same `frame` variable, the same `draw`, the
-// same `schedule` and the same `cancelAnimationFrame` written out in four
-// files.
+// THREE LAYERS SHARE IT — the pin overlay (overlay.js), the axis arrows and
+// plane quads (gizmo.js) and the rotation handles (rings.js) — and they shared
+// it by transcription until this module existed: the same `cssText`, the same
+// `frame` variable, the same `draw`, the same `schedule` and the same
+// `cancelAnimationFrame` written out in four files. The fourth was the section
+// grip, which is a group of meshes in the scene now; `scene3d.js` is this
+// module's twin for widgets that live there, and there it is the RENDER that
+// places them rather than a loop.
 //
 // WHY THE LOOP IS A LOOP AT ALL, which is the one decision that lives here
-// rather than in a caller. The library owns the render loop and offers no
-// post-render hook, so the alternative would be re-projecting from the
-// trackball's `change` event — which fires on camera moves and NOT on the
-// frames a live swap, a visibility change or a drag of one of these very
-// widgets redraws. A loop that stops by itself when there is nothing to draw
-// costs nothing on the ordinary page, which has no pins, no cut and no tool
-// armed.
+// rather than in a caller. The three layers above are divs over the canvas
+// rather than objects in the scene, and they are still driven from here; the
+// alternative for them would be re-projecting from the trackball's `change`
+// event — which fires on camera moves and NOT on the frames a live swap, a
+// visibility change or a drag of one of these very widgets redraws. A loop that
+// stops by itself when there is nothing to draw costs nothing on the ordinary
+// page, which has no pins, no cut and no tool armed.
 //
 // AND THE INVARIANT THAT MAKES `refresh` ENOUGH: while a layer has anything on
 // screen a frame is always pending, because the only thing that shows one is
 // that layer's own `place`, which runs from `draw`, which re-arms. So a cut
 // going away, or a selection, needs no synchronous hide — the frame already
 // queued runs `place`, `wanted` is false by then, and the same call takes the
-// drawing off and lets the loop stop.
+// drawing off and lets the loop stop. That reading is this module's alone:
+// `refresh` in `scene3d.js` asks the library for a frame instead.
 //
 // WHAT IS NOT HERE IS THE GESTURE. Each layer keeps its own presses, its own
 // drag state and its own ending, because what a press MEANS is the whole of
-// what makes them four modules; `drag.js` is the other half they share.
+// what makes them separate modules; `drag.js` is the other half they share, and
+// they share it with the grip in the scene as well.
 
 /** The ink's halo: one filter over a whole shape, drawn on either canvas.
  *

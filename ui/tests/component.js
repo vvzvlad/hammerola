@@ -84,6 +84,25 @@ export const runFrames = () => {
   for (const callback of due) callback(0)
 }
 
+/** How many frames have been asked for since `stubFrames`, run or not.
+ *
+ * FOR THE SUITES THAT MUST ASK FOR NONE. A widget that is an object in the
+ * scene is placed from inside the library's render pass (`scene3d.js`), so a
+ * page standing idle with a cut on it issues no frames at all — and the way a
+ * loop creeps back in is somebody re-arming one beside the render, which nothing
+ * on screen would show. `runFrames` cannot answer this: it clears what it ran.
+ */
+export const framesAsked = () => nextFrame
+
+// -- the library's own frame, driven by hand ----------------------------------
+// The twin of the three above, for the widgets that are OBJECTS IN THE SCENE.
+// Nothing places those on a timer: the fork calls `onBeforeRender` at the top of
+// `Viewer.update` and the widget is put where it belongs for the frame that is
+// about to draw it, which is what `fakeViewer.update` models.
+
+/** The library drew one frame. */
+export const rendered = (viewer) => { viewer.update(true, false) }
+
 // -- setState, in the two contracts the fixtures here use ----------------------
 // Both are factories over the component, because the body has to close over the
 // instance it is writing to. A call site names the one it means.

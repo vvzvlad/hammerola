@@ -17,11 +17,11 @@ import { SECTION_INDEX } from "./options.js";
 /**
  * The library internals every tool here needs, or null if any of them moved.
  *
- * `clipping`, `controls`, `display` and `nestedGroup` ride along UNGUARDED, on
- * purpose: a missing `setVisible` should cost the cut its stencil caps on other
- * tabs, not stop a face from being pickable, and a controls object that has
- * moved should cost the page its pivot and nothing else. Each of those call
- * sites checks what it uses itself.
+ * `clipping`, `controls`, `display`, `nestedGroup` and `scene` ride along
+ * UNGUARDED, on purpose: a missing `setVisible` should cost the cut its stencil
+ * caps on other tabs, not stop a face from being pickable, and a controls object
+ * that has moved should cost the page its pivot and nothing else. Each of those
+ * call sites checks what it uses itself.
  */
 export function internals(viewer) {
   try {
@@ -43,6 +43,12 @@ export function internals(viewer) {
       controls: viewer.controls,
       display: viewer.display,
       nestedGroup: viewer.nestedGroup,
+      // Where the widgets in scene3d.js stand. Read THROUGH THIS DOOR and not off
+      // the viewer, because the getter THROWS before a render and after a
+      // `clear()` — `viewer.scene` is `this.rendered.scene`, and `rendered`
+      // refuses when there is none. The `viewer.ready` check above is what makes
+      // this line safe, and the `try` around it is what makes it safe anyway.
+      scene: viewer.scene,
     };
   } catch (error) {
     console.warn("viewport internals", error);
