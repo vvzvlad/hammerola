@@ -287,6 +287,17 @@ class Viewer {
   renderer!: THREE.WebGLRenderer;
   private _externalGl: boolean;
   onAfterRender: (() => void) | null;
+  // HAMMEROLA'S PATCH — the twin of the field above, called at the TOP of
+  // `update()` rather than at the end of it, so a hook can move an object that
+  // this very frame then draws. Hammerola stands widgets of its own in this
+  // scene (the grip on the section plane), and where one belongs is a function
+  // of the camera that is about to draw it. With this viewer rendering ON
+  // DEMAND and no animation loop running, the only way to follow that camera
+  // from outside was a `requestAnimationFrame` loop of one's own — which moves
+  // the object sixty times a second beside a renderer that is not drawing, so
+  // the widget sits in the scene, correctly placed, and never appears until
+  // something else happens to repaint.
+  onBeforeRender: (() => void) | null;
   mouse!: THREE.Vector2;
   cadTools!: Tools;
   /**
@@ -438,6 +449,7 @@ class Viewer {
     this.pinAsPngCallback = pinAsPngCallback;
     this.updateMarker = updateMarker;
     this.onAfterRender = null;
+    this.onBeforeRender = null;
 
     this.hasAnimationLoop = false;
 
@@ -884,6 +896,13 @@ class Viewer {
     // Batching guard: a run of state setters in render() suppresses their individual
     // paints; the single paint that follows the batch renders the final state once.
     if (this._suppressUpdate) return;
+
+    // HAMMEROLA'S PATCH: this frame is starting, so whatever is positioned
+    // against the camera gets its chance before the scene is drawn rather than
+    // one frame late. See the field's declaration for why it exists at all.
+    if (this.onBeforeRender) {
+      this.onBeforeRender();
+    }
 
     // Skip painting while Studio mode is mid-async-load: composer hasn't
     // been created yet, so a fall-through to renderer.render() would paint

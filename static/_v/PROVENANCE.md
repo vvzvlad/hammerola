@@ -20,10 +20,16 @@ its tsconfig. Its `docs/`, `examples/` and `tests/` are not vendored.
 
 ## What we changed, and why
 
-Three files, the first two carrying the reason in a header comment:
+Four files, all of them but `package.json` carrying the reason in a comment of
+their own:
 
 * `viewer/src/index.ts` re-exports three's namespace, so the page can name the
   very classes the library renders with;
+* `viewer/src/core/viewer.ts` gains an `onBeforeRender` hook — the twin of the
+  library's own `onAfterRender`, called at the top of `update()` — because this
+  viewer renders ON DEMAND and a widget of ours standing in its scene has to be
+  placed by the very frame that draws it (`ui/src/viewport/scene3d.js`). The
+  field's declaration and the call site each carry the reason;
 * `viewer/rollup.config.mjs` sets `external: three` — the whole point (issue #14)
   — and drops the outputs and the dev-server branch we do not use;
 * `viewer/package.json` — `prepare` removed (it ran `yarn build`, and there is no
@@ -58,7 +64,7 @@ file that was committed before, `sourceMappingURL` comment aside.
 
 ## Upgrading
 
-Rebase the three edits onto the new tag inside `viewer/`, run `make viewer`, and
+Rebase the four edits onto the new tag inside `viewer/`, run `make viewer`, and
 commit the source and the built files together. The tessellation JSON carries a
 `version` field (currently 3) produced by `ocp-tessellate` on the model side, and
 the renderer must still understand it — so bump the two together and re-check

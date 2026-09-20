@@ -29228,6 +29228,12 @@ class Viewer {
             // paints; the single paint that follows the batch renders the final state once.
             if (this._suppressUpdate)
                 return;
+            // HAMMEROLA'S PATCH: this frame is starting, so whatever is positioned
+            // against the camera gets its chance before the scene is drawn rather than
+            // one frame late. See the field's declaration for why it exists at all.
+            if (this.onBeforeRender) {
+                this.onBeforeRender();
+            }
             // Skip painting while Studio mode is mid-async-load: composer hasn't
             // been created yet, so a fall-through to renderer.render() would paint
             // the scene with CAD materials (Studio's material swap is also async).
@@ -30649,6 +30655,7 @@ class Viewer {
         this.pinAsPngCallback = pinAsPngCallback;
         this.updateMarker = updateMarker;
         this.onAfterRender = null;
+        this.onBeforeRender = null;
         this.hasAnimationLoop = false;
         this.display = display;
         if (options.keymap) {
