@@ -186,6 +186,14 @@ function fanoutOn(viewer) {
  *     whether the widget took it. `hit` is the intersection itself, for a widget
  *     whose group holds more than one pressable piece.
  *
+ * `rank(object)` is optional and decides WHICH intersection that `hit` is when
+ * the ray crosses several of one widget's targets: the lowest rank wins, ties
+ * going to the nearest, and a widget that passes none gets the nearest hit.
+ * NOT THE NEAREST BY DEFAULT because nothing here has a depth test, so what is
+ * drawn on top is a matter of `renderOrder` and the ray knows nothing about it
+ * — where two pieces cross, the press has to go to the one the reader can see.
+ * `gizmo.js` states that rule where it keeps its own `RANK`.
+ *
  * `order` is the caller's own band out of the three above, and the caller picks
  * it because which widget is drawn over which is a fact about the set of them
  * rather than about this scaffolding.
@@ -197,7 +205,8 @@ function fanoutOn(viewer) {
  * of them ran last.
  */
 export function createScene3D(vp,
-                              { wanted, build, place, press, cursor, order }) {
+                              { wanted, build, place, press, rank, cursor,
+                                order }) {
   // Null until the first `attach` brings the namespace; everything below that
   // needs three checks for the group rather than for the module, because the two
   // arrive together and the group is the one the work is done on.
@@ -298,7 +307,20 @@ export function createScene3D(vp,
     raycaster.setFromCamera(pointer, g.cam);
     group.updateMatrixWorld(true);
     const hits = raycaster.intersectObject(group, true);
-    return hits.length ? hits[0] : null;
+    if (!hits.length) return null;
+    if (!rank) return hits[0];
+    // LOWEST RANK, TIES BY DISTANCE: three answers in distance order, so
+    // keeping the FIRST minimum is the whole of the tie-break.
+    let best = hits[0];
+    let mark = rank(best.object);
+    for (const found of hits) {
+      const value = rank(found.object);
+      if (value < mark) {
+        best = found;
+        mark = value;
+      }
+    }
+    return best;
   }
 
   /** Wear a cursor on `canvas`, or take ours off wherever it was.

@@ -1579,10 +1579,16 @@ export default class HammerolaViewer extends React.Component {
         // BARE, on the same ground as `hmr:place`: the plane lies on ONE face
         // of ONE solid, so a count here would tally parts the cut was never
         // aimed at.
+        //
+        // AND A PLANE THE GRIP'S RINGS HAVE TURNED NAMES NO FACE AT ALL, which
+        // is `secFace: null` and reads as `plane · +N mm` — the subtitle this
+        // panel already has for a cut with no face behind it. It is not one of
+        // the fallbacks above: those answer "which face is this", and a tipped
+        // plane has stopped lying on the one it was placed from.
         const row = this.node(d.id);
         this.set({
           secOn: true,
-          secFace: (row && row.name) || d.name || 'face',
+          secFace: d.turned ? null : ((row && row.name) || d.name || 'face'),
           secOff: Number.isFinite(d.offset) ? d.offset : this.state.secOff,
           secRange: Array.isArray(d.range) ? d.range : this.state.secRange,
           tool: null,

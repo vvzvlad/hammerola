@@ -112,6 +112,12 @@ export function reportCut(vp) {
   emit(vp, EVENT_FACE, {
     id: vp.sectionSeed.id || null,
     name: vp.sectionSeed.name || null,
+    // WHETHER THE PLANE STILL LIES ON THE FACE IT WAS PLACED FROM, which is the
+    // one thing about a cut the two halves of the seed cannot say between them:
+    // the id and the name go on naming that face after the grip's rings have
+    // tipped the plane off it (handle.js), and the panel heads the cut with
+    // exactly that name.
+    turned: !!vp.sectionSeed.turned,
     point: vp.sectionSeed.point,
     normal: vp.sectionSeed.normal,
     offset: vp.state.cutOffset,

@@ -231,6 +231,25 @@ export const HANDLE_HIT_PX = 18;
 export const HANDLE_CASE_PX = 2;
 
 /**
+ * The radius of the grip's two rotation rings: the outer edge of their ink,
+ * which is what `HANDLE_PX` names for the arrow.
+ *
+ * DERIVED FROM THE ARROW AND NOT WRITTEN OUT, which is `GIZMO_PLANE_GAP_PX`'s
+ * arrangement for the plane quads and is here for a sharper reason than it is
+ * there. Both rings tilt the plane's normal, so both LIE IN A PLANE THAT
+ * CONTAINS IT — and the arrow lies along it. Every ring therefore crosses the
+ * arrow's own axis, at exactly this radius, twice. The clearance over the head
+ * is the whole of what this number is, and a length written out on its own
+ * would sit still the day `HANDLE_PX` moved and quietly close it.
+ *
+ * THREE QUARTERS OF THE WHOLE ARROW is half its reach again: the heads end
+ * `HANDLE_PX / 2` out at 28, their casing at 30, and the ring's outermost band
+ * comes down to 37 — seven pixels of daylight, at a radius that still keeps the
+ * whole widget inside 90 px across.
+ */
+export const HANDLE_RING_PX = (HANDLE_PX * 3) / 4;
+
+/**
  * Pixels of `deltaY` the browser emits per e-fold of PINCH SCALE. A measurement,
  * not a taste setting.
  *
@@ -585,6 +604,14 @@ export const RING_SHAFT_PX = 2;
  * ring is at its widest exactly then and collapses as its axis approaches the
  * PLANE OF THE SCREEN. They stay separate constants because they are floors on
  * different widgets measured off different quantities.
+ *
+ * AND THE SECTION GRIP DIVIDES IT DIFFERENTLY AGAIN. Its own two rings have a
+ * major semi-axis of `HANDLE_RING_PX`, which is twice `RING_PX * GIZMO_MIN_SCALE`
+ * — so the same 21 px is a HALF there rather than a fifth, i.e. 30 degrees of
+ * tilt and not 11.5. `handle.js` argues the number from the other end entirely:
+ * above the 9 px half-width of its hit tube, under which a ring stops being a
+ * hoop and becomes a sliver taking presses meant for the arrow inside it.
+ * Anyone retuning this for the rotation handles moves the grip's threshold too.
  */
 export const RING_MIN_PX = 21;
 

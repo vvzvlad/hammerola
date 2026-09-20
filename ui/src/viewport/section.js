@@ -675,7 +675,13 @@ export function captureSection(vp) {
   const point = [src[0] - normal[0] * d - base[0] * bias,
                  src[1] - normal[1] * d - base[1] * bias,
                  src[2] - normal[2] * d - base[2] * bias];
-  return { normal: base, point, placed: !!seed };
+  // AND WHETHER THE PLANE HAS BEEN TURNED OFF ITS FACE, which is not derivable
+  // from anything else in here: the normal comes back verbatim, so a turned plane
+  // and a plane placed on a face pointing that way are the same three numbers.
+  // Lost across the swap, the next slide through `reportCut` would announce the
+  // cut as `turned: false` and the interface would start labelling it with the
+  // name of the face the reader has just turned it away from.
+  return { normal: base, point, placed: !!seed, turned: !!(seed && seed.turned) };
 }
 
 /** Put the captured plane back on the scene that has just been rendered.
@@ -737,6 +743,7 @@ export function restoreSection(vp, keep) {
               keep.point[1] - normal[1] * offset,
               keep.point[2] - normal[2] * offset],
       value: null,
+      turned: !!keep.turned,
     };
     const ok = applySection(vp, g);
     if (!keep.placed) vp.sectionSeed = null;

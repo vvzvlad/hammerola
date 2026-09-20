@@ -42,12 +42,13 @@ import { EVENT_FACE } from '../src/viewport/events.js'
 import { createHandle } from '../src/viewport/handle.js'
 import { internals } from '../src/viewport/internals.js'
 import {
-  HANDLE_CASE_PX, HANDLE_HEAD_PX, HANDLE_HIT_PX, HANDLE_PX, HANDLE_SHAFT_PX,
+  HANDLE_CASE_PX, HANDLE_HEAD_PX, HANDLE_HIT_PX, HANDLE_PX, HANDLE_RING_PX,
+  HANDLE_SHAFT_PX, SECTION_INDEX,
 } from '../src/viewport/options.js'
 import { HANDLE_ORDER } from '../src/viewport/scene3d.js'
 import {
-  applySection, dragSection, placeSectionPlane, sectionAxis, sectionGripAxis,
-  sectionOffset,
+  applySection, captureSection, dragSection, placeSectionPlane, restoreSection,
+  sectionAxis, sectionGripAxis, sectionOffset,
 } from '../src/viewport/section.js'
 import { RECT, framesAsked, rendered, stubFrames } from './component.js'
 import { fakeViewer, fakeViewport, orthoCamera, realCamera } from './fakes.js'
@@ -123,6 +124,38 @@ const stands = (group) => group.position.toArray()
 const along = (group) =>
   new THREE.Vector3(0, 1, 0).applyQuaternion(group.quaternion).toArray()
 
+/** Two directions, to nine places — which is how everything below that is an
+ *  orientation rather than a number is compared. */
+function isVector(actual, expected) {
+  expected.forEach((v, at) => expect(actual[at]).toBeCloseTo(v, 9))
+}
+
+/** The ARROW's own meshes.
+ *
+ * The rings' are not among them, and that is the whole reason this is a
+ * function: a ring hangs under a node of its own, one level deeper, so
+ * everything measured off the group's direct children is about the arrow it
+ * was written for.
+ */
+const arrowPieces = (group) => group.children.filter((child) => child.isMesh)
+
+/** ...and the two ring nodes, in the order `build` adds them: the ring that
+ *  tilts the normal about the group's local +X, then the one about local +Z. */
+const ringNodes = (group) => group.children.filter((child) => !child.isMesh)
+
+/** What one ring DRAWS, outermost band first. */
+const ringBands = (node) => node.children.filter((child) => child.visible)
+
+/** A vector of a node's own frame, read out in the frame of its parent. */
+const facing = (node, v) =>
+  new THREE.Vector3(...v).applyQuaternion(node.quaternion).toArray()
+
+/** ...and one ring's own axis IN THE WORLD: where its node's +Z points once the
+ *  group's own orientation has carried it there. `getWorldQuaternion` composes
+ *  up the parents itself, so this answers for whatever the last frame placed. */
+const worldAxis = (node) => new THREE.Vector3(0, 0, 1)
+  .applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion())).toArray()
+
 /** The extent of what is DRAWN, in the group's own units — which are CSS pixels.
  *
  * In the group's frame and not in the world, so the answer is the widget's own
@@ -136,7 +169,7 @@ function inkPieces(group) {
   // DARK one. The casing stands outside it deliberately, exactly as the rotation
   // handles' rim stands outside `RING_PX`. Told apart by `renderOrder`, which is
   // what the renderer itself sorts them by: the casing is -1, the ink 0.
-  return group.children.filter(
+  return arrowPieces(group).filter(
     (child) => child.visible && child.renderOrder === 0)
 }
 
@@ -259,7 +292,7 @@ describe('what it is built out of', () => {
     // out entirely. That is what `renderOrder` -1 against 0 says, and three
     // sorts a group's subtree by it.
     const { group } = scene()
-    const casing = group.children.filter(
+    const casing = arrowPieces(group).filter(
       (child) => child.visible && child.renderOrder < 0)
     expect(casing.length).toBe(inkPieces(group).length)
     expect(casing.every((child) => child.renderOrder
@@ -289,9 +322,14 @@ describe('what it is built out of', () => {
     // the band decides nothing.
     const { group } = scene()
     expect(group.renderOrder).toBe(HANDLE_ORDER)
-    for (const child of group.children) {
-      expect(child.material.transparent, child.geometry.type).toBe(true)
-    }
+    // EVERY MESH AND NOT ONLY THE ARROW'S: the rings are children of this same
+    // group, so one opaque band anywhere in the subtree would carry the whole
+    // widget into the renderer's other list.
+    group.traverse((child) => {
+      if (child.isMesh) {
+        expect(child.material.transparent, child.geometry.type).toBe(true)
+      }
+    })
   })
 
   it('points both heads outwards', () => {
@@ -322,6 +360,95 @@ describe('what it is built out of', () => {
     // And not the whole canvas: past the cylinder the press belongs to the model
     // again, or a grip 56 px long would swallow the orbit around it.
     expect(grab(canvas, [400, 312]).stopImmediatePropagation).not.toHaveBeenCalled()
+  })
+
+  it('carries two rings, in the two planes that tilt the plane`s own normal', () => {
+    // FIXED IN THE GROUP'S OWN FRAME, which is why there is no basis derived
+    // anywhere in the module: `place` puts local +Y on the plane's normal, so a
+    // ring whose axis is local +X lies in local YZ and one whose axis is local
+    // +Z lies in local XY. three sweeps a torus about its own +Z, so where a
+    // node's +Z points IS the axis its ring turns the plane about.
+    const { group } = scene()
+    const nodes = ringNodes(group)
+    expect(nodes).toHaveLength(2)
+    isVector(facing(nodes[0], [0, 0, 1]), [1, 0, 0])
+    isVector(facing(nodes[1], [0, 0, 1]), [0, 0, 1])
+    // AND WHERE THE PAIR THE ANGLE IS READ IN POINTS, which is the node's own
+    // +X and +Y — so what is drawn and what is measured are the same two
+    // directions rather than two spellings of them. The SIGN is not pinned
+    // here and cannot be: a quaternion has no handedness to read back, and a
+    // pair swapped in `TURNS` mirrors the drawing and the arithmetic together,
+    // which cancels. What pins it is where the plane really ends up after a
+    // quarter turn — `one whole turn`, below.
+    isVector(facing(nodes[0], [1, 0, 0]), [0, 1, 0])
+    isVector(facing(nodes[0], [0, 1, 0]), [0, 0, 1])
+    isVector(facing(nodes[1], [1, 0, 0]), [1, 0, 0])
+    isVector(facing(nodes[1], [0, 1, 0]), [0, 1, 0])
+  })
+
+  it('stands both rings clear of the arrowheads', () => {
+    // A REAL QUESTION HERE AND NOT A TIDY ONE. Both rings tilt the normal, so
+    // both lie in a plane that CONTAINS it — and the arrow lies along it. Every
+    // ring therefore crosses the arrow's own axis, at its radius, twice, and
+    // `HANDLE_RING_PX` is the clearance over the head.
+    const { group } = scene()
+    for (const node of ringNodes(group)) {
+      const bands = ringBands(node)
+      // The ink is the innermost band and its OUTER edge is what the constant
+      // names, exactly as `HANDLE_PX` names the arrow's ink.
+      const ink = bands[bands.length - 1].geometry.parameters
+      expect(ink.radius + ink.tube).toBeCloseTo(HANDLE_RING_PX, 9)
+      // The outermost band is the one that has to clear the casing over the
+      // tip, which stands `HANDLE_CASE_PX` outside the arrow's half-length.
+      const rim = bands[0].geometry.parameters
+      expect(rim.radius - rim.tube)
+        .toBeGreaterThan(HANDLE_PX / 2 + HANDLE_CASE_PX)
+    }
+  })
+
+  it('draws a ring in the grip`s own ink, rimmed, and under the arrow', () => {
+    // THE GRIP'S INK AND NOT A THIRD PALETTE — the same material object the
+    // arrow is drawn with, which is what keeps these two from ever becoming the
+    // world triad's red, green and blue. That colour means "X, Y, Z" everywhere
+    // else in this interface and these rings are neither.
+    //
+    // UNDER THE ARROW, which is what the orders say and is not tidiness: a ring
+    // seen at an angle projects an ellipse whose narrow direction can be
+    // shorter than the arrow's own reach, so the two really do cross on screen,
+    // and with no depth test the paint order IS the stacking.
+    const { group } = scene()
+    const bands = ringBands(ringNodes(group)[0])
+    expect(bands).toHaveLength(3)
+    expect(bands[2].material).toBe(inkPieces(group)[0].material)
+    expect(bands[1].material).toBe(arrowPieces(group).find(
+      (child) => child.visible && child.renderOrder < 0).material)
+    // The rim is the third colour of the widget, and each band is fatter than
+    // the one painted over it or there would be nothing of it left showing.
+    expect(bands[0].material).not.toBe(bands[1].material)
+    const tube = (mesh) => mesh.geometry.parameters.tube
+    expect(tube(bands[0])).toBeGreaterThan(tube(bands[1]))
+    expect(tube(bands[1])).toBeGreaterThan(tube(bands[2]))
+    expect(bands[0].renderOrder).toBeLessThan(bands[1].renderOrder)
+    expect(bands[1].renderOrder).toBeLessThan(bands[2].renderOrder)
+    expect(bands[2].renderOrder)
+      .toBeLessThan(Math.min(...arrowPieces(group).map((m) => m.renderOrder)))
+  })
+
+  it('answers a ray with the ring`s own target and never with what is drawn', () => {
+    // three tests an object's LAYERS and never its visibility, so a band of ink
+    // is a target in its own right unless it is told otherwise — and what tells
+    // the two gestures of this widget apart is the MESH the ray landed on, so a
+    // curve taking a ray would be a press on a ring read as a press on the
+    // arrow. One hit mesh per ring is the whole of what answers.
+    const { viewer, g, group } = scene()
+    rendered(viewer)
+    const node = ringNodes(group)[1]
+    const caster = new THREE.Raycaster()
+    group.updateMatrixWorld(true)
+    caster.setFromCamera(ndcOf(onRing(HELD_T)), g.cam)
+    const hits = caster.intersectObject(node, true)
+    expect(hits.length).toBeGreaterThan(0)
+    for (const hit of hits) expect(hit.object.visible).toBe(false)
   })
 })
 
@@ -657,5 +784,393 @@ describe('one whole drag', () => {
     // would still pass with a plane running away from the cursor.
     expect(moved).toBeGreaterThan(0)
     expect(stands(group)[0]).toBeCloseTo(moved, 9)
+  })
+})
+
+// -- the rings -----------------------------------------------------------------
+//
+// THE ARITHMETIC IS NOT TAKEN FROM THE MODULE. With the default fixture — the
+// plane's normal +X, the camera looking down -Z — the group is turned so that
+// its local +Y is world +X, which puts local +X on world -Y and leaves local +Z
+// on world +Z. So the second ring's axis is world +Z, square on to this camera:
+// its circle is `HANDLE_RING_PX` about the middle of the canvas, its own `u` is
+// world -Y (which this camera puts DOWN the screen) and its `v` is world +X (to
+// the right). The first ring's axis is world -Y, which lies across the view, so
+// that one is edge-on and off the screen.
+
+/** Where that second ring carries the point of its own circle at angle `t`, in
+ *  canvas pixels — `centre + R (u cos t + v sin t)`, projected by hand. A press
+ *  there really lands on the ring, and sweeping `t` by `+pi/2` is a positive
+ *  quarter turn about world +Z whatever the picture looks like. */
+const onRing = (t, [cx, cy] = MIDDLE) =>
+  [cx + HANDLE_RING_PX * Math.sin(t), cy + HANDLE_RING_PX * Math.cos(t)]
+
+/** Where a press is taken on that circle: twenty degrees round from its own
+ *  zero, and OFF the tessellation's seams.
+ *
+ * A torus is a grid of quads. A ray aimed exactly along one of its 64 vertex
+ * rings meets only the edges two quads share, and `intersectTriangle` can
+ * refuse both — which reads as "the widget declined the press" and would pass a
+ * test of that whatever the code did. `t = 0` is the worst of them, being the
+ * seam where the geometry closes, and it is exactly where a circle's own zero
+ * puts a press. Twenty degrees is three and a half of those rings clear of one,
+ * and fourteen pixels clear of the seam at the radius these are drawn at.
+ */
+const HELD_T = Math.PI / 9
+
+/** A canvas pixel in the NDC a raycaster is set from. */
+const ndcOf = ([x, y]) => new THREE.Vector2(
+  (x / RECT.width) * 2 - 1, -((y / RECT.height) * 2 - 1))
+
+/** Looking down world -Y, where the two rings of the same fixture trade places:
+ *  the first ring's axis is world -Y and is now square on to the reader, and
+ *  the second's is world +Z and lies across the view.
+ *
+ * `right x up = -forward`, which every camera in this suite keeps and which is
+ * not decoration: `realCamera` writes the three straight onto a rotation
+ * matrix (`makeBasis`), and a left-handed triple is not a rotation at all — the
+ * quaternion three derives from one is nothing in particular, so the MODEL goes
+ * on projecting correctly while every ray cast through the real camera lands
+ * somewhere else entirely. */
+const FROM_ABOVE = { eye: [0, 60, 45], right: [1, 0, 0], up: [0, 0, -1],
+                     forward: [0, -1, 0] }
+
+/** Where the FIRST ring carries the point of its own circle at angle `t` under
+ *  that camera, in canvas pixels.
+ *
+ * Its axis is world -Y, its `u` is world +X — which this camera puts to the
+ * RIGHT — and its `v` is world +Z, which it puts DOWN the screen, `up` being
+ * -Z. So the circle is `HANDLE_RING_PX` about the middle of the canvas and `t`
+ * runs from the right towards the bottom. Worked out here rather than read off
+ * the module, exactly as `onRing` is. */
+const onRingAbove = (t) => [MIDDLE[0] + HANDLE_RING_PX * Math.cos(t),
+                            MIDDLE[1] + HANDLE_RING_PX * Math.sin(t)]
+
+/** Looking mostly DOWN the plane's own normal, which is where the second ring's
+ *  hit tube reaches in over the arrow.
+ *
+ * Four fifths along world +X — the normal, and the arrow with it — and three
+ * fifths along +Z. So the arrow keeps three fifths of its 56 px on the screen,
+ * while the ring about world +Z keeps `|axis . view| = 0.6` of itself: a minor
+ * semi-axis of 25.2 px, comfortably over `RING_MIN_PX`, and still drawn. Its
+ * hit tube is 9 px about a circle whose projection crosses the arrow's own line
+ * 24.6 px out, so the tube reaches in to 15.6 px — over an arrow whose body
+ * reaches out to 18. That overlap is the whole subject of the test below, and
+ * it is the geometry `BANDS` in handle.js describes.
+ */
+const CROSSING = { eye: [-12, 0, 36], right: [0, 1, 0], up: [0.6, 0, -0.8],
+                   forward: [0.8, 0, 0.6] }
+
+/** Where the two cross on the canvas: 16 px down the screen from the centre,
+ *  which is inside the arrow's casing and inside the ring's hit tube, and 2 px
+ *  across it.
+ *
+ * ACROSS, AND NOT ON THE MIDDLE LINE, which is the torus's own spelling of the
+ * trap `HELD_T` is written for. A ray aimed at x = 400 lies IN the plane of one
+ * of the torus's 64 vertex rings, where it can only meet the edges two quads
+ * share and `intersectTriangle` refuses both — the ring answers nothing at all
+ * and the press reads as a slide whatever the code does. Two pixels puts it
+ * halfway across a quad.
+ */
+const CROSS_AT = [MIDDLE[0] - 2, MIDDLE[1] + 16]
+
+describe('which rings are on the screen', () => {
+  it('takes the ring seen edge-on off it and leaves the other', () => {
+    const { viewer, group } = scene()
+    rendered(viewer)
+    expect(ringNodes(group).map((node) => node.visible)).toEqual([false, true])
+  })
+
+  it('asks each ring`s OWN axis, and not the widget`s', () => {
+    // The same cut from a camera a quarter turn away: the two swap, which is
+    // the whole claim — the floor is `|axis . view|` per ring rather than one
+    // answer about the group. Measured against `RING_MIN_PX`, whose argument
+    // here is the hit tube: under it a ring stops being a hoop and becomes a
+    // filled sliver taking presses meant for the arrow inside it.
+    const { viewer, group } = scene({ camera: orthoCamera(FROM_ABOVE) })
+    rendered(viewer)
+    expect(ringNodes(group).map((node) => node.visible)).toEqual([true, false])
+  })
+
+  it('answers no ray at all while a ring is off the screen', () => {
+    // `scene3d.js` casts its own ray for the CURSOR and knows nothing of this
+    // widget's structure, so the floor has to be said on the hit mesh itself —
+    // three's raycaster consults an object's LAYERS and never its visibility,
+    // and a canvas wearing `grab` over a ring that is not drawn promises a grab
+    // the press then refuses.
+    //
+    // LOOKING STRAIGHT DOWN THE NORMAL, where BOTH rings are edge-on: the arrow
+    // is a disc and the rings are two lines crossing it. 30 px below the middle
+    // is on the first ring's own circle — its hit tube really does lie under
+    // that pixel — and clear of everything else in the group: the arrow's
+    // target is an 18 px disc there, and the second ring is a horizontal line
+    // through it.
+    const { viewer, canvas, group } = scene({ normal: [0, 0, 1] })
+    rendered(viewer)
+    expect(ringNodes(group).map((node) => node.visible)).toEqual([false, false])
+
+    const off = [400, 330]
+    canvas.dispatchEvent(new MouseEvent('pointermove', {
+      clientX: off[0], clientY: off[1], bubbles: true,
+    }))
+    expect(canvas.style.cursor).toBe('')
+    expect(grab(canvas, off).stopImmediatePropagation).not.toHaveBeenCalled()
+
+    // The premise: the widget is on the screen and the arrow still takes both.
+    canvas.dispatchEvent(new MouseEvent('pointermove', {
+      clientX: MIDDLE[0], clientY: MIDDLE[1], bubbles: true,
+    }))
+    expect(canvas.style.cursor).toBe('grab')
+    expect(grab(canvas, MIDDLE).stopImmediatePropagation).toHaveBeenCalled()
+    pointerUp(MIDDLE)
+  })
+})
+
+describe('one whole turn', () => {
+  it('tips the plane about the ring`s world axis, in whole degrees', () => {
+    const { viewer, vp, canvas, group } = scene()
+    rendered(viewer)
+    viewer.setClipNormal.mockClear()
+
+    const press = grab(canvas, onRing(HELD_T))
+    expect(press.stopImmediatePropagation).toHaveBeenCalled()
+    // 45.4 degrees round the circle, because a hand is not a number: what the
+    // plane does is the whole degree, for the reason rings.js gives at its own
+    // snap — the angle travels to an agent in a sentence.
+    pointerMove(onRing(HELD_T + (45.4 * Math.PI) / 180))
+
+    const half = Math.SQRT1_2
+    isVector(vp.sectionSeed.normal, [half, half, 0])
+    // ONE WRITE, carrying the normal AND the slider that belongs with it, which
+    // is what `applySection` is the door for: a normal set without its value
+    // parks the plane at the far edge of the grid, i.e. cuts the model away.
+    expect(viewer.setClipNormal).toHaveBeenCalledTimes(1)
+    expect(Number.isFinite(viewer.setClipNormal.mock.calls[0][2]),
+           'the library reads a null value as `none given` and parks the plane '
+           + 'at the far edge of the grid, which cuts the whole model away')
+      .toBe(true)
+    isVector(viewer.getClipNormal(SECTION_INDEX), [half, half, 0])
+    // AND IT IS THE OTHER GESTURE'S DOOR THAT STAYS SHUT: a turn is not a slide
+    // measured differently, and nothing here moves the plane along its normal.
+    expect(dragSection).not.toHaveBeenCalled()
+
+    rendered(viewer)
+    isVector(along(group), [half, half, 0])
+  })
+
+  it('holds the ring the hand is on still in the world while it turns', () => {
+    // WHAT THE READER SEES, and the one thing the composed orientation in
+    // `place` buys: the ring under the finger does not move while the plane
+    // turns inside it.
+    //
+    // NOT IN THE FIXTURE ABOVE, and this is the trap worth stating plainly.
+    // `setFromUnitVectors` measures from world +Y, and re-deriving it per frame
+    // leaves the twist about the normal free — but that twist is ZERO for a
+    // ring whose axis is square across the reference, which is exactly the
+    // second ring under the default camera. Written there this test passes with
+    // the fix and without it. The ring it shows on is the one whose axis lies
+    // ALONG world -Y: the FIRST of the two, which the camera from above shows
+    // square on and which is therefore the one a ray can reach here.
+    const { viewer, vp, canvas, group } = scene(
+      { camera: orthoCamera(FROM_ABOVE) })
+    rendered(viewer)
+    const ring = ringNodes(group)[0]
+    expect(ring.visible,
+           'the premise: this is the ring on the screen here').toBe(true)
+    const held = worldAxis(ring)
+    isVector(held, [0, -1, 0])
+
+    grab(canvas, onRingAbove(HELD_T))
+    for (const degrees of [15, 45, 90]) {
+      pointerMove(onRingAbove(HELD_T + (degrees * Math.PI) / 180))
+      rendered(viewer)
+      // Re-derived from the normal alone, this swings by the whole angle swept
+      // so far: at 90 degrees the ring stood at world +X — edge-on, off the
+      // screen, with the hand still on it.
+      isVector(worldAxis(ring), held)
+    }
+    expect(ring.visible, 'and it is still there to hold').toBe(true)
+    // AND THE PLANE WENT WHERE THE HAND ASKED, which is the half the composed
+    // orientation must not have changed: +X turned a quarter turn about -Y.
+    isVector(vp.sectionSeed.normal, [0, 0, 1])
+    isVector(along(group), [0, 0, 1])
+  })
+
+  it('leaves the rings where the hand let go of them', () => {
+    // THE FRAME AFTER THE RELEASE, which is the half of the composed pose that
+    // does not live in the drag: with the gesture gone, an orientation derived
+    // from the normal alone is free to pick any twist about it, so the pair
+    // would snap round the arrow at the exact moment the hand came off — and
+    // the ring the reader had hold of can fall under `RING_MIN_PX` and go off
+    // the screen with it. The kept pose (`posed`) is what answers this frame.
+    //
+    // THE SAME CAMERA AND THE SAME RING as the test above, for the reason it
+    // states: the free twist is ZERO for a ring whose axis stands square across
+    // world +Y, so on the default fixture this would pass either way.
+    const { viewer, vp, canvas, group } = scene(
+      { camera: orthoCamera(FROM_ABOVE) })
+    rendered(viewer)
+    const ring = ringNodes(group)[0]
+    const held = worldAxis(ring)
+    isVector(held, [0, -1, 0])
+
+    grab(canvas, onRingAbove(HELD_T))
+    pointerMove(onRingAbove(HELD_T + Math.PI / 2))
+    pointerUp(onRingAbove(HELD_T + Math.PI / 2))
+    rendered(viewer)
+
+    // THE PREMISE THAT MAKES THE TWO BELOW MEAN ANYTHING: the quarter turn
+    // really landed, so the normal the pose would be re-derived from is a
+    // different one from the normal it was first derived on.
+    isVector(vp.sectionSeed.normal, [0, 0, 1])
+    isVector(worldAxis(ring), held)
+    expect(ring.visible, 'the ring the hand was on went off the screen')
+      .toBe(true)
+  })
+
+  it('pivots about the plane, and not about the face the seed is on', () => {
+    // With the plane slid out along its normal the two are different places,
+    // and a pivot about the seed would swing the plane away from the hand AND
+    // change the depth the interface prints — for a gesture that never touched
+    // it. So the POINT moves to keep the anchor where it stands.
+    const { viewer, vp, g, canvas, group } = scene()
+    vp.state.cutOffset = 4
+    applySection(vp, g)                       // what `reconcile` does first
+    rendered(viewer)
+    // 4 world units along +X is 80 px to the right on this camera, and that is
+    // where the ring is now drawn.
+    const at = [MIDDLE[0] + 80, MIDDLE[1]]
+    expect(stands(group)).toEqual([4, 0, 45])
+
+    grab(canvas, onRing(HELD_T, at))
+    pointerMove(onRing(HELD_T + Math.PI / 2, at))
+
+    isVector(vp.sectionSeed.normal, [0, 1, 0])
+    expect(sectionOffset(vp)).toBeCloseTo(4, 9)
+    // The seed has walked to keep the plane where it was: a quarter turn about
+    // +Z with the plane 4 units out along +X leaves the face 4 units back along
+    // the NEW normal.
+    isVector(vp.sectionSeed.point, [4, -4, 45])
+    rendered(viewer)
+    isVector(stands(group), [4, 0, 45])
+  })
+
+  it('says where the plane ended up once, and stops naming the face', () => {
+    // A turned plane no longer lies on the face it was placed from, and the
+    // panel heads the cut with that face's name — so the fact travels out on
+    // the report the grip's slide already uses. Once, at the end, because the
+    // interface re-renders on every one of these.
+    const { viewer, vp, canvas } = scene()
+    rendered(viewer)
+
+    grab(canvas, onRing(HELD_T))
+    pointerMove(onRing(HELD_T + Math.PI / 4))
+    pointerMove(onRing(HELD_T + Math.PI / 2))
+    expect(details(vp, EVENT_FACE)).toEqual([])
+
+    pointerUp(onRing(HELD_T + Math.PI / 2))
+    const faces = details(vp, EVENT_FACE)
+    expect(faces).toHaveLength(1)
+    expect(faces[0].turned).toBe(true)
+    isVector(faces[0].normal, [0, 1, 0])
+    expect(faces[0].offset).toBe(vp.state.cutOffset)
+
+    // AND A SLIDE AFTERWARDS DOES NOT BRING THE FACE BACK, which is why the
+    // fact is kept on the SEED rather than carried out by the gesture that
+    // noticed it: the plane is off that face for good, and the arrow's own
+    // release reports through the very same door.
+    grab(canvas, MIDDLE)
+    pointerMove([400, 340])
+    pointerUp([400, 340])
+    expect(dragSection).toHaveBeenCalledTimes(1)
+    expect(details(vp, EVENT_FACE)).toHaveLength(2)
+    expect(details(vp, EVENT_FACE)[1].turned).toBe(true)
+  })
+
+  it('says nothing at all when the press never moved', () => {
+    // The arrow's own rule, on the other gesture: `reportCut` emits `hmr:face`
+    // and the interface answers by disarming whatever tool is up, so a bare
+    // click on a ring would put down the measure or comment tool the reader was
+    // holding — and a plane nobody turned must not be written to the library at
+    // all.
+    const { viewer, vp, canvas } = scene()
+    rendered(viewer)
+    viewer.setClipNormal.mockClear()
+
+    const press = grab(canvas, onRing(HELD_T))
+    expect(press.stopImmediatePropagation,
+           'the premise: the ring really took this press').toHaveBeenCalled()
+    pointerUp(onRing(HELD_T))
+
+    expect(details(vp, EVENT_FACE)).toEqual([])
+    expect(viewer.setClipNormal).not.toHaveBeenCalled()
+  })
+
+  it('comes back turned after a live reload, carrying nothing of its own', () => {
+    // THE NORMAL FOR FREE AND THE FLAG BY HAND, which is the whole division of
+    // labour here. `captureSection` reads the normal out of the LIBRARY, so a
+    // turned plane is simply what it finds; `turned` is not in the library at
+    // all and has to be carried across the swap on purpose. Lost there, the
+    // next slide would announce the cut as untouched and the interface would go
+    // back to labelling it with the face the reader has turned it away from.
+    //
+    // Nothing about a turn is written into `hmr:state` — the cut does not
+    // survive a page reload today and this is not the place that changes it.
+    const { viewer, vp, canvas } = scene()
+    rendered(viewer)
+    grab(canvas, onRing(HELD_T))
+    pointerMove(onRing(HELD_T + Math.PI / 2))
+    pointerUp(onRing(HELD_T + Math.PI / 2))
+
+    const keep = captureSection(vp)
+    isVector(keep.normal, [0, 1, 0])
+    expect(keep.turned).toBe(true)
+    // The swap: the seed dies with the scene it was measured on, and the
+    // restore is what puts a plane back on the one that replaced it.
+    vp.sectionSeed = null
+    expect(restoreSection(vp, keep)).toBe(true)
+    isVector(vp.sectionSeed.normal, [0, 1, 0])
+    expect(vp.sectionSeed.turned).toBe(true)
+    isVector(viewer.getClipNormal(SECTION_INDEX), [0, 1, 0])
+  })
+
+  it('gives a press where the two cross to the ARROW, not to the ring', () => {
+    // WHAT IS DRAWN THERE IS WHAT TAKES THE PRESS, and the nearest hit is not
+    // that: `BANDS` paints every band of a ring UNDER the arrow, so where the
+    // ring's fat hit tube reaches in over the arrow's own body the reader is
+    // aiming at the arrow while the ray meets the ring first. Left to the
+    // nearest, a press on the arrow's visible ink turns the plane.
+    const { viewer, vp, g, canvas, group } = scene(
+      { camera: orthoCamera(CROSSING) })
+    rendered(viewer)
+    const ring = ringNodes(group)[1]
+    expect(ring.visible,
+           'the premise: this is the ring on the screen here').toBe(true)
+
+    // THE PREMISES ARE CAST RATHER THAN TRUSTED, because both of them are
+    // arithmetic about one pixel: the nearest thing under it is the ring's own
+    // hit torus, and something the arrow DRAWS is under it too — here the white
+    // casing over the lower head, which stands `renderOrder` -1 against the
+    // ring's -4, -3 and -2.
+    const caster = new THREE.Raycaster()
+    group.updateMatrixWorld(true)
+    caster.setFromCamera(ndcOf(CROSS_AT), g.cam)
+    const hits = caster.intersectObject(group, true)
+    const torus = ring.children.find((child) => !child.visible)
+    expect(hits[0] && hits[0].object, 'the ring is not the nearest hit here')
+      .toBe(torus)
+    const drawn = arrowPieces(group).filter((child) => child.visible)
+    expect(hits.some((hit) => drawn.includes(hit.object)),
+           'the arrow draws nothing under this pixel').toBe(true)
+
+    const press = grab(canvas, CROSS_AT)
+    expect(press.stopImmediatePropagation).toHaveBeenCalled()
+    pointerMove([CROSS_AT[0] + 40, CROSS_AT[1]])
+
+    // A SLIDE AND NOT A TURN: the plane moved along its own normal and the
+    // normal itself never budged.
+    expect(dragSection).toHaveBeenCalledTimes(1)
+    isVector(vp.sectionSeed.normal, [1, 0, 0])
+    pointerUp([CROSS_AT[0] + 40, CROSS_AT[1]])
   })
 })

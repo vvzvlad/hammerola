@@ -815,7 +815,11 @@ describe('captureSection', () => {
     placeSectionPlane(vp, g, [1, 0, 0], [2, 0, 0])
     const keep = captureSection(vp)
 
-    expect(Object.keys(keep).sort()).toEqual(['normal', 'placed', 'point'])
+    // `turned` rides along because it is not derivable from the other three —
+    // a plane turned off a face and a plane placed on a face pointing that way
+    // are the same normal, and only this flag tells the interface which it is.
+    expect(Object.keys(keep).sort()).toEqual(['normal', 'placed', 'point', 'turned'])
+    expect(keep.turned).toBe(false)
     // Nothing in it is the number the library is holding: that number means
     // "so far from the centre of THIS grid" and does not survive a republish.
     const slider = viewer.getClipSlider(SECTION_INDEX)
