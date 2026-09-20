@@ -1,11 +1,17 @@
 // Getting hold of three-cad-viewer WITHOUT putting it in this bundle.
 //
-// The library is vendored, not installed: it lives at
-// static/_v/three-cad-viewer.esm.js, it is 3.5 MB, it is committed, and
-// static/_v/PROVENANCE.md says where that copy came from. The hub already serves
-// it at that URL, and templates/build.html links its stylesheet from the same
-// place — so bundling a second copy into hammerola.js would triple the size of
-// this file to fetch bytes the browser already has.
+// The library is OUR OWN build rather than an installed dependency: its source
+// is the fork in viewer/, and `make viewer` writes
+// static/_v/three-cad-viewer.esm.js and copies three's two files in beside it,
+// all committed (static/_v/PROVENANCE.md says where the source came from). three
+// is EXTERNAL to that build (issue #14), so the bundle imports it by a URL of its
+// own — `import * as THREE from '/_v/three.module.js'`, written in by rollup,
+// with three.core.js behind it — and not as a bare `three` left to an import map
+// on the page: the map is an inline script and the hub serves every page under
+// `default-src 'self'` with no `'unsafe-inline'` in script-src, so the browser
+// drops it in silence and the page dies resolving the specifier. The hub already
+// serves all of it at those URLs, and templates/build.html links the stylesheet
+// from the same place — so bundling a copy in here would fetch bytes twice.
 //
 // Hence a RUNTIME import of a URL rather than a build-time one of a module.
 // Three things have to line up for that to survive the build, and all three are

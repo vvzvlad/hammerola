@@ -1,30 +1,70 @@
 # Vendored viewer assets
 
-`three-cad-viewer.esm.js` and `three-cad-viewer.css` are vendored, not fetched at build
-time. They come from the `ocp_vscode` pip package:
+`three-cad-viewer.esm.js` and `three-cad-viewer.css` are **built here**, by
+`make viewer`, out of the library's source in [`viewer/`](../../viewer). They are
+committed because the hub serves them and the test suite reads them, and because
+that source moves only when somebody deliberately rebases or patches it.
 
-```
-<venv>/lib/python3.12/site-packages/ocp_vscode/static/js/three-cad-viewer.esm.js
-<venv>/lib/python3.12/site-packages/ocp_vscode/static/css/three-cad-viewer.css
-```
+`three.module.js` and `three.core.js` are npm's own artefacts, copied out of
+`viewer/node_modules/three/build/` by the same target — not rebuilt. The first
+imports the second by a relative path, which is why both are here under their own
+names. They are the READABLE builds and not npm's `.min` twins: the Makefile says
+what that choice is for.
 
-Taken from `ocp_vscode` 4.0.1 (alongside `ocp-tessellate` 3.4.1, which produces the
-JSON these files render) on 2026-08-21.
+## Where the source came from
 
-## Why vendored rather than installed
+`viewer/` is `bernhard-42/three-cad-viewer` at tag **v5.0.1**, commit
+`42b372b70beb3911ce8789ae9f78e53040ee4f45`, MIT, taken 2026-09-20 — the library's
+own `src/`, `css/`, `icons/`, `scripts/copy_version.cjs`, its rollup config and
+its tsconfig. Its `docs/`, `examples/` and `tests/` are not vendored.
 
-Adding `ocp_vscode` to `requirements.txt` would drag `cadquery-ocp` — hundreds of
-megabytes of OpenCASCADE — into the image. The hub never builds geometry: it only
-serves the tessellation JSON that CI produced elsewhere. Two files are the whole
-dependency.
+## What we changed, and why
+
+Three files, the first two carrying the reason in a header comment:
+
+* `viewer/src/index.ts` re-exports three's namespace, so the page can name the
+  very classes the library renders with;
+* `viewer/rollup.config.mjs` sets `external: three` — the whole point (issue #14)
+  — and drops the outputs and the dev-server branch we do not use;
+* `viewer/package.json` — `prepare` removed (it ran `yarn build`, and there is no
+  yarn here), and the devDependencies cut down to what the one remaining output
+  needs. Easy to miss on a rebase precisely because it carries no comment of its
+  own: restore upstream's copy and `npm ci` starts pulling a toolchain for
+  outputs that are no longer built.
+
+One instance is the property that matters: `instanceof` has to hold across the
+library, its addons and anything we add to its scene. The bundle names that
+instance by URL — `import * as THREE from '/_v/three.module.js'`, written in by
+rollup's `output.paths` — and NOT as a bare `three` resolved by an import map on
+the page. The map was tried first and does not work here: it is an inline script
+and the hub serves every page under `default-src 'self'` with no `'unsafe-inline'`
+in `script-src`, so the browser drops it in silence and the page dies on `Failed
+to resolve module specifier "three"`.
+
+Which is also why nothing in `static/_v/` is served `immutable` any more. The
+year used to be granted to `three-cad-viewer.*` on the grounds that the name
+carried the library's identity and a new version would arrive under a new name.
+`make viewer` rewrites these exact names, so the viewer now changes with the
+image like `hammerola.js` does (`src/app.py`).
+
+## What this replaces, and the claim it corrects
+
+These files used to be copied from the `ocp_vscode` pip package, and the previous
+version of this file called that package the canonical source. It was not: the
+bytes were measured equal to the npm release of `three-cad-viewer@5.0.1`, which
+`ocp_vscode` merely pins and ships. Measured again on the way in here — a build
+of v5.0.1 from this source, with our two edits reverted, is byte-for-byte the
+file that was committed before, `sourceMappingURL` comment aside.
 
 ## Upgrading
 
-Bump `ocp-tessellate` on the model side and these files together: the JSON format
-carries a `version` field (currently 3) and the renderer must understand it. Copy both
-files from the same `ocp_vscode` release, then re-check a real project's build renders.
+Rebase the three edits onto the new tag inside `viewer/`, run `make viewer`, and
+commit the source and the built files together. The tessellation JSON carries a
+`version` field (currently 3) produced by `ocp-tessellate` on the model side, and
+the renderer must still understand it — so bump the two together and re-check
+that a real project's build renders.
 
 ## Do not put these in `data/`
 
-They are assets, not state. `data/` is covered by a docker volume on prod, which would
-hide anything shipped there inside the image.
+They are assets, not state. `data/` is covered by a docker volume on prod, which
+would hide anything shipped there inside the image.

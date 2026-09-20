@@ -1,0 +1,45 @@
+/**
+ * Type augmentations for THREE.js types that are incomplete or have undocumented properties.
+ * This allows type-safe access to internal/undocumented THREE.js APIs.
+ */
+
+import "three";
+
+declare module "three/examples/jsm/controls/OrbitControls.js" {
+  interface OrbitControls {
+    /**
+     * Enable/disable keyboard controls (deprecated in recent THREE.js but still present)
+     */
+    enableKeys: boolean;
+    /**
+     * When true, panning is in screen space (XY) rather than camera plane
+     */
+    screenSpacePanning: boolean;
+  }
+}
+
+declare module "three/examples/jsm/controls/TrackballControls.js" {
+  interface TrackballControls {
+    /**
+     * Enable/disable keyboard controls
+     */
+    enableKeys: boolean;
+    /**
+     * Internal: rotate camera based on mouse movement
+     */
+    _rotateCamera(): void;
+    /**
+     * Internal: pan camera based on mouse movement
+     */
+    _panCamera(): void;
+  }
+}
+
+declare module "three/examples/jsm/lines/LineMaterial.js" {
+  interface LineMaterial {
+    /**
+     * Legacy vertex colors property (string-based in older THREE.js versions)
+     */
+    vertexColors: boolean | string;
+  }
+}

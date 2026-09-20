@@ -1,0 +1,104 @@
+
+.tv-tree-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.tcv_toplevel {
+  list-style-type: none;
+  padding-inline-start: 0px;
+  margin-block-start: 0px !important;
+  margin-block-end: 0px !important;
+}
+
+.tv-node-content {
+  display: flex;
+  align-items: center;
+  padding: 2px 0px 2px 0px;
+  height: 16px;
+  min-width: max-content;
+}
+
+.tv-nav-marker {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 1px;
+  cursor: pointer;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.tv-nav-marker svg {
+  width: 100%;
+  height: 100%;
+}
+
+.tv-icon {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  margin-right: 2px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.tv-pointer {
+  cursor: pointer;
+}
+
+.tv-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.tv-node-label {
+  cursor: pointer;
+  margin-left: 4px;
+  font-size: 14px;
+  font-family: sans-serif;
+}
+
+.tv-node-label-highlight {
+  color: rgb(112, 160, 220);
+}
+
+.tv-children {
+  margin-left: 20px;
+}
+
+.tcv_tree_button {
+  background-repeat: no-repeat;
+  background-position: center center;   
+}
+
+.tcv_button_mesh {
+  background-image: var(--tcv-icon-mesh);
+}
+.tcv_button_mesh_empty {
+  background-image: var(--tcv-icon-mesh_empty);
+}
+
+.tcv_button_mesh_mix {
+  background-image: var(--tcv-icon-mesh_mix);
+}
+
+.tcv_button_mesh_no {
+  background-image: var(--tcv-icon-mesh_no);
+}
+
+.tcv_button_shape {
+  background-image: var(--tcv-icon-shape);
+}
+
+.tcv_button_shape_empty {
+  background-image: var(--tcv-icon-shape_empty);
+}
+
+.tcv_button_shape_mix {
+  background-image: var(--tcv-icon-shape_mix);
+}
+
+.tcv_button_shape_no {
+  background-image: var(--tcv-icon-shape_no);
+}

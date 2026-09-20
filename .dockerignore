@@ -76,3 +76,8 @@ ui/dist
 # no longer does has nothing to overwrite it, so it would ship in the image as a
 # file no commit can account for. That case is this line's alone.
 static/_v/hammerola*
+
+# The vendored viewer library: SOURCE and a node toolchain, neither of which the
+# image has any use for — what it serves is the built bundle, which arrives
+# through the static/ COPY line like every other asset.
+viewer/

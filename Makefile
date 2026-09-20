@@ -53,6 +53,29 @@ PYTEST := $(PY) -m pytest
 UI_OUT   := static/_v
 UI_FILES := hammerola.js
 
+# The viewer library's own outputs, published into the same directory and by the
+# same rules (named one at a time, copied atomically — see the notes above).
+#
+# FOUR FILES BECAUSE THREE IS OUTSIDE THE BUNDLE NOW (issue #14): `viewer/`
+# builds the library with `external: three`, and rollup writes `/_v/three.module.js`
+# into the bundle in place of that name, so everything on the page — the library,
+# its addons, our own scene objects — shares ONE instance. The two three files are
+# npm's own artefacts, copied rather than rebuilt; `three.module.js` imports
+# `./three.core.js`, which is why both are here and why both keep their names
+# (`_safe_name` in src/app.py serves one path component, so the relative import
+# resolves to /_v/three.core.js and no deeper).
+#
+# UNMINIFIED, and that is a choice rather than a default. npm ships `.min`
+# twins — 749 KB against 2.08 MB — and the weight is not what this project is
+# buying: the owner settled that (issue #14 still lists it as a reason; it is
+# not one). What the readable copy buys is the habit this repository runs on —
+# `picking.js` reads the clipping sign off the dependency's own source rather
+# than remembering it, and the hatch and outline suites read shader chunks out
+# of it. Minified, that stops being possible and the reasoning goes back to
+# memory, which is where the bugs come from.
+VIEWER_FILES := three-cad-viewer.esm.js three-cad-viewer.css
+VIEWER_THREE := three.module.js three.core.js
+
 .DEFAULT_GOAL := help
 
 # --- Help --------------------------------------------------------------------
@@ -370,6 +393,19 @@ ui/node_modules/.package-lock.json: ui/package.json $(wildcard ui/package-lock.j
 	@$(REQUIRE_NPM)
 	cd ui && if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
+# The same sentinel arrangement for the vendored library, plus one flag.
+#
+# `--legacy-peer-deps` IS REQUIRED, and it is the library's own knot rather than
+# ours: `postprocessing@6.39.0` declares a peer range of `>= 0.168.0 < 0.184.0`
+# while the library pins `three@0.184.0`. Upstream never sees it because it
+# builds with yarn 1, which only warns. npm refuses outright — `npm ci` too, lock
+# or no lock — so without the flag a fresh checkout cannot build the viewer at
+# all. Nothing is loosened by it: the lockfile still pins every version.
+viewer/node_modules/.package-lock.json: viewer/package.json $(wildcard viewer/package-lock.json)
+	@$(REQUIRE_NPM)
+	cd viewer && if [ -f package-lock.json ]; then npm ci --legacy-peer-deps; \
+		else npm install --legacy-peer-deps; fi
+
 # Each file is copied to a temporary name IN THE DESTINATION DIRECTORY and then
 # renamed over its predecessor. A plain `cp` truncates and rewrites in place, so a
 # `make ui` run while `make run` is serving hands out whatever had been written by
@@ -419,6 +455,34 @@ ui: ui/node_modules/.package-lock.json ## Build the browser bundle from ui/ into
 		tmp=$(UI_OUT)/$$f.tmp.$$$$; \
 		trap 'rm -f "$$tmp"' EXIT; \
 		cp ui/dist/$$f "$$tmp" && mv -f "$$tmp" $(UI_OUT)/$$f || exit 1; \
+	done
+
+# UNLIKE `make ui`, THIS ONE'S OUTPUT IS COMMITTED, and that is not an oversight:
+# the library changes when we rebase onto a new release or patch it ourselves,
+# which is a deliberate act a few times a year, while the bundle is read by the
+# test suite and served by a hub that never runs node. The gitignore's argument
+# against a committed bundle — that nothing forces a rebuild when the source
+# beside it changes — is answered by how rarely this source moves and by the
+# commit that has to carry both halves anyway.
+#
+# The three files are copied out of the install rather than built: they are npm's
+# own artefacts, and rebuilding three from source is not a thing this project
+# does.
+.PHONY: viewer
+viewer: viewer/node_modules/.package-lock.json ## Build the vendored CAD viewer (viewer/) into static/_v/
+	@$(REQUIRE_NPM)
+	cd viewer && SOURCEMAP=false npm run build
+	mkdir -p $(UI_OUT)
+	for f in $(VIEWER_FILES); do \
+		tmp=$(UI_OUT)/$$f.tmp.$$$$; \
+		trap 'rm -f "$$tmp"' EXIT; \
+		cp viewer/dist/$$f "$$tmp" && mv -f "$$tmp" $(UI_OUT)/$$f || exit 1; \
+	done
+	for f in $(VIEWER_THREE); do \
+		tmp=$(UI_OUT)/$$f.tmp.$$$$; \
+		trap 'rm -f "$$tmp"' EXIT; \
+		cp viewer/node_modules/three/build/$$f "$$tmp" \
+			&& mv -f "$$tmp" $(UI_OUT)/$$f || exit 1; \
 	done
 
 # The JS suite: vitest over ui/tests, in jsdom. It covers the halves of the

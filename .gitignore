@@ -44,3 +44,13 @@ data/*
 static/_v/hammerola*
 ui/node_modules/
 ui/dist/
+
+# The vendored viewer's toolchain and build output. `viewer/` (the library's
+# SOURCE at the tag PROVENANCE.md names, our patch on top, the exact pins and
+# package-lock.json) IS committed, and so — unlike the browser bundle above — is
+# what it builds: static/_v/three-cad-viewer.esm.js and the two three files
+# beside it. The argument against committing a build output is that nothing
+# forces a rebuild when the source beside it changes; here the source moves a
+# few times a year, deliberately, and the same commit carries both halves.
+viewer/node_modules/
+viewer/dist/

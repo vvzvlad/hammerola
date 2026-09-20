@@ -241,7 +241,10 @@
 - `templates/` — page templates that ship inside the image: `index.html`,
   `build.html`, `pointer.html`, one per URL the hub serves
 - `static/` — the viewer payload that ships inside the image (`static/_v/`):
-  `three-cad-viewer.esm.js`, the scripts for the pointer page, `tokens.css` (THE
+  `three-cad-viewer.esm.js` and its stylesheet, `three.module.js` /
+  `three.core.js` (three itself, outside the bundle since the fork — see
+  `viewer/` and `PROVENANCE.md` beside them), the scripts for the pointer page,
+  `tokens.css` (THE
   PALETTE — every colour the site paints with, named once per theme, linked by
   all three templates; issue #35), the resolver's `site.css` and `favicon.svg`.
   A separate tree with its own `COPY` line in the Dockerfile and its own smoke
@@ -256,7 +259,7 @@
   drawing, not the mark (see `brand/`). It is found by WALKING this directory
   for `*.svg` rather than by being named, but that walk only ever sees what CI
   put on the runner, and the JS tar names files here ONE AT A TIME (the viewer
-  bundle in this directory is 3.5 MB, which is why). So a new `.svg` dropped in
+  and three together are 3.6 MB, which is why). So a new `.svg` dropped in
   here is checked on a workstation and INVISIBLE to both workflows until the two
   tar lines name it as well — the asymmetry is deliberate and worth knowing:
   `brand/` travels whole, so a new drawing there is checked everywhere at once.
@@ -344,13 +347,25 @@
   push — the path alphabet, a `checklib.py` of one's own, dependencies, and the
   fact that `model.py` is executed by the hub. It carries no address: the reader
   substitutes their own hub
-- `ui/` — the React sources for the browser UI, and the only place node is used
-  here. Built twice, by two toolchains that must not disagree: `make ui` for a
-  workstation and the Dockerfile's `ui` stage for the image. Nothing under
+- `ui/` — the React sources for the browser UI, and one of the two places node
+  is used here (`viewer/` below is the other). Built twice, by two toolchains
+  that must not disagree: `make ui` for a workstation and the Dockerfile's `ui`
+  stage for the image. Nothing under
   `src/` imports or executes anything in it, which is why `make run` and
   `make test` work on a machine with no node at all. The output path is written
   in five files that never import each other, and `tests/test_ui_bundle.py` is
   what keeps them in step; `ui/README.md` has the layout and the pins
+- `viewer/` — the viewer LIBRARY's own source: `three-cad-viewer` v5.0.1 forked
+  into this tree (MIT, issue #14), because what we need from it are two edits to
+  its BUILD — `external: three`, so three ships once beside the bundle instead
+  of inside it, and an index that re-exports three's namespace. A fork kept as
+  SOURCE is what makes those two rebasable onto the next tag; a patched artefact
+  would not be. `make viewer` builds it into `static/_v/` and copies three's two
+  files in beside the bundle. The outputs are committed and the inputs are not:
+  `viewer/node_modules/` and `viewer/dist/` are gitignored, and the directory as
+  a whole is in `.dockerignore` — the image serves the built files and has no
+  use for a node toolchain. `static/_v/PROVENANCE.md` has the commit it was
+  taken at, the two edits, and how to upgrade
 - `ci/smoke.py` — the gate between build and publish: nine checks (a)–(i) the
   test suite structurally cannot make, because it runs against a checkout and
   never looks at the artefact. (b) proves the startup guard fires and NAMES the

@@ -1,0 +1,1110 @@
+canvas {
+  outline: none !important;
+}
+
+/* Disables text selection of UI elements */
+body {
+  user-select: none;
+  overflow: hidden;
+  background-color: var(--tcv-bg-color);
+}
+
+.radio-group {
+  display: inline-flex;
+  align-items: center;
+}
+
+input[type="radio"] {
+  vertical-align: middle;
+  transform: translateY(-2px);
+}
+
+.tcv_button_bottom {
+  background-image: var(--tcv-icon-bottom);
+}
+
+.tcv_button_front {
+  background-image: var(--tcv-icon-front);
+}
+
+.tcv_button_help {
+  background-image: var(--tcv-icon-help);
+}
+
+.tcv_button_iso {
+  background-image: var(--tcv-icon-iso);
+}
+
+.tcv_button_left {
+  background-image: var(--tcv-icon-left);
+}
+
+.tcv_button_pause {
+  background-image: var(--tcv-icon-pause);
+}
+
+.tcv_button_pin {
+  background-image: var(--tcv-icon-pin);
+}
+
+.tcv_button_plane {
+  background-image: var(--tcv-icon-plane);
+}
+
+.tcv_button_play {
+  background-image: var(--tcv-icon-play);
+}
+
+.tcv_button_rear {
+  background-image: var(--tcv-icon-rear);
+}
+
+.tcv_button_reset {
+  background-image: var(--tcv-icon-reset);
+}
+
+.tcv_button_resize {
+  background-image: var(--tcv-icon-resize);
+}
+
+.tcv_button_right {
+  background-image: var(--tcv-icon-right);
+}
+
+.tcv_button_stop {
+  background-image: var(--tcv-icon-stop);
+}
+
+.tcv_button_top {
+  background-image: var(--tcv-icon-top);
+}
+
+.tcv_button_axes {
+  background-image: var(--tcv-icon-axes);
+}
+
+.tcv_button_axes0 {
+  background-image: var(--tcv-icon-axes0);
+}
+
+.tcv_button_grid {
+  background-image: var(--tcv-icon-grid);
+}
+
+.tcv_button_perspective {
+  background-image: var(--tcv-icon-perspective);
+}
+
+.tcv_button_explode {
+  background-image: var(--tcv-icon-explode);
+}
+
+.tcv_button_zscale {
+  background-image: var(--tcv-icon-zscale);
+}
+
+.tcv_button_distance {
+  background-image: var(--tcv-icon-distance);
+}
+
+.tcv_button_properties {
+  background-image: var(--tcv-icon-properties);
+}
+
+.tcv_button_angle {
+  background-image: var(--tcv-icon-angle);
+}
+
+.tcv_button_select {
+  background-image: var(--tcv-icon-select);
+}
+
+.tcv_button_transparent {
+  background-image: var(--tcv-icon-transparent);
+}
+
+.tcv_button_blackedges {
+  background-image: var(--tcv-icon-blackedges);
+}
+
+/* .tcv_button_nav_open {
+  background-image: var(--tcv-icon-nav_open);
+}
+
+.tcv_button_nav_closed {
+  background-image: var(--tcv-icon-nav_closed);
+} */
+
+.tcv_cad_viewer {
+  --tcv-ui-row-gap: 8px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  font-family: sans-serif;
+  -webkit-text-size-adjust: none;
+  background-color: var(--tcv-bg-color);
+  color: var(--tcv-font-color);
+  margin: 4px;
+  width: fit-content;
+}
+
+.tcv_cad_navigation {
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+}
+
+.tcv_cad_body {
+  display: flex;
+  flex-direction: row;
+}
+
+.tcv_cad_view {
+  position: relative;
+  margin: 2px;
+}
+
+/* Hover preselection readout: a rounded overlay badge in a FIXED row directly
+   below the grid-size badge (.tcv_tick_size at bottom:22px), so the grid badge
+   never moves when this appears/vanishes. Left:84px clears the 80px orientation
+   marker — keep in sync with OrientationMarker(80,80) in viewer.ts. JS hides it
+   (display:none) when empty. Pure overlay — never intercepts pointer events. */
+.tcv_status_line {
+  position: absolute;
+  bottom: 4px;
+  left: 84px;
+  max-width: calc(100% - 88px);
+  font-size: 12px;
+  line-height: 14px;
+  font-family: sans-serif;
+  color: var(--tcv-font-color);
+  background-color: var(--tcv-bg-overlay-rest-color);
+  border-radius: 4px;
+  padding: 1px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.tcv_cad_view_glass {
+  position: absolute !important;
+  left: 4px;
+}
+
+.tcv_cad_tree_toggles {
+  text-align: right;
+  padding: 0 4px;
+  margin-bottom: 3px;
+}
+
+.tcv_cad_tree {
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  height: 250px;
+  border-style: solid;
+  border-width: 1px;
+  overflow: hidden;
+  border-top: 1px solid lightgray;
+}
+
+.tcv_cad_tree_glass {
+  border: none !important;
+  height: fit-content;
+  background-color: var(--tcv-bg-overlay-rest-color);
+}
+
+.tcv_cad_tree_glass:hover {
+  background-color: var(--tcv-bg-overlay-color);
+}
+
+.tcv_cad_info {
+  width: 240px;
+  height: 146px;
+  font-family: sans-serif;
+  font-size: 12px;
+  overflow: hidden;
+  user-select: text;
+}
+
+.tcv_cad_info_wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.tcv_cad_info_toggler {
+  vertical-align: middle;
+}
+
+.tcv_toggle_info {
+  vertical-align: middle;
+  display: inline-block;
+  width: 0.8rem;
+}
+
+.tcv_toggle_info_wrapper {
+  display: none;
+  margin-left: 4px;
+}
+
+.tcv_info_label {
+  font-size: 12px;
+  font-family: sans-serif;
+  font-weight: bold;
+  margin-left: 4px;
+  padding-bottom: 4px;
+}
+
+.tcv_toggle_tools {
+  vertical-align: middle;
+  display: inline-block;
+  width: 0.8rem;
+  cursor: pointer;
+}
+
+.tcv_toggle_tools_wrapper {
+  display: none;
+  margin-left: 4px;
+  cursor: pointer;
+}
+
+.tcv_tools_label {
+  font-size: 12px;
+  font-family: sans-serif;
+  font-weight: bold;
+  margin-left: 4px;
+  padding-bottom: 4px;
+  vertical-align: middle;
+  user-select: none;
+}
+
+.tcv_cad_info_glass {
+  display: none;
+  border: none !important;
+  background: var(--tcv-bg-overlay-rest-color);
+}
+
+.tcv_cad_info_glass:hover {
+  background: var(--tcv-bg-overlay-color);
+}
+
+.tcv_small_info_btn {
+  width: 24px !important;
+  height: 14px !important;
+  font-size: 12px !important;
+  color: var(--tcv-font-color);
+  border: 1px solid var(--tcv-bg-overlay-color);
+  font-family: "Courier New", Courier, monospace;
+  font-weight: bold;
+  margin-left: 2px;
+}
+
+.tcv_tcv_info_table {
+  display: block;
+  overflow-x: visible;
+  white-space: nowrap;
+  font-size: 14px;
+  border-spacing: 0px;
+}
+
+.tcv_info_header {
+  margin: 1px 0px 6px 8px;
+  font-weight: bold;
+}
+
+.tcv_small_table {
+  line-height: 14px;
+}
+
+.tcv_small_table_row > td,
+th {
+  padding-left: 6px;
+}
+
+.tcv_info_line {
+  margin: 4px;
+}
+
+.tcv_info_row {
+  vertical-align: top !important;
+}
+
+.tcv_info_num {
+  color: #aaa;
+  white-space: nowrap;
+  margin: 0px;
+}
+
+.tcv_info_red {
+  color: var(--tcv-x-color);
+}
+
+.tcv_info_green {
+  color: var(--tcv-y-color);
+}
+
+.tcv_info_blue {
+  color: var(--tcv-z-color);
+}
+
+.tcv_visible {
+  display: block;
+}
+
+.tcv_unvisible {
+  display: none;
+}
+
+.tcv_cad_toolbar {
+  display: flex;
+  background: var(--tcv-bg-overlay-color);
+  position: relative;
+  overflow-x: clip;
+  overflow-y: visible;
+}
+
+.tcv_cad_toolbar > *:last-child {
+  margin-left: auto;
+}
+
+.tcv_cad_inset {
+  width: 80px;
+  height: 80px;
+  background-color: transparent;
+  border: none;
+  margin: 0;
+  padding: 0px;
+  position: absolute;
+  left: 0px;
+  bottom: 0px;
+  z-index: 100;
+}
+
+.tcv_animation_label {
+  vertical-align: middle;
+  margin-left: 5px;
+}
+
+.tcv_tools_label {
+  vertical-align: middle;
+  margin-left: 5px;
+}
+
+.tcv_animation_slider {
+  width: 120px !important;
+}
+
+.tcv_zscale_slider {
+  width: 120px !important;
+}
+
+.tcv_cad_animation {
+  height: 36px;
+  background-color: var(--tcv-bg-overlay-rest-color);
+  border: none;
+  margin: 0;
+  padding: 0px;
+  position: absolute;
+  right: 0px;
+  bottom: 0px;
+  z-index: 100;
+}
+
+.tcv_cad_animation:hover {
+  background-color: var(--tcv-bg-overlay-color);
+}
+
+.tcv_cad_zscale {
+  height: 36px;
+  background-color: var(--tcv-bg-overlay-rest-color);
+  border: none;
+  margin: 0;
+  padding: 0px;
+  position: absolute;
+  right: 0px;
+  bottom: 0px;
+  z-index: 100;
+  align-content: center;
+}
+
+.tcv_cad_zscale:hover {
+  background-color: var(--tcv-bg-overlay-color);
+}
+
+.tcv_cad_tools {
+  height: 38px;
+  background-color: var(--tcv-bg-overlay-color);
+  border: none;
+  margin: 0;
+  padding: 0px;
+  position: absolute;
+  right: 0px;
+  bottom: 0px;
+  z-index: 100;
+}
+
+.tcv_help {
+  outline: none;
+}
+
+.tcv_cad_help {
+  /* height: 36px; */
+  background-color: var(--tcv-bg-color);
+  border: none;
+  margin: 0;
+  padding: 0px;
+  position: absolute;
+  right: 0px;
+  top: 0px;
+  z-index: 100;
+  display: none;
+  font-size: 12px;
+  max-height: 100%;
+  overflow: scroll;
+}
+
+.tcv_cad_help_layout {
+  border-collapse: separate;
+  border-spacing: 4px;
+}
+
+.tcv_round {
+  box-sizing: border-box;
+  /* -moz-box-sizing: border-box;
+    -webkit-box-sizing: border-box; */
+  border-style: solid;
+  border-width: 1px;
+  border-radius: 6px;
+  border-color: lightgray;
+  margin: 2px;
+  padding: 2px;
+}
+
+.tcv_align_right {
+  float: right;
+  margin-right: 4px;
+}
+
+.tcv_box_content {
+  overflow: auto;
+  height: 100%;
+  /* margin: 0px 0px 0px 4px; */
+  padding-top: 2px;
+}
+
+.tcv_btn {
+  width: 30px;
+  height: 30px;
+  border: 0px;
+  display: inline-block;
+  vertical-align: middle;
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-position: center;
+  padding: 0px;
+}
+
+.tcv_button_frame {
+  width: fit-content;
+  height: fit-content;
+  display: inline-block;
+  border: 1px solid transparent;
+  margin-left: 1px;
+  margin-right: 1px;
+}
+
+.tcv_btn_highlight {
+  border-bottom: 2px solid var(--tcv-theme-blue);
+  border-radius: 6px;
+}
+
+.tcv_btn_click {
+  width: 8px;
+  height: 29px;
+  margin-left: 12px;
+  position: absolute;
+  border-bottom: 3px inset var(--tcv-theme-led);
+}
+
+.tcv_btn_click2 {
+  border: 1px solid var(--tcv-theme-blue);
+  border-radius: 6px;
+  background-color: var(--tcv-bg-pressed-color);
+}
+
+.tcv_separator {
+  border-left: 1px solid lightgray;
+  margin-left: 6px;
+  padding-right: 5px;
+  padding-bottom: 5px;
+  padding-top: 3px;
+}
+
+.tcv_ellipsis {
+  padding-left: 4px;
+  padding-top: 2px;
+}
+
+.tcv_small_btn {
+  width: 14px !important;
+  height: 14px !important;
+  font-size: 11px !important;
+  color: var(--tcv-font-color);
+  /* border: 1px solid var(--tcv-bg-overlay-color); */
+}
+
+.tcv_small_btn:hover {
+  background-color: var(--tcv-bg-overlay-color);
+}
+
+.tcv_btn:hover {
+  box-shadow: 1px px 1px 0 var(--tcv-shadow);
+  background-color: var(--tcv-bg-highlight-color);
+  border-radius: 6px;
+}
+
+.tcv_btn:active {
+  box-shadow: none;
+}
+
+.tcv_tabnav {
+  width: 100%;
+  padding: 0px;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+
+input[type="button"] {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  border-radius: 0;
+  outline: none;
+}
+
+.tcv_tab {
+  width: 50%;
+  height: 24px;
+  display: inline-block;
+  padding: 0px;
+  border: none;
+  /* margin-bottom: 6px; */
+  background-color: transparent;
+  color: var(--tcv-font-color);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tcv_tab:hover {
+  background-color: var(--tcv-bg-highlight-color);
+  font-weight: bold;
+}
+
+.tcv_tab-left {
+  border-right: 1px solid lightgray;
+}
+
+.tcv_tab-right {
+  border-left: 1px solid lightgray;
+}
+
+.tcv_tab-selected {
+  border-bottom: none;
+  font-weight: bold;
+}
+
+.tcv_tab-unselected {
+  border-bottom: 1px solid lightgray;
+  font-weight: normal;
+}
+
+.tcv_tab-disabled {
+  color: var(--tcv-bg-pressed-color);
+}
+
+.tcv_vertical-center {
+  margin: 0;
+  position: absolute;
+  top: 50%;
+  -ms-transform: translateY(-50%);
+  transform: translateY(-50%);
+}
+
+.tcv_label {
+  font-family: sans-serif;
+  font-size: 14px;
+  margin-left: 4px;
+  margin-right: 4px;
+  padding-bottom: 4px;
+  vertical-align: middle;
+  user-select: none;
+}
+
+.tcv_radio_label {
+  font-family: sans-serif;
+  font-size: 14px;
+  margin-right: 4px;
+  vertical-align: middle;
+  margin-top: 2px;
+  user-select: none;
+}
+
+.tcv_check {
+  vertical-align: middle;
+  margin-right: 2px;
+  margin-left: 6px;
+}
+
+.tcv_more-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.tcv_more-btn {
+  border: 0px;
+  background-color: transparent;
+  font-size: 14px;
+  color: var(--tcv-font-color);
+}
+
+.tcv_dropdown-content {
+  display: none;
+  position: absolute;
+  box-shadow: 0px 4px 8px 0px var(--tcv-menu-shadow);
+  z-index: 200;
+  background-color: var(--tcv-bg-color);
+  padding-top: 2px;
+  padding-bottom: 2px;
+  margin-top: 0px;
+}
+
+.tcv_dropdown-entry {
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+
+.tcv_more_icon {
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+.tcv_more-content {
+  width: 115px;
+}
+
+.tcv_more-dropdown:hover .tcv_more-content {
+  display: block;
+}
+
+.tcv_grid-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.tcv_grid-content {
+  width: 60px;
+}
+
+.tcv_grid-dropdown:hover .tcv_grid-content {
+  display: block;
+}
+
+.tcv_slider_group {
+  margin-bottom: var(--tcv-ui-row-gap);
+}
+
+.tcv_slider_group > div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tcv_slider_group > div:first-child {
+  align-items: flex-end;
+}
+
+.tcv_slider_group .tcv_label {
+  margin-bottom: 0;
+}
+
+.tcv_material_ambientlight {
+  margin-top: 4px;
+}
+
+.tcv_cad_material_container .tcv_studio_slider_group {
+  width: 60%;
+}
+
+.tcv_cad_clip_container,
+.tcv_cad_material_container,
+.tcv_cad_zebra_container,
+.tcv_cad_studio_container {
+  overflow: hidden;
+  padding: 0 4px;
+}
+
+.tcv_cad_clip_container .tcv_label,
+.tcv_cad_material_container .tcv_label,
+.tcv_cad_zebra_container .tcv_label,
+.tcv_cad_studio_container .tcv_label {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.tcv_zebra_radio {
+  margin-bottom: var(--tcv-ui-row-gap);
+  margin-left: -3px;
+}
+
+.tcv_clip_checks {
+  margin-top: var(--tcv-ui-row-gap);
+}
+
+.tcv_clip_input {
+  width: 36px;
+  flex-shrink: 0;
+  border: 1px solid #d3d3d3;
+  background-color: var(--tcv-bg-overlay-color);
+  color: var(--tcv-font-color);
+}
+
+.tcv_clip_slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  min-width: 0;
+  height: 5px;
+  border-radius: 2px;
+  background: #a0a0a0;
+  outline: none;
+  opacity: 0.7;
+  -webkit-transition: 0.2s;
+  transition: opacity 0.2s;
+  vertical-align: middle;
+}
+
+.tcv_clip_slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #53a0e3;
+  cursor: pointer;
+  border: 1px solid #48627a;
+}
+
+.tcv_clip_slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #53a0e3;
+  cursor: pointer;
+  border: 1px solid #48627a;
+}
+
+.tcv_clip_slider:hover {
+  opacity: 1;
+}
+
+.tcv_lbl_norm_plane1 {
+  color: var(--tcv-x-color);
+}
+
+.tcv_lbl_norm_plane2 {
+  color: var(--tcv-y-color);
+}
+
+.tcv_lbl_norm_plane3 {
+  color: var(--tcv-z-color);
+}
+
+/*  Scrollbar styling for Chrome like browsers */
+
+.tcv_mac-scrollbar::-webkit-scrollbar {
+  width: 5px !important;
+  height: 5px !important;
+}
+
+.tcv_mac-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--tcv-scrollbar-thumb) !important;
+  border-radius: 100px !important;
+}
+
+.tcv_mac-scrollbar::-webkit-scrollbar-track {
+  background-color: transparent !important;
+}
+
+.tcv_mac-scrollbar::-webkit-scrollbar-piece {
+  background-color: transparent !important;
+}
+
+.tcv_mac-scrollbar::-webkit-scrollbar-corner {
+  background-color: transparent !important;
+}
+
+.tcv_mac-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--tcv-scrollbar-hover) !important;
+}
+
+.tcv_mac-scrollbar::-webkit-scrollbar-thumb:active {
+  background-color: var(--tcv-scrollbar-hover) !important;
+}
+
+.tcv_mac-scrollbar .widget-html-content {
+  overflow-x: visible;
+  overflow-y: visible;
+}
+
+/* Scrollbar styling for Firefox Browser */
+
+.tcv_scroller {
+  scrollbar-width: thin;
+  scrollbar-color: var(--tcv-scrollbar-thumb) transparent;
+  background-color: transparent !important;
+}
+
+.tcv_scroller:hover {
+  scrollbar-width: thin;
+  scrollbar-color: var(--tcv-scrollbar-hover) transparent;
+}
+
+/* tooltips */
+[data-tooltip]:before {
+  position: absolute;
+  pointer-events: none;
+  content: attr(data-tooltip);
+  white-space: nowrap;
+  opacity: 0;
+  font-size: 11px;
+  font-family: sans-serif;
+  transition: opacity 0.3s;
+  z-index: 100;
+  color: var(--tcv-font-color);
+  background-color: var(--tcv-bg-tooltip-color);
+  border: solid 1px var(--tcv-bg-tooltip-color);
+  border-radius: 2px;
+  margin-top: 2.5em;
+  padding: 2px;
+  z-index: 200;
+}
+
+[data-tooltip]:hover:before {
+  opacity: 1;
+  transition-delay: 0.5s;
+}
+
+.tcv_material_info {
+  font-size: 12px;
+}
+
+.tcv_zebra_info {
+  font-size: 12px;
+}
+
+.tcv_studio_select {
+  font-family: sans-serif;
+  font-size: 13px;
+  padding: 2px 4px;
+  border: 1px solid #d3d3d3;
+  border-radius: 3px;
+  background-color: var(--tcv-bg-overlay-color);
+  color: var(--tcv-font-color);
+  width: 55%;
+  flex-shrink: 0;
+  margin-left: auto;
+  outline: none;
+}
+
+.tcv_studio_texture_mapping {
+  width: auto;
+}
+
+.tcv_studio_select:hover {
+  opacity: 1;
+}
+
+.tcv_studio_select option {
+  background-color: var(--tcv-bg-color);
+  color: var(--tcv-font-color);
+}
+
+.tcv_studio_row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--tcv-ui-row-gap);
+}
+
+.tcv_studio_row > .tcv_label {
+  margin-left: 0;
+  padding-bottom: 0;
+  flex-shrink: 0;
+}
+
+.tcv_studio_slider_group {
+  display: flex;
+  align-items: center;
+  width: 55%;
+  flex-shrink: 0;
+  margin-left: auto;
+  gap: 4px;
+}
+
+.tcv_studio_slider_group > .tcv_clip_slider {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.tcv_studio_slider_group > .tcv_clip_input {
+  width: 36px;
+  flex-shrink: 0;
+}
+
+.tcv_studio_checks {
+  display: flex;
+  gap: 16px;
+  margin-top: var(--tcv-ui-row-gap);
+  margin-bottom: var(--tcv-ui-row-gap);
+}
+
+.tcv_studio_4k_row {
+  /* Align checkbox with the slider/dropdown column (45% label + 55% control) */
+  margin-left: 45%;
+  gap: 4px;
+}
+
+.tcv_studio_group_spacer {
+  height: calc(var(--tcv-ui-row-gap) * 0.6);
+}
+
+.tcv_studio_info {
+  font-size: 12px;
+  margin-top: 8px;
+  color: var(--tcv-font-color);
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.tcv_warning_banner {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  background: #e8a735;
+  color: #000;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  max-width: 80%;
+  text-align: center;
+  pointer-events: auto;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.tcv_studio_spinner {
+  display: none;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--tcv-font-color);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: tcv_spin 0.7s linear infinite;
+  opacity: 0.6;
+  float: left;
+  margin-top: 5px;
+}
+
+@keyframes tcv_spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tcv_filter_menu {
+  position: relative;
+}
+
+.tcv_filter_dropdown {
+  display: none;
+}
+
+.tcv_filter_icon {
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.tcv_shape_filter {
+  color: var(--tcv-font-color);
+  font-size: 13px;
+  border: none;
+  position: absolute;
+  right: -4px;
+  top: -3px;
+  /* Fixed width so the trigger pill and the option list share one right-anchored
+     box — their right borders coincide (and line up with the panel edge). Wide
+     enough for the longest option ("Vertex"). */
+  width: 5em;
+}
+
+.tcv_shape_filter:hover {
+  cursor: pointer;
+}
+
+.tcv_filter_dropdown_value {
+  margin-left: 2px;
+  margin-right: 2px;
+  margin-top: 1px;
+}
+
+.tcv_filter_value {
+  flex: 1;
+  text-align: left;
+  padding-left: 3px;
+}
+
+.tcv_filter_dropdown_active {
+  display: block;
+}
+
+.tcv_filter_dropdown_value:hover {
+  cursor: pointer;
+  background-color: var(--tcv-bg-pressed-color);
+}
+
+.tcv_filter_dropdown_inactive {
+  display: none;
+}
+
+.tcv_filter_content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: var(--tcv-bg-overlay-color);
+}
+
+/* Grid-size badge: FIXED bottom-left row, just above the status readout. Stays
+   put whether or not the status line is shown (no jumping). */
+.tcv_tick_size {
+  position: absolute;
+  bottom: 22px;
+  left: 84px;
+  background-color: var(--tcv-bg-overlay-rest-color);
+  border-radius: 4px;
+  padding: 1px 4px;
+  width: fit-content;
+  font-size: 12px;
+  line-height: 14px;
+  z-index: 100;
+}
+
+.tcv_tick_size_value {
+  padding: 3px;
+}
