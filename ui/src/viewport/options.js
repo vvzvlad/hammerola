@@ -218,10 +218,10 @@ export const HANDLE_HIT_PX = 18;
 /**
  * How far the white casing stands outside the arrow's dark ink, in pixels.
  *
- * THE 3D ANSWER TO `HALO`, and it has to exist in some form: the grip is one
+ * THE 3D ANSWER TO A GLOW, and it has to exist in some form: the grip is one
  * dark colour on a canvas that is white or near-black depending on the reader
  * (`readTheme` in ui/src/store.js), so on the dark theme the ink is nearly the
- * background. The DOM layer bought its contrast with a `drop-shadow` filter,
+ * background. The DOM layers bought their contrast with a `drop-shadow` filter,
  * which has no meaning for a mesh; a second, slightly larger copy of the arrow
  * drawn underneath in white is the same idea as geometry, and it is the
  * construction the rotation handles already use (`RING_CASE_PX`, which is this
@@ -309,10 +309,10 @@ export const GIZMO_HEAD_PX = 9;
  *  part's centre and a heavier line turns that crossing into a blot. */
 export const GIZMO_SHAFT_PX = 2;
 
-/** The height of the box that takes the press, against that 2 px shaft. Lower
- *  than the grip's for the reason above: three overlapping targets meeting at
- *  one point, and a fat one would decide which axis the reader gets by which
- *  arrow happens to be drawn last. */
+/** How wide the cylinder that takes the press is, against that 2 px shaft.
+ *  Thinner than the grip's for the reason above: three targets meeting at one
+ *  point, and a fat one would decide which axis the reader gets by which arrow
+ *  the ray happened to reach first. */
 export const GIZMO_HIT_PX = 14;
 
 /** How much of an axis must survive the projection for its arrow to be drawn
@@ -398,16 +398,16 @@ export const GIZMO_DOT_PX = 12;
  * canvases at once, and it is construction rather than palette. They happen to
  * be the same two values today and they are free to move apart.
  *
- * AND NOT THE ARROWS' `filter` HALO, though these two pieces are the arrows'
- * own widget. A halo is an EDGE treatment sized for a 2 px shaft, where the
- * ink is nearly all edge already; the quad and the dot are FILLED shapes ten
- * pixels across, where a 1 px glow is a hairline round a block of one colour.
- * The quad has a second reason of its own, which `gizmo.js` gives at the
- * element: it is drawn under a projection matrix, and a `filter` is computed in
- * the element's own space, so the glow is squashed with the shape rather than
- * drawn round it. `RING_CASE_PX` now reaches the same answer by the same road —
- * its matrix used to MAGNIFY a glow and no longer does, so what is left there
- * is what is left here: geometry gives an exact edge and a filter an
+ * AND NOT THE GLOW THE ARROWS USED TO WEAR, though these two pieces are the
+ * arrows' own widget. A halo is an EDGE treatment sized for a 2 px shaft, where
+ * the ink is nearly all edge already; the quad and the dot are FILLED shapes
+ * ten pixels across, where a 1 px glow is a hairline round a block of one
+ * colour. The argument has outlived the thing it was made against — the arrows
+ * are meshes now and there is no `filter` left anywhere in this widget to
+ * decline — but it is the reason these two numbers exist rather than one more
+ * band of the same casing, so it stays. `RING_CASE_PX` and `HANDLE_CASE_PX`
+ * reached the same answer by the other road: geometry gives an exact edge and a
+ * filter an
  * approximate one. */
 export const GIZMO_CASE_PX = 2;
 

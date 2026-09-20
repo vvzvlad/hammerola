@@ -151,11 +151,14 @@ function element(state = {}, viewer = fakeViewer()) {
   vp.handle = {
     refresh: vi.fn(), endDrag: vi.fn(), attach: vi.fn(), detach: vi.fn(),
   }
-  // The move tool's axis arrows keep a loop and a drag of the same two shapes,
-  // on a layer that is a sibling of the box in the same way — so the element
-  // owes them the same wake-up and the same end, and they are stubbed for the
-  // same reason.
-  vp.gizmo = { refresh: vi.fn(), endDrag: vi.fn() }
+  // The move tool's axis arrows, plane quads and origin dot are the second
+  // widget of that shape: they come and go on their own condition, they keep a
+  // drag no other listener can see, and they stand IN the scene — so the
+  // element owes them the same four calls, the two halves of the lifecycle
+  // included.
+  vp.gizmo = {
+    refresh: vi.fn(), endDrag: vi.fn(), attach: vi.fn(), detach: vi.fn(),
+  }
   // And the turn handles, which are the third widget of that shape: they come
   // and go on the same two conditions, they keep a gesture no other listener
   // can see, and the same things are owed them by the element. Not a tool of
@@ -1582,13 +1585,6 @@ describe('the widgets connectedCallback puts on the page', () => {
     expect(el.querySelector('svg')).toBeNull()
   })
 
-  /** The axis arrows' layer, found the way the cube is found — by the one thing
-   *  distinctive about what it holds. An arrow is the element the viewport puts
-   *  on the page with a grab cursor on it; it carries no class name either. */
-  const arrowsIn = (el) => [...el.children].find(
-    (child) => child.firstElementChild
-      && child.firstElementChild.style.cursor === 'grab')
-
   it('creates the section grip, which is no layer at all', () => {
     // The same hole the cube's test above was written for — delete the line in
     // `element.js` that creates the grip and nothing anywhere else goes red,
@@ -1604,9 +1600,10 @@ describe('the widgets connectedCallback puts on the page', () => {
       expect(typeof el.handle[name], name).toBe('function')
     }
     // And no root of its own: what `connectedCallback` appends is the container
-    // the library renders into plus THREE layers — the pins, the cube and the
-    // arrows — and a fifth child would be the grip built the way it used to be.
-    expect([...el.children]).toHaveLength(4)
+    // the library renders into plus TWO layers — the pins and the cube — and a
+    // fourth child would be one of the three widgets in the scene built the way
+    // it used to be.
+    expect([...el.children]).toHaveLength(3)
   })
 
   it('takes the grip down too when the element leaves the document', () => {
@@ -1620,21 +1617,23 @@ describe('the widgets connectedCallback puts on the page', () => {
     expect(gone).toHaveBeenCalledTimes(1)
   })
 
-  it('creates the turn rings, which are no layer either', () => {
-    // THE SAME HOLE, ONE WIDGET FURTHER ON, and now the same WIDTH of hole as
-    // the grip's: delete the line in `element.js` that creates the rings and
-    // nothing anywhere else goes red — they stand in the library's scene, so
-    // there is nothing on the page to find them by, and the only way left to
-    // turn a part is to type three numbers into the panel, which is the state
-    // this whole feature was written out of. The field and the five calls the
-    // element makes on it are what is left to hold, and the arrows' layer being
-    // the LAST child is what says this one no longer appends a root.
+  it('creates the move manipulator, whose two halves are no layers either', () => {
+    // THE SAME HOLE, TWO WIDGETS FURTHER ON, and the same WIDTH of hole as the
+    // grip's: delete either line in `element.js` and nothing anywhere else goes
+    // red — both stand in the library's scene, so there is nothing on the page
+    // to find them by, and what the reader is left with is typing six numbers
+    // into the panel, which is the state this whole feature was written out of.
+    // The fields and the five calls the element makes on each are what is left
+    // to hold, and the CUBE being the last child is what says neither of them
+    // appends a root any more.
     const el = mount()
-    expect(el.rings).toBeTruthy()
-    for (const name of ['refresh', 'attach', 'detach', 'endDrag', 'destroy']) {
-      expect(typeof el.rings[name], name).toBe('function')
+    for (const widget of [el.gizmo, el.rings]) {
+      expect(widget).toBeTruthy()
+      for (const name of ['refresh', 'attach', 'detach', 'endDrag', 'destroy']) {
+        expect(typeof widget[name], name).toBe('function')
+      }
     }
-    expect([...el.children].at(-1)).toBe(arrowsIn(el))
+    expect([...el.children].at(-1)).toBe(cubeIn(el))
   })
 
   it('takes the rings down when the element leaves the document', () => {
@@ -1654,19 +1653,20 @@ describe('the widgets connectedCallback puts on the page', () => {
 
   it('wakes the axis arrows when the hold key lets go of the cut', () => {
     // THE ARROWS OTHERWISE NEVER COME BACK. They are drawn while `activeTool` is
-    // `move`, so the hold key takes them off and the gizmo's loop — which stops
-    // itself when there is nothing to draw — leaves them off. This release emits
-    // `hmr:tool` and nothing else: the interface answers that with a local
-    // `setState`, never a push, so no `hmr:state` arrives to reconcile and the
-    // arrows stay gone until the reader clicks something in the tree.
+    // `move`, so the hold key takes them off — and the library draws ON DEMAND,
+    // so nothing puts them back. This release emits `hmr:tool` and nothing else:
+    // the interface answers that with a local `setState`, never a push, so no
+    // `hmr:state` arrives to reconcile and the arrows stay gone until the reader
+    // clicks something in the tree.
     const el = mount()
     el.state = { ...el.state, tool: 'move' }
     const gizmo = { refresh: vi.fn(), endDrag: vi.fn(), destroy: vi.fn() }
     el.gizmo = gizmo
     dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyC', key: 'c' }))
     expect(el.activeTool).toBe('cut')
-    // Nothing on the way IN, and that is the loop rather than an omission: it is
-    // still running, so the frame already queued takes the arrows off by itself.
+    // Nothing on the way IN, which is the rotation handles' arrangement beside
+    // it: the widget stands until the next frame, and the press that places the
+    // cut ends in one.
     expect(gizmo.refresh).not.toHaveBeenCalled()
     dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyC', key: 'c' }))
     expect(el.activeTool).toBe('move')

@@ -35,7 +35,7 @@ import * as THREE from '../../static/_v/three.module.js'
 
 import { internals } from '../src/viewport/internals.js'
 import {
-  WIDGET_ORDER, createScene3D, widgetMaterial,
+  GIZMO_ORDER, HANDLE_ORDER, RINGS_ORDER, createScene3D, widgetMaterial,
 } from '../src/viewport/scene3d.js'
 import { RECT, framesAsked, rendered, stubFrames } from './component.js'
 import { fakeViewer, fakeViewport, orthoCamera, realCamera } from './fakes.js'
@@ -76,7 +76,9 @@ const BOX_PX = 20
  * test says otherwise — the two questions those callbacks answer are asked one
  * at a time below.
  */
-function stage({ camera, wanted = () => true, place, press, cut = true } = {}) {
+function stage({
+  camera, wanted = () => true, place, press, cut = true, order = HANDLE_ORDER,
+} = {}) {
   const model = camera || orthoCamera()
   const viewer = fakeViewer({ camera: model, rect: RECT })
   const canvas = document.createElement('div')
@@ -109,6 +111,7 @@ function stage({ camera, wanted = () => true, place, press, cut = true } = {}) {
       return press ? press(event, g, hit) : true
     },
     cursor: 'grab',
+    order,
   })
   widgets.push(widget)
   return { model, viewer, vp, canvas, widget, built, calls }
@@ -501,11 +504,49 @@ describe('what a handle promises the rest of the scene', () => {
     // The library puts its own edges and translucent faces at 999 and its
     // highlight points at 1000, and the section contour takes that same 1000
     // (outline.js). A handle has to be above all of them or it is drawn into the
-    // part it is a handle for.
-    const s = stage()
+    // part it is a handle for — and WHICH of the three bands it takes is the
+    // caller's to say, because being drawn over the other two is a fact about
+    // the set of widgets rather than about this scaffolding.
+    const s = stage({ order: GIZMO_ORDER })
     const group = drawn(s)
-    expect(group.renderOrder).toBe(WIDGET_ORDER)
-    expect(WIDGET_ORDER).toBeGreaterThan(1000)
+    expect(group.renderOrder).toBe(GIZMO_ORDER)
+    for (const band of [RINGS_ORDER, HANDLE_ORDER, GIZMO_ORDER]) {
+      expect(band, `${band}`).toBeGreaterThan(1000)
+    }
+  })
+
+  it('bands the three widgets in the reverse of the order they are built', () => {
+    // THE PAINT ORDER IS THE PRESS ORDER INVERTED, which is the one claim no
+    // single widget's suite can make. All three read the canvas in a
+    // capture-phase listener on the window and refuse the press they take with
+    // `stopImmediatePropagation`, which silences only listeners registered
+    // LATER — so the one built FIRST keeps a contested press, and it has to be
+    // the one drawn ON TOP or the reader presses the widget they can see and
+    // drives the one underneath it. That is exactly the bug this band replaced:
+    // the rings were the only blended widget, three draws its transparent list
+    // last, and a knob painted over a quad answered to neither.
+    //
+    // READ OFF `element.js` and not restated here, because the construction
+    // order is that file's — `tests/test_ui_source.py` is what pins it there,
+    // and this is what keeps the bands pointing the other way from whatever it
+    // says.
+    const built = readFileSync(
+      resolve(process.cwd(), 'src/viewport/element.js'), 'utf8')
+    const widgets = [
+      ['createGizmo(', GIZMO_ORDER],
+      ['createHandle(', HANDLE_ORDER],
+      ['createRings(', RINGS_ORDER],
+    ]
+    for (const [call] of widgets) {
+      expect(built.indexOf(call), call).toBeGreaterThan(-1)
+    }
+    const bands = [...widgets]
+      .sort((a, b) => built.indexOf(a[0]) - built.indexOf(b[0]))
+      .map(([, band]) => band)
+    expect(new Set(bands).size, 'three distinct bands').toBe(3)
+    bands.forEach((band, k) => {
+      if (k) expect(band, `band ${k}`).toBeLessThan(bands[k - 1])
+    })
   })
 
   it('stays on layer 0, where the id-picker never looks', () => {

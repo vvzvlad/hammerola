@@ -58,21 +58,51 @@
 import { ndcAt } from "./camera.js";
 import { internals } from "./internals.js";
 
-/** Where a handle is drawn relative to the model: after all of it.
+/** Where each widget is drawn relative to the model, and to the other two:
+ *  after all of it, and bottom to top rings, grip, manipulator.
  *
- * The library puts its own edges and translucent faces at 999
+ * ABOVE THE LIBRARY'S OWN, WHICH IS WHY THE LOWEST BAND IS 1001. The library
+ * puts its own edges and translucent faces at 999
  * (viewer/src/scene/nestedgroup.ts:523) and its highlight points at 1000; the
  * section contour takes that same 1000 (outline.js, which carries the argument
  * for why a bucket beats the per-object depth sort inside one). A handle is the
- * one thing that must never be hidden by any of them, so it sits one bucket
- * above the highest — and, having no depth test either, it is drawn over the
- * part it is standing on rather than inside it.
+ * one thing that must never be hidden by any of them, so it sits above the
+ * highest — and, having no depth test either, it is drawn over the part it is
+ * standing on rather than inside it.
+ *
+ * AND THREE BANDS RATHER THAN ONE, because the paint order is the press order
+ * INVERTED. `element.js` builds the manipulator, then the grip, then the rings,
+ * and the earliest-built keeps a contested press, since
+ * `stopImmediatePropagation` silences only what was registered later — so what
+ * the reader presses has to be what they see on top, or the widget under the
+ * hand and the widget that answers are two different widgets.
+ *
+ * EACH WIDGET'S OWN LADDER IS UNTOUCHED INSIDE ITS BAND: three carries a
+ * group's `renderOrder` down as `groupOrder` and sorts on that BEFORE each
+ * mesh's own, so a rim under a casing under an ink goes on deciding the
+ * overlaps a widget has with ITSELF — and, by the same fact, the bands need
+ * only be DISTINCT. A mesh's own number is never added to its band and never
+ * compared against one, so 1001, 1002 and 1003 would separate the three widgets
+ * exactly as well. The tens are room to read the numbers apart, not a clearance
+ * anything has to keep.
  */
-export const WIDGET_ORDER = 1001;
+export const RINGS_ORDER = 1001;
+export const HANDLE_ORDER = 1011;
+export const GIZMO_ORDER = 1021;
 
 /**
- * The material every 3D handle is drawn with: flat ink, never hidden, never cut
- * and never graded.
+ * The material every 3D handle is drawn with: flat ink, never hidden, never
+ * cut, never graded and always blended.
+ *
+ * `transparent: true` ON EVERY PIECE, the opaque ones included, and that is
+ * what makes the stacking of the three widgets a SORT rather than a list
+ * boundary. three sorts an object into its opaque or its transparent list by
+ * this flag alone and draws opaque, then transmissive, then transparent
+ * (`static/_v/three.module.js`); `groupOrder` and `renderOrder` only order the
+ * objects WITHIN one list. So one blended piece anywhere in a widget — the
+ * rings' feathered arc — would carry that whole widget over every opaque one
+ * whatever band it was given, and the bands above would settle nothing. Alpha
+ * is 1 on everything but that arc, so nothing is faded by saying this.
  *
  * `depthTest: false` is the whole of "a handle is never lost inside the part it
  * belongs to" — the grip sits ON a cut face, i.e. exactly where the depth buffer
@@ -97,8 +127,8 @@ export const WIDGET_ORDER = 1001;
  */
 export function widgetMaterial(three, color) {
   return new three.MeshBasicMaterial({
-    color, depthTest: false, depthWrite: false, clippingPlanes: [],
-    toneMapped: false,
+    color, transparent: true, depthTest: false, depthWrite: false,
+    clippingPlanes: [], toneMapped: false,
   });
 }
 
@@ -156,13 +186,18 @@ function fanoutOn(viewer) {
  *     whether the widget took it. `hit` is the intersection itself, for a widget
  *     whose group holds more than one pressable piece.
  *
+ * `order` is the caller's own band out of the three above, and the caller picks
+ * it because which widget is drawn over which is a fact about the set of them
+ * rather than about this scaffolding.
+ *
  * `place` ANSWERS RATHER THAN HIDING, which is the one place this departs from
  * `createLayer`'s contract: there each layer owns the `display` of its own
  * pieces, here one flag on the shared group decides whether the widget is in the
  * frame at all, and two owners of one flag is a widget that flickers on whichever
  * of them ran last.
  */
-export function createScene3D(vp, { wanted, build, place, press, cursor }) {
+export function createScene3D(vp,
+                              { wanted, build, place, press, cursor, order }) {
   // Null until the first `attach` brings the namespace; everything below that
   // needs three checks for the group rather than for the module, because the two
   // arrive together and the group is the one the work is done on.
@@ -399,7 +434,7 @@ export function createScene3D(vp, { wanted, build, place, press, cursor }) {
       if (!three) return;
       if (!group) {
         group = new three.Group();
-        group.renderOrder = WIDGET_ORDER;
+        group.renderOrder = order;
         // Until the first frame has placed it. A group built at the origin and
         // visible would be one frame of a handle standing in the middle of the
         // model.

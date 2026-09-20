@@ -25,7 +25,7 @@
 import { internals } from "./internals.js";
 import { watchDrag } from "./drag.js";
 import { finite3 } from "./math.js";
-import { createScene3D, widgetMaterial } from "./scene3d.js";
+import { HANDLE_ORDER, createScene3D, widgetMaterial } from "./scene3d.js";
 import { dragSection, sectionGripAxis, sectionOffset } from "./section.js";
 import { reportCut } from "./tools.js";
 import {
@@ -59,7 +59,7 @@ export function createHandle(vp) {
   // `onDown` are the declarations below; nothing is called until the first
   // `attach` and the first frame the library draws after it.
   const widget = createScene3D(vp, {
-    wanted, build, place, press: onDown, cursor: "grab",
+    wanted, build, place, press: onDown, cursor: "grab", order: HANDLE_ORDER,
   });
 
   // The two vectors the orientation is computed with, kept rather than minted

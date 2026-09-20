@@ -1553,3 +1553,61 @@ def test_the_section_grip_is_built_before_the_rotation_rings():
         "createRings is built before createHandle: a press on the section grip "
         "would now also start a rotation"
     )
+
+def test_the_axis_arrows_are_built_before_the_rotation_rings():
+    """A press on a plane quad cannot also start a rotation.
+
+    The two halves of the move manipulator stand on the SAME part, so a quad
+    and a knob really do cross -- and both read their press off the canvas in a
+    capture-phase `pointerdown` on the window, refusing the one they take with
+    `stopImmediatePropagation`, which silences only listeners registered LATER.
+    So the order these two are CONSTRUCTED in is the whole of which one gets a
+    contested press.
+
+    THIS WAY ROUND AND NOT THE OTHER, and not because one target is fuller than
+    the other: every drawn mesh in rings.js is `NO_HIT`, and what answers a ray
+    there is the invisible disc inside the knob, so the contested press is a
+    20 px knob against a 16 px quad and both are filled. It is WHERE THE HAND
+    ALREADY IS that decides -- the quads and the arrows cluster at the part's
+    centre, where the reader has aimed in order to move it, and a knob only
+    reaches that far in when the projection has flattened its ring nearly
+    edge-on. The paint says the same thing now: `GIZMO_ORDER` stands over
+    `RINGS_ORDER` in scene3d.js, so what wins the press is what is drawn on top.
+
+    On the source, for `test_the_section_grip_is_built_before_the_rotation_rings`'s
+    reason: the listeners are anonymous closures on one node, for one event, in
+    one phase, so swapping the two lines leaves both widgets' own suites green
+    while the gesture goes wrong on the page.
+    """
+    text = (VIEWPORT / "element.js").read_text(encoding="utf-8")
+    arrows = text.index("createGizmo(")
+    rings = text.index("createRings(")
+    assert arrows < rings, (
+        "createRings is built before createGizmo: a press on a plane quad "
+        "would now also start a rotation"
+    )
+
+
+def test_the_axis_arrows_are_built_before_the_section_grip():
+    """A press on an arrow that crosses the grip stays the arrow's.
+
+    THE DOM USED TO SETTLE THIS AND NO LONGER CAN. While the arrows were a
+    layer of divs they took their presses on their own elements, and the grip
+    declined any target but the canvas -- so an arrow lying over the grip won by
+    construction. Both are meshes reading the same canvas now, and the order
+    they are CONSTRUCTED in is the whole of it, exactly as for the two crossings
+    above.
+
+    THIS WAY ROUND because the reader armed the Move tool and the manipulator is
+    what they armed it for, where the grip is a handle on a cut that merely
+    happens to be standing. Keeping it also keeps every precedence the flat
+    widget had, so nothing about which widget answers a press changed on the day
+    the arrows moved into the scene.
+    """
+    text = (VIEWPORT / "element.js").read_text(encoding="utf-8")
+    arrows = text.index("createGizmo(")
+    grip = text.index("createHandle(")
+    assert arrows < grip, (
+        "createHandle is built before createGizmo: a press on an axis arrow "
+        "crossing the section grip would now drag the cut instead"
+    )

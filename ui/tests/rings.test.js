@@ -58,11 +58,12 @@ import { createGizmo } from '../src/viewport/gizmo.js'
 import { createRings } from '../src/viewport/rings.js'
 import { after, quaternionOf, turned } from '../src/viewport/parts.js'
 import {
-  CLICK_PX, RING_ARC_DEG, RING_CASE_PX, RING_DISC_PX, RING_MIN_PX, RING_PX,
-  RING_RIM_PX, RING_SHAFT_PX,
+  CLICK_PX, GIZMO_PX, RING_ARC_DEG, RING_CASE_PX, RING_DISC_PX, RING_MIN_PX,
+  RING_PX, RING_RIM_PX, RING_SHAFT_PX,
 } from '../src/viewport/options.js'
+import { RINGS_ORDER } from '../src/viewport/scene3d.js'
 import {
-  makeViewport, RECT, framesAsked, rendered, runFrames, settled, stubFrames,
+  makeViewport, RECT, framesAsked, rendered, settled, stubFrames,
 } from './component.js'
 import {
   fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera, realCamera,
@@ -77,13 +78,6 @@ const PART = '/Group/plate'
 const OBLIQUE = { right: [1, -1, 0], up: [1, 1, -2], forward: [-1, -1, -1] }
 
 const widgets = []
-
-// Set by `withArrows` below, and the one thing that lets a test out of the
-// frame budget in `afterEach`. The axis arrows are still a DOM layer running a
-// rAF loop of its own — gizmo.js is a later slice — so the handful of tests
-// that stand the two halves of the manipulator against each other cannot make
-// the claim, and every other test in this file can.
-let arrows = false
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -100,14 +94,12 @@ afterEach(() => {
   // than only while a gesture runs, so they would answer for every press and
   // every movement the next test makes.
   while (widgets.length) widgets.pop().destroy()
-  // NOT ONE ANIMATION FRAME. A widget in the scene is placed by the render, so
-  // an idle page with the move tool armed asks for nothing at all — and the way
-  // a loop creeps back in is somebody re-arming one beside the render, which
-  // nothing else here would show.
-  if (!arrows) {
-    expect(framesAsked(), 'the rings ask for no animation frames').toBe(0)
-  }
-  arrows = false
+  // NOT ONE ANIMATION FRAME, and now for BOTH halves of the manipulator: a
+  // widget in the scene is placed by the render, so an idle page with the move
+  // tool armed asks for nothing at all — and the way a loop creeps back in is
+  // somebody re-arming one beside the render, which nothing else here would
+  // show.
+  expect(framesAsked(), 'the manipulator asks for no animation frames').toBe(0)
   document.body.innerHTML = ''
   vi.unstubAllGlobals()
 })
@@ -140,10 +132,18 @@ const CENTRE_AT = [0, 0, 45]
  * WINDOW that decline any target but the canvas, so they have to be events the
  * DOM really dispatched at one. The rect is stubbed on because jsdom computes
  * no layout.
+ *
+ * `arrows` STANDS THE OTHER HALF UP FOR REAL, and it does it BEFORE the rings
+ * because `element.js` does: both halves now read their press off the canvas in
+ * a capture-phase listener on the window, and `stopImmediatePropagation`
+ * silences only what was registered LATER — so construction order is the whole
+ * of which one wins a contested press, and a fixture that built them the other
+ * way round would be testing a page that does not exist.
+ * `tests/test_ui_source.py` is what holds the real order.
  */
 function scene({
   selected = [PART], groups = { [PART]: solid(PART) }, camera, gridSize = 100,
-  tool = 'move', overlay = null,
+  tool = 'move', overlay = null, arrows = false,
 } = {}) {
   const model = camera || orthoCamera()
   realCamera(THREE, model)
@@ -166,7 +166,7 @@ function scene({
     // press on the canvas ends the arrows' gesture as well as this one's — one
     // tool means both can be live at once, and two live drags on one part
     // overwrite each other (`handOver`). A stub by default, replaced with the
-    // real layer by the tests that run the pair against each other.
+    // real widget by the tests that run the pair against each other.
     gizmo: { refresh: vi.fn(), endDrag: vi.fn(), destroy: vi.fn() },
     // AND THE DOOR ONTO THE CANVAS GESTURE, which `installTools` publishes on
     // the element. A press this widget KEEPS ends that too, because the refusal
@@ -174,15 +174,26 @@ function scene({
     // concluding it.
     endGesture: vi.fn(),
   })
+  const gizmo = arrows ? createGizmo(vp) : null
+  if (gizmo) {
+    widgets.push(gizmo)
+    vp.gizmo = gizmo
+  }
   const rings = createRings(vp)
   widgets.push(rings)
   vp.rings = rings
-  // What `show()` does on the far side of `render()`: the group joins the scene
+  // What `show()` does on the far side of `render()`: each group joins the scene
   // the library has just built, the namespace comes with it, and the widget asks
-  // for the frame that then places it.
+  // for the frame that then places it. The RINGS go in first here, which no
+  // press depends on — the listeners were registered above — and which is what
+  // lets the two groups be told apart by the order they arrived in.
   rings.attach(THREE)
   const group = viewer.scene.children.find((child) => child.isGroup)
-  return { model, viewer, vp, groups, canvas, rings, group }
+  if (gizmo) gizmo.attach(THREE)
+  const arrowGroup = gizmo
+    ? viewer.scene.children.find((child) => child.isGroup && child !== group)
+    : null
+  return { model, viewer, vp, groups, canvas, rings, group, gizmo, arrowGroup }
 }
 
 /** The whole widget, and one ring of it. */
@@ -351,28 +362,21 @@ const facing = (group) => [group.quaternion.x, group.quaternion.y,
 /** Where a group ended up, as three numbers. */
 const at = (group) => [group.position.x, group.position.y, group.position.z]
 
-/** The other half of the manipulator, standing on the same part.
- *
- * IT KEEPS A rAF LOOP, which is what `arrows` above is for: gizmo.js is still a
- * DOM layer and this slice does not touch it, so a test that stands one up is
- * excused the frame budget and nothing else is. */
-function withArrows(s) {
-  arrows = true
-  const gizmo = createGizmo(s.vp)
-  widgets.push(gizmo)
-  s.vp.gizmo = gizmo
-  // IN THE DOCUMENT, because a press dispatched at a detached element never
-  // reaches the window listeners this widget reads its own presses in.
-  document.body.appendChild(gizmo.root)
-  gizmo.refresh()
-  runFrames()
-  return gizmo
-}
+/** The three axis arrows, the three plane quads and the origin dot, in the
+ *  order gizmo.js builds them. Read off the OTHER group in the scene, which is
+ *  as much of that widget's structure as this file needs to know. */
+const armOf = (s, axis) => s.arrowGroup.children[axis]
+const arrowInk = (s, axis) =>
+  armOf(s, axis).children[4].material.color.getHex()
 
-const pressArrow = (arrow, [clientX, clientY]) => arrow.dispatchEvent(
-  new MouseEvent('pointerdown', {
-    clientX, clientY, bubbles: true, cancelable: true,
-  }))
+/** A point ON one axis arrow, in canvas pixels: halfway out along its shaft,
+ *  which is past the origin dot's rim and short of the head. That widget's
+ *  group is scaled in CSS pixels too, so the conversion is `worldRadius`'s. */
+const onArrow = (s, axis, along = GIZMO_PX / 2) => {
+  const perPx = (2 * s.model.halfH) / s.model.zoom / RECT.height
+  return canvasAt(s, CENTRE_AT.map(
+    (c, i) => c + (i === axis ? along * perPx : 0)))
+}
 
 describe('when there is nothing to put rings round', () => {
   it('draws nothing while no tool is armed', () => {
@@ -554,6 +558,30 @@ describe('what a ring is built out of', () => {
       .toBeGreaterThan(band(s, 2, 'whole', 'ink').renderOrder)
   })
 
+  it('stands in the lowest band, in the one list all three widgets share', () => {
+    // TWO HALVES OF ONE ANSWER. The band is where this widget is drawn among
+    // the three standing in this scene, and it is the LOWEST because
+    // `element.js` builds the rings LAST and the earliest-built keeps a
+    // contested press — what the reader presses has to be what they can see. A
+    // knob over a quad it does not answer for is the exact failure this widget
+    // exists to avoid.
+    //
+    // AND `transparent` IS WHY THE BAND CAN SAY THAT AT ALL: three sorts into
+    // its opaque and its transparent lists by that flag before it looks at any
+    // order, so the rings blended beside two opaque neighbours were drawn LAST
+    // whatever number anybody gave them — over the grip and over the whole
+    // manipulator.
+    const s = scene()
+    expect(s.group.renderOrder).toBe(RINGS_ORDER)
+    for (const ring of s.group.children) {
+      for (const node of ring.children) {
+        for (const mesh of node.children) {
+          expect(mesh.material.transparent, mesh.geometry.type).toBe(true)
+        }
+      }
+    }
+  })
+
   it('carries its knob ON the curve, at the bisector of the ring`s two axes', () => {
     // THE KNOB IS A CIRCLE IN THE RING'S OWN PLANE and not a dot on the screen,
     // which is what makes it possible to say it is ON the curve at all: it is a
@@ -687,29 +715,23 @@ describe('what a ring is built out of', () => {
     // handles are grey and we deliberately do not copy that: half a widget in
     // grey beside arrows in colour would be worse than either.
     //
-    // THE SAME COLOUR IN TWO SPELLINGS, which is what the move made of it: the
-    // arrows are divs and write a CSS string, and a material takes a hex.
-    const s = scene()
-    const gizmo = withArrows(s)
-    // THE FIRST THREE CHILDREN ARE THE ARROWS, which is the order that layer
-    // builds in — arrows, then the three plane quads, then the origin dot. The
-    // shaft is an arrow's own first child and carries the axis ink.
-    const hexOf = (css) => {
-      const match = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(css)
-      expect(match, `no colour in ${css}`).toBeTruthy()
-      return (Number(match[1]) << 16) | (Number(match[2]) << 8) | Number(match[3])
-    }
-    const arrowInk = [...gizmo.root.children].slice(0, 3).map(
-      (arrow) => hexOf(arrow.firstElementChild.style.backgroundColor))
-    expect(arrowInk).toHaveLength(3)
+    // ONE SPELLING NOW THAT BOTH ARE MESHES, which is what the arrows' own move
+    // into the scene made of it: this used to be a CSS string on one side and a
+    // hex on the other, and the comparison had to go through a regex.
+    const s = scene({ arrows: true })
+    // THE FIRST THREE CHILDREN ARE THE ARROWS, which is the order that widget
+    // builds in — arrows, then the three plane quads, then the origin dot — and
+    // the ink is its third band.
+    const inks = [0, 1, 2].map((axis) => arrowInk(s, axis))
+    expect(new Set(inks).size, 'three different inks').toBe(3)
     expect([0, 1, 2].map((axis) =>
-      band(s, axis, 'whole', 'ink').material.color.getHex())).toEqual(arrowInk)
+      band(s, axis, 'whole', 'ink').material.color.getHex())).toEqual(inks)
     expect([0, 1, 2].map((axis) =>
-      band(s, axis, 'arc', 'ink').material.color.getHex())).toEqual(arrowInk)
+      band(s, axis, 'arc', 'ink').material.color.getHex())).toEqual(inks)
     // And the knob is the same ink as the arc it sits on, so it says which axis
     // it is before anything is hovered.
     expect([0, 1, 2].map((axis) =>
-      band(s, axis, 'knob', 'ink').material.color.getHex())).toEqual(arrowInk)
+      band(s, axis, 'knob', 'ink').material.color.getHex())).toEqual(inks)
   })
 })
 
@@ -942,41 +964,41 @@ describe('what takes the press', () => {
     expect(turn[1], 'the ring that is not on screen').toBe(0)
   })
 
-  it('declines one that landed on a piece of the arrows` layer instead', () => {
+  it('leaves the arrows theirs and keeps its own, on the one canvas', () => {
     // THE CLAIM THAT LETS ONE TOOL DRIVE TWO WIDGETS, checked rather than
-    // assumed. Both are on screen at once, they stand on the same point, and
-    // they take their presses by completely different means: an arrow, a quad
-    // and the origin dot are BOXES and take theirs on their own elements, while
-    // this one reads the canvas's own press in capture listeners on the window.
-    // Capture runs from the window DOWN, so those listeners see a press aimed
-    // at an arrow BEFORE the arrow does — and the single line that keeps them
-    // from stealing it is `event.target !== g.canvas`.
+    // assumed — and it is a different claim now that both halves are objects in
+    // the scene. They used to be told apart by the DOM: an arrow was a BOX and
+    // took its press on its own element, and the single line that kept these
+    // window listeners from stealing it was `event.target !== g.canvas`. Both
+    // read the same canvas now, so what keeps them out of each other's way is
+    // that each answers only for a ray that landed on its OWN meshes — and,
+    // where two really do overlap, the order `element.js` builds them in, which
+    // `tests/test_ui_source.py` holds.
     //
-    // SO THE SAME PIXEL IS PRESSED TWICE, which is the only way to show it: at
-    // the Z knob's own position, once at the arrow and once at the canvas.
-    const s = scene()
+    // SO THE TWO TARGETS ARE PRESSED IN TURN, on one canvas, in one scene.
+    const s = scene({ arrows: true })
     rendered(s.viewer)
-    const gizmo = withArrows(s)
 
-    const arrow = gizmo.root.firstElementChild
-    pressArrow(arrow, AT_KNOB)
-    pointerMove([AT_KNOB[0] + 200, AT_KNOB[1] + 60])
+    const arrow = onArrow(s, 0)
+    press(s.canvas, arrow)
+    pointerMove([arrow[0] + 200, arrow[1] + 60])
 
     const said = s.vp.moved.get(PART)
     expect(said, 'the arrow took its own press').toBeTruthy()
     expect(said.turn, 'and the rings did not take it too').toEqual([0, 0, 0])
     expect(said.delta[0]).not.toBe(0)
 
-    // And the same point on the CANVAS is still the knob's, so the rings have
-    // lost nothing by sharing the reach.
-    const other = scene()
+    // And the knob's own pixel is still the knob's, with the arrows standing.
+    const other = scene({ arrows: true })
     rendered(other.viewer)
     press(other.canvas, AT_KNOB)
     pointerMove(AT_QUARTER)
     expect(other.vp.moved.get(PART).turn).not.toEqual([0, 0, 0])
+    expect(other.vp.moved.get(PART).delta, 'and the arrows did not take it')
+      .toEqual([0, 0, 0])
   })
 
-  it('ends the other layer`s drag, and is ended by it, either way round', async () => {
+  it('ends the other half`s drag, and is ended by it, either way round', async () => {
     // TWO LIVE GESTURES ON ONE PART, which is what the tool merge made possible
     // and neither half defended against. Both ends already conclude their OWN
     // previous gesture; what could not happen before was the CROSS case — this
@@ -993,11 +1015,12 @@ describe('what takes the press', () => {
     // is standing where the reader left it and only the document can be wrong
     // about that.
     const both = () => {
-      const made = scene()
+      const made = scene({ arrows: true })
       rendered(made.viewer)
-      const gizmo = withArrows(made)
-      return { ...made, gizmo, arrow: gizmo.root.firstElementChild }
+      return { ...made, arrow: onArrow(made, 0) }
     }
+    const slide = (made) =>
+      pointerMove([made.arrow[0] + 200, made.arrow[1] + 60])
 
     // A TURN IN PROGRESS, INTERRUPTED BY A PRESS ON AN ARROW.
     const a = both()
@@ -1007,12 +1030,12 @@ describe('what takes the press', () => {
     expect(spun, 'the premise: the part really is being turned')
       .not.toEqual([0, 0, 0])
 
-    pressArrow(a.arrow, [100, 100])
+    press(a.canvas, a.arrow)
     await settled()
     expect(details(a.vp, EVENT_TURNED), 'the turn was dropped rather than said')
       .toHaveLength(1)
 
-    pointerMove([300, 160])
+    slide(a)
     // The handles have let go — the angle stands where the hand left it — while
     // the arrow that took over is writing the offset.
     expect(a.vp.moved.get(PART).turn).toEqual(spun)
@@ -1021,8 +1044,8 @@ describe('what takes the press', () => {
     // AND THE SAME THING THE OTHER WAY ROUND: a slide in progress, interrupted
     // by a press on a knob.
     const b = both()
-    pressArrow(b.arrow, [100, 100])
-    pointerMove([300, 160])
+    press(b.canvas, b.arrow)
+    slide(b)
     const slid = b.vp.moved.get(PART).delta
     expect(slid, 'the premise: the part really is being slid').not.toEqual([0, 0, 0])
 
@@ -1044,8 +1067,8 @@ describe('what takes the press', () => {
     // on. This is the same reader stranding the same gesture with a second
     // finger on the bare model.
     const c = both()
-    pressArrow(c.arrow, [100, 100])
-    pointerMove([300, 160])
+    press(c.canvas, c.arrow)
+    slide(c)
     expect(c.vp.moved.get(PART).delta, 'the premise: a slide is running')
       .not.toEqual([0, 0, 0])
 
@@ -1792,13 +1815,13 @@ describe('what puts the widget on the part', () => {
     // halves is open enough to be drawn — square on, the Z arrow is end-on and
     // two of the three quads are edge-on, so a count taken there would be about
     // the camera rather than about the merge.
-    const s = scene({ camera: orthoCamera(OBLIQUE) })
+    const s = scene({ camera: orthoCamera(OBLIQUE), arrows: true })
     rendered(s.viewer)
-    const gizmo = withArrows(s)
 
-    // Seven pieces on the arrows' layer — three arrows, three quads, the dot —
-    // and the three rings standing among them rather than instead of them.
-    expect([...gizmo.root.children].filter((el) => el.style.display !== 'none'))
+    // Seven pieces in the arrows' own group — three arrows, three quads, the
+    // dot — and the three rings standing among them rather than instead.
+    expect(s.arrowGroup.visible).toBe(true)
+    expect(s.arrowGroup.children.filter((node) => node.visible))
       .toHaveLength(7)
     expect([0, 1, 2].map((axis) => upright(s, axis)))
       .toEqual([true, true, true])
@@ -1819,22 +1842,19 @@ describe('what puts the widget on the part', () => {
     const GROUP = '/Group/proposal'
 
     const bothOn = (over, tweak) => {
-      const s = scene({ camera: orthoCamera(OBLIQUE), ...over })
-      const gizmo = withArrows(s)
+      const s = scene({ camera: orthoCamera(OBLIQUE), arrows: true, ...over })
       if (tweak) tweak(s.vp)
-      gizmo.refresh()
-      runFrames()
       rendered(s.viewer)
       return [
-        [...gizmo.root.children].filter((el) => el.style.display !== 'none')
-          .length,
+        s.arrowGroup.visible
+          ? s.arrowGroup.children.filter((node) => node.visible).length : 0,
         [0, 1, 2].filter((axis) => upright(s, axis)).length,
       ]
     }
 
     // `[arrows, rings]` when the widget is whole: three arrows, three plane
-    // quads and the origin dot on one layer, three rotation handles in the
-    // scene.
+    // quads and the origin dot in one group, three rotation handles in the
+    // other.
     const WHOLE = [7, 3]
     const GONE = [0, 0]
 

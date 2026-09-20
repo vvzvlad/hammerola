@@ -44,6 +44,7 @@ import { internals } from '../src/viewport/internals.js'
 import {
   HANDLE_CASE_PX, HANDLE_HEAD_PX, HANDLE_HIT_PX, HANDLE_PX, HANDLE_SHAFT_PX,
 } from '../src/viewport/options.js'
+import { HANDLE_ORDER } from '../src/viewport/scene3d.js'
 import {
   applySection, dragSection, placeSectionPlane, sectionAxis, sectionGripAxis,
   sectionOffset,
@@ -274,6 +275,23 @@ describe('what it is built out of', () => {
     expect(box.max.y).toBeCloseTo(ink.max.y + HANDLE_CASE_PX, 9)
     expect(box.min.y).toBeCloseTo(ink.min.y - HANDLE_CASE_PX, 9)
     expect(box.max.x).toBeCloseTo(ink.max.x + HANDLE_CASE_PX, 9)
+  })
+
+  it('stands in the grip`s own band, in the one list all three widgets share', () => {
+    // TWO HALVES OF ONE ANSWER, and neither is worth anything without the
+    // other. The band is where this widget is drawn among the three that stand
+    // in this scene — over the rings, under the move manipulator, which is the
+    // reverse of the order `element.js` builds them in, because the widget that
+    // wins a contested press has to be the one the reader can see. And
+    // `transparent` is what puts all three in ONE of the renderer's lists at
+    // all: three sorts by that flag before it looks at any order, so an opaque
+    // grip beside a blended ring is drawn FIRST whatever band it carries, and
+    // the band decides nothing.
+    const { group } = scene()
+    expect(group.renderOrder).toBe(HANDLE_ORDER)
+    for (const child of group.children) {
+      expect(child.material.transparent, child.geometry.type).toBe(true)
+    }
   })
 
   it('points both heads outwards', () => {

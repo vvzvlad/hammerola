@@ -63,7 +63,7 @@ import { finite3 } from "./math.js";
 import {
   grabbable, groupFacing, groupHome, movePart, nudgeTurn, partCentre,
 } from "./parts.js";
-import { createScene3D, widgetMaterial } from "./scene3d.js";
+import { RINGS_ORDER, createScene3D, widgetMaterial } from "./scene3d.js";
 import {
   RING_ARC_DEG, RING_CASE_PX, RING_DISC_PX, RING_MIN_PX, RING_PX,
   RING_RIM_PX, RING_SHAFT_PX,
@@ -106,12 +106,11 @@ const AXES = [
 /** The two inks the CONSTRUCTION is made of, which are not a palette either.
  *
  * The white is the one the grip stands its own ink on (`CASING` in handle.js)
- * and the dark is the one the arrows shadow themselves with (`HALO` in
- * gizmo.js, which spells it `rgba(20,24,28,…)` — the same three bytes). Both
- * are here as geometry rather than as a filter, which is what `RING_CASE_PX`
- * argues and what `HANDLE_CASE_PX` already does in the scene: this widget
- * stands ON the model, over whatever colour the part happens to be and on
- * either canvas.
+ * and the dark is the one every piece of the manipulator is rimmed with (`RIM`
+ * in gizmo.js, the same three bytes). Both are here as geometry rather than as
+ * a filter, which is what `RING_CASE_PX` argues and what `HANDLE_CASE_PX`
+ * already does in the scene: this widget stands ON the model, over whatever
+ * colour the part happens to be and on either canvas.
  */
 const CASING = 0xffffff;
 const RIM = 0x14181c;
@@ -238,14 +237,6 @@ function feather(three, geometry) {
  * One material of this widget: `widgetMaterial` with the two flags this one
  * needs that the grip does not.
  *
- * EVERYTHING IS BLENDED, the opaque pieces included, and that is what decides
- * the paint order rather than a taste for transparency. With no depth test the
- * stacking IS the draw order, and three draws its opaque list before its
- * transparent one — so a faded arc beside an opaque knob would be painted OVER
- * the knob, drawing a coloured line across the casing that exists to hold the
- * knob against the model. In one list the sort is `renderOrder` and the ladder
- * below decides it.
- *
  * `fading` carries the per-vertex alpha and nothing else; `both` turns culling
  * off for the knob, which is a flat disc and is seen from either side of its
  * own ring. A closed tube keeps the default, because two blended sides of one
@@ -253,7 +244,6 @@ function feather(three, geometry) {
  */
 function ringMaterial(three, colour, { fading = false, both = false } = {}) {
   const material = widgetMaterial(three, colour);
-  material.transparent = true;
   if (fading) material.vertexColors = true;
   if (both) material.side = three.DoubleSide;
   return material;
@@ -453,7 +443,7 @@ export function createRings(vp) {
   // `onDown` are the declarations below; nothing is called until the first
   // `attach` and the first frame the library draws after it.
   const widget = createScene3D(vp, {
-    wanted, build, place, press: onDown, cursor: "grab",
+    wanted, build, place, press: onDown, cursor: "grab", order: RINGS_ORDER,
   });
 
   // Built with the group, because the namespace they come from arrives with it.

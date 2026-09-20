@@ -324,42 +324,45 @@ export class HmrViewport extends HTMLElement {
     this.viewcube = createViewCube(this);
     this.appendChild(this.viewcube.root);
 
-    // THE SECTION HANDLE IS NOT IN THIS STACK AT ALL, and that is the whole of
-    // what moving it into the scene changed here: it has no root to append,
-    // because it is a group of meshes standing on the cut (`scene3d.js`). Its
-    // two new lines are in `show()`, where the scene it lives in is replaced.
+    // NONE OF THE NEXT THREE IS IN THIS STACK AT ALL, and that is the whole of
+    // what moving them into the scene changed here: the section grip, the move
+    // tool's arrows, quads and origin dot, and its rotation handles are all
+    // groups of meshes standing in the library's own scene (`scene3d.js`), so
+    // none of them has a root to append. Their lifecycle lines are in `show()`,
+    // where the scene they live in is replaced.
     //
-    // BEFORE `createRings` BELOW, AND THAT IS LOAD-BEARING. Both widgets read
-    // their press off the canvas in a capture-phase `pointerdown` on the window,
-    // and the grip refuses one it takes with `stopImmediatePropagation`, which
-    // silences only listeners registered LATER. Swap the two and one press both
-    // slides the section and starts a rotation, with every suite still green:
-    // `tests/test_ui_source.py` is what says so instead.
-    this.handle = createHandle(this);
-
-    // THE AXIS ARROWS ARE OVER THE GRIP WHEREVER THE TWO MEET, and it is now the
-    // canvas that decides it rather than this order: every layer below is drawn
-    // on top of the canvas the grip is drawn INSIDE. Both widgets are on screen
-    // only in their own mode and the two modes can stand at once — a cut is a
-    // THING THAT IS ON and the Move tool can be armed over it — so something has
-    // to win, and the arrows are the more deliberate state: up only when the
-    // reader has armed Move AND selected a part. The grip is reachable anywhere
-    // else along its length.
+    // AND THIS ORDER IS LOAD-BEARING, for all three. Every one of them reads
+    // its press off the canvas in a capture-phase `pointerdown` on the window,
+    // and each refuses a press it takes with `stopImmediatePropagation`, which
+    // silences only listeners registered LATER — so the order these lines run
+    // in is the whole of which widget wins a press two of them could take.
+    // Swap any two and one press does two things at once with every suite still
+    // green: `tests/test_ui_source.py` is what says so instead.
+    //
+    // WHAT THE ORDER IS CHOSEN FOR is the crossing that actually happens. The
+    // arrows and the rings are two halves of ONE widget standing on one part,
+    // so a quad and a knob really do cross — and NOT because one target is
+    // fuller than the other: every drawn mesh in rings.js is `NO_HIT` and what
+    // answers a ray there is the invisible disc inside the knob, so the contest
+    // is a 20 px knob against a 16 px quad, both filled. It is WHERE THE HAND
+    // ALREADY IS that decides. The quads and the arrows cluster at the part's
+    // centre, which is where the reader has aimed to move it, and a knob only
+    // reaches that far in when the projection has flattened its ring nearly
+    // edge-on. The paint now says the same thing — `GIZMO_ORDER` stands over
+    // `RINGS_ORDER` in scene3d.js — so what wins the press is what is drawn on
+    // top.
+    //
+    // AND THE ARROWS COME BEFORE THE GRIP FOR THE THIRD CROSSING, which the
+    // DOM used to settle on its own: while the arrows were a layer of divs, a
+    // press where one lay over the grip was the arrow's, because the grip reads
+    // the CANVAS and a press on a div is not aimed at one. Both are meshes now
+    // and nothing but this order decides it. It stays the arrow's — the reader
+    // armed the Move tool and the manipulator is what they armed it for, where
+    // the grip is a handle on a cut that happens to be standing — and the
+    // crossing needs the two within a few pixels of each other, with either
+    // widget reachable anywhere else along its length.
     this.gizmo = createGizmo(this);
-    this.appendChild(this.gizmo.root);
-
-    // AND THE ROTATION HANDLES ARE NOT IN THIS STACK EITHER, for the grip's
-    // reason: they are three circles standing in the world plane each one's
-    // axis spans, so they have no root to append (`scene3d.js`). Their two
-    // lifecycle lines are in `show()` beside the grip's.
-    //
-    // WHAT THAT COSTS IS PAINT, and it is worth naming because this line used
-    // to buy it. These are the other half of the very widget above — one
-    // manipulator answering to one tool, so both are always on screen together
-    // — and being the last layer put a knob crossing an arrowhead OVER it.
-    // Every layer above is drawn on top of the canvas these are drawn INSIDE,
-    // so the arrowhead wins that crossing until the arrows move into the scene
-    // as well.
+    this.handle = createHandle(this);
     this.rings = createRings(this);
 
     setPointingDevice(this, initialPointingDevice(), false);
@@ -396,25 +399,26 @@ export class HmrViewport extends HTMLElement {
         if (!this.holdActive) return;
         this.holdActive = false;
         emit(this, EVENT_TOOL, { tool: this.state.tool || null, held: false });
-        // AND THE ARROWS COME BACK, which nothing else would do. The gizmo draws
-        // while `activeTool` is `move`, so the hold key took it off the screen
-        // and — its loop stopping when there is nothing to draw, as every layer
-        // over this canvas does (`layer.js`) — left it off. The way back is the
-        // wake-up, and the only events that carry one are `hmr:state` pushes:
-        // this release emits `hmr:tool` alone, which the interface answers with
-        // a local `setState` and no push at all. So the arrows stayed gone until
-        // the reader happened to click something in the tree.
+        // AND THE ARROWS COME BACK, which nothing else would do. The gizmo
+        // draws while `activeTool` is `move`, so the hold key took it off the
+        // screen and nothing put it back: the library draws ON DEMAND, and the
+        // only events that carry a wake-up are `hmr:state` pushes. This release
+        // emits `hmr:tool` alone, which the interface answers with a local
+        // `setState` and no push at all, so the arrows stayed gone until the
+        // reader happened to click something in the tree. What `refresh` asks
+        // the library for is one FRAME (`scene3d.js`).
         //
-        // NOT NEEDED ON `onHold`, and the asymmetry is the loop rather than an
-        // oversight: going the other way the loop is already running, so the
-        // frame already queued sees `activeTool` is now the cut, takes the
-        // arrows off and lets itself stop.
+        // NOT MATCHED ON `onHold`, which is the rotation handles' arrangement
+        // beside it and is the same reading: going the other way the widget
+        // stands until the next frame, and the very press that places the cut
+        // ends in one (`applySection`). What is left showing in between is a
+        // manipulator over a part nobody is about to move, for as long as the
+        // key is held and no press has arrived.
         this.gizmo.refresh();
-        // AND THE ROTATION HANDLES FOR THE SAME REASON, on the same tool, with
-        // one word changed: these are in the scene, so what `refresh` asks the
-        // library for is a FRAME rather than a loop's next turn. The release is
-        // still the one event that can bring either half back without an
-        // `hmr:state` behind it.
+        // AND THE ROTATION HANDLES FOR THE SAME REASON, on the same tool and in
+        // the same words: two widgets make one manipulator and neither is drawn
+        // by the other's frame. The release is still the one event that can
+        // bring either half back without an `hmr:state` behind it.
         this.rings.refresh();
       },
       onEscape: () => emit(this, EVENT_TOOL, { tool: null, held: false, escape: true }),
@@ -465,9 +469,11 @@ export class HmrViewport extends HTMLElement {
     if (this.viewcube) this.viewcube.destroy();
     if (this.handle) this.handle.destroy();
     if (this.gizmo) this.gizmo.destroy();
-    // AND THE RINGS, which own one thing the other three do not: a
-    // capture-phase `pointerdown` on the window that lives as long as the
-    // layer. Left behind it would answer for a scene that is gone.
+    // AND THE RINGS, which own one thing the other three do not: a SECOND pair
+    // of capture-phase window listeners of their own — the hand-over that ends
+    // a neighbour's gesture on any press, and the hover that decides which knob
+    // is lit — beside the pair `scene3d.js` keeps for every widget in the
+    // scene. Left behind they would answer for a scene that is gone.
     if (this.rings) this.rings.destroy();
     try {
       if (this.viewer) this.viewer.dispose();
@@ -743,11 +749,12 @@ export class HmrViewport extends HTMLElement {
       // press is taken in a window listener of its own, so neither the line above
       // nor the idle clock that defers this swap ever sees it.
       this.handle.endDrag();
-      // And a drag of an axis arrow is a THIRD one, on a layer that is a sibling
-      // of `this.box` too. It is concluded rather than abandoned for the reason
-      // `concludeMove` gives in tools.js: the part is standing displaced in
-      // `this.moved` with nothing in the document claiming it, and the next push
-      // would send it home under the reader's hand.
+      // And a drag of an axis arrow, a quad or the origin dot is a THIRD one,
+      // taken in a window listener of its own in the same way. It is concluded
+      // rather than abandoned for the reason `concludeMove` gives in tools.js:
+      // the part is standing displaced in `this.moved` with nothing in the
+      // document claiming it, and the next push would send it home under the
+      // reader's hand.
       this.gizmo.endDrag();
       // And a drag of a RING is a FOURTH, on a widget in the scene whose press
       // was taken in a window listener of its own — which the idle clock cannot
@@ -810,10 +817,11 @@ export class HmrViewport extends HTMLElement {
         // model's — and the group is built once and kept, so nothing would ever
         // build them again. This is the only call site there is.
         this.handle.detach();
-        // AND THE ROTATION HANDLES, whose one group stands in the same scene
-        // and would go the same way for the same reason — built once, kept
-        // across every scene the reader loads, and nothing left to build them
-        // again.
+        // AND THE MANIPULATOR'S TWO HALVES, whose groups stand in the same
+        // scene and would go the same way for the same reason — built once,
+        // kept across every scene the reader loads, and nothing left to build
+        // them again.
+        this.gizmo.detach();
         this.rings.detach();
         this.viewer.clear();
       }
@@ -822,6 +830,7 @@ export class HmrViewport extends HTMLElement {
       // THREE.Scene from the one detached above. The namespace is handed over
       // here because this is where the page has it; the widget keeps it.
       this.handle.attach(library.THREE);
+      this.gizmo.attach(library.THREE);
       this.rings.attach(library.THREE);
       // Only now does the widget exist to be measured; the first pass asked for
       // the whole container, so re-fit it to what is left once its own chrome is
@@ -981,9 +990,9 @@ export class HmrViewport extends HTMLElement {
     // this pass, and it is the one change to the grip that does not already end
     // in a render of the library's own.
     this.handle.refresh();
-    // The axis arrows keep a loop of the same shape and it stops itself whenever
-    // the Move tool is down or nothing is selected — both of which arrive as
-    // state, i.e. here. Same wake-up, same reason.
+    // The axis arrows, the quads and the origin dot come and go on the Move
+    // tool and the selection — both of which arrive as state, i.e. here. Same
+    // wake-up, same reason: they are placed by the library's render pass too.
     this.gizmo.refresh();
     // And the rotation handles, which come and go on exactly the same two
     // conditions asked about the same tool — placed by the library's render
