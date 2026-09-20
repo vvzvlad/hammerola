@@ -201,7 +201,9 @@ export function cellDirection(face, col, row) {
  *     which sets the POSITION and never aims the camera, and then
  *     `controls.update()`. Aiming is that call's job: `TrackballControls.update()`
  *     ends, for an orthographic camera, in `this.object.lookAt(this.target)`.
- *   * `lookAt` derives the camera's ROLL from `camera.up`, which is `[0, 0, 1]`
+ *   * `lookAt` — `Object3D.lookAt`, the one bullet here that is three's own code
+ *     and is read in static/_v/three.core.js rather than in the bundle —
+ *     derives the camera's ROLL from `camera.up`, which is `[0, 0, 1]`
  *     here (`up: "Z"` in options.js). When the view direction is PARALLEL to up
  *     the cross product that fixes the roll degenerates, and the roll that comes
  *     out is arbitrary.

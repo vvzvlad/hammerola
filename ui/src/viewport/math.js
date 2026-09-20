@@ -28,11 +28,12 @@ export const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1],
  * The first is the dangerous one and it is why this changed, but NOT for the
  * reason it looks like: `finite3` waves it through — every component is a
  * number — and it reaches the library as a normal of length zero, where nothing
- * blows up at all. Read off the vendored bundle rather than assumed:
+ * blows up at all. Read off static/_v/three.core.js rather than assumed:
  * `Vector3.normalize()` is `divideScalar( this.length() || 1 )`, so zero stays
  * zero (and `length()` squares too, so it would have reached zero from 1e200 on
  * its own). The clip plane is then `(0, 0, 0, w)`, and the fragment test
- * `if ( dot( vClipPosition, plane.xyz ) > plane.w ) discard;` becomes `0 > w`.
+ * `if ( dot( vClipPosition, plane.xyz ) > plane.w ) discard;` — that one is in
+ * static/_v/three.module.js, where the shader chunks live — becomes `0 > w`.
  * `w` is itself zero here — it is `value - normal . centre`, and with a zero
  * normal both terms vanish — so the test is `0 > 0`, which is FALSE. Nothing is
  * discarded, the model stays whole on screen, and the cut the reader asked for

@@ -8,7 +8,9 @@
 // nothing), the silences (an empty or degenerate solid produces no segments
 // and never a NaN in the buffer; the memo holds the rebuild off when the plane
 // did not move), and the library facts the harvest leans on, read straight
-// from the vendored bundle at the bottom of this file.
+// from the vendored files at the bottom of this file — the bundle for the
+// library's own code and for the fat-line addons, three's own two files for
+// three, which `external: three` has kept out of the bundle since the fork.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -32,8 +34,26 @@ import {
   fakeMatrix, fakeRenderer, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
 } from './fakes.js'
 
-const repoFile = (path) => readFileSync(resolve(process.cwd(), path), 'utf8')
+/** A repo file, MEMOISED: the three below are megabytes each and the last block
+ *  asks a dozen questions of them. */
+const sources = new Map()
+const repoFile = (path) => {
+  if (!sources.has(path)) {
+    sources.set(path, readFileSync(resolve(process.cwd(), path), 'utf8'))
+  }
+  return sources.get(path)
+}
+
+/** WHICH FILE HOLDS WHAT, since the fork in `viewer/` builds with
+ *  `external: three`. The bundle is three-cad-viewer's own code plus the
+ *  `three/examples/jsm` addons it imports — `LineMaterial`, `LineSegments2` and
+ *  their shaders are in here, not in three. three itself ships as two committed
+ *  npm artefacts: `three.module.js` (the WebGL renderer, which is where
+ *  `_maxInstanceCount` is written and clamped) importing `three.core.js` (the
+ *  materials and the scene graph, which is where `Material.copy` lives). */
 const BUNDLE = '../static/_v/three-cad-viewer.esm.js'
+const THREE_MODULE = '../static/_v/three.module.js'
+const THREE_CORE = '../static/_v/three.core.js'
 
 /** The eight corners of an axis-aligned box, numbered in z runs: 0-1-2-3 round
  *  the low-z face, then 4-5-6-7 above them. `CUBE_INDEX` is written against
@@ -1193,8 +1213,10 @@ describe('insideSection', () => {
   })
 })
 
-describe('the vendored bundle still says what the outline rests on', () => {
+describe('the vendored files still say what the outline rests on', () => {
   const bundle = () => repoFile(BUNDLE)
+  const threeCore = () => repoFile(THREE_CORE)
+  const threeModule = () => repoFile(THREE_MODULE)
   const classBody = (source, declaration) => {
     const start = source.indexOf(declaration)
     expect(start).toBeGreaterThanOrEqual(0)
@@ -1216,8 +1238,12 @@ describe('the vendored bundle still says what the outline rests on', () => {
   })
 
   it('turns shader clipping on in the LineMaterial constructor, so a clone keeps it', () => {
+    // TWO FILES, one sentence. `LineMaterial` is a `three/examples/jsm` addon
+    // and stays inside the bundle; the `copy` that carries the flag over to a
+    // clone is `Material.copy`, three's own, and `external: three` put that in
+    // three.core.js.
     expect(classBody(bundle(), 'class LineMaterial')).toContain('clipping: true')
-    expect(bundle()).toContain('this.clipping = source.clipping')
+    expect(threeCore()).toContain('this.clipping = source.clipping')
   })
 
   it('keeps worldUnits a shader define, which is what makes its ABSENCE readable', () => {
@@ -1234,8 +1260,9 @@ describe('the vendored bundle still says what the outline rests on', () => {
     expect(body).toContain('this.needsUpdate = true')
     // And a clone starts from its donor's defines, not from an empty set — so
     // an absence on the clone is the DONOR's absence and not an artefact of
-    // cloning.
-    expect(bundle()).toContain('this.defines = Object.assign( {}, source.defines )')
+    // cloning. That line is `Material.copy`'s, so it is three's own and lives in
+    // three.core.js rather than in the bundle the addon is built into.
+    expect(threeCore()).toContain('this.defines = Object.assign( {}, source.defines )')
   })
 
   it('divides the quad by the resolution in the branch the outline is drawn in', () => {
@@ -1317,9 +1344,10 @@ describe('the vendored bundle still says what the outline rests on', () => {
   })
 
   it('fades a LineMaterial with an ordinary opacity, so the ghost pass reaches an outline', () => {
-    // The accessor writes the uniform (:80616) and the fragment shader reads
-    // it as the whole of its alpha — no shader change is needed to ghost the
-    // outline.
+    // The accessor writes the uniform (`set opacity` in
+    // three/examples/jsm/lines/LineMaterial.js, which the bundle carries) and
+    // the fragment shader reads it as the whole of its alpha — no shader change
+    // is needed to ghost the outline.
     const body = classBody(bundle(), 'class LineMaterial')
     expect(body).toContain('get opacity()')
     expect(body).toContain('this.uniforms.opacity.value = value')
@@ -1345,16 +1373,21 @@ describe('the vendored bundle still says what the outline rests on', () => {
   })
 
   it('still caches the instance count on the geometry, which is why a fill replaces it', () => {
-    // THE REASON `writeSegments` EXISTS, held to the bundle so that a
+    // THE REASON `writeSegments` EXISTS, held to three's own source so that a
     // re-vendoring which removes the cache says so instead of leaving a
     // geometry swap nobody can explain — and so that the swap is not
     // "simplified" back into a refill in place.
+    //
+    // three.module.js and not the bundle: both lines are the WebGL renderer's
+    // (`WebGLBindingStates.setupVertexAttributes` writes the field,
+    // `renderBufferDirect` reads it), and `external: three` moved the renderer
+    // out of the bundle entirely.
     //
     // Two lines, and the pair is the mechanism: the count is written ONLY while
     // it is undefined, so it never follows a buffer that grew; and the draw
     // takes the smaller of it and the geometry's own count, so what the cache
     // holds is a CEILING on the segments that reach the screen.
-    const source = bundle()
+    const source = threeModule()
     expect(source, 'three no longer caches _maxInstanceCount on the geometry')
       .toContain('geometry._maxInstanceCount === undefined')
     expect(source, 'the draw no longer clamps the instance count')

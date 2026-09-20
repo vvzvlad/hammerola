@@ -1705,7 +1705,7 @@ export default class HammerolaViewer extends React.Component {
     // the bubble phase with Escape's rather than moving to capture the way
     // `holdkey.js` had to: `_handleKeyboardShortcut` is bound on the container
     // and returns before its keymap is consulted whenever ctrl, alt or meta is
-    // down (read off the bundle at :113836, not assumed).
+    // down (read off viewer/src/ui/display.ts:3203, not assumed).
     this._kd = (e) => {
       // MATCHED ON `code` AND NOT ON `key`, for the reason `holdkey.js` gives at
       // length about the hold key: `code` is the physical key, so this fires on

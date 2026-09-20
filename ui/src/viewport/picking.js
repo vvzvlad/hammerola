@@ -95,11 +95,12 @@ export function planePointAt(vp, g, ndc) {
  * Is this solid's cut face on screen at all?
  *
  * Two separate answers, because the library gives them in two separate places.
- * `cull` (bundle :91364) turns a cap mesh off when its solid is too small on
- * screen, over the frame budget, or not straddled by that plane — so a cap that
- * is not `visible` is not being drawn. HIDING a part does not touch the cap: it
- * writes `material.visible = false` on the front face and on the solid's own
- * stencil meshes (`setShapeVisible`, :82562), and the cap quad then renders
+ * `cull` (viewer/src/scene/clipping.ts:694) turns a cap mesh off when its solid
+ * is too small on screen, over the frame budget, or not straddled by that plane
+ * — so a cap that is not `visible` is not being drawn. HIDING a part does not
+ * touch the cap: it writes `material.visible = false` on the front face and on
+ * the solid's own stencil meshes (`setShapeVisible`,
+ * viewer/src/scene/objectgroup.ts:549), and the cap quad then renders
  * against a stencil nothing wrote, painting nothing. Both look identical on
  * screen and neither can be read off the other.
  */
@@ -123,10 +124,11 @@ function capOnScreen(unit, solid) {
  * answers with — or null when no cut stands, or when the cursor is not over one.
  *
  * The stencil cap that closes a cut off is the one thing on screen the id picker
- * cannot see. It is built by `Clipping._createStencils` (bundle :91254) out of a
- * quad with no component id on it, it joins no pick layer and it is in no
- * registry — and the route of giving it one is closed, because the pick pass
- * replaces every material with its own (`scene.overrideMaterial`, :84897), which
+ * cannot see. It is built by `Clipping._createStencils`
+ * (viewer/src/scene/clipping.ts:478) out of a quad with no component id on it,
+ * it joins no pick layer and it is in no registry — and the route of giving it
+ * one is closed, because the pick pass replaces every material with its own
+ * (`scene.overrideMaterial`, viewer/src/rendering/id-picking.ts:1221), which
  * kills the stencil that trims the quad to the part's silhouette and would paint
  * that id across the whole clipping rectangle. So a click on a cut face used to
  * name whatever lay BEHIND it — the menu opened there, and so did the plain
@@ -142,8 +144,8 @@ function capOnScreen(unit, solid) {
  * is nearer the reader than the cap is therefore at `d < 0` exactly when
  * `slope > 0` — and three.js discards on a NEGATIVE signed distance, so that is
  * exactly the case where nothing between the reader and the cap survives the
- * clip. The sign is read off the vendored bundle rather than remembered, because
- * getting it backwards is silent: `clipping_planes_vertex` sets
+ * clip. The sign is read off static/_v/three.module.js rather than remembered,
+ * because getting it backwards is silent: `clipping_planes_vertex` sets
  * `vClipPosition = -mvPosition.xyz`, `projectPlanes` packs the view-space
  * constant into `plane.w`, and the fragment chunk discards on
  * `dot(vClipPosition, plane.xyz) > plane.w`, i.e. on `-(n . p) > c`, i.e. on
@@ -179,9 +181,9 @@ function capOnScreen(unit, solid) {
  * THE PATH COMES BACK BY IDENTITY. `nestedGroup.groups` is keyed by the SLASH
  * path — the string the menu, the tree and `getStates` all agree on — while
  * `unit.solid.name` is the PIPE form the library writes for its own scene graph
- * (`path.replaceAll("/", this.delim)`, :87880). Reversing that spelling is
- * string surgery on a name a model is free to contain, so the key is found by
- * matching the group OBJECT instead.
+ * (`path.replaceAll("/", this.delim)`, viewer/src/scene/nestedgroup.ts:606).
+ * Reversing that spelling is string surgery on a name a model is free to
+ * contain, so the key is found by matching the group OBJECT instead.
  *
  * THE ANSWER'S SHAPE IS `pickEntity`'S, AND TWO OF ITS FIELDS MEAN LESS HERE.
  * `id`, `name` and `point` mean exactly what they mean there. `path` does NOT:

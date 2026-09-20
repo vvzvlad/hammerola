@@ -77,7 +77,7 @@
 //
 // THE ONE FRAGILITY, named so nobody has to rediscover it: this is string
 // surgery on three.js's own shader chunks, so it is pinned to the THREE version
-// inside the vendored bundle (r184 today) rather than to a release of
+// in static/_v/three.module.js (r184 today) rather than to a release of
 // three-cad-viewer. `patchCapMaterial` therefore checks that the marker it
 // splices at is still there and says so once if it is not — a hatch that
 // quietly stopped happening is the failure worth catching, because the page
@@ -90,7 +90,7 @@ const MARKER = "#include <opaque_fragment>";
  *  hatch's own declarations must be, since the marker below sits inside
  *  `main()`, where a declaration would not compile. First occurrence is the
  *  only one in that shader, and the suite proves it sits ahead of `MARKER` in
- *  the vendored bundle. */
+ *  static/_v/three.module.js. */
 const UNIFORM_ANCHOR = "uniform vec3 diffuse;";
 
 /** The two measurements of the hatch, IN TWO DIFFERENT PIXELS, and the split is
@@ -410,7 +410,7 @@ function hatchPitchPx() {
  * DECLARED, NOT JUST READ: the five identifiers exist for the GLSL compiler
  * only because `HATCH_UNIFORMS` is spliced in ahead of three.js's own uniform
  * block. Losing that splice is a shader that fails to compile — loud in the
- * console, and the suite holds the anchor to the vendored bundle for it.
+ * console, and the suite holds the anchor to static/_v/three.module.js for it.
  */
 export function hatchShader(shader) {
   const p = this && this.userData && this.userData.hatch;

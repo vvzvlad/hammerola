@@ -95,33 +95,46 @@ const compile = (material) => {
 // period under every test in this file that compiles anything.
 afterEach(() => { vi.unstubAllGlobals() })
 
-/** A file of this repository, read from `process.cwd()`.
+/** A file of this repository, read from `process.cwd()` and MEMOISED.
  *
  * From the cwd and not from `import.meta.url`: under jsdom the module URL is an
  * http one and `fileURLToPath` refuses it. Vitest runs with the cwd at its
  * config root, which is `ui/`.
  *
- * The one path below that leaves `ui/` is the vendored bundle, and it is the
- * reason the JS step of both workflows names `static/_v/three-cad-viewer.esm.js`
- * beside `./ui` in its tar. If this ever throws ENOENT in CI, that is the line
- * to look at — not this one.
+ * Memoised because the path below leaves `ui/` for a vendored file of three's
+ * that is most of a megabyte; read once per run rather than once per assertion.
+ * That path is also the reason the JS step of both workflows names the vendored
+ * `static/_v/` files beside `./ui` in its tar. If this ever throws ENOENT in CI,
+ * that is the line to look at — not this one.
  */
-const repoFile = (path) => readFileSync(resolve(process.cwd(), path), 'utf8')
+const sources = new Map()
+const repoFile = (path) => {
+  if (!sources.has(path)) {
+    sources.set(path, readFileSync(resolve(process.cwd(), path), 'utf8'))
+  }
+  return sources.get(path)
+}
 
-const BUNDLE = '../static/_v/three-cad-viewer.esm.js'
+/** three.js's own source, which is NO LONGER inside the viewer bundle: the fork
+ *  in `viewer/` builds with `external: three`, so the library and the page share
+ *  one instance loaded from here. `three.module.js` is the half that carries the
+ *  renderer and the shader chunks — `meshphysical_frag` among them — and it
+ *  imports `three.core.js` for the math and the scene graph. The bundle keeps
+ *  only the library's own code and the `three/examples/jsm` addons it uses. */
+const THREE_MODULE = '../static/_v/three.module.js'
 
-/** How three.js's `meshphysical_frag` opens, as the BUNDLE spells it: the quote
- *  that begins its literal, then the shader's first two lines with the newline
- *  between them still escaped. No other chunk starts this way. */
+/** How three.js's `meshphysical_frag` opens, as three.module.js spells it: the
+ *  quote that begins its literal, then the shader's first two lines with the
+ *  newline between them still escaped. No other chunk starts this way. */
 const PHYSICAL_OPENS = '"#define STANDARD\\n#ifdef PHYSICAL'
 
-/** `meshphysical_frag` alone, cut out of the vendored bundle.
+/** `meshphysical_frag` alone, cut out of the vendored three.module.js.
  *
- * WHY THE SHADER AND NOT THE FILE. Rollup leaves three.js's shader chunks as
+ * WHY THE SHADER AND NOT THE FILE. three's own build leaves its shader chunks as
  * ordinary double-quoted JS string literals with their newlines escaped, under
  * names it has mangled to nothing (`const fragment$5 = "#define STANDARD…"`),
- * and the bundle carries NINE copies of `#include <opaque_fragment>` — one per
- * material that ends the same way — beside ten of `uniform vec3 diffuse;`. A
+ * and the file carries NINE copies of `#include <opaque_fragment>` — one per
+ * material that ends the same way — beside nine of `uniform vec3 diffuse;`. A
  * search over the whole file therefore passes on any of the other eight, which
  * is a guard that cannot fail: the chunk could be renamed in the shader this
  * patches, and only there, while eight strangers kept the test green. Measured
@@ -130,7 +143,7 @@ const PHYSICAL_OPENS = '"#define STANDARD\\n#ifdef PHYSICAL'
  * opening and read to its closing quote, and everything below is asked of THAT.
  *
  * Nothing is unescaped on the way out: every probe below sits within one line of
- * the shader, so the escaped newlines can stay exactly as the bundle wrote them.
+ * the shader, so the escaped newlines can stay exactly as three wrote them.
  */
 function meshphysicalFragment(source) {
   expect(source.split(PHYSICAL_OPENS)).toHaveLength(2)   // exactly one shader opens this way
@@ -693,19 +706,21 @@ describe('hatchShader', () => {
   })
 
   it('splices at a chunk the VENDORED three.js still has', () => {
-    // THE UPGRADE GUARD, and the reason this test reads a 3.4 MB file. This is
-    // string surgery on three.js's shader chunks, so it is pinned to the THREE
-    // inside static/_v/three-cad-viewer.esm.js (r184 as this was written) rather
-    // than to a release of the viewer. A rename there costs the page its hatch
-    // and NOTHING ELSE: no error, no warning, a section that is simply a flat
-    // fill again. This is the only place that can notice.
+    // THE UPGRADE GUARD, and the reason this test reads most of a megabyte. This
+    // is string surgery on three.js's shader chunks, so it is pinned to the
+    // THREE the page actually loads — static/_v/three.module.js (r184 as this
+    // was written), which since `external: three` is a file of its own beside
+    // the viewer bundle rather than a passenger inside it — and not to a release
+    // of the viewer. A rename there costs the page its hatch and NOTHING ELSE:
+    // no error, no warning, a section that is simply a flat fill again. This is
+    // the only place that can notice.
     //
-    // `meshphysical_frag` and not the file: the bundle carries nine copies of
-    // this chunk name and only ONE of them is in the shader a
+    // `meshphysical_frag` and not the file: three.module.js carries nine copies
+    // of this chunk name and only ONE of them is in the shader a
     // `MeshStandardMaterial` compiles, which is what the library's cap is. See
     // `meshphysicalFragment` for what that costs and why the file-wide search it
     // replaced could not fail.
-    const shader = meshphysicalFragment(repoFile(BUNDLE))
+    const shader = meshphysicalFragment(repoFile(THREE_MODULE))
     const at = shader.indexOf(hatchMarker)
     expect(at).toBeGreaterThan(-1)
     // The two names the spliced code reads, which have to be declared ahead of

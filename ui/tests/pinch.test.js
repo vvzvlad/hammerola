@@ -3,11 +3,13 @@
 //
 // THE TRACKBALL IS FAKED AND THE FAKE IS TRANSCRIBED, not invented: the fields
 // this guard touches are `CADTrackballControls`' own
-// (static/_v/three-cad-viewer.esm.js :95037-95039) and `_holroydStart.copy` is
-// the same call the library's `_rotateCamera` ends with (:95356) — which is the
-// whole reason the guard has to make it by hand. `update(updateMarker, notify =
-// true)` is `Viewer.update` (:108919), and that DEFAULT is a fact the coalescing
-// rule leans on: an omitted `notify` is the strong value, not a missing one.
+// (viewer/src/camera/controls/CADTrackballControls.ts:63-65) and
+// `_holroydStart.copy` is the same call the library's `_rotateCamera` ends with
+// (viewer/src/camera/controls/CADTrackballControls.ts:498) — which is the whole
+// reason the guard has to make it by hand. `update(updateMarker, notify = true)`
+// is `Viewer.update` (viewer/src/core/viewer.ts:882), and that DEFAULT is a fact
+// the coalescing rule leans on: an omitted `notify` is the strong value, not a
+// missing one.
 //
 // The canvas is a REAL element and the container a real div, because the half
 // under test here is a capture listener on an ancestor and a `target` check

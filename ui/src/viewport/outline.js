@@ -7,7 +7,9 @@
 // resulting segments are laid down as a dark line in the plane, on the
 // library's fat-line stack — `LineSegments2` over a `LineSegmentsGeometry`
 // under a `LineMaterial`, harvested off a live solid's edge overlay because
-// the vendored bundle exports none of the three.
+// the bundle exports none of the three. The fork (`viewer/`) did not change
+// that: what `viewer/src/index.ts` re-exports is three's own namespace, and
+// all three of these are `three/examples/jsm` addons, which are not in it.
 //
 // ONE outline object per solid, a child of that solid's ObjectGroup: a
 // ghosted or rebuilt part carries its outline along for free. The
@@ -175,9 +177,10 @@ function outlineMaterial(classes, g) {
   // The cut plane's normal IN VIEW SPACE, rewritten before every draw by the
   // hook `sectionOutline` installs and read by the correction above. `w` stays
   // 0 until that hook has run once, which keeps the branch off before anything
-  // has been measured. A plain array rather than a `Vector4`: the vendored
-  // bundle exports no THREE symbols, and three's uniform setter takes an array
-  // for a `vec4` exactly as it takes a vector.
+  // has been measured. A plain array rather than a `Vector4`, which the fork
+  // now does put within reach (`viewer/src/index.ts` re-exports three): three's
+  // uniform setter takes an array for a `vec4` exactly as it takes a vector, so
+  // constructing one would buy nothing here.
   const cutNormal = { value: [0, 0, 1, 0] };
   material.userData = { ...(material.userData || {}), cutNormal };
   // NO `customProgramCacheKey` OF OUR OWN, for the reason `hatch.js` already
@@ -230,10 +233,12 @@ function writeCutNormal(outline, camera) {
  * than a tidiness. `setPositions` does replace the instanced buffer on the
  * geometry it is called on — and three caches HOW MANY INSTANCES IT MAY DRAW on
  * that same geometry, in `_maxInstanceCount`: `WebGLBindingStates
- * .setupVertexAttributes` (:61673) writes the field only while it
- * `=== undefined`, and `renderBufferDirect` (:76970) then draws
+ * .setupVertexAttributes` (static/_v/three.module.js:1908) writes the field only
+ * while it `=== undefined`, and `renderBufferDirect`
+ * (static/_v/three.module.js:17116) then draws
  * `min(instanceCount, _maxInstanceCount)`. Nothing recomputes it while the
- * geometry lives — the one thing that clears it is `dispose` (:63961) — so an
+ * geometry lives — the one thing that clears it is the geometry's dispose event
+ * (`delete geometry._maxInstanceCount`, static/_v/three.module.js:4254) — so an
  * outline built at one plane position and refilled at another goes on drawing
  * the number of segments it had AT BIRTH, silently, with the rest of the buffer
  * correct and never rasterised.

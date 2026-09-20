@@ -28,7 +28,7 @@ is only there if the dev dependencies were installed. A fixture generated on the
 fly would therefore be a JS suite that cannot run in the place it has to run.
 The committed file is ~150 KB (17 KB over the wire — it is JSON full of
 repeating float text and compresses ten to one), which is a rounding error next
-to the 3.5 MB vendored viewer already in this repository.
+to the 3.6 MB of viewer and three already in this repository.
 
 WHAT THE MODEL IS AND WHY IT IS THIS ONE. Small enough to commit, and
 deliberately not degenerate:

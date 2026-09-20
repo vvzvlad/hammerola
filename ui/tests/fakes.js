@@ -60,10 +60,11 @@ const norm = (a) => {
 
 // -- colours, for the selection ------------------------------------------------
 //
-// Transcribed from static/_v/three-cad-viewer.esm.js, not invented: the two
-// highlight colours the `HighlightController` module declares (:84938-84940) and
-// hands its shader as uniforms, and the per-plane colours `Clipping` starts
-// every cap material at (`PLANE_COLORS`, :90890) before `setObjectColorCaps`
+// Transcribed from the library's own source in viewer/, not invented: the two
+// highlight colours the `HighlightController` module declares
+// (viewer/src/rendering/highlight.ts:21-24) and hands its shader as uniforms,
+// and the per-plane colours `Clipping` starts every cap material at
+// (`PLANE_COLORS`, viewer/src/scene/clipping.ts:20) before `setObjectColorCaps`
 // writes the solids' own over them.
 
 /** Highlight colour for a SELECTED component — `HIGHLIGHT_COLOR_SELECTED`. */
@@ -248,15 +249,16 @@ export function fakeViewer({
     clipping: {
       clipPlanes: planes,
       setVisible: vi.fn(),
-      // `Clipping` starts this as `[]` (bundle :91131) and `_createStencils`
-      // fills it, so an empty array is what a scene with no solids in it looks
-      // like — not a missing field.
+      // `Clipping` starts this as `[]` (viewer/src/scene/clipping.ts:357) and
+      // `_createStencils` fills it, so an empty array is what a scene with no
+      // solids in it looks like — not a missing field.
       _capUnits: capUnits,
     },
     // `localClippingEnabled` is the renderer flag `Viewer.setLocalClipping`
-    // writes (:111235) and the only place the answer to "is a cut actually
-    // cutting" is kept. Modelled rather than spied on alone, because reading it
-    // back is how the menu decides whether a cut face can be under the cursor.
+    // writes (viewer/src/core/viewer.ts:2014) and the only place the answer to
+    // "is a cut actually cutting" is kept. Modelled rather than spied on alone,
+    // because reading it back is how the menu decides whether a cut face can be
+    // under the cursor.
     renderer: { domElement: canvas, localClippingEnabled: false },
     idPicker: {},
     nestedGroup: {
@@ -267,10 +269,11 @@ export function fakeViewer({
       width: rect.width,
       height: rect.height,
       // `HighlightController`: the two calls the selection pass makes, and the
-      // shared uniform objects its constructor builds (:85075-85082) — the
-      // selected colour is the one the patched fragment shader assigns to
-      // `diffuseColor.rgb`, and the cut-face tint is read off THIS object rather
-      // than off a number of its own.
+      // shared uniform objects its constructor builds
+      // (viewer/src/rendering/highlight.ts:241-248) — the selected colour is the
+      // one the patched fragment shader assigns to `diffuseColor.rgb`, and the
+      // cut-face tint is read off THIS object rather than off a number of its
+      // own.
       highlight: {
         clear: vi.fn(),
         selectSolid: vi.fn(),
@@ -368,12 +371,13 @@ export function fakeGroup(position = [0, 0, 0]) {
 
 // -- the section caps, for the hatch -------------------------------------------
 //
-// Transcribed from static/_v/three-cad-viewer.esm.js, not invented: the
-// `PlaneMesh` constructor (:91056-91101) and `Clipping._createStencils`
-// (:91254-91300), which is what builds `Clipping._capUnits` — one entry PER
-// SOLID, `{ solid, stencilGroups, capMeshes, radiusPx }`, with `capMeshes`
-// pushed plane-major so they are ordered by plane within the unit. The solids'
-// tree paths arrive with `/` already replaced by `|`, as the bundle spells it
+// Transcribed from the library's own source in viewer/, not invented: the
+// `PlaneMesh` constructor (viewer/src/scene/clipping.ts:244-263) and
+// `Clipping._createStencils` (viewer/src/scene/clipping.ts:478-563), which is
+// what builds `Clipping._capUnits` — one entry PER SOLID,
+// `{ solid, stencilGroups, capMeshes, radiusPx }`, with `capMeshes` pushed
+// plane-major so they are ordered by plane within the unit. The solids' tree
+// paths arrive with `/` already replaced by `|`, as the library spells it
 // (`group.name = path.replaceAll("/", this.delim)`, delim `|`).
 
 /** A world matrix as `Object3D.matrixWorld` carries one: column-major, as the
@@ -393,7 +397,8 @@ export function fakeMatrix({ scale = [1, 1, 1], position = [0, 0, 0] } = {}) {
  *  three.js's default no-op `onBeforeCompile`, the `userData` box every THREE
  *  material carries, and the `color` the cap is filled with — which
  *  `createStencilPlaneMaterial` is handed and `PlaneMesh`'s constructor then
- *  `set`s a second time from its own `color` argument (:91070). */
+ *  `set`s a second time from its own `color` argument
+ *  (viewer/src/scene/clipping.ts:255). */
 export function fakeCapMaterial(color = PLANE_COLORS[0]) {
   return {
     defines: { STANDARD: '' },
@@ -426,9 +431,10 @@ export function fakeCap(index, size, normal = [0, 0, 1], color = PLANE_COLORS[in
     plane: { normal: { x: nx, y: ny, z: nz }, constant: 0, center: [0, 0, 0] },
     size,
     center: [0, 0, 0],
-    // `Object3D.visible`, which is what `Clipping.cull` (:91364) writes to take
-    // a cap off the screen — so a cap that has not been culled starts true, the
-    // way every Object3D does.
+    // `Object3D.visible`, which is what `Clipping.cull`
+    // (viewer/src/scene/clipping.ts:694) writes to take a cap off the screen —
+    // so a cap that has not been culled starts true, the way every Object3D
+    // does.
     visible: true,
     material: fakeCapMaterial(color),
   }
@@ -436,8 +442,9 @@ export function fakeCap(index, size, normal = [0, 0, 1], color = PLANE_COLORS[in
 
 /** An `ObjectGroup` as `_createStencils` reads one: `name` is the tree path,
  *  and `front` carries the LOCAL bounding box the library computes at build
- *  time (`front.geometry.computeBoundingBox()`, bundle :87756) plus the
- *  `matrixWorld` that takes it to world. Defaults to the suite's 10 mm cube. */
+ *  time (`front.geometry.computeBoundingBox()`,
+ *  viewer/src/scene/nestedgroup.ts:851) plus the `matrixWorld` that takes it to
+ *  world. Defaults to the suite's 10 mm cube. */
 export function fakeSolidObject(name, { min = [0, 0, 0], max = [10, 10, 10], matrix } = {}) {
   return {
     name,
@@ -483,19 +490,24 @@ export function fakeCapUnits(solids, {
 
 // -- the fat-line stack, for the section outline -------------------------------
 //
-// Transcribed from static/_v/three-cad-viewer.esm.js, not invented. The trio
-// the outline harvests off a live solid's edges: `LineSegmentsGeometry
-// .setPositions` (:79789) keeps the segments in ONE interleaved buffer of
-// stride 6 — `instanceStart` reads xyz at offset 0, `instanceEnd` at offset 3
-// — and `LineMaterial` keeps `color`, `linewidth`, `resolution` and `opacity`
-// in uniforms its own accessor properties mirror, with shader clipping turned
-// on in the constructor and kept by `ShaderMaterial.copy` (:37707).
+// Transcribed from the vendored files, not invented. The trio the outline
+// harvests off a live solid's edges is `three/examples/jsm`, which the bundle
+// keeps carrying even though three itself is external to it now:
+// `LineSegmentsGeometry.setPositions`
+// (three/examples/jsm/lines/LineSegmentsGeometry.js) keeps the segments in ONE
+// interleaved buffer of stride 6 — `instanceStart` reads xyz at offset 0,
+// `instanceEnd` at offset 3 — and `LineMaterial`
+// (three/examples/jsm/lines/LineMaterial.js) keeps `color`, `linewidth`,
+// `resolution` and `opacity` in uniforms its own accessor properties mirror,
+// with shader clipping turned on in the constructor and kept by
+// `ShaderMaterial.copy`, which is three's own (static/_v/three.core.js:37712).
 //
 // `worldUnits` is not a field at all but a view onto the SHADER DEFINES
-// (:80460), which is why it is modelled here as one: the getter asks whether
-// `WORLD_UNITS` is in `defines`, and the setter raises `needsUpdate` when — and
-// only when — the flag actually changes. `defines` rides `ShaderMaterial.copy`
-// as its own fresh object, so a clone starts wherever its donor stood.
+// (`get`/`set worldUnits`, three/examples/jsm/lines/LineMaterial.js), which is
+// why it is modelled here as one: the getter asks whether `WORLD_UNITS` is in
+// `defines`, and the setter raises `needsUpdate` when — and only when — the flag
+// actually changes. `defines` rides `ShaderMaterial.copy` as its own fresh
+// object, so a clone starts wherever its donor stood.
 
 /** A `THREE.Vector2` as `LineMaterial.uniforms.resolution.value` holds one. */
 function fakeVector2(x = 0, y = 0) {
@@ -575,11 +587,12 @@ function LineSegmentsGeometry() {
   this.type = "LineSegmentsGeometry"
   this.instanceCount = 0
   this.setPositionsCalls = 0
-  // `BufferGeometry.dispose` (:19540) — it fires the event `onGeometryDispose`
-  // (:63928) answers, which is what releases the GPU buffer and the
-  // vertex-array object of a geometry nothing refers to any more. Recorded
-  // rather than ignored, because the contour hands its old geometry over to it
-  // on every refill and a leak there is silent.
+  // `BufferGeometry.dispose` (static/_v/three.core.js:19562) — it fires the
+  // event `onGeometryDispose` (static/_v/three.module.js:4221) answers, which is
+  // what releases the GPU buffer and the vertex-array object of a geometry
+  // nothing refers to any more. Recorded rather than ignored, because the
+  // contour hands its old geometry over to it on every refill and a leak there
+  // is silent.
   this.disposed = 0
 }
 
@@ -602,7 +615,7 @@ LineSegmentsGeometry.prototype.setPositions = function setPositions(array) {
 function LineSegments2(geometry, material) {
   this.isLineSegments2 = true
   // Via the `Mesh` base — what makes `_forEachMaterial` treat the outline as
-  // a mesh (`isMesh`, bundle :81773).
+  // a mesh (`isMesh`, static/_v/three.core.js:23040).
   this.isMesh = true
   this.type = "LineSegments2"
   this.geometry = geometry
@@ -612,7 +625,8 @@ function LineSegments2(geometry, material) {
   this.visible = true
 }
 
-// The library's own hook (bundle :81079-81090): before every draw it re-reads
+// The fat-line addon's own hook (`LineSegments2.onBeforeRender`,
+// three/examples/jsm/lines/LineSegments2.js): before every draw it re-reads
 // the viewport and writes it into the material's `resolution`, which is what
 // keeps `linewidth` a count of CSS pixels as the canvas resizes. Modelled here
 // because the section contour WRAPS it rather than replacing it, and a wrapper
@@ -628,7 +642,8 @@ export function fakeRenderer({ width = 800, height = 600 } = {}) {
   return { getViewport: () => ({ x: 0, y: 0, z: width, w: height }) }
 }
 
-/** A solid's `edges` overlay as `_renderEdges` (:87558) leaves it: a
+/** A solid's `edges` overlay as `_renderEdges`
+ *  (viewer/src/scene/nestedgroup.ts:483) leaves it: a
  *  `LineSegments2` over a fresh geometry, under a `LineMaterial` whose
  *  resolution the factory sets from the NestedGroup's own width and height.
  *  The geometry starts empty — the donor's own segments are the scene's edge
@@ -639,8 +654,9 @@ export function fakeEdges({ width = 800, height = 600 } = {}) {
   return new LineSegments2(new LineSegmentsGeometry(), material)
 }
 
-/** `BufferGeometry.computeBoundingBox` as renderShape triggers it (:87756):
- *  a scan of the position attribute — the index is not consulted. */
+/** `BufferGeometry.computeBoundingBox` as renderShape triggers it
+ *  (viewer/src/scene/nestedgroup.ts:851): a scan of the position attribute —
+ *  the index is not consulted. */
 function computeBoundingBox(geometry) {
   const { array } = geometry.attributes.position
   const min = { x: Infinity, y: Infinity, z: Infinity }
@@ -656,9 +672,10 @@ function computeBoundingBox(geometry) {
   geometry.boundingBox = { min, max }
 }
 
-/** An ObjectGroup as `NestedGroup.renderShape` (:87667) leaves one — the
- *  shape a GPU-less test can intersect. `front.geometry` carries the
- *  tessellation exactly as the bundle sets it: a position BufferAttribute of
+/** An ObjectGroup as `NestedGroup.renderShape`
+ *  (viewer/src/scene/nestedgroup.ts:690) leaves one — the shape a GPU-less test
+ *  can intersect. `front.geometry` carries the
+ *  tessellation exactly as the library sets it: a position BufferAttribute of
  *  xyz triples and the triangle index, the bounding box computed at build
  *  time, and the edges overlay attached only when the shape lists edges at
  *  all. `children` and `add` stand in for the Object3D base. */

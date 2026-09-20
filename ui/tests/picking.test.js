@@ -10,10 +10,12 @@
 // lays on it, and the answers are checked against the parts the plane actually
 // crosses.
 //
-// The bundle facts this correction rests on are read straight out of the
-// vendored file at the bottom, in the style outline.test.js and hatch.test.js
+// The vendored facts this correction rests on are read straight out of the
+// shipped files at the bottom, in the style outline.test.js and hatch.test.js
 // established: when three-cad-viewer is next updated they fail loudly, which is
-// the only warning available for a mechanism that reads private fields.
+// the only warning available for a mechanism that reads private fields. Since
+// the fork builds with `external: three` those facts live in two places — the
+// library's own code in the bundle, three's own in static/_v/three.module.js.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -30,8 +32,23 @@ import {
   fakeCapUnits, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
 } from './fakes.js'
 
-const repoFile = (path) => readFileSync(resolve(process.cwd(), path), 'utf8')
+/** A repo file, MEMOISED: the two below are megabytes each and every `it()` in
+ *  the last block would otherwise re-read one. */
+const sources = new Map()
+const repoFile = (path) => {
+  if (!sources.has(path)) {
+    sources.set(path, readFileSync(resolve(process.cwd(), path), 'utf8'))
+  }
+  return sources.get(path)
+}
+
+/** The library's own code, and three's. They are separate files since the fork
+ *  in `viewer/` started building with `external: three`: the bundle holds
+ *  three-cad-viewer plus the `three/examples/jsm` addons it uses, while three
+ *  itself — the clipping shader chunks among it — ships as three.module.js with
+ *  three.core.js behind it. */
 const BUNDLE = '../static/_v/three-cad-viewer.esm.js'
+const THREE_MODULE = '../static/_v/three.module.js'
 
 /** A cube of side 2 with its near-bottom corner at `origin`, two triangles per
  *  face — the same tessellation outline.test.js intersects, moved. */
@@ -427,8 +444,9 @@ describe('capOwnerAt', () => {
   })
 })
 
-describe('the vendored bundle still says what the cut-face menu rests on', () => {
+describe('the vendored files still say what the cut-face menu rests on', () => {
   const bundle = () => repoFile(BUNDLE)
+  const three = () => repoFile(THREE_MODULE)
 
   /** The body of one method, from its signature to the next method at the same
    *  indent — enough to ask what a single function does and does not do. */
@@ -523,9 +541,31 @@ describe('the vendored bundle still says what the cut-face menu rests on', () =>
     // lines carry it -- the vertex chunk's negation, the fragment chunk's
     // comparison, and what `projectPlanes` puts in `w` -- and together they
     // read as "discard where n . p + c < 0".
-    const source = bundle()
+    //
+    // ALL THREE ARE THREE'S OWN, so they are asked of three.module.js and not of
+    // the bundle: `external: three` took the clipping chunks and `WebGLClipping`
+    // out of it, and a `toContain` pointed at the bundle would now fail on a
+    // convention that never moved.
+    const source = three()
     expect(source).toContain('vClipPosition = - mvPosition.xyz;')
     expect(source).toContain('if ( dot( vClipPosition, plane.xyz ) > plane.w ) discard;')
     expect(source).toContain('dstArray[ i4 + 3 ] = plane.constant;')
+  })
+
+  it('names three by the URL the hub actually serves it at', () => {
+    // THE JOINT THE FORK HANGS ON, and it is held by nothing else. Two halves
+    // written in two files that never meet: `output.paths` in
+    // viewer/rollup.config.mjs decides the specifier inside the bundle, and
+    // `_serve_asset` in src/app.py decides the URL the hub answers. A typo in
+    // the first -- `/v/` for `/_v/` -- survives `make viewer`, survives this
+    // whole suite (which reads the file by its path in the repository, never
+    // through the bundle) and survives ci/smoke.py (which checks the file is IN
+    // the image, not that anything points at it). It fails in the browser, and
+    // only there: the page dies resolving a module and draws an empty canvas.
+    expect(bundle()).toContain("from '/_v/three.module.js'")
+    // And the re-export the last line of viewer/src/index.ts exists for: lose it
+    // on a rebase and our own code can no longer name the classes the library
+    // renders with, which is the other half of why three is external at all.
+    expect(bundle()).toContain('export { THREE }')
   })
 })

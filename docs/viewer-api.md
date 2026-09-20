@@ -1,8 +1,10 @@
 # three-cad-viewer: что доступно, когда её интерфейс погашен
 
-Проверено по вендоренному бандлу `static/_v/three-cad-viewer.esm.js` (версия 5.0.1,
-115812 строк) чтением кода, а не по документации: онлайн-документация к этой версии
-местами не соответствует. Номера строк — по этому файлу.
+Проверено чтением кода, а не по документации: онлайн-документация к версии 5.0.1
+местами ей не соответствует. Источник истины — исходники форка библиотеки в
+`viewer/`; ссылки ниже имеют вид `viewer/src/<файл>:<строка>` и ведут туда, а не в
+собранный бандл `static/_v/three-cad-viewer.esm.js`: бандл перестраивается
+`make viewer` и нумерацию строк не сохраняет.
 
 **Зачем документ.** Мы строим свой интерфейс поверх библиотеки, запуская её с
 `tools: false`. Всё ниже — ответ на вопрос «до чего мы дотягиваемся, когда её панель
@@ -16,19 +18,20 @@
 библиотеки создаётся и живёт, скрыт только UI.**
 
 ```js
-// :111081, в конце render()
+// viewer/src/core/viewer.ts:1720, в конце render()
 if (!this.state.get("tools")) {
     this.display.showToolsPanel(false);
     this.rendered.orientationMarker.setVisible(false);
 }
 ```
 
-`showToolsPanel` (:113918) правит `style.display` у дерева, значка сворачивания,
-маркера ориентации и слайдера анимации. `showTools` (:113368) — у тулбара и навигации.
-Больше ничего.
+`showToolsPanel` (`viewer/src/ui/display.ts:3458`) правит `style.display` у дерева,
+значка сворачивания, маркера ориентации и слайдера анимации. `showTools`
+(`viewer/src/ui/display.ts:1874`) — у тулбара и навигации. Больше ничего.
 
 DOM шаблона создаётся целиком и безусловно (`container.innerHTML = TEMPLATE(...)`,
-:113943), кнопки — тоже (:114095–114127; флаги `measureTools`/`selectTool`/`explodeTool`
+`viewer/src/ui/display.ts:397`), кнопки — тоже (`viewer/src/ui/display.ts:593–749`;
+флаги `measureTools`/`selectTool`/`explodeTool`
 управляют только `button.show()`). `Display.getElement` при промахе возвращает
 `document.createElement("div")` — то есть **не бросает**. Ничего не найдено, что падало
 бы из-за отсутствующего элемента панели.
@@ -36,14 +39,18 @@ DOM шаблона создаётся целиком и безусловно (`c
 Форк ради собственного интерфейса не нужен. Единственное, ради чего он может
 понадобиться, — отсутствие `external: three` в её rollup-конфиге, из-за чего к её
 экземпляру three.js не подцепить аддоны (`TransformControls` под ручки секущей
-плоскости).
+плоскости). Ровно это и произошло: библиотека форкнута в `viewer/`, её rollup-конфиг
+собирается с `external: three`, а сам three.js приезжает отдельными файлами
+`static/_v/three.module.js` и `static/_v/three.core.js`.
 
 ### Что при этом остаётся видимым и мешает
 
 `div.tcv_status_line` и обе измерительные панели лежат в `tcv_cad_view`, а не в тулбаре,
 поэтому `showTools(false)` их не трогает. Ховер-преселект включён всегда
-(`hoverPreselectActive()`, :97545 — гасится только для формата GDS и в Studio-режиме) и
-на каждом движении мыши пишет в `display.setStatusLine(text)` (:97626 → :114328) бейдж
+(`hoverPreselectActive()`, `viewer/src/core/picking-controller.ts:160` — гасится только
+для формата GDS и в Studio-режиме) и на каждом движении мыши пишет в
+`display.setStatusLine(text)` (`viewer/src/core/picking-controller.ts:248` →
+`viewer/src/ui/display.ts:951`) бейдж
 вида `Circle: r ≈ 5.00, c ≈ (...), len ≈ 31.42` поверх канваса.
 
 **Его надо погасить.** Но он же и подарок: `setStatusLine` — обычный метод, его можно
@@ -60,16 +67,18 @@ mesh-бэкенд, считающий из тесселяции, без пито
 Создаётся безусловно, в конструкторе `Viewer`, от `tools` не зависит:
 
 ```js
-this.cadTools    = new Tools(this);                                    // :110367
-this.meshBackend = new MeshMeasureBackend(() => this.compactNestedGroup?.meshGeometry ?? null); // :110368
+this.cadTools    = new Tools(this);                                    // viewer/src/core/viewer.ts:466
+this.meshBackend = new MeshMeasureBackend(() => this.compactNestedGroup?.meshGeometry ?? null); // viewer/src/core/viewer.ts:467
 ```
 
 ### Публичный API
 
-**`viewer.meshBackend.distance(path1, path2, center)`** — :86623
+**`viewer.meshBackend.distance(path1, path2, center)`** —
+`viewer/src/tools/cad_tools/mesh-measure.ts:1536`
 
 `center: false` даёт **минимальное** расстояние (точный branch-and-bound по BVH,
-:86300), `true` — между центроидами. Возвращает `null`, если путь не разрезолвился.
+`viewer/src/tools/cad_tools/mesh-measure.ts:1163`), `true` — между центроидами.
+Возвращает `null`, если путь не разрезолвился.
 
 ```js
 {
@@ -83,7 +92,8 @@ this.meshBackend = new MeshMeasureBackend(() => this.compactNestedGroup?.meshGeo
 }
 ```
 
-**`viewer.meshBackend.properties(path)`** — :86563
+**`viewer.meshBackend.properties(path)`** —
+`viewer/src/tools/cad_tools/mesh-measure.ts:1479`
 
 ```js
 {
@@ -95,7 +105,7 @@ this.meshBackend = new MeshMeasureBackend(() => this.compactNestedGroup?.meshGeo
 }
 ```
 
-Состав `result` (:86569–86612):
+Состав `result` (`viewer/src/tools/cad_tools/mesh-measure.ts:1485–1521`):
 
 | Топология | Что приходит |
 | --- | --- |
@@ -104,11 +114,11 @@ this.meshBackend = new MeshMeasureBackend(() => this.compactNestedGroup?.meshGeo
 | face | `center`, `area`, `angle to XY`, `bb` |
 | solid | `volume`, `bb` |
 
-`bb` (:85592) = `{min, center, max, size}`.
+`bb` (`viewer/src/tools/cad_tools/mesh-measure.ts:355`) = `{min, center, max, size}`.
 
 ### Формат пути
 
-Регэксп :86338:
+Регэксп `viewer/src/tools/cad_tools/mesh-measure.ts:1233`:
 
 ```
 /^(.*)\/(faces|edges|vertices)\/(?:faces|edges|vertices)_(\d+)$/
@@ -124,65 +134,75 @@ this.meshBackend = new MeshMeasureBackend(() => this.compactNestedGroup?.meshGeo
 инструментов и панелей, синхронный возврат.
 
 В `notifyCallback` числа измерения **не приходят никогда**. Наружу уходит только
-`selectedShapeIDs` — какие пути выбраны (:96868); это хук для внешнего питоновского
-бэкенда. При `externalMeasurementBackend: false` ответ считается локально и оседает
-внутри (`Tools.handleResponse` :97274 → `measurement.responseData` → панель).
+`selectedShapeIDs` — какие пути выбраны (`viewer/src/tools/cad_tools/measure.ts:404`);
+это хук для внешнего питоновского бэкенда. При `externalMeasurementBackend: false`
+ответ считается локально и оседает внутри (`Tools.handleResponse`
+`viewer/src/tools/cad_tools/tools.ts:239` → `measurement.responseData` → панель).
 
 Отсюда полезная связка: слушать `selectedShapeIDs` и на нём самим звать `meshBackend` —
 получается «человек ткнул мышью, мы посчитали».
 
-`viewer.cadTools.answerMeasurement(payload)` (:97257) работает **только** при уже
+`viewer.cadTools.answerMeasurement(payload)`
+(`viewer/src/tools/cad_tools/tools.ts:215`) работает **только** при уже
 включённом инструменте, иначе тихий no-op, и результат уходит в панель, а не наружу.
 
 ### Единиц нет, и это имеет последствия
 
 Числа — в тех координатах, в которых пришла тесселяция; конвертации в коде не
-существует. Координаты **мировые**, с учётом трансформаций сборки (:86414–86419).
+существует. Координаты **мировые**, с учётом трансформаций сборки
+(`viewer/src/tools/cad_tools/mesh-measure.ts:1326–1346`).
 
 Отсюда два следствия, оба признаны в самом коде:
 
 - **Explode и анимация разносят детали, поэтому расстояния МЕЖДУ деталями поедут.**
-  Комментарий :97595–97599: кэшируются только «coord-free» величины (площадь грани,
-  объём солида), всё с координатами пересчитывается каждый раз.
-- **Z-scale искажает измерения.** `setZscaleValue` (:111484) масштабирует группу, рядом
+  Комментарий `viewer/src/core/picking-controller.ts:225–229`: кэшируются только
+  «coord-free» величины (площадь грани, объём солида), всё с координатами
+  пересчитывается каждый раз.
+- **Z-scale искажает измерения.** `setZscaleValue` (`viewer/src/core/viewer.ts:3173`)
+  масштабирует группу, рядом
   `invalidateHoverCache()` с комментарием «world-space lengths/areas/coords change with
   z-scale».
 
 Внутри одной детали (толщина стенки, диаметр отверстия, длина ребра) всё честно всегда.
 
-Точность (:85336–85338): `shape_type` и `geom_type` **точные**, числа mesh-accurate —
-точные для плоских граней и прямых рёбер, в пределах deflection тесселяции для кривых.
-Радиус окружности — подгонка по полилинии (:85513), поэтому библиотека печатает его
+Точность (`viewer/src/tools/cad_tools/mesh-measure.ts:28–29`): `shape_type` и
+`geom_type` **точные**, числа mesh-accurate — точные для плоских граней и прямых рёбер,
+в пределах deflection тесселяции для кривых. Радиус окружности — подгонка по полилинии
+(`viewer/src/tools/cad_tools/mesh-measure.ts:269`), поэтому библиотека печатает его
 с `≈`.
 
 ---
 
 ## 3. Полупрозрачность отдельной детали — публичного API нет, путь есть
 
-`viewer.setTransparent(flag)` (:109481) и `setOpacity(v)` (:109528) — **глобальные**:
-внутри `_traverse` по всем группам (:88124, :88153). Точечно не применяются.
+`viewer.setTransparent(flag)` (`viewer/src/core/viewer.ts:2466`) и `setOpacity(v)`
+(`viewer/src/core/viewer.ts:2542`) — **глобальные**: внутри `_traverse` по всем группам
+(`viewer/src/scene/nestedgroup.ts:1386` и `:1418`). Точечно не применяются.
 `viewerOptions.transparent` — тоже глобальный, применяется один раз при `render()`
-(:110811).
+(`viewer/src/core/viewer.ts:1319`).
 
 Точечный путь — через группу детали:
 
 ```js
 const group = viewer.nestedGroup.groups[path];   // path — ключ из getStates()
 group.opacity = 0.25;
-group.setTransparent(true);                       // :82497
+group.setTransparent(true);                       // viewer/src/scene/objectgroup.ts:480
 viewer.update(true, false);
 ```
 
-`ObjectGroup.setTransparent` (:82497) ставит `opacity = flag ? this.opacity * this.alpha
+`ObjectGroup.setTransparent` (`viewer/src/scene/objectgroup.ts:480`) ставит
+`opacity = flag ? this.opacity * this.alpha
 : this.alpha` фронтальному и обратному мешам и правит `depthWrite`. Безопасно, потому
-что `MaterialFactory._createBaseProps` (:83420) ставит `transparent: true` **всем**
+что `MaterialFactory._createBaseProps` (`viewer/src/rendering/material-factory.ts:181`)
+ставит `transparent: true` **всем**
 face-материалам всегда — пересборка шейдера не нужна. В CAD-режиме материал у каждой
 детали свой.
 
 **Ограничения:**
 
 - **Studio-режим ломает точечность**: материалы там шарятся через `_studioMaterialCache`
-  (:87404) по `sharingKey`, и правка `front.material.opacity` протечёт на все детали с
+  (`viewer/src/scene/nestedgroup.ts:1546–1549`) по `sharingKey`, и правка
+  `front.material.opacity` протечёт на все детали с
   тем же материалом. В CAD-режиме проблемы нет.
 - Глобальный `viewer.setTransparent`/`setOpacity` **перетрёт** точечную настройку.
   Смешивать нельзя: либо наш слой, либо её тумблер.
@@ -197,15 +217,17 @@ face-материалам всегда — пересборка шейдера �
 
 ```js
 { "/путь/листа": [shapeState, edgesState] }
-const States = { unselected: 0, selected: 1, mixed: 2, disabled: 3 };   // :89596
+const States = { unselected: 0, selected: 1, mixed: 2, disabled: 3 };   // viewer/src/rendering/tree-model.ts:4
 ```
 
 `[0]` — тело, `[1]` — рёбра. `2` (mixed) вычисляется автоматически для узлов
-(`_updateParentStates`, :89884); для листа задавать бессмысленно — `setState` (:89828)
-сравнивает строго с `selected`, так что `2` = «скрыть». `3` (disabled) — иконки нет
-вовсе, записать нельзя.
+(`_updateParentStates`, `viewer/src/rendering/tree-model.ts:383`); для листа задавать
+бессмысленно — `setState` (`viewer/src/rendering/tree-model.ts:314`) сравнивает строго
+с `selected`, так что `2` = «скрыть». `3` (disabled) — иконки нет вовсе, записать
+нельзя.
 
-Цепочка: `setState` → `toggleNodeState` → `Viewer.setObject` (:109181) →
+Цепочка: `setState` → `toggleNodeState` → `Viewer.setObject`
+(`viewer/src/core/viewer.ts:2032`) →
 `ObjectGroup.setShapeVisible` / `setEdgesVisible`. **Прозрачности здесь нет.**
 
 Работает при `tools: false`: DOM дерева скрыт, но модель — источник истины, `setObject`
@@ -217,21 +239,23 @@ const States = { unselected: 0, selected: 1, mixed: 2, disabled: 3 };   // :8959
 ## 5. Выделение детали
 
 Шейдерная подсветка через R8UI-текстуру состояний, per-object материалы не трогаются.
-`HighlightController` (:85061) живёт как `viewer.nestedGroup.highlight`.
+`HighlightController` (`viewer/src/rendering/highlight.ts:204`) живёт как
+`viewer.nestedGroup.highlight`.
 
 ```js
 const hl = viewer.nestedGroup.highlight;   // null до render()
-hl.selectSolid(path, true);                // :85195
+hl.selectSolid(path, true);                // viewer/src/rendering/highlight.ts:376
 viewer.update(true, false);
-hl.clear();                                // :85197
+hl.clear();                                // viewer/src/rendering/highlight.ts:385
 ```
 
-- красит **только грани** (`topo === "face"`, :85190) — осознанно, рёбра остаются
-  своего цвета;
+- красит **только грани** (`topo === "face"`, `viewer/src/rendering/highlight.ts:378`) —
+  осознанно, рёбра остаются своего цвета;
 - `solidPath` — тот же ключ, что в `getStates()`; у не-солида он `null`, там нужен
   `setSelected(id, true)` по конкретным id из
-  `[...viewer.nestedGroup.registry.entries()]` (:84090);
-- цвета захардкожены (`0x53a0e3` выделение, `0x89b9e3` ховер, :84938/84940), меняются
+  `[...viewer.nestedGroup.registry.entries()]` (`viewer/src/rendering/id-picking.ts:204`);
+- цвета захардкожены (`0x53a0e3` выделение, `0x89b9e3` ховер,
+  `viewer/src/rendering/highlight.ts:21` и `:24`), меняются
   через `hl.uniforms.uHighlightSelectedColor.value.set(...)` — необходимость
   `needsUpdate` не проверена;
 - требует рендера: `viewer.update(true, false)`.
@@ -240,8 +264,9 @@ hl.clear();                                // :85197
 `viewer.setSelectionInput(false)` (при `tools: false` и без активного инструмента он и
 так выключен).
 
-Рамка вокруг детали — `viewer.setBoundingBox(id)` (:109215), **тумблер**; снять явно
-`viewer.removeLastBbox()` (:111256). Учесть: `handlePick` строит `id` как
+Рамка вокруг детали — `viewer.setBoundingBox(id)` (`viewer/src/core/viewer.ts:2074`),
+**тумблер**; снять явно `viewer.removeLastBbox()` (`viewer/src/core/viewer.ts:2176`).
+Учесть: `handlePick` строит `id` как
 `` `${path}/${name}` ``, то есть родитель + имя, в отличие от остальных API, где путь
 целиком.
 
@@ -251,13 +276,16 @@ hl.clear();                                // :85197
 
 `setClipNormal`, `setClipSlider`, `resetClip`, `getClipNormal`/`getClipSlider` работают.
 **Но визуально ничего не обрежется**, пока `renderer.localClippingEnabled === false`, а
-в конце `render()` стоит `this.setLocalClipping(false)` (:111066) с комментарием «only
-allow clipping when Clipping tab is selected»; `true` ставится только из
-`switchToTab("clip")` (:114969) — куда при `tools: false` не попасть.
+в конце `render()` стоит `this.setLocalClipping(false)`
+(`viewer/src/core/viewer.ts:1697`) с комментарием «only allow clipping when Clipping tab
+is selected»; `true` ставится только из `switchToTab("clip")`
+(`viewer/src/ui/display.ts:2119`) — куда при `tools: false` не попасть.
 
-Лечится `viewer.setLocalClipping(true)` (:111235). Для торцевых крышек дополнительно
-нужен `clipping.setVisible(true)`: в `render()` стоит `setVisible(false)` (:111067), а
-`Clipping.cull(..., clipActive)` (:91364) при `false` гасит все стенсилы и cap-меши.
+Лечится `viewer.setLocalClipping(true)` (`viewer/src/core/viewer.ts:2014`). Для торцевых
+крышек дополнительно нужен `clipping.setVisible(true)`: в `render()` стоит
+`setVisible(false)` (`viewer/src/core/viewer.ts:1699`), а
+`Clipping.cull(..., clipActive)` (`viewer/src/scene/clipping.ts:694`) при `false` гасит
+все стенсилы и cap-меши.
 
 **У нас это уже решено** — `keepSectionCut()` в `ui/src/viewport/section.js`,
 перенесённый из страничного вьювера, который был до React-интерфейса. Логику не
@@ -270,12 +298,14 @@ allow clipping when Clipping tab is selected»; `true` ставится толь
 
 ## 7. Единственный систематический источник исключений
 
-Геттер `this.rendered` (:108819) бросает `Error("Viewer.render() must be called before
+Геттер `this.rendered` (`viewer/src/core/viewer.ts:307`) бросает
+`Error("Viewer.render() must be called before
 this operation")`, если `render()` ещё не вызван. Это **не связано с `tools`** — только
 с порядком вызовов, и затрагивает почти все сеттеры.
 
 Осторожно: `?.` от бросающего геттера не спасает. В самом коде это отмечено в
-`onIdHoverLeave` (:97440–97444) — там сначала проверяют `host.ready`.
+`onIdHoverLeave` (`viewer/src/core/picking-controller.ts:143–150`) — там сначала
+проверяют `host.ready`.
 
 Тихие no-op (не падают): `setStates` при `_rendered === null`, `setAxes`/`setAmbientLight`
 при `!ready`, `getImage` при `!ready` (вернёт `dataUrl: null`), `update()` при `!ready`,
@@ -293,9 +323,10 @@ this operation")`, если `render()` ещё не вызван. Это **не �
 2. Достаточность `setLocalClipping(true)` без `setActiveTab("clip")` для крышек.
 3. Флаг `transparent` у `LineMaterial` (прозрачность рёбер).
 4. Нужен ли `needsUpdate` после смены цвета подсветки через uniform.
-5. Наличие `tcv_measure_subheader` в шаблоне: `PropertiesPanel.setSubHeader` (:96372)
-   обращается к элементу без guard-а и теоретически может бросить.
+5. Наличие `tcv_measure_subheader` в шаблоне: `PropertiesPanel.setSubHeader`
+   (`viewer/src/tools/cad_tools/ui.ts:344`) обращается к элементу без guard-а и
+   теоретически может бросить.
 6. Где вешаются слушатели `KeyMapper`/`setKeyMap` и гасятся ли они при `tools: false`.
 7. Поведение mesh-бэкенда на формате GDS: `meshGeometry` регистрируется, но наличие
    `face_types`/`edge_types` не проверено; ховер-преселект для GDS библиотека отключает
-   явно (:97546).
+   явно (`viewer/src/core/picking-controller.ts:161`).
