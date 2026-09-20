@@ -468,10 +468,6 @@ def make_handler(store: Store, comment_store: CommentStore,
     publish_slots = threading.BoundedSemaphore(MAX_CONCURRENT_PUBLISHES)
     edit_token = settings.edit_token
     max_build_bytes = settings.max_build_bytes
-    # This hub's own answer about the proposal panel, read once per server for
-    # the reason the two above are: the settings object belongs to THIS hub, and a
-    # test stands up several in one process.
-    proposal_panel = settings.proposal_panel
 
     class HubHandler(BaseHTTPRequestHandler):
         # HTTP/1.1 for keep-alive: a build page pulls meta.json, builds.json and a
@@ -614,18 +610,10 @@ def make_handler(store: Store, comment_store: CommentStore,
             somebody adds. `page` names only WHICH template — everything else is
             decided here, so the three call sites have nothing left to disagree
             about.
-
-            TWO THINGS ARE STAMPED NOW and only one of them is the reader's. The
-            theme comes from their cookie, per request; the proposal panel is
-            this HUB's setting, the same for everybody and fixed at startup —
-            which is why it is read off `settings` here rather than off anything
-            the request carries. It goes through the same door so that there stays
-            one place deciding what a page is stamped with; the two templates
-            with no such attribute are unaffected by it (`render._template`).
             """
             theme = render.cookie_theme(self.headers.get("Cookie", ""))
-            self._send(200, page(theme, proposal_panel).encode("utf-8"),
-                       HTML_TYPE, CACHE_NONE, PAGE_HEADERS, with_body)
+            self._send(200, page(theme).encode("utf-8"), HTML_TYPE, CACHE_NONE,
+                       PAGE_HEADERS, with_body)
             return None
 
         def _serve_index_json(self, with_body: bool):

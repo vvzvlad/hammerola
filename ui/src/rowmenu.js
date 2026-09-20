@@ -17,8 +17,7 @@
  * section that needs them — `compared`, `narrow`, the catalogue, and the one
  * `clearSection` this menu shares with the section popover — and the few
  * lookups that stay beside the component because something else there needs
- * them too: `partRecord` and `fileList` for the files, `noteFor` for the note,
- * `proposalPanelOn` for whether this hub has a proposal panel at all.
+ * them too: `partRecord` and `fileList` for the files, `noteFor` for the note.
  */
 import { countedName } from './hub.js';
 import { SANS } from './style.jsx';
@@ -29,7 +28,7 @@ export function rowMenu(s, deps) {
     tree, viewer, narrow, compared, catalogue, anyDownloads, fileHref,
     clearSection, stop, SECTION_ROW,
     // -- the lookups that stay beside the component
-    noteFor, partRecord, fileList, proposalPanelOn,
+    noteFor, partRecord, fileList,
     // -- the page's own doors
     node: nodeAt, proposalBody, set, setState,
     setVisibility, toast, toggle,
@@ -278,7 +277,7 @@ export function rowMenu(s, deps) {
       // screen at all, is worse than no row: `Note` and the file rows already
       // stand off a group for reasons of their own, and this is a third.
       //
-      // THREE MORE THINGS TAKE IT AWAY, each answering a different question.
+      // TWO MORE THINGS TAKE IT AWAY, each answering a different question.
       // `viewer` is about who the reader IS: both kinds of drag end in the
       // proposal document, which travels to the agent as a comment and is
       // behind the token either way, so a reader without one has nothing to
@@ -288,26 +287,10 @@ export function rowMenu(s, deps) {
       // there is no room to aim on a phone, and a row that armed one anyway
       // would hand back exactly what narrow takes away.
       //
-      // AND THE THIRD IS WHETHER THIS HUB HAS A PANEL AT ALL. `proposal_panel`
-      // is off by default (src/settings.py), and where it is off the panel is
-      // left out of the tree entirely (`v.proposalOn` in `render`) — so a
-      // displacement would have nowhere to be. It IS a node of the proposal
-      // now: no panel means no row saying a part is out of place, no `×` to
-      // put it back, and no projection to send it to the agent in, which is
-      // ui-brief block 6 unanswered in all three of its parts. The part would
-      // simply stand displaced until the next rebuild. Offering the tool and
-      // then dropping what it produces is worse than not offering it.
-      //
-      // `proposalPanelOn()` DIRECTLY and not `v.proposalOn`, because this
-      // module is handed the question rather than the answer: that key is
-      // part of the object `computed()` is still assembling when this runs.
-      // The call is one attribute lookup and the function's own note says it
-      // is meant to be spent where the answer is wanted.
-      //
-      // The comparison is the fourth, and it is the `compared` block this list
+      // The comparison is the third, and it is the `compared` block this list
       // sits inside rather than a condition here: a drag inside one puts a `/cmp/…` path in `partId`,
       // which is what `toolsOff` refuses everywhere else.
-      ...(viewer || narrow || mNode.isNode || !proposalPanelOn() ? [] : [
+      ...(viewer || narrow || mNode.isNode ? [] : [
         mi('Move', '', () => {
           set({ sel: mNode.id, selName: mNode.name, tool: 'move' });
           toast(armedSaid(mNode.id));

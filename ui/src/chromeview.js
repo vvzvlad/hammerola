@@ -36,7 +36,7 @@ import { MONO, SANS } from './style.jsx';
 export function chromeView(s, props, deps) {
   const {
     // -- what `computed()` has already worked out
-    meta, viewer, narrow, stop, proposalOn,
+    meta, viewer, narrow, stop,
     // -- the other panels' answers, drawn by controls that live up here
     revRows, downloadGroups, threads, openCount,
     // -- the lookups and constants that stay beside the component
@@ -555,15 +555,6 @@ export function chromeView(s, props, deps) {
     // proposal produces is stored on the hub under the same token, so a reader
     // who cannot edit has nowhere to put it.
     //
-    // AND ABSENT — not hidden — ON A HUB THAT DID NOT ASK FOR THE FEATURE. That
-    // is a DIFFERENT KIND of gate from the token above, and the difference is
-    // who is being answered: the token is about this READER, who cannot use a
-    // feature the hub does serve, and `display:none` is the right answer to
-    // it. The flag is about this HUB, which never asked for the feature at
-    // all (`proposalPanelOn`, decided before the page was sent) — and the right
-    // answer to that is no markup, so the button and its menu are wrapped in
-    // `v.proposalOn` in `render` and the styles below say nothing about it.
-    //
     // AND NOT TAKEN OUT OF SERVICE BY A COMPARISON, unlike all three. What
     // `toolsOff` guards is a task filed in the BUILD's terms against a scene
     // that is not the build — a `/cmp/…` path in `partId`. A body added here
@@ -580,9 +571,6 @@ export function chromeView(s, props, deps) {
     tProposal: stop(() => setState({
       opsOpen: !s.opsOpen, revOpen: false, dlOpen: false, viewsOpen: false,
       tokenPop: false, menu: null })),
-    // THE FLAG ITSELF, because `render` is where it is spent: it decides
-    // whether these two nodes exist, not how they look.
-    proposalOn,
     proposalBtnStyle: btn(s.opsOpen, viewer, false),
     // THE CARD, drawn exactly as the view switcher's is and for exactly the same
     // reasons — upwards from the button, no `z-index` of its own (the toolbar is

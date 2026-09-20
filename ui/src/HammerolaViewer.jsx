@@ -361,38 +361,6 @@ const NUDGE_QUIET_MS = 100;
 // for, and who calls it.
 const PROPOSAL_SAVE_MS = 800;
 
-// -- whether this hub serves the proposal panel at all ------------------------
-//
-// THE HUB'S ANSWER, STAMPED ON `<html>` BEFORE THE PAGE IS SENT, the way the
-// theme is (`src/render.py`). The panel is part of the toolbar this file draws,
-// so the answer has to be here before a button is drawn — and it is the hub's
-// own configuration, which nothing in a browser can see. `PROPOSAL_PANEL` in the
-// hub's environment is where it comes from; `off` is what a hub that never set
-// it says, so a deployment that did not ask for the feature never carries it.
-//
-// SPELLED HERE AS WELL AS IN src/render.py because the two sides cannot share a
-// module; `tests/test_ui_source.py` holds the name and the values equal across
-// them, the way it already does for the theme cookie.
-const PROPOSAL_ATTRIBUTE = 'data-proposal-panel';
-const PROPOSAL_ON = 'on';
-
-/**
- * Read where the button is drawn, and watched by nothing.
- *
- * NO OBSERVER, and that is the whole difference from the theme: this cannot
- * change while the page is open — it is one setting of the hub, fixed before the
- * document was sent — so there is nothing to notice. What that leaves is a
- * single attribute lookup on the root element, which is cheap enough to do where
- * the answer is spent rather than cached into state somebody could then write.
- *
- * ANYTHING BUT `on` IS OFF, a missing attribute included. A page carrying an
- * answer nobody recognises is a page whose hub did not ask for this, which is
- * the one reading that keeps the default safe.
- */
-const proposalPanelOn = () => (
-  document.documentElement.getAttribute(PROPOSAL_ATTRIBUTE) === PROPOSAL_ON
-);
-
 // WHAT THE PROPOSAL'S BRANCH IS EXPANDED AND COLLAPSED UNDER, in the same
 // `expanded` map the parts tree keys by node id. It cannot collide with one of
 // those: every id `indexTree` mints is a PATH and begins with `/`, while this is
@@ -6190,7 +6158,7 @@ export default class HammerolaViewer extends React.Component {
     const menu = rowMenu(s, {
       tree, viewer, narrow, compared, catalogue, anyDownloads, fileHref,
       clearSection, stop, SECTION_ROW,
-      noteFor, partRecord, fileList, proposalPanelOn,
+      noteFor, partRecord, fileList,
       node: this.node.bind(this),
       proposalBody: this.proposalBody.bind(this),
       set: this.set.bind(this),
@@ -6211,15 +6179,6 @@ export default class HammerolaViewer extends React.Component {
 
     // -- the proposal: a rough body in numbers, laid over the model -----------
     //
-    // WHETHER THIS HUB HAS THE PROPOSAL AT ALL, asked once and spent in two
-    // places: `v.proposalOn`, which the chrome carries and `render()` wraps
-    // both the toolbar button and the tree's branch in, and the row menu —
-    // which is handed the
-    // FUNCTION rather than this answer, for the reason written where that menu
-    // is built. It is not state and nothing on this page can change it; see
-    // `proposalPanelOn`, which says where the answer comes from.
-    const proposalOn = proposalPanelOn();
-
     // OPEN UNLESS THE READER FOLDED IT, which is what `!== false` says and a
     // truthy read could not: the branch is only ever drawn over a document that
     // has something in it, and a row that arrives already folded away is a row
@@ -6269,7 +6228,7 @@ export default class HammerolaViewer extends React.Component {
     // drawn on a header button, the picker's rows inside a header menu, and a
     // second count worked out up there could disagree with the rail it is about.
     const chrome = chromeView(s, this.props, {
-      meta, viewer, narrow, stop, proposalOn,
+      meta, viewer, narrow, stop,
       revRows, downloadGroups, threads, openCount,
       viewPartCount, HOLD_KEY_LABEL, VIEW_TABS_MAX,
       set: this.set.bind(this),
@@ -6926,148 +6885,146 @@ export default class HammerolaViewer extends React.Component {
                 a wall, which is as true over a comparison as over a build — the
                 `Add primitive` menu stays live under one for the same reason —
                 and this branch is the only place the rows exist at all. */}
-            {v.proposalOn && (
-              <div style={css(v.proposalTreeStyle)}>
-                <div style={css(v.proposalHeadStyle)}>
-                  <span onClick={v.proposalToggle} style={css(v.proposalCaretStyle)}>
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d={v.proposalCaretPath} /></svg>
-                  </span>
-                  {/* THE BRANCH'S OWN EYE AND ITS OWN TICK, in the order every
-                      row below carries them: what is on the model, then what
-                      travels to the agent. The eye takes the whole proposal off
-                      the model and the tick holds all of it back from the text;
-                      neither edits a body, and the rows keep answering for
-                      themselves underneath both. */}
-                  <span onClick={v.proposalEyeClick} title="show / hide the whole proposal" style={css(SLOT_24)}>
-                    <span style={css(v.proposalEyeOuter)}><span style={css(v.proposalEyeDot)} /></span>
-                  </span>
-                  {/* THE GHOST COLUMN, STOOD OVER AND NOT USED. A row spends
-                      24px on its eye, 22 on its ghost square and 22 on its tick,
-                      in that order; the header has an eye and a tick and no
-                      ghost — there is nothing to make the whole proposal
-                      translucent — so without this spacer the master tick lands
-                      over the column of ghost squares, 31px to the left of the
-                      ticks it sets and clears, and a tick over the wrong column
-                      does not read as the same control one level up. With it,
-                      and with the caret column a row stands over
-                      (`rowStyle` in proposalview.js), every column of a row is
-                      exactly under the one it answers to. */}
-                  <span style={css('width:22px;flex:none')} />
-                  <span onClick={v.proposalSkipAll} title={v.proposalSkipTitle} style={css(SLOT_22)}>
-                    <span style={css(v.proposalSkipIcon)} />
-                  </span>
-                  <span onClick={v.proposalToggle} style={css(v.proposalHeadNameStyle)}>{v.proposalHeadName}</span>
-                  <span style={css(v.proposalCountStyle)}>{v.proposalCount}</span>
-                  {/* THE HEADER'S OWN `×`, drawn exactly as a row's is: same
-                      glyph, same faint ink, one level up. A row's takes one node
-                      back out of a document being edited; this one takes the
-                      whole document, and the hub's copy of it, which is why it
-                      is the only control on this page that asks first. */}
-                  <span onClick={v.proposalRemove} title={v.proposalRemoveTitle} style={css(FAINT_CLICK)}>&#10005;</span>
-                </div>
-                {/* WHAT THE KERNEL MAKES OF THE DOCUMENT AS IT STANDS
-                    (`proposalSays` in `computed`). Under the head and outside
-                    the rows, so it is there whether or not the caret has folded
-                    the branch away: while it is there the body over the model is
-                    the last one that BUILT rather than nothing at all — see
-                    `setProposal` — so this line is the only thing on the page
-                    that says why a body has stopped following the numbers. */}
-                <div style={css(v.proposalSaysStyle)}>{v.proposalSays}</div>
-                {v.proposalRows.map((row) => (
-                  <div key={row.key} style={css('display:flex;flex-direction:column;align-items:flex-start')}>
-                    {/* `onContextMenu` is null on a move and on a body the scene
-                        cannot place, which leaves the browser's own menu where
-                        this page has nothing to put — see the row. */}
-                    <div onContextMenu={row.onMenu} style={css(row.rowStyle)}>
-                      {/* The eye, the ghost square and the colour, in one box
-                          that keeps the three columns' width whether or not
-                          anything is drawn in them — so the names of the two
-                          kinds of row stand in one line.
-                          A MOVE KEEPS ITS EYE AND NOT THE OTHER TWO, which is
-                          why the box is not hidden as one unit: the eye on
-                          such a row is a switch of this page's own (`onVis`
-                          reaches `toggleMoveEye`), while the square and the
-                          colour are the SCENE's and belong to the part's own
-                          row in the tree below. `ghostStyle` takes the square
-                          off; the colour comes off by itself, since a move has
-                          no row in the scene to take one from. */}
-                      <span style={css(row.marksStyle)}>
-                        <span onClick={row.onVis} title="show / hide" style={css(SLOT_24)}>
-                          <span style={css(row.eyeOuter)}><span style={css(row.eyeDot)} /></span>
-                        </span>
-                        <span onClick={row.onGhost} title="translucent" style={css(row.ghostStyle)}>
-                          <span style={css(row.ghostIcon)} />
-                        </span>
-                        <span style={css(row.dotStyle)} />
-                      </span>
-                      {/* OUTSIDE THAT BOX, which is the whole reason it is not
-                          in it: the box goes `visibility:hidden` on a row with
-                          nothing in the scene — a body the tree cannot place,
-                          and every row at all while a comparison is up — while
-                          being held back from the agent is a statement such a
-                          row can still make. A MOVE row is no longer one of
-                          them: its box stays visible to carry the eye, and it
-                          is the ghost square inside that goes instead. */}
-                      <span onClick={row.onSkip} title={row.skipTitle} style={css(SLOT_22)}>
-                        <span style={css(row.skipIcon)} />
-                      </span>
-                      {/* `move`, on the rows that are one, before the name and
-                          in the same muted mono the count is drawn in. Nothing
-                          else on the row says a displacement of a part the build
-                          already has apart from a body somebody drew. */}
-                      {row.kind && (
-                        <span style={css(row.kindStyle)}>{row.kind}</span>
-                      )}
-                      <span onClick={row.onSelect} style={css(row.nameStyle)}>{row.name}</span>
-                      <span onClick={row.onRemove} title={row.removeTitle} style={css(FAINT_CLICK)}>&#10005;</span>
-                    </div>
-                    <div style={css(row.fieldsStyle)}>
-                      {/* A BODY'S HEAD LINE, absent on a move: the name it is
-                          drawn under, the op it was built from, and the switch
-                          between the two roles — `result = union(solid) −
-                          union(hole)`, with a hole drawn as its own translucent
-                          part so the reader can see what they asked to remove. */}
-                      {row.nameField && (
-                        <div style={css('display:flex;align-items:center;gap:6px')}>
-                          {/* `onKeyDown` on every field of this block: the value
-                              is committed on `change` — a blur, an Enter, or a
-                              nudge of the arrows — and not on the keystroke, so
-                              a field with only the blur wired would ignore the
-                              reader who types a number and presses return. */}
-                          <input type={row.nameField.type} value={row.nameField.value}
-                                 onChange={row.nameField.onChange} onBlur={row.nameField.onBlur}
-                                 onKeyDown={row.nameField.onKeyDown} style={css(row.nameField.style)} />
-                          <span style={css(SPAN_MONO)}>{row.op}</span>
-                          <span onClick={row.onRole} title="solid adds material, hole takes it away" style={css(row.roleStyle)}>{row.role}</span>
-                        </div>
-                      )}
-                      {row.groups.map((g) => (
-                        <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
-                          <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
-                          {/* `type` AND `step` COME OFF THE FIELD, so a number
-                              gets the browser's own arrows and a name — which is
-                              no kind of number — does not. `ref` is how a nudge
-                              of those arrows reaches the document; `field` in
-                              `computed()` says why React leaves it no other way,
-                              and what `onWheel` is for.
-                              `placeholder` AND `min` ARE THE SNAP STEP'S ALONE
-                              and are undefined on every other field, which React
-                              draws as the attribute being absent: an empty step
-                              field is the automatic one and has to say so, and no
-                              number of millimetres below zero means anything. */}
-                          {g.fields.map((f) => (
-                            <input key={f.key} type={f.type} step={f.step} ref={f.ref}
-                                   min={f.min} placeholder={f.placeholder}
-                                   value={f.value} onChange={f.onChange} onBlur={f.onBlur}
-                                   onKeyDown={f.onKeyDown} onWheel={f.onWheel} style={css(f.style)} />
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+            <div style={css(v.proposalTreeStyle)}>
+              <div style={css(v.proposalHeadStyle)}>
+                <span onClick={v.proposalToggle} style={css(v.proposalCaretStyle)}>
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d={v.proposalCaretPath} /></svg>
+                </span>
+                {/* THE BRANCH'S OWN EYE AND ITS OWN TICK, in the order every
+                    row below carries them: what is on the model, then what
+                    travels to the agent. The eye takes the whole proposal off
+                    the model and the tick holds all of it back from the text;
+                    neither edits a body, and the rows keep answering for
+                    themselves underneath both. */}
+                <span onClick={v.proposalEyeClick} title="show / hide the whole proposal" style={css(SLOT_24)}>
+                  <span style={css(v.proposalEyeOuter)}><span style={css(v.proposalEyeDot)} /></span>
+                </span>
+                {/* THE GHOST COLUMN, STOOD OVER AND NOT USED. A row spends
+                    24px on its eye, 22 on its ghost square and 22 on its tick,
+                    in that order; the header has an eye and a tick and no
+                    ghost — there is nothing to make the whole proposal
+                    translucent — so without this spacer the master tick lands
+                    over the column of ghost squares, 31px to the left of the
+                    ticks it sets and clears, and a tick over the wrong column
+                    does not read as the same control one level up. With it,
+                    and with the caret column a row stands over
+                    (`rowStyle` in proposalview.js), every column of a row is
+                    exactly under the one it answers to. */}
+                <span style={css('width:22px;flex:none')} />
+                <span onClick={v.proposalSkipAll} title={v.proposalSkipTitle} style={css(SLOT_22)}>
+                  <span style={css(v.proposalSkipIcon)} />
+                </span>
+                <span onClick={v.proposalToggle} style={css(v.proposalHeadNameStyle)}>{v.proposalHeadName}</span>
+                <span style={css(v.proposalCountStyle)}>{v.proposalCount}</span>
+                {/* THE HEADER'S OWN `×`, drawn exactly as a row's is: same
+                    glyph, same faint ink, one level up. A row's takes one node
+                    back out of a document being edited; this one takes the
+                    whole document, and the hub's copy of it, which is why it
+                    is the only control on this page that asks first. */}
+                <span onClick={v.proposalRemove} title={v.proposalRemoveTitle} style={css(FAINT_CLICK)}>&#10005;</span>
               </div>
-            )}
+              {/* WHAT THE KERNEL MAKES OF THE DOCUMENT AS IT STANDS
+                  (`proposalSays` in `computed`). Under the head and outside
+                  the rows, so it is there whether or not the caret has folded
+                  the branch away: while it is there the body over the model is
+                  the last one that BUILT rather than nothing at all — see
+                  `setProposal` — so this line is the only thing on the page
+                  that says why a body has stopped following the numbers. */}
+              <div style={css(v.proposalSaysStyle)}>{v.proposalSays}</div>
+              {v.proposalRows.map((row) => (
+                <div key={row.key} style={css('display:flex;flex-direction:column;align-items:flex-start')}>
+                  {/* `onContextMenu` is null on a move and on a body the scene
+                      cannot place, which leaves the browser's own menu where
+                      this page has nothing to put — see the row. */}
+                  <div onContextMenu={row.onMenu} style={css(row.rowStyle)}>
+                    {/* The eye, the ghost square and the colour, in one box
+                        that keeps the three columns' width whether or not
+                        anything is drawn in them — so the names of the two
+                        kinds of row stand in one line.
+                        A MOVE KEEPS ITS EYE AND NOT THE OTHER TWO, which is
+                        why the box is not hidden as one unit: the eye on
+                        such a row is a switch of this page's own (`onVis`
+                        reaches `toggleMoveEye`), while the square and the
+                        colour are the SCENE's and belong to the part's own
+                        row in the tree below. `ghostStyle` takes the square
+                        off; the colour comes off by itself, since a move has
+                        no row in the scene to take one from. */}
+                    <span style={css(row.marksStyle)}>
+                      <span onClick={row.onVis} title="show / hide" style={css(SLOT_24)}>
+                        <span style={css(row.eyeOuter)}><span style={css(row.eyeDot)} /></span>
+                      </span>
+                      <span onClick={row.onGhost} title="translucent" style={css(row.ghostStyle)}>
+                        <span style={css(row.ghostIcon)} />
+                      </span>
+                      <span style={css(row.dotStyle)} />
+                    </span>
+                    {/* OUTSIDE THAT BOX, which is the whole reason it is not
+                        in it: the box goes `visibility:hidden` on a row with
+                        nothing in the scene — a body the tree cannot place,
+                        and every row at all while a comparison is up — while
+                        being held back from the agent is a statement such a
+                        row can still make. A MOVE row is no longer one of
+                        them: its box stays visible to carry the eye, and it
+                        is the ghost square inside that goes instead. */}
+                    <span onClick={row.onSkip} title={row.skipTitle} style={css(SLOT_22)}>
+                      <span style={css(row.skipIcon)} />
+                    </span>
+                    {/* `move`, on the rows that are one, before the name and
+                        in the same muted mono the count is drawn in. Nothing
+                        else on the row says a displacement of a part the build
+                        already has apart from a body somebody drew. */}
+                    {row.kind && (
+                      <span style={css(row.kindStyle)}>{row.kind}</span>
+                    )}
+                    <span onClick={row.onSelect} style={css(row.nameStyle)}>{row.name}</span>
+                    <span onClick={row.onRemove} title={row.removeTitle} style={css(FAINT_CLICK)}>&#10005;</span>
+                  </div>
+                  <div style={css(row.fieldsStyle)}>
+                    {/* A BODY'S HEAD LINE, absent on a move: the name it is
+                        drawn under, the op it was built from, and the switch
+                        between the two roles — `result = union(solid) −
+                        union(hole)`, with a hole drawn as its own translucent
+                        part so the reader can see what they asked to remove. */}
+                    {row.nameField && (
+                      <div style={css('display:flex;align-items:center;gap:6px')}>
+                        {/* `onKeyDown` on every field of this block: the value
+                            is committed on `change` — a blur, an Enter, or a
+                            nudge of the arrows — and not on the keystroke, so
+                            a field with only the blur wired would ignore the
+                            reader who types a number and presses return. */}
+                        <input type={row.nameField.type} value={row.nameField.value}
+                               onChange={row.nameField.onChange} onBlur={row.nameField.onBlur}
+                               onKeyDown={row.nameField.onKeyDown} style={css(row.nameField.style)} />
+                        <span style={css(SPAN_MONO)}>{row.op}</span>
+                        <span onClick={row.onRole} title="solid adds material, hole takes it away" style={css(row.roleStyle)}>{row.role}</span>
+                      </div>
+                    )}
+                    {row.groups.map((g) => (
+                      <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
+                        <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
+                        {/* `type` AND `step` COME OFF THE FIELD, so a number
+                            gets the browser's own arrows and a name — which is
+                            no kind of number — does not. `ref` is how a nudge
+                            of those arrows reaches the document; `field` in
+                            `computed()` says why React leaves it no other way,
+                            and what `onWheel` is for.
+                            `placeholder` AND `min` ARE THE SNAP STEP'S ALONE
+                            and are undefined on every other field, which React
+                            draws as the attribute being absent: an empty step
+                            field is the automatic one and has to say so, and no
+                            number of millimetres below zero means anything. */}
+                        {g.fields.map((f) => (
+                          <input key={f.key} type={f.type} step={f.step} ref={f.ref}
+                                 min={f.min} placeholder={f.placeholder}
+                                 value={f.value} onChange={f.onChange} onBlur={f.onBlur}
+                                 onKeyDown={f.onKeyDown} onWheel={f.onWheel} style={css(f.style)} />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
 
             {/* ── comparing two revisions ── */}
             {v.compare && (
@@ -7240,8 +7197,7 @@ export default class HammerolaViewer extends React.Component {
                     </div>
                     {/* A box drawn in the air beside the model — which is what
                         this adds: a rough body in numbers, over the geometry
-                        rather than in it. Absent, not hidden, on a hub that did
-                        not ask for it: see `proposalOn` in `computed()`.
+                        rather than in it.
 
                         THE WRAPPER IS `position:relative` FOR THE REASON THE
                         VIEW SWITCHER'S IS: the toolbar carries a
@@ -7250,25 +7206,23 @@ export default class HammerolaViewer extends React.Component {
                         without it the card would be measured from the toolbar's
                         whole box and start at its left end rather than at the
                         button. */}
-                    {v.proposalOn && (
-                      <div style={css(RELATIVE)}>
-                        <div onClick={v.tProposal} style={css(v.proposalBtnStyle)}>
-                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
-                          Add primitive
-                        </div>
-                        {/* THE OPS THE DOCUMENT KNOWS, one row each, read off the
-                            same table that gives each of them its size fields
-                            (`proposalOps` in ui/src/proposalview.js). The click
-                            is stopped on the card so that pressing inside it
-                            does not reach `rootClick` and shut it under the
-                            press. */}
-                        <div onClick={(e) => e.stopPropagation()} style={css(v.proposalMenuStyle)}>
-                          {v.proposalOps.map((op) => (
-                            <div key={op.key} onClick={op.onClick} style={css(v.proposalOpStyle)}>{op.label}</div>
-                          ))}
-                        </div>
+                    <div style={css(RELATIVE)}>
+                      <div onClick={v.tProposal} style={css(v.proposalBtnStyle)}>
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
+                        Add primitive
                       </div>
-                    )}
+                      {/* THE OPS THE DOCUMENT KNOWS, one row each, read off the
+                          same table that gives each of them its size fields
+                          (`proposalOps` in ui/src/proposalview.js). The click
+                          is stopped on the card so that pressing inside it
+                          does not reach `rootClick` and shut it under the
+                          press. */}
+                      <div onClick={(e) => e.stopPropagation()} style={css(v.proposalMenuStyle)}>
+                        {v.proposalOps.map((op) => (
+                          <div key={op.key} onClick={op.onClick} style={css(v.proposalOpStyle)}>{op.label}</div>
+                        ))}
+                      </div>
+                    </div>
                     <div style={css(RULE)} />
                   </>
                 )}

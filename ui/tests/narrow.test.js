@@ -32,8 +32,7 @@
 // and no case below asserts anything about them — this is about what fits on
 // the screen, not about what is comfortable to aim at.
 
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi }
-  from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 // `vi.hoisted` and ONE MUTABLE OBJECT, exactly as ui/tests/header.test.js does
 // it: `PAGE` is read at the moment `computed()` runs, so the address is a field
@@ -428,11 +427,19 @@ describe('the toolbar on a narrow window', () => {
     // Gestures that want a pointer and a canvas with room to aim in, and a PNG
     // a phone has nowhere to put.
     //
+    // `Add primitive` IS ON THE LIST FOR A REASON OF ITS OWN, and it is the
+    // card rather than the button: a `fixed` child of a `backdrop-filter`
+    // element is pinned to that element instead of to the window, so the menu
+    // cannot become a narrow sheet — it opens 170px wide over the button that
+    // opened it, on a toolbar its own flag has just lifted above the composer.
+    // The case two groups down explains exactly that and says «one of the ones
+    // `showTools` takes away»; this is where the sentence is held to.
+    //
     // MOVE IS NOT ON THIS LIST because it is not on this strip: it is a row of
     // each object's own menu, and the width takes it away there instead — the
     // group below is where that half is asserted. The button it used to be was
     // spelled `Move part`, and nothing on the page says those two words now.
-    for (const gone of ['Measure', 'Comment', 'Frame']) {
+    for (const gone of ['Measure', 'Comment', 'Frame', 'Add primitive']) {
       expect(wide).toContain(gone)
       expect(narrow).not.toContain(gone)
     }
@@ -459,18 +466,6 @@ describe('the toolbar on a narrow window', () => {
 // -- the tool that is armed from somewhere else -------------------------------
 
 describe('the Move row of an object\'s menu on a narrow window', () => {
-
-  // THE HUB HAS TO HAVE ASKED FOR THE PANEL, because the Move row is gated on it
-  // now: a displacement is a node of the proposal, so where there is no panel
-  // there is no row saying a part is out of place and no `×` to put it back.
-  // `proposal_panel` is off by default (src/settings.py), and a fixture that
-  // said nothing would be testing a hub that never offers the tool at all.
-  beforeEach(() => {
-    document.documentElement.setAttribute('data-proposal-panel', 'on')
-  })
-  afterEach(() => {
-    document.documentElement.removeAttribute('data-proposal-panel')
-  })
   /** The row menu open on one part, at a chosen width. */
   const labelsOn = (over) => {
     const c = component(over)

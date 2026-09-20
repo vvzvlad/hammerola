@@ -46,23 +46,6 @@ def test_defaults_match_the_spec(monkeypatch):
     assert s.log_level == "INFO"
 
 
-def test_the_proposal_panel_is_off_unless_the_hub_asks_for_it(monkeypatch):
-    """An unset variable means NO, and that is the whole point of the field.
-
-    The proposal panel is a feature still being tried out, so the question this
-    setting answers is "did somebody ask for this" — and silence is not an answer
-    in favour. A default of True, or no default at all, would put the panel on
-    every hub that took the next image without deciding anything.
-    """
-    monkeypatch.setenv("EDIT_TOKEN", "s3cret")
-    monkeypatch.delenv("PROPOSAL_PANEL", raising=False)
-    assert Settings(_env_file=None).proposal_panel is False
-    # And it is reachable, which is the other half: a flag nothing can turn on
-    # is a feature nobody can try.
-    monkeypatch.setenv("PROPOSAL_PANEL", "true")
-    assert Settings(_env_file=None).proposal_panel is True
-
-
 def test_there_is_no_retention_setting(monkeypatch):
     """The absence is the feature (SPEC 5.3, 7.3), so it is asserted.
 

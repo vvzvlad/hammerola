@@ -37,8 +37,7 @@
 // listeners go on the window — the same helper, under the same name, as
 // revswitch.test.js's.
 
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi }
-  from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import HammerolaViewer, { menuAt, SECTION_ROW } from '../src/HammerolaViewer.jsx'
 import { countedName, indexTree } from '../src/hub.js'
@@ -556,18 +555,6 @@ describe('a hidden row carried onto the next build', () => {
 // holds it.
 
 describe('the Move row of the part menu', () => {
-
-  // THE HUB HAS TO HAVE ASKED FOR THE PANEL, because the Move row is gated on it
-  // now: a displacement is a node of the proposal, so where there is no panel
-  // there is no row saying a part is out of place and no `×` to put it back.
-  // `proposal_panel` is off by default (src/settings.py), and a fixture that
-  // said nothing would be testing a hub that never offers the tool at all.
-  beforeEach(() => {
-    document.documentElement.setAttribute('data-proposal-panel', 'on')
-  })
-  afterEach(() => {
-    document.documentElement.removeAttribute('data-proposal-panel')
-  })
   /** The menu open on one row, and the row that arms the tool from it. */
   const moveOn = (id, over = {}) => {
     const c = component(THREE_PINS, { menu: { id, x: 0, y: 0 }, ...over })

@@ -1081,13 +1081,6 @@ describe('the canvas tools while a comparison is up', () => {
     // SOLID, which is the scene a drag would file a `/cmp/…` path out of, and
     // then over the build's own part on a build page, so this is a claim about
     // the comparison rather than about the row having gone missing altogether.
-    //
-    // THE HUB HAS TO HAVE ASKED FOR THE PANEL for the second half to mean
-    // anything: the row is gated on that flag too, since a displacement is a
-    // node of the proposal and there is nowhere for one to go without it.
-    document.documentElement.setAttribute('data-proposal-panel', 'on')
-    onTestFinished(() =>
-      document.documentElement.removeAttribute('data-proposal-panel'))
     const menu = { id: `${COMPARE_GROUPS.b}/plate`, x: 10, y: 10 }
     expect(comparing({ menu }).computed().menuItems.map((m) => m.label))
       .not.toContain('Move')

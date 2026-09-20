@@ -57,24 +57,6 @@ const ANOTHER_VIEW = 'exploded'
 
 const click = { stopPropagation() {}, preventDefault() {} }
 
-// WHAT THE HUB SAID ABOUT THIS FEATURE, which on a real page is an attribute the
-// server stamps on `<html>` before the bundle runs (`src/render.py`, and
-// `tests/test_ui_source.py` holds the spelling equal on both sides). Every
-// fixture below is a hub that ASKED for the panel, because that is what this
-// file is about; the one test that asks what a hub which did not looks like
-// turns it off by name.
-const PROPOSAL_ATTRIBUTE = 'data-proposal-panel'
-
-const stampProposal = (on) => {
-  document.documentElement.setAttribute(PROPOSAL_ATTRIBUTE, on ? 'on' : 'off')
-}
-
-// Back to a page nobody stamped, so a fixture that forgets to say cannot inherit
-// the last test's hub.
-afterEach(() => {
-  document.documentElement.removeAttribute(PROPOSAL_ATTRIBUTE)
-})
-
 /**
  * A part of the BUILD dragged in the scene, exactly as the viewport reports one:
  * every path that moved, the solid's own name, the offset from where the build
@@ -133,8 +115,7 @@ const withBlock = () => addNode(emptyProposal(), BLOCK);
  * is element.test.js's subject.
  */
 function panel({ token = 'sekrit', proposal, opsOpen = false, narrow = false,
-                 served = true, stored = null, stands = false } = {}) {
-  stampProposal(served)
+                 stored = null, stands = false } = {}) {
   const el = {
     setOverlay: vi.fn(), clearOverlay: vi.fn(), setMoves: vi.fn(),
     // The third door the proposal pushes at, and a spy for the reason the two
@@ -365,76 +346,15 @@ describe('the Add primitive button', () => {
     expect(css(c.computed().toolbarStyle).zIndex).toBe('12')
   })
 
-  it('is gone entirely from a hub that did not ask to serve it', () => {
-    // The SECOND gate of the same kind, and it answers about the HUB rather
-    // than about the reader: one setting, `PROPOSAL_PANEL`, stamped on `<html>`
-    // before the page was sent. Unset means off, so a deployment that never
-    // heard of this feature does not serve it — and neither half of it appears,
-    // with a token in hand, with the menu open and with a body already typed in.
-    const { c } = panel({ served: false, proposal: withBlock(), opsOpen: true })
-
-    expect(c.state.token).toBe('sekrit')
-
-    // OUT OF THE TREE AND NOT MERELY UNPAINTED, which is the difference between
-    // this gate and the token's one line up. `display:none` is the right answer
-    // about a READER who cannot use a feature this hub serves; a hub that never
-    // asked for the feature should not be sending its markup at all. Asserted
-    // against the rendered tree, because a `display` assertion passes either way
-    // and would not notice the day the markup came back.
-    // The button by its label, the menu by a row of it, and the branch by its
-    // head — three nodes, so a gate that covered one of them and not the others
-    // fails here rather than in whatever a reader happened to look at.
-    expect(texts(c.render())).not.toContain('Add primitive')
-    expect(texts(c.render())).not.toContain('cylinder')
-    expect(texts(c.render())).not.toContain(PROPOSAL_BRANCH)
-
-    // AND THE MOVE ROW GOES WITH IT, which is not a second feature being taken
-    // away but the same one: a displacement is a NODE of the proposal, so where
-    // there is no proposal there is nowhere for one to be. Left offered, the
-    // tool would arm, the part would follow the hand, and the release would
-    // reach a page with no row saying the part is out of place, no `×` to put it
-    // back and no projection to send it in — ui-brief block 6 unanswered in all
-    // three of its parts, with the part standing displaced until the next
-    // rebuild.
-    //
-    // A REAL LEAF ROW UNDER THE MENU, and the same menu on a hub that DID ask,
-    // because every other reason the row can be absent — no row at all, a group,
-    // no token, a narrow window — reads identically from here. Without the pair
-    // this would pass on a page whose tree simply has nothing in it.
-    // The flag is read where the answer is spent (`proposalPanelOn`) rather than
-    // held in state, so it is stamped either side of the pair rather than at the
-    // fixtures: whichever component is asked LAST would otherwise decide for
-    // both, and the order these two lines are written in is not a thing the next
-    // reader should have to notice.
-    const menu = { id: '/model/plate', x: 10, y: 10 }
-    const tree = indexTree({ id: '/model', name: 'model', children: [
-      { id: '/model/plate', name: 'plate', key: 'plate' }] })
-    c.state = { ...c.state, tree, menu }
-
-    stampProposal(false)
-    expect(c.computed().menuItems.map((m) => m.label)).not.toContain('Move')
-    stampProposal(true)
-    expect(c.computed().menuItems.map((m) => m.label)).toContain('Move')
-    stampProposal(false)
-
-    // What the flag does NOT take away: everything that was never the
-    // proposal's. Measure is the one next door in the toolbar and files its
-    // answer through the composer, which this hub still serves.
-    expect(css(c.computed().measureBtnStyle).display).not.toBe('none')
-  })
-
-  it('is there again the moment the hub says so', () => {
-    // The other direction, which is the half that would go unnoticed: a gate
-    // spelled wrong — a wrong attribute name, a wrong value — reads as "off"
-    // for every reader and fails nothing, because off is what the page looks
-    // like when nobody asked. So the ON case is asserted too.
-    const { c } = panel({ served: true, proposal: withBlock(), opsOpen: true })
+  it('puts its three nodes in the tree and not merely in `computed()`', () => {
+    // THE BUTTON, A ROW OF ITS MENU AND THE BRANCH'S OWN HEAD, read off what
+    // `render()` returned rather than off a style: a `display` assertion passes
+    // against markup that is not on the page at all, which is the failure the
+    // three strings below are here to catch.
+    const { c } = panel({ proposal: withBlock(), opsOpen: true })
     expect(css(c.computed().proposalBtnStyle).display).not.toBe('none')
     expect(css(c.computed().proposalMenuStyle).display).toBe('block')
 
-    // THE SAME THREE STRINGS THE OFF CASE LOOKS FOR, and this half is what keeps
-    // that half honest: `not.toContain` passes just as well against a string
-    // that is misspelled here as against markup that is genuinely gone.
     expect(texts(c.render())).toContain('Add primitive')
     expect(texts(c.render())).toContain('cylinder')
     expect(texts(c.render())).toContain(PROPOSAL_BRANCH)
