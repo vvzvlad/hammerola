@@ -749,12 +749,12 @@ export class HmrViewport extends HTMLElement {
       // press is taken in a window listener of its own, so neither the line above
       // nor the idle clock that defers this swap ever sees it.
       this.handle.endDrag();
-      // And a drag of an axis arrow, a quad or the origin dot is a THIRD one,
-      // taken in a window listener of its own in the same way. It is concluded
-      // rather than abandoned for the reason `concludeMove` gives in tools.js:
-      // the part is standing displaced in `this.moved` with nothing in the
-      // document claiming it, and the next push would send it home under the
-      // reader's hand.
+      // And a drag of an axis arrow or a plane quad is a THIRD one, taken in a
+      // window listener of its own in the same way. It is concluded rather than
+      // abandoned, and the reason is what ABANDONING would cost here: the part
+      // is standing displaced in `this.moved` with nothing in the document
+      // claiming it, and the next push would send it home under the reader's
+      // hand.
       this.gizmo.endDrag();
       // And a drag of a RING is a FOURTH, on a widget in the scene whose press
       // was taken in a window listener of its own — which the idle clock cannot
@@ -1118,7 +1118,8 @@ export class HmrViewport extends HTMLElement {
    * THE MOVE TOOL ASKS THIS TOO AND DOES SOMETHING ELSE WITH THE ANSWER. It does
    * not refuse a proposal body: a drag of one is an ordinary edit of the panel's
    * document, so the gesture runs and ends in `hmr:proposalmove` instead of in
-   * the move node `hmr:moved` records (tools.js, `onDown`). What the answer
+   * the move node `hmr:moved` records (`grabbable` in viewport/parts.js, which
+   * asks the same question for the manipulator's two halves). What the answer
    * decides there is WHICH of the two gestures a press is — and a MIXED grab, a
    * proposal body together with a part of the model, is refused whole because
    * there is no such thing as half of either.

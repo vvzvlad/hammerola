@@ -576,11 +576,11 @@ describe('the Move row of the part menu', () => {
 
   it('selects the object it was opened on before it arms the tool', () => {
     // ONE WRITE, and the selection is the half that makes the row mean what it
-    // says: the armed tool drags what is SELECTED and only falls back to the
-    // part under the cursor when nothing is (`onDown` in viewport/tools.js).
+    // says: the armed tool puts its manipulator on what is SELECTED (`held` in
+    // viewport/gizmo.js), and there is nowhere else a drag of a part can start.
     // Neither door into this menu writes `sel` — a right-click selects nothing,
     // from the tree or from the scene — so Move chosen on the pins while the LID
-    // stood selected would have dragged the lid.
+    // stood selected would have stood the widget on the lid.
     const { c, row } = moveOn('/model/pin', { sel: '/model/lid', selName: 'lid' })
 
     row.onClick(click)
@@ -594,15 +594,13 @@ describe('the Move row of the part menu', () => {
     expect(c.sync).toHaveBeenCalled()
   })
 
-  it('is not offered on a group, whose selection no press can ever hit', () => {
+  it('is not offered on a group, which the widget cannot stand on', () => {
     // A LEAF IS SPREAD INTO ITS COPIES AND A GROUP IS NOT: `selectedPaths`
-    // answers a group with the node's OWN path, which is not the path of
-    // anything the reader can put a cursor on. The armed tool then refuses every
-    // grab on a part inside that group, because a press outside the standing
-    // selection is refused whole — see 'moves nothing when the grab lands on a
-    // part outside the selection' in tools.test.js. The only press that would
-    // move anything is one that MISSES the model, which takes the entire
-    // sub-assembly: not what a row promising to move THIS object means.
+    // answers a group with the node's OWN path, which names an assembly rather
+    // than a part — and the manipulator stands on a part's own centre, which an
+    // assembly node has none of (`partCentre` in viewport/parts.js). The row
+    // would arm a tool that then draws nothing at all: not what a row promising
+    // to move THIS object means.
     const { c, row } = moveOn('/model')
 
     expect(row).toBeUndefined()
@@ -627,16 +625,30 @@ describe('the Move row of the part menu', () => {
     // the next rebuild — which nothing else on the screen says.
     //
     // AND IT NAMES BOTH HALVES OF THE WIDGET, which is what merging the tools
-    // left it owing. One manipulator stands on the part — arrows, plane quads
-    // and an origin that slide it, coloured discs that turn it — and the Turn
-    // row raises this very sentence, so a reader coming in through either door
-    // is told about the whole of it.
+    // left it owing. One manipulator stands on the part — arrows and plane
+    // quads that slide it, coloured discs that turn it — and a reader told only
+    // about the sliding never goes looking for the rest.
+    //
+    // AND IT NAMES WHAT THE HAND GRABS. `Drag it` described a press on the part
+    // itself, which moves nothing now (viewport/tools.js): a reader who took
+    // that sentence literally would drag the part, orbit the model, and decide
+    // the tool is broken.
     const { c, row } = moveOn('/model/pin')
 
     row.onClick(click)
 
     expect(c.toast).toHaveBeenCalledWith(
-      'Drag it to slide, a coloured disc to turn — it snaps back on the next rebuild')
+      'Drag an arrow or a quad to slide it, a coloured disc to turn'
+      + ' — it snaps back on the next rebuild')
+    // AND THE STRIP SAYS BOTH HALVES TOO, because it is the only line on the
+    // page that describes the tool while it is in force — the toast is gone by
+    // the time the reader reaches for the widget. `disc` and not `ring`: there
+    // is no full ring on screen at rest, and a press on the arc that IS drawn
+    // goes to the trackball, so naming the ring would send the reader to grab
+    // the one part of the widget that does nothing. The origin dot is left
+    // unnamed on the same ground — it is drawn and takes no press at all.
+    expect(c.computed().hintText).toBe(
+      'drag an arrow or a quad to slide, a coloured disc to turn · esc to stop')
   })
 
   it('arms rather than toggles, unlike the button it replaced', () => {
@@ -688,18 +700,17 @@ describe('the move node a drag writes', () => {
   }))
 
   it('says how many copies WENT, which is not how many the row holds', () => {
-    // The two differ, and that is why `hmr:moved` reports a count instead of
-    // this side looking one up: a grab made with NOTHING SELECTED drags the one
-    // copy it hit, out of a row standing for three. The SECOND event is what
-    // that actually looks like on the wire — the viewport names the solid it
-    // grabbed (`tools.js` takes the name off the dragged path), so the drag of
-    // one copy arrives as `pin(2)`, a name no row is drawn under once the run
-    // has collapsed into one — which it has here. The node answers with the
-    // row's.
+    // The two can differ, and that is why `hmr:moved` reports a count instead
+    // of this side looking one up: the viewport sends the paths it actually
+    // moved and names the solid it started from (`tools.js` takes the name off
+    // the first dragged path). The SECOND event is what a drag of one copy out
+    // of a row of three looks like on the wire — it arrives as `pin(2)`, a name
+    // no row is drawn under once the run has collapsed into one, which it has
+    // here. The node answers with the row's.
     // THE PATHS ARE THE ONES THE VIEWPORT WOULD SEND: a drag of the row moves
     // every copy in it, so `count` and `paths.length` are the same number on the
-    // wire — a detail with one path and a count of three is a shape `dragPart`
-    // cannot produce.
+    // wire — a detail with one path and a count of three is a shape no gesture
+    // can produce.
     const c = mounted(THREE_PINS)
     const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
     dragged({ id: row[0], name: 'pin', paths: row, count: row.length,
@@ -866,7 +877,8 @@ describe('the part the section plane says it is cut from', () => {
     expect(c.computed().secSub).toBe('pin · +3.0 mm')
     // AND THE TOOL IS PUT DOWN, which is not this test's subject and had no test
     // of its own anywhere. Four comments in the viewport rest their reasoning on
-    // it — `concludeMove` exists to avoid it, and it is why the manipulator's
+    // it — `conclude` in tools.js is guarded on the cut tool to avoid it for
+    // every other gesture, and it is why the manipulator's
     // two layers end a live canvas gesture at different points in their press
     // handlers (viewport/rings.js, viewport/gizmo.js). A cut announced is a cut
     // placed, and the tool that placed it has done its one job.
@@ -890,6 +902,21 @@ describe('the part the section plane says it is cut from', () => {
     window.dispatchEvent(new CustomEvent(FACE,
       { detail: { id: null, name: null, offset: 0, range: [-30, 30] } }))
     expect(c.state.secFace).toBe('face')
+  })
+
+  it('names NO face once the grip`s rings have turned the plane', () => {
+    // The plane has stopped lying on the face it was placed from (issue #90,
+    // viewport/handle.js), and the seed goes on carrying that face's path and
+    // name for the row lookup above — so the report says so itself. It is not
+    // one of the fallbacks: those answer "which face is this", and the panel
+    // already has a subtitle for a cut with no face behind it.
+    const c = mounted(THREE_PINS)
+    window.dispatchEvent(new CustomEvent(FACE,
+      { detail: { id: '/model/pin(2)', name: 'pin(2)', turned: true, offset: 3,
+                  range: [-30, 30] } }))
+
+    expect(c.state.secFace).toBeNull()
+    expect(c.computed().secSub).toBe('plane · +3.0 mm')
   })
 })
 
@@ -969,7 +996,7 @@ describe('the section row\'s context menu', () => {
     // about a part that is not there.
     const c = component(THREE_PINS, CUT)
     const labels = openSecMenu(c).menuItems.map((m) => m.label)
-    for (const gone of ['Isolate', 'Hide', 'Translucent', 'Move', 'Turn',
+    for (const gone of ['Isolate', 'Hide', 'Translucent', 'Move',
                         'Note', 'Copy name', 'STL']) {
       expect(labels).not.toContain(gone)
     }

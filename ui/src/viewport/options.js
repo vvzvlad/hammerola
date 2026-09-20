@@ -400,11 +400,12 @@ export const GIZMO_PLANE_PX = GIZMO_PX / 4;
 
 /** The origin dot's diameter, in CSS pixels.
  *
- * A screen-space circle and not a world one: it stands for the free drag, which
- * has no axis and no plane to be foreshortened by. Larger than an arrowhead,
- * because it is the target the hand goes to when it wants no constraint at all
- * and it sits where three shafts already cross; small enough that it covers
- * about a tenth of each arrow's own reach. */
+ * A screen-space circle and not a world one: it stands for the point the three
+ * arrows are measured from, which has no axis and no plane to be foreshortened
+ * by. Larger than an arrowhead, because it covers the blot where three shafts
+ * would otherwise cross; small enough that it takes about a tenth of each
+ * arrow's own reach. It is drawn and never pressed (`gizmo.js`), so the size is
+ * legibility and not a target. */
 export const GIZMO_DOT_PX = 12;
 
 /** The light casing the quads and the dot are carried on, and the dark rim

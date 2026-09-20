@@ -1011,7 +1011,7 @@ describe('what takes the press', () => {
     // snapshot of the other's half — so left alone they overwrite each other
     // frame by frame and both report at the release.
     //
-    // CONCLUDED AND NOT ABANDONED, which is `concludeMove`'s argument: the part
+    // CONCLUDED AND NOT ABANDONED, which is `stop`'s own argument here: the part
     // is standing where the reader left it and only the document can be wrong
     // about that.
     const both = () => {
@@ -1085,18 +1085,18 @@ describe('what takes the press', () => {
 
   it('hands the canvas gesture on only for a press it actually keeps', () => {
     // THE THIRD THING THAT CAN BE LIVE, and the one neither half can end by
-    // itself. tools.js concludes its own previous press at the head of its
+    // itself. tools.js finishes its own previous press at the head of its
     // `onDown` — and that listener sees every press aimed at the canvas, so a
     // press this widget DECLINES needs nothing from us. What opens the hole is
     // the refusal `scene3d.js` makes on our answer: a press this widget KEEPS
-    // never reaches that listener, so the free drag a first finger started
-    // stays live.
+    // never reaches that listener, so a cut a first finger started under the
+    // hold key stays live.
     //
     // SO THE CALL BELONGS TO THE KEPT PRESS ALONE, and that is what this pins
     // rather than merely that the call exists. `endGesture` CONCLUDES, and
     // concluding a cut means `reportCut`, which the interface answers by
     // disarming the armed tool — which is exactly why tools.js's own `onDown`
-    // calls `concludeMove` and not `conclude`. Hoisted into `handOver`, this
+    // calls a bare `finish()` and not `conclude`. Hoisted into `handOver`, this
     // would do that on every ordinary canvas press with a cut still live.
     const taken = scene()
     rendered(taken.viewer)

@@ -11,15 +11,16 @@
 // does the foreshortening; how big it is drawn is `scene3d.js`'s one scale, and
 // that module's own suite asks about it. Left here are the questions only this
 // file can answer: WHAT each of the seven pieces is built out of, WHEN one is
-// taken off the screen, WHICH piece a press lands on, and what one whole drag
-// does to the part and says at the end of it.
+// taken off the screen, WHICH of the six that take a press one lands on, and
+// what one whole drag does to the part and says at the end of it.
 //
-// THE ONE CLAIM THIS FILE EXISTS FOR is that a drag is CONSTRAINED: the free
-// drag (tools.js) turns a screen gesture into a world displacement on all three
-// axes at once, and each piece puts that displacement back on its own geometry.
-// Every drag below therefore travels diagonally, and the assertion is about what
-// did NOT move. The origin dot is the exception that says what the other two are
-// measured against: it drops nothing at all.
+// THE ONE CLAIM THIS FILE EXISTS FOR is that a drag is CONSTRAINED. Under an
+// ortho camera a screen gesture carries a world displacement on all three axes
+// at once, and each piece puts that displacement back on its own geometry —
+// which is the whole of why this widget exists, gizmo.js says, and why the free
+// drag it replaced is gone from tools.js. Every drag below therefore travels
+// diagonally, and the assertion is about what did NOT move. The origin dot is
+// the drawn centre those six are measured from and takes no press at all.
 //
 // AND THE TWO CONSTRUCTIONS ARE NOT ONE, which is the thing the quad tests are
 // really guarding. An arrow takes the NEAREST POINT of its line, because a line
@@ -182,7 +183,7 @@ function scene({
     // AND THE DOOR ONTO THE CANVAS GESTURE, which `installTools` publishes on the
     // element. A press this widget KEEPS ends that too, because the refusal
     // `scene3d.js` makes on our answer is what stops tools.js's own `onDown`
-    // concluding it.
+    // from ever seeing the press and finishing it.
     endGesture: vi.fn(),
   })
   const gizmo = createGizmo(vp)
@@ -353,10 +354,10 @@ const stands = (group) => [group.position.x, group.position.y, group.position.z]
  * A DIAGONAL drag: 200 px right and 60 px down from wherever the press landed.
  *
  * In world terms that is +10 along X and -3 along Y under the square-on camera
- * (20 px to the world unit on both screen axes), so the free drag would produce
- * `[10, -3, 0]` and each arrow has to produce one component of it and nothing
- * else. A drag that went straight along one screen axis would pass with no
- * projection in the module at all.
+ * (20 px to the world unit on both screen axes), so the unconstrained
+ * displacement is `[10, -3, 0]` and each arrow has to produce one component of
+ * it and nothing else. A drag that went straight along one screen axis would
+ * pass with no projection in the module at all.
  *
  * FROM THE PRESS AND NOT FROM A FIXED POINT, which is the whole of what changed
  * when the press moved onto the canvas: every gesture here is measured as a
@@ -375,8 +376,7 @@ const dragFrom = (from) => pointerMove(dragged(from))
  *
  * The square-on camera's `[10, -3, 0]` has a zero in it, and the whole point of
  * taking it obliquely is that this one has all three components — so a quad
- * that failed to hold its normal axis, or a dot that constrained anything at
- * all, would show.
+ * that failed to hold its normal axis would show.
  */
 const RIGHT = unit(OBLIQUE.right)
 const UP = unit(OBLIQUE.up)
@@ -633,11 +633,11 @@ describe('what an arrow is built out of', () => {
     // box carried and the reason `GIZMO_HIT_PX` survives the move: a hand
     // cannot reliably hit a 2 px shaft.
     //
-    // AND IT STARTS AT `GIZMO_DOT_PX / 2` OUT, which is the one measurement
-    // that is not the flat widget's. There the dot was drawn over the three
-    // tails and owned the middle by covering them; here the three cylinders are
-    // simply not in it, so the free drag keeps the central 12 px by
-    // construction rather than by a tie-break.
+    // AND IT STARTS AT `GIZMO_DOT_PX / 2` OUT, which is what leaves the middle
+    // of the widget answering no ray at all: the dot is drawn there and takes
+    // no press, and three hit cylinders crossing under it would make the one
+    // place the reader cannot tell the axes apart the easiest place to grab one
+    // of them by accident.
     const s = scene()
     const hit = hitOf(armOf(s, 0))
     expect(hit.visible, 'hit and never drawn').toBe(false)
@@ -802,11 +802,11 @@ describe('where the quads are drawn', () => {
 
 describe('where the dot is drawn', () => {
   it('is turned to face the reader, whatever the camera is doing', () => {
-    // THE ONE PIECE WITH NO AXIS IN IT, which is the whole of what "free"
-    // means: it stands for a gesture with no direction and no plane, so there
-    // is nothing about the camera for it to foreshorten to. A flat disc
-    // standing in the world would collapse to a line on some camera; this one
-    // carries the camera's own orientation, so it is a circle on every one.
+    // THE ONE PIECE WITH NO AXIS IN IT: it marks the origin the other six are
+    // measured from, so there is nothing about the camera for it to
+    // foreshorten to. A flat disc standing in the world would collapse to a
+    // line on some camera; this one carries the camera's own orientation, so
+    // it is a circle on every one.
     for (const camera of [orthoCamera(), looking(OBLIQUE), facingZ(0.3)]) {
       const s = scene({ camera })
       rendered(s.viewer)
@@ -836,8 +836,12 @@ describe('where the dot is drawn', () => {
     expect(radius('casing')).toBeCloseTo(GIZMO_DOT_PX / 2 - GIZMO_RIM_PX, 9)
     expect(radius('ink'))
       .toBeCloseTo(GIZMO_DOT_PX / 2 - GIZMO_RIM_PX - GIZMO_CASE_PX, 9)
-    expect(hitOf(node).geometry.parameters.radius)
-      .toBeCloseTo(GIZMO_DOT_PX / 2, 9)
+    // THE BANDS AND NOTHING ELSE: every other piece carries ONE MORE mesh,
+    // built last, that answers the ray — a fourth on a quad, a seventh on an
+    // arrow, which is why `hitOf` takes the last child rather than an index —
+    // and this one has none at all. See 'takes no press and offers no cursor on
+    // the origin dot' for what that buys.
+    expect(node.children).toHaveLength(3)
 
     const lowest = Math.min(...['rim', 'casing', 'ink']
       .map((which) => band(node, which).renderOrder))
@@ -908,7 +912,8 @@ describe('what takes the press', () => {
     // concluding a cut means `reportCut`, which the interface answers by
     // disarming the armed tool — so a press this widget declines must not make
     // that call. tools.js's own listener sees every press aimed at the canvas
-    // and concludes its own.
+    // and finishes its own — which is not the same thing, and is why declining
+    // costs nothing here.
     expect(s.vp.endGesture).not.toHaveBeenCalled()
   })
 
@@ -984,40 +989,34 @@ describe('what takes the press', () => {
     expect(details(s.vp, EVENT_MOVED)).toEqual([])
   })
 
-  it('gives an overlapping press to the dot rather than to the arrow', () => {
-    // WHICH PIECE A PRESS LANDS ON IS DECIDED BY PRIORITY AND NOT BY DISTANCE,
-    // and this is the camera where the two answers differ. The flat widget
-    // settled it by build order — a solid dot was drawn over three mostly-empty
-    // boxes, so the reader got the thing they could see filled in — and
-    // `intersectObject` answers with the NEAREST hit instead, which at the
-    // widget's own centre is a coin toss.
+  it('takes no press and offers no cursor on the origin dot', () => {
+    // THE DOT IS DRAWN AND NEVER PRESSED. It used to be the free drag's own
+    // handle and that gesture is gone (tools.js), so nothing of it may answer a
+    // ray: a cursor over it would promise a grab the press then refuses, and a
+    // press it swallowed would be an orbit the reader never got.
     //
-    // NEAR END-ON IS WHERE THEY REALLY OVERLAP: the Z arrow's hit cylinder
-    // starts at the dot's rim IN THE WORLD, so face-on there is nothing to
-    // decide. Turned until only a quarter of the axis survives, that cylinder
-    // projects onto a disc round the centre and covers the dot — and it covers
-    // it from IN FRONT, so a nearest-hit rule would hand the press to the
-    // arrow.
-    const s = scene({ camera: alongZ(0.25) })
+    // FACE ON IS WHERE THE ARROWS DO NOT COVER FOR IT, which is what makes this
+    // a claim about the dot. Their hit cylinders start at its rim IN THE WORLD
+    // and the quads stand further out still, so a ray through the middle of the
+    // widget crosses nothing whatever — the Z arrow, which would lie along it,
+    // is the one the floor takes off the screen here.
+    const s = scene()
     rendered(s.viewer)
-    expect(upright(s, armOf(s, 2)), 'the premise: the arrow is still drawn')
-      .toBe(true)
-
     const spot = onDot(s)
-    const found = rayAt(s, spot)
-    expect(found.map((one) => one.object),
-           'the premise: both pieces answer this ray')
-      .toEqual(expect.arrayContaining([hitOf(armOf(s, 2)), hitOf(dotOf(s))]))
-    expect(found[0].object, 'the premise: the arrow is the NEARER of the two')
-      .toBe(hitOf(armOf(s, 2)))
+    expect(band(dotOf(s), 'ink').visible, 'the premise: the dot is drawn')
+      .toBe(true)
+    expect(rayAt(s, spot), 'something of the widget answered here').toEqual([])
 
-    press(s.canvas, spot)
+    hoverAt(s.canvas, spot)
+    expect(s.canvas.style.cursor).toBe('')
+
+    const event = press(s.canvas, spot)
     dragFrom(spot)
 
-    // THE FREE DRAG AND NOT A CONSTRAINED ONE: every component is its own,
-    // which only the dot produces.
-    const moved = stands(s.groups[PART])
-    expect(moved.filter((v) => v !== 0)).toHaveLength(3)
+    expect(stands(s.groups[PART])).toEqual([0, 0, 0])
+    expect(s.vp.moved.size).toBe(0)
+    expect(event.stopImmediatePropagation).not.toHaveBeenCalled()
+    expect(event.preventDefault).not.toHaveBeenCalled()
   })
 
   it('gives an overlapping press to the quad rather than to the arrow', () => {
@@ -1054,6 +1053,20 @@ describe('what takes the press', () => {
     expect(moved[0]).not.toBe(0)
     expect(moved[1]).not.toBe(0)
   })
+})
+
+/** A row of two copies of one part, which is what the interface sends as the
+ *  selection for a `pin x2` row (issue #75): one gesture applies one delta to
+ *  every path of it.
+ *
+ * BOTH COPIES STAND ON THE SAME CENTRE, and nothing below reads where either of
+ * them is DRAWN — the widget stands on the first selected path, so this is what
+ * keeps one press point valid however the row is selected. What the tests using
+ * it ask about is `vp.moved` and what the release announces.
+ */
+const PINS = ['/Group/pin', '/Group/pin(2)']
+const row = (selected = PINS) => scene({
+  selected, groups: Object.fromEntries(PINS.map((p) => [p, solid(p)])),
 })
 
 describe('one whole drag', () => {
@@ -1093,9 +1106,9 @@ describe('one whole drag', () => {
   })
 
   it('says where the part ended up once, and only when the hand comes off', async () => {
-    // THE RELEASE IS THE ONLY REPORT, and it is the same one the canvas drag
-    // ends in: the interface answers a recorded move by opening the panel, which
-    // re-stages, and a re-stage ends the gesture the reader has not let go of.
+    // THE RELEASE IS THE ONLY REPORT: the interface answers a recorded move by
+    // opening the panel, which re-stages, and a re-stage ends the gesture the
+    // reader has not let go of.
     const s = scene()
     rendered(s.viewer)
 
@@ -1120,10 +1133,205 @@ describe('one whole drag', () => {
     expect(stands(s.groups[PART])).toEqual([10, 0, 0])
   })
 
-  it('rounds to the same step the free drag rounds to', async () => {
+  it('says nothing for a drag that came back to the offset it started on', async () => {
+    // MEASURED AGAINST WHAT WAS ALREADY STANDING AND NOT AGAINST ZERO, which is
+    // the guard in `reportModelMove` and the reason it is asked of `bases`: a
+    // part of the build, unlike a body of the proposal, may already be
+    // displaced when this press lands. A drag that crossed a snap step and came
+    // back to the one it started on has changed nothing, and announcing it
+    // would write a node the document already has — which the interface answers
+    // by opening the panel on nothing new.
+    const s = scene()
+    rendered(s.viewer)
+    s.vp.moved.set(PART, { delta: [4, 0, 0], turn: [0, 0, 0] })
+
+    const spot = onArrow(s, 0)
+    press(s.canvas, spot)
+    dragFrom(spot)
+    expect(stands(s.groups[PART]), 'the premise: it really did go somewhere')
+      .toEqual([14, 0, 0])
+    pointerMove(spot)
+    pointerUp(spot)
+    await settled()
+
+    expect(stands(s.groups[PART])).toEqual([4, 0, 0])
+    expect(details(s.vp, EVENT_MOVED)).toEqual([])
+  })
+
+  it('announces the delta that LANDED, not the one that was refused', async () => {
+    // `stood` EXISTS FOR THIS AND ONLY THIS. Past its pre-check `movePart` is
+    // not atomic: a `position.set` that throws part way down a row leaves the
+    // paths before it displaced and answers `false` without unwinding (parts.js
+    // says why). The snapped delta has to advance whatever happens, or a step
+    // that failed would be retried on every event for the rest of the gesture —
+    // so the two are separate fields, and what the release announces is the
+    // last offset the whole gesture is known to have reached.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const s = row()
+    rendered(s.viewer)
+
+    const spot = onArrow(s, 0)
+    press(s.canvas, spot)
+    dragFrom(spot)
+    const landed = [...s.vp.moved.get(PINS[0]).delta]
+    s.groups[PINS[1]].position.set = () => { throw new Error('gone') }
+    const far = [spot[0] + 2 * DRAG[0], spot[1] + DRAG[1]]
+    pointerMove(far)
+    pointerUp(far)
+    await settled()
+
+    const [report] = details(s.vp, EVENT_MOVED)
+    expect(report.delta).toEqual(landed)
+    // The scene really is out of step — the first path took the refused step
+    // before the throw — and settling that is `reconcileMoves`'s job, off the
+    // document this delta is about to be written into.
+    expect(stands(s.groups[PINS[0]])).toEqual(landed.map((v) => v * 2))
+  })
+
+  it('speaks up when the ANCHOR came back but its siblings did not', async () => {
+    // THE GUARD IS ASKED OF EVERY PATH, and this is the gesture that made it
+    // have to be. One copy is dragged out on its own, so the row stands apart:
+    // one at the offset, one at home. The row is then selected with the
+    // DISPLACED copy FIRST — it is the anchor, so the drag starts from its
+    // offset — carried out and brought back to exactly where it began. Nothing
+    // happened to the anchor. Everything happened to its sibling, which one
+    // delta applied to every path (`movePart`) has carried the whole way
+    // across.
+    //
+    // Asked about the anchor alone this reads as a gesture that went nowhere,
+    // and the sibling is left standing at an offset no node in the document
+    // claims — until the next push jerks it home under the reader's hand.
+    const s = row([PINS[1]])
+    rendered(s.viewer)
+    const spot = onArrow(s, 0)
+    press(s.canvas, spot)
+    dragFrom(spot)
+    pointerUp(dragged(spot))
+    await settled()
+    const [first] = details(s.vp, EVENT_MOVED)
+    expect(stands(s.groups[PINS[0]]), 'the sibling came along on the first drag')
+      .toEqual([0, 0, 0])
+
+    s.vp.state = { ...s.vp.state, selected: [PINS[1], PINS[0]] }
+    rendered(s.viewer)
+    press(s.canvas, spot)
+    dragFrom(spot)
+    pointerMove(spot)
+    pointerUp(spot)
+    await settled()
+
+    const reports = details(s.vp, EVENT_MOVED)
+    expect(reports).toHaveLength(2)
+    expect(reports[1].delta).toEqual(first.delta)
+    expect(reports[1].paths).toEqual([PINS[1], PINS[0]])
+    expect(stands(s.groups[PINS[0]]), 'the sibling did not come to the anchor')
+      .toEqual(first.delta)
+  })
+
+  it('stamps the build at the PRESS, whatever arrives mid-drag', async () => {
+    // AS OF THE PRESS AND NOT THE RELEASE, which is what makes it a stamp
+    // rather than a reading: the scene can be replaced under a hand that has
+    // not come off the model, and what these paths and this offset describe is
+    // the assembly that was on screen when the grab was made. The other side
+    // drops a report whose stamp is not the build it is showing, so one stamped
+    // at the release would be filed against the wrong assembly — and across a
+    // revision the same path can be a different part altogether.
+    //
+    // `drawnKey` AND NOT `state.buildKey`, which is what the fixture moves
+    // here: the state field goes the moment a swap is ANNOUNCED and the
+    // geometry arrives after the `await fetch` in `load()`, while `show()`
+    // writes `drawnKey` beside the payload — the line that means the new scene
+    // is really up.
+    const s = scene()
+    rendered(s.viewer)
+
+    const spot = onArrow(s, 0)
+    press(s.canvas, spot)
+    dragFrom(spot)
+    s.vp.drawnKey = 'build-2'
+    pointerUp(dragged(spot))
+    await settled()
+
+    expect(details(s.vp, EVENT_MOVED)[0].build).toBe('build-1')
+  })
+
+  it('announces the retraction when a part is dragged back home', async () => {
+    // A ZERO IS NOT SILENCE, and it is the half of the guard the test above
+    // cannot reach. `reportModelMove` asks whether the gesture CHANGED
+    // anything, not whether the delta is nothing: a part standing displaced and
+    // dragged back to where the build puts it has changed a great deal, and the
+    // interface answers that by deleting the move node rather than by writing a
+    // displacement of (0, 0, 0) into the projection. An early return on a zero
+    // delta would pass everything else in this file and lose exactly this.
+    const s = scene()
+    rendered(s.viewer)
+    const out = onArrow(s, 0)
+    press(s.canvas, out)
+    dragFrom(out)
+    pointerUp(dragged(out))
+    await settled()
+    expect(stands(s.groups[PART])).not.toEqual([0, 0, 0])
+
+    // From where the part now stands, the same travel back the way it came.
+    rendered(s.viewer)
+    const home = onArrow(s, 0)
+    const there = [home[0] - DRAG[0], home[1] - DRAG[1]]
+    press(s.canvas, home)
+    pointerMove(there)
+    pointerUp(there)
+    await settled()
+
+    // `-0` ON THE AXIS THAT CAME BACK, which is what `Math.round` answers for a
+    // negative landing on zero, so the question is asked the way arithmetic
+    // asks it rather than the way `Object.is` does. It is the same number
+    // everywhere it goes from here — `-0 === 0` for the guard in
+    // `reportModelMove`, and `JSON.stringify` writes `0` into the document.
+    const [, back] = details(s.vp, EVENT_MOVED)
+    expect(back.delta.every((v) => v === 0), 'the delta did not come home')
+      .toBe(true)
+    expect(stands(s.groups[PART]).every((v) => v === 0), 'the part did not')
+      .toBe(true)
+  })
+
+  it('carries the turn the part is already standing at through the drag', async () => {
+    // `movePart` writes the group's quaternion on EVERY call, the identity
+    // included — so a drag that said nothing about the turn would flatten a
+    // part the reader had turned in the panel, under their own hand, with the
+    // document still saying it is turned. `moveRecord` reads the anchor's turn
+    // once at the press and hands it back on every step.
+    //
+    // NO PIVOT IS SEEDED, unlike the version of this that lived in
+    // tools.test.js: `solid()` above carries real positions and a bounding box,
+    // so `partCentre` answers and `partPivot` fills itself on the first turn
+    // (parts.js). A part whose centre cannot be read is one `movePart` refuses
+    // to turn at all, which parts.test.js pins separately.
+    const s = row()
+    for (const path of PINS) {
+      s.vp.moved.set(path, { delta: [0, 0, 0], turn: [0, 0, 90] })
+    }
+    rendered(s.viewer)
+
+    const spot = onArrow(s, 0)
+    press(s.canvas, spot)
+    dragFrom(spot)
+    pointerUp(dragged(spot))
+    await settled()
+
+    expect(s.vp.moved.get(PINS[0]).turn).toEqual([0, 0, 90])
+    expect(s.groups[PINS[0]].quaternion.w)
+      .toBeCloseTo(Math.cos((45 * Math.PI) / 180), 12)
+    // AND THE REPORT SAYS NOTHING ABOUT THE TURN, because a drag is about
+    // WHERE: the node the interface edits keeps the turn it was already
+    // carrying.
+    const [report] = details(s.vp, EVENT_MOVED)
+    expect(report.delta).not.toEqual([0, 0, 0])
+    expect(report.turn).toBeUndefined()
+  })
+
+  it('rounds to the step tools.js sets, not to the arithmetic', async () => {
     // ONE VOCABULARY FOR ONE DOCUMENT. `niceStep` and `snap` are imported from
     // tools.js rather than copied, so a 20 mm assembly lands on tenths here
-    // exactly as it does under a free drag — `0.6` and not the
+    // exactly as it does under a quad or a disc — `0.6` and not the
     // `0.6000000000000001` six steps of a tenth come to in binary.
     const s = scene({ gridSize: 20 })
     rendered(s.viewer)
@@ -1294,9 +1502,10 @@ describe('one whole drag', () => {
 
   it('edits the panel`s document for a body the proposal staged', async () => {
     // THE SECOND MEANING OF THE SAME GESTURE, and the arrows reach it through
-    // the same `reportMove` the canvas drag does. A body of the proposal is the
-    // reader's OWN drawing: it moves for the eye alone while the hand is down,
-    // nothing is recorded for it, and the release names the body to the panel.
+    // the same `reportMove` the quads and the discs do. A body of the proposal
+    // is the reader's OWN drawing: it moves for the eye alone while the hand
+    // is down, nothing is recorded for it, and the release names the body to
+    // the panel.
     const BODY = '/Group/proposal/plate'
     const s = scene({
       selected: [BODY],
@@ -1352,8 +1561,8 @@ describe('one whole drag of a quad', () => {
     // point under the pointer AND in the plane is where the ray through the
     // moved cursor cuts the plane through where the drag began. The orthogonal
     // projection `w - n(w.n)` answers a different question — the nearest point
-    // of the plane to where a free drag would have gone — and lags the hand by
-    // whatever it threw away.
+    // of the plane to where the bare displacement would have gone — and lags
+    // the hand by whatever it threw away.
     //
     // SO THE ASSERTION IS ABOUT THE SCREEN AND NOT ABOUT THE HELD AXIS. Both
     // formulas hold the normal axis perfectly; only one of them puts the part
@@ -1488,8 +1697,8 @@ describe('one whole drag of a quad', () => {
 
   it('says where the part ended up in the same sentence an arrow does', async () => {
     // ONE VOCABULARY FOR ONE DOCUMENT. A quad's drag ends in the same
-    // `reportMove` the arrows and the canvas drag end in, so what reaches the
-    // panel is a move node like any other — the same `delta`, the same paths,
+    // `reportMove` the arrows and the discs end in, so what reaches the panel
+    // is a move node like any other — the same `delta`, the same paths,
     // the same build stamp, once, and only when the hand comes off.
     const s = scene({ camera: looking(OBLIQUE) })
     rendered(s.viewer)
@@ -1513,84 +1722,21 @@ describe('one whole drag of a quad', () => {
   })
 })
 
-describe('one whole drag of the origin dot', () => {
-  it('moves the part on all three axes at once', () => {
-    // THE ONE PIECE THAT CONSTRAINS NOTHING, and it is what the other two are
-    // measured against: the same gesture that an arrow reduces to one number
-    // and a quad to two comes through here as all three.
-    const s = scene({ camera: looking(OBLIQUE) })
-    rendered(s.viewer)
-
-    const spot = onDot(s)
-    press(s.canvas, spot)
-    dragFrom(spot)
-
-    expect(stands(s.groups[PART])).toEqual(OBLIQUE_WORLD.map(round))
-    // And every component really was its own: a widget that quietly held one
-    // would pass the line above on a camera that put a zero there.
-    for (const v of OBLIQUE_WORLD) expect(Math.abs(v)).toBeGreaterThan(STEP)
-  })
-
-  it('is the free drag itself and not a second copy of it', async () => {
-    // A SECOND DOOR TO `dragPart` IN tools.js — the very function a press on
-    // the part runs — so the two cannot round differently, record differently
-    // or report differently. The proof this file can give is that the answer is
-    // the one the FREE drag gives and not the one any projection would: square
-    // on, the hand spans `[10, -3, 0]` and nothing is dropped from it.
-    const s = scene()
-    rendered(s.viewer)
-
-    const spot = onDot(s)
-    press(s.canvas, spot)
-    dragFrom(spot)
-    pointerUp(dragged(spot))
-    await settled()
-
-    expect(stands(s.groups[PART])).toEqual([10, -3, 0])
-    expect(details(s.vp, EVENT_MOVED)[0].delta).toEqual([10, -3, 0])
-  })
-
-  it('edits the panel`s document for a body the proposal staged', async () => {
-    // THE SECOND MEANING OF THE SAME GESTURE, reached through the same
-    // `reportMove`: a body of the proposal moves for the eye alone, nothing is
-    // recorded for it, and the release names the body to the panel. It is the
-    // arrows' case asked of the piece that goes through tools.js's own
-    // function, so a dot wired to anything else would show here.
-    const BODY = '/Group/proposal/plate'
-    const s = scene({
-      selected: [BODY],
-      groups: { [BODY]: solid(BODY) },
-      overlay: [{ name: 'plate' }],
-    })
-    rendered(s.viewer)
-
-    const spot = onDot(s)
-    press(s.canvas, spot)
-    dragFrom(spot)
-    pointerUp(dragged(spot))
-    await settled()
-
-    const [report] = details(s.vp, EVENT_PROPOSALMOVE)
-    expect(report.name).toBe('plate')
-    expect(report.delta).toEqual([10, -3, 0])
-    expect(stands(s.groups[BODY])).toEqual([10, -3, 0])
-    expect(s.vp.moved.size, 'an offset was written for it').toBe(0)
-    expect(details(s.vp, EVENT_MOVED)).toEqual([])
-  })
-})
-
 describe('a press this widget does take', () => {
   it('ends every other gesture that could be live', () => {
     // THREE THINGS CAN BE RUNNING WHEN A PIECE IS PRESSED, and until the tools
     // were merged only the first could: this widget's own drag, the rotation
-    // handles' drag, and the canvas gesture in tools.js. All three write the
-    // same part through `movePart`, which sets position AND orientation
-    // together from its own snapshot of the other's half — so any two of them
-    // live at once overwrite each other frame by frame and both report at the
-    // release.
+    // handles' drag, and the canvas gesture in tools.js — which under `move` is
+    // either a cut the hold key put up or the ordinary press that missed every
+    // piece of the widget. The first two write the same part through
+    // `movePart`, which sets position AND orientation together from its own
+    // snapshot of the other's half, so the two live at once overwrite each
+    // other frame by frame and both report at the release; the third goes on
+    // dragging the clipping plane under a hand that has left it, or, as a plain
+    // press, ends in a pick that changes the selection mid-drag.
     //
     // THE CANVAS ONE IS THE ONE A PRESS HERE CANNOT OTHERWISE REACH. tools.js
-    // concludes its own previous press at the head of its `onDown`, and that
+    // finishes its own previous press at the head of its `onDown`, and that
     // listener DOES see every press aimed at the canvas — so what opens the
     // hole is the refusal `scene3d.js` makes on our answer, which takes the
     // press away before that listener runs.
@@ -1600,14 +1746,14 @@ describe('a press this widget does take', () => {
     const s = scene({ camera: looking(OBLIQUE) })
     rendered(s.viewer)
 
-    for (const spot of [onArrow(s, 0), onQuad(s, 2), onDot(s)]) {
+    for (const spot of [onArrow(s, 0), onQuad(s, 2)]) {
       s.vp.rings.endDrag.mockClear()
       s.vp.endGesture.mockClear()
       press(s.canvas, spot)
       pointerUp(spot)
       expect(s.vp.rings.endDrag, 'the handles were left running')
         .toHaveBeenCalled()
-      expect(s.vp.endGesture, 'the canvas drag was left running')
+      expect(s.vp.endGesture, 'the canvas gesture was left running')
         .toHaveBeenCalled()
     }
   })

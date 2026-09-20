@@ -598,7 +598,14 @@ export function chromeView(s, props, deps) {
       // drawn through it is a picture the trackball still owns (`rings.js`),
       // so naming the ring would send the reader to grab the one part of the
       // widget that does nothing.
-      : armed === 'move' ? 'drag it to slide, a coloured disc to turn · esc to stop'
+      //
+      // AND THE ARROW AND THE QUAD FOR THE SAME REASON. `drag it` described a
+      // press on the part itself, which no longer moves anything
+      // (`viewport/tools.js`): a drag that starts anywhere but on a piece of
+      // the widget orbits, so the strip has to send the hand to the pieces.
+      // The origin dot is left unnamed — it is drawn, it takes no press, and
+      // naming it would be the very mistake the paragraph above avoids.
+      : armed === 'move' ? 'drag an arrow or a quad to slide, a coloured disc to turn · esc to stop'
       : armed === 'cut' ? 'click a face to place the section plane'
       : `drag — orbit · wheel — zoom · hold ${HOLD_KEY_LABEL} — section`,
   };

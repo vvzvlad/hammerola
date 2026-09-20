@@ -402,17 +402,11 @@ export function movableGroup(viewer, path) {
  * The paths a gesture may take hold of, as `{paths, proposal}` — or null when
  * one of them is not grabbable and the whole grab is therefore refused.
  *
- * THE ONE QUESTION THREE GESTURES ASK. The canvas drag (tools.js) asks it of
- * the standing selection — unless the press landed on a part outside it, which
- * is a grab of something else and not a drag of the selection at all — or of
- * the single part it grabbed when nothing is selected, and the two halves of
- * the manipulator — the arrows
- * and quads (gizmo.js) and the rotation handles (rings.js) — ask it every frame
- * of what is selected, because a widget offering a move that the press would
- * then refuse is a promise it cannot keep. Two halves of ONE widget that came
- * up on different conditions would be a widget with a piece missing, and a
- * widget that came up on conditions the canvas drag does not share would be a
- * third opinion about the same part.
+ * THE ONE QUESTION BOTH HALVES OF THE MANIPULATOR ASK — the arrows and quads
+ * (gizmo.js) and the rotation handles (rings.js) — every frame, of what is
+ * selected, because a widget offering a move that the press would then refuse
+ * is a promise it cannot keep. Two halves of ONE widget that came up on
+ * different conditions would be a widget with a piece missing.
  *
  * MIXED SELECTIONS ARE REFUSED WHOLE by the `some` and then `every` below,
  * rather than quietly moving the half that may: one overlay path makes this a
@@ -422,10 +416,9 @@ export function movableGroup(viewer, path) {
  * answers null for it — so a body the panel cannot NAME is a body no report
  * could be about.
  *
- * WHAT IS NOT ASKED HERE IS WHICH TOOL IS IN FORCE, because the three callers
- * differ on it: the manipulator wants `move` armed and the canvas press has
- * already read `activeTool` once, at the press, and lives with that answer for
- * the rest of the gesture.
+ * WHAT IS NOT ASKED HERE IS WHICH TOOL IS IN FORCE, which is the caller's own
+ * half of the question: both halves of the manipulator ask it under `move` and
+ * nowhere else (`held` in either file).
  */
 export function grabbable(vp, paths) {
   const list = Array.isArray(paths) ? paths : [];

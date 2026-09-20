@@ -1094,18 +1094,14 @@ describe('the proposal as a branch of the tree', () => {
     const said = c.computed().menuItems.map((m) => m.label)
     expect(said).toContain('Isolate')
     expect(said).toContain('Move')
-    // AND TURN BESIDE IT, which it did not have while that row minted a node
-    // rather than arming a gesture — see the case further down, where the whole
-    // of what changed is written out.
-    expect(said).toContain('Turn')
   })
 
   it('gives a move row no menu at all', () => {
     // NOTHING IN THAT MENU APPLIES TO IT. Isolate and Hide others are about
     // geometry the node does not own, the Files are the catalogue's, and Move
-    // and Turn would mint a second node over paths this one already claims.
-    // What is left is a menu ABOUT THE BUILD PART, opened from a row that only
-    // names it — the confusion the branch exists to avoid.
+    // would arm the tool on the PART rather than on the node. What is left is a
+    // menu ABOUT THE BUILD PART, opened from a row that only names it — the
+    // confusion the branch exists to avoid.
     const { c, el } = mounted({})
     stage(c, el, [])
     drag('/model/plate', [3, 0, 0])
@@ -3506,48 +3502,6 @@ describe('a proposal body as the part a task is filed against', () => {
     expect(labelsOn('/model/proposal')).not.toContain('Move')
   })
 
-  it('is offered Turn, and it mints no node for a body', () => {
-    // THE ROW A BODY USED TO BE REFUSED, AND WHY IT IS NOT ANY MORE. Turn armed
-    // NOTHING while a turn had no gesture: all it could do was mint a move node
-    // and open the panel, and a move node on an overlay path is a second way to
-    // turn a body that already has a `rot°` three rows up the same sheet —
-    // `move "korpus" turned (…)` printed for the agent beside its own
-    // `rot (…)`. There are rotation handles now (viewport/rings.js), and the
-    // gesture is re-routed at the press exactly as the drag is: a body's turn
-    // goes out on `hmr:proposalturn` and edits that very `rot`. So the tool is
-    // armed on either kind of object.
-    //
-    // AND THE TOOL IS `move`, which is not a slip. The handles and the arrows
-    // are one manipulator under one command, so both rows arm the same thing
-    // and what is left to tell them apart is the node below.
-    //
-    // WHAT IS STILL THE BUILD'S ALONE is the node: the item makes a row for a
-    // part nothing has claimed yet, so that an exact angle has somewhere to be
-    // typed, and a body needs none because its own row is already there.
-    const menuOn = (id) => {
-      const { c, el } = panel({ proposal: withBlock() })
-      staging(el)
-      c.state = { ...c.state, tree: indexTree(STAGED), menu: { id, x: 0, y: 0 } }
-      return { c, items: c.computed().menuItems }
-    }
-    const labelsOn = (id) => menuOn(id).items.map((m) => m.label)
-
-    expect(labelsOn('/model/proposal/korpus')).toEqual(
-      expect.arrayContaining(['Move', 'Turn']))
-    expect(labelsOn('/model/plate')).toEqual(
-      expect.arrayContaining(['Move', 'Turn']))
-
-    // The tool is armed on the body and the document is left exactly as it was
-    // — one node, the body the fixture put there, and no move beside it.
-    const { c, items } = menuOn('/model/proposal/korpus')
-    const before = c.state.proposal.nodes.length
-    items.find((m) => m.label === 'Turn')
-      .onClick({ stopPropagation() {}, preventDefault() {} })
-    expect(c.state.tool).toBe('move')
-    expect(c.state.proposal.nodes).toHaveLength(before)
-    expect(moves(c.state.proposal)).toEqual([])
-  })
-
   it('is told apart from a build part by the sentence the row raises', () => {
     // The two drags MEAN different things and the toast is where the reader is
     // told which one they are in. A part of the build moves as a statement to
@@ -3571,182 +3525,6 @@ describe('a proposal body as the part a task is filed against', () => {
     expect(body.c.state.tool).toBe('move')
 
     expect(armOn('/model/plate').said).toContain('snaps back')
-  })
-})
-
-// -- the row that makes a move where no drag has been --------------------------
-
-describe('Turn, in a part\'s own menu', () => {
-  // THIS ROW DOES TWO THINGS AND USED TO DO ONE. It arms a tool on the object it
-  // names — the SAME tool Move arms, since the two halves of the manipulator
-  // were merged and turning no longer needs a mode of its own — and it writes
-  // the selection, because an armed tool acts on what is SELECTED and neither
-  // door into this menu writes it. What is left between the two rows is what
-  // each does BESIDES arming, which is the rest of this block.
-  //
-  // AND IT GOES ON MAKING THE ROW, which is what it did when a turn had no
-  // gesture at all: a ring says "about this much" and a field says "exactly
-  // 90", and a part nobody has dragged has no row in the panel and therefore
-  // nowhere to type the second.
-
-  const STAGED = {
-    id: '/model',
-    name: 'model',
-    children: [
-      { id: '/model/plate', name: 'plate', key: 'plate', known: true },
-      { id: '/model/pin', name: 'pin', key: 'pin', known: true },
-      { id: '/model/pin(2)', name: 'pin', key: 'pin', known: true },
-      {
-        id: '/model/housing',
-        name: 'housing',
-        children: [{ id: '/model/housing/lid', name: 'lid', key: 'lid', known: true }],
-      },
-    ],
-  }
-
-  /** The page with a row's menu open on `id`. */
-  function menu(id, over = {}) {
-    const { c, el } = panel({ proposal: withBlock(), ...over })
-    c.state = { ...c.state, tree: indexTree(STAGED), menu: { id, x: 0, y: 0 } }
-    return { c, el }
-  }
-
-  const labels = (c) => c.computed().menuItems.map((m) => m.label)
-
-  const choose = (c, label) => c.computed().menuItems.find((m) => m.label === label)
-    .onClick({ stopPropagation() {}, preventDefault() {} })
-
-  it('stands beside Move, under exactly the same four gates', () => {
-    // THE SAME NODE OF THE SAME DOCUMENT comes out of both rows, so the four
-    // answers that take Move away take this away with it: a reader with no token
-    // has nowhere to send it, a phone has no room to aim, a group is a path no
-    // press can hit, and a hub that serves no panel has nowhere to draw the row.
-    expect(labels(menu('/model/plate').c)).toContain('Turn')
-    expect(labels(menu('/model/plate', { token: null }).c)).not.toContain('Turn')
-    expect(labels(menu('/model/plate', { narrow: true }).c)).not.toContain('Turn')
-    expect(labels(menu('/model/housing').c)).not.toContain('Turn')
-    expect(labels(menu('/model/plate', { served: false }).c)).not.toContain('Turn')
-    // And the two rows are gated together rather than each on its own reading of
-    // the same four questions.
-    for (const over of [{ token: null }, { narrow: true }, { served: false }]) {
-      const said = labels(menu('/model/plate', over).c)
-      expect(said.includes('Turn')).toBe(said.includes('Move'))
-    }
-  })
-
-  it('arms the one manipulator on the object the row names, and says so', () => {
-    // THE SELECTION AND THE TOOL IN ONE WRITE, which is what makes the row mean
-    // what it says: the armed tool works on what is SELECTED, and a right-click
-    // on a row does not select. Chosen while another object stood selected,
-    // this would otherwise have put the widget round that one.
-    //
-    // `move` AND NOT A TOOL OF ITS OWN. `turn` was one, and it meant the widget
-    // came up as two halves the reader had to swap between — arrows under one
-    // name, rotation handles under the other. There is one manipulator now and
-    // this row arms it; what the row still owns is the node it mints and the
-    // panel it opens, which is where an exact angle is typed.
-    const { c } = menu('/model/plate')
-
-    choose(c, 'Turn')
-
-    expect(c.state.tool).toBe('move')
-    expect(c.state.sel).toBe('/model/plate')
-    // AND THE SENTENCE NAMES BOTH HALVES, which is the whole of what one tool
-    // owes the reader: told only about the discs they would never find the
-    // arrows, and told only `drag it` they would never find the discs.
-    const said = c.toast.mock.calls.map(([text]) => text).join('')
-    expect(said).toContain('slide')
-    expect(said).toContain('disc')
-    // AND THE STRIP SAYS THE SAME THING, because it is the only line on the
-    // page that describes the tool while it is in force. `disc` and not `ring`:
-    // there is no full ring on screen at rest, and a press on the arc that IS
-    // drawn goes to the trackball, so naming the ring would send the reader to
-    // grab the one part of the widget that does nothing.
-    expect(c.computed().hintText).toContain('slide')
-    expect(c.computed().hintText).toContain('disc')
-  })
-
-  it('mints a row at no offset and no turn, and opens the panel on it', () => {
-    const { c, el } = menu('/model/plate', { open: false })
-
-    choose(c, 'Turn')
-
-    expect(moves(c.state.proposal)).toEqual([{
-      id: 'm2', role: 'move', paths: ['/model/plate'], name: 'plate',
-      delta: [0, 0, 0], turn: [0, 0, 0],
-    }])
-    // THE PANEL COMES UP WITH IT, because a row nobody can see is a row nobody
-    // can type in — which is the whole of what this item is for.
-    expect(c.state.proposalOpen).toBe(true)
-    expect(moveRows(c)).toHaveLength(1)
-    expect(moveRows(c)[0].groups.map((g) => g.label))
-      .toEqual(['by', 'turn°'])
-    // AND THE VIEWPORT IS TOLD, so the scene and the document agree from the
-    // first moment the row exists — at nothing, which is where the part already
-    // stands.
-    expect(pushed(el))
-      .toEqual([{ paths: ['/model/plate'], delta: [0, 0, 0], turn: [0, 0, 0] }])
-  })
-
-  it('takes every copy a collapsed row stands for, and its counted name', () => {
-    // The same paths Hide and Isolate take, because it is the same object: a row
-    // reading `pin ×2` is two solids, and turning one of them alone would be the
-    // row quietly meaning something else here than it does everywhere else.
-    const { c } = menu('/model/pin')
-
-    choose(c, 'Turn')
-
-    expect(moves(c.state.proposal)[0].paths).toEqual(['/model/pin', '/model/pin(2)'])
-    expect(moves(c.state.proposal)[0].name).toBe('pin ×2')
-  })
-
-  it('survives the reconcile that follows, which drops nothing it did not', () => {
-    // THE RULE THIS IS NOT. A node is dropped when a DRAG is reported at zero —
-    // the reader putting a displacement back by hand — and a node minted here is
-    // a row asked for rather than a statement withdrawn, so nothing looks at its
-    // zeroes. Pushing the document is what would have shown otherwise: the
-    // viewport is handed the node, and the document still holds it afterwards.
-    const { c, el } = menu('/model/plate')
-
-    choose(c, 'Turn')
-    c.proposalMoves(c.state.proposal)
-
-    expect(moves(c.state.proposal)).toHaveLength(1)
-    expect(pushed(el))
-      .toEqual([{ paths: ['/model/plate'], delta: [0, 0, 0], turn: [0, 0, 0] }])
-    // And it is still there to be typed into after the row has been redrawn.
-    expect(moveRows(c)).toHaveLength(1)
-  })
-
-  it('types a turn into the row it just made', () => {
-    const { c, el } = menu('/model/plate')
-    choose(c, 'Turn')
-
-    const row = moveRows(c)[0]
-    type(row.groups[1].fields[1], '45')
-
-    expect(moves(c.state.proposal)[0].turn).toEqual([0, 45, 0])
-    expect(pushed(el))
-      .toEqual([{ paths: ['/model/plate'], delta: [0, 0, 0], turn: [0, 45, 0] }])
-    expect(proposalText(c.state.proposal))
-      .toContain('move "plate" by (0, 0, 0) turned (0, 45, 0)')
-  })
-
-  it('gives a part that already has a row no second one', () => {
-    // Two nodes claiming one path are two contradictory sentences about it in the
-    // projection and two rows of which only one `×` appears to do anything — the
-    // hazard the drag handler matches by intersection to avoid. The row is
-    // already there; all this has left to do is open the panel it is in.
-    const { c } = mounted({ proposal: withBlock(), open: false })
-    drag('/model/plate', [3, 0, 0])
-    c.setState({ proposalOpen: false })
-    c.state = { ...c.state, tree: indexTree(STAGED), menu: { id: '/model/plate', x: 0, y: 0 } }
-
-    choose(c, 'Turn')
-
-    expect(moves(c.state.proposal)).toHaveLength(1)
-    expect(moves(c.state.proposal)[0].delta).toEqual([3, 0, 0])
-    expect(c.state.proposalOpen).toBe(true)
   })
 })
 

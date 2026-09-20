@@ -1443,8 +1443,8 @@ export default class HammerolaViewer extends React.Component {
    * and no revision, and the agent has nothing to look the path up in.
    *
    * THE MOVE GESTURE IS NOT REFUSED BY THIS. A drag of a proposal body is a
-   * DIFFERENT GESTURE, told apart a step earlier by the viewport (`onDown` in
-   * viewport/tools.js, which asks the same `isOverlay`) and ending in
+   * DIFFERENT GESTURE, told apart a step earlier by the viewport (`grabbable`
+   * in viewport/parts.js, which asks the same `isOverlay`) and ending in
    * `hmr:proposalmove` — an edit of the panel's own document rather than a task
    * about a part. So nothing about such a body ever reaches the `hmr:moved`
    * handler, and this question is never asked there. The row menu offers Move on
@@ -6080,10 +6080,8 @@ export default class HammerolaViewer extends React.Component {
       clearSection, stop, SECTION_ROW,
       noteFor, partRecord, fileList, proposalPanelOn,
       node: this.node.bind(this),
-      nextSeq: () => { this._proposalSeq += 1; return this._proposalSeq; },
       proposalBody: this.proposalBody.bind(this),
       set: this.set.bind(this),
-      setProposal: this.setProposal.bind(this),
       setState: this.setState.bind(this),
       setVisibility: this.setVisibility.bind(this),
       toast: this.toast.bind(this),

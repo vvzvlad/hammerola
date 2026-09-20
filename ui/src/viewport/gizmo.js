@@ -1,8 +1,9 @@
 // The move tool's manipulator, less its rotation handles: an ORIGIN DOT at the
 // selected part's centre, THREE AXIS ARROWS out of it along world +X, +Y and
-// +Z, and THREE PLANE QUADS, one lying in each world plane. The dot is dragged
-// for a free move, an arrow slides the part along THAT AXIS ONLY, and a quad
-// slides it in THAT PLANE — two axes at once with the third held.
+// +Z, and THREE PLANE QUADS, one lying in each world plane. An arrow slides the
+// part along THAT AXIS ONLY and a quad slides it in THAT PLANE — two axes at
+// once with the third held. The dot is DRAWN AND NOT PRESSED: it marks the
+// origin the six of them are measured from and answers no ray at all.
 //
 // ONE WIDGET, TWO FILES, ONE TOOL. The rotation handles are the fourth piece of
 // the same manipulator and they live in rings.js, which answers to this same
@@ -24,15 +25,16 @@
 // is. The paint says the same thing the other way up — `GIZMO_ORDER` is the
 // topmost band in scene3d.js — so what the reader sees on top is what answers.
 //
-// WHY IT EXISTS. The Move tool has always dragged a part freely in the plane of
-// the screen (`dragPart` in tools.js), which is the right gesture for "put it
-// about there" and the wrong one for every sentence that names a direction —
+// WHY IT EXISTS. The Move tool used to drag a part freely in the plane of the
+// screen, off a press on the part itself, which is the right gesture for "put
+// it about there" and the wrong one for every sentence that names a direction —
 // "three millimetres further out", "up off the plate". Under an ortho camera a
 // free drag can produce a delta on all three axes at once, and nothing in the
 // hand can say which of them the reader meant. Blender's answer is this widget,
-// and it is the one readers arrive already knowing. The dot gives the free drag
-// back as a fourth target, because with a tool armed the hand is on the widget
-// rather than on the part.
+// and it is the one readers arrive already knowing. IT IS THE WHOLE GESTURE
+// NOW: the free drag is gone (tools.js), so an armed tool no longer costs the
+// reader the orbit, and a press anywhere but on a piece of this widget means
+// what it means with no tool up.
 //
 // OBJECTS IN THE SCENE AND NOT A LAYER OF DIVS OVER IT, which is what makes an
 // arrow point along its axis rather than along a picture of it. `scene3d.js`
@@ -47,17 +49,16 @@
 // `cameraBasis().view`.
 //
 // EVERY NUMBER A DRAG PRODUCES COMES FROM tools.js, and none of that moved.
-// Each constrained delta is the free drag's own world displacement put back on
-// the piece's own geometry — an arrow takes the NEAREST POINT of its line, a
-// quad takes the point where the ray through the cursor MEETS its plane, and
-// the difference is not arbitrary: a plane and a ray meet and a line and a ray
-// do not, so only one of the two can promise the reader that the part follows
-// the pointer exactly. From there both are the same `niceStep`, the same
-// `snap`, the same `movePart`/`nudgePart`, the same `stood`/`last` distinction
-// and the same `reportMove` — so a part dragged by an arrow, by a quad, by the
-// dot and by hand reach the proposal document as the same kind of sentence. A
+// Each constrained delta is the unconstrained world displacement the hand spans
+// put back on the piece's own geometry — an arrow takes the NEAREST POINT of
+// its line, a quad takes the point where the ray through the cursor MEETS its
+// plane, and the difference is not arbitrary: a plane and a ray meet and a line
+// and a ray do not, so only one of the two can promise the reader that the part
+// follows the pointer exactly. From there both are the same `niceStep`, the
+// same `snap`, the same `movePart`/`nudgePart`, the same `stood`/`last`
+// distinction and the same `reportMove` — so a part dragged by an arrow and one
+// dragged by a quad reach the proposal document as the same kind of sentence. A
 // second copy of any of that would not fail; it would drift, which is worse.
-// The dot does not even project: it calls `dragPart` itself.
 
 import { cameraBasis, ndcAt, ndcOffset } from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
@@ -65,7 +66,7 @@ import { internals } from "./internals.js";
 import { dot3 } from "./math.js";
 import { grabbable, movePart, nudgePart, partCentre } from "./parts.js";
 import { GIZMO_ORDER, createScene3D, widgetMaterial } from "./scene3d.js";
-import { dragPart, moveRecord, niceStep, reportMove, snap } from "./tools.js";
+import { moveRecord, niceStep, reportMove, snap } from "./tools.js";
 import {
   GIZMO_CASE_PX, GIZMO_DOT_PX, GIZMO_HEAD_PX, GIZMO_HIT_PX, GIZMO_MIN_SCALE,
   GIZMO_PLANE_GAP_PX, GIZMO_PLANE_PX, GIZMO_PX, GIZMO_RIM_PX, GIZMO_SHAFT_PX,
@@ -155,14 +156,17 @@ const NO_HIT = () => {};
 /** Which piece a press belongs to when a ray finds more than one, LOWEST FIRST.
  *
  * NOT THE NEAREST HIT, which is what `intersectObject` would answer and is a
- * coin toss at the widget's own centre — the three arrows, the dot and, on a
- * camera that has turned them nearly end-on, the quads all lie within a few
- * pixels of one point. The flat widget decided this by build order: a quad and
- * the dot were solid all the way to their edges and an arrow's box was mostly
- * empty, so the reader got the thing they could see filled in. That is the rule
- * kept here, said as a rank instead of as a stacking order.
+ * coin toss where the pieces cross — on a camera that has turned a quad nearly
+ * end-on it lies within a few pixels of the two arrows that span it. The flat
+ * widget decided this by build order: a quad was solid all the way to its edges
+ * and an arrow's box was mostly empty, so the reader got the thing they could
+ * see filled in. That is the rule kept here, said as a rank instead of as a
+ * stacking order.
+ *
+ * THE DOT IS IN NEITHER, because it answers no ray: it is drawn and never
+ * pressed, so it has no rank to hold.
  */
-const RANK = { free: 0, plane: 1, axis: 2 };
+const RANK = { plane: 0, axis: 1 };
 
 /**
  * Where an ARROW drag lands: the offset already standing, with the component
@@ -203,10 +207,11 @@ function alongAxis(base, world, axis, sine, step) {
  *
  * THE PART FOLLOWS THE POINTER, which is the whole of what this gesture owes
  * and is NOT what the orthogonal projection gives. `w - n (w . n)` is the
- * nearest point of the plane to where a free drag would have put the part, and
- * it is the right answer only when the plane faces the reader; anywhere else
- * the part lags the hand by the component it threw away. Under this viewport's
- * ortho camera every pixel looks along one fixed direction `view`, so two world
+ * nearest point of the plane to where the bare displacement would put the part,
+ * and it is the right answer only when the plane faces the reader; anywhere
+ * else the part lags the hand by the component it threw away. Under this
+ * viewport's ortho camera every pixel looks along one fixed direction `view`,
+ * so two world
  * points project to the same pixel exactly when they differ by a multiple of
  * it. The displacement that lands the grabbed point back under the cursor while
  * staying in the plane is therefore the one point of the ray through the moved
@@ -274,25 +279,28 @@ export function createGizmo(vp) {
   // A RAYCASTER OF OUR OWN, beside the one `scene3d.js` keeps, and the two ask
   // different questions of the same ray: that one asks whether ANY of this
   // widget is under the pointer, which is all a cursor needs, and this one asks
-  // WHICH OF THE SEVEN — the question only a widget made of separable pieces
-  // has, and the one `RANK` above answers.
+  // WHICH OF THE SIX — the question only a widget made of separable pieces
+  // has, and the one `RANK` above answers. Six and not seven: the dot is drawn
+  // and never pressed, so it is in neither this map nor that ladder.
   let group = null;
   let raycaster = null;
   let pointer = null;
 
-  /** The three arrows, the three quads and the dot: `{kind, axis, world, node}`.
+  /** The three arrows and the three quads: `{kind, axis, world, node}`.
    *
    * `kind` IS READ IN TWO PLACES AND BOTH MATTER. `onMove` picks the
-   * arithmetic — `dragPart`, `alongAxis` or `acrossPlane`. `onDown` decides
-   * what is MEASURED at the press and reads it twice over: `!== "free"` takes
-   * the camera basis — which the QUAD divides by directly, as `view . n`, and
-   * which the arrow's own `sine` is measured against rather than divided by —
-   * and `=== "axis"` takes that `sine` on top of it. That second branch is
-   * where a quad's divisor is deliberately NOT measured, because `place` has
-   * already fenced it.
+   * arithmetic — `alongAxis` or `acrossPlane`. `onDown` decides what is
+   * MEASURED at the press: both kinds take the camera basis — which the QUAD
+   * divides by directly, as `view . n`, and which the arrow's own `sine` is
+   * measured against rather than divided by — and `=== "axis"` takes that
+   * `sine` on top of it. A quad's divisor is deliberately NOT measured there,
+   * because `place` has already fenced it.
    *
    * `world` is the axis an arrow is constrained to and the NORMAL a quad holds
-   * still; the dot has none, which is what having no constraint means.
+   * still.
+   *
+   * `dot` IS THE BARE NODE and not a piece, because it takes no press: what is
+   * done to it is drawing it and turning it to face the reader.
    */
   let arms = [];
   let quads = [];
@@ -303,8 +311,8 @@ export function createGizmo(vp) {
 
   // The gesture in progress: which piece it is on, how much of that piece's own
   // axis the camera leaves (`sine`, measured once at the press and meaningless
-  // for the other two kinds), the camera's projection axis, where the press
-  // landed, the move record it is applying, and whether the pointer has
+  // on a quad, the only other kind), the camera's projection axis, where the
+  // press landed, the move record it is applying, and whether the pointer has
   // travelled far enough to be a drag at all. Null between gestures.
   let drag = null;
 
@@ -312,10 +320,11 @@ export function createGizmo(vp) {
    * The selection this widget stands for, or null when there is nothing to put
    * it on.
    *
-   * `grabbable` IN parts.js IS THE WHOLE OF IT — the same question `onDown` in
-   * tools.js asks of a grab and the same one `held` in rings.js asks, which is
-   * why it is one function: a piece offering a move that the press would then
-   * refuse is a promise the widget cannot keep, and two halves of ONE widget
+   * `grabbable` IN parts.js IS THE WHOLE OF IT — the same question `held` in
+   * rings.js asks, which is why it is one function and why parts.js calls it
+   * the one question BOTH HALVES of the manipulator ask: a piece offering a
+   * move that the press would then refuse is a promise the widget cannot keep,
+   * and two halves of ONE widget
    * that came up on different conditions would be a widget with a piece
    * missing.
    *
@@ -426,10 +435,10 @@ export function createGizmo(vp) {
       // cannot reliably hit a 2 px shaft.
       //
       // AND IT STARTS AT THE DOT'S RIM rather than at the part's centre, which
-      // is the one measurement that is not the flat widget's. There the dot was
-      // drawn over the three tails and owned the middle by covering them; here
-      // the three cylinders are simply not in it, so the free drag keeps the
-      // central 12 px by construction instead of by a tie-break.
+      // leaves the central 12 px answering no ray whatever: the dot is drawn
+      // there and takes no press, and three cylinders crossing under it would
+      // make the one place the reader cannot tell the axes apart the easiest
+      // place to grab one of them by accident.
       const reach = GIZMO_PX - GIZMO_DOT_PX / 2;
       const hit = target(three, piece, new three.CylinderGeometry(
         GIZMO_HIT_PX / 2, GIZMO_HIT_PX / 2, reach, SIDES), paint);
@@ -474,22 +483,23 @@ export function createGizmo(vp) {
       group.add(node);
       return piece;
     });
-    // THE DOT IS THE ONE PIECE WITH NO AXIS IN IT, which is the whole of what
-    // "free" means: it stands for a gesture with no direction and no plane, so
-    // it is BILLBOARDED — `place` copies the camera's own orientation onto it
-    // — and shows the reader a circle rather than a foreshortened anything.
-    const node = new three.Object3D();
-    dot = { kind: "free", axis: -1, world: null, node };
-    let paint = null;
+    // THE DOT IS THE ONE PIECE WITH NO AXIS IN IT, and it is the origin the
+    // other six are measured from rather than a gesture: it is BILLBOARDED —
+    // `place` copies the camera's own orientation onto it — and shows the
+    // reader a circle rather than a foreshortened anything.
+    //
+    // AND IT IS GIVEN NO `target`, which is the whole of it taking no press. It
+    // used to be the free drag's own handle; nothing that only looks at the
+    // reader may wear a cursor or swallow a press for a gesture it will not
+    // perform, so the ray passes through it — to an arrow if one is under it,
+    // and otherwise to the canvas, where a drag orbits as it always did.
+    dot = new three.Object3D();
     BANDS.forEach(({ colour, sink }, band) => {
       const material = widgetMaterial(three, colour === null ? RIM : colour);
-      node.add(drawn(three, new three.CircleGeometry(
+      dot.add(drawn(three, new three.CircleGeometry(
         GIZMO_DOT_PX / 2 - sink, DOT_SIDES), material, band + 4));
-      paint = material;
     });
-    target(three, dot,
-           new three.CircleGeometry(GIZMO_DOT_PX / 2, DOT_SIDES), paint);
-    group.add(node);
+    group.add(dot);
   }
 
   /** Which piece a ray landed on, or null.
@@ -574,7 +584,7 @@ export function createGizmo(vp) {
     // one piece that stands for no direction at all. The group carries position
     // and a uniform scale only, so the camera's own orientation IS the
     // orientation that squares this circle to the screen.
-    dot.node.quaternion.copy(g.cam.quaternion);
+    dot.quaternion.copy(g.cam.quaternion);
     return true;
   }
 
@@ -595,12 +605,12 @@ export function createGizmo(vp) {
    *
    * ONE FUNCTION FOR EVERY ENDING THERE IS HERE — the release, a pointer the
    * platform took away, a second press arriving with one live, and the scene
-   * being swapped out from under a hand that never came off. tools.js splits
-   * those (`conclude` vs `concludeMove`) only because a section drag ends
-   * differently from a move; there is no cut in this widget, so they collapse
-   * into one, and `concludeMove`'s docblock is the argument for why a move is
-   * reported from all four: the part is already standing where the reader
-   * dragged it, and only the document can be wrong about that.
+   * being swapped out from under a hand that never came off. ALL FOUR REPORT,
+   * which is the opposite of what the section drag does with three of its own
+   * (`conclude` in tools.js), and the asymmetry is deliberate: the part is
+   * already standing where the reader dragged it, so an ending that said
+   * nothing would leave it displaced with no node in the document claiming it,
+   * and the next push would send it home under the reader's hand.
    *
    * ONLY IF THE GESTURE REALLY WAS A DRAG, which is the canvas gesture's rule
    * (`if (p.moved)`) with the canvas gesture's meaning of `moved`: `CLICK_PX` of
@@ -622,15 +632,6 @@ export function createGizmo(vp) {
     // reader never asked for, which opens the panel on top of it.
     if (!travelled(event, drag)) return;
     drag.moved = true;
-    // THE DOT IS THE FREE DRAG ITSELF, and it goes through tools.js's own
-    // function rather than round it: `dragPart` is what a press on the part
-    // does, snapping, proposal branch, `stood`/`last` and all, so there is
-    // nothing left for this file to say about a move with no constraint in it.
-    // Everything below would have to be undone to arrive back at that.
-    if (drag.piece.kind === "free") {
-      dragPart(vp, drag.move, event);
-      return;
-    }
     const viewer = vp.viewer;
     const g = internals(viewer);
     if (!g) return;
@@ -639,13 +640,12 @@ export function createGizmo(vp) {
     const b = cameraBasis(viewer, g);
     if (!b) return;
     const d = drag.move;
-    // THE FREE DRAG'S OWN DISPLACEMENT, PUT BACK ON THE PIECE'S GEOMETRY —
-    // which is what "along one axis" and "in one plane" mean here, and it is
-    // computed out of the same two `ndcOffset` readings `dragPart` takes: the
-    // world vector a screen displacement spans is the difference of the two
-    // ends' offsets, and under ortho that is depth-free. Starting from it keeps
-    // everything the unconstrained gesture already gets right — the
-    // px-per-world-unit scale, the zoom, the pan.
+    // THE UNCONSTRAINED DISPLACEMENT, PUT BACK ON THE PIECE'S GEOMETRY — which
+    // is what "along one axis" and "in one plane" mean here. The world vector a
+    // screen displacement spans is the difference of the two ends' `ndcOffset`
+    // readings, exactly as the swipe pan computes it, and under ortho that is
+    // depth-free. Starting from it is what gets the px-per-world-unit scale,
+    // the zoom and the pan right without asking about any of them.
     //
     // THE TWO CONSTRUCTIONS ARE NOT ONE, and the docblocks say why at length:
     // an arrow takes the nearest point of its LINE, because a line and the ray
@@ -663,9 +663,9 @@ export function createGizmo(vp) {
     const to = ndcOffset(g, b.eye, b.view, ndc[0], ndc[1]);
     if (!from || !to) return;
     const world = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
-    // THE SAME STEP AND THE SAME SNAP the free drag rounds to, so a move made
-    // with an arrow or a quad reads like a move made by hand and lands on the
-    // same numbers in `vp.moved`, on the event and in the proposal document.
+    // THE STEP AND THE SNAP ARE tools.js's, so a move made with an arrow and
+    // one made with a quad land on the same numbers in `vp.moved`, on the event
+    // and in the proposal document — and so does a turn made with a disc.
     const step = niceStep(viewer);
     const delta = drag.piece.kind === "axis"
       ? alongAxis(d.base, world, drag.piece.world, drag.sine, step)
@@ -673,7 +673,7 @@ export function createGizmo(vp) {
     if (delta[0] === d.last[0] && delta[1] === d.last[1]
         && delta[2] === d.last[2]) return;
     d.last = delta;
-    // THE TWO MEANINGS, AND THE SAME TWO CALLS `dragPart` MAKES. A body of the
+    // THE TWO MEANINGS, AND THE TWO CALLS THEY PART INTO. A body of the
     // proposal is moved for the eye alone and NOTHING IS RECORDED for it — a
     // delta in `vp.moved` would be re-applied on top of the position the
     // document will carry after the re-stage, and the body would walk away by
@@ -697,8 +697,8 @@ export function createGizmo(vp) {
   }
 
   /**
-   * A press the ray found on one of the seven. True when this widget has taken
-   * it, which is what `scene3d.js` suppresses the event on.
+   * A press the ray found on one of the six that take one. True when this
+   * widget has taken it, which is what `scene3d.js` suppresses the event on.
    *
    * THE PRIMARY BUTTON AND NOTHING ELSE. The press is taken off the CANVAS, so
    * what this refuses really does go on to everything behind it: a right-drag
@@ -724,10 +724,12 @@ export function createGizmo(vp) {
     if (event.button !== 0) return false;
     const piece = aimed(g, event);
     if (!piece) return false;
-    // A previous gesture is concluded before a new one begins, exactly as
-    // `onDown` in tools.js does it and for the same two reasons: a second
-    // pointer landing on a piece would otherwise overwrite the press point with
-    // its own, and the part it interrupted is standing somewhere no node claims.
+    // A previous gesture is concluded before a new one begins, which tools.js
+    // does too at the head of its own `onDown` — though only as a bare
+    // `finish()`, since no gesture it still carries moves a part. Here there
+    // are two reasons rather than one: a second pointer landing on a piece
+    // would otherwise overwrite the press point with its own, and the part it
+    // interrupted is standing somewhere no node claims.
     stop();
     // AND THE ROTATION HANDLES' GESTURE WITH IT, which is the same sentence
     // about the other half of this widget. The line above treats a second
@@ -745,8 +747,9 @@ export function createGizmo(vp) {
     //
     // `endDrag` IS THE DOOR THE SYSTEM ALREADY HAS: every widget publishes one,
     // `element.js` calls all three when the scene is pulled out from under a
-    // hand, and it CONCLUDES rather than abandons — `concludeMove`'s argument,
-    // which is the whole reason the line above is `stop()` and not `finish()`.
+    // hand, and it CONCLUDES rather than abandons — which is the whole reason
+    // the line above is `stop()` and not `finish()`, and what `endDrag` below
+    // spells the cost of.
     //
     // AND IT IS THIS FILE'S JOB rather than `handOver`'s in rings.js, because a
     // press this widget keeps never reaches that listener at all: it was
@@ -769,14 +772,13 @@ export function createGizmo(vp) {
     //   3. the canvas gesture (tools.js `press`)     — this line
     //   4. the section grip's drag (handle.js)       — deliberately left alone
     //
-    // THREE IS THE ONE A PRESS HERE CANNOT OTHERWISE END. tools.js concludes
-    // its own previous press at the head of its `onDown` — and that listener
-    // DOES see every press aimed at the canvas, so a press this widget declines
+    // THREE IS THE ONE A PRESS HERE CANNOT OTHERWISE END. tools.js finishes its
+    // own previous press at the head of its `onDown` — and that listener DOES
+    // see every press aimed at the canvas, so a press this widget declines
     // needs nothing from this line. What opens the hole is the refusal
     // `scene3d.js` makes on our answer: a press this widget KEEPS never reaches
-    // that listener, so the free drag a first finger started stays live, both
-    // `onMove`s then running on every move with `dragPart` measuring from the
-    // FIRST finger's ndc to wherever the second one now is.
+    // that listener, so a cut a first finger started under the hold key stays
+    // live, dragging the clipping plane on every move the second finger makes.
     //
     // FOUR IS A DIFFERENT KIND AND IS WHY THE LIST IS WORTH WRITING OUT. The
     // grip drags the clipping PLANE, and a cut can stand while Move is armed
@@ -796,59 +798,53 @@ export function createGizmo(vp) {
     //
     // WHAT IT COSTS, SAID OUT LOUD: `endGesture` CONCLUDES, and for a cut
     // gesture concluding means `reportCut`, which the interface answers by
-    // disarming the armed tool. tools.js's own `onDown` calls `concludeMove`
-    // rather than `conclude` to avoid exactly that, and it has no published
-    // door that stops short. The sequence it takes is narrow — a hold-key cut
-    // press still down, the key released mid-drag so this widget reappears, and
-    // then a second finger on a piece — and the alternative is leaving the
-    // canvas drag live, which is the reachable corruption above.
+    // disarming the armed tool. tools.js's own `onDown` stops short of that on
+    // purpose (`conclude`), and it has no published door that does. The
+    // sequence it takes is narrow — a hold-key cut press still down, the key
+    // released mid-drag so this widget reappears, and then a second finger on a
+    // piece — and the alternative is leaving that drag live, which is the
+    // reachable corruption above.
     vp.endGesture();
     const sel = held();
     if (!sel) return false;
     const ndc = ndcAt(g.canvas, event);
     if (!ndc) return false;
     // THE ANCHOR IS THE FIRST SELECTED PATH, the same one `place` stands the
-    // widget on. The canvas drag chooses the copy under the cursor instead,
-    // because there IS one there and a part the reader is holding must not leap
-    // out from under them; here the cursor is on a widget rather than on a part,
-    // and the row converges onto whichever copy is named (`movePart`), so the
-    // one the widget is drawn from is the only answer that does not move the
-    // thing the reader is aiming at.
+    // widget on: the cursor is on a widget rather than on a part, and the row
+    // converges onto whichever copy is named (`movePart`), so the one the
+    // widget is drawn from is the only answer that does not move the thing the
+    // reader is aiming at.
     //
-    // WHAT EACH KIND MEASURES AT THE PRESS, and the three differ exactly as
-    // much as their arithmetic does. Both constrained kinds want the camera's
-    // own projection direction — `acrossPlane` meets the ray through the cursor
-    // with the plane along it, and an arrow's foreshortening is the angle
-    // against it. The dot is the free drag and has no camera reading to go
-    // stale. `cameraBasis` builds a fresh array every call, so holding this one
-    // cannot be holding something the library will move underneath.
+    // WHAT EACH KIND MEASURES AT THE PRESS, and the two differ exactly as much
+    // as their arithmetic does. Both want the camera's own projection direction
+    // — `acrossPlane` meets the ray through the cursor with the plane along it,
+    // and an arrow's foreshortening is the angle against it. `cameraBasis`
+    // builds a fresh array every call, so holding this one cannot be holding
+    // something the library will move underneath.
+    const basis = cameraBasis(vp.viewer, g);
+    // The scene refusing to be measured at all, which takes the gesture away.
+    if (!basis) return false;
+    const view = basis.view;
     let sine = 0;
-    let view = null;
-    if (piece.kind !== "free") {
-      const basis = cameraBasis(vp.viewer, g);
-      // The scene refusing to be measured at all, which takes the gesture away.
-      if (!basis) return false;
-      view = basis.view;
-      if (piece.kind === "axis") {
-        // THE SAME COMPONENT `place` DRAWS FROM, so the arrow on screen is the
-        // arrow that drags. Zero is an axis pointing straight at the reader,
-        // which `place` never draws and the division in `alongAxis` could not
-        // survive; a NaN out of a basis a hair off unit fails the same test.
-        const cos = Math.abs(view[piece.axis]);
-        sine = Math.sqrt(1 - cos * cos);
-        if (!(sine > 0)) return false;
-      }
-      // AND NOTHING OF THE KIND FOR A QUAD, which is deliberate rather than
-      // missing. Its own divisor is `view . n`, and `place` has already fenced
-      // it: a quad that could be pressed was drawn with `|view . n|` at or
-      // above `GIZMO_MIN_SCALE`. A second test here would be a guard against a
-      // state the widget does not put on screen.
+    if (piece.kind === "axis") {
+      // THE SAME COMPONENT `place` DRAWS FROM, so the arrow on screen is the
+      // arrow that drags. Zero is an axis pointing straight at the reader,
+      // which `place` never draws and the division in `alongAxis` could not
+      // survive; a NaN out of a basis a hair off unit fails the same test.
+      const cos = Math.abs(view[piece.axis]);
+      sine = Math.sqrt(1 - cos * cos);
+      if (!(sine > 0)) return false;
     }
+    // AND NOTHING OF THE KIND FOR A QUAD, which is deliberate rather than
+    // missing. Its own divisor is `view . n`, and `place` has already fenced
+    // it: a quad that could be pressed was drawn with `|view . n|` at or above
+    // `GIZMO_MIN_SCALE`. A second test here would be a guard against a state
+    // the widget does not put on screen.
     drag = {
       piece,
       // HOW FAR ALONG THE AXIS ONE UNIT OF PROJECTED DISPLACEMENT GOES, and the
       // square is the whole of it (`alongAxis` carries the derivation). Zero on
-      // the two kinds that never read it.
+      // a quad, which never reads it.
       sine,
       view,
       startX: event.clientX,
@@ -873,9 +869,9 @@ export function createGizmo(vp) {
    * press was taken in a window listener this widget owns, so neither that
    * gesture nor the idle clock that defers the swap ever saw it, and the
    * release that would have concluded it never comes. Concluding rather than
-   * abandoning is `concludeMove`'s argument: the part stands displaced in
-   * `vp.moved` with nothing in the document claiming it, and the next push
-   * sends it home under the reader's hand.
+   * abandoning, and the reason is what ABANDONING costs: the part stands
+   * displaced in `vp.moved` with nothing in the document claiming it, and the
+   * next push sends it home under the reader's hand.
    */
   const endDrag = () => {
     stop();
@@ -893,7 +889,7 @@ export function createGizmo(vp) {
       // listeners on the window holding a scene that is gone. `finish` and not
       // `stop`: this is the widget going away, and `vp.moved` goes with it, so
       // the displacement there would be to report is one nothing is left
-      // standing at — the same fifth ending tools.js's teardown takes.
+      // standing at — the same ending tools.js's own teardown takes.
       finish();
       widget.destroy();
       group = null;

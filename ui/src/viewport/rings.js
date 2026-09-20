@@ -8,10 +8,11 @@
 // meant the reader had to put a part down before they could turn it.
 //
 // WHAT THE MERGE DID COST IS IN `handOver`, and it is not the name in `held`.
-// Both halves stand on the part at once now, so three gestures can be live where
-// one could be before: this widget's, the arrows', and the canvas drag underneath
-// them. Each press therefore ends the other two. Read `handOver` and `onDown`
-// before believing anything about this file is simple.
+// Both halves stand on the part at once now, so two gestures that move the same
+// part can be live where one could be before — this widget's and the arrows' —
+// with the canvas gesture underneath them holding a cut. Each press therefore
+// ends the others. Read `handOver` and `onDown` before believing anything about
+// this file is simple.
 //
 // ONE KNOB PER AXIS IS WHAT THE READER ACTUALLY SEES AND PRESSES, and that is
 // the answer to the two things three full circles got wrong. They DROWNED in
@@ -315,12 +316,11 @@ function bodyOrigin(vp, path) {
  * orientation instead of a place, and every field is that field's answer.
  *
  * IN THIS FILE AND NOT BESIDE IT, which is the one deliberate difference.
- * `moveRecord` was lifted into tools.js because TWO gestures make one — the
- * canvas drag and the manipulator's own press, whichever of its seven pieces it
- * landed on — and a second hand-written copy is how they would start
- * disagreeing about what a drag means. There is one gesture that
- * turns, so its record belongs where it is used; the day a second one appears,
- * this moves.
+ * `moveRecord` stayed in tools.js because the record and the `reportMove` that
+ * reads it are one sentence, and a second hand-written copy is how the pieces
+ * that make one would start disagreeing about what a drag means. There is one
+ * gesture that turns, so its record belongs where it is used; the day a second
+ * one appears, this moves.
  *
  * `base` IS THE TURN ALREADY STANDING and `delta` the offset already standing,
  * and the second is carried without ever being changed: this gesture says which
@@ -484,8 +484,8 @@ export function createRings(vp) {
    * offering a turn that the press would then refuse are a promise the widget
    * cannot keep, and two halves of ONE widget that appeared on different
    * conditions would be a widget with a piece missing. That is why the question
-   * itself is `grabbable` in parts.js — one function, which the canvas drag
-   * asks as well — and why what is left here is the tool it is asked under.
+   * itself is `grabbable` in parts.js — one function, which the arrows and the
+   * quads ask too — and why what is left here is the tool it is asked under.
    *
    * `activeTool` AND NOT `state.tool`, for the reason tools.js gives: the hold
    * key puts the cut up without writing to `state`, and rings left standing
@@ -731,10 +731,12 @@ export function createRings(vp) {
    *
    * ONE FUNCTION FOR EVERY ENDING THERE IS HERE — the release, a pointer the
    * platform took away, a second press arriving with one live, and the scene
-   * being swapped out from under a hand that has not come off. `concludeMove`
-   * in tools.js is the argument for reporting from all four: the part is
-   * already standing turned where the reader left it, and only the document can
-   * be wrong about that.
+   * being swapped out from under a hand that has not come off. The argument for
+   * reporting from all four is one sentence: the part is already standing
+   * turned where the reader left it, and only the document can be wrong about
+   * that. A CUT is the other way round — `conclude` in tools.js reports from
+   * two endings and stays silent on the rest, because announcing one disarms
+   * the tool that placed it.
    *
    * ONLY IF THE GESTURE REALLY WAS A DRAG, which is the canvas gesture's rule
    * with the canvas gesture's meaning of `moved`: `CLICK_PX` of travel. A bare
@@ -849,9 +851,10 @@ export function createRings(vp) {
       return;
     }
     d.last = turn;
-    // THE TWO MEANINGS, AND THE TWO CALLS `dragPart` MAKES FOR THE OTHER HALF
-    // OF A PLACEMENT. A body of the proposal is turned for the eye alone and
-    // NOTHING IS RECORDED for it — an angle in `vp.moved` would be re-applied
+    // THE TWO MEANINGS, AND THE TWO CALLS THE OTHER HALF OF A PLACEMENT MAKES
+    // (`onMove` in gizmo.js). A body of the proposal is turned for the eye
+    // alone and NOTHING IS RECORDED for it — an angle in `vp.moved` would be
+    // re-applied
     // on top of the `rot` the document will carry after the re-stage, and the
     // body would turn twice as far. A part of the build leaves `vp.moved`
     // behind, which is the pose the scene is really holding; `stood` is the
@@ -883,9 +886,13 @@ export function createRings(vp) {
    * THE COMPLETE LIST OF WHAT CAN BE LIVE, since one call reads as if it were
    * the whole of it: this widget's own drag (`stop()`), the arrows'
    * (`vp.gizmo.endDrag()`), the canvas gesture in tools.js — which is `onDown`'s
-   * because only a press this widget KEEPS takes it away from that listener —
-   * and the section grip's, deliberately left alone because it drives the
-   * clipping PLANE and nothing it writes is anything this reads.
+   * because only a press this widget KEEPS takes it away from that listener,
+   * and which under `move` is EITHER a cut the hold key put up OR the ordinary
+   * press that missed every piece of the widget: tools.js arms its watch on
+   * that one too, and its release would otherwise land as a pick that changes
+   * the selection out from under a live turn — and the section grip's,
+   * deliberately left alone because it drives the clipping PLANE and nothing it
+   * writes is anything this reads.
    *
    * WHY THE ARROWS' AND NOT ONLY OURS. Until the tools were merged the CROSS
    * case could not arise: this widget wanted `turn` and gizmo.js wanted `move`,
@@ -947,7 +954,7 @@ export function createRings(vp) {
     if (theta === null) return false;
     // AND THE CANVAS GESTURE, WHICH IS THE THIRD THING THAT CAN BE LIVE — here
     // and not in `handOver`, and the difference is exactly the press this
-    // function keeps. tools.js concludes its own previous press at the head of
+    // function keeps. tools.js finishes its own previous press at the head of
     // its `onDown`, and that listener DOES see every press aimed at the canvas,
     // so a press that misses every knob needs nothing from this line. It is the
     // refusal `scene3d.js` makes on our answer that opens the hole, by taking
@@ -955,9 +962,9 @@ export function createRings(vp) {
     //
     // AND MOVING IT UP WOULD BE WORSE THAN REDUNDANT. `endGesture` CONCLUDES,
     // and concluding a cut means `reportCut`, which the interface answers by
-    // disarming the armed tool — which is why tools.js's own `onDown` calls
-    // `concludeMove` and not `conclude`. Called for every press, this would do
-    // that on every ordinary canvas press with a cut drag still live.
+    // disarming the armed tool — which is why tools.js's own `onDown` stops
+    // short of it. Called for every press, this would disarm the tool on every
+    // ordinary canvas press with a cut drag still live.
     //
     // `vp.endGesture` IS ALWAYS A FUNCTION HERE. `installTools` assigns it in
     // the same synchronous `connectedCallback` that builds this widget, and
@@ -994,8 +1001,8 @@ export function createRings(vp) {
    * and it exists for the failure all three were written for: the press was
    * taken in a window listener this widget owns, so neither that gesture nor
    * the idle clock that defers the swap ever saw it, and the release that would
-   * have concluded it never comes. Concluding rather than abandoning is
-   * `concludeMove`'s argument: the part stands turned in `vp.moved` with
+   * have concluded it never comes. Concluding rather than abandoning, and the
+   * reason is what ABANDONING costs: the part stands turned in `vp.moved` with
    * nothing in the document claiming it, and the next push straightens it under
    * the reader's hand.
    */
@@ -1013,7 +1020,7 @@ export function createRings(vp) {
     destroy() {
       // `finish` and not `stop`: this is the widget going away, and `vp.moved`
       // goes with it, so the pose there would be to report is one nothing is
-      // left standing at — the same fifth ending tools.js's teardown takes.
+      // left standing at — the same ending tools.js's own teardown takes.
       finish();
       // AND THE TWO LIFELONG LISTENERS WITH IT, which the gesture's own are
       // not: these are on the window for the whole life of the widget rather

@@ -272,8 +272,9 @@ export function proposalView(s, deps) {
   const addBody = (op) => () => {
     // THE COUNTER IS THE PAGE'S AND NOT THIS MODULE'S, which is what keeps two
     // nodes from being minted under one id: `nextSeq` bumps the component's own
-    // `_proposalSeq` and hands back what it now stands at, exactly as the row
-    // menu's Turn does one door over.
+    // `_proposalSeq` and hands back what it now stands at. This panel is the
+    // only door left that mints one — the row menu had a second until the
+    // manipulator took that job.
     const seq = nextSeq();
     setProposal(addNode(doc, {
       id: `n${seq}`,

@@ -24,11 +24,11 @@ import {
   EVENT_FACE, EVENT_MEASURE, EVENT_MENU, EVENT_MOVED, EVENT_PICK, EVENT_PLACE,
   EVENT_PROPOSALMOVE, emit,
 } from "./events.js";
-import { cameraBasis, canvasXY, ndcAt, ndcOffset } from "./camera.js";
+import { canvasXY, ndcAt } from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
-import { gestureInternals, internals } from "./internals.js";
+import { internals } from "./internals.js";
 import { measureDistance, measureEntity } from "./measure.js";
-import { grabbable, groupHome, movePart, nudgePart } from "./parts.js";
+import { groupHome } from "./parts.js";
 import { capOwnerAt, faceNormalAt, pickEntity } from "./picking.js";
 import {
   dragSection, keepSectionCut, placeSectionPlane, sectionAxis,
@@ -45,10 +45,10 @@ import { tidy } from "../proposal.js";
  * way" — and 2.8371 mm says a precision the gesture does not have. The number
  * travels to an agent, so it should read like an instruction.
  *
- * EXPORTED BECAUSE THERE ARE TWO GESTURES THAT MOVE A PART NOW — the free drag
- * below and the axis arrows (gizmo.js) — and a second copy of this rule would be
- * two vocabularies for one document: the same hand, on the same part, would
- * round differently depending on which of the two it reached for.
+ * EXPORTED BECAUSE THE GESTURES THAT MOVE A PART LIVE IN ANOTHER FILE — the
+ * axis arrows and the plane quads (gizmo.js) — and a second copy of this rule
+ * would be two vocabularies for one document: the same hand, on the same part,
+ * would round differently depending on which piece it reached for.
  */
 export function niceStep(viewer) {
   const grid = viewer && viewer.gridSize;
@@ -144,8 +144,9 @@ export function reportCut(vp) {
  * AND IT IS NEVER SENT FROM INSIDE A RENDER, which is what the microtask is
  * for and the one thing here that is not obvious. This report comes back as a
  * STAGE: the panel writes the body's `at` and calls `setOverlay`, which reaches
- * `restage()`, which reads `this.payload` and renders it. One of the two
- * callers of `conclude` is `endGesture`, and `endGesture` is called from
+ * `restage()`, which reads `this.payload` and renders it. One of the endings
+ * that raise this report is the widget's `endDrag` (gizmo.js, rings.js), and
+ * `endDrag` is called from
  * inside `show()` — after its only `await` and BEFORE `this.payload = shapes`,
  * which is deliberately the last thing a successful render does (element.js
  * says why). Sent synchronously from there, the re-stage would read the
@@ -176,16 +177,15 @@ function reportProposalMove(vp, move) {
  * (`reconcileMoves`). It is not cheap at all once the interface answers by
  * OPENING THE PANEL: an overlay that changed reaches `restage()`, `restage()`
  * calls `show()`, and `show()` ends the gesture the reader has not let go of
- * (`endGesture`, element.js) — so the press and its window listeners were torn
+ * (`endDrag`, element.js) — so the press and its window listeners were torn
  * down one snap step into the drag and the part froze under the cursor. A
  * report per gesture cannot do that: by the time it lands, the gesture it
  * would end is already over.
  *
- * THE SAME FOUR ENDINGS AS THE BODY ABOVE, which is `conclude` and
- * `concludeMove` between them, and the teardown reports nothing. An
- * interrupted drag has to be reported for the reason `concludeMove` gives: the
- * part is standing displaced in `vp.moved` with nothing in the document
- * claiming it, and the next push would send it home under the reader's hand.
+ * EVERY ENDING THE WIDGET HAS RAISES IT, which is `stop()` in gizmo.js and in
+ * rings.js: an interrupted drag has to be reported because the part is standing
+ * displaced in `vp.moved` with nothing in the document claiming it, and the
+ * next push would send it home under the reader's hand.
  *
  * A GESTURE THAT CHANGED NOTHING SAYS NOTHING, and for a part of the build
  * "nothing" is measured against the offsets that were STANDING rather than
@@ -203,11 +203,10 @@ function reportProposalMove(vp, move) {
  * "nothing happened", and the siblings are left standing somewhere no node
  * claims — until the next push jerks them home.
  *
- * `count` IS WHAT MOVED and not what the row holds — the two differ, which is
- * why it is reported rather than looked up on the other side. A grab made with
- * NOTHING SELECTED drags the one copy it hit, because the viewport is told
- * which paths are selected and knows nothing about the rest; the pick that
- * press emits selects the whole row, so the NEXT drag takes all of it.
+ * `count` IS WHAT MOVED, reported rather than looked up on the other side
+ * because the viewport is the half that knows what the gesture actually took
+ * hold of — the paths the manipulator was standing on when the press was made,
+ * which need not be the selection the interface holds by the time this lands.
  *
  * `paths` IS EVERY ONE OF THEM AND `id` IS STILL THE FIRST, because the two
  * are read by different halves of the other side. The interface looks the
@@ -246,12 +245,15 @@ function reportModelMove(vp, move) {
  *
  * THE TWO MEANINGS PART HERE AND NOWHERE ELSE, on the one field that tells them
  * apart: a proposal body carries the name the panel drew it under and a part of
- * the build carries none. That is the dispatch `concludeMove` was written as,
- * and lifting it out of `installTools` is what lets the axis arrows (gizmo.js)
- * end their own drag through the same sentence rather than through a second
- * copy of it — which is the defect worth naming, because a copy would not
- * fail: it would simply drift, and the two gestures would start reporting the
- * same hand differently.
+ * the build carries none.
+ *
+ * MODULE-LEVEL AND EXPORTED although nothing in this file calls it: the
+ * gestures that move a part are the manipulator's (gizmo.js, rings.js), and
+ * what they end in is this sentence rather than a copy of it — which is the
+ * defect worth naming, because a copy would not fail: it would simply drift,
+ * and the pieces would start reporting the same hand differently. It stays
+ * HERE, beside `snap` and the two reports it dispatches between, so the record
+ * and the sentence that reads it cannot come apart.
  */
 export function reportMove(vp, move) {
   if (move.body) reportProposalMove(vp, move);
@@ -266,10 +268,11 @@ export function reportMove(vp, move) {
  * made, `anchor` the path the other fields are read off, and `proposal` whether
  * this is a drag of the reader's own drawing rather than of the build.
  *
- * MODULE-LEVEL AND EXPORTED because two gestures make one of these now — the
- * canvas drag below and the manipulator's own press (gizmo.js), whichever of its
- * seven pieces it landed on — and every field is a decision with a reason, which
- * is exactly the kind of thing a second hand-made copy gets subtly wrong.
+ * MODULE-LEVEL AND EXPORTED because the gesture that makes one lives in
+ * gizmo.js — whichever of its six targets the press landed on — while the
+ * report that reads it is `reportMove` above. Every field is a decision with a
+ * reason, which is exactly the kind of thing a second hand-made copy gets
+ * subtly wrong.
  *
  * WHAT THE PROPOSAL DRAG CARRIES INSTEAD OF `vp.moved`, and both fields
  * are the gesture's own and die with it. `body` is the name the panel drew
@@ -288,7 +291,8 @@ export function reportMove(vp, move) {
  * `bases` IS THE SAME QUESTION ASKED OF EVERY PATH, and the two are not
  * the same list because the copies of a row need not agree: `base` is the
  * anchor's alone and decides where the drag STARTS FROM, which is the
- * grabbed copy's offset so it does not leap out from under the cursor.
+ * offset of the copy the manipulator is standing on, so the widget and the
+ * part under it do not leap apart at the first snap step.
  * Every other path is carried to that same offset by the first snap step,
  * and where each of them WAS is the only record of what this gesture
  * actually changed — which is what `reportModelMove` asks at the release.
@@ -344,101 +348,6 @@ export function moveRecord(vp, paths, ndc, anchor, proposal) {
   };
 }
 
-/** One pointermove while a part is being dragged FREELY — no axis and no plane,
- *  the delta the hand spans in the plane of the screen.
- *
- * MODULE-LEVEL AND EXPORTED for `moveRecord`'s reason, one gesture later. TWO
- * THINGS CALL IT — the canvas drag below and the origin dot at the centre of the
- * manipulator (gizmo.js) — while two more are built from the same displacement
- * and then put it on their own geometry rather than calling this at all: an
- * arrow takes the nearest point of its line, and a quad meets the cursor's ray
- * with its plane. Four gestures, one displacement, two callers.
- *
- * THE DOT IS A SECOND DOOR to the gesture and not a second copy of it: what it
- * buys is that a reader
- * with the widget under their hand need not go and find the part to move it
- * freely, and what it must not buy is a second opinion about what a free drag
- * means.
- *
- * `press.move` IS NOW AN ARGUMENT, which is the whole of what lifting it cost:
- * it closed over the live press and nothing else.
- */
-export function dragPart(vp, d, event) {
-  const viewer = vp.viewer;
-  const g = internals(viewer);
-  if (!g) return;
-  const ndc = ndcAt(g.canvas, event);
-  if (!ndc) return;
-  const b = cameraBasis(viewer, g);
-  if (!b) return;
-  // The world vector a screen displacement spans, exactly as the swipe pan
-  // computes it: the difference of the two ends' offsets. Under ortho that is
-  // depth-free, so a part slides in the plane of the screen and never towards
-  // or away from the reader — which is what "show me where" means with a mouse.
-  //
-  // THE TURN IS NOT IN THIS GESTURE. A move node carries one now (`turn` in
-  // ui/src/proposal.js), and it is typed into the row's own fields in the
-  // proposal branch of the tree rather than dragged: the hand does one thing
-  // here, and the turn the part is already standing at is carried along
-  // untouched (`d.turn` below — the record is an argument now, as the docblock
-  // says, so there is no `press` in this scope to read it off).
-  const from = ndcOffset(g, b.eye, b.view, d.ndc[0], d.ndc[1]);
-  const to = ndcOffset(g, b.eye, b.view, ndc[0], ndc[1]);
-  if (!from || !to) return;
-  const step = niceStep(viewer);
-  const delta = [
-    snap(d.base[0] + to[0] - from[0], step),
-    snap(d.base[1] + to[1] - from[1], step),
-    snap(d.base[2] + to[2] - from[2], step),
-  ];
-  if (delta[0] === d.last[0] && delta[1] === d.last[1]
-      && delta[2] === d.last[2]) return;
-  d.last = delta;
-  // A BODY OF THE PROPOSAL GOES NO FURTHER THAN THE SCREEN while the hand is
-  // down. It is moved so the reader can see where they are putting it, and
-  // NOTHING IS RECORDED for it: `vp.moved` is re-applied after every re-stage
-  // (`restageMoves`) and the panel re-stages on the next edit, so a delta left
-  // there would be added on top of the position the document will by then
-  // carry, and the body would walk away by twice the distance. No move node
-  // either — `hmr:moved` is the interface's statement about a part of the
-  // BUILD, and this body is in no build. The release is what reaches the panel
-  // (`reportProposalMove`), and the stage that follows is what really puts the
-  // body where it now stands.
-  if (d.body) {
-    nudgePart(vp, d.paths, d.homes, delta);
-    return;
-  }
-  // A PART OF THE BUILD ALSO GOES NO FURTHER THAN THE SCREEN while the hand is
-  // down, and unlike the body above it leaves `vp.moved` behind — which is the
-  // whole difference between the two: the offset is real, the scene is holding
-  // it, and the release is what tells the interface (`reportModelMove`). The
-  // report used to go out from here, on every snap step, and that is what the
-  // panel opening on a recorded move turned into a broken drag: the overlay
-  // changed, `restage()` called `show()`, and `show()` ended this very gesture
-  // one step in.
-  //
-  // A GRAB OUTSIDE A STANDING SELECTION NEVER REACHES THIS LINE: `onDown`
-  // answers it with `null`, so the press degrades to a rotation and no part is
-  // moved at all.
-  //
-  // `stood` IS THE LAST DELTA THAT LANDED, and it is a second field rather
-  // than `last` because `movePart` can refuse — a path whose group has gone,
-  // or a `position.set` that throws part way down a row (parts.js says why
-  // neither is unwound). `last` has to advance whatever happens, or a step
-  // that fails is retried on every pointermove for the rest of the gesture.
-  //
-  // IT IS NOT "WHERE THE PARTS ARE", and the difference matters in exactly the
-  // case it exists for: a refusal that threw half way down a row leaves the
-  // paths before the throw at the NEWER delta and the rest at this one, so no
-  // single number describes the scene. What this holds is the last offset the
-  // whole gesture is known to have reached, which is the truest thing there is
-  // to announce — and `reconcileMoves` is what settles the stragglers, since
-  // it walks `vp.moved` and writes every path the document's offset is not
-  // already standing at. Reporting per step made the distinction for free: a
-  // failed step simply emitted nothing.
-  if (movePart(vp, d.paths, delta, d.turn)) d.stood = delta;
-}
-
 export function installTools(vp) {
   let press = null;
 
@@ -452,71 +361,37 @@ export function installTools(vp) {
     watch.disarm();
   };
 
-  /** The end of a gesture that moved something, for the two endings that always
-   * answered for one: the release (`onUp`) and the scene being swapped out from
-   * under a hand that has not come off the model (`endGesture`).
+  /** The end of the one gesture this file can still be holding — a drag of the
+   * section plane — for the two endings that say where it ended up: the release
+   * (`onUp`) and the scene being swapped out from under a hand that has not
+   * come off the model (`endGesture`).
    *
-   * THERE ARE FIVE ENDINGS IN THIS FILE, not two and not four. Besides those:
-   * the platform taking the pointer away (`onCancel`), a second press arriving
-   * with one still live (`onDown`) — both of which conclude the MOVE alone, see
-   * `concludeMove` — and the teardown in `installTools`, which calls a bare
-   * `finish()` and reports nothing, because a gesture cannot outlive the element
-   * it was made on.
+   * THE OTHER THREE ENDINGS SAY NOTHING, and that was already the cut's rule
+   * before the move left this file: the platform taking the pointer away
+   * (`onCancel`), a second press arriving with one still live (`onDown`) and
+   * the teardown in `installTools` all call a bare `finish()`. A cut
+   * interrupted that way is simply dropped — `reportCut` is not a bare
+   * readback, since the interface answers `hmr:face` by DISARMING the armed
+   * tool, so an interrupted plane drag would start turning the cut tool off,
+   * which no reader asked for.
+   *
+   * WHAT AN UNREPORTED CUT COSTS, said out loud because it is a real cost: the
+   * interface goes on printing a depth the plane has not been at — a wrong
+   * NUMBER beside a plane that is standing correctly.
    *
    * IT IS CALLED AFTER `finish()`, never before. `reportCut` can reach back into
    * the element, and a report that ends up re-staging runs `endGesture` again:
    * with `press` already cleared there is nothing left to conclude twice.
    */
   const conclude = (p) => {
-    if (!p || !p.moved) return;
-    if (p.tool === "cut") reportCut(vp);
-    else concludeMove(p);
-  };
-
-  /** The same end, for a gesture that was MOVING something — a body of the
-   *  proposal or a part of the build.
-   *
-   * THE TWO MEANINGS PART IN `reportMove` AND NOT HERE, which is why this reads
-   * as one line: whichever it was, the thing is
-   * standing somewhere the document does not have it, and that is what an ending
-   * is for. `conclude` above goes through this one rather than repeating it, so
-   * the four endings cannot drift into answering differently — and the axis
-   * arrows (gizmo.js) end their own drag in that same `reportMove`, which is why
-   * it is a module-level function rather than this pair of lines.
-   *
-   * WHY THE CUT IS NOT REPORTED FROM HERE, though the staleness is real and the
-   * readback would fix it: these two endings dropped every gesture before this
-   * change, and taking the cut with them would alter a tool nobody asked about.
-   * `reportCut` is not a bare readback — the interface answers `hmr:face` by
-   * DISARMING the armed tool, so an interrupted plane drag would start turning
-   * the cut tool off, which no reader asked for and no test describes. The move
-   * half has no such reach: it edits the document the reader is drawing and
-   * nothing else.
-   *
-   * THE ASYMMETRY IS THE POINT rather than an oversight. An unreported cut
-   * leaves the interface printing a depth the plane has not been at — a wrong
-   * NUMBER beside a plane that is standing correctly. An unreported move leaves
-   * the thing where the hand dragged it while the document still says otherwise:
-   * for a body, the panel's next edit stages it home; for a part of the build,
-   * the next `reconcileMoves` sends it home, because the document claims no such
-   * offset. Either way the drag is silently undone, which for a gesture whose
-   * POSITION IS THE DATA is the whole of it.
-   *
-   * NO `tool === "cut"` TEST, and none is needed: `press.move` is filled in only
-   * on the `move` branch of `onDown`, so a cut gesture reaches here with no
-   * `move` at all and the guard below turns it away without naming the tool. A
-   * branch on the tool would be one nothing can enter.
-   */
-  const concludeMove = (p) => {
-    if (!p || !p.moved || !p.move) return;
-    reportMove(vp, p.move);
+    if (p && p.moved && p.tool === "cut") reportCut(vp);
   };
 
   // Published so the element can end a gesture the reader has not let go of,
-  // which is what a scene being replaced under one is. Everything a live press
-  // holds — the plane's screen axis, a part's starting offset — was measured
-  // against the scene that is going away, so continuing it would move the NEW
-  // model by numbers about the old one.
+  // which is what a scene being replaced under one is. What a live press
+  // holds — the plane's screen axis — was measured against the scene that is
+  // going away, so continuing it would move the NEW model's plane by numbers
+  // about the old one.
   //
   // IT CONCLUDES THE GESTURE RATHER THAN ABANDONING IT, and the difference is
   // one readback. A swap can arrive mid-drag — the interface waits for the hand
@@ -629,9 +504,7 @@ export function installTools(vp) {
       press.x = event.clientX;
       press.y = event.clientY;
       dragSection(vp, g, press.axis, dx, dy);
-      return;
     }
-    if (press.tool === "move" && press.move) dragPart(vp, press.move, event);
   }
 
   /**
@@ -737,41 +610,21 @@ export function installTools(vp) {
   /** The pointer was taken away — the platform scrolling, a gesture the browser
    *  decided was its own. No `pointerup` follows one of these.
    *
-   * THE MOVE IS CONCLUDED HERE AND THE CUT IS NOT — `concludeMove` carries the
-   * reason, and this is deliberately not "concluded like every other ending".
-   * What a cancel interrupts is something already standing somewhere else on
-   * screen: abandoned, the document keeps the place the thing has just left, and
-   * the next stage or reconcile puts it back — the drag silently undone, the one
-   * failure this whole gesture is written around. There is nothing to undo on the
-   * way out: the report is the position the thing is already at. A cut
-   * interrupted here is dropped exactly as it was before anything could be
-   * dragged.
+   * NOTHING IS REPORTED, which is deliberately not "concluded like the
+   * release": a cut interrupted here is dropped, exactly as it was before there
+   * was anything else this listener could be holding. `conclude` carries the
+   * reason and the cost.
    */
   function onCancel() {
-    const p = press;
     finish();
-    concludeMove(p);
   }
 
   const onDown = (event) => {
     // A PRESS ARRIVING WITH ONE STILL LIVE, which is either a gesture whose
     // release this page never saw or a second button — or finger — coming down
-    // mid-drag. Either way the old one ends HERE. A move is concluded for the
-    // reason `onCancel` gives: the thing is standing where the reader dragged it
-    // and only the document can be wrong about that. A cut is dropped, exactly
-    // as it was before anything could be dragged at all — `concludeMove` says
-    // why that asymmetry is deliberate.
-    //
-    // WHAT CONCLUDING COSTS, said out loud because it is a real cost: a report
-    // can lead to a re-stage, and a re-stage ends whatever gesture is live by
-    // then — this very press, which by the time the deferred report lands has
-    // been built below. So the press that interrupted a moved thing does nothing
-    // and the reader presses again. That is the same thing a build landing
-    // mid-drag already does, it happens only when there was a displacement to
-    // report, and the alternative is losing the drag itself.
-    const live = press;
+    // mid-drag. Either way the old one ends HERE and says nothing, which is the
+    // cut's rule for every ending but the release (`conclude`).
     finish();
-    concludeMove(live);
     // Two buttons mean something here and the rest mean nothing: the left is
     // every tool and the plain pick, the right is the part menu.
     if (event.button !== 0 && event.button !== 2) return;
@@ -795,7 +648,7 @@ export function installTools(vp) {
         tool: null, menu: true,
         x: event.clientX, y: event.clientY,
         startX: event.clientX, startY: event.clientY,
-        moved: false, axis: undefined, move: null,
+        moved: false, axis: undefined,
       };
       watch.arm();
       return;
@@ -813,104 +666,30 @@ export function installTools(vp) {
       tool,
       x: event.clientX, y: event.clientY,
       startX: event.clientX, startY: event.clientY,
-      moved: false, axis: undefined, move: null,
+      moved: false, axis: undefined,
     };
     watch.arm();
     if (!tool) return;
-    // THE RINGS OWN NO PRESS ON THIS ELEMENT, and there is no branch here for
-    // them. They answer to `move` along with the arrows now — one widget, one
-    // tool — and they take their press in a capture-phase listener on the
-    // WINDOW, which runs before this one and stops what it wants there. So a
-    // press that reaches this line under `move` is one that missed every DISC,
-    // and it goes on to mean exactly what a press under this tool has always
-    // meant: the part under the cursor is grabbed, and anything else degrades
-    // to a pick and a rotation below.
-    if (tool === "move") {
-      const at = canvasXY(g.canvas, event);
-      const hit = at ? pickEntity(g, at[0], at[1]) : null;
-      // The selected part if there is one, otherwise whatever was grabbed — and
-      // then the interface is told, so its selection follows the hand rather
-      // than the reader having to select first and drag second.
-      //
-      // A LIST BECAUSE THE SELECTION IS ONE: a row standing for five copies of
-      // one part sends all five paths, and grabbing any of them drags the row.
-      const sel = Array.isArray(vp.state.selected) ? vp.state.selected : [];
-      const wanted = sel.length
-        ? (hit && !sel.includes(hit.id)
-          ? null                                // grabbed a different part
-          : sel)
-        : (hit && hit.id ? [hit.id] : null);
-      const ndc = wanted ? ndcAt(g.canvas, event) : null;
-      // WHICH OF TWO GESTURES THIS IS, and the question is the viewport's own
-      // (`isOverlay`). The proposal panel stages its bodies into the scene, so
-      // each is an ordinary group here and an ordinary pick target — but such a
-      // body is the READER'S OWN DRAWING and not a part of the build, so dragging
-      // one means something else entirely. A part of the model moves as a
-      // STATEMENT to the agent: `hmr:moved` files the paths in the build's terms
-      // and the panel records them beside its bodies, the model itself being
-      // untouched. A proposal body moves as an EDIT of the panel's document:
-      // `hmr:proposalmove` names the body, the panel adds the delta to its `at`,
-      // and nothing is filed about anything. Same hand, same snapping, two
-      // MEANINGS — "ending" is this file's word for a place a gesture can stop,
-      // and there are five of those. They part in two places now: `dragPart`,
-      // which decides what the scene does while the hand is down, and
-      // `concludeMove`, which decides what is said when it comes off.
-      //
-      // `grabbable` IN parts.js IS BOTH HALVES OF THAT — which of the two this
-      // is, and whether every path can be taken hold of as it — and the two
-      // halves of the manipulator ask the very same function about their own
-      // selection every frame. It is also what refuses a MIXED grab — a
-      // proposal body selected together with a part of the model — whole rather
-      // than quietly moving the half it may.
-      //
-      // REFUSED WITH THE GESTURE and not later, in the same breath as a part the
-      // scene cannot move at all: here nothing has moved yet, and the press
-      // degrades into the plain one below. ASKED LAST of the three, so a press
-      // with no `ndc` to measure from costs no walk of the scene.
-      const grab = wanted && ndc ? grabbable(vp, wanted) : null;
-      if (!grab) {
-        // Nothing here to drag. The press DEGRADES to a plain one rather than
-        // being dropped: a click still selects and a drag still rotates, which
-        // is how a reader reaches the part they meant to move without leaving
-        // the tool first.
-        press.tool = null;
-        return;
-      }
-      if (!sel.length && hit) {
-        emit(vp, EVENT_PICK, { id: hit.id, name: hit.name, point: hit.point });
-      }
-      // THE ANCHOR IS THE COPY UNDER THE HAND, and the copies of a row do not
-      // always agree on where they are.
-      //
-      // A gesture applies ONE delta to all of its paths, each from its OWN home
-      // (`movePart`), so whatever offsets the paths carried before it are
-      // replaced by a single one: the row converges back into one thing, which
-      // is what a row claims to be. TWO THINGS DRIVE THEM APART, and the second
-      // is the one that gets forgotten. The ordinary one: a grab made with
-      // NOTHING SELECTED drags the one copy it hit, since the viewport is only
-      // told which paths are selected (see the note on `count` in `dragPart`),
-      // and the pick that press emits then puts the whole row under this one.
-      // The other is a FAILURE: past its pre-check `movePart` is not atomic, so
-      // a `position.set` that throws on the third path leaves the first two
-      // displaced and recorded in `vp.moved` (the note on it in `parts.js` says
-      // why that is answered with `false` and no unwinding). Neither one changes
-      // what is chosen here, and neither strands a part — `reconcileMoves` walks
-      // exactly the paths `vp.moved` holds and puts back every one the proposal
-      // document does not claim. So the convergence is not avoidable, and the
-      // only thing left to choose is WHO does not jump to reach it. It is the
-      // grabbed copy: under direct manipulation the part the reader is
-      // holding must not leap out from under the cursor, while a sibling
-      // snapping into line beside it reads as the row closing up.
-      //
-      // `wanted[0]` is the fallback for a gesture with no hit at all — a press
-      // on empty space while a selection stands, which drags the selection.
-      const anchor = hit && wanted.includes(hit.id) ? hit.id : wanted[0];
-      // Every field of the record, and why each is what it is, lives in
-      // `moveRecord` above: the axis arrows make one of these too, and a second
-      // hand-written copy is how the two gestures would start disagreeing about
-      // what a drag of the same part means.
-      press.move = moveRecord(vp, wanted, ndc, anchor, grab.proposal);
-    }
+    // THE MOVE TOOL TAKES NO PRESS ON THIS ELEMENT AT ALL, which is what makes
+    // it the one armed tool the trackball still shares the canvas with. A part
+    // is moved by the manipulator standing on it and by nothing else — an axis
+    // arrow or a plane quad (gizmo.js), a rotation disc (rings.js) — and each
+    // of those takes its own press in a capture-phase listener on the WINDOW,
+    // which runs before this one and stops what it wants there. So a press that
+    // reaches this line under `move` is one that missed every piece of the
+    // widget, and it means exactly what it means with no tool armed: a click
+    // selects and a drag orbits.
+    //
+    // THE FREE DRAG IS WHAT THIS REPLACES. A press on the part itself used to
+    // slide it in the plane of the screen, which under an ortho camera puts a
+    // delta on all three axes at once with nothing in the hand to say which of
+    // them the reader meant — and it cost them the orbit, the one gesture the
+    // viewport can least afford to take away, for as long as the tool was up.
+    //
+    // THE TOOL STAYS ON `press` rather than being cleared to null: this press
+    // falls past every branch of `onUp` and reaches the plain pick at the foot
+    // of it, exactly as a tool this file has never heard of does.
+    if (tool === "move") return;
     // Take the press away from the trackball. A capture-phase listener on the
     // CONTAINER runs before the canvas's own pointerdown handler, so stopping it
     // here means the controls never begin a rotation. preventDefault also
@@ -940,16 +719,11 @@ export function installTools(vp) {
   return () => {
     vp.box.removeEventListener("pointerdown", onDown, true);
     vp.box.removeEventListener("contextmenu", onContextMenu);
-    // `finish` and NOT `endGesture` — the FIFTH ending, and the one that reports
-    // nothing. This is the viewport going away, and each of the three things a
-    // gesture can be holding goes with it. For a cut there is no scene left to
-    // read the plane off. For a body of the proposal there is no gesture that can
-    // outlive the element it was made on — the body goes with the viewport, and
-    // whatever comes next stages it from the document. For a part of the BUILD
-    // the same is true from the other end: `vp.moved` is this element's own map
-    // and dies here too, so the displacement being reported is one nothing is
-    // left standing at. Nothing on screen is left disagreeing with anything.
-    // Only the listeners have to go.
+    // `finish` and NOT `endGesture`. This is the viewport going away, and what
+    // a gesture can be holding goes with it: for a cut there is no scene left
+    // to read the plane off, and a gesture cannot outlive the element it was
+    // made on. Nothing on screen is left disagreeing with anything. Only the
+    // listeners have to go.
     finish();
     if (vp.endGesture === endGesture) vp.endGesture = null;
   };

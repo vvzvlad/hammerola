@@ -21,7 +21,6 @@
  * `proposalPanelOn` for whether this hub has a proposal panel at all.
  */
 import { countedName } from './hub.js';
-import { addNode, emptyProposal, moves } from './proposal.js';
 import { SANS } from './style.jsx';
 
 export function rowMenu(s, deps) {
@@ -32,7 +31,7 @@ export function rowMenu(s, deps) {
     // -- the lookups that stay beside the component
     noteFor, partRecord, fileList, proposalPanelOn,
     // -- the page's own doors
-    node: nodeAt, nextSeq, proposalBody, set, setProposal, setState,
+    node: nodeAt, proposalBody, set, setState,
     setVisibility, toast, toggle,
   } = deps;
 
@@ -116,13 +115,18 @@ export function rowMenu(s, deps) {
    * What arming the manipulator on `id` says, which is ONE sentence because
    * there is one widget.
    *
-   * Two rows arm it — Move and Turn — and they used to raise two sentences
-   * because they armed two tools. Now there is a single manipulator round the
-   * part (`viewport/gizmo.js` and `viewport/rings.js`): an origin dot and
-   * three arrows and three plane quads that slide it, and three coloured
-   * discs that turn it, all at once. A sentence naming only one half would
-   * leave the reader who came in through that row never looking for the
-   * other, which is the whole of what merging the tools was for.
+   * ONE ROW ARMS IT, and the sentence has to name the whole manipulator
+   * because the row's name cannot. There were two rows and two tools, Move and
+   * Turn, and a reader had to put a part down before they could turn it; there
+   * is one manipulator round the part now (`viewport/gizmo.js` and
+   * `viewport/rings.js`) — arrows and plane quads that slide it and coloured
+   * discs that turn it, all at once — and a second row arming the same tool
+   * said there were two gestures when there is one.
+   *
+   * AND IT NAMES WHAT THE HAND MUST ACTUALLY GRAB. "Drag it" was true while a
+   * press on the part itself slid it about; that gesture is gone
+   * (`viewport/tools.js`), so a reader told to drag the part would drag it,
+   * orbit the model instead, and conclude the tool is broken.
    *
    * THE TAIL IS STILL TWO SENTENCES, and it has to be: a part of the BUILD
    * moves as a statement to the agent and the model is untouched, so the next
@@ -131,8 +135,8 @@ export function rowMenu(s, deps) {
    * one of them.
    */
   const armedSaid = (id) => (proposalBody(id)
-    ? 'Drag it to slide, a coloured disc to turn — the proposal keeps the body where you put it'
-    : 'Drag it to slide, a coloured disc to turn — it snaps back on the next rebuild');
+    ? 'Drag an arrow or a quad to slide it, a coloured disc to turn — the proposal keeps the body where you put it'
+    : 'Drag an arrow or a quad to slide it, a coloured disc to turn — it snaps back on the next rebuild');
 
   /**
    * This part's files — the row-menu half of the header's Downloads menu.
@@ -235,13 +239,12 @@ export function rowMenu(s, deps) {
       // afterwards; here the object is already named, so the row can do both.
       //
       // AND IT SELECTS BEFORE IT ARMS, in one write, which is the half that
-      // makes the row mean what it says. The armed tool drags what is
-      // SELECTED and only falls back to the part under the cursor when
-      // nothing is (`onDown` in viewport/tools.js) — and neither door into
-      // this menu writes `sel`: a right-click on a tree row does not select,
-      // and neither does one on the part in the scene. So Move chosen here
-      // while another object stood selected would have dragged that other
-      // one, or refused the press.
+      // makes the row mean what it says. The armed tool puts a manipulator on
+      // what is SELECTED and there is nowhere else a drag of a part can start
+      // (`held` in viewport/gizmo.js) — and neither door into this menu writes
+      // `sel`: a right-click on a tree row does not select, and neither does
+      // one on the part in the scene. So Move chosen here while another object
+      // stood selected would have stood the widget on that other one.
       //
       // ARMED AND NOT TOGGLED, unlike the toolbar buttons `setTool` draws: a
       // row of a menu that closes behind it is not something a reader presses
@@ -249,19 +252,14 @@ export function rowMenu(s, deps) {
       //
       // AND THE SELECTION IS WHY THE ROW IS OFFERED ON A PROPOSAL BODY TOO,
       // rather than being the one kind of object this is kept off. Such a body
-      // needs the same armed tool as any part (`onDown` returns on no tool at
-      // all), and an armed tool drags what is SELECTED: a press outside a
-      // standing selection is refused whole. So a row offered on the parts and
-      // withheld from the bodies would arm the tool holding a PART every time,
-      // and the first grab on a body would be refused.
+      // needs the same armed tool as any part, and the widget comes up on what
+      // is SELECTED: a row offered on the parts and withheld from the bodies
+      // would arm the tool with a PART selected every time, and the reader
+      // would be looking at a manipulator standing on the wrong object.
       //
-      // NOT UNREACHABLE — ONE GESTURE MORE, AND AN OBSCURE ONE. The refused
-      // press degrades to a plain one, so a CLICK on the body selects it and
-      // the drag after that takes it. A drag is not a click, though: a press
-      // that travels goes to `conclude` instead (`onUp` in viewport/tools.js)
-      // and rotates the view, selecting nothing. So a reader who simply tries
-      // to drag the body gets an orbit, and the step that would have worked is
-      // one they had no reason to try.
+      // NOT UNREACHABLE WITHOUT THE ROW — ONE GESTURE MORE. A click on the
+      // body selects it and the widget comes up round it, so what this row
+      // saves is that step rather than being the only door.
       //
       // THE SENTENCE IS NOT THE SAME FOR THE TWO, because the surprising half
       // differs. A part of the MODEL moves as a statement to the agent and the
@@ -272,14 +270,13 @@ export function rowMenu(s, deps) {
       //
       // AND A GROUP IS REFUSED BY THE SAME ARITHMETIC THE BODIES ALMOST WERE.
       // `selectedPaths` spreads a LEAF into the copies of its part, but a group
-      // it leaves as the node's own path — so arming from a group row puts one
-      // path in the selection that no press will ever hit, and every grab on a
-      // part inside that group is then outside the selection and refused. The
-      // only press that moves anything is one that MISSES the model, which
-      // takes the whole sub-assembly. A row promising to move this object,
-      // which then turns every grab on it into an orbit, is worse than no row:
-      // `Note` and the file rows already stand off a group for reasons of
-      // their own, and this is a third.
+      // it leaves as the node's own path — and the widget stands on a part's
+      // own centre, which an assembly node has none of: the library registers
+      // such a path as a bare `Group` with no front mesh under it, so
+      // `partCentre` answers null and `place` draws nothing. A row promising to
+      // move this object, which then arms a tool that puts no manipulator on
+      // screen at all, is worse than no row: `Note` and the file rows already
+      // stand off a group for reasons of their own, and this is a third.
       //
       // THREE MORE THINGS TAKE IT AWAY, each answering a different question.
       // `viewer` is about who the reader IS: both kinds of drag end in the
@@ -314,104 +311,6 @@ export function rowMenu(s, deps) {
         mi('Move', '', () => {
           set({ sel: mNode.id, selName: mNode.name, tool: 'move' });
           toast(armedSaid(mNode.id));
-        }),
-        // TURN ARMS THE SAME TOOL THE ROW ABOVE DOES, and there is nothing
-        // left in `tool` to tell the two apart with. It used to arm nothing,
-        // because a displacement had a gesture — the hand says "about here"
-        // better than a field does — and a turn had none: it was three
-        // numbers, typed into the row in the proposal's branch. Then it armed
-        // a `turn` tool of its own, and the reader had to put a part down
-        // before they could turn it. The widget is one manipulator now —
-        // arrows, quads and an origin in viewport/gizmo.js, rotation handles
-        // in viewport/rings.js, all of it answering to `move` — so this row
-        // arms that, in the same two writes as the one above and for the same
-        // reason: the armed tool works on what is SELECTED, and neither door
-        // into this menu writes `sel`.
-        //
-        // WHICH LEAVES IT A ROW WORTH KEEPING, and that is not obvious from
-        // the line itself. Everything ELSE it does is still its own — the
-        // node it mints, the panel it opens — and those are what a reader who
-        // means "exactly 90 degrees" came to this row for. What it no longer
-        // does is promise a different gesture from Move, because there is no
-        // longer a different gesture to promise.
-        //
-        // GATED EXACTLY AS MOVE IS, and the extra gate this row used to carry
-        // is gone with the reason for it. It excluded a BODY OF THE PROPOSAL,
-        // because what the row produced was a MOVE NODE and a move node
-        // naming an overlay path is a second way to turn a body that already
-        // has a `rot°` of its own — `move "motor" turned (…)` printed for an
-        // agent beside that body's own `rot (…)`. The GESTURE has no such
-        // problem: the viewport tells the two apart at the press exactly as
-        // it does for a drag, and a body's turn goes out on
-        // `hmr:proposalturn` and edits that very `rot`. So the tool is armed
-        // on either kind of object, and only the node-minting below is still
-        // the build's alone.
-        //
-        // AND IT GOES ON MAKING THE ROW, which is the half that is easy to
-        // read as leftover and is not. A gesture says "about this much" and a
-        // field says "exactly 90", and a reader who wants the second has
-        // nowhere to type it until some node claims the part. So the row
-        // still mints one for a part nothing has claimed yet and still opens
-        // the panel, and the gesture then edits the node that is already
-        // there rather than minting a second.
-        //
-        // A PART THAT ALREADY HAS A ROW GETS NO SECOND ONE. Two nodes
-        // claiming one path are two contradictory statements about it in the
-        // projection and two rows of which only one `×` appears to do
-        // anything — the very thing `recordGesture` matches by intersection
-        // to avoid. The row is already there; the panel is all this has left
-        // to open.
-        //
-        // AND IT IS NOT A RETRACTION. The rule that drops a node reported at
-        // zero is about a GESTURE — the reader taking a displacement or a
-        // rotation back by hand — and says nothing about a node minted here,
-        // which is a row asked for rather than a statement withdrawn. Nothing
-        // else drops one: the push that follows claims these paths, and
-        // `reconcileMoves` leaves a part standing exactly where it is.
-        mi('Turn', '', () => {
-          const body = proposalBody(mNode.id);
-          set({ sel: mNode.id, selName: mNode.name, tool: 'move' });
-          // THE SAME SENTENCE THE ROW ABOVE RAISES, because it is the same
-          // widget and one of them would otherwise be describing half of it:
-          // a reader who came in through Turn and was told only about the
-          // discs would never find the arrows, and one who came in through
-          // Move and was told only "drag it" would never find the discs.
-          toast(armedSaid(mNode.id));
-          // NO NODE FOR A BODY, which is the one thing left of the gate this
-          // row used to sit inside: a body's pose is its own `rot` and a move
-          // node about it would be the contradiction described above. The
-          // fields it wants are already on its row.
-          if (body) return;
-          // `current` AND NOT `doc`, the name `proposalview.js` binds for the
-          // panel's own rows: this closure runs long after any such read, so
-          // that name would resolve to a document taken at a different moment
-          // — and now that the two live in different files, a reader chasing
-          // the difference would not even have it on screen.
-          const current = s.proposal || emptyProposal();
-          const paths = mNode.leaves;
-          const claimed = moves(current).some(
-            (node) => node.paths.some((path) => paths.includes(path)));
-          let next = current;
-          if (!claimed) {
-            // The page's own counter, bumped through the door it was handed
-            // — see `_proposalSeq` in the constructor for why one of it
-            // serves bodies and moves together.
-            const seq = nextSeq();
-            next = addNode(current, {
-              id: `m${seq}`,
-              role: 'move',
-              paths,
-              // THE COUNTED NAME, exactly as a gesture records it: a row
-              // standing for five copies of a part turns all five, and
-              // `pin ×5` is what that reads as in the panel and in the
-              // projection.
-              name: mName,
-              delta: [0, 0, 0],
-              turn: [0, 0, 0],
-            });
-          }
-          setState({ proposalOpen: true });
-          setProposal(next);
         }),
       ]),
     ]),
