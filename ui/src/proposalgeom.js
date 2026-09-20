@@ -31,7 +31,7 @@
 // `DIFF_COLOURS` in hub.js, a payload colour for the same reason — so both
 // sides state the same thing instead of this module sitting outside in silence.
 import {
-  booleans, extrusions, geometries, measurements, primitives, transforms,
+  booleans, geometries, measurements, primitives, transforms,
 } from '@jscad/modeling'
 
 // The bodies the person is claiming: a neutral grey that is nobody's real part.
@@ -54,19 +54,16 @@ const origin = () => [[0, 0, 0], [0, 0, 0, 1]]
 
 // ONE ENTRY PER OP, keyed the way `DIMS` in proposal.js is keyed. Each builds
 // the op at the origin in its own natural orientation; `placed` below does the
-// rotation and the move. A box, a cylinder and a sphere come back CENTRED on the
-// origin, so `at` is their centre — an extrusion does not, because its profile
-// already says where it sits in the plane, so `at` is the corner of its own
-// coordinate system and the extrusion runs up from there.
+// rotation and the move. Every op here comes back CENTRED on the origin, so
+// `at` is the body's centre in all three — which is a property of the table as
+// it stands and not a rule: an op whose own geometry says where it sits would
+// place itself, and `at` would mean something else for that one.
 const SHAPES = {
   box: (node) => primitives.cuboid({ size: node.size }),
   cylinder: (node) => primitives.cylinder({
     radius: node.d / 2, height: node.h,
   }),
   sphere: (node) => primitives.sphere({ radius: node.d / 2 }),
-  extrude: (node) => extrusions.extrudeLinear(
-    { height: node.h }, primitives.polygon({ points: node.profile }),
-  ),
 }
 
 // The ops this table answers for — the other half of the pair `DIM_OPS` in

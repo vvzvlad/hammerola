@@ -346,13 +346,6 @@ const DIMS = {
   box: (node) => `${node.size[0]} x ${node.size[1]} x ${node.size[2]}`,
   cylinder: (node) => `d${node.d} h${node.h}`,
   sphere: (node) => `d${node.d}`,
-  // THE POINTS AND NOT A COUNT OF THEM. `profile 4pt` said an extrusion was
-  // some quadrilateral, which is the one body in this table whose shape is not
-  // in its numbers — a count leaves the agent designing against a hole in the
-  // sentence. Spelled the way the panel's own profile field spells it, so the
-  // line reads back as the thing the reader typed.
-  extrude: (node) => `h${node.h} profile ${
-    node.profile.map((point) => point.join(',')).join('; ')}`,
 }
 
 // THE OPS THIS TABLE ANSWERS FOR, so the agreement above can be CHECKED instead

@@ -1178,18 +1178,19 @@ describe('the proposal as a branch of the tree', () => {
   it('takes the bodies off even on a document the kernel refused', () => {
     // WHERE "LEAVE THE LAST GOOD BODY" AND "TAKE IT ALL AWAY" MEET, and the
     // second one wins because it was asked for out loud. A document that will
-    // not build leaves the previous shape standing deliberately — a profile
-    // being typed a point at a time must not blink the model away — and the eye
+    // not build leaves the previous shape standing deliberately — a number
+    // being typed a digit at a time must not blink the model away — and the eye
     // has no road to the scene except that same stage. So it went closed, the
     // displaced parts went home, and the bodies stayed: a control drawn off over
     // a thing that is still there.
     const { c, el } = panel({ proposal: withBlock() })
-    c.computed().proposalOps[3].onClick()
-    // An extrusion with two of its profile's points typed so far, which is no
-    // polygon — the commonest way to reach a document that will not build.
+    c.computed().proposalOps[0].onClick()
+    // A box with a minus typed into one of its sizes, which is the whole of
+    // what the kernel refuses: it builds a zero without complaint, so a
+    // negative number is the only document that will not build.
     const drawn = bodyRows(c)
-    type(drawn[drawn.length - 1].groups[0].fields[1], '0,0; 20,0')
-    expect(c.state.proposalError).toMatch(/three or more points/)
+    type(drawn[drawn.length - 1].groups[0].fields[0], '-5')
+    expect(c.state.proposalError).toMatch(/must be positive/)
     expect(el.clearOverlay).not.toHaveBeenCalled()
 
     c.computed().proposalEyeClick(click)
@@ -1202,18 +1203,19 @@ describe('the proposal as a branch of the tree', () => {
     // WHERE THE VERDICT IS DRAWN AND WHERE THE FIELDS ARE ARE NOW TWO PLACES.
     // The numbers moved out into this branch and the branch outlives the sheet
     // being shut — which is the state the move was made for — while
-    // `proposalSays` is still inside the sheet. So a reader typing a profile
-    // with it closed got a refusal that changed nothing on the model and printed
-    // nothing anywhere: the model does not blink, by design, and the sentence
+    // `proposalSays` is still inside the sheet. So a reader whose document
+    // stopped building with it closed got a refusal that changed nothing on the
+    // model and printed nothing anywhere: the model does not blink, by design,
+    // and the sentence
     // explaining why was behind `display:none`.
     const { c } = panel({ proposal: withBlock(), open: false })
-    c.computed().proposalOps[3].onClick()
+    c.computed().proposalOps[0].onClick()
     expect(c.state.proposalOpen, 'the premise: it is shut').toBe(false)
 
     const drawn = bodyRows(c)
-    type(drawn[drawn.length - 1].groups[0].fields[1], '0,0; 20,0')
+    type(drawn[drawn.length - 1].groups[0].fields[0], '-5')
 
-    expect(c.state.proposalError).toMatch(/three or more points/)
+    expect(c.state.proposalError).toMatch(/must be positive/)
     expect(c.state.proposalOpen).toBe(true)
     expect(css(c.computed().proposalSaysStyle).display).toBe('block')
   })
@@ -1227,12 +1229,12 @@ describe('the proposal as a branch of the tree', () => {
     // viewer a sheet of editing buttons with no way to put it away. The verdict
     // is for whoever can act on it.
     const { c } = panel({ proposal: withBlock(), token: null, open: false })
-    c.computed().proposalOps[3].onClick()
+    c.computed().proposalOps[0].onClick()
     const drawn = bodyRows(c)
-    type(drawn[drawn.length - 1].groups[0].fields[1], '0,0; 20,0')
+    type(drawn[drawn.length - 1].groups[0].fields[0], '-5')
 
     expect(c.state.proposalError, 'the premise: it really was refused')
-      .toMatch(/three or more points/)
+      .toMatch(/must be positive/)
     expect(c.state.proposalOpen).toBe(false)
   })
 
@@ -1586,8 +1588,8 @@ describe('every id the tree hands the interface', () => {
 // -- the bodies ---------------------------------------------------------------
 
 describe('a body', () => {
-  it('can be any of the four ops, and each one draws something', () => {
-    expect(ops(panel().c)).toEqual(['box', 'cylinder', 'sphere', 'extrude'])
+  it('can be any of the three ops, and each one draws something', () => {
+    expect(ops(panel().c)).toEqual(['box', 'cylinder', 'sphere'])
 
     for (const [index, op] of ops(panel().c).entries()) {
       const { c, el } = panel()
@@ -1704,37 +1706,6 @@ describe('a body', () => {
     expect(el.clearOverlay).toHaveBeenCalledTimes(1)
   })
 
-  it('spells an extruded profile as points, and reads them back the same way', () => {
-    const { c } = panel()
-    c.computed().proposalOps[3].onClick()
-    const profile = bodyRows(c)[0].groups[0].fields[1]
-    expect(profile.value).toBe('0,0; 20,0; 20,10; 0,10')
-
-    type(profile, '0,0; 10,0; 10,10;')
-    // The trailing `;` somebody types before the next point is dropped rather
-    // than guessed at — a corner at the origin would be a point nobody asked for.
-    expect(c.state.proposal.nodes[0].profile).toEqual([[0, 0], [10, 0], [10, 10]])
-  })
-
-  it('drops a pair that does not read as two numbers, rather than guessing at it', () => {
-    // A PAIR IS TWO FINITE NUMBERS OR IT IS NOT A PAIR. Parsed with the same
-    // reader the placements use — which answers 0 for anything that is not a
-    // number — `a,b` planted a corner at the origin and `20,` one on the axis:
-    // points nobody typed, in a profile the reader is looking at.
-    const { c } = panel()
-    c.computed().proposalOps[3].onClick()
-    const profile = () => bodyRows(c)[0].groups[0].fields[1]
-
-    type(profile(), '0,0; a,b; 20,10')
-    expect(c.state.proposal.nodes[0].profile).toEqual([[0, 0], [20, 10]])
-
-    type(profile(), '0,0; 20,; 20,10; 5')
-    expect(c.state.proposal.nodes[0].profile).toEqual([[0, 0], [20, 10]])
-
-    // Whitespace around the numbers is not what makes a pair unreadable.
-    type(profile(), ' 0 , 0 ; -2.5,10 ')
-    expect(c.state.proposal.nodes[0].profile).toEqual([[0, 0], [-2.5, 10]])
-  })
 })
 
 // -- what happens when it will not build --------------------------------------
@@ -1747,18 +1718,18 @@ describe('a document the kernel refuses', () => {
   }
 
   it('says what it said, and leaves the last good body on the model', () => {
-    // THE ASSERTION THIS PANEL NEEDS MOST. The commonest way to reach a
-    // document that will not build is halfway through saying something — an
-    // extrusion whose profile has two of its points typed so far, which is no
-    // polygon at all — and blanking the model at that moment would make the
-    // body flash away and back on the way to a shape that is perfectly fine.
+    // THE ASSERTION THIS PANEL NEEDS MOST. A document that will not build is
+    // reached halfway through saying something — a minus still standing in a
+    // size while the reader types the number after it — and blanking the model
+    // at that moment would make the body flash away and back on the way to a
+    // shape that is perfectly fine.
     const { c, el } = panel({ proposal: withBlock() })
-    c.computed().proposalOps[3].onClick()
+    c.computed().proposalOps[0].onClick()
     const good = el.setOverlay.mock.calls.length
 
-    type(lastSize(c)[1], '0,0; 20,0')
+    type(lastSize(c)[0], '-5')
 
-    expect(c.state.proposalError).toMatch(/three or more points/)
+    expect(c.state.proposalError).toMatch(/must be positive/)
     expect(css(c.computed().proposalSaysStyle).display).toBe('block')
     // Not one more call: the shape on screen is the last one that meant
     // something, and nothing was taken off.
@@ -1768,14 +1739,14 @@ describe('a document the kernel refuses', () => {
 
   it('takes the message back as soon as the document builds again', () => {
     const { c, el } = panel({ proposal: withBlock() })
-    c.computed().proposalOps[3].onClick()
-    type(lastSize(c)[1], '0,0; 20,0')
+    c.computed().proposalOps[0].onClick()
+    type(lastSize(c)[0], '-5')
     expect(c.state.proposalError).toBeTruthy()
 
-    type(lastSize(c)[1], '0,0; 20,0; 20,10')
+    type(lastSize(c)[0], '5')
 
     expect(c.state.proposalError).toBeNull()
-    expect(overlay(el)).toEqual(['korpus', 'extrude2'])
+    expect(overlay(el)).toEqual(['korpus', 'box2'])
   })
 
   it('is not what an emptied field makes — that is a zero, and a zero builds', () => {
@@ -1910,13 +1881,13 @@ describe('a number field', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  it('is a number with a step, where the profile is text with none', () => {
+  it('is a number with a step, where the name is text with none', () => {
     // THE ARROWS ARE THE PLATFORM'S: a `type` of `number` and a `step` is the
     // whole of what the panel says about them, and it is what brings the
-    // spinner, the up and down keys and the repeat on a held key. A profile is
-    // `x,y; x,y; …` and no kind of number, so it gets neither.
+    // spinner, the up and down keys and the repeat on a held key. A name is no
+    // kind of number, so it gets neither.
     const { c } = panel({ proposal: withBlock() })
-    c.computed().proposalOps[3].onClick()
+    c.computed().proposalOps[1].onClick()
 
     for (const f of [...sizeFields(c), at(c, 0), at(c, 1), at(c, 2)]) {
       expect(f.type).toBe('number')
@@ -1927,13 +1898,15 @@ describe('a number field', () => {
     // be two dozen clicks to reach any of them.
     for (const axis of [0, 1, 2]) expect(rot(c, axis).step).toBe(15)
 
-    const extrusion = bodyRows(c)[1]
-    expect(extrusion.groups[0].fields[0]).toMatchObject({ type: 'number', step: 1 })
-    expect(extrusion.groups[0].fields[1].type).toBe('text')
-    expect(extrusion.groups[0].fields[1].step).toBeUndefined()
-    // Nor is a name a number, and nothing nudges one.
-    expect(extrusion.nameField.type).toBe('text')
-    expect(extrusion.nameField.ref).toBeUndefined()
+    // The same of the body added second, whose two numbers are its own.
+    const cylinder = bodyRows(c)[1]
+    for (const f of cylinder.groups[0].fields) {
+      expect(f).toMatchObject({ type: 'number', step: 1 })
+    }
+    // A name is not a number, and nothing nudges one.
+    expect(cylinder.nameField.type).toBe('text')
+    expect(cylinder.nameField.step).toBeUndefined()
+    expect(cylinder.nameField.ref).toBeUndefined()
   })
 
   it('reaches the document and the model when it is nudged', () => {
@@ -2141,9 +2114,7 @@ describe('a number field', () => {
     expect(wheel.preventDefault).not.toHaveBeenCalled()
 
     // And a field with no arrows on it has nothing to take away.
-    c.computed().proposalOps[3].onClick()
-    expect(bodyRows(c)[1].groups[0].fields[1].onWheel).toBeUndefined()
-    expect(bodyRows(c)[1].nameField.onWheel).toBeUndefined()
+    expect(bodyRows(c)[0].nameField.onWheel).toBeUndefined()
   })
 
   it('keeps the number that was there when the text is not one the browser can read', () => {
@@ -2190,27 +2161,29 @@ describe('a number field', () => {
     // test and reaches the markup without its `type` is a field with no arrows
     // on it, and every assertion above would still pass.
     const { c } = panel({ proposal: withBlock() })
-    c.computed().proposalOps[3].onClick()
+    c.computed().proposalOps[1].onClick()
     // THE ELEMENTS AND NOT THEIR `props`, because `ref` is not one: React keeps
     // it on the element itself, and reading it off the props bag answers
     // `undefined` for a field that carries one perfectly well.
     const inputs = collect(c.render(), (el) => (el.type === 'input' ? el : undefined))
     const numbers = inputs.filter((el) => el.props.type === 'number')
 
-    // The box's three sizes, three places and three turns; the extrusion's
-    // height, its three places and its three turns.
-    expect(numbers).toHaveLength(16)
+    // The box's three sizes, three places and three turns; the cylinder's
+    // two numbers, its three places and its three turns.
+    expect(numbers).toHaveLength(17)
     expect(numbers.filter((el) => el.props.step === 15)).toHaveLength(6)
-    expect(numbers.filter((el) => el.props.step === 1)).toHaveLength(10)
+    expect(numbers.filter((el) => el.props.step === 1)).toHaveLength(11)
     // And the handler that carries a nudge into the document is on every one,
     // as is the one that keeps a wheel over a focused field from being an edit.
     expect(numbers.every((el) => typeof el.ref === 'function')).toBe(true)
     expect(numbers.every((el) => typeof el.props.onWheel === 'function')).toBe(true)
 
-    const profile = inputs.find((el) => el.props.value === '0,0; 20,0; 20,10; 0,10')
-    expect(profile.props.type).toBe('text')
-    expect(profile.props.step).toBeUndefined()
-    expect(profile.props.onWheel).toBeUndefined()
+    // And the one field of a body that is NOT a number reaches the markup as
+    // text, with neither the arrows nor the handler that guards them.
+    const named = inputs.find((el) => el.props.value === 'korpus')
+    expect(named.props.type).toBe('text')
+    expect(named.props.step).toBeUndefined()
+    expect(named.props.onWheel).toBeUndefined()
   })
 })
 
@@ -2357,9 +2330,9 @@ describe('add to comment', () => {
     // panel is already saying what is wrong; what it must not do is offer to
     // send it.
     const { c } = panel({ proposal: withBlock() })
-    const profile = () => bodyRows(c)[1].groups[0].fields[1]
-    c.computed().proposalOps[3].onClick()
-    type(profile(), '0,0; 20,0')
+    const side = () => bodyRows(c)[1].groups[0].fields[0]
+    c.computed().proposalOps[0].onClick()
+    type(side(), '-5')
     expect(c.state.proposalError).toBeTruthy()
     expect(css(c.computed().proposalAddStyle).display).toBe('none')
 
@@ -2369,7 +2342,7 @@ describe('add to comment', () => {
     expect(c.state.composer).toBeNull()
 
     // The offer is back as soon as the document builds again.
-    type(profile(), '0,0; 20,0; 20,10')
+    type(side(), '5')
     expect(css(c.computed().proposalAddStyle).display).not.toBe('none')
     c.computed().proposalAdd()
     expect(c.state.composer.proposal).toBe(proposalText(c.state.proposal))

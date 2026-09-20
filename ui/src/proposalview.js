@@ -82,20 +82,8 @@ export function proposalView(s, deps) {
   // `badInput` is the platform's own answer to "there is text in here and I
   // could not read it", and it is the only thing that tells that apart from
   // the genuinely empty field the rule above is about. It is `false` on a text
-  // input, so the name and the profile pass through it unchanged.
+  // input, so the name passes through it unchanged.
   const unread = (target) => !!(target && target.validity && target.validity.badInput);
-  // `x,y; x,y; …`. A PAIR THAT DOES NOT READ AS TWO NUMBERS IS DROPPED rather
-  // than guessed at, and `num` is the wrong parser for it: it answers 0 for
-  // anything that is not a number, so `a,b` came through as a corner at the
-  // origin and `20,` as one on the axis — a point nobody typed, in a profile
-  // they are looking at. An empty field is not a number either, which is what
-  // makes the trailing `;` somebody types before the next point cost nothing
-  // while they think about it.
-  const coord = (text) => (text.trim() ? Number(text.trim()) : NaN);
-  const points = (raw) => String(raw).split(';')
-    .map((pair) => pair.split(',').map(coord))
-    .filter((pair) => pair.length === 2 && pair.every(Number.isFinite));
-  const pointsText = (list) => list.map((pair) => pair.join(',')).join('; ');
   const swap = (list, index, value) => list.map((v, i) => (i === index ? value : v));
 
   // HOW FAR ONE NUDGE OF A NUMBER GOES. Every number of a body is an
@@ -112,8 +100,8 @@ export function proposalView(s, deps) {
   // One field of the panel: what it shows, and what typing in it does.
   // `commit` turns the raw text into the whole NEXT DOCUMENT, because that is
   // what `setProposal` takes — there is no partial write anywhere in here.
-  // A `step` makes it one of the NUMBER fields; the name and the profile are
-  // text and pass none.
+  // A `step` makes it one of the NUMBER fields; the name is text and passes
+  // none.
   //
   // TYPING TOUCHES THE DRAFT AND NOTHING ELSE; the document is written on
   // `change` — a blur, an Enter, or a nudge of the arrows — which is the
@@ -226,15 +214,6 @@ export function proposalView(s, deps) {
                      (raw) => updateNode(doc, node.id, { d: num(raw) }),
                      '47%', STEP_MM)],
     }),
-    extrude: (node) => ({
-      label: 'h · profile',
-      fields: [
-        field(`${node.id}.h`, node.h,
-              (raw) => updateNode(doc, node.id, { h: num(raw) }), '24%', STEP_MM),
-        field(`${node.id}.profile`, pointsText(node.profile),
-              (raw) => updateNode(doc, node.id, { profile: points(raw) }), '72%'),
-      ],
-    }),
   };
 
   // WHAT EACH OP IS THE MOMENT IT IS ADDED: a body big enough to see, at the
@@ -245,7 +224,6 @@ export function proposalView(s, deps) {
     box: { size: [20, 20, 20] },
     cylinder: { d: 10, h: 20 },
     sphere: { d: 20 },
-    extrude: { h: 5, profile: [[0, 0], [20, 0], [20, 10], [0, 10]] },
   };
 
   // THE FIRST FREE NAME, and for a harder reason than tidiness. A body's name
@@ -642,10 +620,11 @@ export function proposalView(s, deps) {
       // them in.
       proposalOps: Object.keys(SIZES).map((op) => ({
         key: op,
-        // The op's own name unless it reads badly on a button — `+ profile` is
-        // what the reader is about to type into `extrude`. Not a table anything
-        // has to be kept in step with: an op missing from it gets its own name.
-        label: `+ ${{ extrude: 'profile' }[op] || op}`,
+        // THE OP'S OWN NAME, with nothing between it and the button. There used
+        // to be a spelling table here for the one op whose key read badly on a
+        // button; every op left is a solid whose name IS what the reader means
+        // by it, so a table of one entry is a table to keep in step for nothing.
+        label: `+ ${op}`,
         onClick: addBody(op),
       })),
 

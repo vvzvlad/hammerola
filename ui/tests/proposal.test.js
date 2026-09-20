@@ -285,23 +285,21 @@ describe('proposalText', () => {
     expect(lines.find((line) => line.includes('"val"'))).toMatch(/at \(0, 0, 42\)$/)
   })
 
-  it('spells the sphere and the extrusion the way the other two are spelled', () => {
+  it('spells the sphere and the cylinder the way the box is spelled', () => {
     expect(proposalText(addNode(just({
       id: 'a', name: 'ball', op: 'sphere', role: 'solid',
       at: [0, 0, 0], rot: [0, 0, 0], d: 10,
     }), {
-      id: 'b', name: 'plate', op: 'extrude', role: 'solid',
-      at: [0, 0, -10], rot: [0, 0, 0], h: 3,
-      profile: [[0, 0], [20, 0], [20, 10], [0, 10]],
+      id: 'b', name: 'post', op: 'cylinder', role: 'solid',
+      at: [0, 0, -10], rot: [0, 0, 0], d: 6, h: 3,
     }))).toBe([
       'units: mm',
       '',
-      // THE PROFILE'S OWN POINTS, in the spelling the panel's field uses. `4pt`
-      // said "some quadrilateral": an extrusion is the one body here whose shape
-      // is not in its numbers, so the count left the agent designing against a
-      // hole in the sentence it was sent.
-      'solid  sphere   "ball"   d10                                at (0, 0, 0)',
-      'solid  extrude  "plate"  h3 profile 0,0; 20,0; 20,10; 0,10  at (0, 0, -10)',
+      // EVERY BODY'S SHAPE IS IN ITS NUMBERS, which is what lets one column
+      // width serve all three: the ops left are the primitives, and a primitive
+      // is said in full by the two or three measurements beside its name.
+      'solid  sphere    "ball"  d10    at (0, 0, 0)',
+      'solid  cylinder  "post"  d6 h3  at (0, 0, -10)',
       '',
       'result = union(solid) - union(hole)',
     ].join('\n'))
@@ -540,19 +538,6 @@ describe('buildProposal', () => {
     const ideal = (4 / 3) * Math.PI * 125
     expect(volumeOf(payload.parts[0])).toBeLessThan(ideal)
     expect(volumeOf(payload.parts[0])).toBeGreaterThan(ideal * 0.97)
-  })
-
-  it('builds a payload for an extrusion, whose profile places itself', () => {
-    const payload = buildProposal(just({
-      id: 'e', name: 'plate', op: 'extrude', role: 'solid',
-      at: [0, 0, -10], rot: [0, 0, 0], h: 3,
-      profile: [[0, 0], [20, 0], [20, 10], [0, 10]],
-    }))
-    expectWellFormed(payload)
-    expect(volumeOf(payload.parts[0])).toBeCloseTo(600, 6)
-    // An extrusion runs UP from `at`, because its profile already says where it
-    // sits in the plane — unlike the three primitives, which `at` centres.
-    expectBox(payload.bb, { xmin: 0, xmax: 20, ymin: 0, ymax: 10, zmin: -10, zmax: -7 })
   })
 
   it('turns a node by the rotation the document gives it, in degrees', () => {

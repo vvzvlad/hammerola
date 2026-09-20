@@ -4195,8 +4195,8 @@ export default class HammerolaViewer extends React.Component {
    *
    * A DOCUMENT THAT WILL NOT BUILD LEAVES THE LAST GOOD BODY WHERE IT IS, and
    * that is the whole reason this is not two lines. The commonest way to reach
-   * one is halfway through saying something — an extrusion committed with two
-   * points of its profile typed, which the kernel refuses as no polygon at all —
+   * one is halfway through saying something — a minus typed into a size, with
+   * the digits after it still to come, which the kernel refuses outright —
    * and blanking the model at that moment would make the body flash away and
    * back on the way to a shape that is perfectly fine. The kernel's own sentence
    * goes in the panel instead, where the reader is already looking, and the
@@ -4400,8 +4400,9 @@ export default class HammerolaViewer extends React.Component {
     // that says anything. `proposalSays` is drawn inside the panel, while the
     // FIELDS moved out into the branch of the tree and the branch now outlives
     // the panel being shut — which is the state the whole move was made for. So
-    // a reader typing a profile with the sheet closed got a refusal that changed
-    // nothing on the model and printed nothing anywhere: the same muteness this
+    // a reader whose document stopped building with the sheet closed got a
+    // refusal that changed nothing on the model and printed nothing anywhere:
+    // the same muteness this
     // file calls a defect a few hundred lines down ("nothing opened, nothing was
     // said"). Opening on a refusal and not on every stage, so the sheet a reader
     // deliberately shut stays shut while they are simply working.
@@ -4434,7 +4435,7 @@ export default class HammerolaViewer extends React.Component {
     //
     // A DOCUMENT THE KERNEL REFUSED LEAVES THE LAST GOOD BODY STANDING, which is
     // what `parts` being null means here and is deliberate: a reader half way
-    // through typing a profile should not have the model blink out from under
+    // through typing a number should not have the model blink out from under
     // them at every intermediate value.
     //
     // UNLESS THE EYE IS SHUT, and that clause is the whole of what this line got
@@ -7067,12 +7068,11 @@ export default class HammerolaViewer extends React.Component {
                         <div key={g.key} style={css('display:flex;align-items:center;gap:5px;margin-top:5px')}>
                           <span style={css(`width:50px;flex:none;font:400 9.5px ${MONO};color:var(--text-muted)`)}>{g.label}</span>
                           {/* `type` AND `step` COME OFF THE FIELD, so a number
-                              gets the browser's own arrows and an extrusion's
-                              profile — `x,y; x,y; …`, which is no kind of number
-                              — does not. `ref` is how a nudge of those arrows
-                              reaches the document; `field` in `computed()` says
-                              why React leaves it no other way, and what
-                              `onWheel` is for. */}
+                              gets the browser's own arrows and a name — which is
+                              no kind of number — does not. `ref` is how a nudge
+                              of those arrows reaches the document; `field` in
+                              `computed()` says why React leaves it no other way,
+                              and what `onWheel` is for. */}
                           {g.fields.map((f) => (
                             <input key={f.key} type={f.type} step={f.step} ref={f.ref}
                                    value={f.value} onChange={f.onChange} onBlur={f.onBlur}
@@ -7466,7 +7466,7 @@ export default class HammerolaViewer extends React.Component {
                 </div>
 
                 <div style={css(v.proposalEmptyStyle)}>
-                  add a box, a cylinder, a sphere or an extruded profile, then say how
+                  add a box, a cylinder or a sphere, then say how
                   big it is and where it sits. Every measurement is a plain number
                   &mdash; there is no arithmetic.
                 </div>
