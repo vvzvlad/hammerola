@@ -330,14 +330,15 @@ def test_the_exporter_still_produces_the_committed_structure(committed, tmp_path
     an ImportError that is not a ModuleNotFoundError — the module is found and
     its extension refuses to load. pytest 9 still defaults to catching plain
     ImportError but warns about it, and 9.1 changes the default to
-    ModuleNotFoundError; without the argument this guard would then stop
-    skipping and the CI container would go red again on a pytest bump.
+    ModuleNotFoundError; without the argument this guard would then stop skipping
+    on a machine whose kernel is installed but cannot load, and go red there on a
+    pytest bump.
     """
     pytest.importorskip(
         "cadquery", exc_type=ImportError,
         reason="the CAD kernel does not import in this interpreter, so the real "
                "exporter cannot be run — see this test's docstring for what "
-               "skipping it costs in CI")
+               "skipping it costs")
 
     module = load_generator()
     module.export(tmp_path / "out")

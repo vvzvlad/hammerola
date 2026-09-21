@@ -272,8 +272,9 @@ jobs:
         # dies with `ImportError: libGL.so.1` at import time and about ninety tests quietly
         # become skips (measured: 94 of them against 4 with the libraries), the six that
         # `make cad-test` names among them — so a change to src/cadbuild/views.py or
-        # assembly.py that moves the payload's shape rides through a green CI while vitest
-        # goes on checking the browser half against a fixture no build produces any more. `curl` and `gosu` are on the
+        # assembly.py that moves the payload's shape rides through a green CI while
+        # vitest goes on checking the browser half against a fixture no build
+        # produces any more. `curl` and `gosu` are on the
         # Dockerfile's line and deliberately NOT here: they are the image's runtime tools —
         # healthcheck and entrypoint — and nothing in the suite runs either.
         # `git config --global --add safe.directory /src` because the tree arrives owned by
@@ -293,8 +294,9 @@ jobs:
         # WAITING rather than computing: real sockets, real subprocesses, real builds, 165 s
         # in test bodies against 26 s in fixtures, so the wall clock follows the worker count.
         # Measured here, same container, kernel libraries installed: pytest 143 s and 163 s on
-        # two runs at four workers against 293 s serial, and the whole step 272 s against
-        # 434 s. The libraries are what turned 94 skips into 4: 2560 results, none failed.
+        # two runs at four workers against 293 s serial, and the whole step 276 s and 318 s on
+        # those same two runs against 434 s — pip is ~100 s of it and is untouched by any of
+        # this. The libraries turned 94 skips into 4: 2560 results, none failed.
         # FOUR AND NOT `auto`, which is eight on this runner: the ceiling above is measured at
         # a worker count, and `auto` would move the floor with the next runner's CPU count
         # while the number here stayed put — eight workers were killed at 2g and at 4g.

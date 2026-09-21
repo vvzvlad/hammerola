@@ -531,12 +531,13 @@ def test_no_usable_occt_is_not_a_refusal(monkeypatch, capsys):
     what they share, and it is the whole rule.
 
       * not installed: `ModuleNotFoundError(name="OCP")`.
-      * installed and refusing to load: plain `ImportError(name="OCP")`. This is
-        the CI test container, measured -- `python:3.11-slim` with
-        requirements.txt but without the system libraries the Dockerfile adds
-        gives `libGL.so.1: cannot open shared object file` for `import OCP`, and
-        `import cadquery` fails identically. Reading THAT as a refusal turns the
-        whole suite red in the one environment it is supposed to run in.
+      * installed and refusing to load: plain `ImportError(name="OCP")`. Measured
+        on a checkout that installed requirements.txt without the system
+        libraries the Dockerfile adds -- `python:3.11-slim` bare, which is what
+        CI's container was before issue #27 -- where `import OCP` gives
+        `libGL.so.1: cannot open shared object file` and `import cadquery` fails
+        identically. Reading THAT as a refusal turns the suite red on every
+        machine where the kernel is installed but cannot load.
 
     Simulated with a meta-path blocker rather than with `sys.modules` (see
     `probes.block_import`): the sys.modules trick produces an exception naming
@@ -606,8 +607,9 @@ def test_an_occt_that_loaded_but_hides_its_pool_is_not_read_as_no_occt(monkeypat
     stale = type(sys)("OCP.OSD")
     stale.OSD_ThreadPool = _Answering
     monkeypatch.setitem(sys.modules, "OCP.OSD", stale)
-    # `raising=False` because the ordinary case is a CI container with no OCP at
-    # all -- and, now, because the line above may be the only reason it is there.
+    # `raising=False` because the ordinary case is a machine with no importable
+    # OCP at all -- and, now, because the line above may be the only reason it is
+    # there.
     monkeypatch.delitem(sys.modules, "OCP.OSD", raising=False)
     # An OCP that is there and is not a package: importing OCP.OSD off it fails
     # with `name == "OCP.OSD"`, which is the first shape.

@@ -233,9 +233,9 @@ def test_two_real_step_files_measure_the_change_between_them(tmp_path):
     nothing back, which is a number to be counted by hand rather than read off
     the run.
 
-    Skips where the kernel is missing -- i.e. in CI, on both workflows (issue
-    #27) -- like every other test that needs real geometry; `make cad-test` is
-    the hand that runs it.
+    Skips where the kernel is missing, like every other test that needs real
+    geometry; CI's container installs it (issue #27), and `make cad-test` runs
+    this one without the rest of the suite.
     """
     cq = pytest.importorskip("cadquery", exc_type=ImportError,
                              reason="a real boolean needs the CAD kernel")

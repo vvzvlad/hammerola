@@ -87,7 +87,11 @@ def test_the_image_and_the_test_container_install_the_same_kernel_libraries():
         "the Dockerfile no longer installs libgl1 by a line this test can read; "
         "`import cadquery` fails without it, so check the install command rather "
         "than this expectation")
-    assert len(WORKFLOWS) == 2
+    missing = [path.name for path in WORKFLOWS if not path.is_file()]
+    assert not missing, (
+        f"the workflows this file compares are not where it looks for them: "
+        f"{missing}. Renamed or moved, the loop below would compare nothing — "
+        f"point it at the new paths rather than deleting the row")
     for workflow in WORKFLOWS:
         suite = packages(workflow) - TEST_ONLY
         assert suite == image, (

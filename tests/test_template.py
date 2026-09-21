@@ -258,8 +258,8 @@ def test_the_model_defines_the_contract_it_is_the_example_of():
 
 # -- the provenance rule, asked of the hub rather than imitated --------------
 # WHAT STOOD HERE WAS A SECOND IMPLEMENTATION OF THE RULE, written over a syntax
-# tree because importing the template was believed to need the CAD kernel. It
-# does not: a stub is enough to let the module EXECUTE --
+# tree because importing the template was believed to need the CAD kernel. It does
+# not: a stub is enough to let the module EXECUTE --
 # after which `provenance` answers with the hub's own verdict, which is what the
 # copy was approximating.
 #
@@ -646,9 +646,10 @@ def test_the_stub_refuses_the_multiplication_the_kernel_refuses():
     corpus above cannot hold this case: an EDIT has to IMPORT under both kernels
     to be compared at all, and this one imports under neither.
 
-    The second half needs the kernel and skips in the CI containers, exactly as
-    the corpus comparison above does. What it costs is the same: the claim that
-    the kernel really refuses this is checked on a workstation and trusted in CI.
+    The second half needs the kernel and skips where it does not import, exactly
+    as the corpus comparison above does — no longer in CI, whose container
+    installs it (issue #27). What it costs on such a machine is the same: the
+    claim that the kernel really refuses this goes unchecked there.
     """
     with pytest.raises(TypeError):
         _Opaque() * _Opaque()
