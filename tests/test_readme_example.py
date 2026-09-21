@@ -453,8 +453,8 @@ def test_the_readme_gives_the_ceiling_metrics_json_really_holds(capsys):
     `*_omitted` fields exist to prevent, undone in prose.
 
     NO KERNEL AND NO BUILD, unlike everything else in this file: it is a
-    sentence checked against a constant, so it runs in both CI containers where
-    the example itself is unwatched.
+    sentence checked against a constant, so it runs even on a machine where the
+    kernel does not import and the example itself is unwatched.
     """
     found = NOTES_CEILING.findall(README.read_text(encoding="utf-8"))
     assert len(found) == 1, (

@@ -255,9 +255,9 @@ def test_publish_to_data_lands_a_build_and_a_rerun_keeps_the_slot(tmp_path):
     and it was dead for as long as it took somebody to open one: `publish_dev`
     became `publish_dev_built` and took a staging directory instead of a tar, and
     nothing anywhere called it. The test above is next door and could not have
-    caught it — it needs a CAD kernel CI does not have, so it skips in the one
-    place that runs on every push. This one hands the export IN and therefore
-    runs everywhere.
+    caught it — it needs a CAD kernel, so it skips wherever one does not import.
+    This one hands the export IN and therefore runs everywhere, including on a
+    machine with no kernel at all.
 
     The second publish is the other half of the check, and not a formality: the
     slot is a page somebody has open, so re-running the target when nothing
@@ -312,30 +312,14 @@ def test_the_exporter_still_produces_the_committed_structure(committed, tmp_path
     it does compare is every name and every nesting level, which is what the
     adapter reads and what a format change moves.
 
-    THIS TEST DOES NOT RUN IN CI, AND THAT IS WHAT THE GUARD BELOW COSTS. Both
-    workflows run the suite in a bare `python:3.11-slim` carrying nothing but
-    `git`, while the system libraries the CAD kernel links against are installed
-    by the RUNTIME Dockerfile only — so there `import cadquery` dies with
-    `ImportError: libGL.so.1`: the distribution is on disk, the shared object it
-    loads is not. The guard turns that into a skip, exactly as tests/cadbuild/
-    does for the same reason.
-
-    What is being paid for it, stated plainly rather than left to read as
-    routine: NOT ONE test that computes real geometry executes in CI, and from
-    now on this one is among them — so the committed fixture is compared against
-    the real exporter only on a workstation where `make install` put the kernel
-    in place. Do not read the neighbouring suite as part of that bill.
-    tests/cadbuild/ deliberately does not depend on the kernel (its conftest.py
-    says so outright), and it was measured: with `cadquery`, `OCP`,
-    `ocp_tessellate` and `trimesh` all raising ImportError, exactly ONE of its
-    174 tests skips — the colour-parsing case in tests/cadbuild/test_views.py,
-    guarded the same way as this one. Between such runs the drift this file
-    exists to catch is unwatched: a change to src/cadbuild/views.py that moves
-    the payload's shape goes through a green CI, and the vitest suite keeps
-    passing against a document no build produces any more. Closing the hole means
-    putting libgl1 into the test container, which switches this test and that
-    single cadbuild one on — a step of its own, with its own cost to measure; it
-    is written up in issue #27.
+    THIS TEST RUNS IN CI, and it did not always: both workflows used to run the
+    suite in a bare `python:3.11-slim` carrying nothing but `git`, so there
+    `import cadquery` died with `ImportError: libGL.so.1` — the distribution on
+    disk, the shared object it loads not — and the guard below turned that into a
+    skip. The test container installs the kernel's system libraries now (issue
+    #27), so the committed fixture is compared against the real exporter on every
+    push instead of only on a workstation. The guard stays for the machine that
+    has no kernel, which is what it was written for.
 
     Guarding on `cadquery` alone covers `ocp_tessellate` too, which the export
     also needs: both are pinned in requirements.txt and both fail on the same

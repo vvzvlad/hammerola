@@ -235,11 +235,11 @@ def test_the_hang_budget_is_armed_again_where_the_model_starts(
     than accumulates -- and the end-to-end proof that a dump really does name
     the model's line is the test above.
 
-    The slow start is injected rather than waited for. On this workstation the
-    real one costs 0.8-3.9 s (see the test above) and would make the point on
-    its own; in the CI container there is no usable OCP at all, so without the
-    injection the start is fast enough that a test written here would pass
-    against the broken code.
+    The slow start is injected rather than waited for. Where the kernel imports
+    the real one costs 0.8-3.9 s (see the test above) and would make the point on
+    its own; on a machine with no usable OCP there is nothing to wait for at all,
+    so without the injection the start is fast enough that a test written here
+    would pass against the broken code.
     """
     budget = 0.5
     slow = 1.0

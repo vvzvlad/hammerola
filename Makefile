@@ -254,15 +254,11 @@ test: install ## Run both test suites: pytest always, the JS suite when npm is p
 	@$(RUN_JS_TESTS)
 
 # --- The six tests that need the CAD kernel -----------------------------------
-# CI RUNS THESE SIX NOW: issue #27 decided 2026-08-31 to leave `libgl1` out and
-# catch the export half by hand, and the owner reversed that on 2026-09-21 — both
-# workflows install the kernel's libraries into the test container, so a change to
-# `src/cadbuild/views.py` or `assembly.py` that moves the payload's shape is
-# caught by the run rather than by whoever remembers to look.
-#
-# The target stays, and its job is now the smaller one it is named for: these six
-# without the other ~2500, for the edit-run-edit loop on the export half. It is no
-# longer the only thing standing between that drift and production.
+# CI RUNS THEM (issue #27): both workflows install the kernel's libraries into the
+# test container, so a change to `src/cadbuild/views.py` or `assembly.py` that
+# moves the payload's shape is caught by the run rather than by whoever remembers
+# to look. This target is for the edit-run-edit loop on the export half — these
+# six without the other ~2500 — not for catching that drift.
 #
 # THE TARGET FAILS WHEN A TEST SKIPS, which is the whole point: run on a machine
 # with no kernel, all six would skip and pytest would exit 0 — a green run that

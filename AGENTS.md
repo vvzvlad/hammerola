@@ -66,11 +66,12 @@ make cad-test          # the six tests that need the CAD kernel
 ```
 
 CI runs the whole suite, those six included: both workflows install the kernel's
-libraries into the test container (issue #27, reversed 2026-09-21), so a payload
-shape drifting away from `ui/tests/fixtures/assembled.json` is caught by the run.
-CI runs it PARALLEL — `pytest -n 4`, four xdist workers, a count the container's
-measured memory ceiling depends on — while `make test` stays serial, so a test
-that only breaks in parallel surfaces in CI: reproduce it by hand with the
+libraries into the test container (issue #27), which turned ~90 skips into real
+runs — so a payload shape drifting away from `ui/tests/fixtures/assembled.json`
+is caught by the run.
+CI runs it PARALLEL — `pytest -n 4 --dist loadfile`, and the container's measured
+memory ceiling depends on that worker count — while `make test` stays serial, so
+a test that only breaks in parallel surfaces in CI: reproduce it by hand with the
 `docker run` out of the test step, not with `make test`.
 
 ## Running the app

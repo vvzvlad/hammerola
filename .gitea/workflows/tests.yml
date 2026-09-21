@@ -209,12 +209,13 @@ jobs:
         # What the suite actually needs, by running it — RE-MEASURED 2026-09-21 on
         # cirunner-docker with this exact command, because the kernel's libraries and `-n 4`
         # below invalidated every earlier number (issue #27): it PASSES (pytest rc 0,
-        # OOMKilled false) at 3g and at 4g, and the kernel kills it (`OOMKilled=true`, which
-        # surfaces as a crashed xdist worker blamed on whichever test it was running) at 2g.
-        # The floor is therefore above 2 GB and no higher than 3 GB, which puts 6g between 2×
-        # and 3× it — the interval is the honest figure, and a single multiple would state the
-        # floor more precisely than the measurement does. EIGHT workers were killed at 2g AND
-        # at 4g, which is the other half of why the flag below names four.
+        # OOMKilled false) at 3g and at 6g, and the kernel kills it (`OOMKilled=true`, which
+        # surfaces as an xdist worker crashing on whichever test it was running) at 2g. The
+        # floor is therefore above 2 GB and no higher than 3 GB, which puts 6g between 2× and
+        # 3× it — the interval is the honest figure, and a single multiple would state the
+        # floor more precisely than the measurement does. The default `--dist load` brackets
+        # the same way (2g killed, 3g and 4g pass) and EIGHT workers were killed at 2g AND at
+        # 4g: both halves of the flag below are what this ceiling is measured at.
         # The margin is deliberately a MULTIPLE rather than a percentage: a
         # suite that grows a fixture, a dependency or a parallel worker must not start
         # failing CI for a reason that has nothing to do with the commit, while an allocation
@@ -232,9 +233,10 @@ jobs:
         # 473ca4c describe a suite RLIMIT_CPU killed half way through, and they were wrong in
         # both directions. Re-measure when the container's contents change or the worker count
         # moves — both moved on 2026-09-21, which is why the paragraph above is dated. The
-        # spike this suite is measured against is one test holding a few hundred MB
-        # (tests/test_archive_security.py, the pax header) while the other workers hold the
-        # ~222 MB of OCCT that `import cadquery` maps.
+        # spike this suite is measured against is one test holding 800 MB in a single buffer
+        # — tests/test_archive_security.py joins four pax headers DECLARING 200 MB each, which
+        # is the attack it exists to refuse — while the other workers hold the ~222 MB of OCCT
+        # that `import cadquery` maps.
         #
         # The two flags MUST STAY EQUAL. `--memory-swap` is the memory+swap TOTAL, and leaving
         # it unset gives the container swap equal to the limit, so a process that ran away
@@ -264,10 +266,11 @@ jobs:
         # THE CAD KERNEL'S SYSTEM LIBRARIES travel with git, and they are the same list the
         # Dockerfile installs — read the derivation THERE and do not repeat it here; the two
         # lists are compared by tests/test_ci_kernel_libs.py. Without them `import cadquery`
-        # dies with `ImportError: libGL.so.1` at import time, the six tests that need the
-        # kernel skip, and a change to src/cadbuild/views.py or assembly.py that moves the
-        # payload's shape rides through a green CI while vitest goes on checking the browser
-        # half against a fixture no build produces any more. `curl` and `gosu` are on the
+        # dies with `ImportError: libGL.so.1` at import time and about ninety tests quietly
+        # become skips (measured: 94 of them against 4 with the libraries), the six that
+        # `make cad-test` names among them — so a change to src/cadbuild/views.py or
+        # assembly.py that moves the payload's shape rides through a green CI while vitest
+        # goes on checking the browser half against a fixture no build produces any more. `curl` and `gosu` are on the
         # Dockerfile's line and deliberately NOT here: they are the image's runtime tools —
         # healthcheck and entrypoint — and nothing in the suite runs either.
         # `git config --global --add safe.directory /src` because the tree arrives owned by
@@ -286,12 +289,19 @@ jobs:
         # `pytest -n 4` — pytest-xdist, four worker processes. The suite spends its time
         # WAITING rather than computing: real sockets, real subprocesses, real builds, 165 s
         # in test bodies against 26 s in fixtures, so the wall clock follows the worker count.
-        # Measured here, same container, kernel libraries installed: pytest 139 s and 164 s on
+        # Measured here, same container, kernel libraries installed: pytest 143 s and 163 s on
         # two runs at four workers against 293 s serial, and the whole step 272 s against
         # 434 s. The libraries are what turned 94 skips into 4: 2560 results, none failed.
         # FOUR AND NOT `auto`, which is eight on this runner: the ceiling above is measured at
         # a worker count, and `auto` would move the floor with the next runner's CPU count
         # while the number here stayed put — eight workers were killed at 2g and at 4g.
+        # `--dist loadfile` KEEPS A FILE'S TESTS ON ONE WORKER, and the default `load` does
+        # not: it hands out tests one at a time, so a MODULE-scoped fixture is built again in
+        # every worker that draws a test from that module — `built` in
+        # tests/test_readme_example.py is a real CAD build whose docstring says it exists to
+        # run once instead of four times. Measured at 139 s and 164 s that way, i.e. the same
+        # wall clock as loadfile, so the duplicated builds buy nothing and this flag costs
+        # nothing.
         # NOT in pytest.ini's addopts on purpose: `make test` and a single file run by hand
         # keep live output and a usable debugger, so a failure that only happens in parallel
         # is reproduced with THIS command rather than with `make test`.
@@ -305,7 +315,7 @@ jobs:
           -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
           -e PYTHONDONTWRITEBYTECODE=1 \
           "$RUNTIME_IMAGE" \
-          sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; apt-get update; apt-get install -y --no-install-recommends git libgl1 libx11-6 libexpat1 libxext6 libxrender1 libsm6 libice6; git config --global --add safe.directory /src; pip install --no-cache-dir -r requirements-dev.txt; pytest -n 4 --tb=short -q'
+          sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; apt-get update; apt-get install -y --no-install-recommends git libgl1 libx11-6 libexpat1 libxext6 libxrender1 libsm6 libice6; git config --global --add safe.directory /src; pip install --no-cache-dir -r requirements-dev.txt; pytest -n 4 --dist loadfile --tb=short -q'
 
     - name: Run the JS test suite in a container
       # The browser half of the suite: vitest over ui/tests, in jsdom. It covers the parts of

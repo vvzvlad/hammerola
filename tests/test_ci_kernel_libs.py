@@ -23,7 +23,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCKERFILE = ROOT / "Dockerfile"
-WORKFLOWS = sorted((ROOT / ".gitea" / "workflows").glob("*.yml"))
+# BY NAME rather than by globbing the directory, as tests/test_workflow_steps.py
+# names them: a glob that stops matching — a rename to `.yaml`, a directory that
+# moved — leaves this file comparing nothing and still green, and a third
+# workflow that legitimately installs nothing would fail it for no drift at all.
+WORKFLOWS = (ROOT / ".gitea" / "workflows" / "tests.yml",
+             ROOT / ".gitea" / "workflows" / "image-check-publish.yml")
 
 # The image's own runtime tools, on the Dockerfile's line and deliberately not in
 # the test container: `curl` is the healthcheck's, `gosu` the entrypoint's, and
@@ -41,13 +46,29 @@ INSTALL = re.compile(
     r"apt-get install -y --no-install-recommends\s+(.*?)(?:&&|;|$)", re.S)
 
 
-def packages(text):
-    """Every package named by the first such install command in `text`."""
-    match = INSTALL.search(text)
-    assert match, "no `apt-get install -y --no-install-recommends` found"
+def packages(path):
+    """Every package named by the one such install command in `path`.
+
+    ONE, asserted rather than assumed: a second `apt-get install` — a build stage
+    of its own in the Dockerfile, a tool added to the workflow's step — would
+    otherwise make this file compare whichever came first and go on looking like
+    it was comparing the kernel's libraries.
+    """
+    text = path.read_text()
+    # Whole comment lines go before the match, not tokens starting with `#`
+    # after it: the Dockerfile writes prose ABOVE its install and this file's
+    # own continuation lines are commented in places, and a word from a comment
+    # counted as a package is a failure that reads like drift.
+    stripped = "\n".join(line for line in text.splitlines()
+                         if not line.lstrip().startswith("#"))
+    found = INSTALL.findall(stripped)
+    assert len(found) == 1, (
+        f"{path.name}: expected exactly one `apt-get install -y "
+        f"--no-install-recommends`, found {len(found)}. Two of them and this "
+        f"comparison silently describes the wrong one — name the kernel's "
+        f"libraries in a single command, or teach this test which one is which")
     # Continuations and newlines are separators like any other whitespace.
-    return {token for token in match.group(1).replace("\\", " ").split()
-            if not token.startswith("#")}
+    return set(found[0].replace("\\", " ").split())
 
 
 def test_the_image_and_the_test_container_install_the_same_kernel_libraries():
@@ -58,15 +79,17 @@ def test_the_image_and_the_test_container_install_the_same_kernel_libraries():
     the workflows write them on one line because that command is also what a
     developer runs by hand, and neither spelling is the one to standardise on.
     """
-    image = packages(DOCKERFILE.read_text()) - RUNTIME_ONLY
-    # A guard against the whole test passing vacuously the day somebody rewrites
-    # the Dockerfile's install into a form the expression above does not match.
+    image = packages(DOCKERFILE) - RUNTIME_ONLY
+    # Two guards against the whole test passing vacuously: the day somebody
+    # rewrites the Dockerfile's install into a form the expression above does not
+    # match, and the day the loop below iterates over nothing.
     assert "libgl1" in image, (
         "the Dockerfile no longer installs libgl1 by a line this test can read; "
         "`import cadquery` fails without it, so check the install command rather "
         "than this expectation")
+    assert len(WORKFLOWS) == 2
     for workflow in WORKFLOWS:
-        suite = packages(workflow.read_text()) - TEST_ONLY
+        suite = packages(workflow) - TEST_ONLY
         assert suite == image, (
             f"{workflow.name}: the test container and the image install "
             f"different kernel libraries. Only in the image: "
