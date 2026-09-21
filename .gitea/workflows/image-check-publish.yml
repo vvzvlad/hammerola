@@ -75,9 +75,10 @@ jobs:
     # reused: `docker ps` on a machine shared by every repository should say which half is
     # still running, and a single name would let the Python cleanup remove the node container
     # out from under a suite that was still going.
-    # RUNTIME_IMAGE and NODE_IMAGE deliberately stay in their own steps' `env:`: exactly one
-    # step uses each of them and no second step has to agree with either, so hoisting them
-    # here would buy nothing.
+    # NODE_IMAGE deliberately stays in its own step's `env:`: exactly one step uses it and no
+    # second step has to agree with it, so hoisting it here would buy nothing. The Python
+    # suite's base is not here either and not in its step: it is the `FROM` line of
+    # ci/Dockerfile.test, and the tag of the image built from it is computed rather than written.
     env:
       TEST_NAME: hammerola-tests-${{ github.run_id }}
       JS_NAME: hammerola-js-${{ github.run_id }}
@@ -93,11 +94,6 @@ jobs:
       # uses makes "the tests ran" and "docker works on this runner" the same statement, and
       # both are proved by the same step.
       timeout-minutes: 20
-      env:
-        # The SAME base the Dockerfile uses. Testing under a different interpreter than the
-        # one that ships is exactly the gap this whole arrangement exists to close: a suite
-        # that is green on one python and an image that runs another.
-        RUNTIME_IMAGE: python:3.11-slim
       run: |
         set -e
         set -o pipefail
@@ -108,6 +104,43 @@ jobs:
         # a container instead of about the code. `|| true` because on every normal run there
         # is nothing there and this is a no-op.
         docker rm -f -v "$TEST_NAME" || true
+        # THE SUITE'S ENVIRONMENT IS A PREBUILT IMAGE — ci/Dockerfile.test, where what is in it
+        # and why is written down. Assembling it inside the step instead, which is what this
+        # replaced, costs one `apt-get` and one `pip install` of some 430 MB of wheels on EVERY
+        # run — 112 s of pip and 28 s of apt out of the 299 s that step took — and none of it
+        # depends on the commit under test (issue #27 put the kernel's libraries on that line,
+        # which is what made it worth doing something about).
+        # THE TAG IS A HASH OF THE INPUTS — that file and the two requirements files, which are
+        # also the whole build context below. Reuse on a persistent daemon is only safe if a
+        # stale image cannot answer to a CURRENT name: a floating `:ci` would mean "whatever was
+        # built last", which on a daemon shared by every branch is one branch's suite running
+        # against another branch's dependencies. A new tag does not imply new layers: the build
+        # below fills it from the cache wherever nothing material moved, so a comment edited in
+        # THIS file costs 1 s — a comment edited in either requirements file costs the whole
+        # 252 s, because the `COPY` layer is keyed by those files' bytes and everything after it
+        # rebuilds.
+        TEST_IMAGE="hammerola-test:$(cat ci/Dockerfile.test requirements.txt requirements-dev.txt | sha256sum | cut -c1-12)"
+        # `--pull` is `docker run --pull always` moved to where the base image is named now: this
+        # daemon is persistent, so a once-pulled python:3.11-slim would otherwise sit in its
+        # cache for months. It does not fight the reuse — an unchanged base digest leaves every
+        # layer cached, 1 s against 252 s for a cold build.
+        # The context is a tar of the three hashed files rather than the repository: the tar is
+        # for the reason the workspace below travels as one, .dockerignore does not apply to it,
+        # and a context of exactly the hashed files is the same statement as the tag — nothing
+        # else can affect this image, so nothing else can make it stale.
+        # `--memory` / `--memory-swap` are a MEASURED ceiling, as on every container this CI
+        # starts (issue #28), applied PER `RUN` by the builder. Swept with `--no-cache`
+        # necessarily: a warm build executes no RUN and can never reach the limit, so a green
+        # run here is no evidence the number still holds. THE FLOOR IS THE `pip install`: killed
+        # at 512m (`Killed`, exit code 137 on that RUN) and it builds at 768m and at 1g, which
+        # puts 2g between 2.7× and 4× the floor — the same bracket, off the same wheels, as the
+        # image build in the other job.
+        # THE TWO FLAGS MUST STAY EQUAL, as on the `docker run` below: `--memory-swap` is the
+        # memory+swap TOTAL, and left unset it hands the build swap equal to the limit instead
+        # of killing it there.
+        tar -cf - ci/Dockerfile.test requirements.txt requirements-dev.txt \
+          | docker build --pull --memory=2g --memory-swap=2g \
+          -f ci/Dockerfile.test -t "$TEST_IMAGE" -
         # The workspace is streamed into the container as a tar over stdin rather than
         # bind-mounted, and that is not a stylistic choice either. This job runs INSIDE
         # act_runner's own job container while `docker` talks to the HOST's daemon through the
@@ -124,14 +157,14 @@ jobs:
         # installing git without sending `.git` swaps one red test for another. The `.git/config`
         # exclusion below is what keeps sending it from also sending a credential.
         # Note that .dockerignore does NOT apply here — this is a tar, not a build
-        # context — which is what makes tests/ and requirements-dev.txt available, both of
-        # which the image itself deliberately excludes. That same fact is why every other
-        # exclusion has to be spelled out here by hand, one flag each:
+        # context — which is what makes tests/ available at all, the one thing the suite cannot
+        # run without and the shipped image deliberately excludes. That same fact is why every
+        # other exclusion has to be spelled out here by hand, one flag each:
         # `.git/config` is the ONE part of the repository left behind, and that flag is
         # load-bearing rather than tidiness. actions/checkout defaults `persist-credentials` to
         # true and writes the run's token into that file as an `http.<server>.extraheader`, so
         # sending `.git` whole would hand a live credential to the container that is about to
-        # `pip install` the entire dependency tree — the same exposure the late `docker login` in
+        # run the whole test suite — the same exposure the late `docker login` in
         # the publishing workflow exists to prevent, arriving through a different door. The
         # by-hand reproduction has its own version of it: a remote URL with a token in it, or a
         # credential helper. Nothing in the check reads the file — `git ls-files` reads
@@ -143,8 +176,8 @@ jobs:
         # megabytes pushed through stdin on every run, landing in /src beside the code as a
         # tree of binaries nothing in that container could load. It is dead weight and nothing
         # more: the container runs its own /usr/local/bin/python with VIRTUAL_ENV unset, so
-        # .venv/lib/*/site-packages never enters sys.path and cannot shadow what pip installs
-        # inside — do not re-justify this flag as a correctness fix, it is a size fix.
+        # .venv/lib/*/site-packages never enters sys.path and cannot shadow the image's own
+        # site-packages — do not re-justify this flag as a correctness fix, it is a size fix.
         # `ui/node_modules` is the same story as `.venv` and carries the flag for the same
         # reason rather than a different one: a dependency tree installed on the HOST, tens
         # of megabytes of it, carrying esbuild and rollup binaries built for the host's
@@ -173,10 +206,6 @@ jobs:
         # interpreter than the one about to run the suite — the host's python, not the
         # container's 3.11 — so nothing in them is valid inside it: weight on stdin at best,
         # stale state that muddies a failure at worst.
-        # `--pull always`: unlike GitHub's ephemeral runners this daemon is persistent, so
-        # without it a once-pulled python:3.11-slim would sit in its cache for months and the
-        # tests would run against an unpatched base — the same reason `docker build --pull`
-        # carries the flag.
         # EDIT_TOKEN is the ONE variable src/settings.py declares with no default — one secret
         # for the whole system (issue #26), covering publishing, a build's sources, the
         # project routes and the whole comment queue including writing to it:
@@ -200,33 +229,37 @@ jobs:
         # MEASURE THIS BY PASS/FAIL AT A LIMIT, NEVER BY `memory.peak`. That reading is the
         # trap, and it is written down here because the first version of this ceiling fell
         # into it. `memory.peak` in a cgroup counts reclaimable PAGE CACHE, which this run
-        # generates in quantity — apt, pip and untarring the workspace — and the kernel keeps
-        # that cache for as long as the limit leaves room for it, so the peak RISES WITH THE
-        # LIMIT and then saturates somewhere BELOW it. Measured on the self-hosted runner (Debian
-        # 13, x86_64, 8 vcpu, 19 GB) with this exact command: 2.86 GB under a 4g limit,
-        # 2.00 GB under 2g, 769 MB under 768m. It does not merely fill whatever it is given —
+        # generates in quantity — unpacking the workspace and reading the tree back — and the
+        # kernel keeps that cache for as long as the limit leaves room for it, so the peak RISES
+        # WITH THE LIMIT and then saturates somewhere BELOW it. Measured on the self-hosted
+        # runner (Debian 13, x86_64, 8 vcpu, 19 GB) on the form of this command that still
+        # installed everything inside the container: 2.86 GB under a 4g limit, 2.00 GB under 2g,
+        # 769 MB under 768m. It does not merely fill whatever it is given —
         # 2.86 is well short of 4 — and that is what makes the number so plausible and so
         # useless: it says how much the run was ALLOWED to cache, not how much it needs, so
         # it can be made to say almost anything by changing the very flag it would justify.
         #
-        # What the suite actually needs, by running it — RE-MEASURED 2026-09-21 on
-        # cirunner-docker with this exact command, because the kernel's libraries and `-n 4`
-        # below invalidated every earlier number (issue #27): it PASSES (pytest rc 0,
-        # OOMKilled false) at 3g and at 6g, and the kernel kills it (`OOMKilled=true`, which
-        # surfaces as an xdist worker crashing on whichever test it was running) at 2g. The
+        # What the suite actually needs, by running it — RE-MEASURED 2026-09-22 on
+        # cirunner-docker with this exact command, because the dependencies moving into
+        # ci/Dockerfile.test changed what is in the container: it PASSES (pytest rc 0,
+        # `OOMKilled=false`) at 6g and at 3g, and at 2g the kernel kills a worker —
+        # `OOMKilled=true`, surfacing as `[gw2] node down: Not properly terminated` and one
+        # failed test, after which the run does not finish at all but sits there until something
+        # kills it, i.e. in CI it is the step's 20-minute bound rather than a red suite. The
         # floor is therefore above 2 GB and no higher than 3 GB, which puts 6g between 2× and
-        # 3× it — the interval is the honest figure, and a single multiple would state the
-        # floor more precisely than the measurement does. The default `--dist load` brackets
-        # the same way (2g killed, 3g and 4g pass) and EIGHT workers were killed at 2g AND at
-        # 4g: both halves of the flag below are what this ceiling is measured at.
+        # 3× it — the interval is the honest figure, and a single multiple would state the floor
+        # more precisely than the measurement does. The bracket did not move when the installs
+        # left the container, and the sweep that found it bracketed `--dist load` the same way
+        # and killed EIGHT workers at 2g AND at 4g: both halves of the flag below are measured.
         # The margin is deliberately a MULTIPLE rather than a percentage: a
         # suite that grows a fixture, a dependency or a parallel worker must not start
         # failing CI for a reason that has nothing to do with the commit, while an allocation
         # that runs away still dies inside this job instead of on the host.
         #
         # EVERY CONTAINER THIS CI STARTS NOW CARRIES ONE, each from a pass/fail sweep of its
-        # own (issue #28): the JS suite's node:22-bookworm-slim container, the `docker build`
-        # step in the build job, and the three ci/smoke.py starts. The argument was never
+        # own (issue #28): the build of the image this step runs the suite in, a few lines above,
+        # the JS suite's node:22-bookworm-slim container, the `docker build` step in the build
+        # job, and the three ci/smoke.py starts. The argument was never
         # specific to this step — it is a property of the RUNNER, 19 GB shared with every
         # other repository's jobs — and what WAS specific is that only this step had been
         # measured. Each number is written where its container is started, next to the
@@ -235,7 +268,8 @@ jobs:
         # Any re-measurement has to be on a run that COMPLETES: the numbers taken before
         # 473ca4c describe a suite RLIMIT_CPU killed half way through, and they were wrong in
         # both directions. Re-measure when the container's contents change or the worker count
-        # moves — both moved on 2026-09-21, which is why the paragraph above is dated. The
+        # moves, which is why the paragraph above is dated: the worker count moved on
+        # 2026-09-21 and the contents on 2026-09-22, and the rule has now fired twice. The
         # spike this suite is measured against is one test holding 800 MB in a single buffer
         # — tests/test_archive_security.py joins four pax headers DECLARING 200 MB each, which
         # is the attack it exists to refuse — while the other workers hold the ~222 MB of OCCT
@@ -246,44 +280,11 @@ jobs:
         # would thrash to twice the number instead of being killed at it — the ceiling would
         # still be written here while no longer being enforced, which is worse than not having
         # one, and the measurements above would no longer describe what happens.
-        # GIT IS INSTALLED INSIDE THE CONTAINER, and for exactly one test.
-        # tests/test_no_conflict_markers.py enumerates the tracked files with `git ls-files` and
-        # greps each one for a merge marker; python:3.11-slim carries no git at all, so without
-        # this the test dies with `FileNotFoundError: [Errno 2] No such file or directory: 'git'`
-        # — which is how the inherited cad_snapshot_hub CI stayed red for six pushes in a row. It
-        # is the ONLY check that can catch a `<<<<<<< HEAD` that survived a merge into a
-        # committed file: every other test asserts that something IS present, and a marker adds
-        # text without removing any, so nothing else in the suite can see it. One did reach a
-        # served page exactly that way, with 191 green tests around it.
-        # Making the test SKIP when git is absent was considered and REJECTED. It paints the run
-        # green in precisely the situation where the guarantee has stopped existing, which is the
-        # failure this test was written after; an error naming the missing tool is the cheaper
-        # outcome by a wide margin.
-        # The install runs AFTER the extraction, so the tar on stdin is drained before anything
-        # else touches the stream. `--no-install-recommends` because nothing `ls-files` does
-        # reaches less, ssh-client or patch. There is deliberately NO `rm -rf
-        # /var/lib/apt/lists/*` mirroring the Dockerfile's: there it drops the lists from the
-        # LAYER being committed, here nothing is committed at all — the container is `--rm` and
-        # its writable layer goes with it — so the same line would be a no-op that reads like a
-        # working economy.
-        # THE CAD KERNEL'S SYSTEM LIBRARIES travel with git, and they are the same list the
-        # Dockerfile installs — read the derivation THERE and do not repeat it here; the two
-        # lists are compared by tests/test_ci_kernel_libs.py. Without them `import cadquery`
-        # dies with `ImportError: libGL.so.1` at import time and about ninety tests quietly
-        # become skips (measured: 94 of them against 4 with the libraries), the six that
-        # `make cad-test` names among them — so a change to src/cadbuild/views.py or
-        # assembly.py that moves the payload's shape rides through a green CI while
-        # vitest goes on checking the browser half against a fixture no build
-        # produces any more. `curl` and `gosu` are on the
-        # Dockerfile's line and deliberately NOT here: they are the image's runtime tools —
-        # healthcheck and entrypoint — and nothing in the suite runs either.
-        # `git config --global --add safe.directory /src` because the tree arrives owned by
-        # whichever uid packed it. On the runner both ends are root and the setting changes
-        # nothing; on a workstation running this command BY HAND the files land owned by the
-        # developer while the container is root, and git then refuses the repository outright
-        # with `detected dubious ownership` — an error, not a warning, so the by-hand
-        # reproduction this command is also written for would fail on the very test the lines
-        # above exist to make runnable.
+        # WHAT IS IN THE CONTAINER and why each piece is there — git for
+        # tests/test_no_conflict_markers.py, the kernel's system libraries for `import cadquery`,
+        # the dependency tree, `safe.directory` for the by-hand run — is ci/Dockerfile.test,
+        # built at the top of this body. The reasoning for each piece lives there, next to the
+        # line that installs it, and is deliberately not repeated in both places.
         # `viewer/node_modules` (108 MB) and `viewer/dist` are excluded for the same reason as
         # `ui/node_modules`, and matter for the same by-hand run: a runner's checkout has
         # neither -- both are gitignored and nothing in CI builds the viewer -- but a
@@ -293,11 +294,12 @@ jobs:
         # `pytest -n 4` — pytest-xdist, four worker processes. The suite spends its time
         # WAITING rather than computing: real sockets, real subprocesses, real builds, 165 s
         # in test bodies against 26 s in fixtures, so the wall clock follows the worker count.
-        # Measured here, same container, kernel libraries installed: pytest 163 s and 164 s on
-        # two runs at four workers — 49 s of it tests/buildproc, 114 s the rest — against
-        # 293 s serial, and the whole step 299 s against 434 s. pip is ~100 s of that and is
-        # untouched by any of this. The libraries turned 94 skips into 4: 2560 results, none
-        # failed.
+        # MEASURED IN THIS IMAGE, 2026-09-22, at four workers: pytest 163 s, of which 46 s is
+        # tests/buildproc and 117 s the rest, against 293 s serial. The run around it is
+        # 161–165 s on an idle runner and 200 s beside another job on it — that is pytest plus
+        # the workspace on stdin and nothing else, where the same step took 299 s while it
+        # installed its own dependencies and 434 s before the workers. The libraries turned 94
+        # skips into 4: 2560 results, none failed.
         # FOUR AND NOT `auto`, which is eight on this runner: the ceiling above is measured at
         # a worker count, and `auto` would move the floor with the next runner's CPU count
         # while the number here stayed put — eight workers were killed at 2g and at 4g.
@@ -328,13 +330,12 @@ jobs:
           --exclude=./viewer/node_modules --exclude=./viewer/dist \
           --exclude=./data --exclude=./.env --exclude=./.pytest_cache \
           --exclude=__pycache__ . \
-          | docker run --rm -i --pull always --name "$TEST_NAME" \
+          | docker run --rm -i --name "$TEST_NAME" \
           --memory=6g --memory-swap=6g \
           -e EDIT_TOKEN=fake-test-edit-token-not-real \
-          -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
           -e PYTHONDONTWRITEBYTECODE=1 \
-          "$RUNTIME_IMAGE" \
-          sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; apt-get update; apt-get install -y --no-install-recommends git libgl1 libx11-6 libexpat1 libxext6 libxrender1 libsm6 libice6; git config --global --add safe.directory /src; pip install --no-cache-dir -r requirements-dev.txt; pytest -n 4 --dist loadfile tests/buildproc --tb=short -q; pytest -n 4 --dist loadfile --ignore=tests/buildproc --tb=short -q'
+          "$TEST_IMAGE" \
+          sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; pytest -n 4 --dist loadfile tests/buildproc --tb=short -q; pytest -n 4 --dist loadfile --ignore=tests/buildproc --tb=short -q'
 
     - name: Run the JS test suite in a container
       # The browser half of the suite: vitest over ui/tests, in jsdom. It covers the parts of
@@ -347,8 +348,7 @@ jobs:
       timeout-minutes: 10
       env:
         # The SAME base the Dockerfile's `ui` stage builds the bundle with. Kept in the step's
-        # own env: for the same reason RUNTIME_IMAGE is — exactly one step uses it, and no
-        # second step has to agree with it.
+        # own env: because exactly one step uses it, and no second step has to agree with it.
         NODE_IMAGE: node:22-bookworm-slim
       # The `run:` body of this step is byte-identical to the one in tests.yml. It is on the
       # whitelist for the same reason the four bodies before it are: the PR gate and the
@@ -363,9 +363,10 @@ jobs:
         # nothing), plus one more that is specific to node: it is not part of this project's
         # toolchain at all. Nothing under src/ imports anything from ui/, `make run` works on a
         # machine that has never seen npm, and the image builds the bundle in a stage of its own.
-        # THE SAME BASE AS THAT STAGE, node:22-bookworm-slim, for exactly the reason the Python
-        # step pins python:3.11-slim: a suite green under one node and a bundle built by another
-        # is the gap this whole arrangement exists to close. Change one, change both.
+        # THE SAME BASE AS THAT STAGE, node:22-bookworm-slim, for exactly the reason
+        # ci/Dockerfile.test pins python:3.11-slim: a suite green under one node and a bundle
+        # built by another is the gap this whole arrangement exists to close. Change one, change
+        # both.
         # Clear the name before claiming it. A re-run from the Gitea UI reuses github.run_id, so
         # $JS_NAME can already be held by the container a killed attempt left behind, and
         # `docker run --name` fails outright on a name conflict — the re-run would then die

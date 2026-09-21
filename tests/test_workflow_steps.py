@@ -246,3 +246,82 @@ def test_buildproc_runs_in_a_pytest_of_its_own(pr_bodies, publish_bodies):
             f"{name}: the second invocation no longer ignores tests/buildproc, "
             f"so those tests run twice -- the second time in workers that may "
             f"have the kernel imported, which is the failure the split avoids")
+
+
+# THE TEST IMAGE'S TAG IS A HASH OF ITS INPUTS, and "its inputs" has to mean the
+# same set of files in three places: the `cat` that hashes them, the `tar` that
+# makes the build context, and the `COPY` in ci/Dockerfile.test that puts them in
+# the image. A file that reaches the image without reaching the hash is a stale
+# image answering to a CURRENT tag — the single failure the hash exists to rule
+# out, arriving through the back door.
+TEST_DOCKERFILE = WORKFLOWS.parents[1] / "ci" / "Dockerfile.test"
+HASHED = re.compile(r'TEST_IMAGE="hammerola-test:\$\(cat ([^|]+)\| sha256sum')
+CONTEXT = re.compile(r"tar -cf - (ci/Dockerfile\.test[^\\\n]*)")
+COPIED = re.compile(r"^COPY (.+) /reqs/$", re.M)
+
+
+def test_the_test_images_tag_hashes_every_file_that_can_change_it(pr_bodies,
+                                                                 publish_bodies):
+    """Three lists, one set, in both workflows.
+
+    Read as text rather than executed, because what goes wrong is an edit: a
+    requirements file added to the `COPY` and forgotten in the `cat`, and every
+    run afterwards reuses an image built from the older set while the tag says it
+    is current. Nothing about that run looks wrong — the suite passes, against
+    dependencies nobody chose.
+
+    The build context is in the set for the same reason, from the other side: a
+    file the hash names but the context does not is a build that fails outright,
+    which is loud, but it also means the hash is measuring something the image
+    cannot contain.
+    """
+    copied = COPIED.search(TEST_DOCKERFILE.read_text(encoding="utf-8"))
+    assert copied, (
+        "ci/Dockerfile.test no longer has a `COPY <files> /reqs/` line this test "
+        "can read — it is the only place the image's inputs are listed, so point "
+        "this expression at the new shape rather than dropping the check")
+    inputs = {TEST_DOCKERFILE.relative_to(WORKFLOWS.parents[1]).as_posix(),
+              *copied.group(1).split()}
+
+    for name, body in (("tests.yml", pr_bodies[SUITE_STEP]),
+                       ("image-check-publish.yml", publish_bodies[SUITE_STEP])):
+        hashed = HASHED.search(body)
+        assert hashed, (
+            f"{name}: the test image's tag is no longer a sha256 of a `cat` of "
+            f"its inputs. A floating tag on a persistent daemon is one branch's "
+            f"suite running against another branch's dependencies")
+        assert set(hashed.group(1).split()) == inputs, (
+            f"{name}: the tag hashes {sorted(hashed.group(1).split())} while the "
+            f"image is built from {sorted(inputs)}. Whatever is in the image and "
+            f"not in the hash can change without changing the tag")
+        context = CONTEXT.search(body)
+        assert context, (
+            f"{name}: the build context is no longer a `tar -cf -` of named "
+            f"files — this test reads that list to compare it with the hash")
+        assert set(context.group(1).split()) == inputs, (
+            f"{name}: the build context carries "
+            f"{sorted(context.group(1).split())} against hashed "
+            f"{sorted(inputs)}. The two lists are the same statement — nothing "
+            f"else can affect the image, so nothing else can make it stale")
+
+
+def test_the_suite_runs_in_the_image_the_step_builds(pr_bodies, publish_bodies):
+    """The link that used to be mechanical and became prose.
+
+    While the kernel's libraries were installed by the `docker run` itself,
+    tests/test_ci_kernel_libs.py read the executed line. They live in
+    ci/Dockerfile.test now, so that file is what it reads — and an edit putting
+    any other image back on the `docker run` would leave all of it green while
+    about ninety tests quietly went back to being skips, which is the failure
+    issue #27 closed.
+    """
+    for name, body in (("tests.yml", pr_bodies[SUITE_STEP]),
+                       ("image-check-publish.yml", publish_bodies[SUITE_STEP])):
+        assert "| docker run" in body, (
+            f"{name}: the suite is no longer started by a `docker run` this test "
+            f"can find")
+        started = body.split("| docker run", 1)[1].split("sh -c", 1)[0]
+        assert '"$TEST_IMAGE"' in started, (
+            f"{name}: the suite runs in something other than the image built "
+            f"above. A bare python:3.11-slim there passes every check in this "
+            f"file and silently turns the kernel's tests back into skips")

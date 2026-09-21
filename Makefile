@@ -254,8 +254,8 @@ test: install ## Run both test suites: pytest always, the JS suite when npm is p
 	@$(RUN_JS_TESTS)
 
 # --- The six tests that need the CAD kernel -----------------------------------
-# CI RUNS THEM (issue #27): both workflows install the kernel's libraries into the
-# test container, so a change to `src/cadbuild/views.py` or `assembly.py` that
+# CI RUNS THEM (issue #27): the image the suite runs in, `ci/Dockerfile.test`, carries
+# the kernel's libraries, so a change to `src/cadbuild/views.py` or `assembly.py` that
 # moves the payload's shape is caught by the run rather than by whoever remembers
 # to look. This target is for the edit-run-edit loop on the export half — these
 # six without the other ~2500 — not for catching that drift.

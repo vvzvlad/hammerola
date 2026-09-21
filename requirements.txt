@@ -81,11 +81,12 @@ loguru==0.7.2
 # accepted deliberately: nothing updates by itself any more, and every update is a manual bump
 # and a rebuild.
 #
-# IT IS THE IMAGE THAT IS LOCKED, NOT THIS FILE. `make install` and both CI test containers
-# install requirements-dev.txt, which pulls THIS file in and not the lock, so in a workstation's
-# .venv and in the test container everything not named here still floats. That is the right way
-# round rather than an omission: the geometry claim is about the artefact the hub runs, and a
-# test environment that drifts fails a test somebody reads.
+# IT IS THE IMAGE THAT IS LOCKED, NOT THIS FILE. `make install` and the CI test image
+# (ci/Dockerfile.test) install requirements-dev.txt, which pulls THIS file in and not the lock,
+# so in a workstation's .venv and in that image everything not named here still floats — in the
+# image as of the moment it was built, which is the last time one of those files changed. That
+# is the right way round rather than an omission: the geometry claim is about the artefact the
+# hub runs, and a test environment that drifts fails a test somebody reads.
 #
 # ci/smoke.py states SEVEN of this file's versions independently (its `PINS`) and reads them back
 # out of the BUILT IMAGE before anything is published, so an image whose resolver picked

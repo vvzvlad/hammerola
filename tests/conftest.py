@@ -18,7 +18,7 @@ import threading
 # both workflows passes `-e EDIT_TOKEN=...` on the `docker run` that starts the suite's
 # container, inside the step's `run:` body — so the variable is already in the environment
 # before pytest is invoked and this line leaves CI's value alone. It is NOT injected through a
-# workflow `env:` block: those carry the container names, RUNTIME_IMAGE and the smoke gate's
+# workflow `env:` block: those carry the container names, NODE_IMAGE and the smoke gate's
 # SMOKE_* variables, none of which the suite reads.
 #
 # ONE line, because there is one secret for the whole system (issue #26). There were two

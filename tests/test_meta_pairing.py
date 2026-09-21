@@ -22,7 +22,7 @@ all: the model is written, and everything the assertions look at is computed
 from it by the same code a push runs.
 
 IT SKIPS WHERE THE CAD KERNEL DOES NOT IMPORT, which is no longer CI: the test
-container installs the kernel's libraries (issue #27), so the pairing is verified
+image carries the kernel's libraries (issue #27), so the pairing is verified
 on every push. On a machine without the kernel it still skips, and there the two
 halves are each checked against a hand-written stand-in of the other.
 """

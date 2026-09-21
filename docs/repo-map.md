@@ -316,7 +316,7 @@
   `tests/test_template.py` runs it through `run_build` — the same entry point a
   push takes — so a template that stopped satisfying the gate fails here instead
   of being handed to somebody who cannot tell whose fault it is. That test runs in
-  CI, whose test container installs the kernel's libraries (issue #27), and skips
+  CI, whose test image installs the kernel's libraries (issue #27), and skips
   only where the kernel does not import; the shape checks beside it
   do not, and they are what catch the edit that actually happens (a file added
   under a name the path alphabet refuses, which takes down the whole push of
@@ -367,6 +367,15 @@
   a whole is in `.dockerignore` — the image serves the built files and has no
   use for a node toolchain. `static/_v/PROVENANCE.md` has the commit it was
   taken at, the two edits, and how to upgrade
+- `ci/Dockerfile.test` — the container the Python suite runs in, in both workflows.
+  Not the artefact: the shipped image is the Dockerfile at the root, which installs
+  requirements.lock with `--require-hashes` and no test dependency at all. This one
+  is python:3.11-slim plus git, the CAD kernel's system libraries and
+  requirements-dev.txt, all of which the test step would otherwise install on every
+  single run. Its tag is a hash of this file and the two requirements files — the
+  same three that make up its build context — which is what makes reuse on the
+  runner's persistent daemon safe: a stale image cannot answer to a current name.
+  `tests/test_ci_kernel_libs.py` holds its library list to the Dockerfile's
 - `ci/smoke.py` — the gate between build and publish: nine checks (a)–(i) the
   test suite structurally cannot make, because it runs against a checkout and
   never looks at the artefact. (b) proves the startup guard fires and NAMES the

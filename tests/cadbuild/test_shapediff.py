@@ -235,7 +235,7 @@ def test_two_real_step_files_measure_the_change_between_them(tmp_path):
     the run.
 
     Skips where the kernel is missing, like every other test that needs real
-    geometry; CI's container installs it (issue #27), and `make cad-test` runs
+    geometry; CI's image carries it (issue #27), and `make cad-test` runs
     this one without the rest of the suite.
     """
     cq = pytest.importorskip("cadquery", exc_type=ImportError,

@@ -16,7 +16,7 @@ Half of this file needs no CAD kernel at all: `first_layer_area` reads a
 trimesh.Trimesh, and a Trimesh can be written out by hand. The other half needs
 the kernel, because what it checks is that the two refusals fire from inside
 `export_printables` on geometry OCC really meshed -- and it skips where the
-kernel does not import. CI's container installs it (issue #27), so it runs
+kernel does not import. CI's image carries it (issue #27), so it runs
 there.
 """
 

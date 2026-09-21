@@ -316,10 +316,11 @@ def test_the_exporter_still_produces_the_committed_structure(committed, tmp_path
     suite in a bare `python:3.11-slim` carrying nothing but `git`, so there
     `import cadquery` died with `ImportError: libGL.so.1` — the distribution on
     disk, the shared object it loads not — and the guard below turned that into a
-    skip. The test container installs the kernel's system libraries now (issue
-    #27), so the committed fixture is compared against the real exporter on every
-    push instead of only on a workstation. The guard stays for the machine that
-    has no kernel, which is what it was written for.
+    skip. The image the suite runs in carries the kernel's system libraries now
+    (issue #27, `ci/Dockerfile.test`), so the committed fixture is compared
+    against the real exporter on every push instead of only on a workstation.
+    The guard stays for the machine that has no kernel, which is what it was
+    written for.
 
     Guarding on `cadquery` alone covers `ocp_tessellate` too, which the export
     also needs: both are pinned in requirements.txt and both fail on the same

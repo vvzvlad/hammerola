@@ -20,7 +20,7 @@ says a body was skipped. So the tests below are written to fail on the old
 implementation rather than to describe the new one.
 
 Needs the CAD kernel and skips without it, like test_material_at.py. CI's test
-container installs the kernel's libraries (issue #27), so this runs there.
+image carries the kernel's libraries (issue #27), so this runs there.
 """
 
 import re
