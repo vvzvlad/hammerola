@@ -892,7 +892,7 @@ def test_a_real_difference_is_drawn_in_the_part_coordinates_and_placed(tmp_path)
     loc -- so a change that started baking the placement into either one would
     show up as the geometry being applied twice.
 
-    Skips where the kernel is missing; CI's container installs it (issue #27).
+    Skips where the kernel is missing; CI's image carries it (issue #27).
     """
     cq = pytest.importorskip("cadquery", exc_type=ImportError,
                              reason="a real fuse and tessellation need the kernel")

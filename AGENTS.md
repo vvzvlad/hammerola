@@ -65,14 +65,16 @@ make test              # runs .venv/bin/python -m pytest
 make cad-test          # the six tests that need the CAD kernel
 ```
 
-CI runs the whole suite, those six included: both workflows install the kernel's
-libraries into the test container (issue #27), which turned ~90 skips into real
-runs — so a payload shape drifting away from `ui/tests/fixtures/assembled.json`
-is caught by the run.
+CI runs the whole suite, those six included: the container it runs in is built from
+`ci/Dockerfile.test` — python:3.11-slim plus the kernel's libraries (issue #27) and
+the dependencies, tagged by a hash of its own inputs and reused while those do not
+move — which turned ~90 skips into real runs, so a payload shape drifting away from
+`ui/tests/fixtures/assembled.json` is caught by the run.
 CI runs it PARALLEL — `pytest -n 4 --dist loadfile`, and the container's measured
 memory ceiling depends on that worker count — while `make test` stays serial, so
 a test that only breaks in parallel surfaces in CI: reproduce it by hand with the
-`docker run` out of the test step, not with `make test`.
+`TEST_IMAGE=`, `docker build` and `docker run` lines out of the test step — all
+three, the run needs the image — rather than with `make test`.
 
 ## Running the app
 ```bash

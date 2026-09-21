@@ -7,13 +7,12 @@ be a project that cannot publish, handed to somebody who has no way of telling
 whether the fault is theirs. Written as prose in a README it would rot in
 silence. As a directory the suite pushes through the real build, it cannot.
 
-TWO TESTS HERE NEED THE CAD KERNEL, and CI runs them: the test container
-installs the kernel's system libraries (issue #27), so `import cadquery` works
-there. They skip on a machine where it does not import, exactly as
-`tests/test_view_fixture.py` does. They are the BUILD test at the foot of this
-file, which computes the geometry, and the one that holds the stubbed kernel
-against the real one; what each of them costs when it skips is written where it
-stands.
+TWO TESTS HERE NEED THE CAD KERNEL, and CI runs them: the image it runs the suite in
+carries the kernel's system libraries (issue #27, `ci/Dockerfile.test`), so `import
+cadquery` works there. They skip on a machine where it does not import, exactly as
+`tests/test_view_fixture.py` does. They are the BUILD test at the foot of this file,
+which computes the geometry, and the one that holds the stubbed kernel against the real
+one; what each of them costs when it skips is written where it stands.
 
 EVERYTHING ELSE RUNS ON EVERY PUSH, THE PROVENANCE GUARD INCLUDED — it imports
 the template with the kernel STUBBED and then asks the hub's own rule about the

@@ -6,7 +6,7 @@ measures, writes and cleans up after itself, and `overview_meshes` and
 `preview_files` turn the evidence of what was written into the two maps that
 declare it. The only caller of the export that runs the real thing is
 `tests/test_template.py`, and that one skips wherever the kernel does not
-import — no longer CI, whose container installs it (issue #27), but still any
+import — no longer CI, whose image carries it (issue #27), but still any
 machine without it, so anything asserted only there is unasserted on such a
 machine.
 

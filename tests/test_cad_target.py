@@ -1,12 +1,12 @@
 """`make cad-test` names six tests by node id, and node ids rot.
 
 The target runs those six without the other ~2500, for the edit-run-edit loop on
-the export half; CI runs them too, since its test container installs the kernel's
-libraries (issue #27). It fails loudly when a name it holds no longer exists --
-but only for somebody who runs it, and a target nobody runs is where a rotted
-node id waits. So the list is checked here instead, on every run of the ordinary
-suite, where a rename shows up the day it happens rather than the day somebody
-remembers.
+the export half; CI runs them too, since the image it runs the suite in carries
+the kernel's libraries (issue #27, `ci/Dockerfile.test`). It fails loudly when a
+name it holds no longer exists -- but only for somebody who runs it, and a
+target nobody runs is where a rotted node id waits. So the list is checked here
+instead, on every run of the ordinary suite, where a rename shows up the day it
+happens rather than the day somebody remembers.
 
 This does NOT run the six; running them needs the kernel and that is the
 target's job. It checks that each name still points at a function.

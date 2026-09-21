@@ -754,7 +754,7 @@ def test_a_real_export_is_a_document_the_hub_would_accept(out_dir):
     push whose geometry has already been computed.
 
     Skips where the kernel is missing, like every other test that needs real
-    geometry; CI's container installs it (issue #27).
+    geometry; CI's image carries it (issue #27).
     """
     cq = pytest.importorskip("cadquery", exc_type=ImportError,
                              reason="a real export needs the CAD kernel")

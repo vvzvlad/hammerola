@@ -1,0 +1,91 @@
+# The container both workflows run the Python suite in, built here instead of being assembled
+# from scratch inside the step on every run.
+#
+# WHAT THIS BUYS. Assembling the same environment inside the step instead — which is what this
+# replaced — means one `apt-get install` for the kernel's libraries and one `pip install -r
+# requirements-dev.txt`, some 430 MB of wheels with the OCCT ones among them, on EVERY run:
+# 112 s of pip and 28 s of apt out of a 299 s step, and none of it
+# depends on the commit under test. Here both are layers keyed by the files named below, so a run
+# whose dependencies have not moved reuses them and installs nothing at all — 1 s
+# against 252 s for a build that has to do the work.
+#
+# THE RUNNER'S DAEMON IS PERSISTENT, which is the fact that makes the reuse possible at all —
+# and the same fact is why the build in the workflow carries `--pull`: a python:3.11-slim pulled
+# once would otherwise sit in that cache for months and the suite would run on an unpatched
+# base. Reuse and staleness come from the one property, and `--pull` together with the hashed
+# tag is how both halves are handled.
+#
+# THE TAG IS A HASH OF THIS FILE AND THE TWO REQUIREMENTS FILES, computed in the step that
+# builds it. That is what makes the reuse SAFE rather than merely cheap: any edit here, or to
+# either of those files, changes the tag, so a stale image cannot be picked up under a name that
+# says it is current. Do not replace it with a floating `:ci` — that name would go on meaning
+# "whatever was built last", which on a persistent daemon is a suite running against somebody
+# else's branch's dependencies.
+#
+# It is built by both workflows' "Run the test suite in a container" step — one byte-identical
+# body — and by nothing else, and it is never pushed anywhere: the tag exists on the runner's
+# daemon only. One image per distinct set of requirements accumulates there — 1.9 GB of wheels
+# over a 317 MB library layer, by `docker history` — and like the dangling bases `--pull` leaves
+# behind, that is the runner host's periodic cleanup to reclaim rather than this repository's.
+#
+# NOT the image the service ships in — that is the Dockerfile at the repository root, which
+# installs requirements.lock with `--require-hashes` and carries no test dependency at all. This
+# one installs the hand-written requirements-dev.txt (which pulls in requirements.txt), exactly
+# as the step it replaces did: what the suite runs against is unchanged by moving it in here.
+#
+# THE SAME BASE AS THAT IMAGE, python:3.11-slim. Testing under a different interpreter than the
+# one that ships is the gap the whole arrangement exists to close — a suite green on one python
+# and an image running another — so change one, change both.
+FROM python:3.11-slim
+
+# GIT, for exactly one test: tests/test_no_conflict_markers.py enumerates the tracked files with
+# `git ls-files`, and python:3.11-slim carries no git at all. The workspace arrives as a tar with
+# `.git` inside it precisely so that test can ask the index rather than the working tree; without
+# git the test does not check less, it dies with FileNotFoundError.
+#
+# THE CAD KERNEL'S SYSTEM LIBRARIES are the rest of the line, and they are the same list the
+# root Dockerfile installs — read the derivation THERE and do not repeat it here; the two lists
+# are compared by tests/test_ci_kernel_libs.py. Without them `import cadquery` dies with
+# `ImportError: libGL.so.1` and about ninety tests quietly become skips (measured: 94 of them
+# against 4 with the libraries, issue #27) — so a change to src/cadbuild/ that moves the
+# payload's shape would ride through a green CI while vitest went on checking the browser half
+# against a fixture no build produces any more. `curl` and `gosu` are on the Dockerfile's line
+# and deliberately not here: they are the shipped image's runtime tools, the healthcheck's and
+# the entrypoint's, and nothing in the suite runs either.
+#
+# ONE `RUN` with the apt lists dropped in the SAME layer, for the reason the Dockerfile spells
+# out: removing them later would shrink nothing, the lists being already committed above.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git \
+        libgl1 \
+        libx11-6 \
+        libexpat1 \
+        libxext6 \
+        libxrender1 \
+        libsm6 \
+        libice6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# The workspace lands in /src as a tar unpacked by root, and git refuses a repository whose files
+# belong to somebody else — `detected dubious ownership`, an error rather than a warning. On the
+# runner both ends are root and this changes nothing; it is baked in for the by-hand run of the
+# same command in a developer's checkout, where the files are the developer's and the container
+# is root, and it belongs in the image rather than in the step because it is a property of where
+# the tree is unpacked.
+RUN git config --global --add safe.directory /src
+
+# Housekeeping: pip's version-check notice is noise in a build log, which is read only when
+# something else has already gone wrong.
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# BOTH FILES, because requirements-dev.txt opens with `-r requirements.txt` and pip resolves that
+# beside the file it is reading. requirements.lock is deliberately not here: nothing in this
+# image reads it, which is also why it stays out of the tag's hash — a re-locked dependency tree
+# that nobody has asked this container to install must not invalidate it.
+#
+# They arrive through a tar built in the step from exactly these two files plus this one, not
+# through the repository's build context: .dockerignore does not apply to a tar on stdin, and a
+# context of three files is also a statement about what CAN affect this image.
+COPY requirements.txt requirements-dev.txt /reqs/
+RUN pip install --no-cache-dir -r /reqs/requirements-dev.txt

@@ -3,7 +3,7 @@
 Two assertions, and both used to live only as sentences in a comment. The comment
 is still there — the numbers and how they were measured have to be read by a
 human — but the part that has to STAY TRUE is here, because it is now spread over
-nine places instead of two: `--memory=` appears six times across the two
+eleven places instead of two: `--memory=` appears eight times across the two
 workflows and `memory_flags` is used at three `docker run` sites in `ci/smoke.py`.
 
     1. `--memory` WITHOUT `--memory-swap` IS NOT A CEILING. `--memory-swap` is the
@@ -39,7 +39,7 @@ MEMORY_SWAP = re.compile(r"--memory-swap=(\S+)")
 
 
 def test_every_memory_flag_in_the_workflows_has_an_equal_swap_flag():
-    """Paired on the SAME LINE, which is how all six are written.
+    """Paired on the SAME LINE, which is how all eight are written.
 
     Same-line is a stricter rule than the danger requires — docker would honour
     the pair anywhere in the command — and deliberately so: the two flags being
@@ -61,9 +61,10 @@ def test_every_memory_flag_in_the_workflows_has_an_equal_swap_flag():
                 f"{where}: --memory and --memory-swap must be set together and "
                 f"be EQUAL. Unequal or missing, the container gets swap on top "
                 f"of the limit and the ceiling stops being one: {line.strip()}")
-    assert seen == 6, (
-        f"expected six ceilings across the workflows — the Python suite, the JS "
-        f"suite and the image build, in each of the two files — found {seen}")
+    assert seen == 8, (
+        f"expected eight ceilings across the workflows — the Python suite, the "
+        f"build of the image it runs in, the JS suite and the build of the "
+        f"shipped image, in each of the two files — found {seen}")
 
 
 def run_arguments(tree):

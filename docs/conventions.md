@@ -203,11 +203,14 @@ be shorter, and renaming it breaks links, so it is not covered by this rule.
   images are therefore not by themselves evidence of an old instance — they happen on a current
   one too. What points at the version is WHICH run was cancelled: a queued one is normal, a run
   that was already building is the older behaviour.
-- CI installs no Python on the runner: both workflows run pytest inside a
-  `python:3.11-slim` container (the same base the Dockerfile uses), with the workspace
-  streamed in as a tar over stdin. Do not "simplify" this to `actions/setup-python` or to
-  a bind mount — setup actions are unverified on this runner and fail by silently doing
-  nothing, and a bind mount would resolve on the host daemon rather than in this job.
+- CI installs no Python on the runner: both workflows run pytest inside a container built
+  from `ci/Dockerfile.test` (python:3.11-slim, the same base the Dockerfile uses, plus the
+  suite's dependencies), with the workspace streamed in as a tar over stdin. That image is
+  tagged by a hash of the three files it is built from, which is what lets a persistent
+  daemon reuse it without any run ever meeting somebody else's dependencies.
+  Do not "simplify" this to `actions/setup-python` or to a bind mount — setup actions are
+  unverified on this runner and fail by silently doing nothing, and a bind mount would
+  resolve on the host daemon rather than in this job.
 - `ci/smoke.py` publishes no ports and never talks to `127.0.0.1`: the job runs inside a
   container while `docker` drives the host's daemon, so a published port is not reachable
   from the job. Anything that has to be observed inside a container goes through

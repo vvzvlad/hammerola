@@ -19,9 +19,9 @@ point in the universe. Every `assert solid(...)` in every model then passes. So
 `material_at` refuses such a part, `volume`/`is_empty` are how a model asks
 whether anything survived, and the tests for all three are below.
 
-Every test here needs the CAD kernel and skips without it. CI's test container
-installs it (issue #27), so this file contributes there too; on a machine with no
-kernel it contributes nothing, and what holds these there is the pair below.
+Every test here needs the CAD kernel and skips without it. The image CI runs the
+suite in carries it (issue #27), so this file contributes there too; on a machine
+with no kernel it contributes nothing, and what holds these there is the pair below.
 """
 
 import sys

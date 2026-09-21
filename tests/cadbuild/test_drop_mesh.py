@@ -45,7 +45,7 @@ carries none of. `geometry.drop_mesh` is where they are all written down. These
 assertions, being comparisons, need none of them.
 
 Needs the CAD kernel and skips without it, like test_material_at.py. CI's test
-container installs the kernel's libraries (issue #27), so this runs there.
+image carries the kernel's libraries (issue #27), so this runs there.
 """
 
 import pytest
