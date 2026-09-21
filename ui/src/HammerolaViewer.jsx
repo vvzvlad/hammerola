@@ -6896,21 +6896,20 @@ export default class HammerolaViewer extends React.Component {
                     the model and the tick holds all of it back from the text;
                     neither edits a body, and the rows keep answering for
                     themselves underneath both. */}
-                <span onClick={v.proposalEyeClick} title="show / hide the whole proposal" style={css(SLOT_24)}>
-                  <span style={css(v.proposalEyeOuter)}><span style={css(v.proposalEyeDot)} /></span>
+                {/* THE SAME BOX A ROW CARRIES ITS THREE MARKS IN, with the
+                    last two stood over and not used: the head has an eye, no
+                    ghost square and no colour of its own. Spending them here
+                    is what puts the master tick under the tick of every row,
+                    and the branch's name under the name of every BODY row — a
+                    move puts its `move` badge in that column first.
+                    `proposalMarksStyle` in proposalview.js has the rest. */}
+                <span style={css(v.proposalMarksStyle)}>
+                  <span onClick={v.proposalEyeClick} title="show / hide the whole proposal" style={css(SLOT_24)}>
+                    <span style={css(v.proposalEyeOuter)}><span style={css(v.proposalEyeDot)} /></span>
+                  </span>
+                  <span style={css(v.proposalGhostStyle)} />
+                  <span style={css(v.proposalDotStyle)} />
                 </span>
-                {/* THE GHOST COLUMN, STOOD OVER AND NOT USED. A row spends
-                    24px on its eye, 22 on its ghost square and 22 on its tick,
-                    in that order; the header has an eye and a tick and no
-                    ghost — there is nothing to make the whole proposal
-                    translucent — so without this spacer the master tick lands
-                    over the column of ghost squares, 31px to the left of the
-                    ticks it sets and clears, and a tick over the wrong column
-                    does not read as the same control one level up. With it,
-                    and with the caret column a row stands over
-                    (`rowStyle` in proposalview.js), every column of a row is
-                    exactly under the one it answers to. */}
-                <span style={css('width:22px;flex:none')} />
                 <span onClick={v.proposalSkipAll} title={v.proposalSkipTitle} style={css(SLOT_22)}>
                   <span style={css(v.proposalSkipIcon)} />
                 </span>
