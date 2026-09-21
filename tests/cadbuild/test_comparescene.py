@@ -2,7 +2,8 @@
 
 Split where the CAD kernel is, like `test_shapediff.py` and for the same reason:
 everything except the last test runs on a python with no OCCT at all, which is
-any machine without the kernel — CI's container has it (issue #27). What is arithmetic here is nearly all of it -- merging two
+any machine without the kernel — CI's container has it (issue #27). What is
+arithmetic here is nearly all of it -- merging two
 documents, rebuilding ids, recolouring leaves, placing pieces and counting
 volumes are operations over dicts, and a dict can be typed by hand.
 

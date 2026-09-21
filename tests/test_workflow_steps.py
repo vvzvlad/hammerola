@@ -207,3 +207,42 @@ def test_the_gates_worst_case_is_the_same_number_in_all_three_places():
             f"{path.name} allows the gate {allowed} s and its own worst case is "
             f"{worst} s: a slow but healthy run is killed mid-gate, and the "
             f"`finally` that removes its containers never runs")
+
+
+# The suite runs as TWO pytest invocations, and which tests each one takes is
+# load-bearing rather than a tidy split.
+SUITE_STEP = "Run the test suite in a container"
+BUILDPROC_RUN = "pytest -n 4 --dist loadfile tests/buildproc "
+REST_RUN = "pytest -n 4 --dist loadfile --ignore=tests/buildproc "
+
+
+def test_buildproc_runs_in_a_pytest_of_its_own(pr_bodies, publish_bodies):
+    """Merge the two invocations back into one and CI starts flipping a coin.
+
+    `tests/buildproc/conftest.py` opens every test there by asserting the real
+    kernel is not imported in this process -- a test that reached the live OCCT
+    pool would resize it for everything after. Serially that held for free:
+    `tests/buildproc/` is collected before `tests/cadbuild/`, whose real-geometry
+    tests `importorskip("cadquery")` into the pytest process. Under xdist a
+    worker takes whole files as they free up, so one worker can run a buildproc
+    file, then a kernel file, then another buildproc file -- and every buildproc
+    test after that errors at SETUP, blaming "a stub planted without monkeypatch"
+    for something no test did. 91 errors on the run that caught it, against four
+    green runs before, i.e. this is a coin rather than a regression.
+
+    Two things hold it up besides the split, and neither is checked here because
+    neither can be read off the workflow: nothing under `src/` imports the kernel
+    at module level (it is reached inside functions), and no test under
+    `tests/buildproc/` imports it either -- `probes.py` asks a SUBPROCESS. Break
+    one of those and this test still passes while the coin comes back.
+    """
+    for name, body in (("tests.yml", pr_bodies[SUITE_STEP]),
+                       ("image-check-publish.yml", publish_bodies[SUITE_STEP])):
+        assert BUILDPROC_RUN in body, (
+            f"{name}: tests/buildproc no longer runs in a pytest of its own. "
+            f"Sharing a process with the tests that import the kernel is what "
+            f"turns its autouse guard into a scheduling lottery")
+        assert REST_RUN in body, (
+            f"{name}: the second invocation no longer ignores tests/buildproc, "
+            f"so those tests run twice -- the second time in workers that may "
+            f"have the kernel imported, which is the failure the split avoids")
