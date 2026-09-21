@@ -485,6 +485,31 @@ describe('the proposal as a branch of the tree', () => {
     expect(css(v.proposalRows[0].rowStyle).margin).toBe(head.margin)
   })
 
+  it('spends a row\'s three mark columns on the head as well', () => {
+    // WHAT STANDS BETWEEN THE EYE AND THE TICK. A row draws three marks — the
+    // eye, the ghost square and the colour — and the head draws one; the other
+    // two are boxes that keep their width and nothing else, and without them
+    // the master tick and the branch's name land 13px left of the column they
+    // head. Asserted column against column rather than against the width the
+    // three add up to, so a column that changes moves on both sides or fails
+    // here.
+    const { c, el } = mounted({ proposal: withBlock() })
+    stage(c, el, ['korpus'])
+    const v = c.computed()
+    const row = rows(c)[0]
+    const width = (style) => css(style).width
+
+    expect(v.proposalMarksStyle).toBe(row.marksStyle)
+    expect(width(v.proposalGhostStyle)).toBe(width(row.ghostStyle))
+    expect(width(v.proposalDotStyle)).toBe(width(row.dotStyle))
+    expect(css(v.proposalDotStyle).margin).toBe(css(row.dotStyle).margin)
+    // Drawn as absent, the way a row with nothing in the scene draws all three:
+    // a hidden box takes no pointer events, so there is nothing to press rather
+    // than a control that answers nothing.
+    expect(css(v.proposalGhostStyle).visibility).toBe('hidden')
+    expect(v.proposalDotStyle).toContain('transparent')
+  })
+
 
   // WHERE THE DOCUMENT IS NOW. It used to be two lists inside the panel on the
   // right; it is a small tree of its own below the parts tree, and what was
@@ -1432,19 +1457,19 @@ describe('the proposal as a branch of the tree', () => {
       .toHaveLength(2)
   })
 
-  it('stands over the ghost column it has no control of its own for', () => {
+  it('stands over both columns it has no control of its own for', () => {
     // KEEP X AND Y IN STEP, WHICH IS A TEST AND NOT A COMMENT. A row spends its
-    // width on an eye, a GHOST SQUARE and a tick; the head has an eye and a tick
-    // and nothing that would make the whole proposal translucent, so it carries
-    // an empty span the width of that square to keep its tick in the same
-    // column. Left as prose, the next change to the ghost control's width moves
-    // the master tick silently off the ticks it sets and clears — which is where
-    // it started, a whole column to the left.
+    // width on an eye, a GHOST SQUARE, a COLOUR and a tick; the head has an eye
+    // and a tick, nothing that would make the whole proposal translucent and no
+    // colour of its own — so it carries BOTH of those columns empty to keep its
+    // tick under the ticks it sets and clears. Left as prose, the next change to
+    // either width moves the master tick off them silently.
     //
-    // THE SPACER AGAINST THE THING IT STANDS IN FOR, and not the two run-ups
-    // against each other: those do not agree to the pixel and are not meant to
-    // (a row also carries the part's colour dot, which the head has no use for).
-    // What has to hold is that the head reserves exactly the ghost column.
+    // EACH SPACER AGAINST THE THING IT STANDS IN FOR, and at the render rather
+    // than in `computed()`: that the widths add up is asserted where the branch
+    // is measured, and what is asked here is that the page draws both boxes in
+    // the tick's run-up at all. Reserving only the ghost column was the whole of
+    // this test once, and it left the master tick 13px left of the rows'.
     const { c } = mounted({ proposal: withBlock() })
     const drawn = c.render()
 
@@ -1485,19 +1510,25 @@ describe('the proposal as a branch of the tree', () => {
     // failure -- `undefined` width does not equal the ghost's, and `-1` puts
     // the premise assert below on `head[-2]`.
     const ghost = widthOf(row.find((k) => k.props && k.props.title === 'translucent'))
+    // THE COLOUR IS THE ONE MARK WITH NEITHER TITLE NOR HANDLER — it is a
+    // swatch and not a control — which is also what tells the head's two
+    // spacers from the eye standing beside them.
+    const bare = (k) => k.props && !k.props.title && !k.props.onClick
+    const dot = widthOf(row.find(bare))
     const tickAt = head.findIndex(
       (k) => k.props && k.props.title === 'hold all of it back from the agent')
-    const spacer = head[tickAt - 1]
+    const marks = head[tickAt - 1]
     // Said out loud rather than thrown as `undefined.props`: a wrapper put round
     // either control breaks the shape this walk assumes, and the next reader
     // should be told that and not left reading a stack trace.
-    expect(spacer, 'the premise: the spacer is the tick\'s left neighbour')
+    expect(marks, 'the premise: the marks box is the tick\'s left neighbour')
       .toBeTruthy()
-    // An empty span and not another control: it reserves the column, it does
-    // not offer anything in it.
-    expect(spacer.props.onClick).toBeUndefined()
-    expect(spacer.props.children).toBeUndefined()
-    expect(widthOf(spacer)).toBe(ghost)
+    const spacers = [marks.props.children].flat(9).filter(Boolean).filter(bare)
+
+    // Empty spans and not further controls: they reserve the two columns, they
+    // do not offer anything in them.
+    expect(spacers.map((s) => s.props.children)).toEqual([undefined, undefined])
+    expect(spacers.map(widthOf)).toEqual([ghost, dot])
   })
 
   it('is drawn on the page, below the parts tree, in the page\'s own column', () => {

@@ -741,6 +741,20 @@ export function proposalView(s, deps) {
       proposalEyeOuter: eyeOuter(s.proposalOff ? 'off' : 'on'),
       proposalEyeDot: eyeDot(s.proposalOff ? 'off' : 'on'),
       proposalEyeClick: stop(() => toggleProposalEye()),
+      // THE ROW'S THREE COLUMNS, SPENT BY THE HEAD TOO. A row draws an eye, a
+      // ghost square and a colour before its tick; the head has only the eye —
+      // there is nothing to make the whole proposal translucent, and it has no
+      // colour of its own — so the other two stand empty and keep their width.
+      // The two slots come from the rows' own constants; the box around them is
+      // the row's base copied, so the three stand without the head's `gap`
+      // between them. A spacer measured by hand instead misses the colour
+      // column, and the master tick then sits 13px left of the ticks it sets
+      // and clears — a tick over the wrong column does not read as the same
+      // control one level up. Pinned by a test that measures each of the head's
+      // columns against the row's own rather than against a number.
+      proposalMarksStyle: 'display:flex;align-items:center;flex:none',
+      proposalGhostStyle: `${SLOT_22};visibility:hidden`,
+      proposalDotStyle: `${SWATCH}transparent`,
       // THE MASTER TICK: every node held back, or every node let through. It
       // shows filled only when there is nothing left to send, which is the state
       // it would put the document in — so pressing it twice is a round trip, and
