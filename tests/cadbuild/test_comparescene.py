@@ -2,7 +2,8 @@
 
 Split where the CAD kernel is, like `test_shapediff.py` and for the same reason:
 everything except the last test runs on a python with no OCCT at all, which is
-CI (issue #27). What is arithmetic here is nearly all of it -- merging two
+any machine without the kernel — CI's container has it (issue #27). What is
+arithmetic here is nearly all of it -- merging two
 documents, rebuilding ids, recolouring leaves, placing pieces and counting
 volumes are operations over dicts, and a dict can be typed by hand.
 
@@ -891,7 +892,7 @@ def test_a_real_difference_is_drawn_in_the_part_coordinates_and_placed(tmp_path)
     loc -- so a change that started baking the placement into either one would
     show up as the geometry being applied twice.
 
-    Skips where the kernel is missing, i.e. in CI on both workflows (issue #27).
+    Skips where the kernel is missing; CI's container installs it (issue #27).
     """
     cq = pytest.importorskip("cadquery", exc_type=ImportError,
                              reason="a real fuse and tessellation need the kernel")

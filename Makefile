@@ -253,16 +253,12 @@ test: install ## Run both test suites: pytest always, the JS suite when npm is p
 	$(PYTEST)
 	@$(RUN_JS_TESTS)
 
-# --- The six tests CI cannot run ----------------------------------------------
-# `libgl1` is deliberately NOT in the CI test container (issue #27, decided
-# 2026-08-31): it would buy six tests, four of which compute real geometry, at
-# the price of ~222 MB of OCCT mapped on import and a `--memory` ceiling that
-# would have to be measured again. The cost of that decision is named in the
-# issue and it is real — a change to `src/cadbuild/views.py` or `assembly.py`
-# that moves the payload's shape rides through a green CI, while vitest goes on
-# checking the browser half against `ui/tests/fixtures/assembled.json`, a
-# document no build produces any more. This target is the hand that catches it,
-# and "we catch it by hand" without one means we do not catch it.
+# --- The six tests that need the CAD kernel -----------------------------------
+# CI RUNS THEM (issue #27): both workflows install the kernel's libraries into the
+# test container, so a change to `src/cadbuild/views.py` or `assembly.py` that
+# moves the payload's shape is caught by the run rather than by whoever remembers
+# to look. This target is for the edit-run-edit loop on the export half — these
+# six without the other ~2500 — not for catching that drift.
 #
 # THE TARGET FAILS WHEN A TEST SKIPS, which is the whole point: run on a machine
 # with no kernel, all six would skip and pytest would exit 0 — a green run that
@@ -278,15 +274,15 @@ CAD_TESTS := \
 	tests/cadbuild/test_comparescene.py::test_a_real_difference_is_drawn_in_the_part_coordinates_and_placed
 
 .PHONY: cad-test
-cad-test: install ## Run the six tests that need the CAD kernel — CI skips them (#27)
+cad-test: install ## Run just the six tests that need the CAD kernel (CI runs them too)
 	@out=$$($(PYTEST) -q -rs $(CAD_TESTS) 2>&1); status=$$?; \
 	printf '%s\n' "$$out"; \
 	if printf '%s' "$$out" | grep -qi 'skipped'; then \
 		echo ""; \
 		echo "make cad-test: FAILED — a test skipped, so nothing was checked."; \
-		echo "               These six exist to run on a machine that HAS the CAD"; \
-		echo "               kernel; CI has none on purpose (issue #27). Install the"; \
-		echo "               kernel here, or run this where it imports."; \
+		echo "               These six need the CAD kernel, and it does not import"; \
+		echo "               on this machine. Install it here, or run this where it"; \
+		echo "               does — CI's test container has it (issue #27)."; \
 		exit 1; \
 	fi; \
 	exit $$status

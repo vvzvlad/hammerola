@@ -44,8 +44,8 @@ shape at two tolerances on one bench, three qualifiers a literal in an assertion
 carries none of. `geometry.drop_mesh` is where they are all written down. These
 assertions, being comparisons, need none of them.
 
-Needs the CAD kernel and skips without it, like test_material_at.py: CI runs the
-suite in a python:3.11-slim container where `import cadquery` dies on libGL.
+Needs the CAD kernel and skips without it, like test_material_at.py. CI's test
+container installs the kernel's libraries (issue #27), so this runs there.
 """
 
 import pytest

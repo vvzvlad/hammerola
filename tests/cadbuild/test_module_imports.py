@@ -11,8 +11,8 @@ it `checklib`, `parts`, `palette` and `geometry`.
 So every `from .<module> import <name>` inside `src/cadbuild/` has to name a
 module that DEFINES the name, and re-export has to be a decision somebody wrote
 down rather than a coincidence. Read from the syntax tree rather than by
-importing, so a module that needs the CAD kernel is swept here too -- i.e. in CI
-as well as on a workstation.
+importing, so a module that needs the CAD kernel is swept here too -- on a
+machine that has no kernel as well as on one that has.
 """
 
 import ast

@@ -8,10 +8,11 @@ tests/conftest.py and reach here too (they are not autouse, so nothing in this
 directory picks them up by accident); the `hub` and `hub_factory` fixtures there
 start a real server, and nothing under cadbuild/ has any use for one.
 
-Nothing here touches the network, a docker daemon or a CAD kernel. Every test in
-this directory runs on a python that has none of them, because the logic worth
-pinning down -- the palette, the naming rules, the gates, the diff -- is all
-pure.
+Nothing here touches the network or a docker daemon, and almost nothing touches a
+CAD kernel: the logic worth pinning down -- the palette, the naming rules, the
+gates, the diff -- is all pure, so it is exercised on a python that has none. The
+handful of tests that do need one say so with `importorskip` and skip where it
+does not import.
 
 THE SETTINGS HALF OF THE ORIGINAL FIXTURE IS GONE, and that is the transfer
 rather than a simplification. In cad_publish this fixture also pointed

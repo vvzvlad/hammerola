@@ -38,14 +38,14 @@ to the contract would go quiet without a red character anywhere. If the
 decision is ever reversed again, change that comment in README.md and delete
 this file in the same commit.
 
-THE CAD KERNEL IS NOT ASSUMED. Both CI workflows run this suite in a bare
-`python:3.11-slim` with requirements.txt installed and none of the system
-libraries the Dockerfile adds, where the distribution is on disk and
-`import cadquery` still dies on `libGL.so.1` -- so the guard is an import
-attempt and not `find_spec`, and it names ImportError explicitly. Same guard,
-same reasoning and the same cost as tests/test_view_fixture.py: on a run
-without the kernel this example is unwatched, and the README can go stale
-through a green CI.
+THE CAD KERNEL IS NOT ASSUMED, and the shape of the failure it guards against is
+why: on a checkout that installed requirements.txt without the system libraries
+the Dockerfile adds, the distribution is on disk and `import cadquery` still dies
+on `libGL.so.1` -- so the guard is an import attempt and not `find_spec`, and it
+names ImportError explicitly. CI installs those libraries (issue #27), so the
+example is executed on every push; on a machine without them it is unwatched and
+the README can go stale there unnoticed. Same guard and same reasoning as
+tests/test_view_fixture.py.
 """
 
 import json
@@ -216,8 +216,9 @@ def built(tmp_path_factory):
     `exc_type=ImportError` on the second is explicit, because the failure it is
     FOR is an ImportError that is NOT a ModuleNotFoundError: the module is
     found and its extension refuses to load. pytest 9.1 narrows the default to
-    ModuleNotFoundError, and without the argument this guard would stop
-    skipping and the CI container would go red on a pytest bump.
+    ModuleNotFoundError, and without the argument this guard would stop skipping
+    on a machine whose kernel is installed but cannot load, and go red there on a
+    pytest bump.
     """
     source = readme_model_source()
     pytest.importorskip(
@@ -453,8 +454,8 @@ def test_the_readme_gives_the_ceiling_metrics_json_really_holds(capsys):
     `*_omitted` fields exist to prevent, undone in prose.
 
     NO KERNEL AND NO BUILD, unlike everything else in this file: it is a
-    sentence checked against a constant, so it runs in both CI containers where
-    the example itself is unwatched.
+    sentence checked against a constant, so it runs even on a machine where the
+    kernel does not import and the example itself is unwatched.
     """
     found = NOTES_CEILING.findall(README.read_text(encoding="utf-8"))
     assert len(found) == 1, (

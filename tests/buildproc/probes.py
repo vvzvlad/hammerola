@@ -62,13 +62,13 @@ def import_works(name):
     """Whether `import name` really WORKS -- decided by trying it, elsewhere.
 
     `importlib.util.find_spec` is the obvious call and it is WRONG here, in the
-    one environment these marks exist for. Both CI workflows run the suite in a
-    bare `python:3.11-slim` with requirements.txt installed and none of the
-    system libraries the Dockerfile adds, and there `find_spec("cadquery")`
-    answers yes -- the distribution is on disk -- while `import cadquery` dies
-    with `libGL.so.1: cannot open shared object file`. A mark built on find_spec
-    therefore does not skip, and the two tests that need real geometry fail in
-    CI for a reason that has nothing to do with them.
+    one environment these marks exist for: a checkout that installed
+    requirements.txt without the system libraries the Dockerfile adds -- which is
+    what CI's container was before issue #27 and what a bare workstation still is.
+    There `find_spec("cadquery")` answers yes -- the distribution is on disk --
+    while `import cadquery` dies with `libGL.so.1: cannot open shared object
+    file`. A mark built on find_spec therefore does not skip, and the tests that
+    need real geometry fail for a reason that has nothing to do with them.
 
     In a process of its own so that a pytest run does not end up with the whole
     CAD stack (and an OCCT thread pool) resident just to answer a question about
@@ -83,9 +83,9 @@ def import_works(name):
 
 needs_cadquery = pytest.mark.skipif(
     not import_works("cadquery"),
-    reason="the CAD stack does not import in this interpreter (the image's does; "
-           "a bare checkout or the CI test container may be missing it, or the "
-           "system libraries it loads)")
+    reason="the CAD stack does not import in this interpreter (the image's does, "
+           "and so does CI's test container; a bare checkout may be missing it, or "
+           "the system libraries it loads)")
 
 needs_occt = pytest.mark.skipif(
     not import_works("OCP"),

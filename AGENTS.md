@@ -65,10 +65,14 @@ make test              # runs .venv/bin/python -m pytest
 make cad-test          # the six tests that need the CAD kernel
 ```
 
-CI computes no real geometry: `libgl1` is deliberately not in the test container
-(issue #27), so those six skip there. **Touching `src/cadbuild/` means running
-`make cad-test` on a machine where the kernel imports** — nothing else notices when
-the payload's shape drifts away from `ui/tests/fixtures/assembled.json`.
+CI runs the whole suite, those six included: both workflows install the kernel's
+libraries into the test container (issue #27), which turned ~90 skips into real
+runs — so a payload shape drifting away from `ui/tests/fixtures/assembled.json`
+is caught by the run.
+CI runs it PARALLEL — `pytest -n 4 --dist loadfile`, and the container's measured
+memory ceiling depends on that worker count — while `make test` stays serial, so
+a test that only breaks in parallel surfaces in CI: reproduce it by hand with the
+`docker run` out of the test step, not with `make test`.
 
 ## Running the app
 ```bash

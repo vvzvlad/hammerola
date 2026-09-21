@@ -315,8 +315,9 @@
   honest:
   `tests/test_template.py` runs it through `run_build` — the same entry point a
   push takes — so a template that stopped satisfying the gate fails here instead
-  of being handed to somebody who cannot tell whose fault it is. That test skips
-  where the CAD kernel does not import, i.e. in CI; the shape checks beside it
+  of being handed to somebody who cannot tell whose fault it is. That test runs in
+  CI, whose test container installs the kernel's libraries (issue #27), and skips
+  only where the kernel does not import; the shape checks beside it
   do not, and they are what catch the edit that actually happens (a file added
   under a name the path alphabet refuses, which takes down the whole push of
   every project made from it). It carries NO `project.json`: `create` mints the

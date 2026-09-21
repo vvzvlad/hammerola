@@ -2,7 +2,8 @@
 
 The module under test is split where the CAD kernel is, and so is this file.
 Everything except the last test runs on a python that has no OCCT at all --
-which is CI (issue #27) -- because the rule that decides whether a measurement
+which is any machine without the kernel, CI's container having it (issue #27) --
+because the rule that decides whether a measurement
 may be shown is arithmetic over a dict, and a dict can be typed by hand. The
 last test is the one that has to agree with the kernel, so it skips where the
 kernel is missing and `make cad-test` is what runs it.
@@ -233,9 +234,9 @@ def test_two_real_step_files_measure_the_change_between_them(tmp_path):
     nothing back, which is a number to be counted by hand rather than read off
     the run.
 
-    Skips where the kernel is missing -- i.e. in CI, on both workflows (issue
-    #27) -- like every other test that needs real geometry; `make cad-test` is
-    the hand that runs it.
+    Skips where the kernel is missing, like every other test that needs real
+    geometry; CI's container installs it (issue #27), and `make cad-test` runs
+    this one without the rest of the suite.
     """
     cq = pytest.importorskip("cadquery", exc_type=ImportError,
                              reason="a real boolean needs the CAD kernel")

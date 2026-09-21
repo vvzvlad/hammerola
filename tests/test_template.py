@@ -7,14 +7,13 @@ be a project that cannot publish, handed to somebody who has no way of telling
 whether the fault is theirs. Written as prose in a README it would rot in
 silence. As a directory the suite pushes through the real build, it cannot.
 
-TWO TESTS HERE NEED THE CAD KERNEL, AND THEY ARE THE ONES CI CANNOT RUN. The
-kernel is not importable in the test container (both workflows run the suite in
-a bare `python:3.11-slim`, where `import cadquery` dies on `libGL.so.1`), so
-both skip there exactly as `tests/test_view_fixture.py` does — its docstring
-carries the full accounting of what that costs. They are the BUILD test at the
-foot of this file, which computes the geometry, and the one that holds the
-stubbed kernel against the real one; what each of them costs when it skips is
-written where it stands.
+TWO TESTS HERE NEED THE CAD KERNEL, and CI runs them: the test container
+installs the kernel's system libraries (issue #27), so `import cadquery` works
+there. They skip on a machine where it does not import, exactly as
+`tests/test_view_fixture.py` does. They are the BUILD test at the foot of this
+file, which computes the geometry, and the one that holds the stubbed kernel
+against the real one; what each of them costs when it skips is written where it
+stands.
 
 EVERYTHING ELSE RUNS ON EVERY PUSH, THE PROVENANCE GUARD INCLUDED — it imports
 the template with the kernel STUBBED and then asks the hub's own rule about the
@@ -259,9 +258,8 @@ def test_the_model_defines_the_contract_it_is_the_example_of():
 
 # -- the provenance rule, asked of the hub rather than imitated --------------
 # WHAT STOOD HERE WAS A SECOND IMPLEMENTATION OF THE RULE, written over a syntax
-# tree because importing the template was believed to need the CAD kernel that
-# neither CI container has. It does not. The kernel is the one import a model
-# makes that CI cannot satisfy, and a stub is enough to let the module EXECUTE --
+# tree because importing the template was believed to need the CAD kernel. It does
+# not: a stub is enough to let the module EXECUTE --
 # after which `provenance` answers with the hub's own verdict, which is what the
 # copy was approximating.
 #
@@ -535,8 +533,8 @@ def test_the_hub_would_publish_the_template_as_it_stands(tmp_path):
 
     Every project created from this template inherits whatever is here, and its
     author has no way of telling whose fault a refusal is -- so this must fail on
-    a workstation AND in both CI containers, where there is no CAD kernel. It
-    does, because the kernel is stubbed and the RULE is the real one.
+    a workstation AND on a machine with no CAD kernel at all. It does, because
+    the kernel is stubbed and the RULE is the real one.
     """
     verdict = hub_verdict(template_under(tmp_path, UNCHANGED))
     assert verdict.bare == (), (
@@ -618,11 +616,12 @@ def test_the_stub_answers_what_the_real_kernel_answers(edit, tmp_path):
     refusal text, every declared number with its kind and value, and every bare
     one.
 
-    It SKIPS in both CI containers, and what that costs is worth being exact
-    about: the guard itself does not skip there, because the rule it runs is the
-    hub's either way -- what goes unchecked in CI is only whether the stub still
-    stands in for the kernel faithfully. The kernel moves on its pins in
-    `requirements.txt`, and this is what a workstation says about that move.
+    It SKIPS where the kernel does not import — no longer CI, which installs it
+    (issue #27) — and what that costs on such a machine is worth being exact
+    about: the guard itself does not skip, because the rule it runs is the hub's
+    either way; what goes unchecked is only whether the stub still stands in for
+    the kernel faithfully. The kernel moves on its pins in `requirements.txt`,
+    and this is what a run with the real one says about that move.
     """
     pytest.importorskip(
         "cadquery", exc_type=ImportError,
@@ -647,9 +646,10 @@ def test_the_stub_refuses_the_multiplication_the_kernel_refuses():
     corpus above cannot hold this case: an EDIT has to IMPORT under both kernels
     to be compared at all, and this one imports under neither.
 
-    The second half needs the kernel and skips in the CI containers, exactly as
-    the corpus comparison above does. What it costs is the same: the claim that
-    the kernel really refuses this is checked on a workstation and trusted in CI.
+    The second half needs the kernel and skips where it does not import, exactly
+    as the corpus comparison above does — no longer in CI, whose container
+    installs it (issue #27). What it costs on such a machine is the same: the
+    claim that the kernel really refuses this goes unchecked there.
     """
     with pytest.raises(TypeError):
         _Opaque() * _Opaque()
@@ -1554,7 +1554,7 @@ def test_the_template_builds_the_way_the_hub_builds_it(tmp_path):
     the tessellation, in that order and with those arguments. A template that
     passes this is a template that publishes.
 
-    It SKIPS where the CAD kernel does not import, which is both CI containers —
+    It SKIPS where the CAD kernel does not import, which is no longer CI —
     see this module's docstring. `exc_type=ImportError` is explicit because the
     failure being skipped for is an ImportError that is NOT a
     ModuleNotFoundError: the distribution is installed and its extension refuses

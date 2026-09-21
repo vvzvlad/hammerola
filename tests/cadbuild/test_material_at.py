@@ -19,11 +19,9 @@ point in the universe. Every `assert solid(...)` in every model then passes. So
 `material_at` refuses such a part, `volume`/`is_empty` are how a model asks
 whether anything survived, and the tests for all three are below.
 
-Every test here needs the CAD kernel and skips without it, so in CI (a
-python:3.11-slim container with no OCCT) this file contributes nothing. That is
-the same trade `tests/test_template.py` makes and it is worth stating: what
-holds these on a workstation is the pair below, and what holds them in CI is
-nothing at all.
+Every test here needs the CAD kernel and skips without it. CI's test container
+installs it (issue #27), so this file contributes there too; on a machine with no
+kernel it contributes nothing, and what holds these there is the pair below.
 """
 
 import sys
@@ -171,10 +169,10 @@ def test_the_refusal_does_not_need_the_cad_kernel(monkeypatch):
     The first version of `material_at` imported OCP at the top of the function,
     before looking at its argument, so passing a string answered
     `ImportError: libGL.so.1` -- an error about the environment for a mistake
-    in the code. CI caught it by going red on the test above, in the
-    python:3.11-slim container the suite runs in. On a workstation with the
-    kernel installed neither test can see the difference, which is why the
-    import is blocked here rather than assumed absent.
+    in the code. CI caught it by going red on the test above, back when its
+    container had no importable kernel at all. Where the kernel IS installed
+    neither test can see the difference, which is why the import is blocked here
+    rather than assumed absent -- and since issue #27 that includes CI.
     """
     for name in ("OCP", "OCP.BRepClass3d", "OCP.gp", "OCP.TopAbs"):
         monkeypatch.setitem(sys.modules, name, None)

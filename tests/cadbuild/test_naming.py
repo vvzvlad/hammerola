@@ -371,10 +371,11 @@ def test_an_explicit_colour_wins_for_every_kind_and_comes_back_as_hex():
     picture of a part that was perfectly fine.
     """
     # `exc_type=ImportError` because the failure this guard is FOR is an
-    # ImportError that is NOT a ModuleNotFoundError: in CI the distribution is
-    # on disk and its extension refuses to load (`libGL.so.1`). pytest 9.1
-    # narrows the default to ModuleNotFoundError, so without this the guard
-    # would stop skipping and CI would go red on a pytest bump.
+    # ImportError that is NOT a ModuleNotFoundError: on a machine whose kernel is
+    # installed but cannot load, the distribution is on disk and its extension
+    # refuses to load (`libGL.so.1`). pytest 9.1 narrows the default to
+    # ModuleNotFoundError, so without this the guard would stop skipping and that
+    # machine would go red on a pytest bump.
     pytest.importorskip("ocp_tessellate", exc_type=ImportError,
                         reason="colour parsing uses the tessellator's parser")
     read = read_catalogue(Model({"body": entry(color="red"),

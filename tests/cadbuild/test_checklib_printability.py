@@ -11,8 +11,8 @@ The file is in two halves, and the split is the same one `test_checklib.py` and
 `test_material_at.py` make between them. The refusals are plain Python and run
 everywhere, CI included: a size that is not a size, a sweep of one position, an
 exemption for a part that is not in the assembly, an argument that is not
-geometry. The measurements need the CAD kernel and skip without it, so in CI
-(a python:3.11-slim container with no OCCT) that half contributes nothing.
+geometry. The measurements need the CAD kernel and skip without it; CI's test
+container has it (issue #27), so both halves run there.
 
 The geometry the second half runs on is built here rather than fetched: a
 socket with a narrow mouth over a wider cavity, and a lid whose head has to

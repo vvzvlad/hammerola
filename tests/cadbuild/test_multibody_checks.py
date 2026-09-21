@@ -19,8 +19,8 @@ Both failures are silent in the sense that matters: nothing about the result
 says a body was skipped. So the tests below are written to fail on the old
 implementation rather than to describe the new one.
 
-Needs the CAD kernel and skips without it, like test_material_at.py: CI runs the
-suite in a python:3.11-slim container where `import cadquery` dies on libGL.
+Needs the CAD kernel and skips without it, like test_material_at.py. CI's test
+container installs the kernel's libraries (issue #27), so this runs there.
 """
 
 import re

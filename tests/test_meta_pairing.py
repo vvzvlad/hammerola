@@ -21,11 +21,10 @@ that, and it is deliberately the ONLY test here that does no hand-writing at
 all: the model is written, and everything the assertions look at is computed
 from it by the same code a push runs.
 
-IT SKIPS WHERE THE CAD KERNEL DOES NOT IMPORT, which is both CI containers —
-`tests/test_template.py` and `tests/test_view_fixture.py` carry the full
-accounting of what that costs and it is not repeated here. What is worth saying
-is the shape of the trade: the pairing is verified on a workstation, and in CI
-the two halves are each checked against a hand-written stand-in of the other.
+IT SKIPS WHERE THE CAD KERNEL DOES NOT IMPORT, which is no longer CI: the test
+container installs the kernel's libraries (issue #27), so the pairing is verified
+on every push. On a machine without the kernel it still skips, and there the two
+halves are each checked against a hand-written stand-in of the other.
 """
 
 from __future__ import annotations
