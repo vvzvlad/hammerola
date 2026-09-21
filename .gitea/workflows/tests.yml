@@ -256,6 +256,15 @@ jobs:
         # LAYER being committed, here nothing is committed at all — the container is `--rm` and
         # its writable layer goes with it — so the same line would be a no-op that reads like a
         # working economy.
+        # THE CAD KERNEL'S SYSTEM LIBRARIES travel with git, and they are the same list the
+        # Dockerfile installs — read the derivation THERE and do not repeat it here; the two
+        # lists are compared by tests/test_ci_kernel_libs.py. Without them `import cadquery`
+        # dies with `ImportError: libGL.so.1` at import time, the six tests that need the
+        # kernel skip, and a change to src/cadbuild/views.py or assembly.py that moves the
+        # payload's shape rides through a green CI while vitest goes on checking the browser
+        # half against a fixture no build produces any more. `curl` and `gosu` are on the
+        # Dockerfile's line and deliberately NOT here: they are the image's runtime tools —
+        # healthcheck and entrypoint — and nothing in the suite runs either.
         # `git config --global --add safe.directory /src` because the tree arrives owned by
         # whichever uid packed it. On the runner both ends are root and the setting changes
         # nothing; on a workstation running this command BY HAND the files land owned by the
@@ -279,7 +288,7 @@ jobs:
           -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
           -e PYTHONDONTWRITEBYTECODE=1 \
           "$RUNTIME_IMAGE" \
-          sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; apt-get update; apt-get install -y --no-install-recommends git; git config --global --add safe.directory /src; pip install --no-cache-dir -r requirements-dev.txt; pytest --tb=short -q'
+          sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; apt-get update; apt-get install -y --no-install-recommends git libgl1 libx11-6 libexpat1 libxext6 libxrender1 libsm6 libice6; git config --global --add safe.directory /src; pip install --no-cache-dir -r requirements-dev.txt; pytest -n auto --tb=short -q'
 
     - name: Run the JS test suite in a container
       # The browser half of the suite: vitest over ui/tests, in jsdom. It covers the parts of
