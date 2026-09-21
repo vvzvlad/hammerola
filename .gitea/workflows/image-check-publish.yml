@@ -310,6 +310,17 @@ jobs:
         # NOT in pytest.ini's addopts on purpose: `make test` and a single file run by hand
         # keep live output and a usable debugger, so a failure that only happens in parallel
         # is reproduced with THIS command rather than with `make test`.
+        # TWO INVOCATIONS, and this is the one place the parallel run is not the serial run
+        # divided. tests/buildproc/ carries an autouse guard — see its conftest.py — asserting
+        # the real kernel is NOT imported in the pytest process, because a test there that
+        # reached the live OCCT pool would resize it for everything after. Serially that held
+        # for free: `tests/buildproc/` is collected before `tests/cadbuild/`, whose
+        # real-geometry tests import cadquery in-process. Under xdist a worker takes whole
+        # FILES as they free up, so one worker can run a buildproc file, then a file that
+        # imports the kernel, then another buildproc file — 91 setup errors on one run here
+        # against four green ones before it, which is luck rather than a property. In a pytest
+        # of its own, buildproc's workers never see the kernel and the guard holds by
+        # construction.
         tar -cf - --exclude=./.git/config --exclude=./.venv --exclude=./ui/node_modules \
           --exclude=./viewer/node_modules --exclude=./viewer/dist \
           --exclude=./data --exclude=./.env --exclude=./.pytest_cache \
@@ -320,7 +331,7 @@ jobs:
           -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
           -e PYTHONDONTWRITEBYTECODE=1 \
           "$RUNTIME_IMAGE" \
-          sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; apt-get update; apt-get install -y --no-install-recommends git libgl1 libx11-6 libexpat1 libxext6 libxrender1 libsm6 libice6; git config --global --add safe.directory /src; pip install --no-cache-dir -r requirements-dev.txt; pytest -n 4 --dist loadfile --tb=short -q'
+          sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; apt-get update; apt-get install -y --no-install-recommends git libgl1 libx11-6 libexpat1 libxext6 libxrender1 libsm6 libice6; git config --global --add safe.directory /src; pip install --no-cache-dir -r requirements-dev.txt; pytest -n 4 --dist loadfile tests/buildproc --tb=short -q; pytest -n 4 --dist loadfile --ignore=tests/buildproc --tb=short -q'
 
     - name: Run the JS test suite in a container
       # The browser half of the suite: vitest over ui/tests, in jsdom. It covers the parts of

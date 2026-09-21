@@ -154,9 +154,10 @@ def with_the_real_rule(driven, monkeypatch, isolated_project):
     tests/test_template.py: the fixture above replaces the whole module with a
     stub, `tests/cadbuild/test_provenance.py` calls `collect`/`check` through a
     helper of its own, and the one end-to-end witness -- the template build --
-    is importorskip'ped wherever the CAD kernel is absent, i.e. in both CI
-    containers. So the rule was tested thoroughly and its CALL was not tested at
-    all. Nothing here needs a kernel: everything that would touch one is already
+    is importorskip'ped wherever the CAD kernel is absent — which CI no longer is
+    (issue #27), so that witness does run on a push now; what this file covers is
+    the machine that has no kernel, where the rule was tested thoroughly and its
+    CALL was not tested at all. Nothing here needs a kernel: everything that would touch one is already
     faked by `driven`, and what is real is the parse, the walk and the refusal.
 
     Returns a function that writes model.py and points `build` at it.

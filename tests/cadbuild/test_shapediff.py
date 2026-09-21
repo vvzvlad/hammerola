@@ -2,7 +2,8 @@
 
 The module under test is split where the CAD kernel is, and so is this file.
 Everything except the last test runs on a python that has no OCCT at all --
-which is CI (issue #27) -- because the rule that decides whether a measurement
+which is any machine without the kernel, CI's container having it (issue #27) --
+because the rule that decides whether a measurement
 may be shown is arithmetic over a dict, and a dict can be typed by hand. The
 last test is the one that has to agree with the kernel, so it skips where the
 kernel is missing and `make cad-test` is what runs it.
