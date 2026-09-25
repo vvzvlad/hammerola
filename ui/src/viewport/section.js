@@ -9,7 +9,9 @@
 
 import { cameraBasis, projectPoint } from "./camera.js";
 import { internals } from "./internals.js";
-import { clamp, cross3, dot3, finite3, sub3, unit3, vec3 } from "./math.js";
+import {
+  clamp, cross3, dot3, finite3, sineFromCos, sub3, unit3, vec3,
+} from "./math.js";
 import { MIN_SINE, SECTION_BIAS, SECTION_INDEX } from "./options.js";
 import { clearSectionOutlines, sectionOutline } from "./outline.js";
 
@@ -60,9 +62,9 @@ const stepCap = (viewer) => (sectionLimit(viewer) || 1) / 10;
  * therefore truthy — so returning its result unchecked would hand `!view` and
  * `!n` a value they cannot refuse. What each of them does with NaNs afterwards
  * is worse than useless: `placeSectionPlane` writes a seed nothing can measure,
- * and `sectionAxis` computes `Math.sqrt(1 - NaN)` and compares it against
- * `MIN_SINE`, a comparison that is false, which is the ACCEPTING branch of the
- * guard against a plane seen edge-on.
+ * and `sectionAxis` takes `sineFromCos` of a NaN and compares the NaN that comes
+ * back against `MIN_SINE`, a comparison that is false, which is the ACCEPTING
+ * branch of the guard against a plane seen edge-on.
  *
  * That covers a bad `point` and a bad eye alike — an infinite `eye.y` reached
  * here for as long as this checked `eye.x` alone.
@@ -113,10 +115,8 @@ function foreshorten(viewer, g, n) {
   const basis = cameraBasis(viewer, g);
   if (!basis) return null;
   // Both are unit vectors, so the dot IS the cosine and no division enters it.
-  // `clamp` because that dot can still land a hair outside [-1, 1] in floating
-  // point, where `1 - cos * cos` would go negative and the root NaN.
-  const cos = clamp(dot3(n, basis.view), -1, 1);
-  return Math.sqrt(1 - cos * cos);
+  // `sineFromCos` carries the clamp that dot still needs.
+  return sineFromCos(dot3(n, basis.view));
 }
 
 /**
@@ -349,8 +349,7 @@ export function sectionAxis(viewer, g, point) {
   if (!n) return null;
   const view = viewDir(g, point);
   if (!view) return null;
-  const cos = clamp(dot3(n, view), -1, 1);
-  if (Math.sqrt(1 - cos * cos) < MIN_SINE) return null;
+  if (sineFromCos(dot3(n, view)) < MIN_SINE) return null;
   const sine = foreshorten(viewer, g, n);
   const rect = g.canvas.getBoundingClientRect();
   if (!(rect.width > 0) || !(rect.height > 0)) return null;

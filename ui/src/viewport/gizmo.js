@@ -48,25 +48,30 @@
 // with the representation and what is left of them is two components of
 // `cameraBasis().view`.
 //
-// EVERY NUMBER A DRAG PRODUCES COMES FROM tools.js, and none of that moved.
-// Each constrained delta is the unconstrained world displacement the hand spans
-// put back on the piece's own geometry — an arrow takes the NEAREST POINT of
-// its line, a quad takes the point where the ray through the cursor MEETS its
-// plane, and the difference is not arbitrary: a plane and a ray meet and a line
-// and a ray do not, so only one of the two can promise the reader that the part
-// follows the pointer exactly. From there both are the same `niceStep`, the
-// same `snap`, the same `movePart`/`nudgePart`, the same `stood`/`last`
-// distinction and the same `reportMove` — so a part dragged by an arrow and one
-// dragged by a quad reach the proposal document as the same kind of sentence. A
-// second copy of any of that would not fail; it would drift, which is worse.
+// NO NUMBER A DRAG PRODUCES IS THIS FILE'S OWN. Each constrained delta is the
+// unconstrained world displacement the hand spans put back on the piece's own
+// geometry — an arrow takes the NEAREST POINT of its line, a quad takes the
+// point where the ray through the cursor MEETS its plane, and the difference is
+// not arbitrary: a plane and a ray meet and a line and a ray do not, so only one
+// of the two can promise the reader that the part follows the pointer exactly.
+// From there both are the same `niceStep` and `snap` (tools.js), the same
+// `movePart`/`nudgePart`, and the same record and report every gesture of this
+// tool ends in (gesture.js) — so a part dragged by an arrow, one dragged by a
+// quad and one turned by a disc reach the proposal document as the same kind of
+// sentence. A second copy of any of that would not fail; it would drift, which
+// is worse.
 
 import { cameraBasis, ndcAt, ndcOffset } from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
+import { EVENT_MOVED, EVENT_PROPOSALMOVE } from "./events.js";
+import { gestureRecord, reportGesture } from "./gesture.js";
 import { internals } from "./internals.js";
-import { dot3 } from "./math.js";
-import { grabbable, movePart, nudgePart, partCentre } from "./parts.js";
+import { dot3, sineFromCos } from "./math.js";
+import {
+  grabbable, groupHome, movePart, nudgePart, partCentre,
+} from "./parts.js";
 import { GIZMO_ORDER, createScene3D, widgetMaterial } from "./scene3d.js";
-import { moveRecord, niceStep, reportMove, snap } from "./tools.js";
+import { niceStep, snap } from "./tools.js";
 import {
   GIZMO_CASE_PX, GIZMO_DOT_PX, GIZMO_HEAD_PX, GIZMO_HIT_PX, GIZMO_MIN_SCALE,
   GIZMO_PLANE_GAP_PX, GIZMO_PLANE_PX, GIZMO_PX, GIZMO_RIM_PX, GIZMO_SHAFT_PX,
@@ -168,6 +173,18 @@ const NO_HIT = () => {};
  */
 const RANK = { plane: 0, axis: 1 };
 
+/** How a finished slide is announced: the name a part of the BUILD goes out
+ *  under, the name a body of the PROPOSAL goes out under, and the field of
+ *  `vp.moved` this gesture writes.
+ *
+ * WHICH IS THE WHOLE OF WHAT SEPARATES THIS GESTURE FROM THE DISCS' by the time
+ * either reaches `reportGesture` (gesture.js) — the rotation handles hand it the
+ * same three, spelled for an orientation.
+ */
+const MOVE_REPORT = {
+  modelEvent: EVENT_MOVED, proposalEvent: EVENT_PROPOSALMOVE, key: "delta",
+};
+
 /**
  * Where an ARROW drag lands: the offset already standing, with the component
  * along `axis` of the hand's own world displacement added to it and snapped.
@@ -259,10 +276,34 @@ function acrossPlane(base, world, normal, view, step) {
   const into = dot3(view, normal);
   // `inPlane` AND NOT `held`, which is taken: `held()` in this file is the
   // selection the widget stands on, and two different things under one name is
-  // how the wrong one gets read — the same objection `moveRecord` in tools.js
-  // makes to calling its `already` field `stood`.
+  // how the wrong one gets read — the same objection `gestureRecord` in
+  // gesture.js makes to calling its `already` field `stood`.
   const inPlane = world.map((v, i) => v - view[i] * (out / into));
   return base.map((v, i) => (normal[i] ? v : snap(v + inPlane[i], step)));
+}
+
+/**
+ * What a SLIDE remembers on top of what every gesture of this tool does —
+ * `gestureRecord` in gesture.js carries the rest, and the two fields here are
+ * the reason this is a function of its own rather than that call.
+ *
+ * `ndc` IS WHERE THE POINTER WAS WHEN THE PRESS WAS MADE, and only a slide has
+ * one: the world displacement `onMove` constrains is the span between that
+ * reading and the current one, while a turn reads an angle off the ray afresh at
+ * every event and remembers that instead (`turnRecord` in rings.js).
+ *
+ * `homes` IS WHERE THE GROUPS STAND AT THE PRESS, read straight off the scene
+ * rather than remembered in `vp.partHome`: a proposal body's home is whatever
+ * the document last said, so a home kept across the re-stage the last drag
+ * caused would be a home that has moved. A turn needs a pose and the body's own
+ * centre beside it, which is why that gesture's snapshot is a different shape.
+ */
+function moveRecord(vp, paths, ndc, anchor, proposal) {
+  return {
+    ...gestureRecord(vp, paths, anchor, proposal, MOVE_REPORT.key),
+    ndc,
+    homes: proposal ? paths.map((path) => groupHome(vp.viewer, path)) : null,
+  };
 }
 
 export function createGizmo(vp) {
@@ -558,14 +599,13 @@ export function createGizmo(vp) {
     // ONE COMPONENT OF `view` FOR EACH OF THE SIX, which is the whole of what
     // the projection used to be asked for. An axis and the plane square on to
     // it are the two readings of ONE angle: `|view[k]|` is the fraction of the
-    // plane that survives the projection and `sqrt(1 - view[k]^2)` the fraction
+    // plane that survives the projection and `sineFromCos(view[k])` the fraction
     // of the axis, so they are never both gone and never both at full.
     arms.forEach((arm, k) => {
       // NEARLY END-ON IS GONE, not shortened — `GIZMO_MIN_SCALE` carries the
       // argument: the drag divides by `sine^2`, so past the floor a steady hand
       // is a jump of several snap steps rather than a stuck arrow.
-      const cos = Math.abs(basis.view[k]);
-      arm.node.visible = Math.sqrt(1 - cos * cos) >= GIZMO_MIN_SCALE;
+      arm.node.visible = sineFromCos(basis.view[k]) >= GIZMO_MIN_SCALE;
     });
     quads.forEach((quad, k) => {
       // NEARLY EDGE-ON IS GONE, not flattened, and this line IS THE WHOLE FENCE
@@ -615,12 +655,12 @@ export function createGizmo(vp) {
    * ONLY IF THE GESTURE REALLY WAS A DRAG, which is the canvas gesture's rule
    * (`if (p.moved)`) with the canvas gesture's meaning of `moved`: `CLICK_PX` of
    * travel, not one pixel of it (`onMove` below). A bare press on an arrow is
-   * not a placement, and `reportMove` would answer it by writing a node.
+   * not a placement, and the report would answer it by writing a node.
    */
   const stop = () => {
     const live = drag;
     finish();
-    if (live && live.moved) reportMove(vp, live.move);
+    if (live && live.moved) reportGesture(vp, live.move, MOVE_REPORT);
   };
 
   function onMove(event) {
@@ -834,12 +874,12 @@ export function createGizmo(vp) {
     const view = basis.view;
     let sine = 0;
     if (piece.kind === "axis") {
-      // THE SAME COMPONENT `place` DRAWS FROM, so the arrow on screen is the
-      // arrow that drags. Zero is an axis pointing straight at the reader,
-      // which `place` never draws and the division in `alongAxis` could not
-      // survive; a NaN out of a basis a hair off unit fails the same test.
-      const cos = Math.abs(view[piece.axis]);
-      sine = Math.sqrt(1 - cos * cos);
+      // THE SAME COMPONENT `place` DRAWS FROM, THROUGH THE SAME FUNCTION, so the
+      // arrow on screen is the arrow that drags. Zero is an axis pointing
+      // straight at the reader, which `place` never draws and the division in
+      // `alongAxis` could not survive — and a basis a hair off unit lands on that
+      // same zero rather than on a NaN, which fails this test the same way.
+      sine = sineFromCos(view[piece.axis]);
       if (!(sine > 0)) return false;
     }
     // AND NOTHING OF THE KIND FOR A QUAD, which is deliberate rather than

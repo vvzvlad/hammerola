@@ -75,6 +75,35 @@ export const finite3 = (a) => Array.isArray(a) && a.length === 3
   && a.every(Number.isFinite);
 
 /**
+ * The sine of the angle whose cosine is `cos` — i.e. how much of a unit vector
+ * survives a projection along the direction that cosine was measured against,
+ * between 0 and 1.
+ *
+ * ONE FUNCTION FOR FOUR FORESHORTENINGS (#101), which are four readings of one
+ * piece of arithmetic: the section grip's arrow (`foreshorten` in section.js),
+ * the guard on the plane's own drag (`sectionAxis`), and both readings of an axis
+ * arrow's slant — whether it is drawn at all, and how much world one pixel of
+ * hand buys (`place` and `onDown` in gizmo.js). What each of them holds is a
+ * cosine and nothing else, and `sqrt(1 - cos * cos)` written out four times is
+ * four places to forget the clamp.
+ *
+ * `clamp` BECAUSE THE INPUT IS NEVER QUITE A COSINE: it is a dot of two vectors
+ * the caller believes are unit, or one component of a basis the library handed
+ * over, and either can land a hair outside [-1, 1] in floating point — where
+ * `1 - cos * cos` goes negative and the root is a NaN. That NaN makes every
+ * comparison it reaches false, which in `sectionAxis` is the ACCEPTING branch of
+ * the guard against a plane seen edge-on.
+ *
+ * IT DOES NOT MAKE A NaN INPUT INTO A NUMBER — `min` and `max` propagate one —
+ * so the callers that refuse a camera they cannot read go on doing that work
+ * themselves (`viewDir` in section.js).
+ */
+export const sineFromCos = (cos) => {
+  const c = clamp(cos, -1, 1);
+  return Math.sqrt(1 - c * c);
+};
+
+/**
  * A world point as a `{x, y, z}` object.
  *
  * Good enough for every library call this code makes with one, and that is not

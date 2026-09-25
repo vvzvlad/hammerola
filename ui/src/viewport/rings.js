@@ -58,7 +58,8 @@
 
 import { cameraBasis, ndcAt, ndcRay } from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
-import { EVENT_PROPOSALTURN, EVENT_TURNED, emit } from "./events.js";
+import { EVENT_PROPOSALTURN, EVENT_TURNED } from "./events.js";
+import { gestureRecord, reportGesture } from "./gesture.js";
 import { internals } from "./internals.js";
 import { finite3 } from "./math.js";
 import {
@@ -310,120 +311,45 @@ function bodyOrigin(vp, path) {
   return part && finite3(part.origin) ? part.origin : null;
 }
 
+/** How a finished turn is announced: the name a part of the BUILD goes out
+ *  under, the name a body of the PROPOSAL goes out under, and the field of
+ *  `vp.moved` this gesture writes.
+ *
+ * THE TWO NAMES ARE OPPOSITE CLAIMS ABOUT THE MODEL — a part of the build is a
+ * STATEMENT to the agent about a model nothing has changed, a body is an
+ * ordinary EDIT of the document the reader is drawing — which is why they are
+ * two events rather than a flag on one. `MOVE_REPORT` in gizmo.js is the same
+ * three, spelled for a place instead of an orientation.
+ */
+const TURN_REPORT = {
+  modelEvent: EVENT_TURNED, proposalEvent: EVENT_PROPOSALTURN, key: "turn",
+};
+
 /**
- * Everything a turn gesture has to remember about the scene it started on,
- * assembled once at the press. `moveRecord` in tools.js, asked about an
- * orientation instead of a place, and every field is that field's answer.
- *
- * IN THIS FILE AND NOT BESIDE IT, which is the one deliberate difference.
- * `moveRecord` stayed in tools.js because the record and the `reportMove` that
- * reads it are one sentence, and a second hand-written copy is how the pieces
- * that make one would start disagreeing about what a drag means. There is one
- * gesture that turns, so its record belongs where it is used; the day a second
- * one appears, this moves.
- *
- * `base` IS THE TURN ALREADY STANDING and `delta` the offset already standing,
- * and the second is carried without ever being changed: this gesture says which
- * way the part faces and says nothing whatever about where it is. `movePart`
- * writes both on every call, so a gesture that left the offset out would send a
- * part the reader had dragged straight back home the moment they turned it.
- *
- * `bases` IS THE SAME QUESTION ASKED OF EVERY PATH, for `reportModelTurn`'s
- * sake and for the reason tools.js gives: one gesture writes one turn onto
- * every path it holds, so the copies of a row converge, and where each of them
- * WAS is the only record of what this gesture actually changed.
+ * What a TURN remembers on top of what every gesture of this tool does.
+ * `gestureRecord` in gesture.js carries the rest — the pose already standing,
+ * the offset carried through untouched, the build stamp — and `seats` is the
+ * reason this is a function of its own rather than that call.
  *
  * `seats` IS WHAT A BODY OF THE PROPOSAL CARRIES INSTEAD OF `vp.moved` — where
- * each group stands, which way it faces and where the body's own origin is,
- * all taken at the press and dying with the gesture. `nudgeTurn` says why none
- * of the three may be remembered: the document is what places a body, and a
- * home kept across the re-stage the last gesture caused is a home that has
- * moved.
+ * each group stands, which way it faces and where the body's own origin is, all
+ * taken at the press and dying with the gesture. `nudgeTurn` says why none of
+ * the three may be remembered: the document is what places a body, and a home
+ * kept across the re-stage the last gesture caused is a home that has moved.
+ *
+ * A SLIDE TAKES THE HOME ALONE and reads the press's pointer position beside it,
+ * so its snapshot is a different shape (`moveRecord` in gizmo.js) — the one
+ * thing about these two gestures that is not shared.
  */
 function turnRecord(vp, paths, anchor, proposal) {
-  const already = vp.moved.get(anchor);
-  const base = already ? already.turn : [0, 0, 0];
   return {
-    paths,
-    delta: already ? already.delta : [0, 0, 0],
-    base,
-    last: base,
-    stood: base,
-    bases: paths.map((path) => {
-      const held = vp.moved.get(path);
-      return held ? held.turn : [0, 0, 0];
-    }),
-    build: vp.drawnKey,
-    body: proposal ? vp.overlayBody(anchor) : null,
+    ...gestureRecord(vp, paths, anchor, proposal, TURN_REPORT.key),
     seats: proposal ? paths.map((path) => ({
       home: groupHome(vp.viewer, path),
       pose: groupFacing(vp.viewer, path),
       centre: bodyOrigin(vp, path),
     })) : null,
   };
-}
-
-/** Which way a part of the BUILD ended up facing, announced once.
- *
- * `reportModelMove` in tools.js with the other field of the node, and every
- * decision on it is that one's: THE RELEASE IS THE ONLY REPORT, because the
- * interface answers a recorded statement by opening the panel and an opened
- * panel re-stages, which ends the gesture the reader has not let go of; the
- * report is DEFERRED BY A MICROTASK so it cannot be raised from inside a
- * render; and `build` is stamped at the press because that microtask can
- * outlive the build the angles were measured on.
- *
- * A GESTURE THAT CHANGED NOTHING SAYS NOTHING, measured against the angles that
- * were STANDING rather than against zero — a part may well have been turned
- * before this press — and against EVERY PATH'S OWN, because one gesture carries
- * the copies of a row onto a single turn and can come back to exactly where the
- * anchor started while its siblings are left somewhere no node claims.
- */
-function reportModelTurn(vp, turn) {
-  const t = turn.stood;
-  if (turn.bases.every((base) => t.every((v, axis) => v === base[axis]))) return;
-  queueMicrotask(() => emit(vp, EVENT_TURNED, {
-    id: turn.paths[0],
-    name: turn.paths[0].split("/").filter(Boolean).pop(),
-    paths: [...turn.paths],
-    count: turn.paths.length,
-    build: turn.build,
-    turn: t,
-  }));
-}
-
-/** How far a body of the PROPOSAL was turned, announced once.
- *
- * `reportProposalMove` in tools.js, and the same microtask for the same reason:
- * this report comes back as a STAGE, and a stage sent synchronously from inside
- * a render would repaint the build that is being replaced.
- *
- * A GESTURE THAT WENT NOWHERE SAYS NOTHING. `last` starts at nothing for a body
- * — the document holds its pose and this side has never read it — so a drag
- * that never left the first whole degree, or came back to it, turned the body
- * by nothing, and reporting it would be a re-stage of a document nothing
- * changed in.
- */
-function reportProposalTurn(vp, turn) {
-  const t = turn.last;
-  if (!t[0] && !t[1] && !t[2]) return;
-  queueMicrotask(() => emit(vp, EVENT_PROPOSALTURN, {
-    name: turn.body, turn: t,
-  }));
-}
-
-/** What one finished turn SAYS, whichever of the two things it was turning.
- *
- * `reportMove`'s dispatch, on the same field and for the same reason: a body of
- * the proposal carries the name the panel drew it under and a part of the build
- * carries none. The two are opposite claims about the model — a part of the
- * build is a STATEMENT to the agent about a model nothing has changed, a body
- * is an ordinary EDIT of the document the reader is drawing — so they part here
- * rather than behind a flag on one event.
- */
-function reportTurn(vp, turn) {
-  if (turn.body) reportProposalTurn(vp, turn);
-  else reportModelTurn(vp, turn);
 }
 
 export function createRings(vp) {
@@ -761,7 +687,7 @@ export function createRings(vp) {
     // and only a frame can say so: nothing else on this path asks the library
     // to draw.
     widget.refresh();
-    if (live.moved) reportTurn(vp, live.turn);
+    if (live.moved) reportGesture(vp, live.turn, TURN_REPORT);
   };
 
   function onMove(event) {
