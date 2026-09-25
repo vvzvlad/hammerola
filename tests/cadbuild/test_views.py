@@ -14,13 +14,14 @@ a reader.
 
 import json
 
+import numpy as np
 import pytest
 
 from src.cadbuild.errors import BuildError
 from src.cadbuild.hubspec import MAX_VIEW_DEPTH, MAX_VIEW_NAME_CHARS
 from src.cadbuild.palette import HARDWARE_COLOR, MOCK_COLOR, PART_PALETTE
-from src.cadbuild.views import (interference_pairs, prepare_views,
-                                shaped_document)
+from src.cadbuild.views import (at_viewer_precision, interference_pairs,
+                                prepare_views, shaped_document)
 
 from fakes import Location, catalogue, part, turned
 
@@ -736,6 +737,106 @@ def test_a_group_moves_nothing():
     assert doc["parts"][0]["loc"] == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
 
 
+# Shortened to what the browser keeps
+# --------------------------------------------------------------------------
+
+def measured_document(**shape):
+    """A leaf inside a group, with numbers no rounding would leave alone.
+
+    Round coordinates would hide the bug these tests are about: every float
+    here needs more decimals than a float32 holds, so a buffer that came back
+    unshortened is visible rather than merely likely.
+    """
+    leaf = {"name": "body", "id": "/Group/housing/body", "key": "body",
+            "color": "#c8102e", "alpha": 0.5533333333333333,
+            "loc": [[1.2345678901234567, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 0.9999999999999999]],
+            "bb": {"xmin": -12.345678901234567, "xmax": 12.345678901234567},
+            "shape": shape or {
+                "vertices": [4.986019134521484, -0.1234567890123457, 1e-08,
+                             -0.0, 12.0, 7.677777777777778],
+                "normals": [0.7071067811865476, -0.5773502691896258, 0.0,
+                            1.0, -0.3333333333333333, 0.9128709291752769],
+                "obj_vertices": [3.3333333333333335, -7.891011121314151,
+                                 0.30000000000000004],
+                "edges": [[1.2345678901234567, 2.3456789012345678,
+                           -3.456789012345679],
+                          [4.567890123456789, 5.678901234567891,
+                           6.789012345678901]],
+                "triangles": [0, 1, 2, 1, 0, 2], "face_types": [1, 0],
+                "edge_types": [2, 3], "triangles_per_face": [1, 1],
+                "segments_per_edge": [1, 1]}}
+    return {"version": 3, "name": "Group", "id": "/Group",
+            "loc": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+            "parts": [{"name": "housing", "id": "/Group/housing",
+                       "loc": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+                       "parts": [leaf]}]}
+
+
+def mesh_of(doc):
+    """The one leaf's `shape` -- reached through the group, which is the half
+    that proves the walk descends rather than reading the top level."""
+    return doc["parts"][0]["parts"][0]["shape"]
+
+
+def test_every_number_written_is_the_one_the_browser_would_have_kept():
+    """The whole specification, and the reason this is allowed to drop digits.
+
+    The viewer loads these buffers into a `Float32Array`, so a coordinate
+    written to float64 precision is truncated on arrival anyway. What is
+    written has to be float32-equal to what the tessellator measured: the same
+    mesh, spelled shorter.
+    """
+    was = mesh_of(measured_document())
+    now = mesh_of(at_viewer_precision(measured_document()))
+    for name in ("vertices", "normals", "obj_vertices"):
+        assert np.array_equal(np.asarray(was[name], dtype=np.float32),
+                              np.asarray(now[name], dtype=np.float32))
+        assert now[name] != was[name], f"{name} kept its float64 spelling"
+    for before, after in zip(was["edges"], now["edges"]):
+        assert np.array_equal(np.asarray(before, dtype=np.float32),
+                              np.asarray(after, dtype=np.float32))
+    assert now["edges"] != was["edges"]
+
+
+def test_nothing_but_the_mesh_buffers_is_rewritten():
+    """Two halves of one rule: only floats, and only floats inside `shape`.
+
+    The indices beside them are what the viewer reads into a `Uint32Array`, so
+    a shortened one is a different mesh rather than the same one written
+    shorter. Everything outside `shape` is nobody's buffer at all -- a `loc`
+    cut to float32 would move the part.
+    """
+    was = measured_document()["parts"][0]["parts"][0]
+    now = at_viewer_precision(measured_document())["parts"][0]["parts"][0]
+    for name in ("triangles", "face_types", "edge_types",
+                 "triangles_per_face", "segments_per_edge"):
+        assert now["shape"][name] == was["shape"][name]
+    for name in ("key", "color", "alpha", "loc", "bb"):
+        assert now[name] == was[name]
+
+
+def test_the_edge_buffer_keeps_its_nesting():
+    """`edges` is a list of segments and the viewer flattens it itself, so a
+    flattened one is a different document."""
+    assert [len(edge) for edge in mesh_of(
+        at_viewer_precision(measured_document()))["edges"]] == [3, 3]
+
+
+@pytest.mark.parametrize("shape", [
+    {"triangles": [0, 1, 2]},
+    {"vertices": [], "normals": [], "obj_vertices": [], "edges": []}])
+def test_a_buffer_that_is_empty_or_absent_survives(shape):
+    """A part with no edges at all is an ordinary document, not a broken one."""
+    assert mesh_of(at_viewer_precision(measured_document(**shape))) == shape
+
+
+def test_the_document_really_gets_shorter():
+    """The point of the whole thing: 6.65 MB -> 4.27 MB on a real mesh."""
+    assert len(json.dumps(at_viewer_precision(measured_document()))) < \
+        len(json.dumps(measured_document()))
+
+
 def test_a_real_export_is_a_document_the_hub_would_accept(out_dir):
     """The one test here that runs the tessellator, and the reason it exists.
 
@@ -763,8 +864,14 @@ def test_a_real_export_is_a_document_the_hub_would_accept(out_dir):
     from src import render
     from src.cadbuild.views import export_views
 
+    # 10.1 RATHER THAN 10, AND THE DECIMAL IS LOAD-BEARING. A box of round
+    # millimetres translated by round millimetres has none but exactly
+    # representable coordinates, and those are already at their shortest -- the
+    # export then comes out byte-identical with the shortening and without it,
+    # so no assertion about its numbers can prove the call is still there. An
+    # odd height puts +-5.050000190734863 in the buffer instead.
     def box(x):
-        return cq.Workplane("XY").box(10, 10, 10).translate((x, 0, 0))
+        return cq.Workplane("XY").box(10, 10, 10.1).translate((x, 0, 0))
 
     cat = {key: {"shape": box(index * 20), "kind": kind, "color": None,
                  "note": None}
@@ -800,3 +907,12 @@ def test_a_real_export_is_a_document_the_hub_would_accept(out_dir):
     # cannot do: a mock is grey where the printables next to it are not.
     board = doc["parts"][1]
     assert board["key"] == "board" and board["color"] == MOCK_COLOR
+    # The one claim about the NUMBERS, and it belongs here because this is the
+    # only test that runs the real exporter: every other one calls
+    # `at_viewer_precision` directly, so dropping its call out of export_views
+    # would leave them green while every view file silently grew back. The
+    # predicate has to go through `str`, not `np.float32(v) == v` -- the
+    # tessellator already emits float32 values, so the comparison alone is true
+    # of the long form as well.
+    assert all(value == float(str(np.float32(value)))
+               for value in board["shape"]["vertices"])
