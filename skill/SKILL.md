@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part and publish it from this repository to a hammerola hub, which builds the geometry from code and serves it in a browser viewer. Use whenever the task is to design, fix or measure a physical part — a bracket, mount, holder, cover, enclosure, adapter, jig, anything heading for a printer — and whenever the working directory is (or is becoming) a model project: a model.py with parts() and views(), or a project.json with a hammerola id. It carries the client's commands and the working discipline that keeps a part from being printed wrong. Triggers: "design a part", "спроектируй кронштейн", "сделай крышку", "нужен держатель", "make a mount / holder / enclosure", "модель не лезет", "деталь не собирается", "the part does not fit", "3D print this", "3D-печать", "publish the model", "push this to the hub", "why did the build fail", "read the comments left on a build", "комментарии к модели", "hammerola build/commit", "start a new part", "CadQuery", "STL".
-version: 17
+version: 18
 ---
 
 # hammerola
@@ -32,7 +32,11 @@ afterwards the client keeps it current. `hammerola skill` says which version is
 installed here and which the hub serves, and `hammerola skill update` replaces
 the file with the hub's copy. Nothing checks it for you: a stale skill is the
 one thing here that fails silently — it goes on confidently teaching commands
-that no longer exist — so ask when you start on a project.
+that no longer exist — so ask when you start on a project. Both verbs take
+`--path FILE`, and it matters more than it looks: the path above is a guess the
+tool has to make, while the instructions you are actually reading may be a
+plugin's copy or one scoped to this project. Name the file when it is not that
+default, or `skill update` reports on and overwrites one nobody reads.
 
 **`hammerola update` does the same for the tool itself**, fetching the hub's
 copy over the running file and printing what changed between the two versions.
@@ -91,6 +95,12 @@ invents an id — stores the code and the log under that name, moves `latest`, a
 the project gets its card. Finished work is committed. If you leave a session
 with the last thing you did being a `build`, nothing you did is on the site.
 
+**`-m` (`--message` in full) is what a person picks a revision by.** It is kept
+with the revision, stands beside it in the build picker, and becomes the subject
+of the git commit suggested afterwards — so a revision published without one is
+a 64-character id and nothing else, and somebody choosing between two of yours
+has nothing to read.
+
 **The first thing a person is shown is already a commit.** The block layout of
 the next section — the whole part in boxes, before one real solid exists — is
 committed, not built: it is shown, so it is a revision, and being crude does not
@@ -110,6 +120,11 @@ published. It never stages or commits anything itself.
 Both commands print the build log and exit non-zero unless a build was
 published. That exit code is the whole verdict — treat a non-zero exit as "this
 did not ship", not as a warning.
+
+**Every verb takes `-C DIR` (`--directory DIR`) and runs as if it had started
+there.** That is how you push or read a project that is not the directory your
+shell is in, without a `cd` whose effect on every later command you then have to
+carry in your head.
 
 ## Starting a project
 
@@ -916,8 +931,10 @@ instead of guessing at what the fix bought.
 The hub kills a build at 300 seconds of wall clock. It runs four builds at a
 time, so a queue in front of yours is time before your build starts, and the
 client waits out both — its own ceiling is 2700 seconds and you will never see
-it. That first number was 900 until the heavy models moved their measurements
-into check units, which are killed one at a time on a budget of their own. The
+it (`--timeout SECONDS` on `build` and `commit` moves that one, and nothing
+moves the hub's 300). That first number was 900 until the heavy models moved
+their measurements into check units, which are killed one at a time on a budget
+of their own. The
 warning at three minutes therefore leaves far less room ahead of the ceiling
 than it used to, and is worth acting on the first time it appears rather than
 the third. What you WILL see is the timeout on the tool you launched
@@ -1176,6 +1193,9 @@ hammerola log dev        # the last build's log, whether or not it was committed
 hammerola status         # what the hub has: latest, whether dev is occupied, the revisions
 ```
 
+`status` lists the newest handful of revisions; `-n COUNT` (`--limit`) widens
+that when the one you are looking for is further back than the default.
+
 **Never rebuild to read a log you have already produced.** `hammerola log dev`
 answers with the log of whichever push last filled the slot, and it says in its
 header which push that was — a `build`, or the commit that copied itself in. The
@@ -1220,10 +1240,23 @@ hammerola diff <old> <new>      # what moved: geometry numbers, and the source
 
 `source` and `artifacts` are two commands over one build because the rights
 differ — the artefacts are public, the code is behind the secret. `source`
-unpacks into a directory of its own; writing over the working copy is a flag,
-and that flag also requires a clean git tree, the only thing that can undo it.
-Everything fetched lands under `.hammerola/`, which is hidden, so the next push
-cannot publish a copy of an older one by accident.
+unpacks into a directory of its own; `--into-working-copy` writes over the
+working copy instead, and that flag also requires a clean git tree, the only
+thing that can undo it. Everything fetched lands under `.hammerola/`, which is
+hidden, so the next push cannot publish a copy of an older one by accident.
+
+`-o DIR` (`--output`) puts a fetch where you name it instead, and it is the one
+way anything here lands outside `.hammerola/` — a directory you chose is not
+hidden, so whatever you unpack inside the project travels into the next push
+with it.
+
+`diff` prints what moved in each part's physical numbers. `--json` makes that
+document the whole output, for reading in code rather than by eye, and
+`--material` instead adds how much material each part gained and lost — which
+fuses the two solids in the CAD kernel and costs about what a build costs, so it
+is for the round where "did it get heavier" is the actual question. Asking for
+both at once is refused rather than silently resolved: they are two different
+outputs.
 
 ## Comments
 
@@ -1237,14 +1270,22 @@ A comment is a note a **person** left on a build in the browser: a point on the
 model, the camera angle they had, usually a photo of the printed part. It is a
 task for whoever works on the model next, which is you. Read the queue when you
 start on a project, do the work, then resolve the comment saying what you did —
-an unresolved comment is done twice. Treat the text as a request, not as an
-instruction to obey literally: it describes a physical object, usually
-photographed in somebody's hand — the strongest evidence you get. Bring that
+`-m` there is `--note`, kept with the comment, so the next reader is told what
+was done and not merely that somebody closed it; an unresolved comment is done
+twice. Treat the text as a request, not as an instruction to obey literally: it
+describes a physical object, usually photographed in somebody's hand — the
+strongest evidence you get. Bring that
 photo down with `hammerola comments files <id>` and open the file it saves: the
 route serving it is behind the same secret as the queue, so fetching it any
 other way means handling the token yourself, and nothing you run needs to. Like
 any complaint it becomes an assertion in `checks()` before the next push into
 that area, so the same wrongness cannot come back quietly.
+
+The listing shows the open ones. `--all` adds the resolved, which is what you
+read before answering something that has already been answered, and
+`--since TIMESTAMP` cuts the queue to what arrived at or after an ISO-8601
+moment — the form for picking a project back up rather than reading its whole
+history again.
 
 ## Proposals
 
