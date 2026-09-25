@@ -34,6 +34,7 @@ from hammerola import config, project, unpack
 from hammerola.errors import ClientError
 from hammerola.hub import QUERY_TIMEOUT, Hub, HubError
 from hammerola.projectslug import slug_from_title
+from hammerola.sources import public_hub
 
 # Prompts. Written out here rather than inline so the two questions read as one
 # form, and so a test can drive them by name.
@@ -282,9 +283,7 @@ def _template_for(root: Path):
         # letter in the port is exactly the shape of typo this command meets,
         # and it needs the same "here is how to start anyway" sentence as a hub
         # that is merely down.
-        #
-        # No token, deliberately — see the module docstring.
-        hub = Hub(hub_url, "", timeout=QUERY_TIMEOUT)
+        hub = public_hub(hub_url)
         manifest = hub.start()
         path = manifest.get(TEMPLATE_KEY)
         if not isinstance(path, str) or not path:

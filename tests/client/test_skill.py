@@ -32,7 +32,7 @@ import pytest
 from harness import TOKEN
 
 from src import onboarding
-from hammerola import config, skill
+from hammerola import config, skill, sources
 from hammerola.cli import main
 
 
@@ -291,16 +291,21 @@ def test_neither_verb_presents_a_secret(configured, installed, monkeypatch):
     request carrying a secret would be answered exactly the same way and the
     experiment would prove nothing. A wrong value is put in the environment so
     that "never read" is what passes rather than "there was nothing to read".
+
+    Watched where the handle is BUILT, which since #108 is
+    `sources.public_hub` — both verbs reach it through that one factory, and a
+    token creeping into it would be a secret presented by `create` and `update`
+    as well.
     """
     presented = []
-    real = skill.Hub
+    real = sources.Hub
 
     class Watched(real):
         def __init__(self, url, token, **kw):
             presented.append(token)
             super().__init__(url, token, **kw)
 
-    monkeypatch.setattr(skill, "Hub", Watched)
+    monkeypatch.setattr(sources, "Hub", Watched)
     monkeypatch.setenv("EDIT_TOKEN", "not-" + TOKEN)
 
     assert main(["skill", "update", "--path", str(installed)]) == 0

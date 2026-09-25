@@ -78,6 +78,26 @@ def hub_for(root) -> Hub:
                timeout=QUERY_TIMEOUT)
 
 
+def public_hub(hub_url: str) -> Hub:
+    """The hub handle for the routes that present no secret. -> Hub.
+
+    Shared by `create`'s template download, `skill`, `skill update`, `update`
+    and the version question `build` and `commit` ask before they publish — five
+    byte-identical copies of one line until they became this call (issue #108),
+    so a timeout or a header added to the client has ONE place to go.
+
+    THE EMPTY TOKEN IS THE ANSWER AND NOT A DEFAULT LEFT TO FILL IN. `/start`
+    and the files it names are public on purpose (`src/onboarding.py`): the
+    reader of the instructions has not been handed a password yet, and a machine
+    whose client is too old to publish may never have been logged in at all.
+
+    AN ADDRESS AND NOT A PROJECT ROOT, which is what tells this apart from
+    `hub_for` above: none of these verbs addresses a project, so none of them
+    has a directory to read a setting out of.
+    """
+    return Hub(hub_url, "", timeout=QUERY_TIMEOUT)
+
+
 def scratch_dir(base, name: str):
     """`<base>/.hammerola/<name>`, with the directory and its .gitignore made.
 
