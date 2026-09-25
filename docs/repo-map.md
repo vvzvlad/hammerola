@@ -394,6 +394,10 @@
   cannot see a file that is not there, so without that refusal a stripped image
   served a 200 and an archive that died on the laptop that downloaded it
 - `docs/SPEC.md` — requirements, verified facts and the work plan (section 8A)
+- `docs/ui-brief.md` — what the interface is FOR, and the vocabulary its panels
+  use; `docs/viewer-api.md` — which of the vendored viewer is a public API and
+  what `ui/src/viewport/` reaches into at its own risk. Listed here because the
+  only way in used to be a comment inside the code that needed them (#100)
 - `main.py` — thin entry point over `src/`
 - `pyproject.toml` — packaging metadata for the CLIENT and for nothing else: the
   distribution name `hammerola`, the `>=3.9` floor, no dependencies at all and
