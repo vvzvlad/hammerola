@@ -159,6 +159,8 @@ export { isMaterialXMaterial } from "./core/types.js";
 // Instanced/compressed format decoding
 export {
   isInstancedFormat,
+  decodeBuffers,
+  resolveInstances,
   decodeInstancedFormat,
 } from "./utils/decode-instances.js";
 

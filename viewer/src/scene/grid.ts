@@ -294,13 +294,7 @@ class Grid extends THREE.Group {
     this.getAxes0 = getAxes0;
     this.onGridChange = onGridChange || null;
 
-    // Heuristics, experimentally determined
-    const size = bbox.max_dist_from_center();
-    const canvasSize = Math.min(cadWidth, height);
-    const scale = Math.max(1.0, 6 - Math.log2(canvasSize / 100));
-    this.minFontIndex = Math.round(
-      (size < 2 ? 6 : size < 1000 ? 5 : 3) * scale,
-    );
+    this.minFontIndex = this.computeMinFontIndex();
     this.minZoomIndex = -4;
     this.zoomMaxIndex = 5;
 
@@ -328,6 +322,29 @@ class Grid extends THREE.Group {
     };
 
     this.create();
+  }
+
+  /**
+   * Heuristics, experimentally determined
+   */
+  private computeMinFontIndex(): number {
+    const size = this.bbox.max_dist_from_center();
+    const canvasSize = Math.min(this.cadWidth, this.height);
+    const scale = Math.max(1.0, 6 - Math.log2(canvasSize / 100));
+    return Math.round((size < 2 ? 6 : size < 1000 ? 5 : 3) * scale);
+  }
+
+  /**
+   * Update the cached canvas dimensions after the CAD view was resized.
+   * The label scale is derived from these (see calculateTextScale), so the
+   * caller must rescale afterwards via scaleLabels() / update(zoom, true).
+   * @param cadWidth - New width of the CAD view in pixels
+   * @param height - New height of the CAD view in pixels
+   */
+  resize(cadWidth: number, height: number): void {
+    this.cadWidth = cadWidth;
+    this.height = height;
+    this.minFontIndex = this.computeMinFontIndex();
   }
 
   /**
@@ -489,7 +506,14 @@ class Grid extends THREE.Group {
       );
 
       let label: THREE.Sprite;
-      for (let x = -this.size / 2; x <= this.size / 2; x += this.delta / 2) {
+      // A grid of no size has no labels, and asking for them hangs the tab:
+      // `niceBounds` answers [0, 0, 0] for a bounding box whose largest extent
+      // is zero - which is what an empty model gives it - so `delta` is zero
+      // and the loop below steps by zero, never advancing and never throwing.
+      // Guarded here rather than in `niceBounds`, whose answer is right: there
+      // is nothing to place ticks on.
+      const step = this.delta / 2;
+      for (let x = -this.size / 2; step > 0 && x <= this.size / 2; x += step) {
         if (Math.abs(x) < 1e-6) {
           continue;
         } // skip center label

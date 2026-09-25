@@ -214,22 +214,49 @@ function isInstancedFormat(data: unknown): data is InstancedData {
 }
 
 /**
+ * Decode every instance's buffers from base64 into TypedArrays.
+ *
+ * This is the leaf half of the instanced format: it knows the encoding and
+ * nothing about the shapes tree. A host that receives its geometry as raw
+ * binary rather than base64 skips this step and builds the `Shape[]` itself.
+ */
+function decodeBuffers(instances: EncodedInstance[]): Shape[] {
+  return instances.map(decodeInstance);
+}
+
+/**
+ * Resolve `{ ref: N }` entries in the shapes tree against decoded instances,
+ * and return the tree.
+ *
+ * This is the structural half: the same geometry referenced N times - twenty
+ * identical bolts - which every host needs whatever encoding it received the
+ * buffers in. Held separate from `decodeBuffers` so that a host holding
+ * TypedArrays already does not have to reimplement the walk.
+ */
+function resolveInstances(shapes: Shapes, decoded: Shape[]): Shapes {
+  resolveRefs(shapes, decoded);
+  return shapes;
+}
+
+/**
  * Decode the instanced format into a standard Shapes object.
  *
  * 1. Decode all instance buffers from base64 → TypedArrays
  * 2. Walk the shapes tree and replace { ref: N } with decoded instances
  * 3. Return the unwrapped Shapes object
+ *
+ * Kept as the composition of the two halves above, so existing callers see
+ * no change.
  */
 function decodeInstancedFormat(data: InstancedData): Shapes {
-  // Decode all instances
-  const decoded = data.instances.map(decodeInstance);
-
-  // Resolve all shape references
-  const shapes = data.shapes;
-  resolveRefs(shapes, decoded);
-
-  return shapes;
+  return resolveInstances(data.shapes, decodeBuffers(data.instances));
 }
 
-export { isInstancedFormat, decodeInstancedFormat, decodeInlineBuffers };
+export {
+  isInstancedFormat,
+  decodeBuffers,
+  resolveInstances,
+  decodeInstancedFormat,
+  decodeInlineBuffers,
+};
 export type { InstancedData, EncodedBuffer, EncodedInstance };

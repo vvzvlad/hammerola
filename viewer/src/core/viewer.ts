@@ -1243,6 +1243,11 @@ class Viewer {
       deepDispose(this._rendered.camera);
       deepDispose(this._rendered.controls);
       deepDispose(this._rendered.treeview);
+      // The orientation marker owns its own THREE.Scene (cones, labels, sphere,
+      // axes), not part of the main scene above, so it needs its own dispose —
+      // without it every clear()/render() cycle left 8 geometries and 3 programs
+      // behind on the GL (measured 2026-09-17, working-docs/leak-harness.html).
+      this._rendered.orientationMarker.dispose();
 
       // clear tree view
       this.display.clearCadTree();
@@ -4575,7 +4580,14 @@ class Viewer {
       this.display.updateHelp(before, modifiers);
     }
 
-    KeyMapper.setActionShortcuts(actions);
+    if (Object.keys(actions).length > 0) {
+      // Merge over the existing table: a partial config (e.g. modifiers only)
+      // must not wipe the action shortcuts
+      KeyMapper.setActionShortcuts({
+        ...KeyMapper.getActionShortcuts(),
+        ...actions,
+      });
+    }
     this.display.updateTooltips();
   }
 
@@ -4640,12 +4652,21 @@ class Viewer {
     // Resize the id pick target to match the canvas
     this.idPicker?.setSize(cadWidth, height);
 
-    // Adapt display dimensions
+    // Adapt display dimensions. `glass` and `tools` are part of the sizes:
+    // setSizes widens the toolbar and the body by the tree only when the tree
+    // sits beside the canvas (`tools && !glass`), and updates the tree and
+    // info heights only outside glass mode. Leaving them out meant neither
+    // branch could ever be taken from a resize, so a non-glass viewer got a
+    // toolbar and a body of `cadWidth + 2` with a `treeWidth + cadWidth` row
+    // inside them - measured as a 550px toolbar over 802px of content - and a
+    // tree that kept its old height. `glassMode` passes both and was right.
     this.display.setSizes({
       treeWidth: treeWidth,
       treeHeight: this.state.get("treeHeight"),
       cadWidth: cadWidth,
       height: height,
+      glass: glass,
+      tools: this.state.get("tools"),
     });
     // Set glass state - subscription will update UI
     this.state.set("glass", glass);
@@ -4656,6 +4677,14 @@ class Viewer {
     // Adapt camera to new dimensions
     this.rendered.camera.changeDimensions(this.bb_radius, cadWidth, height);
     this.controls.handleResize();
+
+    // Rescale the grid labels explicitly: their size is derived from the
+    // canvas height (and, for ortho, the frustum), both of which just
+    // changed — but a resize alone never trips the zoom-based rescale gate
+    // in Grid.update().
+    this.rendered.gridHelper.resize(cadWidth, height);
+    this.rendered.gridHelper.scaleLabels();
+    this.rendered.gridHelper.update(this.rendered.camera.getZoom(), true);
 
     // Resize the post-processing composer (render targets must match viewport)
     this._studioManager.setSize(cadWidth, height);

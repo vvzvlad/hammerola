@@ -127,6 +127,7 @@ class ObjectGroup extends THREE.Group {
   private _cadOriginalBackColor: THREE.Color | null;
   private _isStudioMode: boolean;
   private _cadEdgesVisible: boolean | null;
+  private _cadVerticesVisible: boolean | null;
 
   /**
    * Create an ObjectGroup for managing a CAD object's visual representation.
@@ -180,6 +181,7 @@ class ObjectGroup extends THREE.Group {
     this._cadOriginalBackColor = null;
     this._isStudioMode = false;
     this._cadEdgesVisible = null;
+    this._cadVerticesVisible = null;
   }
 
   /**
@@ -224,6 +226,7 @@ class ObjectGroup extends THREE.Group {
     this._cadOriginalBackColor = null;
     this._isStudioMode = false;
     this._cadEdgesVisible = null;
+    this._cadVerticesVisible = null;
   }
 
   /**
@@ -614,7 +617,12 @@ class ObjectGroup extends THREE.Group {
       }
     }
     if (this.vertices) {
-      this.vertices.material.visible = flag;
+      if (this._isStudioMode) {
+        // Same rule as edges: Studio hides vertices, record the CAD intent only.
+        this._cadVerticesVisible = flag;
+      } else {
+        this.vertices.material.visible = flag;
+      }
     }
     this._syncPickVertices();
   }
@@ -842,9 +850,13 @@ class ObjectGroup extends THREE.Group {
       ? this.originalBackColor.clone()
       : null;
 
-    // Save edge visibility state
+    // Save edge and vertex visibility state (also for edge-only / vertex-only
+    // groups, which have no front mesh and get no studio material)
     this._cadEdgesVisible = this.edgeMaterial
       ? this.edgeMaterial.visible
+      : null;
+    this._cadVerticesVisible = this.vertices
+      ? this.vertices.material.visible
       : null;
 
     // --- Swap front material ---
@@ -906,25 +918,31 @@ class ObjectGroup extends THREE.Group {
       this.originalBackColor = this._cadOriginalBackColor.clone();
     }
 
-    // --- Restore edge visibility ---
+    // --- Restore edge and vertex visibility ---
     if (this.edgeMaterial && this._cadEdgesVisible !== null) {
       this.edgeMaterial.visible = this._cadEdgesVisible;
+    }
+    if (this.vertices && this._cadVerticesVisible !== null) {
+      this.vertices.material.visible = this._cadVerticesVisible;
     }
 
     this._isStudioMode = false;
   }
 
   /**
-   * Toggle edge visibility while in Studio mode.
+   * Toggle edge and vertex visibility while in Studio mode.
    *
-   * Only affects edges (not vertices). Should only be called while in
-   * Studio mode; the saved CAD edge visibility is not affected.
+   * Should only be called while in Studio mode; the saved CAD edge/vertex
+   * visibility is not affected and is restored by `leaveStudioMode()`.
    *
-   * @param visible - Whether edges should be visible
+   * @param visible - Whether edges and vertices should be visible
    */
   setStudioShowEdges(visible: boolean): void {
     if (this.edgeMaterial) {
       this.edgeMaterial.visible = visible;
+    }
+    if (this.vertices) {
+      this.vertices.material.visible = visible;
     }
   }
 }

@@ -356,8 +356,10 @@
   `make test` work on a machine with no node at all. The output path is written
   in five files that never import each other, and `tests/test_ui_bundle.py` is
   what keeps them in step; `ui/README.md` has the layout and the pins
-- `viewer/` — the viewer LIBRARY's own source: `three-cad-viewer` v5.0.1 forked
-  into this tree (MIT, issue #14), because what we need from it are two edits to
+- `viewer/` — the viewer LIBRARY's own source: `three-cad-viewer` forked into
+  this tree (MIT, issue #14; the tag and commit it sits on are recorded in
+  `static/_v/PROVENANCE.md` and nowhere else, so an upgrade moves one file),
+  because what we need from it are two edits to
   its BUILD — `external: three`, so three ships once beside the bundle instead
   of inside it, and an index that re-exports three's namespace. A fork kept as
   SOURCE is what makes those two rebasable onto the next tag; a patched artefact
