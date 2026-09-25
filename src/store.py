@@ -121,7 +121,7 @@ from src.archive import (ALPHABET_FAULT, ARCHIVE_OVERHEAD_BYTES, CHUNK,
                          _open_member_dir, _pax_header_chars,
                          _refused_names_error, _shown_untrusted, unpack)
 from src.errors import PublishError
-from src.safeio import open_regular, read_regular_text
+from src.safeio import open_regular, read_regular_text, resolve_settled
 
 # Identifiers that arrive in the URL. No dot at all: that keeps a build directory
 # from ever colliding with `builds.json`, and keeps it from being a dot-entry the
@@ -181,6 +181,15 @@ POINTER_NAMES = (LATEST_LINK, DEV_LINK)
 # (SPEC 7A.2), where it costs a build the ability to be commented on and nothing
 # else, and app.py documents that trade.
 RESERVED_BUILD_NAMES = set(POINTER_NAMES)
+
+# The three documents this hub generates, one per level of the layout above: a
+# build's `meta.json`, a project's `builds.json` and the root `index.json`.
+# Named here rather than spelled again at every reader (issue #105), because the
+# layout is this module's to know — and because the URL of each of the three IS
+# its file name, so the name on disk and the address cannot be renamed apart.
+BUILD_META_FILE = "meta.json"
+PROJECT_BUILDS_FILE = "builds.json"
+SITE_INDEX_FILE = "index.json"
 
 # Where the payload digest of a build is remembered, so a retry of the same commit
 # can be told apart from a different build claiming the same commit (SPEC 7).
@@ -583,6 +592,51 @@ class Store:
         with self._locks_guard:
             return self._locks.setdefault(pid, threading.Lock())
 
+    # -- addresses on the volume -------------------------------------------
+    # ONE PLACE THAT KNOWS THE LAYOUT, and that is the whole of what this
+    # section buys (issue #105). A caller that assembles `projects_dir / pid /
+    # commit / "meta.json"` for itself has taken a copy of the layout, and the
+    # copies are what make the layout impossible to move: the file server would
+    # go on reading the old shape while this module wrote the new one. These are
+    # addresses and nothing else — none of them touches the disk, and none of
+    # them says the file is there.
+    def project_dir(self, pid: str) -> Path:
+        """Everything this hub holds about one project."""
+        return self.projects_dir / pid
+
+    def build_dir(self, pid: str, name: str) -> Path:
+        """One build of it, by commit id or by either pointer name."""
+        return self.project_dir(pid) / name
+
+    def build_meta_path(self, pid: str, name: str) -> Path:
+        """The document that decides whether that build can be served."""
+        return self.build_dir(pid, name) / BUILD_META_FILE
+
+    def builds_json_path(self, pid: str) -> Path:
+        """The project's build picker."""
+        return self.project_dir(pid) / PROJECT_BUILDS_FILE
+
+    def site_index_path(self) -> Path:
+        """The front page's cards. Absent until the first push."""
+        return self.root / SITE_INDEX_FILE
+
+    def resolve_inside(self, path: Path) -> Path:
+        """The path with its symlinks followed, refused unless it lands in here.
+
+        WHERE THE VOLUME ENDS IS THIS MODULE'S QUESTION, so the file server asks
+        it rather than measuring against a root of its own. OSError when the path
+        cannot be resolved and ValueError when it resolves outside DATA_DIR —
+        which is the pair every caller already answers with one 404.
+
+        `resolve_settled` AND NOT `resolve`, because `latest` is a symlink being
+        swapped under the reader by whoever is publishing: this is the same
+        answer with an EINVAL retried (issue #70, `safeio` carries the
+        measurement). A missing file is still refused on the first try.
+        """
+        resolved = resolve_settled(path)
+        resolved.relative_to(self.root)
+        return resolved
+
     # -- publish -----------------------------------------------------------
     def upload_path(self) -> Path:
         """A private path under DATA_DIR for one request body.
@@ -769,7 +823,7 @@ class Store:
             return
         try:
             with self._lock_for(pid):
-                path = final / "meta.json"
+                path = final / BUILD_META_FILE
                 meta = json.loads(read_regular_text(path))
                 if meta.get("message") == message:
                     return
@@ -1191,7 +1245,7 @@ class Store:
         tmp = pdir / f"{STAGING_PREFIX}{DEV_LINK}-{uuid.uuid4().hex}"
         try:
             shutil.copytree(final, tmp)
-            (tmp / "meta.json").write_text(
+            (tmp / BUILD_META_FILE).write_text(
                 json.dumps(dict(meta, commit=DEV_LINK, dev=True, job=job),
                            indent=1),
                 encoding="utf-8")
@@ -1326,7 +1380,7 @@ class Store:
         # under a commit URL's year of `immutable` would pin every published build
         # to the viewer markup of the day it was pushed. app.py renders it from
         # the template instead, the same way it serves `/`.
-        (staging / "meta.json").write_text(
+        (staging / BUILD_META_FILE).write_text(
             json.dumps(meta, indent=1), encoding="utf-8")
         (staging / PAYLOAD_DIGEST_FILE).write_text(digest, encoding="utf-8")
         return meta
@@ -1342,7 +1396,7 @@ class Store:
         in after the `is_file()` used to be a publish worker gone for good, and
         is now the same `OSError` an unreadable file was always answered with.
         """
-        path = staging / "meta.json"
+        path = staging / BUILD_META_FILE
         if not path.is_file():
             raise PublishError(422, "the build produced no meta.json")
         try:
@@ -1452,7 +1506,7 @@ class Store:
                 continue
             if entry.name in RESERVED_BUILD_NAMES:
                 continue
-            meta_path = entry / "meta.json"
+            meta_path = entry / BUILD_META_FILE
             if not meta_path.is_file():
                 continue
             try:
@@ -1531,7 +1585,7 @@ class Store:
         renamed = self.project_title(pid)
         if renamed is not None:
             picker["title"] = renamed
-        _atomic_write_json(self.projects_dir / pid / "builds.json", picker)
+        _atomic_write_json(self.builds_json_path(pid), picker)
 
     def _dev_meta(self, pid: str) -> dict | None:
         """The local slot's meta.json, or None if the slot is empty.
@@ -1542,7 +1596,7 @@ class Store:
         """
         try:
             meta = json.loads(read_regular_text(
-                self.projects_dir / pid / DEV_LINK / "meta.json"))
+                self.build_meta_path(pid, DEV_LINK)))
         except (ValueError, OSError, RecursionError):
             return None
         return meta if _usable_meta(meta, DEV_LINK) else None
@@ -1644,7 +1698,7 @@ class Store:
                         card["title"] = renamed
                     cards.append(card)
             cards.sort(key=lambda c: c["built"], reverse=True)
-            _atomic_write_json(self.root / "index.json", cards)
+            _atomic_write_json(self.site_index_path(), cards)
 
     # -- the draft's last build --------------------------------------------
     def draft_job(self, pid: str) -> str | None:
