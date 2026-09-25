@@ -271,6 +271,10 @@ def _read_record(path: Path) -> dict | None:
     under `data/`, a build can write anywhere on that volume, and a plain
     `open()` on a fifo planted there parks the request thread for good.
     `NotRegularFile` is an `OSError`, so it lands in the arm already written.
+
+    NO WRITE-BACK, for the reason `comments._read_record` gives: this runs per
+    request rather than into a registry a start builds, so there is no long-lived
+    copy to diverge from the volume (#107).
     """
     try:
         record = json.loads(read_regular_text(path))
