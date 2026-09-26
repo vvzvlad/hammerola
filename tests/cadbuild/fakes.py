@@ -201,26 +201,65 @@ def part(x=0.0, y=0.0, size=10.0, volume=1000.0, areas=(100.0, 100.0, 50.0)):
                            volume=volume, areas=areas))
 
 
+class Mesh:
+    """A trimesh.Trimesh as far as this build reads one: three arrays and a box.
+
+    `parts.MESH_ATTRS` is the list, and this implements exactly it -- so a test
+    that builds a scene out of these is testing the same interface a real
+    Trimesh presents, on a python with no trimesh installed at all. That a REAL
+    one presents it is pinned separately, by the tests that load one.
+
+    The default is a unit tetrahedron, which is the smallest thing with a
+    volume: four vertices, four faces, and a box that is not a point.
+    """
+
+    def __init__(self, vertices=None, faces=None, normals=None):
+        self.vertices = vertices if vertices is not None else [
+            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        self.faces = faces if faces is not None else [
+            [0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]
+        self.vertex_normals = normals if normals is not None else [
+            [0.0, 0.0, -1.0]] * len(self.vertices)
+
+    @property
+    def bounds(self):
+        """`[[xmin, ymin, zmin], [xmax, ymax, zmax]]`, trimesh's own shape."""
+        columns = list(zip(*self.vertices))
+        return [[min(values) for values in columns],
+                [max(values) for values in columns]]
+
+
 def catalogue(**kinds):
     """A read catalogue: `catalogue(lid="printable", screw="hardware")`.
 
     Every entry gets a part of its own standing at the origin. Where a test
     cares where a part stands it passes the object instead of the kind:
-    `catalogue(lid=("printable", part(x=50)))`.
+    `catalogue(lid=("printable", part(x=50)))`. A `Mesh` passed that way lands
+    under `mesh` rather than under `shape`, which is where `read_catalogue` puts
+    one -- `catalogue(scan=("mock", Mesh()))`.
     """
     read = {}
     for key, value in kinds.items():
         kind, obj = value if isinstance(value, tuple) else (value, part())
-        read[key] = {"shape": obj, "kind": kind, "color": None, "note": None}
+        mesh = obj if isinstance(obj, Mesh) else None
+        read[key] = {"shape": None if mesh is not None else obj, "mesh": mesh,
+                     "kind": kind, "color": None, "note": None}
     return read
 
 
 def node(key, obj=None, alpha=1.0, at=None, color="#000000", deformed=None,
          label=None):
-    """One leaf, in the shape prepare_views produces."""
+    """One leaf, in the shape prepare_views produces.
+
+    A `Mesh` handed over as `obj` makes a MESH leaf, whose `shape` is None --
+    exactly one of the two is set on every leaf `_read_reference` builds.
+    """
+    mesh = obj if isinstance(obj, Mesh) else None
     return {
         "key": key,
-        "shape": obj if obj is not None else part(),
+        "shape": None if mesh is not None else (obj if obj is not None
+                                                else part()),
+        "mesh": mesh,
         "color": color,
         "alpha": alpha,
         "at": at,

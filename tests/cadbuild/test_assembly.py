@@ -32,7 +32,7 @@ from src.cadbuild.errors import BuildError
 from src.cadbuild.parts import RESERVED_STEMS
 from src.cadbuild.printables import overview_meshes, preview_files
 
-from fakes import Box, Shape, Workplane, catalogue, node, part, view
+from fakes import Box, Mesh, Shape, Workplane, catalogue, node, part, view
 
 
 class Recording(Shape):
@@ -309,6 +309,33 @@ def test_the_scenery_is_in_the_file_and_out_of_the_measurement(exported, out_dir
     # Both bodies went into the file, and the count is what the picture's footer
     # is told.
     assert parts == 2
+    assert [path.name for path in out_dir.iterdir()] == [f"{ASSEMBLED_STEM}.stl"]
+
+
+def test_a_mesh_leaf_is_drawn_and_never_glued(exported, out_dir):
+    """The one thing `assembled.stl` leaves out, and why it is not a decision.
+
+    A `mesh` entry holds a trimesh: there is nothing for `Compound.makeCompound`
+    to glue and nothing for `exportStl` to mesh, so it cannot be in this file at
+    any price -- while the view document the browser loads has it. It is out of
+    the measurement too, but for the ordinary reason every mock is: scenery
+    overlaps the product by construction.
+
+    Passing is also the proof that `as_shapes` never saw it: a mesh leaf carries
+    no `shape` at all, so reaching it would refuse the build.
+    """
+    calls, _ = exported
+    product = Recording(calls, box=Box(0, 0, 0, 30, 40, 50))
+    prepared = [view(ASSEMBLED_VIEW_ID, [node("body", Workplane(product)),
+                                         node("scan", Mesh())])]
+
+    parts, bbox = export_assembled(prepared, out_dir,
+                                   catalogue(body="printable",
+                                             scan=("mock", Mesh())))
+
+    assert (bbox.xlen, bbox.ylen, bbox.zlen) == (30, 40, 50)
+    # ONE body in the file, not two: the mesh is not in it.
+    assert parts == 1
     assert [path.name for path in out_dir.iterdir()] == [f"{ASSEMBLED_STEM}.stl"]
 
 

@@ -32,6 +32,14 @@ Three forms of reference, and no fourth:
     is no "in place" to be a different shape in, and the plate is a file
     (see _refuse_deformed_on_the_plate).
 
+A reference to a `mesh` entry (parts.py) takes neither `at` nor the
+`shape`/`deformed` hatch; `alpha` still applies. `at` is REFUSED because it is
+applied with `Shape.moved()`, which a trimesh has no answer for, so a mesh
+arrives in the frame the model put it in -- transform it with trimesh before
+handing it to the catalogue. The hatch is REFUSED because a mesh entry has no
+shape of its own to be a different shape from, and that second refusal is what
+holds the leaf names apart (see `_mesh_leaf`).
+
 A group -- `{"group": "housing", "parts": [...]}`, nested to `MAX_VIEW_DEPTH`
 and REFUSED past it -- is presentation and nothing else: it is the author's own
 structure, not a classification by kind, and no gate can see it. Every gate
@@ -60,6 +68,10 @@ REFERENCE_KEYS = frozenset({"part", "at", "alpha", "shape", "deformed"})
 # ...and a GROUP is exactly these two, both required.
 GROUP_KEYS = frozenset({"group", "parts"})
 
+# The three axes a bounding box is measured on. The viewer reads the six numbers
+# as `xmin`/`xmax` and so on, which is the spelling `_widen_bb` writes.
+BB_AXES = ("x", "y", "z")
+
 
 def prepare_views(views, catalogue):
     """Validate everything views() returned, before any work is done.
@@ -75,7 +87,7 @@ def prepare_views(views, catalogue):
          "nested_ok":       {frozenset((key, key)), ...},
          "interference_ok": {frozenset((key, key)): "reason"},
          "tree":            groups and leaf indices, for the export,
-         "nodes":           [{"key", "shape", "color", "alpha", "at",
+         "nodes":           [{"key", "shape", "mesh", "color", "alpha", "at",
                               "deformed", "label"}, ...]}
 
     `nodes` IS THE FLAT LIST OF LEAVES and it is what every gate reads; `tree`
@@ -404,6 +416,21 @@ def _read_reference(entry, vid, catalogue, colors, nodes, spot):
                 'account for. {"deformed": "clamped round the pipe"}.'
             )
         reason = reason.strip()
+        # A MESH ENTRY HAS NOTHING FOR THIS HATCH TO DIFFER FROM, and letting
+        # it through is worse than meaningless. The tessellator names the solid
+        # leaf after the key, `_mesh_leaf` numbers the mesh occurrences of that
+        # key on its own, and the two then meet on one name: the tree comes out
+        # with two nodes on one id. Nothing downstream says so -- the hub's
+        # check does not read ids, and the viewer silently drops one of the two
+        # (measured in comparescene.py) -- so it reaches a published build.
+        if record["mesh"] is not None:
+            raise BuildError(
+                f'{spot} carries a "shape", and the catalogue holds {key!r} as '
+                'a mesh. "deformed" is for a part that is a different shape in '
+                "place, and a mesh entry has none of its own to differ from. A "
+                "mesh that is a different shape is a different mesh: load or "
+                "build the deformed one and give it a catalogue key of its own."
+            )
         as_shapes(shape, spot)
         # Printed rather than merely stored: this is the one place a view may
         # hold geometry, and a reader of the log has to be able to see every
@@ -411,6 +438,19 @@ def _read_reference(entry, vid, catalogue, colors, nodes, spot):
         # declared deformation is legal and the author has already explained
         # it.
         print(f"  {vid}: {key!r} carries geometry of its own -- {reason}")
+
+    # WHICH KIND OF GEOMETRY THIS LEAF IS. A reference that brought its own
+    # `shape` points at a solid entry -- the refusal above is what makes that
+    # true -- so the catalogue answers this on its own.
+    mesh = record["mesh"]
+    if mesh is not None and at is not None:
+        raise BuildError(
+            f'{spot}: "at" was given for a mesh. `at` is applied with '
+            "Shape.moved(), which a trimesh has no answer for, so a mesh "
+            "arrives in the frame the model put it in: transform it there -- "
+            "`mesh.apply_transform(...)`, `mesh.apply_translation(...)` -- "
+            "before handing it to the catalogue."
+        )
 
     alpha = entry.get("alpha", DEFAULT_ALPHA)
     if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
@@ -438,8 +478,12 @@ def _read_reference(entry, vid, catalogue, colors, nodes, spot):
 
     nodes.append({
         "key": key,
-        "shape": _placed(shape if shape is not None else record["shape"], at,
-                         spot),
+        # EXACTLY ONE OF THE TWO IS None ON EVERY LEAF, which is what lets
+        # everything downstream route on `node["mesh"] is None` rather than
+        # asking the catalogue again.
+        "shape": None if mesh is not None else _placed(
+            shape if shape is not None else record["shape"], at, spot),
+        "mesh": mesh,
         "color": colors[key],
         "alpha": alpha,
         "at": at,
@@ -727,6 +771,11 @@ def export_views(prepared, out_dir):
     Every node's `id` is rebuilt as the parent's id plus `/` plus its name,
     which is how the viewer's own paths are formed -- the leaf ids the
     tessellator wrote are for a flat document and would not match the tree.
+
+    A MESH LEAF IS NOT HANDED OVER. There is nothing for the tessellator to do
+    to a mesh -- it is triangles already -- and it takes CadQuery objects, so a
+    trimesh would end the export. `shaped_document` writes those leaves itself
+    and sews the two kinds back into one tree.
     """
     from ocp_tessellate.convert import export_three_cad_viewer_js
 
@@ -734,6 +783,7 @@ def export_views(prepared, out_dir):
     for view in prepared:
         vid = view["id"]
         nodes = view["nodes"]
+        solids = [node for node in nodes if node["mesh"] is None]
         filename = view["file"]
         target = out_dir / filename
 
@@ -742,10 +792,10 @@ def export_views(prepared, out_dir):
         # fetch() -- and the failure is silent, an empty scene (SPEC 5.1).
         started = time.monotonic()
         export_three_cad_viewer_js(
-            None, *[node["shape"] for node in nodes],
-            names=[node["key"] for node in nodes],
-            colors=[node["color"] for node in nodes],
-            alphas=[node["alpha"] for node in nodes],
+            None, *[node["shape"] for node in solids],
+            names=[node["key"] for node in solids],
+            colors=[node["color"] for node in solids],
+            alphas=[node["alpha"] for node in solids],
             filename=str(target),
         )
         if not target.exists():
@@ -787,32 +837,54 @@ def shaped_document(doc, view):
 
     Separated from the export so the whole rewrite can be tested without a CAD
     kernel: what goes in is a JSON document and what comes out is one.
+
+    THE TESSELLATOR SAW ONLY THE SOLID LEAVES, so its flat list lines up with
+    THOSE and not with `nodes`. A per-node list is built first, taking the next
+    tessellated entry for a solid leaf and writing a mesh leaf for a mesh one,
+    and the tree is then rebuilt against that -- because `tree` holds indices
+    into `nodes`, and a mesh leaf anywhere but the end would otherwise shift
+    every later solid leaf onto the wrong key, permanently, into an immutable
+    build.
     """
     flat = doc.get("parts")
     nodes = view["nodes"]
-    if not isinstance(flat, list) or len(flat) != len(nodes):
-        # The tessellator is handed one object per leaf and hands back one
+    solids = [node for node in nodes if node["mesh"] is None]
+    if not isinstance(flat, list) or len(flat) != len(solids):
+        # The tessellator is handed one object per solid leaf and hands back one
         # entry per object. If that ever stops being true the stamping below
         # would file parts under the wrong keys -- silently, and permanently,
         # into an immutable build.
         raise BuildError(
             f"view {view['id']!r} tessellated into "
             f"{len(flat) if isinstance(flat, list) else type(flat).__name__} "
-            f"parts, and the view has {len(nodes)}. The two have to line up: "
-            "the key of each part is taken from the view by position."
+            f"parts, and {len(solids)} of the view's {len(nodes)} leaves were "
+            "handed over. The two have to line up: the key of each part is "
+            "taken from the view by position."
         )
-    for entry, node in zip(flat, nodes):
-        entry["key"] = node["key"]
+
+    leaves = []
+    supplied = iter(flat)
+    repeats = {}
+    for node in nodes:
+        if node["mesh"] is None:
+            leaf = next(supplied)
+            leaf["key"] = node["key"]
+            leaves.append(leaf)
+            continue
+        repeats[node["key"]] = repeats.get(node["key"], 0) + 1
+        leaves.append(_mesh_leaf(node, repeats[node["key"]]))
 
     def rebuild(entries, parent_id):
         built = []
         for entry in entries:
             if isinstance(entry, int):
-                leaf = flat[entry]
+                leaf = leaves[entry]
                 # The name is the tessellator's rather than the key: it
                 # disambiguates repeats of one name (`pin`, `pin(2)`), and the
                 # viewer builds its paths out of names, so two leaves called
-                # the same thing would share a path.
+                # the same thing would share a path. A mesh leaf was named the
+                # same way by `_mesh_leaf`, which is the whole reason it counts
+                # its own repeats.
                 #
                 # DEMANDED RATHER THAN DEFAULTED, for the reason the length of
                 # `flat` is checked above: this rests on what the tessellator
@@ -860,7 +932,104 @@ def shaped_document(doc, view):
             "the whole tree hangs off a name that is not there."
         )
     doc["parts"] = rebuild(view["tree"], root_id)
+    _widen_bb(doc, nodes)
     return doc
+
+
+def _mesh_leaf(node, occurrence):
+    """One leaf written from a trimesh, field for field as a tessellated one.
+
+    The field set is `ocp_tessellate.cad_objects`' own (a solid leaf of
+    `ui/tests/fixtures/assembled.json` is what it looks like), because the
+    viewer reads every one of them off every node it draws. What a mesh has
+    none of is TOPOLOGY -- no edges, no vertices to snap to, no faces to count
+    triangles per -- so those buffers are written EMPTY rather than invented:
+    the viewer draws a leaf without edges (`viewer/src/scene/nestedgroup.ts`
+    guards on `edgeList && edgeList.length > 0`), and a made-up edge would be a
+    line nobody modelled.
+
+    THE NAME IS NUMBERED THE WAY THE TESSELLATOR NUMBERS ONE -- `scan`, then
+    `scan(2)` -- because every node's id is the parent's plus its name, so two
+    references to one mesh under one name would share a path and neither the
+    viewer nor a reader could tell them apart. Counting only the mesh
+    occurrences of that key is enough: a catalogue entry is a mesh or a solid
+    and never both, AND a reference to a mesh one cannot come out a solid leaf
+    -- `_read_reference` refuses the `deformed` hatch over a mesh -- so the two
+    numberings cannot meet on one name. The second half is the load-bearing
+    one: entry-level exclusivity alone let a mesh entry produce a solid leaf,
+    which is exactly how the two numberings used to meet.
+
+    The identity `loc` is written out in full, like the one on a group above,
+    because the viewer reads `loc` off every node it renders -- and it IS the
+    identity because the mesh is already where the model put it:
+    `_read_reference` refuses `at` on one.
+    """
+    import numpy as np
+
+    mesh = node["mesh"]
+    triangles = np.asarray(mesh.faces).reshape(-1)
+    return {
+        "type": "shapes",
+        "subtype": "solid",
+        "name": node["key"] if occurrence == 1
+                else f"{node['key']}({occurrence})",
+        "shape": {
+            "vertices": np.asarray(mesh.vertices,
+                                   dtype=np.float64).reshape(-1).tolist(),
+            "normals": np.asarray(mesh.vertex_normals,
+                                  dtype=np.float64).reshape(-1).tolist(),
+            "triangles": triangles.tolist(),
+            "edges": [],
+            "obj_vertices": [],
+            "face_types": [],
+            "edge_types": [],
+            "segments_per_edge": [],
+            # ONE ENTRY, the whole mesh: the viewer walks this buffer to split
+            # the triangles into faces it can pick, and a mesh is one face's
+            # worth of triangles because it has no faces to be several.
+            "triangles_per_face": [len(triangles) // 3],
+        },
+        "state": [1, 1],
+        "color": node["color"],
+        "alpha": node["alpha"],
+        "material": None,
+        "normalize_uvs": True,
+        "texture": None,
+        "loc": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+        "renderback": False,
+        "accuracy": None,
+        "bb": None,
+        "key": node["key"],
+    }
+
+
+def _widen_bb(doc, nodes):
+    """Take the meshes into the root's box, which nothing else in the build does.
+
+    The tessellator measures what it was GIVEN and a mesh leaf never reaches it,
+    so the box it wrote is the box of the solids alone. The viewer reads the
+    scene's extent exactly once and only off the root
+    (`comparescene._union_bb` has that measurement), so a mesh outside that box
+    is drawn off screen with the camera framed on the parts beside it -- a scene
+    that looks like a missing mesh rather than like a bad box.
+
+    A VIEW OF NOTHING BUT MESHES HAS NO BOX TO WIDEN: handed no objects at all
+    the tessellator writes `"bb": null`, so the meshes are the whole of it.
+    """
+    bounds = [node["mesh"].bounds for node in nodes if node["mesh"] is not None]
+    if not bounds:
+        return
+    lows = [[float(value) for value in box[0]] for box in bounds]
+    highs = [[float(value) for value in box[1]] for box in bounds]
+    box = doc.get("bb")
+    if isinstance(box, dict):
+        lows.append([float(box[f"{axis}min"]) for axis in BB_AXES])
+        highs.append([float(box[f"{axis}max"]) for axis in BB_AXES])
+    widened = {}
+    for index, axis in enumerate(BB_AXES):
+        widened[f"{axis}min"] = min(low[index] for low in lows)
+        widened[f"{axis}max"] = max(high[index] for high in highs)
+    doc["bb"] = widened
 
 
 def at_viewer_precision(doc):

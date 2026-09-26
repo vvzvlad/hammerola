@@ -20,7 +20,14 @@ is the deformed hatch (see views.py), which has to name a reason.
             "screw_m3": {"shape": screw, "kind": "hardware",
                          "note": "M3x8 DIN912"},
             "board":    {"shape": board, "kind": "mock"},
+            "scan":     {"mesh": scan,   "kind": "mock"},
         }
+
+An entry carries `shape` -- a CadQuery object this build computes with -- or
+`mesh`, a `trimesh.Trimesh` the model loaded itself (`trimesh` is in the image
+and `ref/` travels to the hub with the source, so a scan lives beside
+model.py). Never both: one key is one piece of geometry, and two of them under
+one name would be two parts sharing an identity.
 """
 
 from .artifacts import ASSEMBLED_STEM, PRINT_VIEW_ID
@@ -52,11 +59,18 @@ KIND_MOCK = "mock"
 # what is only there so the picture makes sense.
 KINDS = (KIND_PRINTABLE, KIND_HARDWARE, KIND_MOCK)
 
-# Every key one catalogue entry is read for. `shape` and `kind` are required;
-# `color` and `note` are not. THERE IS NO DISPLAY NAME, deliberately: the key is
-# the name, in every view and in every file, and a second name would be a second
-# identity to keep in step with the first.
-RECORD_KEYS = frozenset({"shape", "kind", "color", "note"})
+# Every key one catalogue entry is read for. `kind` is required and so is
+# exactly one of `shape`/`mesh`; `color` and `note` are not. THERE IS NO DISPLAY
+# NAME, deliberately: the key is the name, in every view and in every file, and a
+# second name would be a second identity to keep in step with the first.
+RECORD_KEYS = frozenset({"shape", "mesh", "kind", "color", "note"})
+
+# The three arrays a mesh leaf is written from (`views._mesh_leaf`), plus the
+# extent the scene's bounding box has to be widened by (`views._widen_bb`).
+# Asked of the object HERE, where a catalogue still costs milliseconds: the same
+# absence found in the tessellation phase is an AttributeError out of a build
+# that has already computed and exported every part.
+MESH_ATTRS = ("vertices", "vertex_normals", "faces", "bounds")
 
 # The stems this build keeps for ITSELF, next to the parts, and what each one is.
 # A catalogue key landing on one of them is worse than an awkward name: a
@@ -184,6 +198,33 @@ def _check_color(color, where):
     return parsed.web_color
 
 
+def _check_mesh(mesh, where):
+    """Somebody else's geometry, held to the four attributes the build reads.
+
+    A DUCK TYPE AND NOT `isinstance(trimesh.Trimesh)`, because `MESH_ATTRS` is
+    the whole of what this build asks of one and an import would buy nothing
+    over it: most catalogues hold no mesh at all, and this is the phase whose
+    point is that it costs milliseconds. What it catches is the author's own
+    slip -- a Workplane written under `mesh`, a path written instead of a loaded
+    mesh -- which is what `as_shape` catches on the other side.
+
+    `tests/cadbuild/test_naming.py` holds a REAL Trimesh against the same list,
+    which is what keeps the duck type honest: the fake mesh the rest of the
+    suite runs on implements exactly these names and would not notice trimesh
+    renaming one.
+    """
+    missing = [name for name in MESH_ATTRS if not hasattr(mesh, name)]
+    if not missing:
+        return mesh
+    raise BuildError(
+        f'{where}: "mesh" is a {type(mesh).__name__}, which has no '
+        f"{', '.join(missing)}. A mesh is a trimesh.Trimesh the model loaded "
+        'itself -- `trimesh.load("ref/scan.stl", force="mesh")` -- and the '
+        "build draws it from its vertices, vertex_normals and faces. A "
+        'CadQuery object goes under "shape".'
+    )
+
+
 def _check_note(note, where):
     """The author's note on a part, held to the hub's own rules for it."""
     if not isinstance(note, str):
@@ -228,7 +269,7 @@ def _check_note(note, where):
 
 
 def read_catalogue(model):
-    """parts(), validated, with every entry normalised to the same four keys.
+    """parts(), validated, with every entry normalised to the same five keys.
 
     Runs before any view is looked at and before a single triangle exists: all
     of it is rules about strings and about the shape of a dict, so a catalogue
@@ -279,9 +320,27 @@ def read_catalogue(model):
             )
 
         shape = record.get("shape")
-        if shape is None:
-            raise BuildError(f'{where} has no "shape": there is nothing to build')
-        as_shape(shape, where)
+        mesh = record.get("mesh")
+        if shape is not None and mesh is not None:
+            # ONE ENTRY IS ONE PIECE OF GEOMETRY. Two would be two parts under
+            # one identity, and every reader downstream -- the export, the
+            # gates, the tessellation -- would have to pick, differently in each
+            # place, which of them this key means.
+            raise BuildError(
+                f'{where} carries both "shape" and "mesh". One is a CadQuery '
+                "object this build computes with, the other a mesh the model "
+                "loaded; an entry has exactly one of them. Give the mesh a "
+                "catalogue key of its own."
+            )
+        if shape is None and mesh is None:
+            raise BuildError(
+                f'{where} has no "shape" and no "mesh": there is nothing to '
+                "build"
+            )
+        if shape is not None:
+            as_shape(shape, where)
+        else:
+            _check_mesh(mesh, where)
 
         if "kind" not in record:
             raise BuildError(
@@ -299,6 +358,25 @@ def read_catalogue(model):
                 f"{KIND_PRINTABLE!r} is exported and gets download buttons, "
                 f"{KIND_HARDWARE!r} is bought and goes into the product, "
                 f"{KIND_MOCK!r} is only there so the picture makes sense."
+            )
+        if mesh is not None and kind != KIND_MOCK:
+            # A mesh CAN ONLY BE SCENERY, and it is the three things this build
+            # does to the other two kinds that say so: there is no solid to
+            # write into a STEP, nothing whose watertightness or first layer the
+            # printable gate could judge, and no boolean the interference gate
+            # could ask about a triangle soup. `mock` is already out of all
+            # three (`printables.export_printables` walks the printables,
+            # `gate.check_interference` skips a pair with a mock in it,
+            # `check_print_layout` keeps the plate to printables), so this is
+            # the kind whose existing treatment is the right one -- rather than
+            # a fourth kind, or three exemptions written by hand.
+            raise BuildError(
+                f'{where} is a "mesh" declared {kind!r}, and a mesh has to be '
+                f"{KIND_MOCK!r}. It is geometry that came from somewhere else: "
+                "there is no solid in it to export, nothing to put on a bed, "
+                "and nothing the interference gate could measure -- which is "
+                f"exactly what {KIND_MOCK!r} already means here. A scan is the "
+                "thing the part is designed around, so scenery is what it is."
             )
 
         color = record.get("color")
@@ -322,7 +400,8 @@ def read_catalogue(model):
                 f"not read. Known keys: {', '.join(sorted(RECORD_KEYS))}."
             )
 
-        read[key] = {"shape": shape, "kind": kind, "color": color, "note": note}
+        read[key] = {"shape": shape, "mesh": mesh, "kind": kind,
+                     "color": color, "note": note}
 
     if not printable_keys(read):
         raise BuildError(

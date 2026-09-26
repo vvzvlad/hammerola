@@ -26,8 +26,8 @@ from src.cadbuild.gate import (
     check_print_layout,
 )
 
-from fakes import (Box, Location, Shape, Workplane, catalogue, mirrored, node,
-                   part, turned, view)
+from fakes import (Box, Location, Mesh, Shape, Workplane, catalogue, mirrored,
+                   node, part, turned, view)
 
 
 # --------------------------------------------------------------------------
@@ -765,6 +765,33 @@ def test_no_bounding_box_is_taken_for_a_mock():
     # ...and the printable beside it still is, so this measures the order and
     # not a gate that stopped looking at anything.
     assert body.measured == 1
+
+
+def test_a_mesh_is_never_resolved_by_the_interference_gate(capsys):
+    """The kind filter is the whole of what keeps a trimesh out of `as_shapes`.
+
+    A mesh leaf carries no `shape` at all, so `_bodies` on one would refuse the
+    build -- `as_shapes` asks for `isValid()` and a mesh has none. Scenery is
+    decided before any node is resolved (`check_interference`), and only a mock
+    may be a mesh (`parts.read_catalogue`), so the two rules meet here: this
+    test passing IS the proof that nothing looked.
+    """
+    check_interference(
+        [view("assembled", [node("body", solid(0)), node("scan", Mesh())])],
+        catalogue(body="printable", scan=("mock", Mesh())))
+    assert "0 pair(s) needed a boolean" in capsys.readouterr().out
+
+
+def test_a_mesh_on_the_plate_is_refused_before_anything_resolves_it():
+    """The plate refuses every kind but `printable`, and a mesh can only be a
+    mock -- so the refusal is the ordinary one and it arrives before the boxes,
+    which is what keeps a trimesh out of `_bodies` here too."""
+    prepared = [view("print", [node("body", part(0, 0)),
+                               node("scan", Mesh())])]
+    with pytest.raises(BuildError) as exc:
+        check_print_layout(prepared, catalogue(body="printable",
+                                               scan=("mock", Mesh())))
+    assert "'scan' is mock" in str(exc.value)
 
 
 def test_two_mocks_inside_each_other_need_no_declaration():

@@ -14,11 +14,11 @@ from src.cadbuild.hubspec import (MAX_NOTE_CHARS, MAX_PARTS,
                                   MAX_VIEW_DEPTH, MAX_VIEW_NAME_CHARS,
                                   MEMBER_RE, RESERVED_NAMES, hub_text_problem)
 from src.cadbuild.palette import HARDWARE_COLOR, MOCK_COLOR, PART_PALETTE
-from src.cadbuild.parts import (KINDS, catalogue_colors, check_stem,
-                                printable_keys, read_catalogue)
+from src.cadbuild.parts import (KINDS, MESH_ATTRS, catalogue_colors,
+                                check_stem, printable_keys, read_catalogue)
 from src.cadbuild.project import MAX_TITLE_CHARS
 
-from fakes import part
+from fakes import Mesh, part
 
 
 class Model:
@@ -157,10 +157,12 @@ def test_a_minimal_catalogue_reads():
     read = read_catalogue(Model({"body": entry()}))
     assert list(read) == ["body"]
     assert read["body"]["kind"] == "printable"
-    # Normalised to the same four keys whatever the entry left out, so nothing
-    # downstream has to ask whether a key is there.
-    assert set(read["body"]) == {"shape", "kind", "color", "note"}
+    # Normalised to the same five keys whatever the entry left out, so nothing
+    # downstream has to ask whether a key is there -- `views._read_reference`
+    # routes on `mesh is None` and would see no key at all on a solid entry.
+    assert set(read["body"]) == {"shape", "mesh", "kind", "color", "note"}
     assert read["body"]["color"] is None and read["body"]["note"] is None
+    assert read["body"]["mesh"] is None
 
 
 def test_parts_must_return_a_non_empty_dict():
@@ -233,6 +235,96 @@ def test_something_that_is_not_geometry_is_refused_by_name():
 
 
 # --------------------------------------------------------------------------
+# A mesh somebody else made
+#
+# The other geometry an entry may hold: a `trimesh.Trimesh` the model loaded
+# out of `ref/`, drawn beside the parts this build computes. Everything here is
+# a rule about the entry, which is where the whole feature is decided -- the
+# build downstream routes on `mesh is None` and asks the catalogue nothing.
+# --------------------------------------------------------------------------
+
+def test_a_mesh_entry_reads_and_holds_no_shape():
+    read = read_catalogue(Model({"body": entry(),
+                                 "scan": {"mesh": Mesh(), "kind": "mock"}}))
+    assert read["scan"]["shape"] is None
+    assert read["scan"]["mesh"] is not None
+    # Painted by what it IS, like any other mock: nothing about a mesh reaches
+    # the palette, which routes on the kind alone.
+    assert catalogue_colors(read)["scan"] == MOCK_COLOR
+
+
+def test_an_entry_carrying_both_a_shape_and_a_mesh_is_refused():
+    """One entry is one piece of geometry, because the key is one identity.
+
+    Two would leave every reader downstream -- the export, the gates, the
+    tessellation -- to pick for itself which of them this key means, and there
+    is no answer that is right in all three places.
+    """
+    message = refusal({"body": entry(),
+                       "scan": {"shape": part(), "mesh": Mesh(),
+                                "kind": "mock"}})
+    assert 'both "shape" and "mesh"' in message
+
+
+def test_an_entry_with_neither_a_shape_nor_a_mesh_is_refused():
+    assert "no \"shape\" and no \"mesh\"" in refusal(
+        {"body": {"kind": "printable"}})
+
+
+@pytest.mark.parametrize("attribute", MESH_ATTRS)
+def test_a_mesh_missing_an_attribute_the_build_reads_is_named(attribute):
+    """Found while the catalogue still costs milliseconds, not in the
+    tessellation phase where the same absence is an AttributeError out of a
+    build that has already computed and exported every part."""
+    class Partial:
+        pass
+
+    for name in MESH_ATTRS:
+        if name != attribute:
+            setattr(Partial, name, ())
+    message = refusal({"body": entry(),
+                       "scan": {"mesh": Partial(), "kind": "mock"}})
+    assert attribute in message and "trimesh.Trimesh" in message
+
+
+def test_a_workplane_written_under_mesh_is_refused_rather_than_drawn():
+    """The slip this check is for: geometry in the right catalogue and the
+    wrong key. A Workplane has none of the four arrays."""
+    message = refusal({"body": entry(),
+                       "scan": {"mesh": part(), "kind": "mock"}})
+    assert 'goes under "shape"' in message
+
+
+@pytest.mark.parametrize("kind", ["printable", "hardware"])
+def test_a_mesh_may_only_be_a_mock(kind):
+    """Somebody else's geometry has no solid to export, nothing to put on a bed
+    and nothing the interference gate could measure -- and `mock` is the kind
+    this build already keeps out of all three."""
+    message = refusal({"body": entry(),
+                       "scan": {"mesh": Mesh(), "kind": kind}})
+    assert f"{kind!r}" in message and "'mock'" in message
+
+
+def test_a_real_trimesh_carries_every_attribute_the_build_reads():
+    """The one test here that loads the real class, and what it is for.
+
+    `_check_mesh` is a duck type over four names, and `fakes.Mesh` implements
+    exactly those four -- so every other test in this file and in test_views.py
+    would stay green if trimesh renamed one of them. This is the line that
+    would not.
+    """
+    trimesh = pytest.importorskip(
+        "trimesh", exc_type=ImportError,
+        reason="the real mesh class is what this one is about")
+    mesh = trimesh.Trimesh(
+        vertices=[[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        faces=[[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]])
+    read = read_catalogue(Model({"body": entry(),
+                                 "scan": {"mesh": mesh, "kind": "mock"}}))
+    assert read["scan"]["mesh"] is mesh
+
+
+# --------------------------------------------------------------------------
 # The kind
 # --------------------------------------------------------------------------
 
@@ -271,7 +363,7 @@ def test_an_unknown_record_key_is_said_out_loud(capsys):
     read_catalogue(Model({"body": entry(colour="#ff0000", qty=4)}))
     printed = capsys.readouterr().out
     assert "'colour'" in printed and "'qty'" in printed
-    assert "Known keys: color, kind, note, shape" in printed
+    assert "Known keys: color, kind, mesh, note, shape" in printed
 
 
 # --------------------------------------------------------------------------
