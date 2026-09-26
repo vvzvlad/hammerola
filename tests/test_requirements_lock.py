@@ -50,7 +50,7 @@ PINS_KEY_RE = re.compile(r'(?m)^\s*"([^"]+)":')
 # Every count requirements.txt states in prose, as the sentence that carries it.
 # EVERY number in these sentences is captured, including the ones that are only
 # repeating a total established elsewhere: an uncaptured `\d+` reads as though it
-# were checked and is not, and "Ten of those 56" is exactly where the file's size
+# were checked and is not, and "Eleven of those 56" is exactly where the file's size
 # would go stale next. Spelled-out numbers are matched as words because that is
 # how the file writes them, and WORDS below is the whole vocabulary needed.
 COUNTS = {
@@ -72,11 +72,11 @@ COUNTS = {
 INHERITED_RE = re.compile(r"further up the tree \(([^)]*)\)")
 INHERITED_PIN_RE = re.compile(r"`([A-Za-z0-9][A-Za-z0-9._-]*)==([^`]+)`")
 
-WORDS = {"three": 3, "four": 4, "seven": 7, "ten": 10}
+WORDS = {"three": 3, "four": 4, "seven": 7, "ten": 10, "eleven": 11}
 
 # The prose with its wrapping taken out. requirements.txt is a comment file wrapped
 # at ~99 columns, so a sentence routinely crosses a line break and picks up a `# `
-# on the far side — "Ten of\n# those 56 are named here". Unwrapping is what lets the
+# on the far side — "Eleven of\n# those 56 are named here". Unwrapping is what lets the
 # patterns above be written as the sentences a reader sees.
 PROSE = re.sub(r"\s+", " ", re.sub(r"(?m)^#\s?", "", REQUIREMENTS))
 
@@ -150,7 +150,8 @@ def test_the_dockerfile_installs_the_lock_and_requires_hashes():
     assert INSTALL_RE.search(DOCKERFILE), (
         "the Dockerfile has no `RUN pip install ... --require-hashes -r "
         "requirements.lock` line. The lock is the whole point of having a lock: "
-        "installing requirements.txt directly pins the ten packages named there "
+        "installing requirements.txt directly pins the eleven packages named "
+        "there "
         "and lets the rest of the environment — numpy included — float again."
     )
 
@@ -204,7 +205,7 @@ def test_the_counts_requirements_txt_states_are_the_counts_that_exist():
 
     # The three inherited pins are counted from the names the sentence itself
     # gives, and each is then looked for in the lock at that version and checked
-    # NOT to be one of the ten named here. Without this the split would only have
+    # NOT to be one of the eleven named here. Without this the split would only have
     # to add up, and moving a package from `inherited` to `transitive` in the same
     # breath would pass while saying something false about both.
     parenthesis = INHERITED_RE.search(PROSE)
