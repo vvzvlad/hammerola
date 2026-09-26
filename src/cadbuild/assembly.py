@@ -45,9 +45,18 @@ def _view_objects(prepared, vid):
     One leaf is one object, already standing where the view puts it: the `at`
     of a reference was applied when the view was prepared, so nothing here
     moves anything.
+
+    A MESH LEAF IS NOT ONE OF THEM, and that is a limit of the FILES rather than
+    a decision about the picture. A `mesh` entry holds a trimesh (`parts.py`),
+    which is not a `Shape`, and a mesh leaf's `shape` is None rather than the
+    trimesh: there is nothing for `Compound.makeCompound` to glue and nothing
+    for `exportStl` to mesh, so a mesh is in every view the browser loads and in
+    none of the STLs written here. Only a `mock` may be a mesh and
+    the plate refuses mocks outright, so in practice this is about the assembly.
     """
     nodes = _view_nodes(prepared, vid)
-    return None if nodes is None else [node["shape"] for node in nodes]
+    return None if nodes is None else [node["shape"] for node in nodes
+                                       if node["mesh"] is None]
 
 
 def _product_bbox(prepared, catalogue):
@@ -199,6 +208,10 @@ def export_assembled(prepared, out_dir, catalogue):
     wall would print "the product changed size" -- and would hide the one
     physical change no per-part number registers, a part moved inside the
     assembly.
+
+    THE ONE THING NEITHER HALF HOLDS IS A MESH LEAF (`_view_objects`): it is out
+    of the file because nothing here can glue a trimesh, and out of the box
+    because a mesh is scenery. The view the browser loads still shows it.
 
     IT IS MEASURED BEFORE THE EXPORT, AND THAT ORDER IS THE MEASUREMENT, for
     the reason export_print_plate's docstring gives at length: exportStl meshes

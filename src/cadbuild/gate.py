@@ -440,8 +440,12 @@ def check_interference(prepared, catalogue):
     # ONE RESOLUTION PER NODE, and it is what the whole pass below is built on
     # (see `_bodies`). A mock is not resolved here at all, because nothing below
     # asks a mock anything; the geometry of one is still validated where it is
-    # used -- `assembly.assembled_shape` walks every leaf of this view through
-    # `as_shapes`, and `views.export_views` tessellates every one of them.
+    # used -- `assembly.assembled_shape` walks every SOLID leaf of this view
+    # through `as_shapes`, and `views.export_views` tessellates the same ones.
+    # A mesh leaf goes through neither, and skipping it here is what keeps it
+    # away from `as_shapes` -- which it would reach carrying None, its `shape`
+    # being where the mesh is not. Only a mock may be a mesh
+    # (`parts.read_catalogue`), so this line is the whole of that guard.
     resolved = [None if is_scenery else _bodies(node, ASSEMBLED_VIEW_ID)
                 for node, is_scenery in zip(nodes, scenery)]
     problems = []

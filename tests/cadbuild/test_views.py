@@ -13,6 +13,7 @@ a reader.
 """
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -23,7 +24,7 @@ from src.cadbuild.palette import HARDWARE_COLOR, MOCK_COLOR, PART_PALETTE
 from src.cadbuild.views import (at_viewer_precision, interference_pairs,
                                 prepare_views, shaped_document)
 
-from fakes import Location, catalogue, part, turned
+from fakes import Location, Mesh, catalogue, part, turned
 
 
 _UNSET = object()
@@ -216,6 +217,56 @@ def test_a_rotation_is_carried_through_to_the_gate():
     """The print gate reads the matrix off the Location the view kept."""
     prepared = prepare([one_view(parts=[{"part": "body", "at": turned(90, "z")}])])
     assert prepared[0]["nodes"][0]["at"].rows[2] == (0.0, 0.0, 1.0)
+
+
+# --------------------------------------------------------------------------
+# A mesh in the scene
+# --------------------------------------------------------------------------
+
+def with_a_mesh(mesh=None):
+    """A catalogue of one printable and one mesh mock, which is the whole case."""
+    return catalogue(body="printable",
+                     scan=("mock", mesh if mesh is not None else Mesh()))
+
+
+def test_a_mesh_reference_makes_a_leaf_that_holds_the_mesh_and_no_shape():
+    """Exactly one of the two is set, which is what lets everything downstream
+    route on `mesh is None` instead of asking the catalogue again."""
+    prepared = prepare([one_view(parts=["body", "scan"])], with_a_mesh())
+    solid, mesh = prepared[0]["nodes"]
+    assert solid["shape"] is not None and solid["mesh"] is None
+    assert mesh["shape"] is None and mesh["mesh"] is not None
+
+
+def test_at_on_a_mesh_is_refused():
+    """`_placed` applies `at` with `Shape.moved()`, which a trimesh has no
+    answer for -- so the mesh is transformed where it is loaded, and the message
+    says with what."""
+    with pytest.raises(BuildError) as exc:
+        prepare([one_view(parts=["body", {"part": "scan",
+                                          "at": Location(10, 0, 0)}])],
+                with_a_mesh())
+    message = str(exc.value)
+    assert '"at" was given for a mesh' in message
+    assert "apply_transform" in message
+
+
+def test_the_deformed_hatch_is_shut_over_a_mesh_entry():
+    """The assertion `_mesh_leaf` rests on: the two numberings cannot meet.
+
+    Let the hatch through and the tessellator names its solid leaf after the
+    key while `_mesh_leaf` numbers the mesh occurrences of that key on its own
+    -- two nodes on one id, which the hub's check does not read and the viewer
+    drops one of without a word.
+    """
+    with pytest.raises(BuildError) as exc:
+        prepare([one_view(parts=[{"part": "scan", "shape": part(),
+                                  "deformed": "clamped round the pipe"},
+                                 "scan", "body"])],
+                with_a_mesh())
+    message = str(exc.value)
+    assert "the catalogue holds 'scan' as a mesh" in message
+    assert "a different shape is a different mesh" in message
 
 
 # --------------------------------------------------------------------------
@@ -737,6 +788,140 @@ def test_a_group_moves_nothing():
     assert doc["parts"][0]["loc"] == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
 
 
+# ...and the mesh leaves written into it
+# --------------------------------------------------------------------------
+#
+# The tessellator is handed the SOLID leaves only, so its flat list no longer
+# lines up with `nodes` -- and `tree` holds indices into `nodes`. Getting that
+# wrong is the failure this whole section is about: it files parts under each
+# other's keys, silently, into an immutable build.
+# --------------------------------------------------------------------------
+
+def mixed(mesh=None):
+    """`body`, then a mesh, then `cap` -- one solid leaf on either side of it.
+
+    The order is the test: a mesh at the END would line up by accident whatever
+    the stitching did, and a mesh at the FRONT only shifts one leaf. This shifts
+    `cap` and would put the mesh's own name and the wrong key on it.
+    """
+    cat = catalogue(body="printable", cap="printable",
+                    scan=("mock", mesh if mesh is not None else Mesh()))
+    prepared = prepare([one_view(parts=["body", "scan", "cap"])], cat)
+    return shaped_document(flat_document("body", "cap"), prepared[0])
+
+
+def test_a_mesh_leaf_is_sewn_back_in_between_the_two_tessellated_ones():
+    leaves = mixed()["parts"]
+    assert [leaf["key"] for leaf in leaves] == ["body", "scan", "cap"]
+    assert [leaf["name"] for leaf in leaves] == ["body", "scan", "cap"]
+    # The one in the middle is the one this build wrote, and the two beside it
+    # are the tessellator's own entries, untouched but for the key.
+    assert leaves[1]["shape"]["triangles"] == [0, 2, 1, 0, 1, 3, 0, 3, 2,
+                                               1, 2, 3]
+    assert leaves[0]["shape"] == {} and leaves[2]["shape"] == {}
+
+
+def test_every_id_is_still_the_path_to_the_node_with_a_mesh_among_them():
+    assert [leaf["id"] for leaf in mixed()["parts"]] == [
+        "/Group/body", "/Group/scan", "/Group/cap"]
+
+
+def test_a_document_carrying_an_entry_for_the_mesh_too_is_refused():
+    """The count is over the leaves that were HANDED OVER, so a tessellator that
+    somehow answered for the mesh as well does not line up either -- and the
+    message says how many of how many went."""
+    cat = catalogue(body="printable", scan=("mock", Mesh()))
+    prepared = prepare([one_view(parts=["body", "scan"])], cat)
+    with pytest.raises(BuildError) as exc:
+        shaped_document(flat_document("body", "scan"), prepared[0])
+    assert "1 of the view's 2 leaves" in str(exc.value)
+
+
+def test_the_mesh_leaf_carries_exactly_the_fields_a_tessellated_one_does():
+    """THE FIELD SET IS THE CONTRACT WITH THE VIEWER, which reads every one of
+    them off every node it draws -- so it is held against the document a real
+    export produced rather than against a list written out here. That fixture is
+    what the browser half of the suite is checked against too, so the two stay
+    one statement.
+    """
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[2]
+         / "ui/tests/fixtures/assembled.json").read_text(encoding="utf-8"))
+    tessellated = fixture["parts"][0]
+    mesh_leaf = mixed()["parts"][1]
+    assert set(mesh_leaf) == set(tessellated)
+    assert set(mesh_leaf["shape"]) == set(tessellated["shape"])
+    # The values that are not the geometry are the tessellator's own, so a
+    # reader of the tree cannot tell the two kinds of leaf apart by them.
+    for field in ("type", "subtype", "state", "material", "normalize_uvs",
+                  "texture", "renderback", "accuracy", "bb"):
+        assert mesh_leaf[field] == tessellated[field], field
+
+
+def test_a_mesh_has_no_topology_and_none_is_invented():
+    """The viewer draws a leaf with no edges; a made-up edge would be a line
+    nobody modelled. `triangles_per_face` is the one buffer that cannot be
+    empty -- the viewer splits the mesh into pickable faces by it -- so it is
+    one face's worth, the whole mesh."""
+    shape = mixed()["parts"][1]["shape"]
+    for buffer in ("edges", "obj_vertices", "face_types", "edge_types",
+                   "segments_per_edge"):
+        assert shape[buffer] == [], buffer
+    assert shape["triangles_per_face"] == [len(shape["triangles"]) // 3]
+
+
+def test_two_references_to_one_mesh_get_paths_of_their_own():
+    """Numbered the way the tessellator numbers repeats of one name, because
+    every node's id is the parent's plus its name -- two leaves under one name
+    share a path, and neither the viewer nor a reader can tell them apart."""
+    cat = catalogue(body="printable", scan=("mock", Mesh()))
+    prepared = prepare([one_view(parts=["scan", "body", "scan"])], cat)
+    doc = shaped_document(flat_document("body"), prepared[0])
+    assert [leaf["name"] for leaf in doc["parts"]] == ["scan", "body", "scan(2)"]
+    assert len({leaf["id"] for leaf in doc["parts"]}) == 3
+
+
+def test_the_scene_s_own_box_takes_the_meshes_in():
+    """The viewer reads the scene's extent once and only off the root, so a mesh
+    left out of it is drawn off screen with the camera framed on the parts
+    beside it. The tessellator measures what it was GIVEN, and it was not given
+    this."""
+    far = Mesh(vertices=[[100.0, 0.0, -5.0], [140.0, 0.0, 0.0],
+                         [100.0, 60.0, 0.0], [100.0, 0.0, 12.0]])
+    cat = catalogue(body="printable", scan=("mock", far))
+    prepared = prepare([one_view(parts=["body", "scan"])], cat)
+    doc = flat_document("body")
+    doc["bb"] = {"xmin": -12.0, "xmax": 12.0, "ymin": -8.0, "ymax": 8.0,
+                 "zmin": -2.5, "zmax": 16.5}
+
+    box = shaped_document(doc, prepared[0])["bb"]
+
+    assert box == {"xmin": -12.0, "xmax": 140.0, "ymin": -8.0, "ymax": 60.0,
+                   "zmin": -5.0, "zmax": 16.5}
+
+
+def test_a_view_of_nothing_but_meshes_gets_its_box_from_them():
+    """Handed no objects at all the tessellator writes `"bb": null`, so there is
+    nothing to widen and the meshes are the whole of the scene's extent."""
+    prepared = prepare([one_view(parts=["scan"])],
+                       catalogue(scan=("mock", Mesh())))
+    doc = flat_document()
+    doc["bb"] = None
+
+    box = shaped_document(doc, prepared[0])["bb"]
+
+    assert box == {"xmin": 0.0, "xmax": 1.0, "ymin": 0.0, "ymax": 1.0,
+                   "zmin": 0.0, "zmax": 1.0}
+
+
+def test_a_view_with_no_mesh_in_it_keeps_the_box_the_tessellator_measured():
+    prepared = prepare([one_view(parts=["body"])])
+    doc = flat_document("body")
+    doc["bb"] = {"xmin": -1.0, "xmax": 1.0, "ymin": -1.0, "ymax": 1.0,
+                 "zmin": -1.0, "zmax": 1.0}
+    assert shaped_document(doc, prepared[0])["bb"] == doc["bb"]
+
+
 # Shortened to what the browser keeps
 # --------------------------------------------------------------------------
 
@@ -873,8 +1058,8 @@ def test_a_real_export_is_a_document_the_hub_would_accept(out_dir):
     def box(x):
         return cq.Workplane("XY").box(10, 10, 10.1).translate((x, 0, 0))
 
-    cat = {key: {"shape": box(index * 20), "kind": kind, "color": None,
-                 "note": None}
+    cat = {key: {"shape": box(index * 20), "mesh": None, "kind": kind,
+                 "color": None, "note": None}
            for index, (key, kind) in enumerate(
                (("lid", "printable"), ("pin", "printable"),
                 ("board", "mock")))}
@@ -916,3 +1101,68 @@ def test_a_real_export_is_a_document_the_hub_would_accept(out_dir):
     # of the long form as well.
     assert all(value == float(str(np.float32(value)))
                for value in board["shape"]["vertices"])
+
+
+def test_a_real_export_with_a_mesh_in_it_is_a_document_the_hub_would_accept(
+        out_dir):
+    """The whole feature end to end, through the two consumers it is written for.
+
+    Everything above works on a document handed in by hand; this is the one that
+    lets the real tessellator produce the solid half and then checks that what
+    the build sewed the mesh into is a file the HUB accepts -- a 422 there is a
+    push whose geometry has already been computed. It is also the only test that
+    proves the mesh never reaches the tessellator: handed a trimesh, that call
+    would end the export rather than come back.
+
+    Skips where the kernel is missing, like every other test that needs real
+    geometry; CI's image carries it (issue #27).
+    """
+    cq = pytest.importorskip("cadquery", exc_type=ImportError,
+                             reason="a real export needs the CAD kernel")
+    pytest.importorskip("ocp_tessellate", exc_type=ImportError,
+                        reason="a real export needs the tessellator")
+    trimesh = pytest.importorskip("trimesh", exc_type=ImportError,
+                                  reason="the mesh half needs the real class")
+    from src import render
+    from src.cadbuild.views import export_views
+
+    def box(x):
+        return cq.Workplane("XY").box(10, 10, 10.1).translate((x, 0, 0))
+
+    # Standing well clear of both parts, so the widened box is visibly the
+    # union rather than whatever the solids alone measured.
+    scan = trimesh.creation.box(extents=(6, 6, 6))
+    scan.apply_translation((100.0, 0.0, 0.0))
+    cat = {"lid": {"shape": box(0), "mesh": None, "kind": "printable",
+                   "color": None, "note": None},
+           "cap": {"shape": box(20), "mesh": None, "kind": "printable",
+                   "color": None, "note": None},
+           "scan": {"shape": None, "mesh": scan, "kind": "mock",
+                    "color": None, "note": None}}
+    # The mesh in the MIDDLE, which is the arrangement the stitching can get
+    # wrong, and inside a group, which is where the ids are rebuilt.
+    prepared = prepare_views(
+        [one_view(parts=[{"group": "housing",
+                          "parts": ["lid", "scan", "cap"]}])], cat)
+
+    entries = export_views(prepared, out_dir)
+
+    assert entries[0]["parts"] == ["lid", "scan", "cap"]
+    render.check_view_file(out_dir / entries[0]["file"], entries[0]["id"], cat)
+
+    doc = json.loads((out_dir / entries[0]["file"]).read_text(encoding="utf-8"))
+    leaves = doc["parts"][0]["parts"]
+    assert [leaf["key"] for leaf in leaves] == ["lid", "scan", "cap"]
+    assert [leaf["id"] for leaf in leaves] == [
+        "/Group/housing/lid", "/Group/housing/scan", "/Group/housing/cap"]
+    assert leaves[1]["color"] == MOCK_COLOR
+    # 12 triangles for a box, and the mesh's own coordinates: nothing moved it,
+    # because `at` is refused on a mesh and its `loc` is the identity.
+    assert leaves[1]["shape"]["triangles_per_face"] == [12]
+    assert max(leaves[1]["shape"]["vertices"]) == pytest.approx(103.0)
+    assert leaves[1]["loc"] == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+    # The scene's own extent, which the tessellator measured without the mesh.
+    assert doc["bb"]["xmax"] == pytest.approx(103.0)
+    # And the mesh buffers were shortened like every other one in the file.
+    assert all(value == float(str(np.float32(value)))
+               for value in leaves[1]["shape"]["vertices"])

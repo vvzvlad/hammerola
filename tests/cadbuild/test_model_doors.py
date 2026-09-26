@@ -227,7 +227,8 @@ class Doors:
              lambda: ("abc123def456", "scratch", "Scratch (scratch)")),
             ("load_model", lambda: model),
             ("read_catalogue",
-             lambda _: {"base": {"shape": None, "kind": "printable",
+             lambda _: {"base": {"shape": None, "mesh": None,
+                                 "kind": "printable",
                                  "color": None, "note": None}}),
         ):
             self.monkeypatch.setattr(build_module, name, value)
@@ -479,7 +480,8 @@ def test_the_shape_itself_is_outside_every_door(isolated_project):
 
     prepared = [view("print", [node("lid", Refusing()),
                                node("cap", Refusing())])]
-    parts_read = {key: {"shape": Refusing(), "kind": "printable",
+    parts_read = {key: {"shape": Refusing(), "mesh": None,
+                        "kind": "printable",
                         "color": None, "note": None}
                   for key in ("lid", "cap")}
 
@@ -512,8 +514,8 @@ def test_the_shape_that_the_gate_chokes_on_is_still_the_authors_fault(
     monkeypatch.setattr(build_module, "load_model", lambda: model)
     monkeypatch.setattr(build_module, "provenance", NO_NUMBERS)
     monkeypatch.setattr(build_module, "read_catalogue", lambda _: {
-        key: {"shape": refusing(), "kind": "printable", "color": None,
-              "note": None}
+        key: {"shape": refusing(), "mesh": None, "kind": "printable",
+              "color": None, "note": None}
         for key in ("lid", "cap")})
     monkeypatch.setattr(build_module, "prepare_views", lambda views, cat: [
         view("print", [node("lid", refusing()), node("cap", refusing())])])
@@ -551,8 +553,8 @@ def test_a_bug_of_the_hubs_is_not_handed_to_the_author(doors, monkeypatch):
                         lambda: ("abc123def456", "scratch", "Scratch (scratch)"))
     monkeypatch.setattr(build_module, "provenance", NO_NUMBERS)
     monkeypatch.setattr(build_module, "read_catalogue", lambda _: {
-        "lid": {"shape": None, "kind": "printable", "color": None,
-                "note": None}})
+        "lid": {"shape": None, "mesh": None, "kind": "printable",
+                "color": None, "note": None}})
     monkeypatch.setattr(build_module, "prepare_views", lambda views, cat: [])
     monkeypatch.setattr(build_module, "check_print_layout", broken)
 

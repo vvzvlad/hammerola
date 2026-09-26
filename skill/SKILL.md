@@ -537,7 +537,12 @@ section: a working model with the rules written next to the geometry. In short,
 
 * **`parts()` — the catalogue, and the one place geometry lives.** A non-empty
   dict of records: `{"lid": {"shape": <CadQuery object>, "kind": "printable"}}`,
-  with `color` and `note` optional. **The key IS the part's identity** — the
+  with `color` and `note` optional. A record carries `shape` OR `mesh` — the
+  latter a `trimesh.Trimesh` the model loaded itself, `trimesh.load("ref/scan.stl",
+  force="mesh")`, for showing somebody else's geometry beside your own. A mesh
+  entry must be `"kind": "mock"`, nothing is exported from it, and `at` is
+  refused on it: put it where it belongs with `mesh.apply_transform(...)` before
+  it reaches the catalogue. **The key IS the part's identity** — the
   stem it is exported under, the row the viewer's tree shows, the name every
   view points at, what it is filed under in `meta.json`. There is no display
   name beside it, deliberately: a second name is a second identity to keep in
