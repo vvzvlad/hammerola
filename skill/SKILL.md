@@ -95,7 +95,8 @@ invents an id — stores the code and the log under that name, moves `latest`, a
 the project gets its card. Finished work is committed. If you leave a session
 with the last thing you did being a `build`, nothing you did is on the site.
 
-**`-m` (`--message` in full) is what a person picks a revision by.** It is kept
+**`commit -m` (`--message` in full) is what a person picks a revision by** — the
+flag is `commit`'s alone, and `build -m` is exit 2. It is kept
 with the revision, stands beside it in the build picker, and becomes the subject
 of the git commit suggested afterwards — so a revision published without one is
 a 64-character id and nothing else, and somebody choosing between two of yours
@@ -121,10 +122,13 @@ Both commands print the build log and exit non-zero unless a build was
 published. That exit code is the whole verdict — treat a non-zero exit as "this
 did not ship", not as a warning.
 
-**Every verb takes `-C DIR` (`--directory DIR`) and runs as if it had started
-there.** That is how you push or read a project that is not the directory your
-shell is in, without a `cd` whose effect on every later command you then have to
-carry in your head.
+**`-C DIR` (`--directory DIR`) goes BEFORE the verb, not after it** — `hammerola
+-C ../bracket commit -m "..."`, never `hammerola commit -C ../bracket`, which is
+rejected outright with exit 2. It is the one flag that sits on the tool rather
+than on a verb, and every verb that works with a project then runs as if it had
+started in `DIR`. That is how you push or read a project that is not the
+directory your shell is in, without a `cd` whose effect on every later command
+you then have to carry in your head.
 
 ## Starting a project
 
@@ -1245,8 +1249,9 @@ working copy instead, and that flag also requires a clean git tree, the only
 thing that can undo it. Everything fetched lands under `.hammerola/`, which is
 hidden, so the next push cannot publish a copy of an older one by accident.
 
-`-o DIR` (`--output`) puts a fetch where you name it instead, and it is the one
-way anything here lands outside `.hammerola/` — a directory you chose is not
+`-o DIR` (`--output`) puts a fetch where you name it instead, and apart from
+`--into-working-copy` above it is the only way anything here lands outside
+`.hammerola/` — a directory you chose is not
 hidden, so whatever you unpack inside the project travels into the next push
 with it.
 

@@ -597,9 +597,10 @@ class Store:
     # section buys (issue #105). A caller that assembles `projects_dir / pid /
     # commit / "meta.json"` for itself has taken a copy of the layout, and the
     # copies are what make the layout impossible to move: the file server would
-    # go on reading the old shape while this module wrote the new one. These are
-    # addresses and nothing else — none of them touches the disk, and none of
-    # them says the file is there.
+    # go on reading the old shape while this module wrote the new one. The five
+    # below are addresses and nothing else — none of them touches the disk, and
+    # none of them says the file is there. `resolve_inside` is the one that does
+    # reach the volume, and its own docstring says on what terms.
     def project_dir(self, pid: str) -> Path:
         """Everything this hub holds about one project."""
         return self.projects_dir / pid
