@@ -96,11 +96,11 @@ the project gets its card. Finished work is committed. If you leave a session
 with the last thing you did being a `build`, nothing you did is on the site.
 
 **`commit -m` (`--message` in full) is what a person picks a revision by** — the
-flag is `commit`'s alone, and `build -m` is exit 2. It is kept
-with the revision, stands beside it in the build picker, and becomes the subject
-of the git commit suggested afterwards — so a revision published without one is
-a 64-character id and nothing else, and somebody choosing between two of yours
-has nothing to read.
+flag is `commit`'s alone, and `build -m` is exit 2. It is kept with the revision,
+stands beside it in the build picker, and becomes the subject of the git commit
+suggested afterwards — so a revision published without one is a 64-character id
+and nothing else, and somebody choosing between two of yours has nothing to
+read.
 
 **The first thing a person is shown is already a commit.** The block layout of
 the next section — the whole part in boxes, before one real solid exists — is
@@ -1251,9 +1251,8 @@ hidden, so the next push cannot publish a copy of an older one by accident.
 
 `-o DIR` (`--output`) puts a fetch where you name it instead, and apart from
 `--into-working-copy` above it is the only way anything here lands outside
-`.hammerola/` — a directory you chose is not
-hidden, so whatever you unpack inside the project travels into the next push
-with it.
+`.hammerola/` — a directory you chose is not hidden, so whatever you unpack
+inside the project travels into the next push with it.
 
 `diff` prints what moved in each part's physical numbers. `--json` makes that
 document the whole output, for reading in code rather than by eye, and
