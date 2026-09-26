@@ -662,7 +662,13 @@ section: a working model with the rules written next to the geometry. In short,
   fixed one), `tool_access` (does a driver reach that screw and turn there).
   Manufacture: `unsupported_area` (how much of a part hangs over nothing at the
   orientation it prints in), `thin_walls`, `minimum_feature` (the smallest thing
-  this nozzle can put down). The fast "is there material at this point" probe is
+  this nozzle can put down). Against a physical sample: `deviation` measures a
+  scan of the real thing against your model and hands back coloured bands ready
+  to drop into `parts()` — blue where the scan sits inside the model, green
+  inside the band you name, red outside — plus the figures (signed and absolute
+  medians, the extremes, the fraction of the surface inside each threshold). It
+  triangulates and cleans up after itself, so the "do not mesh inside
+  `checks()`" rule below does not reach it. The fast "is there material at this point" probe is
   `material_at`; `volume` and `is_empty` say whether a boolean left anything at
   all (`assert wp.vals()` cannot answer that — it is true of an emptied body);
   and `section` marks a stretch of `checks()` so the build log prints what it

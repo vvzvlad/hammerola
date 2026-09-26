@@ -62,15 +62,15 @@ loguru==0.7.2
 #
 # BE PRECISE ABOUT WHAT THESE FOUR LINES BUY, and about what they never could. They are the
 # geometry kernel (cadquery + the OpenCASCADE binding underneath it), the tessellation exporter
-# and the mesh library — four names out of the 56 distributions this file resolves to. Ten of
+# and the mesh library — four names out of the 56 distributions this file resolves to. Eleven of
 # those 56 are named here; three more are pinned for us further up the tree (`cadquery-ocp`
 # declares `vtk==9.6.2` and `cadquery-ocp-proxy==7.9.3.1.1`, `pydantic` declares
-# `pydantic-core==2.46.4`); the other 43 arrive transitively, and they are not inert — numpy
+# `pydantic-core==2.46.4`); the other 42 arrive transitively, and they are not inert — numpy
 # builds the very buffers the revision comparison hashes (issue #10 «Сравнение двух ревизий»),
 # nlopt and casadi are the solver behind part placement in assemblies, and numba, llvmlite,
-# scipy, ezdxf and matplotlib sit alongside them.
+# ezdxf and matplotlib sit alongside them.
 #
-# THOSE 43 ARE PINNED TOO, IN requirements.lock, which is what these four lines no longer have
+# THOSE 42 ARE PINNED TOO, IN requirements.lock, which is what these four lines no longer have
 # to carry alone. Until the lock existed they floated, so "a model rebuilt from the same source
 # a year from now produces the same geometry" was NOT what this file bought: a rebuild of an
 # unchanged commit could move numpy under the buffers and nothing anywhere would report it, and
@@ -146,6 +146,14 @@ ocp-tessellate==3.4.1
 # no way to ask the question at all, and a model exports, publishes and looks perfectly fine in
 # the viewer while being unprintable.
 trimesh==4.12.2
+
+# `from scipy.spatial import cKDTree` in src/cadbuild/checklib.py — the tree over facet centres
+# that `checklib.deviation` searches, and the whole reason a scan of 200 000 points is measured
+# against a model in seconds rather than in hours. NAMED HERE THOUGH IT ARRIVES TRANSITIVELY,
+# which is the rule at the top of this file and the same case as pydantic above: requirements.lock
+# records it `# via cadquery`, so the day a cadquery release stops wanting scipy, what breaks is a
+# deviation map in a build of a model nobody touched.
+scipy==1.17.1
 
 # --- The preview picture -----------------------------------------------------------------------
 # The three below are what `src/cadbuild/preview_png.py` imports at module level to draw the

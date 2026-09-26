@@ -32,6 +32,12 @@ probes along Z, `mating_face_flat` takes the height of the joint as `plane_z`.
 A part modelled lying on its side has to be rotated before these two mean
 anything.
 
+NOR IS `deviation` A CHECK. It hands back a PICTURE and a table of numbers --
+catalogue entries for `parts()`, one per colour band, and the figures behind
+them -- because what an author does with the distance between the model and a
+scan of the real thing is look at it. Whether any of those numbers is a problem
+is a judgement, and the model writes it as its own `assert`.
+
 ONE THING HERE IS NOT A CHECK: `Number` and the three constructors below it.
 They are the other half of the same argument -- a check measures the solid that
 came out, and a `Number` says where the figure that went in came from -- and
@@ -1967,6 +1973,470 @@ def thin_walls(part, planes, min_thickness, *, name="part", pitch=None,
                 "under it. Thicken the wall, or say the smaller number here "
                 "if the part is meant to be that thin.")
     return problems
+
+
+# --------------------------------------------------------------------------
+# 8. How far the model is from a scan of the real thing
+# --------------------------------------------------------------------------
+
+# The three bands a deviation map is cut into: the suffix each one's catalogue
+# key carries, the colour it is drawn in, and what it MEANS. The colours are the
+# metrology convention rather than a preference -- blue where the real thing has
+# less material than the model asked for, red where it has more than the model
+# accounts for, green for the band the author allowed -- and a map painted any
+# other way needs a legend beside it to be read at all.
+#
+# One band is one catalogue entry, because a catalogue entry is one colour
+# (views.py writes `node["color"]` onto the whole leaf). That is the whole reason
+# this returns three meshes rather than one: a per-vertex colour has nowhere to
+# live between here and the viewer.
+_DEVIATION_BANDS = (
+    ("inside", "#2f6fd0", "scan inside the model: the model is thicker here"),
+    ("within", "#3aa65b", "scan within tolerance of the model"),
+    ("outside", "#d1432f", "scan outside the model: the model is missing material"),
+)
+
+# The angular tolerance the model is tessellated at, in radians. The MILLIMETRE
+# argument of `Shape.tessellate` is a real second regulator and it is the one
+# this file cannot steer by, because cadquery asks OCCT for a RELATIVE deflection
+# (`BRepMesh_IncrementalMesh(..., isRelative=True)`): what it means is a fraction
+# of the face's own size, so the millimetre figure binds only once it drops below
+# a threshold that MOVES WITH THE PART. Measured 2026-09-26 on cadquery 2.8.0, a
+# sphere of radius 50 at this angle: 0.2 mm, 0.02 mm and 0.002 mm all gave 8 002
+# facets and 0.108 mm of sag, and 0.0002 mm gave 50 424 facets and 0.017 mm. One
+# millimetre figure is therefore a different fidelity on a different part, while
+# the angle means the same thing on every one of them.
+#
+# The sag is the part of it that reaches the ANSWER (0.22 * R * angle^2, and
+# `deviation` says what that costs), the facet count the part that reaches the
+# clock, and it goes as the inverse square. This value is the one this repository
+# already exports STL at, artifacts.STL_ANGULAR_TOLERANCE.
+_TESSELLATION_ANGLE = 0.1
+
+# How far a facet may reach from its own centre, as a fraction of the model's
+# bounding-box diagonal -- relative to the diagonal so the facet count, and with
+# it the tree, lands in the same place whatever size the part is.
+#
+# IT DECIDES THE CLOCK AGAINST THE MEMORY AND NOTHING ELSE, which is checked
+# rather than asserted: the three measurements below returned the same figures to
+# six decimals. Since `_signed_distance` excludes on each facet's OWN radius it
+# does not even decide how many facets are measured exactly -- what it moves is
+# how many the ball hands over before the exclusion throws them out, as its
+# square -- so the finer it goes the faster this runs and the more it holds,
+# until the memory a build has is what stops it. Measured 2026-09-26 on a
+# filleted bracket against a 197 600-vertex scan: 22.9 s and 1.32 GiB at a
+# hundredth, 14.2 s and 2.07 GiB here, 12.3 s and 2.95 GiB at a three-hundredth.
+# This is the clock inside its target with the most room left under the ceiling.
+_FACET_PER_DIAGONAL = 200
+
+# How many candidate ROWS -- (point, facet) pairs -- are held at once. The rows
+# are the memory in this measurement and the meshes are not, and a budget in
+# POINTS bounds them nowhere: a chunk of 20 000 points against a model whose
+# widest facet reached 70 mm was an OOM kill rather than a slow run (measured
+# 2026-09-26). A row costs about 70 bytes through the filtering below, so this is
+# under a hundred megabytes, chosen to leave the 6 GiB of address space a build
+# process has (buildproc.limits) to the kernel's own mappings. Raising it buys
+# nothing: three million rows measured the same 8.7 s and 0.35 GiB more.
+_DEVIATION_ROWS = 1_000_000
+
+# A ceiling on the bisection below, not a target. Longest-edge bisection
+# terminates on its own -- the worst case measured here, a bracket cut to a
+# four-hundredth of its diagonal, needed 17 rounds -- and this is what keeps a
+# pathological facet from looping inside a build instead.
+# Hitting it costs SPEED AND NOT CORRECTNESS: the search radius is read off the
+# facets that actually came out, never off the limit that was asked for.
+_BISECTION_ROUNDS = 64
+
+
+def _reach(soup):
+    """How far each facet's rim lies from its own centre.
+
+    The radius in the exclusion argument of `_signed_distance`. Taken to the
+    VERTICES because the farthest point of a triangle from any fixed point is one
+    of its corners -- so this is the whole facet's radius and not a sample of it.
+    """
+    import numpy
+    return numpy.linalg.norm(soup - soup.mean(axis=1)[:, None, :], axis=2).max(axis=1)
+
+
+def _bisected(soup, limit):
+    """The same surface again, with no facet reaching further than `limit`.
+
+    Split at the midpoint of the LONGEST edge, two ways, rather than at all three
+    midpoints into four (`trimesh.remesh.subdivide_to_size`). A tessellated
+    fillet arrives as slivers -- 34 mm long and 0.4 mm wide, measured on cadquery
+    2.8.0 -- and the four-way split narrows those as well as shortening them, at a
+    thousand facets apiece where two dozen would do: on one bracket it made 3.8 M
+    facets against 346 k here, and the search over all of them ran five times
+    slower rather than faster (31.3 s against 6.4 s for 200 000 points).
+
+    The result is a triangle SOUP with T-junctions in it, and nothing here minds:
+    it covers exactly the surface it came from, and the only two questions asked
+    of it are how far a point is from a facet and which way that facet faces.
+
+    A FACET THAT IS DONE IS SET ASIDE rather than carried round the loop again,
+    which is the difference between this fitting in a build and not. Carrying the
+    whole soup meant every round measured facets already known to be small enough
+    and then allocated a second copy of all of them to append to, and since the
+    flat faces of a part are most of the final count and settle last, that copy
+    was of the largest array there is, fourteen times over. Measured 2026-09-26
+    on the bracket `deviation` quotes, at a two-hundredth of its diagonal: the
+    2 078 122 facets come out in 0.7 s and 0.74 GiB here, where carrying them ran
+    past a 4 GiB ceiling and was killed.
+    """
+    import numpy
+    settled = []
+    for _ in range(_BISECTION_ROUNDS):
+        wide = _reach(soup) > limit
+        if not wide.any():
+            break
+        settled.append(soup[~wide])
+        big = soup[wide]
+        sides = numpy.stack([big[:, 1] - big[:, 0], big[:, 2] - big[:, 1],
+                             big[:, 0] - big[:, 2]], axis=1)
+        longest = numpy.linalg.norm(sides, axis=2).argmax(axis=1)
+        # Turned so that the edge to split is the one from corner 0 to corner 1,
+        # whichever of the three it was.
+        turned = big[numpy.arange(len(big))[:, None],
+                     (numpy.arange(3) + longest[:, None]) % 3]
+        middle = (turned[:, 0] + turned[:, 1]) / 2.0
+        soup = numpy.concatenate([
+            numpy.stack([turned[:, 0], middle, turned[:, 2]], axis=1),
+            numpy.stack([middle, turned[:, 1], turned[:, 2]], axis=1)])
+    settled.append(soup)
+    return numpy.concatenate(settled)
+
+
+def _tessellated(shape, tolerance):
+    """One shape's facets, meshed HERE rather than taken off whatever it carries.
+
+    `Shape.mesh` remeshes only when `BRepTools.Triangulation_s(shape, tol)` says
+    the shape has no triangulation at that LINEAR tolerance, so a shape something
+    else already meshed answers with THAT mesh and the angle asked for here is
+    ignored outright. Measured 2026-09-26 on cadquery 2.8.0: a sphere of radius
+    50 meshed at the STL export's settings and then asked for `(0.02, 0.02)`
+    gives 8 002 facets where a fresh shape gives 201 558. An STL export earlier
+    in the build reaches this, and so does a `@cache`-decorated builder handing
+    the same object to a second call.
+
+    So the triangulation goes BOTH SIDES: before, so the answer is this call's
+    own, and after, so the next BoundingBox() is not the box of our mesh --
+    `geometry.drop_mesh` is the same call made for that second reason alone.
+    """
+    from OCP.BRepTools import BRepTools
+
+    BRepTools.Clean_s(shape.wrapped)
+    try:
+        # The linear argument is a FRACTION of the face's own size and not a
+        # length (see _TESSELLATION_ANGLE), so a fifth of the band is a fifth of
+        # the band only in the sense that a tighter band asks for a finer mesh.
+        # At the bands a printed part is judged by it is looser than the angle
+        # and the angle is what decides; it starts to bind somewhere under
+        # 0.01 mm, which is the right direction for it to bind in.
+        # The angle is read here rather than passed in, so a caller cannot ask
+        # for a mesh the build itself never sees: every reading in a build has
+        # to come off the same triangulation to be comparable with the next.
+        return shape.tessellate(tolerance / 5.0, _TESSELLATION_ANGLE)
+    finally:
+        BRepTools.Clean_s(shape.wrapped)
+
+
+def _facets(model, tolerance, facet, where):
+    """The model's surface as a triangle soup, ready to be searched.
+
+    `(soup, normals, tree, reach)`: the facets as an (n, 3, 3) array, their unit
+    normals, a KD-tree over their centres and EACH facet's own radius.
+
+    EVERY BODY, like everything else in this file -- a part is routinely several
+    and the scan sees all of them. The normals come out pointing away from the
+    material: `Shape.tessellate` reverses the winding of a reversed face, which
+    was verified rather than assumed (the mesh's signed volume matches
+    `Shape.Volume()` to three decimals on a shell, a fillet and a part with a
+    hole through it, cadquery 2.8.0).
+
+    A facet of no area is dropped: it has no normal to take a sign from and no
+    surface to be nearest to. OCCT leaves a couple at the poles of a revolved
+    face.
+    """
+    import numpy
+    from scipy.spatial import cKDTree
+
+    soup = numpy.concatenate([
+        numpy.array([(v.x, v.y, v.z) for v in vertices], dtype=float)[
+            numpy.array(faces, dtype=numpy.int64)]
+        for vertices, faces in (_tessellated(shape, tolerance)
+                                for shape in _shapes(model, where))])
+    if facet is None:
+        corners = soup.reshape(-1, 3)
+        facet = float(numpy.linalg.norm(
+            corners.max(axis=0) - corners.min(axis=0))) / _FACET_PER_DIAGONAL
+    soup = _bisected(soup, facet)
+
+    cross = numpy.cross(soup[:, 1] - soup[:, 0], soup[:, 2] - soup[:, 0])
+    twice_area = numpy.linalg.norm(cross, axis=1)
+    real = twice_area > 0.0
+    soup, cross, twice_area = soup[real], cross[real], twice_area[real]
+    return (soup, cross / twice_area[:, None], cKDTree(soup.mean(axis=1)),
+            _reach(soup))
+
+
+def _passes(counts, budget):
+    """The runs of points to measure one at a time, each at most `budget` rows.
+
+    A point that brings more rows than the budget on its own is a run of one: the
+    budget is what the passes are SIZED by, not a ceiling this could honour by
+    splitting a point in half.
+    """
+    import numpy
+    carried = numpy.concatenate(([0], numpy.cumsum(counts)))
+    start = 0
+    while start < len(counts):
+        stop = max(start + 1, int(numpy.searchsorted(
+            carried, carried[start] + budget, side="right")) - 1)
+        yield start, stop
+        start = stop
+
+
+def _signed_distance(points, soup, normals, tree, reach):
+    """Each point's distance to the nearest facet, signed by that facet's normal.
+
+    EXACT, and the proof is one inequality PER FACET. Every point of facet `j`
+    lies within `reach[j]` of the centre `c` the tree holds it under, so for any
+    point `q` on it `|p - q| >= |p - c| - reach[j]`: a facet whose centre is
+    further than `bound + reach[j]` from `p` has nothing closer to `p` than
+    `bound`. `bound` is the distance from `p` to the facet its centre is nearest,
+    measured exactly, so nothing the test throws out could have won -- and every
+    facet it keeps is measured with `trimesh.triangles.closest_point` rather than
+    approximated.
+
+    EACH FACET'S OWN RADIUS AND NOT THE WIDEST IN THE MODEL, which is where this
+    measurement's cost lives. A tessellated part is wildly uneven -- on the
+    bracket `deviation` quotes, the median facet reaches 0.11 mm and the widest
+    69.6 mm, and the bisection only caps the top of that at 0.73 mm -- so one
+    radius standing for all of them draws a ball seven times wider than the
+    fillet facets a point actually sits among, and the ratio enters squared. The
+    ball itself still has ONE radius, because that is the query scipy offers;
+    what the per-facet test does is cut its answer down to the facets that could
+    win, before any of them is measured exactly. Measured 2026-09-26 over that
+    bracket, 197 600 points: 475 facets a point come back from the ball and 39 of
+    them survive the test.
+
+    WHY IT IS WRITTEN OUT HERE. `rtree`, `pyembree` and `embreex` are all absent
+    from this image, so `trimesh.proximity.signed_distance` and
+    `ProximityQuery.on_surface` raise ModuleNotFoundError, and what trimesh has
+    left is `closest_point_naive` -- brute force, 36.9 s for 41 k points against
+    5 120 facets, measured 2026-09-26, i.e. hours at the size a scan is. The
+    KD-tree over surface SAMPLES that suggests itself instead is not an
+    alternative: on a 2 mm wall it was out by 40-450 um even at k=16, which is
+    the size of the tolerance band being measured.
+
+    A PASS IS SIZED BY CANDIDATE ROWS AND NOT BY POINTS, which is the same fact
+    seen from the memory side: what is held at once is one row per (point, facet)
+    pair, and how many rows a point brings depends on where it sits rather than
+    on how many points there are. A budget in POINTS therefore bounds nothing,
+    which is how a chunk of 20 000 came to be an OOM kill rather than a slow run.
+    `query_ball_point(..., return_length=True)` counts the rows without building
+    them, so the runs can be cut where the budget falls.
+
+    THE SIGN IS THE NEAREST FACET'S, which is what leaves one case undecided: a
+    point whose nearest point on the surface is an edge or a corner can sit
+    exactly in the plane of the facet that won, and the dot product is then zero.
+    It comes out positive, and the magnitude -- which is what the report quotes
+    -- is unaffected.
+    """
+    import numpy
+    import trimesh
+
+    centres = soup.mean(axis=1)
+    nearest = tree.query(points, workers=-1)[1]
+    bound = numpy.linalg.norm(
+        points - trimesh.triangles.closest_point(soup[nearest], points), axis=1)
+    ball = bound + float(reach.max())
+    counts = tree.query_ball_point(points, ball, workers=-1, return_length=True)
+
+    out = numpy.empty(len(points))
+    for start, stop in _passes(counts, _DEVIATION_ROWS):
+        here, wide = points[start:stop], counts[start:stop]
+        groups = tree.query_ball_point(here, ball[start:stop], workers=-1,
+                                       return_sorted=False)
+        candidates = numpy.fromiter((j for g in groups for j in g), numpy.int64,
+                                    int(wide.sum()))
+        owner = numpy.repeat(numpy.arange(len(here)), wide)
+        near = (numpy.linalg.norm(centres[candidates] - here[owner], axis=1)
+                - reach[candidates]) <= bound[start:stop][owner]
+        candidates, owner = candidates[near], owner[near]
+        away = here[owner] - trimesh.triangles.closest_point(soup[candidates],
+                                                             here[owner])
+        span = numpy.linalg.norm(away, axis=1)
+        # Ordered by point and then by distance, so the first row of each point's
+        # run is its own nearest facet. Every point still has a run: the facet
+        # `bound` was measured against passes the test by construction.
+        order = numpy.lexsort((span, owner))
+        kept = numpy.bincount(owner, minlength=len(here))
+        best = order[numpy.concatenate(([0], numpy.cumsum(kept)[:-1]))]
+        out[start:stop] = numpy.copysign(
+            span[best],
+            numpy.einsum("ij,ij->i", away[best], normals[candidates[best]]))
+    return out
+
+
+def _weighted_median(values, weight):
+    """The value half the SURFACE is under, rather than half the points.
+
+    A scan is denser where the scanner spent longer, so a median over vertices is
+    a median over the scanner's attention and not over the part.
+    """
+    import numpy
+    order = numpy.argsort(values)
+    carried = numpy.cumsum(weight[order])
+    return float(values[order][
+        min(int(numpy.searchsorted(carried, carried[-1] / 2.0)), len(order) - 1)])
+
+
+def deviation(scan, model, tolerance, *, name="deviation", thresholds=None):
+    """How far a scan of the real part is from the model, in colour and in figures.
+
+        @cache
+        def measured():
+            scan = trimesh.load("ref/scan.stl", force="mesh")
+            return checklib.deviation(scan, bracket(), tolerance=0.1)
+
+        def parts():
+            bands, _ = measured()
+            return {"bracket": {"shape": bracket(), "kind": "printable"}, **bands}
+
+        def views():
+            return [{"id": "assembled", "parts": ["bracket"]},
+                    {"id": "deviation", "parts": list(measured()[0])}]
+
+    BEHIND A BUILDER AND NOT AT MODULE LEVEL, for the reason every other builder
+    in a model is: each check worker imports the model afresh
+    (`checkunits._work`), so a measurement standing at module level runs again in
+    every one of them.
+
+    One entry per colour band, keyed `<name>_inside`, `<name>_within`,
+    `<name>_outside`; a band with nothing in it is absent rather than empty, so
+    iterate `bands` instead of spelling the three keys out. Each is a `mock`
+    carrying a piece of the SCAN's own mesh and an explicit colour, which wins
+    over the grey a mock is otherwise painted (`parts.catalogue_colors`).
+
+    WHAT IS MEASURED, and the sign is the whole of it: for every vertex of the
+    scan, the distance to the nearest point of the model's surface, PLUS when the
+    scan lies outside the model -- the real thing has material the model does not
+    account for -- and MINUS when it lies inside, where the model is thicker than
+    the thing it describes. Which side is decided by the normal of the nearest
+    facet. `tolerance` is the half-width of the green band, in millimetres, and
+    it has no default for the reason `unsupported_area`'s budget has none: how
+    close is close enough is a fact about this part and nobody else's.
+
+    `report` carries the numbers, because colour answers "where" and half of the
+    question is "by how much":
+
+        report.median_signed     mm, WHICH WAY the surface sits: the bias
+        report.median_absolute   mm, HOW FAR off it is: the typical error
+        report.minimum           mm, the most negative -- deepest into the model
+        report.maximum           mm, the most positive -- furthest outside it
+        report.within            {threshold: fraction of the surface inside it}
+        report.points            how many scan vertices were measured
+
+    Both medians are weighted by surface rather than by vertex, and THE TWO ARE
+    NOT INTERCHANGEABLE, which is why neither of them is called `median`: on a
+    part a third of which is 0.6 mm thin, a third 0.05 mm proud and a third
+    0.5 mm proud, the SIGNED median is 0.05 mm -- the zone the crossing lands in
+    is the one that is nearly right -- while the ABSOLUTE median is 0.5 mm and
+    two thirds of the surface is half a millimetre out. The signed one answers
+    "is the print big or small", the absolute one "is the print right", and it is
+    the second that belongs beside `within`, which is likewise on the magnitude.
+
+    `thresholds` is what `within` is keyed by and defaults to `(tolerance,)`;
+    pass several -- `(0.05, 0.1, 0.2)` -- to see the shape of the distribution
+    rather than one number off it.
+
+    A FACE IS DRAWN IN THE BAND OF ITS WORST CORNER, so a band errs towards
+    showing a deviation rather than averaging it away, while the figures are
+    measured at the points themselves. The two are close and not equal, and the
+    report is the half to quote.
+
+    NOTHING HERE MOVES THE SCAN. Lining a scan up with the model is the author's
+    decision and often the whole job; a function that quietly did it would be
+    answering about a position nobody chose. Load the scan where it belongs
+    (`mesh.apply_transform`) and hand it over standing there.
+
+    A SCAN OF 200 000 VERTICES FITS, AND THAT IS THE SIZE THIS IS SIZED FOR.
+    Measured 2026-09-26 on a 120x80x20 bracket with 8 mm corner fillets, twelve
+    holes and every edge rounded at 0.8 mm -- so a tessellation of 217 k facets
+    ranging from 0.11 mm to 70 mm across, which is the shape of the cost -- and a
+    197 600-vertex scan taken off its fillets, where the facets are smallest and
+    the search is dearest: 14.2 s and 2.1 GiB on a laptop. The hub is some four
+    times slower and a build has 300 seconds and 6 GiB of address space for
+    everything (`buildproc.limits`), so past roughly half a million vertices thin
+    the scan out rather than wait -- `scan.simplify_quadric_decimation(...)`, or
+    a submesh of the zone in question -- because both figures grow with it, the
+    clock linearly and the memory only in the pass being held.
+
+    THE TESSELLATION IS THE FLOOR UNDER EVERY READING, and it is not a knob. The
+    model is triangulated at a fixed angular tolerance (`_TESSELLATION_ANGLE`),
+    and a triangulation stands INSIDE a convex surface by about
+    0.22 * R * angle^2 -- 22 um at a 10 mm radius, 110 um at 50 mm, 1.1 mm at
+    half a metre -- which is added to every reading over that surface in one
+    direction. On a part whose radii are large that floor is what a band tighter
+    than it would be measuring, so read the figures against it.
+    """
+    if tolerance <= 0:
+        raise ValueError(
+            f"deviation({name}): tolerance is {tolerance!r}. It is the "
+            "half-width of the band that counts as agreement, in millimetres, "
+            "and at zero or less there is no such band: every face lands in blue "
+            "or red on the sign of arithmetic noise, and the picture says "
+            "nothing about the part.")
+
+    import numpy
+    import trimesh
+
+    vertices = numpy.asarray(scan.vertices, dtype=float)
+    at_point = _signed_distance(
+        vertices, *_facets(model, tolerance, None, f"deviation({name})"))
+
+    faces = numpy.asarray(scan.faces)
+    corners = at_point[faces]
+    worst = numpy.take_along_axis(
+        corners, numpy.abs(corners).argmax(axis=1)[:, None], axis=1)[:, 0]
+    area = numpy.asarray(scan.area_faces, dtype=float)
+
+    bands = {}
+    for (suffix, colour, phrase), belongs in zip(
+            _DEVIATION_BANDS,
+            (worst < -tolerance, numpy.abs(worst) <= tolerance, worst > tolerance)):
+        picked = numpy.flatnonzero(belongs)
+        if picked.size == 0:
+            continue
+        # Renumbered onto the vertices this band actually uses: a leaf carrying
+        # the whole scan's vertex buffer would widen the scene's bounding box to
+        # the whole scan in every band (views._widen_bb).
+        used, renumbered = numpy.unique(faces[picked], return_inverse=True)
+        # `"mock"` spelled out rather than imported: this module reaches no
+        # first-party name, for the reason `_shapes` gives at length. A test ties
+        # the literal to `parts.KIND_MOCK`.
+        bands[f"{name}_{suffix}"] = {
+            "mesh": trimesh.Trimesh(vertices=vertices[used],
+                                    faces=renumbered.reshape(-1, 3),
+                                    process=False),
+            "kind": "mock",
+            "color": colour,
+            "note": f"{phrase}, {area[picked].sum() / area.sum():.0%} of the area",
+        }
+
+    weight = numpy.bincount(faces.reshape(-1), weights=numpy.repeat(area, 3) / 3.0,
+                            minlength=len(at_point))
+    return bands, types.SimpleNamespace(
+        median_signed=_weighted_median(at_point, weight),
+        median_absolute=_weighted_median(numpy.abs(at_point), weight),
+        minimum=float(at_point.min()),
+        maximum=float(at_point.max()),
+        within={float(edge): float(weight[numpy.abs(at_point) <= edge].sum()
+                                   / weight.sum())
+                for edge in ((tolerance,) if thresholds is None else thresholds)},
+        points=len(at_point))
 
 
 # --------------------------------------------------------------------------

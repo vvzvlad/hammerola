@@ -147,6 +147,7 @@ Number = _impl.Number
 PLANE_TOL = _impl.PLANE_TOL
 check = _impl.check
 derived = _impl.derived
+deviation = _impl.deviation
 estimated = _impl.estimated
 is_empty = _impl.is_empty
 measured = _impl.measured
@@ -189,6 +190,7 @@ __all__ = [
     "PLANE_TOL",
     "check",
     "derived",
+    "deviation",
     "estimated",
     "is_empty",
     "material_at",
