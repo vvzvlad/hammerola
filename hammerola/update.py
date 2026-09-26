@@ -43,7 +43,8 @@ from pathlib import Path
 
 from hammerola import VERSION, changelog, config
 from hammerola.errors import ClientError
-from hammerola.hub import QUERY_TIMEOUT, Hub, HubError
+from hammerola.hub import HubError
+from hammerola.sources import public_hub
 
 # The two manifest keys this follows: where the client is, and which version the
 # hub serves. Constants rather than literals at the call sites, for the reason
@@ -80,10 +81,7 @@ def run(args) -> int:
     target = _target()
 
     hub_url = config.hub_url(None)
-    # NO TOKEN, exactly as `skill` presents none: `/start` and the file it names
-    # are public on purpose, and a machine whose client is too old to publish
-    # may well be one that was never logged in.
-    hub = Hub(hub_url, "", timeout=QUERY_TIMEOUT)
+    hub = public_hub(hub_url)
     manifest = hub.start()
     where = manifest.get(CLIENT_KEY)
     if not isinstance(where, str) or not where:
@@ -135,12 +133,12 @@ def refuse_if_behind(hub_url: str) -> None:
     black-holes packets instead of refusing them hangs the terminal for five
     silent minutes BEFORE any output, since this runs ahead of the packing, and
     then hangs it again on the push. Taking the URL leaves that budget outside
-    the function rather than inside it as a thing to reach for. NO TOKEN, for
-    the reason `run` gives: `/start` is public, and a client too old to publish
-    may be one that was never logged in.
+    the function rather than inside it as a thing to reach for, and it is what
+    lets the handle come from `sources.public_hub` — which is also where the
+    empty token is accounted for.
     """
     try:
-        manifest = Hub(hub_url, "", timeout=QUERY_TIMEOUT).start()
+        manifest = public_hub(hub_url).start()
     except HubError:
         return
     served = manifest.get(VERSION_KEY)

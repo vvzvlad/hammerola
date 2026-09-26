@@ -356,8 +356,10 @@
   `make test` work on a machine with no node at all. The output path is written
   in five files that never import each other, and `tests/test_ui_bundle.py` is
   what keeps them in step; `ui/README.md` has the layout and the pins
-- `viewer/` — the viewer LIBRARY's own source: `three-cad-viewer` v5.0.1 forked
-  into this tree (MIT, issue #14), because what we need from it are two edits to
+- `viewer/` — the viewer LIBRARY's own source: `three-cad-viewer` forked into
+  this tree (MIT, issue #14; the tag and commit it sits on are recorded in
+  `static/_v/PROVENANCE.md` and nowhere else, so an upgrade moves one file),
+  because what we need from it are two edits to
   its BUILD — `external: three`, so three ships once beside the bundle instead
   of inside it, and an index that re-exports three's namespace. A fork kept as
   SOURCE is what makes those two rebasable onto the next tag; a patched artefact
@@ -394,6 +396,10 @@
   cannot see a file that is not there, so without that refusal a stripped image
   served a 200 and an archive that died on the laptop that downloaded it
 - `docs/SPEC.md` — requirements, verified facts and the work plan (section 8A)
+- `docs/ui-brief.md` — what the interface is FOR, and the vocabulary its panels
+  use; `docs/viewer-api.md` — which of the vendored viewer is a public API and
+  what `ui/src/viewport/` reaches into at its own risk. Listed here because the
+  only way in used to be a comment inside the code that needed them (#100)
 - `main.py` — thin entry point over `src/`
 - `pyproject.toml` — packaging metadata for the CLIENT and for nothing else: the
   distribution name `hammerola`, the `>=3.9` floor, no dependencies at all and

@@ -1813,6 +1813,8 @@ class Display {
   /**
    * Checkbox Handler for setting the tools mode.
    * Delegates state mutations to Viewer.activateTool() to maintain unidirectional data flow.
+   * The active tab is left untouched: a measure/select tool can run on any tab,
+   * including Clip, so a sectioned model can be measured.
    */
   setTool = (name: string, flag: boolean): void => {
     // Block tool activation while Studio mode is active
@@ -1820,19 +1822,10 @@ class Display {
       return;
     }
     this.viewer.toggleAnimationLoop(flag);
-    const activeTool = this.state.get("activeTool");
-    const currentTool = typeof activeTool === "string" ? activeTool : "";
 
     if (flag) {
       // Delegate state mutations to Viewer
       this.viewer.activateTool(name, true);
-
-      if (
-        ["distance", "properties", "select"].includes(name) &&
-        !["distance", "properties", "select"].includes(currentTool)
-      ) {
-        this.viewer.toggleTab(true);
-      }
       this.viewer.setSelectionInput(flag);
 
       if (name === "distance") {
@@ -1846,9 +1839,6 @@ class Display {
         this.viewer.checkChanges({ activeTool: ToolTypes.SELECT });
       }
     } else {
-      if (currentTool === name || name === "explode") {
-        this.viewer.toggleTab(false);
-      }
       if (name === "distance") {
         this.viewer.cadTools.disable();
       } else if (name === "properties") {
@@ -1951,9 +1941,6 @@ class Display {
     ) {
       this.clickButtons[activeTool]?.set(false);
       this.setTool(activeTool, false);
-      // setTool→toggleTab(false) silently sets activeTab to "tree" (no notification).
-      // Restore to "studio" so the next tab click correctly detects Studio as oldTab.
-      this.state.set("activeTab", "studio", false);
     }
 
     // Hide tool buttons
@@ -1968,24 +1955,6 @@ class Display {
    * @internal
    */
   private _restoreToolsAfterStudio(): void {
-    this.showMeasureTools(this.measureTools);
-    this.showSelectTool(this.selectTool);
-  }
-
-  /**
-   * Entering Clip mode: hide the measure + select tool buttons (a measure/select
-   * tool can't be active here — it disables the clip tab — but the buttons must not
-   * be invocable while clipping). Mirrors {@link _deactivateToolsForStudio};
-   * explode/zscale stay enabled for consistency with studio mode. Restored by
-   * {@link _restoreToolsAfterClip} on leave.
-   */
-  private _deactivateToolsForClip(): void {
-    this.showMeasureTools(false);
-    this.showSelectTool(false);
-  }
-
-  /** Leaving Clip mode: restore measure + select buttons per their feature flags. */
-  private _restoreToolsAfterClip(): void {
     this.showMeasureTools(this.measureTools);
     this.showSelectTool(this.selectTool);
   }
@@ -2127,9 +2096,6 @@ class Display {
     if (oldTab === "zebra" && newTab !== "zebra") {
       this.viewer.enableZebraTool(false);
     }
-    if (oldTab === "clip" && newTab !== "clip") {
-      this._restoreToolsAfterClip();
-    }
     if (oldTab === "studio" && newTab !== "studio") {
       this.closeMatEditor();
       this._saveMatEditorChanges();
@@ -2176,7 +2142,6 @@ class Display {
       this.viewer.treeview?.update();
     } else if (newTab === "clip") {
       _updateVisibility(false, true, false, false, false);
-      this._deactivateToolsForClip();
       this.viewer.nestedGroup.setBackVisible(true);
       const clipIntersection = this.viewer.state.get("clipIntersection");
       if (typeof clipIntersection === "boolean") {

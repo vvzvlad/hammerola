@@ -2536,6 +2536,7 @@ class ObjectGroup extends THREE.Group {
         this._cadOriginalBackColor = null;
         this._isStudioMode = false;
         this._cadEdgesVisible = null;
+        this._cadVerticesVisible = null;
     }
     /**
      * Get the zebra tool, creating it on first access.
@@ -2577,6 +2578,7 @@ class ObjectGroup extends THREE.Group {
         this._cadOriginalBackColor = null;
         this._isStudioMode = false;
         this._cadEdgesVisible = null;
+        this._cadVerticesVisible = null;
     }
     /**
      * Set the front face mesh.
@@ -2932,7 +2934,13 @@ class ObjectGroup extends THREE.Group {
             }
         }
         if (this.vertices) {
-            this.vertices.material.visible = flag;
+            if (this._isStudioMode) {
+                // Same rule as edges: Studio hides vertices, record the CAD intent only.
+                this._cadVerticesVisible = flag;
+            }
+            else {
+                this.vertices.material.visible = flag;
+            }
         }
         this._syncPickVertices();
     }
@@ -3141,9 +3149,13 @@ class ObjectGroup extends THREE.Group {
         this._cadOriginalBackColor = this.originalBackColor
             ? this.originalBackColor.clone()
             : null;
-        // Save edge visibility state
+        // Save edge and vertex visibility state (also for edge-only / vertex-only
+        // groups, which have no front mesh and get no studio material)
         this._cadEdgesVisible = this.edgeMaterial
             ? this.edgeMaterial.visible
+            : null;
+        this._cadVerticesVisible = this.vertices
+            ? this.vertices.material.visible
             : null;
         // --- Swap front material ---
         if (this.front && studioFront) {
@@ -3198,23 +3210,29 @@ class ObjectGroup extends THREE.Group {
         if (this._cadOriginalBackColor) {
             this.originalBackColor = this._cadOriginalBackColor.clone();
         }
-        // --- Restore edge visibility ---
+        // --- Restore edge and vertex visibility ---
         if (this.edgeMaterial && this._cadEdgesVisible !== null) {
             this.edgeMaterial.visible = this._cadEdgesVisible;
+        }
+        if (this.vertices && this._cadVerticesVisible !== null) {
+            this.vertices.material.visible = this._cadVerticesVisible;
         }
         this._isStudioMode = false;
     }
     /**
-     * Toggle edge visibility while in Studio mode.
+     * Toggle edge and vertex visibility while in Studio mode.
      *
-     * Only affects edges (not vertices). Should only be called while in
-     * Studio mode; the saved CAD edge visibility is not affected.
+     * Should only be called while in Studio mode; the saved CAD edge/vertex
+     * visibility is not affected and is restored by `leaveStudioMode()`.
      *
-     * @param visible - Whether edges should be visible
+     * @param visible - Whether edges and vertices should be visible
      */
     setStudioShowEdges(visible) {
         if (this.edgeMaterial) {
             this.edgeMaterial.visible = visible;
+        }
+        if (this.vertices) {
+            this.vertices.material.visible = visible;
         }
     }
 }
@@ -4282,7 +4300,10 @@ const BACKGROUND_ID = 0;
  * `Uint32BufferAttribute` under this name; the pick pass reads it as an **integer**
  * attribute (`gpuType = THREE.IntType`, GLSL3 `in uint`) so ids stay exact past
  * 2^24. The geometry side must set `gpuType = THREE.IntType` on the attribute for
- * the pick shader to read it.
+ * the pick shader to read it. Between the stages the id travels as two float
+ * varyings (16-bit halves), deliberately NOT as a `flat uint` — see the note in
+ * highlight.ts: a `flat` varying costs ~25x the scene's buffer bytes in graphics
+ * memory under WebKit's ANGLE-on-Metal backend.
  */
 const COMPONENT_ID_ATTRIBUTE = "componentId";
 /**
@@ -4580,8 +4601,9 @@ const VERTEX_DEPTH_BIAS_FACTOR = 2e-4;
  */
 const PICK_POINT_SIZE = 3;
 /**
- * Shared GLSL3 MRT fragment shader for all pick materials (face/vertex/edge): packs
- * the flat `vId` into attachment 0 (byte order MUST match `packId()`: low byte in R)
+ * Shared GLSL3 MRT fragment shader for all pick materials (face/vertex/edge):
+ * reassembles the id from its two interpolated halves and packs it into attachment 0
+ * (byte order MUST match `packId()`: low byte in R)
  * and writes the interpolated world position into attachment 1 (RGBA32F; `w=1` marks
  * "has position"). The fragment clip chunk only `discard`s (non-ALPHA_TO_COVERAGE),
  * so no `diffuseColor` symbol is required.
@@ -4589,13 +4611,15 @@ const PICK_POINT_SIZE = 3;
 const PICK_FRAGMENT_SHADER = /* glsl */ `
   #include <clipping_planes_pars_fragment>
 
-  flat in uint vId;
+  in float vIdLo;
+  in float vIdHi;
   in vec3 vWorldPos;
   layout(location = 0) out vec4 fragId;
   layout(location = 1) out vec4 fragPos;
 
   void main() {
     #include <clipping_planes_fragment>
+    uint vId = ( uint( vIdHi + 0.5 ) << 16 ) | uint( vIdLo + 0.5 );
     fragId = vec4(
       float( vId & 0xFFu ) / 255.0,
       float( ( vId >> 8 ) & 0xFFu ) / 255.0,
@@ -4613,19 +4637,24 @@ const PICK_FRAGMENT_SHADER = /* glsl */ `
 function createFacePickMaterial(options = {}) {
     // GLSL3 (WebGL2). For a (non-Raw) ShaderMaterial three.js auto-injects
     // `in vec3 position;`, `uniform mat4 modelMatrix/modelViewMatrix/projectionMatrix`,
-    // so we declare ONLY the custom integer attribute + flat varying. Integer
-    // varyings MUST be `flat`. Clip chunks use legacy `varying`/`attribute` keywords
+    // so we declare ONLY the custom integer attribute + the two id-half varyings
+    // (float, interpolated — an integer varying would have to be `flat`, which is
+    // the ANGLE-on-Metal memory trap described in highlight.ts; all vertices of a
+    // primitive carry the same id, so interpolation + rounding is exact). Clip
+    // chunks use legacy `varying`/`attribute` keywords
     // which three remaps via `#define` under GLSL3; the vertex chunk reads a local
     // `vec4 mvPosition`, which we compute before the include.
     const vertexShader = /* glsl */ `
     #include <clipping_planes_pars_vertex>
 
     in uint componentId;
-    flat out uint vId;
+    out float vIdLo;
+    out float vIdHi;
     out vec3 vWorldPos;
 
     void main() {
-      vId = componentId;
+      vIdLo = float( componentId & 0xFFFFu );
+      vIdHi = float( componentId >> 16 );
       vec4 worldPos = modelMatrix * vec4( position, 1.0 );
       vWorldPos = worldPos.xyz;
       vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
@@ -4664,13 +4693,15 @@ function createVertexPickMaterial(options = {}) {
     #include <clipping_planes_pars_vertex>
 
     in uint componentId;
-    flat out uint vId;
+    out float vIdLo;
+    out float vIdHi;
     out vec3 vWorldPos;
     uniform float uPickSize;
     uniform float uDepthBias;
 
     void main() {
-      vId = componentId;
+      vIdLo = float( componentId & 0xFFFFu );
+      vIdHi = float( componentId >> 16 );
       vec4 worldPos = modelMatrix * vec4( position, 1.0 );
       vWorldPos = worldPos.xyz;
       vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
@@ -4730,7 +4761,8 @@ function createEdgePickMaterial(options = {}) {
     in vec3 instanceEnd;
     in uint componentId;
 
-    flat out uint vId;
+    out float vIdLo;
+    out float vIdHi;
     out vec3 vWorldPos;
 
     void trimSegment( const in vec4 start, inout vec4 end ) {
@@ -4742,7 +4774,8 @@ function createEdgePickMaterial(options = {}) {
     }
 
     void main() {
-      vId = componentId;
+      vIdLo = float( componentId & 0xFFFFu );
+      vIdHi = float( componentId >> 16 );
 
       // World-space segment endpoints → approximate hit point along the edge.
       vWorldPos = ( position.y < 0.5 )
@@ -5280,20 +5313,41 @@ const U_HIGHLIGHT_HOVER_COLOR = "uHighlightHoverColor";
 //
 // three upgrades stock materials to GLSL ES 3.00 on WebGL2 via `#define attribute
 // in` / `#define varying out|in` macros (WebGLProgram.js), so writing `attribute` /
-// `flat varying` here is converted automatically; `usampler2D` / `texelFetch` /
+// `varying` here is converted automatically; `usampler2D` / `texelFetch` /
 // integer attributes are then available.
+//
+// The component id crosses to the fragment stage as TWO ordinary (interpolated)
+// float varyings holding its 16-bit halves — NOT as a `flat uint`. A `flat`
+// varying is what an integer varying would require, and it is exactly what must
+// be avoided here: under WebKit's ANGLE-on-Metal backend, every draw whose
+// program has a `flat` varying makes ANGLE allocate a converted copy of the
+// draw's index data (>= 64 KB each, pooled, never returned to the GL on
+// deleteBuffer). With this varying on every visible material that was ~25x the
+// scene's vertex/index bytes in graphics memory (26 MB of buffers -> 812 MB;
+// 100 MB -> 2.3 GB) and it is charged to the page's WebContent process in the
+// system WebKit, which killed build123d Studio at 16 GB after a few large
+// shows. Without `flat` the same scene takes 63 MB / 160 MB. Measured 2026-09-17
+// (working-docs/leak-harness.html + probe2.html, Playwright WebKit and Safari).
+//
+// Interpolating floats is exact for the id's purpose: every vertex of a face,
+// every vertex of an instanced segment and a point carry the SAME id, so the
+// interpolated value equals it up to rounding, and `uint(x + 0.5)` recovers it.
+// Two 16-bit halves (both < 65536, exactly representable in float32) keep the
+// full 32-bit id range that `applyComponentIds` promises.
 // ---------------------------------------------------------------------------
 /**
  * Shared state-fetch GLSL, injected into BOTH stages: the vertex stage needs it for
  * widening / point size, the fragment for color. Declares the sampler + texWidth +
- * the flat varying and a helper returning the component's {@link HighlightFlag} bits
- * (0 for background / nothing).
+ * the two id-half varyings and a helper returning the component's
+ * {@link HighlightFlag} bits (0 for background / nothing).
  */
 const HL_STATE_GLSL = `
-flat varying uint vHighlightId;
+varying float vHighlightIdLo;
+varying float vHighlightIdHi;
 uniform highp usampler2D ${U_HIGHLIGHT_STATE};
 uniform int ${U_HIGHLIGHT_TEX_WIDTH};
 uint highlightState() {
+  uint vHighlightId = (uint(vHighlightIdHi + 0.5) << 16) | uint(vHighlightIdLo + 0.5);
   if (vHighlightId == 0u) return 0u;
   ivec2 hlUv = ivec2(
     int(vHighlightId) % ${U_HIGHLIGHT_TEX_WIDTH},
@@ -5308,8 +5362,8 @@ uint highlightState() {
 const HL_VERTEX_HEADER = `
 attribute uint ${COMPONENT_ID_ATTRIBUTE};
 ${HL_STATE_GLSL}`;
-/** Vertex main: forward the id. Injected right after `void main() {`. */
-const HL_VERTEX_ASSIGN = `vHighlightId = ${COMPONENT_ID_ATTRIBUTE};`;
+/** Vertex main: forward the id as two 16-bit halves. Injected right after `void main() {`. */
+const HL_VERTEX_ASSIGN = `vHighlightIdLo = float(${COMPONENT_ID_ATTRIBUTE} & 0xFFFFu); vHighlightIdHi = float(${COMPONENT_ID_ATTRIBUTE} >> 16);`;
 /** Fragment header: the shared state fetch + the two highlight colors. */
 const HL_FRAGMENT_HEADER = `
 ${HL_STATE_GLSL}
@@ -5559,7 +5613,7 @@ class HighlightController {
                 this.uniforms.uHighlightSelectedColor;
             shader.uniforms[U_HIGHLIGHT_HOVER_COLOR] =
                 this.uniforms.uHighlightHoverColor;
-            // Common: forward the component id as a flat varying.
+            // Common: forward the component id (as two interpolated float halves).
             shader.vertexShader =
                 HL_VERTEX_HEADER +
                     "\n" +
@@ -7907,11 +7961,14 @@ class NestedGroup {
             // widen + recolor the flagged segment in-shader (Option A).
             this.highlight?.patchEdgeMaterial(edges.material);
             // Internal measurement backend: record the standalone edge node's geometry
-            // (obj_vertices lets the hover status resolve a picked corner's coords).
+            // (obj_vertices lets the hover status resolve a picked corner's coords,
+            // edge_types the exact curve type — without it every edge reads as "other"
+            // and a circle/arc loses its center + radius readout).
             this.meshGeometry.register(path, {
                 edges: edgeData.edges,
                 segments_per_edge: edgeData.segments_per_edge,
                 obj_vertices: edgeData.obj_vertices,
+                edge_types: edgeData.edge_types,
             }, group, null);
         }
         group.setEdges(edges);
@@ -8550,13 +8607,17 @@ class NestedGroup {
         }
         // Track material tags that failed to resolve
         const unresolvedTags = new Set();
-        // Iterate all ObjectGroups with front meshes
         for (const path in this.groups) {
             const obj = this.groups[path];
             if (!(obj instanceof ObjectGroup))
                 continue;
-            if (!obj.front)
+            if (!obj.front) {
+                // Edge-only / vertex-only group: no studio material, but it must still
+                // enter studio mode so its CAD edge/vertex visibility is saved and
+                // restored on leave (setStudioShowEdges hides both in studio).
+                obj.enterStudioMode(null, null);
                 continue;
+            }
             // Determine material tag, leaf color, and leaf alpha
             const tag = obj.materialTag || "";
             const leafColor = obj.originalColor
@@ -8912,11 +8973,7 @@ class Grid extends THREE.Group {
         this.getCamera = getCamera;
         this.getAxes0 = getAxes0;
         this.onGridChange = onGridChange || null;
-        // Heuristics, experimentally determined
-        const size = bbox.max_dist_from_center();
-        const canvasSize = Math.min(cadWidth, height);
-        const scale = Math.max(1.0, 6 - Math.log2(canvasSize / 100));
-        this.minFontIndex = Math.round((size < 2 ? 6 : size < 1000 ? 5 : 3) * scale);
+        this.minFontIndex = this.computeMinFontIndex();
         this.minZoomIndex = -4;
         this.zoomMaxIndex = 5;
         this.canvasHeight = 128; // Fixed height for all label textures (higher = crisper)
@@ -8939,6 +8996,27 @@ class Grid extends THREE.Group {
             ],
         };
         this.create();
+    }
+    /**
+     * Heuristics, experimentally determined
+     */
+    computeMinFontIndex() {
+        const size = this.bbox.max_dist_from_center();
+        const canvasSize = Math.min(this.cadWidth, this.height);
+        const scale = Math.max(1.0, 6 - Math.log2(canvasSize / 100));
+        return Math.round((size < 2 ? 6 : size < 1000 ? 5 : 3) * scale);
+    }
+    /**
+     * Update the cached canvas dimensions after the CAD view was resized.
+     * The label scale is derived from these (see calculateTextScale), so the
+     * caller must rescale afterwards via scaleLabels() / update(zoom, true).
+     * @param cadWidth - New width of the CAD view in pixels
+     * @param height - New height of the CAD view in pixels
+     */
+    resize(cadWidth, height) {
+        this.cadWidth = cadWidth;
+        this.height = height;
+        this.minFontIndex = this.computeMinFontIndex();
     }
     /**
      * Calculate text scale based on camera mode and canvas size
@@ -9067,7 +9145,14 @@ class Grid extends THREE.Group {
             group.name = `GridHelper-${i}`;
             group.add(new GridHelper(this.size, 2 * this.ticks, this.colors[this.theme][i === 0 ? 1 : i === 1 ? 0 : 2], this.colors[this.theme][i === 0 ? 0 : i === 1 ? 2 : 1], this.theme == "dark" ? 0x7777777 : 0xbbbbbb));
             let label;
-            for (let x = -this.size / 2; x <= this.size / 2; x += this.delta / 2) {
+            // A grid of no size has no labels, and asking for them hangs the tab:
+            // `niceBounds` answers [0, 0, 0] for a bounding box whose largest extent
+            // is zero - which is what an empty model gives it - so `delta` is zero
+            // and the loop below steps by zero, never advancing and never throwing.
+            // Guarded here rather than in `niceBounds`, whose answer is right: there
+            // is nothing to place ticks on.
+            const step = this.delta / 2;
+            for (let x = -this.size / 2; step > 0 && x <= this.size / 2; x += step) {
                 if (Math.abs(x) < 1e-6) {
                     continue;
                 } // skip center label
@@ -17609,7 +17694,7 @@ class Tools {
     }
 }
 
-const version = "5.0.1";
+const version = "5.0.7";
 
 /**
  * `PickedComponent` over a GPU id-pick result. Drives the shader
@@ -29039,19 +29124,40 @@ function isInstancedFormat(data) {
         typeof data.shapes === "object");
 }
 /**
+ * Decode every instance's buffers from base64 into TypedArrays.
+ *
+ * This is the leaf half of the instanced format: it knows the encoding and
+ * nothing about the shapes tree. A host that receives its geometry as raw
+ * binary rather than base64 skips this step and builds the `Shape[]` itself.
+ */
+function decodeBuffers(instances) {
+    return instances.map(decodeInstance);
+}
+/**
+ * Resolve `{ ref: N }` entries in the shapes tree against decoded instances,
+ * and return the tree.
+ *
+ * This is the structural half: the same geometry referenced N times - twenty
+ * identical bolts - which every host needs whatever encoding it received the
+ * buffers in. Held separate from `decodeBuffers` so that a host holding
+ * TypedArrays already does not have to reimplement the walk.
+ */
+function resolveInstances(shapes, decoded) {
+    resolveRefs(shapes, decoded);
+    return shapes;
+}
+/**
  * Decode the instanced format into a standard Shapes object.
  *
  * 1. Decode all instance buffers from base64 → TypedArrays
  * 2. Walk the shapes tree and replace { ref: N } with decoded instances
  * 3. Return the unwrapped Shapes object
+ *
+ * Kept as the composition of the two halves above, so existing callers see
+ * no change.
  */
 function decodeInstancedFormat(data) {
-    // Decode all instances
-    const decoded = data.instances.map(decodeInstance);
-    // Resolve all shape references
-    const shapes = data.shapes;
-    resolveRefs(shapes, decoded);
-    return shapes;
+    return resolveInstances(data.shapes, decodeBuffers(data.instances));
 }
 
 // =============================================================================
@@ -31069,6 +31175,11 @@ class Viewer {
             deepDispose(this._rendered.camera);
             deepDispose(this._rendered.controls);
             deepDispose(this._rendered.treeview);
+            // The orientation marker owns its own THREE.Scene (cones, labels, sphere,
+            // axes), not part of the main scene above, so it needs its own dispose —
+            // without it every clear()/render() cycle left 8 geometries and 3 programs
+            // behind on the GL (measured 2026-09-17, working-docs/leak-harness.html).
+            this._rendered.orientationMarker.dispose();
             // clear tree view
             this.display.clearCadTree();
             // clear info
@@ -32717,7 +32828,14 @@ class Viewer {
             KeyMapper.set(modifiers);
             this.display.updateHelp(before, modifiers);
         }
-        KeyMapper.setActionShortcuts(actions);
+        if (Object.keys(actions).length > 0) {
+            // Merge over the existing table: a partial config (e.g. modifiers only)
+            // must not wipe the action shortcuts
+            KeyMapper.setActionShortcuts({
+                ...KeyMapper.getActionShortcuts(),
+                ...actions,
+            });
+        }
         this.display.updateTooltips();
     }
     // ---------------------------------------------------------------------------
@@ -32768,12 +32886,21 @@ class Viewer {
         this.renderer.setSize(cadWidth, height);
         // Resize the id pick target to match the canvas
         this.idPicker?.setSize(cadWidth, height);
-        // Adapt display dimensions
+        // Adapt display dimensions. `glass` and `tools` are part of the sizes:
+        // setSizes widens the toolbar and the body by the tree only when the tree
+        // sits beside the canvas (`tools && !glass`), and updates the tree and
+        // info heights only outside glass mode. Leaving them out meant neither
+        // branch could ever be taken from a resize, so a non-glass viewer got a
+        // toolbar and a body of `cadWidth + 2` with a `treeWidth + cadWidth` row
+        // inside them - measured as a 550px toolbar over 802px of content - and a
+        // tree that kept its old height. `glassMode` passes both and was right.
         this.display.setSizes({
             treeWidth: treeWidth,
             treeHeight: this.state.get("treeHeight"),
             cadWidth: cadWidth,
             height: height,
+            glass: glass,
+            tools: this.state.get("tools"),
         });
         // Set glass state - subscription will update UI
         this.state.set("glass", glass);
@@ -32782,6 +32909,13 @@ class Viewer {
         // Adapt camera to new dimensions
         this.rendered.camera.changeDimensions(this.bb_radius, cadWidth, height);
         this.controls.handleResize();
+        // Rescale the grid labels explicitly: their size is derived from the
+        // canvas height (and, for ortho, the frustum), both of which just
+        // changed — but a resize alone never trips the zoom-based rescale gate
+        // in Grid.update().
+        this.rendered.gridHelper.resize(cadWidth, height);
+        this.rendered.gridHelper.scaleLabels();
+        this.rendered.gridHelper.update(this.rendered.camera.getZoom(), true);
         // Resize the post-processing composer (render targets must match viewport)
         this._studioManager.setSize(cadWidth, height);
         // update the this
@@ -33622,6 +33756,8 @@ class Display {
         /**
          * Checkbox Handler for setting the tools mode.
          * Delegates state mutations to Viewer.activateTool() to maintain unidirectional data flow.
+         * The active tab is left untouched: a measure/select tool can run on any tab,
+         * including Clip, so a sectioned model can be measured.
          */
         this.setTool = (name, flag) => {
             // Block tool activation while Studio mode is active
@@ -33629,15 +33765,9 @@ class Display {
                 return;
             }
             this.viewer.toggleAnimationLoop(flag);
-            const activeTool = this.state.get("activeTool");
-            const currentTool = typeof activeTool === "string" ? activeTool : "";
             if (flag) {
                 // Delegate state mutations to Viewer
                 this.viewer.activateTool(name, true);
-                if (["distance", "properties", "select"].includes(name) &&
-                    !["distance", "properties", "select"].includes(currentTool)) {
-                    this.viewer.toggleTab(true);
-                }
                 this.viewer.setSelectionInput(flag);
                 if (name === "distance") {
                     this.viewer.cadTools.enable(ToolTypes.DISTANCE);
@@ -33653,9 +33783,6 @@ class Display {
                 }
             }
             else {
-                if (currentTool === name || name === "explode") {
-                    this.viewer.toggleTab(false);
-                }
                 if (name === "distance") {
                     this.viewer.cadTools.disable();
                 }
@@ -35201,9 +35328,6 @@ class Display {
             ["distance", "properties", "select"].includes(activeTool)) {
             this.clickButtons[activeTool]?.set(false);
             this.setTool(activeTool, false);
-            // setTool→toggleTab(false) silently sets activeTab to "tree" (no notification).
-            // Restore to "studio" so the next tab click correctly detects Studio as oldTab.
-            this.state.set("activeTab", "studio", false);
         }
         // Hide tool buttons
         this.showMeasureTools(false);
@@ -35216,22 +35340,6 @@ class Display {
      * @internal
      */
     _restoreToolsAfterStudio() {
-        this.showMeasureTools(this.measureTools);
-        this.showSelectTool(this.selectTool);
-    }
-    /**
-     * Entering Clip mode: hide the measure + select tool buttons (a measure/select
-     * tool can't be active here — it disables the clip tab — but the buttons must not
-     * be invocable while clipping). Mirrors {@link _deactivateToolsForStudio};
-     * explode/zscale stay enabled for consistency with studio mode. Restored by
-     * {@link _restoreToolsAfterClip} on leave.
-     */
-    _deactivateToolsForClip() {
-        this.showMeasureTools(false);
-        this.showSelectTool(false);
-    }
-    /** Leaving Clip mode: restore measure + select buttons per their feature flags. */
-    _restoreToolsAfterClip() {
         this.showMeasureTools(this.measureTools);
         this.showSelectTool(this.selectTool);
     }
@@ -35253,9 +35361,6 @@ class Display {
         // before the new tab's controls are activated.
         if (oldTab === "zebra" && newTab !== "zebra") {
             this.viewer.enableZebraTool(false);
-        }
-        if (oldTab === "clip" && newTab !== "clip") {
-            this._restoreToolsAfterClip();
         }
         if (oldTab === "studio" && newTab !== "studio") {
             this.closeMatEditor();
@@ -35295,7 +35400,6 @@ class Display {
         }
         else if (newTab === "clip") {
             _updateVisibility(false, true, false, false, false);
-            this._deactivateToolsForClip();
             this.viewer.nestedGroup.setBackVisible(true);
             const clipIntersection = this.viewer.state.get("clipIntersection");
             if (typeof clipIntersection === "boolean") {
@@ -36120,4 +36224,4 @@ class Display {
     }
 }
 
-export { CLIP_INDICES, CollapseState, Display, EnvironmentManager, MATERIAL_PRESETS, MATERIAL_PRESET_NAMES, Timer$1 as Timer, Viewer, decodeInstancedFormat, gpuTracker, hasSegmentsPerEdge, hasTrianglesPerFace, isClipIndex, isInstancedFormat, isMaterialXMaterial, isShapeBinaryFormat, logger, version };
+export { CLIP_INDICES, CollapseState, Display, EnvironmentManager, MATERIAL_PRESETS, MATERIAL_PRESET_NAMES, Timer$1 as Timer, Viewer, decodeBuffers, decodeInstancedFormat, gpuTracker, hasSegmentsPerEdge, hasTrianglesPerFace, isClipIndex, isInstancedFormat, isMaterialXMaterial, isShapeBinaryFormat, logger, resolveInstances, version };

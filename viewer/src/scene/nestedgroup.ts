@@ -62,6 +62,9 @@ interface EdgeData {
   // Real B-rep corner vertices (edge endpoints); used to build the pick-only vertex
   // cloud so a standalone edge's corners are selectable, like a solid's/face's.
   obj_vertices?: Float32Array | number[];
+  // Per-edge OCP curve type; used by the internal measurement backend for exact
+  // geom_type (a circular edge reports center + radius instead of just a length).
+  edge_types?: number[] | Uint8Array | Uint32Array;
 }
 
 interface VertexData {
@@ -576,13 +579,16 @@ class NestedGroup {
       // widen + recolor the flagged segment in-shader (Option A).
       this.highlight?.patchEdgeMaterial(edges.material);
       // Internal measurement backend: record the standalone edge node's geometry
-      // (obj_vertices lets the hover status resolve a picked corner's coords).
+      // (obj_vertices lets the hover status resolve a picked corner's coords,
+      // edge_types the exact curve type — without it every edge reads as "other"
+      // and a circle/arc loses its center + radius readout).
       this.meshGeometry.register(
         path,
         {
           edges: edgeData.edges,
           segments_per_edge: edgeData.segments_per_edge,
           obj_vertices: edgeData.obj_vertices,
+          edge_types: edgeData.edge_types,
         },
         group,
         null,
@@ -1529,11 +1535,16 @@ class NestedGroup {
     // Track material tags that failed to resolve
     const unresolvedTags = new Set<string>();
 
-    // Iterate all ObjectGroups with front meshes
     for (const path in this.groups) {
       const obj = this.groups[path];
       if (!(obj instanceof ObjectGroup)) continue;
-      if (!obj.front) continue;
+      if (!obj.front) {
+        // Edge-only / vertex-only group: no studio material, but it must still
+        // enter studio mode so its CAD edge/vertex visibility is saved and
+        // restored on leave (setStudioShowEdges hides both in studio).
+        obj.enterStudioMode(null, null);
+        continue;
+      }
 
       // Determine material tag, leaf color, and leaf alpha
       const tag = obj.materialTag || "";

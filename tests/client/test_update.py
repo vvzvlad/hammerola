@@ -447,13 +447,13 @@ def test_only_the_verbs_that_publish_ask_the_hub_about_the_client(monkeypatch,
     that brings that back, and it would pass every other test in this file.
     """
     asked = []
-    real = update.Hub.start
+    real = hub_module.Hub.start
 
     def counted(self):
         asked.append((self.url, self.timeout))
         return real(self)
 
-    monkeypatch.setattr(update.Hub, "start", counted)
+    monkeypatch.setattr(hub_module.Hub, "start", counted)
 
     assert publish(model, "build") == 0
     assert asked == [(config.hub_url(model), hub_module.QUERY_TIMEOUT)], (

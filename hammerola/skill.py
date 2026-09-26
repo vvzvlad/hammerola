@@ -41,7 +41,8 @@ from pathlib import Path
 
 from hammerola import config
 from hammerola.errors import ClientError
-from hammerola.hub import QUERY_TIMEOUT, Hub, HubError
+from hammerola.hub import HubError
+from hammerola.sources import public_hub
 
 # WHERE A CLAUDE CODE SKILL LIVES, and the same path the skill's own setup block
 # writes with `curl -o`. Written here as one string rather than assembled, so
@@ -137,7 +138,7 @@ def update(args) -> int:
     before = version_of(before_text)
 
     hub_url = config.hub_url(None)
-    hub = Hub(hub_url, "", timeout=QUERY_TIMEOUT)
+    hub = public_hub(hub_url)
     manifest = hub.start()
     where = manifest.get(SKILL_KEY)
     if not isinstance(where, str) or not where:
@@ -213,7 +214,7 @@ def _read(path: Path):
 
 def _served_version(hub_url: str) -> int:
     """The version the hub says it ships. NO TOKEN — `/start` is public."""
-    manifest = Hub(hub_url, "", timeout=QUERY_TIMEOUT).start()
+    manifest = public_hub(hub_url).start()
     version = manifest.get(VERSION_KEY)
     # `bool` is an `int` in python and `True` would sail through the check
     # below, which is worth one clause here: the manifest carries a boolean of

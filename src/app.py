@@ -16,12 +16,18 @@ Routing (SPEC 3, 7.4):
     GET  /start/skill.md                      the agent instructions
     GET  /start/hammerola                     the client, as one file
     GET  /start/template.tar.gz               a model directory that builds
-    GET  /project/<pid>/                      302 -> latest/
+    GET  /favicon.ico                         the site icon, as SVG bytes
+    GET  /project/<pid>/                      picks the pointer this reader last
+                                              opened (SPEC 9); the URL without
+                                              the slash 302s to this one
     GET  /project/<pid>/builds.json           build picker
     GET  /project/<pid>/latest/<file>         newest build of a commit, no-cache
     GET  /project/<pid>/dev/<file>            the local slot, no-cache
     GET  /project/<pid>/<commit>/<file>       one build's files, immutable forever
-    GET  /project/<pid>/<commit>/             the page shell, from the template
+    GET  /project/<pid>/<commit>/             the page shell, from the template;
+                                              `latest/` and `dev/` answer the
+                                              same, and a URL without the slash
+                                              302s to the one with it
     GET  /project/<pid>/<a>/compare/<b>/      the comparison page, always no-cache
     GET  /project/<pid>/<a>/compare/<b>/<name>?v=<view>
                                               scene.json and report.json of one
@@ -159,9 +165,10 @@ from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
                       SUBMIT_QUEUE_FULL, BuildQueue, BuildTask, CompareTask,
                       JobStore)
 from src.multipart import MultipartError, parse_multipart
-from src.safeio import nonblocking, read_regular_bytes, resolve_settled
-from src.store import (COMPARE_FILES, DEV_LINK, POINTER_NAMES, PublishError,
-                       Store)
+from src.safeio import nonblocking, read_regular_bytes
+from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK,
+                       POINTER_NAMES, PROJECT_BUILDS_FILE, PublishError,
+                       SITE_INDEX_FILE, Store)
 
 # SPEC 7.4. `immutable` tells a browser not to even revalidate on reload, which is
 # only honest because a build directory can never change: republishing the same
@@ -560,7 +567,7 @@ def make_handler(store: Store, comment_store: CommentStore,
                 (lambda: segments == ["health"],
                  lambda: self._json(200, {"status": "ok"}, CACHE_NONE,
                                     with_body=with_body)),
-                (lambda: segments == ["index.json"],
+                (lambda: segments == [SITE_INDEX_FILE],
                  lambda: self._serve_index_json(with_body)),
                 (lambda: segments[:1] == ["_v"],
                  lambda: self._serve_asset(segments[1:], with_body)),
@@ -657,7 +664,7 @@ def make_handler(store: Store, comment_store: CommentStore,
             """
             if not self._require_token(with_body):
                 return None
-            path = store.root / "index.json"
+            path = store.site_index_path()
             if not path.is_file():
                 return self._json(200, [], CACHE_NONE, with_body=with_body)
             try:
@@ -782,6 +789,7 @@ def make_handler(store: Store, comment_store: CommentStore,
             `latest` is a symlink, and following it is the whole point, so the
             question is not "is there a symlink" but "where did it land".
 
+            `store.resolve_inside` is what asks both halves of that, with
             `resolve_settled` AND NOT `resolve`, because that symlink is being
             swapped under this reader by whoever is publishing — `safeio` carries
             the measurement (issue #70). It is the same answer with an EINVAL
@@ -794,8 +802,7 @@ def make_handler(store: Store, comment_store: CommentStore,
             served as an opaque attachment whatever it is called.
             """
             try:
-                resolved = resolve_settled(path)
-                resolved.relative_to(store.root)
+                resolved = store.resolve_inside(path)
             except (OSError, ValueError):
                 return self._error(404, "not found", with_body=with_body)
 
@@ -944,16 +951,15 @@ def make_handler(store: Store, comment_store: CommentStore,
             creates one, but a restore or a hand-copy can), and a page that then
             fails every fetch is worse than a 404.
 
-            `resolve_settled` for the reason `_send_file` gives, and this is the
-            SECOND of the two sites rather than a second observation: both
+            `store.resolve_inside` for the reason `_send_file` gives, and this is
+            the SECOND of the two sites rather than a second observation: both
             failures issue #70 recorded were files, not pages. `build_dir` is
             `<project>/latest` whenever the URL named that pointer, so this
             resolve crosses the same symlink at the same instant — a 404 here
             costs the whole page instead of one fetch.
             """
             try:
-                resolved = resolve_settled(build_dir / "meta.json")
-                resolved.relative_to(store.root)
+                store.resolve_inside(build_dir / BUILD_META_FILE)
             except (OSError, ValueError):
                 return self._error(404, "not found", with_body=with_body)
             return self._serve_page(render.build_page_html, with_body)
@@ -971,7 +977,7 @@ def make_handler(store: Store, comment_store: CommentStore,
             out by hand is still a project, and `latest` is the honest thing to
             answer with.
             """
-            if not (store.projects_dir / pid).is_dir():
+            if not store.project_dir(pid).is_dir():
                 return self._error(404, "not found", with_body=with_body)
             return self._serve_page(render.pointer_page_html, with_body)
 
@@ -1007,9 +1013,9 @@ def make_handler(store: Store, comment_store: CommentStore,
                 return self._serve_pointer_page(pid, with_body)
 
             second = rest[1]
-            if second == "builds.json" and len(rest) == 2:
-                return self._send_file(
-                    store.projects_dir / pid / "builds.json", CACHE_NONE, with_body)
+            if second == PROJECT_BUILDS_FILE and len(rest) == 2:
+                return self._send_file(store.builds_json_path(pid), CACHE_NONE,
+                                       with_body)
 
             # A COMPARISON OF TWO REVISIONS (issue #10), and the word sits in
             # the FOURTH position rather than the second for one reason:
@@ -1040,7 +1046,7 @@ def make_handler(store: Store, comment_store: CommentStore,
             else:
                 return self._error(404, "not found", with_body=with_body)
 
-            build_dir = store.projects_dir / pid / second
+            build_dir = store.build_dir(pid, second)
             if len(rest) == 2:
                 # The viewer derives every relative fetch from its own directory,
                 # so the trailing slash is not cosmetic: without it `meta.json`
@@ -1159,9 +1165,7 @@ def make_handler(store: Store, comment_store: CommentStore,
                                       with_body)
             for revision in (old, new):
                 try:
-                    resolved = resolve_settled(
-                        store.projects_dir / pid / revision / "meta.json")
-                    resolved.relative_to(store.root)
+                    store.resolve_inside(store.build_meta_path(pid, revision))
                 except (OSError, ValueError):
                     return self._error(404, "not found", with_body=with_body)
             return self._serve_page(render.build_page_html, with_body)
@@ -1756,7 +1760,7 @@ def make_handler(store: Store, comment_store: CommentStore,
                     and store.valid_build_id(new)):
                 return self._error(404, "not found", {"Connection": "close"})
             for revision in (old, new):
-                if not (store.projects_dir / pid / revision).is_dir():
+                if not store.build_dir(pid, revision).is_dir():
                     return self._error(404, "not found", {"Connection": "close"})
             if view is not None:
                 # Asked of the STORE, which is what has to be able to name a
@@ -1799,8 +1803,7 @@ def make_handler(store: Store, comment_store: CommentStore,
                 # already answers in a sentence; this one now says which of the
                 # two ordinary things happened, without echoing the name back.
                 for revision in (old, new):
-                    document = (store.projects_dir / pid / revision
-                                / f"{view}.json")
+                    document = store.build_dir(pid, revision) / f"{view}.json"
                     if not document.is_file():
                         return self._error(404, VIEW_NOT_IN_BOTH_ERROR,
                                            {"Connection": "close"})
@@ -2092,26 +2095,49 @@ def make_handler(store: Store, comment_store: CommentStore,
                 return None
             path = self.path.split("?", 1)[0]
             segments = self._split(path)
-            if segments[:2] != ["api", "v1"] or len(segments) != 4 or \
-                    segments[2] not in ("projects", "proposals"):
-                return self._error(404, "not found", {"Connection": "close"})
-            # A body would sit unread on the socket and be parsed as the next
-            # request. Nothing about these routes takes one, so it is refused
-            # rather than drained.
-            if self.headers.get("Transfer-Encoding") or \
-                    (self.headers.get("Content-Length") or "0").strip() not in \
-                    ("", "0"):
-                return self._error(400, "this endpoint takes no body",
-                                   {"Connection": "close"})
 
-            pid = segments[3]
-            if not store.valid_pid(pid):
-                return self._error(404, "not found")
-            if segments[2] == "proposals":
-                # No 404 for a project with nothing stored: the caller asked for
-                # this document to be gone and it is, which is the same answer
-                # either way — and the boolean is what says which it was.
-                return self._json(200, {"removed": proposal_store.remove(pid)})
+            # ONE ENTRY PER ROUTE, TRIED IN ORDER, like `_handle_get` and
+            # `_handle_post`, and the order means the same thing here: a narrow
+            # route keeps its answer only while it stays above a wider one
+            # (issue #105). The two checks under the match are shared by both
+            # routes and are made only once one of them has matched, so a path
+            # this hub does not answer at all is still a 404 rather than a
+            # complaint about its body.
+            routes = (
+                (lambda: segments[:3] == ["api", "v1", "projects"]
+                 and len(segments) == 4,
+                 lambda: self._remove_project(segments[3])),
+                (lambda: segments[:3] == ["api", "v1", "proposals"]
+                 and len(segments) == 4,
+                 lambda: self._remove_proposal(segments[3])),
+            )
+            for matches, handler in routes:
+                if not matches():
+                    continue
+                # A body would sit unread on the socket and be parsed as the next
+                # request. Nothing about these routes takes one, so it is refused
+                # rather than drained.
+                if self.headers.get("Transfer-Encoding") or \
+                        (self.headers.get("Content-Length") or "0").strip() \
+                        not in ("", "0"):
+                    return self._error(400, "this endpoint takes no body",
+                                       {"Connection": "close"})
+                if not store.valid_pid(segments[3]):
+                    return self._error(404, "not found")
+                return handler()
+            return self._error(404, "not found", {"Connection": "close"})
+
+        def _remove_proposal(self, pid: str):
+            """DELETE /api/v1/proposals/<pid> — the reader's working document.
+
+            No 404 for a project with nothing stored: the caller asked for this
+            document to be gone and it is, which is the same answer either way —
+            and the boolean is what says which it was.
+            """
+            return self._json(200, {"removed": proposal_store.remove(pid)})
+
+        def _remove_project(self, pid: str):
+            """DELETE /api/v1/projects/<pid> — the project and all of it."""
             removed = store.remove_project(pid)
             if removed is None:
                 return self._error(404, "not found")
@@ -2202,7 +2228,7 @@ def make_handler(store: Store, comment_store: CommentStore,
             # it. The reverse is explicitly fine: a comment whose build somebody
             # later removes by hand stays in the queue (SPEC 7A.3), because the
             # check is here, at write time, and nothing revisits it.
-            if not (store.projects_dir / pid / commit / "meta.json").is_file():
+            if not store.build_meta_path(pid, commit).is_file():
                 return self._error(404, "not found", {"Connection": "close"})
 
             # NOTHING THROTTLES THIS ROUTE and nothing counts what is already in

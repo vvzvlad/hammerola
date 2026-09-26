@@ -1543,13 +1543,12 @@ class BuildQueue:
             if task.view is not None:
                 staging = self._store.compare_staging(
                     task.pid, task.old, task.new, task.view)
-            # Composed the way every other reader of the store composes them:
-            # `<projects>/<pid>/<revision>`. Both were validated by the request
-            # and both exist — it checked that too — and neither can change
-            # under this call, a published revision being immutable.
+            # Both were validated by the request and both exist — it checked
+            # that too — and neither can change under this call, a published
+            # revision being immutable.
             args, keywords = compare_arguments(
-                self._store.projects_dir / task.pid / task.old,
-                self._store.projects_dir / task.pid / task.new,
+                self._store.build_dir(task.pid, task.old),
+                self._store.build_dir(task.pid, task.new),
                 task.pid, out_dir=staging, view=task.view)
             outcome = self._run_compare(*args, **keywords)
             if outcome.ok:

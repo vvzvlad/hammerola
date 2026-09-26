@@ -1,7 +1,7 @@
 // Measurements, taken from the library's own mesh backend.
 //
 // THIS IS NOT WRITTEN HERE, and the note this project carried for years — that
-// measurements "need a backend we do not run" — is out of date: version 5.0.1
+// measurements "need a backend we do not run" — is out of date: the library
 // carries `MeshMeasureBackend`, which computes from the tessellation with no
 // Python `ocp_vscode` anywhere. It is built unconditionally in the `Viewer`
 // constructor and does not depend on `tools` (docs/viewer-api.md §2), so at

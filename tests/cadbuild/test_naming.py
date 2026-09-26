@@ -99,10 +99,8 @@ def test_every_text_ceiling_here_equals_the_hub_s():
     them together.
     """
     assert MAX_NOTE_CHARS == render.MAX_TEXT
-    # How big the catalogue may be. It was `MAX_NOTES` on both sides and it
-    # counted the parts carrying a note; what makes meta.json enormous is the
-    # number of RECORDS, so the ceiling and both its names moved to that
-    # (issue #75).
+    # How big the catalogue may be: what makes meta.json enormous is the number
+    # of RECORDS, not the number of notes among them (issue #75).
     assert MAX_PARTS == render.MAX_PARTS
     # The view's caption reaches the hub through meta.json's `views`, and the
     # project's title and slug through `title` and `project`. All three are

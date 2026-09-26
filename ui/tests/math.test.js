@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  clamp, cross3, dot3, finite3, len3, sub3, unit3, vec3,
+  clamp, cross3, dot3, finite3, len3, sineFromCos, sub3, unit3, vec3,
 } from '../src/viewport/math.js'
 
 describe('sub3', () => {
@@ -135,6 +135,31 @@ describe('clamp', () => {
     expect(clamp(5, 0, 10)).toBe(5)
     expect(clamp(-1, 0, 10)).toBe(0)
     expect(clamp(11, 0, 10)).toBe(10)
+  })
+})
+
+describe('sineFromCos', () => {
+  it('is sqrt(1 - cos^2) over the range a cosine is allowed', () => {
+    expect(sineFromCos(1)).toBe(0)
+    expect(sineFromCos(-1)).toBe(0)
+    expect(sineFromCos(0)).toBe(1)
+    expect(sineFromCos(0.6)).toBeCloseTo(0.8, 12)
+  })
+
+  it('ignores the sign, because a foreshortening has none', () => {
+    expect(sineFromCos(-0.6)).toBe(sineFromCos(0.6))
+  })
+
+  // The whole reason the clamp is inside: a dot of two nearly-unit vectors
+  // lands a hair outside the range, `1 - cos * cos` goes negative, and the NaN
+  // makes the edge-on guard in `sectionAxis` accept instead of refuse.
+  it('gives 0 rather than NaN for a cosine a hair out of range', () => {
+    expect(sineFromCos(1 + 1e-12)).toBe(0)
+    expect(sineFromCos(-1 - 1e-12)).toBe(0)
+  })
+
+  it('does not turn a NaN input into a number: that refusal stays with the caller', () => {
+    expect(sineFromCos(NaN)).toBeNaN()
   })
 })
 

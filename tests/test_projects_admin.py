@@ -237,6 +237,20 @@ def test_there_is_no_route_that_removes_one_build(hub):
     assert hub.get(f"/project/proj1/{revision}/meta.json").status_code == 200
 
 
+def test_a_path_this_hub_does_not_answer_is_a_404_even_with_a_body(hub):
+    """The shared body refusal sits UNDER the route match, not above it.
+
+    Both checks are one-per-verb now (#105), and hoisting them above the loop
+    reads cleaner — which is the change this test exists to fail. Hoisted, a
+    DELETE of a path with no route answers "this endpoint takes no body", which
+    tells a caller the URL was understood when it was not."""
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    for path in ("/api/v1/nonsense/x", "/api/v1/projects/proj1/extra"):
+        reply = httpx.request("DELETE", f"{hub.url}{path}", headers=headers,
+                              content=b"x", timeout=10, trust_env=False)
+        assert reply.status_code == 404, path
+
+
 def test_a_project_with_no_builds_can_still_be_removed(hub):
     """A directory with nothing in it is what a build cleared out by hand
     leaves, and it is still a project as far as every other answer here is

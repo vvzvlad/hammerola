@@ -31,13 +31,10 @@ MAX_NOTE_CHARS = 200
 # unbounded -- a hundred thousand legal records make a meta.json nobody can
 # load, served under a year of `immutable`.
 #
-# IT WAS `MAX_NOTES` AND COUNTED THE PARTS CARRYING A NOTE. The note moved
-# inside the record it is about, so there is no count of notes left to take --
-# and the records without one are exactly what a note-shaped ceiling could not
-# see: a catalogue of bought screws costs the same megabytes and carries no
-# note at all. Renamed on both sides at once, because the two are compared by
-# name in tests/cadbuild/test_naming.py and a ceiling whose name says notes and
-# whose job is the catalogue is a number nobody can reason about.
+# IT COUNTS RECORDS, NOT NOTES: the records WITHOUT a note are exactly what a
+# note-shaped ceiling cannot see -- a catalogue of bought screws costs the same
+# megabytes and carries no note at all. The two sides are compared by name in
+# tests/cadbuild/test_naming.py, so both carry the same one (#75).
 MAX_PARTS = 200
 # ...and for the VIEW's own name -- the caption in the picker, written into
 # meta.json by export_views and checked there again by the hub

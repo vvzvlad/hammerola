@@ -232,6 +232,33 @@ def test_every_name_on_the_wire_is_declared_in_events_js(modules):
     )
 
 
+def dispatched(body):
+    """Every `EVENT_` constant the adapter really hands to `emit`.
+
+    THE SECOND ARGUMENT OF EVERY `emit(` IS WHAT A DISPATCH IS, and most of them
+    name their constant outright. The manipulator's four do not: a slide and a
+    turn are one gesture cycle written once (`reportGesture` in gesture.js), so
+    the constants are handed to it in an options object and what it emits is the
+    PARAMETER. So an argument that is not a constant is resolved through the key
+    it names -- `emit(vp, modelEvent, ...)` dispatches whatever any `modelEvent:`
+    in the adapter is bound to.
+
+    ONE HOP AND NO MORE, which is a floor under the indirection rather than an
+    accident of the regex: a dispatcher that took its name from anything but a
+    named key of its own argument drops out of this set, and the check above
+    fails. That is the honest failure -- the tie between a declared name and the
+    line that sends it is exactly what this file exists to keep readable.
+    """
+    sent = set()
+    for arg in re.findall(r"\bemit\(\s*[^,]+,\s*([\w$.]+)", body):
+        if arg.startswith("EVENT_"):
+            sent.add(arg)
+            continue
+        key = arg.rsplit(".", 1)[-1]
+        sent.update(re.findall(rf"\b{re.escape(key)}:\s*(EVENT_[A-Z]+)\b", body))
+    return sent
+
+
 def test_every_declared_up_event_is_actually_dispatched(modules):
     """A contract that names an event nobody sends is a contract that lies.
 
@@ -239,6 +266,12 @@ def test_every_declared_up_event_is_actually_dispatched(modules):
     dispatched is a handler that is simply never called -- the exact silence this
     whole arrangement is built to avoid, and the reason the list is checked
     against the call sites rather than against itself.
+
+    WHAT COUNTS AS A CALL SITE is `dispatched` above, and it is the whole of what
+    this check had to grow when the four names of the move tool stopped being
+    written at an `emit(` of their own. Deleting either `emit` inside the shared
+    dispatcher turns this red, exactly as deleting a literal one does: the names
+    bound to that key are then sent by nothing.
     """
     events = modules["events.js"]
     listed = re.search(r"(?s)export const EVENTS_UP = \[(.*?)\];", events)
@@ -248,14 +281,15 @@ def test_every_declared_up_event_is_actually_dispatched(modules):
 
     body = "\n".join(code(text) for name, text in modules.items()
                      if name != "events.js")
-    unsent = [name for name in names
-              if not re.search(rf"emit\([^,]+,\s*{name}\b", body)]
+    sent = dispatched(body)
+    unsent = [name for name in names if name not in sent]
 
     assert not unsent, (
         f"these events are declared in EVENTS_UP and never dispatched: {unsent!r}. "
         "Either something stopped emitting one, or a name was added to the list "
-        "ahead of the code that sends it -- in both cases the interface is "
-        "listening for something that never arrives."
+        "ahead of the code that sends it, or a dispatcher shared by several names "
+        "no longer emits the parameter its callers spell as a key -- in all three "
+        "cases the interface is listening for something that never arrives."
     )
 
 

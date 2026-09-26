@@ -472,6 +472,14 @@ def _read_record(path: Path) -> dict | None:
     call for as long as the file sat there. `NotRegularFile` is an `OSError`, so
     it lands in the arm already written below and reads as one more unreadable
     entry.
+
+    NO WRITE-BACK, UNLIKE `jobs._read_record`, and the difference is the reader
+    rather than the trust. That one feeds a registry built in `JobStore.__init__`
+    before the socket is bound, and writes back because a job left `queued` must
+    be recorded terminal or the same warning prints at every start. This one runs
+    per request, off `_read_all` and off the single-record reader, so there is no
+    long-lived copy to diverge from the volume and nothing a start would repeat
+    (#107).
     """
     try:
         record = json.loads(read_regular_text(path))

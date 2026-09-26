@@ -13,8 +13,9 @@ import { outlineChild, refreshSectionOutline } from "./outline.js";
 // import from here would drag the whole viewport behind a module whose promise
 // is that a document can be built and projected with no browser near it. The
 // re-export is kept because a turn is still this file's subject, and the tests
-// take them from here for that reason (`parts.test.js` all four, `rings.test.js`
-// three); the modules of `ui/src` import them from `math.js` directly.
+// take them from here for that reason — three each, and between the two all four
+// (`after` only in `rings.test.js`, `anglesOf` only in `parts.test.js`); the
+// modules of `ui/src` import them from `math.js` directly.
 export { after, anglesOf, quaternionOf, turned };
 
 /**
