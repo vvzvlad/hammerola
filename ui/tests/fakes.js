@@ -317,7 +317,16 @@ export function fakeViewer({
     // "is a cut actually cutting" is kept. Modelled rather than spied on alone,
     // because reading it back is how the menu decides whether a cut face can be
     // under the cursor.
-    renderer: { domElement: canvas, localClippingEnabled: false },
+    //
+    // The pixel ratio starts where the library's constructor leaves it —
+    // `window.devicePixelRatio`, 1 under jsdom — and `setPixelRatio` is a spy
+    // because what the viewport owes it is to be called ONLY when that moves.
+    renderer: {
+      domElement: canvas, localClippingEnabled: false,
+      pixelRatio: window.devicePixelRatio,
+      getPixelRatio: () => viewer.renderer.pixelRatio,
+      setPixelRatio: vi.fn((value) => { viewer.renderer.pixelRatio = value }),
+    },
     idPicker: {},
     nestedGroup: {
       groups,

@@ -101,16 +101,17 @@ const UNIFORM_ANCHOR = "uniform vec3 diffuse;";
  *  applied — see `HATCH`.
  *
  *  WHY NOT ONE UNIT FOR BOTH, which is what this was and what made the hatch
- *  read as scanner noise rather than as lines. The library renders at
- *  `renderer.setPixelRatio(window.devicePixelRatio)`, so a period of 8
+ *  read as scanner noise rather than as lines. The canvas is drawn at the
+ *  renderer's pixel ratio — the display's own density unless the reader has
+ *  turned "Retina resolution" off (viewport/element.js) — so a period of 8
  *  FRAMEBUFFER pixels is four CSS pixels on a 2x display, with a line three
  *  quarters of a CSS pixel wide inside it — that is grain, and on a close-up it
  *  fills the screen with it. The two numbers answer different questions:
  *
  *    * the DISTANCE BETWEEN LINES is legibility, and what the reader perceives
- *      is CSS pixels, so the target is `PITCH_PX * devicePixelRatio`
- *      framebuffer pixels (`hatchPitchPx`) and the spacing comes out between 8
- *      and 16 CSS pixels on every display;
+ *      is CSS pixels, so the target is `PITCH_PX` times the renderer's pixel
+ *      ratio in framebuffer pixels (`hatchPitchPx`) and the spacing comes out
+ *      between 8 and 16 CSS pixels on every display;
  *    * the WIDTH is ink, and stays framebuffer: a pixel and a half OF THE
  *      FRAMEBUFFER is what reads as a drawn hairline, while the same 1.5 taken
  *      as CSS pixels would be three device pixels on a retina screen and read
@@ -166,11 +167,11 @@ function mix(h) {
  *  THE CONVERSION IS THE SHADER'S, and that is the point rather than a detail.
  *  These were `LINE_PX / 2 / PITCH_PX` and `0.5 / PITCH_PX`, computed here as
  *  fractions of the period, which was fine while the period was a constant. It
- *  is neither constant nor knowable here any more: it follows the display's
- *  density (see PITCH_PX) and then the LEVEL the shader picks for the face (see
- *  `HATCH`), so a fraction taken against the old constant would leave the line
- *  and the band at a fixed share of a period that MOVES — widening the line from
- *  1.5 framebuffer pixels to 3 on a 2x display, and doubling it again at every
+ *  is neither constant nor knowable here any more: it follows the renderer's
+ *  pixel ratio (see PITCH_PX) and then the LEVEL the shader picks for the face
+ *  (see `HATCH`), so a fraction taken against the old constant would leave the
+ *  line and the band at a fixed share of a period that MOVES — the line going
+ *  from 1.5 framebuffer pixels to 3 on a 2x display, and doubling again at every
  *  level change, which is exactly the band the split exists to avoid. Handing
  *  the shader pixel counts and letting it divide by the period's own pixel size
  *  keeps all three in step by construction, at whatever ratio and whatever
@@ -190,10 +191,10 @@ const HALF_AA_PX = (AA_PX / 2).toFixed(4);
  *
  *  `hatchPitch` is the one that is neither per part nor constant: it is the
  *  TARGET spacing in framebuffer pixels — what the level is picked against, see
- *  `HATCH` — which depends on the display the canvas is on (see
- *  `hatchPitchPx`). A UNIFORM and not a number baked into `HATCH`, because
+ *  `HATCH` — which depends on the renderer's pixel ratio (see `hatchPitchPx`).
+ *  A UNIFORM and not a number baked into `HATCH`, because
  *  `HATCH` has to stay one module-level string — three.js keys its program cache
- *  off `onBeforeCompile.toString()`, and a source that varied with the display
+ *  off `onBeforeCompile.toString()`, and a source that varied with the ratio
  *  would mean a second compiled program, or worse, one program silently shared
  *  by caps that wanted different ones. See `hatchShader`. */
 const HATCH_UNIFORMS = `
@@ -214,8 +215,8 @@ uniform float hatchPitch;
  * part and are the only per-part numbers there are; see `capUniforms` for where
  * they come from. The pitch is not among them: `hatchPitch` is one number for
  * the whole scene, PITCH_PX CSS pixels expressed in framebuffer ones — see
- * `hatchPitchPx`, which is where the display's density enters — and it is the
- * TARGET spacing that picks the level rather than the period itself.
+ * `hatchPitchPx`, which is where the renderer's pixel ratio enters — and it is
+ * the TARGET spacing that picks the level rather than the period itself.
  *
  * THE PERIOD IS A DISTANCE IN THE PLANE OF THE CUT, which is the whole of the
  * fix. `hatchUv` is measured in the cap quad's uv, and that uv IS the section
@@ -357,28 +358,18 @@ const HATCH = `
 
 /**
  * The target spacing the level is picked against (see `HATCH`), in FRAMEBUFFER
- * pixels — PITCH_PX CSS pixels converted through the density of whatever display
- * the canvas is on.
+ * pixels: PITCH_PX CSS pixels times `ratio`, the RENDERER's pixel ratio — the
+ * pixels the shader's derivatives count. That is the display's density unless
+ * "Retina resolution" is off (viewport/element.js), and it is NOT
+ * `window.devicePixelRatio`, which would double the spacing with it off. See
+ * PITCH_PX for why the width does NOT go through here.
  *
- * The conversion is needed because the library renders at
- * `renderer.setPixelRatio(window.devicePixelRatio)` (its `Viewer` constructor),
- * so the pixels the shader's derivatives count are framebuffer ones while the
- * spacing the reader judges is in CSS ones. See PITCH_PX for why the width does
- * NOT go through here.
- *
- * DEFENSIVE ONLY ABOUT THE NUMBER: a missing or zero ratio is 1, and nothing
- * else is read or clamped — this must track what `setPixelRatio` was actually
- * given, so a ceiling here would silently halve the spacing on a 3x display.
- *
- * SAMPLED WHEN A UNIFORM IS WRITTEN, AND NOT TRACKED. A window dragged between
- * displays of different densities keeps the old target until the next render or
- * the next flip of the checkbox, both of which rewrite the uniform. That is
- * accepted deliberately: a `matchMedia` listener, a resize hook or any other
- * live-tracking machinery would be permanent apparatus for a case that corrects
- * itself the moment the reader does anything at all.
+ * DEFENSIVE ONLY ABOUT THE NUMBER: a missing or zero ratio is 1 and nothing is
+ * clamped — a ceiling would silently halve the spacing on a 3x display. Sampled
+ * when a uniform is written and never tracked: the viewport re-runs
+ * `setCutHatch` whenever it moves the ratio.
  */
-function hatchPitchPx() {
-  const ratio = window.devicePixelRatio;
+function hatchPitchPx(ratio) {
   return PITCH_PX * (ratio > 0 ? ratio : 1);
 }
 
@@ -403,23 +394,26 @@ function hatchPitchPx() {
  * can flip a value in place later, without a recompile.
  *
  * THE PITCH IS SET HERE TOO, and it is the one uniform that comes from neither
- * the material nor a constant: `hatchPitchPx()` reads the display's density at
- * compile time. Set at PATCH time and not only from `setCutHatch`, so a scene
- * that renders once and is never toggled is already right.
+ * the material nor a constant: it follows the pixel ratio of `renderer`, the
+ * second argument three.js hands `onBeforeCompile`. Set at PATCH time and not
+ * only from `setCutHatch`, so a scene that renders once and is never toggled is
+ * already right.
  *
  * DECLARED, NOT JUST READ: the five identifiers exist for the GLSL compiler
  * only because `HATCH_UNIFORMS` is spliced in ahead of three.js's own uniform
  * block. Losing that splice is a shader that fails to compile — loud in the
  * console, and the suite holds the anchor to static/_v/three.module.js for it.
  */
-export function hatchShader(shader) {
+export function hatchShader(shader, renderer) {
   const p = this && this.userData && this.userData.hatch;
   if (p) {
     shader.uniforms.hatchDirX = { value: p.dirX };
     shader.uniforms.hatchDirY = { value: p.dirY };
     shader.uniforms.hatchPhase = { value: p.phase };
     shader.uniforms.hatchOn = { value: p.on };
-    shader.uniforms.hatchPitch = { value: hatchPitchPx() };
+    shader.uniforms.hatchPitch = {
+      value: hatchPitchPx(renderer && renderer.getPixelRatio()),
+    };
     this.userData.hatchShader = shader;
   }
   shader.fragmentShader = shader.fragmentShader
@@ -575,14 +569,17 @@ export function hatchSectionCaps(g, on = true) {
  * THE PITCH RIDES ALONG on the same walk rather than getting a writer of its
  * own. It is not part of the toggle and does not belong to `userData.hatch` —
  * it is not per part — but this is the one path that already reaches every LIVE
- * shader, and re-reading the display's density here is what lets a window moved
- * to another display recover on the next flip of the checkbox. See
- * `hatchPitchPx` for why nothing watches for that moment.
+ * shader, which is why the viewport calls it again after moving the renderer's
+ * pixel ratio. The renderer is reached through the display, the one object in
+ * `g` that holds the viewer (`Display.setupUI`).
  */
 export function setCutHatch(g, on) {
   const units = g && g.clipping && g.clipping._capUnits;
   if (!Array.isArray(units)) return 0;
   const flag = on ? 1 : 0;
+  const viewer = g.display && g.display.viewer;
+  const renderer = viewer && viewer.renderer;
+  const pitch = hatchPitchPx(renderer && renderer.getPixelRatio());
   let flipped = 0;
   for (const unit of units) {
     const caps = unit && unit.capMeshes;
@@ -596,7 +593,7 @@ export function setCutHatch(g, on) {
       const live = uniforms && uniforms.hatchOn;
       if (live) {
         live.value = flag;
-        if (uniforms.hatchPitch) uniforms.hatchPitch.value = hatchPitchPx();
+        if (uniforms.hatchPitch) uniforms.hatchPitch.value = pitch;
         flipped += 1;
       }
     }

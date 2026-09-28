@@ -18,8 +18,8 @@
 // narrow and wide. An assertion that only ever saw one of them would pass on a
 // flag nothing reads.
 //
-// NOTHING IS MOUNTED except in the four cases where the lifecycle IS the
-// subject — three that cross the breakpoint with the page open and one that
+// NOTHING IS MOUNTED except in the cases where the lifecycle IS the
+// subject — those that cross the breakpoint with the page open and the one that
 // takes the page away, which together are the only way to reach the listener
 // `componentDidMount` registers. Everywhere else the
 // instance is the real prototype with the state spelled out, `computed()` and
@@ -202,6 +202,16 @@ describe('which layout the page comes up in', () => {
     c.state.opsOpen = true
     change(true)
     expect(c.state.opsOpen).toBe(false)
+    expect(css(c.computed().toolbarStyle).zIndex).toBe('12')
+  })
+
+  it('puts the Settings card away on the way in, for the same reason', () => {
+    const { change } = fakeMatchMedia(false)
+    const c = mounted()
+
+    c.state.settingsOpen = true
+    change(true)
+    expect(c.state.settingsOpen).toBe(false)
     expect(css(c.computed().toolbarStyle).zIndex).toBe('12')
   })
 

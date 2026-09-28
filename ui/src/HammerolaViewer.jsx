@@ -112,7 +112,7 @@ import {
 // reaches the cookie.
 import {
   readToken, readNotes, writeNotes, rememberPointer,
-  readTabs, rememberTab, forgetTab, readTheme, writeTheme,
+  readTabs, rememberTab, forgetTab, readTheme, writeTheme, readRetina,
 } from './store.js';
 // The two attachments a comment carries, made small enough to send. Imported
 // only for `sendComment`: the frame grab itself (`frameBlob`) stays lossless,
@@ -1273,6 +1273,8 @@ export default class HammerolaViewer extends React.Component {
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
       secFace: null, secPop: false,
+      // The Settings card's one answer, remembered per browser (store.js).
+      retina: readRetina(),
       // `opsOpen` is the `Add primitive` menu in the floating toolbar, and it is
       // one of these rather than one of the proposal's own fields below for the
       // reason it is written beside `viewsOpen`: it is a menu of the chrome's,
@@ -1281,6 +1283,7 @@ export default class HammerolaViewer extends React.Component {
       // a sentence has been wrong twice already, because nothing fails when a
       // menu is added beside it.
       revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false,
+      settingsOpen: false,
       cmp: [], compare: false, diffShow: 'both',
       // -- the comparison, and it is FIVE fields rather than one because they
       // answer five different questions (issue #10).
@@ -1780,8 +1783,8 @@ export default class HammerolaViewer extends React.Component {
       }
       if (e.key !== 'Escape') return;
       this.set({ menu: null, secPop: false, revOpen: false, dlOpen: false,
-                 viewsOpen: false, opsOpen: false, notePop: null,
-                 tokenPop: false, tool: null });
+                 viewsOpen: false, opsOpen: false, settingsOpen: false,
+                 notePop: null, tokenPop: false, tool: null });
     };
     window.addEventListener('keydown', this._kd);
 
@@ -1843,13 +1846,13 @@ export default class HammerolaViewer extends React.Component {
     this._mq = window.matchMedia ? window.matchMedia(NARROW) : null;
     if (this._mq) {
       this._narrow = (e) => (e.matches
-        // `opsOpen` GOES WITH THE TOOL, and for the tool's own reason. The
-        // card itself is inside `showTools` and unmounts on its own, but
-        // `toolbarStyle` reads the flag to raise the bar to z-17 over the
-        // composer: left standing, a narrow window wears a toolbar lifted for
-        // a menu that is not on screen, and the first click anywhere is spent
-        // putting it down again.
-        ? this.set({ narrow: true, tool: null, opsOpen: false })
+        // `opsOpen` AND `settingsOpen` GO WITH THE TOOL, and for the tool's
+        // own reason. Their cards are inside `showTools` and unmount on their
+        // own, but `toolbarStyle` reads the flags to raise the bar to z-17 over
+        // the composer: left standing, a narrow window wears a toolbar lifted
+        // for a menu that is not on screen, and the first click anywhere is
+        // spent putting it down again.
+        ? this.set({ narrow: true, tool: null, opsOpen: false, settingsOpen: false })
         : this.setState({ narrow: false }));
       this._mq.addEventListener('change', this._narrow);
     }
@@ -3983,6 +3986,7 @@ export default class HammerolaViewer extends React.Component {
       detail: {
         ...scene,
         cut: s.secOn, cutOffset: s.secOff, cutFlip: s.secFlip, cutHatch: s.hatch,
+        retina: s.retina,
         tool: s.tool,
         diffShow: s.diffShow, pins,
         ...(extra || {}),
@@ -6255,7 +6259,7 @@ export default class HammerolaViewer extends React.Component {
     });
 
     return {
-      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false, tokenPop: false }),
+      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false, settingsOpen: false, tokenPop: false }),
 
       // -- the page's chrome ---------------------------------------------------
       //
@@ -7234,10 +7238,27 @@ export default class HammerolaViewer extends React.Component {
                   Fit
                 </div>
                 {v.showTools && (
-                  <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(QUIET_BTN)}>
-                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
-                    Frame
-                  </div>
+                  <>
+                    <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(QUIET_BTN)}>
+                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
+                      Frame
+                    </div>
+                    {/* The `Add primitive` card's pattern, wrapper and stopped
+                        click included — see `settingsMenuStyle` for why this
+                        one hangs off the right edge instead. */}
+                    <div style={css(RELATIVE)}>
+                      <div onClick={v.tSettings} style={css(v.settingsBtnStyle)}>
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="4.2" /><circle cx="8" cy="8" r="1.8" /><path d="M8 1.6v2.2M8 12.2v2.2M1.6 8h2.2M12.2 8h2.2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M3.5 12.5L5 11M11 5l1.5-1.5" /></svg>
+                        Settings
+                      </div>
+                      <div onClick={(e) => e.stopPropagation()} style={css(v.settingsMenuStyle)}>
+                        <div onClick={v.toggleRetina} style={css(v.settingsRowStyle)}>
+                          <span style={css(v.retinaBox)}>{v.retinaMark}</span>
+                          <span>Retina resolution</span>
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             </div>

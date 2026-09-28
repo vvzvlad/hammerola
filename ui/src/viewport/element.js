@@ -68,6 +68,9 @@ const INITIAL_STATE = {
   cutOffset: 0,
   cutFlip: false,
   cutHatch: true,
+  // The renderer's pixel ratio: the display's own when true, 1 when false —
+  // the interface's "Retina resolution" setting (store.js remembers it).
+  retina: true,
   tool: null,
   pins: [],
   camera: null,
@@ -995,6 +998,20 @@ export class HmrViewport extends HTMLElement {
     if (!same(s.cutHatch, this.applied.cutHatch)) {
       setCutHatch(internals(this.viewer), s.cutHatch);
       this.applied.cutHatch = s.cutHatch;
+    }
+    // THE PIXEL RATIO, asked of the RENDERER rather than memo'd in `applied`,
+    // which every render resets: `setPixelRatio` always re-sizes the canvas and
+    // reallocates its drawing buffer, so it must run only when the ratio really
+    // moves. A viewer the library has just built starts at the display's own
+    // density whatever the setting says; the reconcile after its first render is
+    // what brings it down. The hatch pitch is counted in the same framebuffer
+    // pixels (hatch.js `hatchPitchPx`), so the live caps are re-told as well.
+    const renderer = this.viewer.renderer;
+    const want = s.retina === false ? 1 : (window.devicePixelRatio || 1);
+    if (renderer.getPixelRatio() !== want) {
+      renderer.setPixelRatio(want);
+      setCutHatch(internals(this.viewer), s.cutHatch);
+      this.viewer.update(true, true);
     }
     this.overlay.setPins(s.pins);
     // The grip is placed by the library's own render pass (`scene3d.js`), so

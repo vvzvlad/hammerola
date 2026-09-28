@@ -373,6 +373,51 @@ describe('reconcile', () => {
     })
   })
 
+  describe('the pixel ratio', () => {
+    /** A 2x display, set BEFORE the fake viewer is built so its renderer starts
+     *  where the library's constructor would leave it. */
+    const retinaScreen = () => {
+      vi.stubGlobal('devicePixelRatio', 2)
+      onTestFinished(() => vi.unstubAllGlobals())
+    }
+
+    it('drops to 1 with retina off, re-tells the hatch and asks for a frame', () => {
+      retinaScreen()
+      const vp = element({ retina: false, cutHatch: false })
+      vp.reconcile()
+      expect(vp.viewer.renderer.setPixelRatio).toHaveBeenCalledTimes(1)
+      expect(vp.viewer.renderer.getPixelRatio()).toBe(1)
+      expect(vp.viewer.update).toHaveBeenCalledWith(true, true)
+      // The pitch is counted in framebuffer pixels, so the live caps are told
+      // the new ratio — once for `applied`'s first pass and once for this.
+      expect(setCutHatch).toHaveBeenCalledTimes(2)
+      expect(setCutHatch.mock.calls[1][1]).toBe(false)
+    })
+
+    it('goes back to the display\'s own density with retina on', () => {
+      retinaScreen()
+      const vp = settled({ retina: false })
+      vp.state = { ...vp.state, retina: true }
+      vp.reconcile()
+      expect(vp.viewer.renderer.setPixelRatio).toHaveBeenCalledWith(2)
+      expect(vp.viewer.update).toHaveBeenCalledWith(true, true)
+    })
+
+    it('leaves the renderer alone while the ratio is already right', () => {
+      // `setPixelRatio` re-sizes the canvas and reallocates its drawing buffer,
+      // and a reconcile runs on every step of the section slider.
+      retinaScreen()
+      const off = settled({ retina: false })
+      const on = settled({ retina: true })
+      off.reconcile()
+      on.reconcile()
+      for (const each of [off, on]) {
+        expect(each.viewer.renderer.setPixelRatio).not.toHaveBeenCalled()
+        expect(each.viewer.update).not.toHaveBeenCalled()
+      }
+    })
+  })
+
   it('hands the pins to the overlay on every pass', () => {
     // No diffing here on purpose: the overlay redraws from scratch and the pins
     // move with the camera, so there is no state to compare against.
