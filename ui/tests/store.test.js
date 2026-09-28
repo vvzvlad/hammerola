@@ -1,6 +1,7 @@
 // ui/src/store.js — everything these pages remember in the browser: the token,
 // the notes, which pointer the reader was last on, how the front page's list of
-// projects is arranged, and the strip of projects this browser has been in.
+// projects is arranged, the strip of projects this browser has been in, and
+// whether the model is drawn at retina resolution.
 //
 // THE STORAGE IS A DOUBLE, AND THE DOUBLE IS THE WHOLE TEST. There is no
 // `localStorage` in this runner at all: Node's own global of that name is
@@ -38,9 +39,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  clearToken, forgetTab, readNotes, readProjectSort, readProjectView, readTabs,
-  readToken, rememberPointer, rememberTab, TAB_CAP, writeNotes,
-  writeProjectSort, writeProjectView, writeToken,
+  clearToken, forgetTab, readNotes, readProjectSort, readProjectView, readRetina,
+  readTabs, readToken, rememberPointer, rememberTab, TAB_CAP, writeNotes,
+  writeProjectSort, writeProjectView, writeRetina, writeToken,
 } from '../src/store.js'
 
 const POINTER_KEY = 'hammerola.pointer.proj1'
@@ -49,6 +50,7 @@ const NOTES_KEY = 'hammerola.notes.proj1'
 const VIEW_KEY = 'hammerola.projects_view'
 const SORT_KEY = 'hammerola.projects_sort'
 const TABS_KEY = 'hammerola.tabs'
+const RETINA_KEY = 'hammerola.retina'
 
 /** The smallest thing store.js can tell from the real one, plus a way to fail. */
 function fakeStorage({ failing = false } = {}) {
@@ -582,5 +584,27 @@ describe('the tab strip', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(() => rememberTab('a', 'A')).not.toThrow()
     expect(readTabs()).toEqual([])
+  })
+})
+
+// -- the retina setting ------------------------------------------------------
+// Whether the renderer draws at the display's full density. One site-wide key,
+// and NOTHING STORED IS ON — the page as it was before there was a choice.
+
+describe('the retina setting', () => {
+  it('reads ON where nothing was stored', () => {
+    expect(readRetina()).toBe(true)
+  })
+
+  it('reads OFF once it was turned off, under one site-wide key', () => {
+    writeRetina(false)
+    expect([...storage.cells.keys()]).toEqual([RETINA_KEY])
+    expect(readRetina()).toBe(false)
+  })
+
+  it('reads ON again once it was turned back on', () => {
+    writeRetina(false)
+    writeRetina(true)
+    expect(readRetina()).toBe(true)
   })
 })

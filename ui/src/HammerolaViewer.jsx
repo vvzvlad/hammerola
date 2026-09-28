@@ -112,7 +112,7 @@ import {
 // reaches the cookie.
 import {
   readToken, readNotes, writeNotes, rememberPointer,
-  readTabs, rememberTab, forgetTab, readTheme, writeTheme,
+  readTabs, rememberTab, forgetTab, readTheme, writeTheme, readRetina,
 } from './store.js';
 // The two attachments a comment carries, made small enough to send. Imported
 // only for `sendComment`: the frame grab itself (`frameBlob`) stays lossless,
@@ -1273,6 +1273,8 @@ export default class HammerolaViewer extends React.Component {
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
       secFace: null, secPop: false,
+      // The Settings card's one answer, remembered per browser (store.js).
+      retina: readRetina(),
       // `opsOpen` is the `Add primitive` menu in the floating toolbar, and it is
       // one of these rather than one of the proposal's own fields below for the
       // reason it is written beside `viewsOpen`: it is a menu of the chrome's,
@@ -1281,6 +1283,7 @@ export default class HammerolaViewer extends React.Component {
       // a sentence has been wrong twice already, because nothing fails when a
       // menu is added beside it.
       revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false,
+      settingsOpen: false,
       cmp: [], compare: false, diffShow: 'both',
       // -- the comparison, and it is FIVE fields rather than one because they
       // answer five different questions (issue #10).
@@ -1780,8 +1783,8 @@ export default class HammerolaViewer extends React.Component {
       }
       if (e.key !== 'Escape') return;
       this.set({ menu: null, secPop: false, revOpen: false, dlOpen: false,
-                 viewsOpen: false, opsOpen: false, notePop: null,
-                 tokenPop: false, tool: null });
+                 viewsOpen: false, opsOpen: false, settingsOpen: false,
+                 notePop: null, tokenPop: false, tool: null });
     };
     window.addEventListener('keydown', this._kd);
 
@@ -1843,13 +1846,13 @@ export default class HammerolaViewer extends React.Component {
     this._mq = window.matchMedia ? window.matchMedia(NARROW) : null;
     if (this._mq) {
       this._narrow = (e) => (e.matches
-        // `opsOpen` GOES WITH THE TOOL, and for the tool's own reason. The
-        // card itself is inside `showTools` and unmounts on its own, but
-        // `toolbarStyle` reads the flag to raise the bar to z-17 over the
-        // composer: left standing, a narrow window wears a toolbar lifted for
-        // a menu that is not on screen, and the first click anywhere is spent
-        // putting it down again.
-        ? this.set({ narrow: true, tool: null, opsOpen: false })
+        // `opsOpen` AND `settingsOpen` GO WITH THE TOOL, and for the tool's
+        // own reason. Their cards are inside `showTools` and unmount on their
+        // own, but `toolbarStyle` reads the flags to raise the bar to z-17 over
+        // the composer: left standing, a narrow window wears a toolbar lifted
+        // for a menu that is not on screen, and the first click anywhere is
+        // spent putting it down again.
+        ? this.set({ narrow: true, tool: null, opsOpen: false, settingsOpen: false })
         : this.setState({ narrow: false }));
       this._mq.addEventListener('change', this._narrow);
     }
@@ -3983,6 +3986,7 @@ export default class HammerolaViewer extends React.Component {
       detail: {
         ...scene,
         cut: s.secOn, cutOffset: s.secOff, cutFlip: s.secFlip, cutHatch: s.hatch,
+        retina: s.retina,
         tool: s.tool,
         diffShow: s.diffShow, pins,
         ...(extra || {}),
@@ -6255,7 +6259,7 @@ export default class HammerolaViewer extends React.Component {
     });
 
     return {
-      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false, tokenPop: false }),
+      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false, settingsOpen: false, tokenPop: false }),
 
       // -- the page's chrome ---------------------------------------------------
       //
@@ -7151,12 +7155,16 @@ export default class HammerolaViewer extends React.Component {
                 toolbar, so it is the toolbar that has to rise above the
                 overlays sharing the model with it. */}
             <div style={css(v.toolbarStyle)}>
-              <div style={css('pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;background:var(--float-bg);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)')}>
+              {/* `contain:layout` and NOT a `backdrop-filter`: both make the bar
+                  the containing block and stacking context its menus are built
+                  around, but a backdrop filter over the WebGL canvas cost a third
+                  of the frame rate while orbiting on a retina Mac (measured). */}
+              <div style={css('pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;background:var(--float-bg);contain:layout;border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)')}>
                 {/* A STRIP WHILE THE VIEWS FIT, A MENU WHEN THEY DO NOT — see
                     `VIEW_TABS_MAX`. The wrapper is `position:relative` so that
-                    the menu is anchored to the BUTTON: the toolbar carries a
-                    `backdrop-filter` and is therefore already a containing
-                    block for it (CSS Filter Effects 2, §2.1), so without the
+                    the menu is anchored to the BUTTON: the toolbar carries
+                    `contain:layout` and is therefore already a containing
+                    block for it (CSS Containment 1, §3.2), so without the
                     wrapper the menu would be measured from the toolbar's whole
                     box and start at its left end rather than at the button. */}
                 {v.viewMenu ? (
@@ -7199,9 +7207,9 @@ export default class HammerolaViewer extends React.Component {
                         rather than in it.
 
                         THE WRAPPER IS `position:relative` FOR THE REASON THE
-                        VIEW SWITCHER'S IS: the toolbar carries a
-                        `backdrop-filter` and is therefore already a containing
-                        block for the menu (CSS Filter Effects 2, §2.1), so
+                        VIEW SWITCHER'S IS: the toolbar carries
+                        `contain:layout` and is therefore already a containing
+                        block for the menu (CSS Containment 1, §3.2), so
                         without it the card would be measured from the toolbar's
                         whole box and start at its left end rather than at the
                         button. */}
@@ -7230,10 +7238,27 @@ export default class HammerolaViewer extends React.Component {
                   Fit
                 </div>
                 {v.showTools && (
-                  <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(QUIET_BTN)}>
-                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
-                    Frame
-                  </div>
+                  <>
+                    <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(QUIET_BTN)}>
+                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
+                      Frame
+                    </div>
+                    {/* The `Add primitive` card's pattern, wrapper and stopped
+                        click included — see `settingsMenuStyle` for why this
+                        one hangs off the right edge instead. */}
+                    <div style={css(RELATIVE)}>
+                      <div onClick={v.tSettings} style={css(v.settingsBtnStyle)}>
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="4.2" /><circle cx="8" cy="8" r="1.8" /><path d="M8 1.6v2.2M8 12.2v2.2M1.6 8h2.2M12.2 8h2.2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M3.5 12.5L5 11M11 5l1.5-1.5" /></svg>
+                        Settings
+                      </div>
+                      <div onClick={(e) => e.stopPropagation()} style={css(v.settingsMenuStyle)}>
+                        <div onClick={v.toggleRetina} style={css(v.settingsRowStyle)}>
+                          <span style={css(v.retinaBox)}>{v.retinaMark}</span>
+                          <span>Retina resolution</span>
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             </div>

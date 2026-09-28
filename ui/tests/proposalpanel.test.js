@@ -320,7 +320,7 @@ describe('the Add primitive button', () => {
 
   it('raises the whole toolbar over the composer while its menu is down', () => {
     // THE LAYER MOVES ON THE CONTAINER AND NOT ON THE CARD: the toolbar carries
-    // a `backdrop-filter`, which makes it a stacking context, so a `z-index`
+    // `contain:layout`, which makes it a stacking context, so a `z-index`
     // inside it would only sort the toolbar's own children. Unraised, the
     // overlays that share the model's area take the click meant for a row of
     // this menu — and the composer is the one that reaches it, anchored to the

@@ -27,10 +27,10 @@ import {
   PAGE, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
 import {
-  ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, TAB_OFF, TAB_ON, btn, popover, tab,
+  BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, TAB_OFF, TAB_ON, btn, popover, tab,
 } from './panelstyle.js';
 import { dropMoves, emptyProposal } from './proposal.js';
-import { clearToken, writeToken } from './store.js';
+import { clearToken, writeRetina, writeToken } from './store.js';
 import { MONO, SANS } from './style.jsx';
 
 export function chromeView(s, props, deps) {
@@ -259,7 +259,7 @@ export function chromeView(s, props, deps) {
       // until some later edit happened to send a document.
       setState({ token: null, tokenPop: false, tokenDraft: '',
                       composer: null, notePop: null, feed: [],
-                      opsOpen: false, proposalOff: true });
+                      opsOpen: false, settingsOpen: false, proposalOff: true });
       proposalOverlay(null);
       proposalMoves(dropMoves(stateNow().proposal));
       set({ tool: null });
@@ -444,9 +444,9 @@ export function chromeView(s, props, deps) {
     viewLabelStyle: ELLIPSIS,
     viewsToggle: stop(() => setState({
       viewsOpen: !s.viewsOpen, revOpen: false, dlOpen: false, tokenPop: false, menu: null,
-      // The other menu in this toolbar, which opens upwards from a button a few
+      // The other menus in this toolbar, which open upwards from buttons a few
       // pixels along: two of them at once would overlap.
-      opsOpen: false })),
+      opsOpen: false, settingsOpen: false })),
     viewBtnStyle: `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
       + (s.viewsOpen ? TAB_ON : TAB_OFF),
     // OPENS UPWARDS, unlike every other popover on this page: the toolbar it
@@ -462,9 +462,9 @@ export function chromeView(s, props, deps) {
     // menu comes down on top of the control that opened it.
     //
     // AND IT IS THE ONE POPOVER THAT TAKES NO SHEET ON A NARROW WINDOW. The
-    // toolbar carries `backdrop-filter:blur(10px)`, and a `backdrop-filter`
+    // toolbar carries `contain:layout`, and layout containment
     // makes the element a containing block for descendants positioned `fixed`
-    // AS WELL AS `absolute` (CSS Filter Effects 2, §2.1) — so `popSheet` would
+    // AS WELL AS `absolute` (CSS Containment 1, §3.2) — so `popSheet` would
     // resolve its `left`/`right`/`bottom` against the TOOLBAR's box rather
     // than the window, and the "sheet" would come up over the button that
     // opened it. Nor does it need the clamp the header's panels need: this
@@ -484,7 +484,7 @@ export function chromeView(s, props, deps) {
     viewMenuStyle: 'position:absolute;left:0;bottom:38px;width:260px;max-height:308px;overflow:auto;'
       + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
       + (s.viewsOpen ? 'block' : 'none'),
-    // THE LAYER THE WHOLE TOOLBAR SITS ON, raised for as long as EITHER of its
+    // THE LAYER THE WHOLE TOOLBAR SITS ON, raised for as long as ANY of its
     // menus is open. While one is, the toolbar has to cover the overlays that
     // share the model's area with it — the "This view did not render" card (14),
     // the section panel (15) and the composer (16) — or a click on a row one of
@@ -493,7 +493,7 @@ export function chromeView(s, props, deps) {
     // things that are allowed to cover the toolbar. Closed, it is 12 again,
     // so nothing else on the page ever sees a different order.
     toolbarStyle: 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:'
-      + (s.viewsOpen || s.opsOpen ? '17' : '12'),
+      + (s.viewsOpen || s.opsOpen || s.settingsOpen ? '17' : '12'),
     // WHAT THE TOOLBAR KEEPS WHEN IT IS THE WIDTH OF A PHONE: the view tabs
     // and Fit, which are the two controls about LOOKING at the model. The
     // rest goes — Measure and Comment are gestures that want a pointer and a
@@ -570,14 +570,14 @@ export function chromeView(s, props, deps) {
     // and `measAdd` refuses such a value by its shape.
     tProposal: stop(() => setState({
       opsOpen: !s.opsOpen, revOpen: false, dlOpen: false, viewsOpen: false,
-      tokenPop: false, menu: null })),
+      settingsOpen: false, tokenPop: false, menu: null })),
     proposalBtnStyle: btn(s.opsOpen, viewer, false),
     // THE CARD, drawn exactly as the view switcher's is and for exactly the same
     // reasons — upwards from the button, no `z-index` of its own (the toolbar is
     // its own stacking context, so a value here would only sort this menu
     // against the toolbar's other children), and no sheet on a narrow window
     // (the button is one of the ones `showTools` takes away, and a `fixed` child
-    // of a `backdrop-filter` element clamps itself to that element anyway).
+    // of a `contain:layout` element clamps itself to that element anyway).
     //
     // NARROWER THAN THAT ONE because a row here is one word rather than a
     // model's own sentence, and with no height cap for the same reason: the ops
@@ -590,6 +590,32 @@ export function chromeView(s, props, deps) {
     // is the ink the document's own words are printed in everywhere else.
     proposalOpStyle: `display:flex;align-items:center;padding:7px 14px;font:400 11.5px ${MONO};cursor:pointer;`
       + INK,
+    // SETTINGS, BUILT EXACTLY AS `Add primitive` IS — a flag of the page's, a
+    // `stop()`ed toggle that shuts the other menus, a card measured upwards,
+    // `rootClick`/Escape to dismiss — and SHOWN WITHOUT A TOKEN: what it holds
+    // is about this browser's screen rather than about the model.
+    tSettings: stop(() => setState({
+      settingsOpen: !s.settingsOpen, revOpen: false, dlOpen: false, viewsOpen: false,
+      opsOpen: false, tokenPop: false, menu: null })),
+    settingsBtnStyle: btn(s.settingsOpen),
+    // `right:0` AND NOT `left:0`: this is the last button in the bar, so a card
+    // measured from its left edge would hang out past the toolbar's end rather
+    // than open over it.
+    settingsMenuStyle: 'position:absolute;right:0;bottom:38px;width:190px;'
+      + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
+      + (s.settingsOpen ? 'block' : 'none'),
+    settingsRowStyle: `display:flex;align-items:center;gap:8px;padding:7px 14px;font:400 11.5px ${SANS};cursor:pointer;`
+      + INK,
+    // The renderer's pixel ratio (viewport/element.js), drawn like the section
+    // panel's hatch checkbox. Remembered per browser, like the screen it is
+    // about; the viewport hears it through `sync`, which `set` runs.
+    toggleRetina: () => {
+      set({ retina: !s.retina });
+      writeRetina(!s.retina);
+    },
+    retinaBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;'
+      + (s.retina ? ON_ACCENT : BLANK_BOX),
+    retinaMark: s.retina ? '✓' : '',
     fitView: () => fitView(),
     grabFrame: () => saveFrame(),
     // OFF `armed` AND NOT OFF `s.tool`, so the strip stops instructing the

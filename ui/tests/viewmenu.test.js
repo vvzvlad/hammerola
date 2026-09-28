@@ -202,7 +202,7 @@ describe('the menu itself', () => {
 
   it('raises the whole toolbar while it is open, and puts it back after', () => {
     // The layer has to move on the CONTAINER and not on the menu: the toolbar
-    // carries a `backdrop-filter`, which makes it a stacking context, so a
+    // carries `contain:layout`, which makes it a stacking context, so a
     // `z-index` inside it only sorts the toolbar's own children. Unraised, the
     // overlays that share the model's area — the view-error card at 14, the
     // section panel at 15, the composer at 16 — take the click meant for a row
@@ -242,8 +242,8 @@ describe('the menu itself', () => {
 
   it('stays where it is on a narrow window, unlike every other popover here', () => {
     // NOT `popSheet`, and this is the case that stops it being "fixed" into one.
-    // The toolbar's `backdrop-filter` makes it a containing block for `fixed`
-    // descendants as well as `absolute` ones (CSS Filter Effects 2, §2.1), so a
+    // The toolbar's `contain:layout` makes it a containing block for `fixed`
+    // descendants as well as `absolute` ones (CSS Containment 1, §3.2), so a
     // sheet would clamp itself to the TOOLBAR's box rather than the window and
     // come up over the button that opened it. No clamp is needed anyway: the
     // toolbar is centred on the bottom edge and narrow leaves this button and

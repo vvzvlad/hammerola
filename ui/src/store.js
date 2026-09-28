@@ -1,25 +1,26 @@
 // Everything these pages remember in the browser, and nothing else.
 //
-// Six things are kept, all under the `hammerola.` prefix the rest of the site
+// Seven things are kept, all under the `hammerola.` prefix the rest of the site
 // already uses — `hammerola.pointing_device`, the viewport's own answer
-// (viewport/options.js). FIVE OF THEM LIVE IN `localStorage` AND ONE IN A
+// (viewport/options.js). SIX OF THEM LIVE IN `localStorage` AND ONE IN A
 // COOKIE, and the odd one out is the theme: it is the only remembered answer the
 // SERVER has to know, because the page has to arrive already painted in it (the
 // section at the foot of this file has the whole argument). Everything else here
 // is nobody's business but this browser's, and a cookie would only put it on
 // every request for nothing.
 //
-// Two of the FIVE IN `localStorage` are keyed BY PROJECT for the reason
+// Two of the SIX IN `localStorage` are keyed BY PROJECT for the reason
 // pointer_pref.js gives about its own key: somebody editing one model and merely
 // looking at another must not have the two answers collide. The count is of
-// those five and not of all six, because the theme is not in the arithmetic at
+// those six and not of all seven, because the theme is not in the arithmetic at
 // all: it is one answer for the browser, the server reads it, and there is no
-// project in a cookie to key it by. The token is one of the other three, and
+// project in a cookie to key it by. The token is one of the other four, and
 // the section below says why that changed; the
 // arrangement of the project list is another, and it never could be — the page
 // that has it names no project; the tab strip is the third, and it is the one
 // thing here that is ABOUT several projects at once, so no single project could
-// have keyed it either.
+// have keyed it either; the retina setting is the fourth, and it is about the
+// screen in front of the reader rather than about any model.
 //
 // EVERY access goes through the two functions at the top, and the cookie's two
 // at the bottom. `localStorage` is not a property that is always there — a
@@ -374,6 +375,23 @@ export function forgetTab(pid) {
   if (!pid) return;
   write(TABS_KEY, JSON.stringify(readTabs().filter((entry) => entry.pid !== pid)));
 }
+
+// -- whether the model is drawn at the display's full density ----------------
+// The Settings card's "Retina resolution": on, the renderer draws at
+// `window.devicePixelRatio`; off, at 1 — a quarter of the pixels on a 2x screen,
+// which is what keeps orbiting at 60 fps on a retina Mac (viewport/element.js).
+// ONE KEY FOR THE WHOLE SITE, like the arrangement above: it is an answer about
+// this screen and this machine, not about any model.
+//
+// NOTHING STORED READS AS ON, which is what the page did before there was a
+// choice. Only the exact word `off` turns it off, so a value nobody can read
+// falls back to that same default rather than to a slower or a blurrier page.
+
+const RETINA_KEY = `${NS}retina`;
+
+export const readRetina = () => read(RETINA_KEY) !== 'off';
+
+export const writeRetina = (on) => write(RETINA_KEY, on ? 'on' : 'off');
 
 // -- the theme ---------------------------------------------------------------
 // Which of the two palettes this reader is in. Per BROWSER, like the

@@ -18,8 +18,8 @@
 // narrow and wide. An assertion that only ever saw one of them would pass on a
 // flag nothing reads.
 //
-// NOTHING IS MOUNTED except in the four cases where the lifecycle IS the
-// subject — three that cross the breakpoint with the page open and one that
+// NOTHING IS MOUNTED except in the cases where the lifecycle IS the
+// subject — those that cross the breakpoint with the page open and the one that
 // takes the page away, which together are the only way to reach the listener
 // `componentDidMount` registers. Everywhere else the
 // instance is the real prototype with the state spelled out, `computed()` and
@@ -202,6 +202,16 @@ describe('which layout the page comes up in', () => {
     c.state.opsOpen = true
     change(true)
     expect(c.state.opsOpen).toBe(false)
+    expect(css(c.computed().toolbarStyle).zIndex).toBe('12')
+  })
+
+  it('puts the Settings card away on the way in, for the same reason', () => {
+    const { change } = fakeMatchMedia(false)
+    const c = mounted()
+
+    c.state.settingsOpen = true
+    change(true)
+    expect(c.state.settingsOpen).toBe(false)
     expect(css(c.computed().toolbarStyle).zIndex).toBe('12')
   })
 
@@ -428,7 +438,7 @@ describe('the toolbar on a narrow window', () => {
     // a phone has nowhere to put.
     //
     // `Add primitive` IS ON THE LIST FOR A REASON OF ITS OWN, and it is the
-    // card rather than the button: a `fixed` child of a `backdrop-filter`
+    // card rather than the button: a `fixed` child of a `contain:layout`
     // element is pinned to that element instead of to the window, so the menu
     // cannot become a narrow sheet — it opens 170px wide over the button that
     // opened it, on a toolbar its own flag has just lifted above the composer.
@@ -578,9 +588,9 @@ describe('the popovers that become a sheet on a narrow page', () => {
   // the composer's LEFT end that goes off screen, not its controls; and the
   // view menu and the `Add primitive` menu, NEITHER of which could take this
   // sheet even if it wanted one. They open
-  // inside the floating toolbar, and that toolbar's `backdrop-filter` makes it
+  // inside the floating toolbar, and that toolbar's `contain:layout` makes it
   // a containing block for `fixed` descendants as well as `absolute` ones (CSS
-  // Filter Effects 2, §2.1) — so a sheet there would clamp itself to the
+  // Containment 1, §3.2) — so a sheet there would clamp itself to the
   // toolbar's box and come up over the button that opened it. They need no clamp
   // either: the toolbar is centred on the bottom edge and on a narrow window
   // holds the view button and Fit and nothing else — `Add primitive` is one of

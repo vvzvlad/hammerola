@@ -80,19 +80,24 @@ const slopeOf = (hatch) =>
  *  marker — so what comes back carries the hatch's GLSL as well as its uniform
  *  values. The pitch tests need the two together: the target spacing is a
  *  uniform and the width a literal in the source, and only reading them side by
- *  side says what either measures. */
-const compile = (material) => {
+ *  side says what either measures.
+ *
+ *  `renderer` is the second argument three.js hands `onBeforeCompile`, and the
+ *  pitch is read off its pixel ratio. */
+const compile = (material, renderer) => {
   const shader = {
     uniforms: {},
     fragmentShader: `uniform vec3 diffuse;\n${hatchMarker}\n`,
   }
-  hatchShader.call(material, shader)
+  hatchShader.call(material, shader, renderer)
   return shader
 }
 
-// The display's density is a GLOBAL the module reads at patch time, and the
-// pitch tests below stub it. Restored for everyone: a leaked 3x would move the
-// period under every test in this file that compiles anything.
+/** A renderer as the hatch reads one: a pixel ratio that can be moved. */
+const rendererAt = (ratio) => ({ ratio, getPixelRatio() { return this.ratio } })
+
+// One test below stubs the window's density to prove the module does NOT read
+// it. Restored for everyone, so a leaked 3x cannot hide a regression elsewhere.
 afterEach(() => { vi.unstubAllGlobals() })
 
 /** A file of this repository, read from `process.cwd()` and MEMOISED.
@@ -466,17 +471,16 @@ describe('one pitch for every cut face, anchored to the part', () => {
     }
   }
 
-  /** One cap of one part, patched and compiled on a display of that density. */
+  /** One cap of one part, patched and compiled by a renderer at that ratio. */
   const inkAt = (ratio) => {
-    vi.stubGlobal('devicePixelRatio', ratio)
     const g = fakeInternals(['|model|lid'], { planes: [[0, 0, 1]] })
     hatchSectionCaps(g)
-    return inkOf(compile(capsOf(g)[0]))
+    return inkOf(compile(capsOf(g)[0], rendererAt(ratio)))
   }
 
   it('targets PITCH_PX CSS pixels between lines on every display', () => {
-    // ISSUE #96, and the reason the target is a uniform at all. The library
-    // renders at `setPixelRatio(window.devicePixelRatio)`, so the pixels the
+    // ISSUE #96, and the reason the target is a uniform at all. The canvas is
+    // drawn at the renderer's pixel ratio, so the pixels the
     // shader's derivatives count are FRAMEBUFFER ones: a spacing pinned at 8 of
     // those is four CSS pixels on a retina screen, and four CSS pixels between
     // lines three quarters of one wide is scanner grain rather than hatching —
@@ -496,6 +500,13 @@ describe('one pitch for every cut face, anchored to the part', () => {
     for (const ratio of [undefined, 0]) {
       expect(inkAt(ratio).pitch).toBeCloseTo(HATCH_PITCH_PX, 12)
     }
+  })
+
+  it('follows the RENDERER\'s ratio, not the window\'s', () => {
+    // With "Retina resolution" off the canvas is drawn at 1 on a 2x screen, so
+    // a pitch taken from the window would double the spacing on screen.
+    vi.stubGlobal('devicePixelRatio', 2)
+    expect(inkAt(1).pitch).toBeCloseTo(HATCH_PITCH_PX, 12)
   })
 
   it('draws the line LINE_PX wide and softens it over about one pixel', () => {
@@ -522,10 +533,13 @@ describe('one pitch for every cut face, anchored to the part', () => {
   it('keeps all three across a `setCutHatch` toggle', () => {
     // The checkbox writes the live uniforms, so it is the one path that could
     // leave a cap hatching at the wrong period — and the path that repairs one.
-    vi.stubGlobal('devicePixelRatio', 2)
+    // It reaches the renderer through the display, which is where `internals()`
+    // hands over the viewer (`Display.setupUI`).
+    const renderer = rendererAt(2)
     const g = fakeInternals(['|model|lid'], { planes: [[0, 0, 1]] })
+    g.display = { viewer: { renderer } }
     hatchSectionCaps(g)
-    const shader = compile(capsOf(g)[0])
+    const shader = compile(capsOf(g)[0], renderer)
     expect(inkOf(shader)).toEqual({
       pitch: HATCH_PITCH_PX * 2, line: HATCH_LINE_PX, band: HATCH_AA_PX,
     })
@@ -535,14 +549,13 @@ describe('one pitch for every cut face, anchored to the part', () => {
     expect(inkOf(shader)).toEqual({
       pitch: HATCH_PITCH_PX * 2, line: HATCH_LINE_PX, band: HATCH_AA_PX,
     })
-    // ...and a window dragged to a display of another density recovers HERE,
-    // on the next toggle or the next render, because those are what rewrite the
-    // uniform. Nothing watches for the move itself: a `matchMedia` listener
-    // would be permanent machinery for a case that corrects itself the moment
-    // the reader does anything at all.
-    vi.stubGlobal('devicePixelRatio', 1)
+    // ...and when the viewport moves the renderer's ratio — "Retina resolution"
+    // turned off — this is the call it makes next, and the live cap follows.
+    renderer.ratio = 1
     setCutHatch(g, true)
-    expect(inkOf(shader).pitch).toBeCloseTo(HATCH_PITCH_PX, 12)
+    expect(inkOf(shader)).toEqual({
+      pitch: HATCH_PITCH_PX, line: HATCH_LINE_PX, band: HATCH_AA_PX,
+    })
   })
 })
 
@@ -550,7 +563,7 @@ describe('setCutHatch', () => {
   it('flips the live uniform on every patched cap, and recompiles nothing', () => {
     const g = fakeInternals(['|model|lid'])
     expect(hatchSectionCaps(g)).toBe(3)
-    const shaders = capsOf(g).map(compile)
+    const shaders = capsOf(g).map((m) => compile(m))
     for (const m of capsOf(g)) m.needsUpdate = false
     expect(setCutHatch(g, false)).toBe(3)
     capsOf(g).forEach((m, i) => {
@@ -570,7 +583,7 @@ describe('setCutHatch', () => {
     const g = fakeInternals(['|model|lid'])
     hatchSectionCaps(g)
     setCutHatch(g, false)
-    const shaders = capsOf(g).map(compile)
+    const shaders = capsOf(g).map((m) => compile(m))
     for (const s of shaders) expect(s.uniforms.hatchOn.value).toBe(0)
   })
 
