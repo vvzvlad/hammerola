@@ -7151,12 +7151,16 @@ export default class HammerolaViewer extends React.Component {
                 toolbar, so it is the toolbar that has to rise above the
                 overlays sharing the model with it. */}
             <div style={css(v.toolbarStyle)}>
-              <div style={css('pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;background:var(--float-bg);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)')}>
+              {/* `contain:layout` and NOT a `backdrop-filter`: both make the bar
+                  the containing block and stacking context its menus are built
+                  around, but a backdrop filter over the WebGL canvas cost a third
+                  of the frame rate while orbiting on a retina Mac (measured). */}
+              <div style={css('pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;background:var(--float-bg);contain:layout;border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)')}>
                 {/* A STRIP WHILE THE VIEWS FIT, A MENU WHEN THEY DO NOT — see
                     `VIEW_TABS_MAX`. The wrapper is `position:relative` so that
-                    the menu is anchored to the BUTTON: the toolbar carries a
-                    `backdrop-filter` and is therefore already a containing
-                    block for it (CSS Filter Effects 2, §2.1), so without the
+                    the menu is anchored to the BUTTON: the toolbar carries
+                    `contain:layout` and is therefore already a containing
+                    block for it (CSS Containment 1, §3.2), so without the
                     wrapper the menu would be measured from the toolbar's whole
                     box and start at its left end rather than at the button. */}
                 {v.viewMenu ? (
@@ -7199,9 +7203,9 @@ export default class HammerolaViewer extends React.Component {
                         rather than in it.
 
                         THE WRAPPER IS `position:relative` FOR THE REASON THE
-                        VIEW SWITCHER'S IS: the toolbar carries a
-                        `backdrop-filter` and is therefore already a containing
-                        block for the menu (CSS Filter Effects 2, §2.1), so
+                        VIEW SWITCHER'S IS: the toolbar carries
+                        `contain:layout` and is therefore already a containing
+                        block for the menu (CSS Containment 1, §3.2), so
                         without it the card would be measured from the toolbar's
                         whole box and start at its left end rather than at the
                         button. */}

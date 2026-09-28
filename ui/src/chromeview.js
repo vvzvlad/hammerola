@@ -462,9 +462,9 @@ export function chromeView(s, props, deps) {
     // menu comes down on top of the control that opened it.
     //
     // AND IT IS THE ONE POPOVER THAT TAKES NO SHEET ON A NARROW WINDOW. The
-    // toolbar carries `backdrop-filter:blur(10px)`, and a `backdrop-filter`
+    // toolbar carries `contain:layout`, and layout containment
     // makes the element a containing block for descendants positioned `fixed`
-    // AS WELL AS `absolute` (CSS Filter Effects 2, §2.1) — so `popSheet` would
+    // AS WELL AS `absolute` (CSS Containment 1, §3.2) — so `popSheet` would
     // resolve its `left`/`right`/`bottom` against the TOOLBAR's box rather
     // than the window, and the "sheet" would come up over the button that
     // opened it. Nor does it need the clamp the header's panels need: this
@@ -577,7 +577,7 @@ export function chromeView(s, props, deps) {
     // its own stacking context, so a value here would only sort this menu
     // against the toolbar's other children), and no sheet on a narrow window
     // (the button is one of the ones `showTools` takes away, and a `fixed` child
-    // of a `backdrop-filter` element clamps itself to that element anyway).
+    // of a `contain:layout` element clamps itself to that element anyway).
     //
     // NARROWER THAN THAT ONE because a row here is one word rather than a
     // model's own sentence, and with no height cap for the same reason: the ops

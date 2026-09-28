@@ -428,7 +428,7 @@ describe('the toolbar on a narrow window', () => {
     // a phone has nowhere to put.
     //
     // `Add primitive` IS ON THE LIST FOR A REASON OF ITS OWN, and it is the
-    // card rather than the button: a `fixed` child of a `backdrop-filter`
+    // card rather than the button: a `fixed` child of a `contain:layout`
     // element is pinned to that element instead of to the window, so the menu
     // cannot become a narrow sheet — it opens 170px wide over the button that
     // opened it, on a toolbar its own flag has just lifted above the composer.
@@ -578,9 +578,9 @@ describe('the popovers that become a sheet on a narrow page', () => {
   // the composer's LEFT end that goes off screen, not its controls; and the
   // view menu and the `Add primitive` menu, NEITHER of which could take this
   // sheet even if it wanted one. They open
-  // inside the floating toolbar, and that toolbar's `backdrop-filter` makes it
+  // inside the floating toolbar, and that toolbar's `contain:layout` makes it
   // a containing block for `fixed` descendants as well as `absolute` ones (CSS
-  // Filter Effects 2, §2.1) — so a sheet there would clamp itself to the
+  // Containment 1, §3.2) — so a sheet there would clamp itself to the
   // toolbar's box and come up over the button that opened it. They need no clamp
   // either: the toolbar is centred on the bottom edge and on a narrow window
   // holds the view button and Fit and nothing else — `Add primitive` is one of
