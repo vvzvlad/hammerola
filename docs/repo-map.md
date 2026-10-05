@@ -172,7 +172,7 @@
   reader who already has a token goes to the list and never touches this route —
   and every failure of that fetch is silence: a hint must not be able to take a
   sign-in form down (`loadStart` in `ui/src/hub.js`)
-- **The client has THREE doors now, and only two of them are used here.** Out of
+- **The client has TWO doors.** Out of
   a checkout it
   is `python3 -m hammerola`, STARTED IN THE CHECKOUT ROOT because that is where
   `hammerola` is importable — so the model directory is an argument and not the
@@ -188,28 +188,11 @@
   the very name the hub's bootstrap writes with `curl -o`, and a write through a
   symlink lands in the link's TARGET — so the download quietly overwrote the
   repository's own copy while the command went on working, with `git status` as
-  the only symptom. THE PACKAGING ENTRY POINT NOW EXISTS, and this paragraph used
-  to say the opposite: while the client was `src/client/`, the repo's one
-  importable top-level name was `src`, and `pip install`ing that onto a laptop
-  would have shadowed every other project's `src`. So the client moved OUT of
-  `src/` and became the top-level package `hammerola/`, taking the three shared
-  stdlib-only modules with it — an installed distribution that imported
-  `src.buildnames` would have to ship `src` as well, which is the shadowing all
-  over again. `pyproject.toml` declares the name, the `>=3.9` floor (equal to
-  `onboarding.MIN_PYTHON`), no dependencies at all and the console script, so
-  `pip install <this checkout>` puts a `hammerola` on the PATH — the THIRD door,
-  counted the same way `hammerola/__init__.py` and `hammerola/__main__.py` count
-  it. IT IS NOT A NEW RECOMMENDED INSTALL, and nothing here uses it: no target
-  runs it, the hub is still where the tool comes from, and if a `pip install`
-  and the bootstrap `curl -o` both land in `~/.local/bin` the download wins.
-  The name exists because
-  `hammerola update` had nowhere to install to; that mechanism (issue #77) IS
-  built now and lives in `hammerola/update.py`, and this door is the one it
-  cannot serve — a `pip install`ed copy is a package directory rather than a
-  single file, so `update` names pip instead of writing into site-packages.
-  `pyproject.toml`'s `version` is the fourth thing in it nothing would notice
-  going stale, and it is held equal to `hammerola.VERSION` by
-  `tests/test_packaging.py`
+  the only symptom. The client is the top-level package `hammerola/` rather
+  than a part of `src/`, and carries the three shared stdlib-only modules with
+  it, so the zipapp holds no `src` at all. `hammerola update` (issue #77,
+  `hammerola/update.py`) replaces the zipapp in place; a checkout is not a
+  single file and is updated with git
 - `checklib.py` — at the ROOT, and not a stray file: `import checklib` is part
   of the contract with every model.py in the fleet, exactly like `parts()` and
   `views()`. It re-exports `src/cadbuild/checklib.py` under that name, and
@@ -299,10 +282,9 @@
   other way (`-dark` for dark ink) and that reading is a coin toss whose losing
   side is an invisible logo, so the test asserts the naming: each file's ribbon
   has to be on the opposite side of mid-grey from the background its name
-  promises. Only `mark-on-light.svg` is rendered today, because the interface is
-  light everywhere; `mark-on-dark.svg` is wired in by issue #35, and is
-  kept — rather than dropped as dead weight — because its geometry is held to
-  the same check meanwhile
+  promises. `mark-on-dark.svg` is the reference for the dark palette: the dark
+  theme's tokens in `static/_v/tokens.css` are taken from its inks, and
+  `ui/tests/chrome.test.js` checks them against this file
 - `model_template/` — the starter project `hammerola create` unpacks, served at
   `/start/template.tar.gz`: a `model.py` that BUILDS AS IT STANDS, a
   `.gitignore`, a `ref/measurements.md` for the numbers the model claims to
@@ -401,10 +383,4 @@
   what `ui/src/viewport/` reaches into at its own risk. Listed here because the
   only way in used to be a comment inside the code that needed them (#100)
 - `main.py` — thin entry point over `src/`
-- `pyproject.toml` — packaging metadata for the CLIENT and for nothing else: the
-  distribution name `hammerola`, the `>=3.9` floor, no dependencies at all and
-  the `hammerola` console script. `packages` names the one package explicitly
-  rather than letting setuptools discover them, because `src/` is the SERVICE and
-  must never be packaged. The hub is not installable and is not meant to be — it
-  ships as the image — so nothing here describes it
 

@@ -113,15 +113,6 @@ the skill tells the reader and what a test holds the syntax to: a stock
 `/usr/bin/python3` is 3.9 on macOS and on Debian 11, so "newer than that" is a
 first onboarding step that fails on the ordinary machine).
 
-The package also has a DISTRIBUTION NAME — `hammerola`, declared in
-`pyproject.toml` — so `pip install <this checkout>` puts a `hammerola` console
-script on the PATH and the tool becomes importable from anywhere. That name is
-the point of it: the only importable top-level name here used to be `src`, so
-installing this on a laptop would have shadowed every other project's `src`, and
-a tool that cannot be installed cannot update itself either. It is a name, not a
-new recommended install — the hub still serves the zipapp, and if both land in
-`~/.local/bin` the bootstrap `curl -o` above overwrites the console script.
-
 `GET /start` is the manifest that names both of those, plus the starter template
 `create` fetches below — and one boolean, `empty`, which is the only thing on
 this service that says anything about the deployment without the token. It is
@@ -203,8 +194,7 @@ what lands there is what the machine will run next, and written through a rename
 so an interrupted update cannot leave a laptop with no tool and no way to fetch
 one. It then prints what changed between the two versions, which is what makes
 the refusal above worth acting on rather than merely obeying. There is no flag
-for where to write: a copy running out of a checkout or a `pip install` is told
-to use git or pip.
+for where to write: a copy running out of a checkout is told to use git.
 
 `hammerola --help` has the flags, and `hammerola rm` — the one command that
 unmakes anything. It removes a project whole, never a single build, and it asks

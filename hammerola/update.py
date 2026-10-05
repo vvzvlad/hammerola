@@ -157,9 +157,9 @@ def _target() -> Path:
 
     A zipapp is imported out of the archive itself, so `__file__` here reads
     `<archive>/hammerola/update.py` and two parents up is the single file on
-    PATH. Under either other door those same two parents land on a DIRECTORY —
-    the package inside a checkout, or inside site-packages — which is what tells
-    the doors apart without asking anything about how the process was started.
+    PATH. Out of a checkout those same two parents land on a DIRECTORY — the
+    checkout itself — which is what tells the doors apart without asking
+    anything about how the process was started.
     """
     running = Path(__file__).resolve().parent.parent
     if not running.is_file():
@@ -167,7 +167,7 @@ def _target() -> Path:
             f"this hammerola is the package in {config.display_path(running)}, "
             f"not the one-file client the hub serves, so there is no single "
             f"file to write over. Nothing was fetched.\n"
-            f"  A checkout is updated with git and an installed copy with pip; "
+            f"  A checkout is updated with git; "
             f"`{UPDATE_HINT}` is for the file `curl -o ~/.local/bin/hammerola` "
             f"wrote.")
     return running

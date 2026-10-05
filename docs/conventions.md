@@ -123,12 +123,6 @@ be shorter, and renaming it breaks links, so it is not covered by this rule.
   only thing that does it, and if it stops, everything still looks fine), that
   `.dockerignore` kept `tests/`, `.env` and `.venv` out of the image, and that the image's
   own command reaches its startup marker. When you add a check, add it there.
-- `docker login` runs AFTER the gate, and that placement is the load-bearing half: until the
-  gate is green there is nothing to publish, so there is no moment before it at which the
-  registry PAT needs to be in the job's docker config — and everything above that line executes
-  untrusted code on a runner shared with every other repository (the Dockerfile's `RUN` steps,
-  including whatever `pip install` pulls in, and then the image's own code under the gate). Do
-  not move the login back to the top of the job.
   The explicit `docker logout` at the end, under `if: always()`, is defence in depth rather
   than the thing preventing a leak: `docker/login-action` already logs out in its post step
   (`logout:` defaults to true, and act_runner does run post steps), and this job's docker config
