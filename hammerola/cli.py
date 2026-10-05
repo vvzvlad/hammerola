@@ -495,7 +495,7 @@ def _publish(args) -> int:
         # QUOTED, like every other place a reply's own words are printed. This
         # one and the two below are on the ordinary push path — the commonest
         # route in the tool — and they were writing whatever the far end sent
-        # straight to a terminal, bounded only by the 64 MiB reply ceiling.
+        # straight to a terminal.
         return _fail(f"the hub refused the push with HTTP {code}: "
                      f"{quoted(payload.get('error', payload))}")
 
