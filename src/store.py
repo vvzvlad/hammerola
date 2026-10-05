@@ -121,7 +121,6 @@ from src.archive import (ALPHABET_FAULT, ARCHIVE_OVERHEAD_BYTES, CHUNK,
                          _open_member_dir, _pax_header_chars,
                          _refused_names_error, _shown_untrusted, unpack)
 from src.errors import PublishError
-from src.safeio import resolve_settled
 
 # Identifiers that arrive in the URL. No dot at all: that keeps a build directory
 # from ever colliding with `builds.json`, and keeps it from being a dot-entry the
@@ -628,13 +627,8 @@ class Store:
         it rather than measuring against a root of its own. OSError when the path
         cannot be resolved and ValueError when it resolves outside DATA_DIR —
         which is the pair every caller already answers with one 404.
-
-        `resolve_settled` AND NOT `resolve`, because `latest` is a symlink being
-        swapped under the reader by whoever is publishing: this is the same
-        answer with an EINVAL retried (issue #70, `safeio` carries the
-        measurement). A missing file is still refused on the first try.
         """
-        resolved = resolve_settled(path)
+        resolved = path.resolve(strict=True)
         resolved.relative_to(self.root)
         return resolved
 

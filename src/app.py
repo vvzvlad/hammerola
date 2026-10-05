@@ -787,12 +787,7 @@ def make_handler(store: Store, comment_store: CommentStore,
             and it costs one stat. Note it must be done on the RESOLVED path:
             `latest` is a symlink, and following it is the whole point, so the
             question is not "is there a symlink" but "where did it land".
-
-            `store.resolve_inside` is what asks both halves of that, with
-            `resolve_settled` AND NOT `resolve`, because that symlink is being
-            swapped under this reader by whoever is publishing — `safeio` carries
-            the measurement (issue #70). It is the same answer with an EINVAL
-            retried; a missing file is still refused on the first try.
+            `store.resolve_inside` is what asks both halves of that.
 
             `uploaded` says whether the bytes came out of a push, which decides
             how narrowly the content type is whitelisted. `content` overrides
