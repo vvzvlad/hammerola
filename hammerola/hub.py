@@ -713,9 +713,9 @@ class Hub:
             # matters ("Check HUB_URL: an `http://` address where the hub speaks
             # `https://`..."), leaving a mangled quotation and no advice.
             return None, f"the hub could not be reached ({error})"
-        # ASKED ONLY OF THE TWO STATUSES THAT CAN BE A VERDICT. It parses a body
-        # the far end chose, so running it on every 200 as well would be work
-        # — and exposure — for an answer nothing reads.
+        # ASKED ONLY OF THE TWO STATUSES THAT CAN BE A VERDICT. It parses the
+        # body, so running it on every 200 as well would be work for an answer
+        # nothing reads.
         mine = status in (401, 404) and _carries_the_hubs_error_shape(raw)
         if status == 401 and mine:
             raise HubError(UNAUTHORIZED)

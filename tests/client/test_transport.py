@@ -51,7 +51,7 @@ def _serve(handler):
 
 
 @pytest.fixture
-def elsewhere():
+def recorder():
     """A `_Recorder` server, to see whether a request reached it. -> its url."""
     _Recorder.seen = []
     url, server = _serve(_Recorder)
@@ -138,7 +138,7 @@ def test_a_legal_address_is_not_refused_by_any_of_those_checks(url):
     ("/x\x00y", "a NUL"),
 ])
 def test_a_path_the_hub_named_that_cannot_be_sent_never_reaches_the_wire(
-        elsewhere, path, what_is_wrong):
+        recorder, path, what_is_wrong):
     """UNTRUSTED INPUT, which is the case `fetch_path` exists for.
 
     The path comes out of the hub's own manifest, so `\\r\\n` in it is an attempt
@@ -153,7 +153,7 @@ def test_a_path_the_hub_named_that_cannot_be_sent_never_reaches_the_wire(
     request at all, so there is no version of this where the line went out and
     the error came back anyway.
     """
-    hub = Hub(elsewhere, "token", timeout=10)
+    hub = Hub(recorder, "token", timeout=10)
 
     with pytest.raises(HubError) as raised:
         hub.fetch_path(path)
@@ -166,7 +166,7 @@ def test_a_path_the_hub_named_that_cannot_be_sent_never_reaches_the_wire(
         "the request reached the server, so the injected header went with it")
 
 
-def test_the_transport_still_refuses_an_unsendable_path_on_its_own(elsewhere):
+def test_the_transport_still_refuses_an_unsendable_path_on_its_own(recorder):
     """The backstop below `fetch_path`, reached directly because nothing else
     can reach it any more.
 
@@ -176,7 +176,7 @@ def test_the_transport_still_refuses_an_unsendable_path_on_its_own(elsewhere):
     depth, and defence in depth that no test can reach is indistinguishable from
     a clause that was deleted — so it is exercised at the level it lives on.
     """
-    hub = Hub(elsewhere, "token", timeout=10)
+    hub = Hub(recorder, "token", timeout=10)
 
     with pytest.raises(HubError) as raised:
         hub._call("/x\r\nX-Evil: 1")
@@ -381,8 +381,8 @@ def test_the_quoting_helper_escapes_then_trims_and_says_the_true_length():
     before the trim or a cut can land inside an escape sequence and the ceiling
     would be measured on the wrong string; the SOURCE has to be cut before the
     escaping or a 256 MB reply is copied and expanded only to be thrown away.
-    Both hold at once: cut with a margin, escape,
-    trim the result, and report the length of the SOURCE.
+    Both hold at once: cut with a margin, escape, trim the result, and report
+    the length of the SOURCE.
     """
     from hammerola.hub import QUOTE_LIMIT, quoted
 
@@ -529,7 +529,7 @@ def test_no_route_prints_what_the_far_end_wrote_without_quoting_it(route):
         server.server_close()
 
 
-def test_the_last_resort_clause_is_a_sentence_and_not_a_traceback(elsewhere):
+def test_the_last_resort_clause_is_a_sentence_and_not_a_traceback(recorder):
     """The clause that says "this is none of them — please report it".
 
     Coverage said no test in the suite executed it, which is this project's own
@@ -538,7 +538,7 @@ def test_the_last_resort_clause_is_a_sentence_and_not_a_traceback(elsewhere):
     round. It is reached here the way the other backstop is: at the level it
     lives on, below the checks that keep the public entry points away from it.
     """
-    hub = Hub(elsewhere, "token", timeout=10)
+    hub = Hub(recorder, "token", timeout=10)
 
     with pytest.raises(HubError) as raised:
         hub._call("/старт")
@@ -585,8 +585,7 @@ def test_an_error_reply_whose_body_stops_early_is_named_and_not_a_traceback():
     It used to happen inside `_call`'s own `except HTTPError` clause, and Python
     does not offer an exception raised in a handler to the handlers beside it —
     so a 500 with a truncated chunked body went past every clause as a
-    traceback, while the identical 200 was named properly. Putting a ceiling on
-    error bodies is what made this reachable.
+    traceback, while the identical 200 was named properly.
     """
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -643,11 +642,17 @@ def test_a_complete_reply_carrying_BOTH_framings_is_not_called_truncated():
 
 # -- a reply that stopped early ---------------------------------------------
 @pytest.fixture
-def truncated():
-    """A server that declares 40 bytes, sends 10 and hangs up. -> its url."""
+def truncated(request):
+    """A server that declares 40 bytes, sends 10 and hangs up. -> its url.
+
+    The status is the test's parameter when it gives one: an error reply's body
+    is read by a second `read()` call, and that one has to stay argument-free too.
+    """
+    status = getattr(request, "param", 200)
+
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", "40")
             self.end_headers()
@@ -665,6 +670,7 @@ def truncated():
         server.server_close()
 
 
+@pytest.mark.parametrize("truncated", [200, 500], indirect=True)
 def test_a_reply_shorter_than_it_declared_is_refused_and_not_returned(
         truncated):
     """The integrity check a reply has, and it is the library's own.
@@ -696,14 +702,14 @@ def test_a_truncated_ARTEFACT_is_refused_rather_than_handed_back_short(
     assert "Nothing was kept" in str(raised.value)
 
 
-def test_a_manifest_naming_something_host_shaped_is_not_followed(elsewhere):
+def test_a_manifest_path_without_a_leading_slash_is_not_fetched(recorder):
     """The cheap shape check in `fetch_path`, which nothing observed.
 
     A guard whose removal changes nothing observable is one nobody can tell has
     gone. A manifest naming a path with no leading slash is not naming a path
     on this hub, and this refuses to fetch it at all.
     """
-    hub = Hub(elsewhere, "token", timeout=10)
+    hub = Hub(recorder, "token", timeout=10)
 
     with pytest.raises(HubError):
         hub.fetch_path("start/template.tar.gz")
