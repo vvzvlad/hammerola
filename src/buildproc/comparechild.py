@@ -64,13 +64,6 @@ from src.buildproc.child import (
     _print_exc_quietly,
     _say,
 )
-# The one file this module reads that a BUILD wrote (metrics.json, out of a
-# published build directory). `data/` is one volume every build can write
-# anywhere in, so it is read the way the hub reads that volume: non-blocking,
-# and refusing anything that is not a regular file. A plain open on a fifo never
-# returns, and this process would then sit there until the parent's deadline
-# killed it -- with nothing printed and nothing said about which part it was on.
-from src.safeio import read_regular_text
 # THE ENGINE, AT THE TOP AND NOT DEFERRED the way `child.py` defers
 # `src.cadbuild.build`. That deferral is there because importing the build half
 # imports cadquery; this half imports no kernel at all -- every OCP name
@@ -225,7 +218,7 @@ def _write_artefacts(scene, out_dir, view, view_files, diffs, refused, covered):
     (`store.publish_compare`), so a half-written file here is a directory that
     is thrown away rather than a cache entry anybody can read.
     """
-    document_a, document_b = (json.loads(read_regular_text(path))
+    document_a, document_b = (json.loads(path.read_text(encoding="utf-8"))
                               for path in view_files)
     documents = {
         "scene.json": scene.build_scene(document_a, document_b, diffs,
@@ -319,7 +312,7 @@ def _compare(shapediff, old_dir, new_dir, keep_shapes=False):
             # THE CONTRACT AT THE TOP OF THIS MODULE, held for the failures that
             # RAISE and not only for the ones `check` puts into words. `data/`
             # is one volume every build can write anywhere in, so a `lid.step`
-            # that is a directory or a fifo is an ordinary `model.py` mistake --
+            # that is a directory is an ordinary `model.py` mistake --
             # and letting it out of this loop would throw away the eleven parts
             # already measured and end the job as a crash with no report at all.
             # The sentence goes into `refused` for the same reason the gate's
@@ -420,7 +413,8 @@ def _sided(build_dir, stem, phrase, volume_phrase):
 
 def _recorded_volume(build_dir, stem):
     try:
-        metrics = json.loads(read_regular_text(build_dir / "metrics.json"))
+        metrics = json.loads(
+            (build_dir / "metrics.json").read_text(encoding="utf-8"))
         volume = metrics["parts"][stem]["volume_mm3"]
     except (OSError, ValueError, TypeError, KeyError, IndexError):
         return None

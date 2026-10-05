@@ -121,7 +121,7 @@ from src.archive import (ALPHABET_FAULT, ARCHIVE_OVERHEAD_BYTES, CHUNK,
                          _open_member_dir, _pax_header_chars,
                          _refused_names_error, _shown_untrusted, unpack)
 from src.errors import PublishError
-from src.safeio import open_regular, read_regular_text, resolve_settled
+from src.safeio import resolve_settled
 
 # Identifiers that arrive in the URL. No dot at all: that keeps a build directory
 # from ever colliding with `builds.json`, and keeps it from being a dot-entry the
@@ -825,7 +825,7 @@ class Store:
         try:
             with self._lock_for(pid):
                 path = final / BUILD_META_FILE
-                meta = json.loads(read_regular_text(path))
+                meta = json.loads(path.read_text(encoding="utf-8"))
                 if meta.get("message") == message:
                     return
                 meta["message"] = message
@@ -1390,18 +1390,14 @@ class Store:
     def _read_meta(staging: Path) -> dict:
         """The build's own meta.json, off the staging directory it wrote.
 
-        `is_file()` STAYS, and it is not the type check: it is what tells "the
-        build produced no meta.json" — a 422 naming the actual mistake — apart
-        from every other way a read can fail. The type check is `safeio`'s, on
-        the handle, which is what closes the gap between the two: a fifo swapped
-        in after the `is_file()` used to be a publish worker gone for good, and
-        is now the same `OSError` an unreadable file was always answered with.
+        `is_file()` is what tells "the build produced no meta.json" — a 422
+        naming the actual mistake — apart from every other way a read can fail.
         """
         path = staging / BUILD_META_FILE
         if not path.is_file():
             raise PublishError(422, "the build produced no meta.json")
         try:
-            raw = json.loads(read_regular_text(path))
+            raw = json.loads(path.read_text(encoding="utf-8"))
         except (ValueError, UnicodeDecodeError) as error:
             raise PublishError(422, f"meta.json is not valid JSON: {error}") from error
         if not isinstance(raw, dict):
@@ -1511,7 +1507,7 @@ class Store:
             if not meta_path.is_file():
                 continue
             try:
-                meta = json.loads(read_regular_text(meta_path))
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
             except (ValueError, OSError, RecursionError):
                 logger.warning(f"unreadable meta.json in {entry}")
                 continue
@@ -1596,8 +1592,8 @@ class Store:
         those to render a header.
         """
         try:
-            meta = json.loads(read_regular_text(
-                self.build_meta_path(pid, DEV_LINK)))
+            meta = json.loads(self.build_meta_path(pid, DEV_LINK).read_text(
+                encoding="utf-8"))
         except (ValueError, OSError, RecursionError):
             return None
         return meta if _usable_meta(meta, DEV_LINK) else None
@@ -1738,8 +1734,9 @@ class Store:
         that route touched.
         """
         try:
-            payload = json.loads(read_regular_text(
-                self.projects_dir / pid / PROJECT_DRAFT_JOB_FILE))
+            payload = json.loads(
+                (self.projects_dir / pid / PROJECT_DRAFT_JOB_FILE
+                 ).read_text(encoding="utf-8"))
         except (ValueError, OSError, RecursionError):
             return None
         if not isinstance(payload, dict):
@@ -1794,8 +1791,9 @@ class Store:
         the sort of coupling `data/` is deliberately free of.
         """
         try:
-            payload = json.loads(read_regular_text(
-                self.projects_dir / pid / PROJECT_TITLE_FILE))
+            payload = json.loads(
+                (self.projects_dir / pid / PROJECT_TITLE_FILE
+                 ).read_text(encoding="utf-8"))
         except (ValueError, OSError, RecursionError):
             return None
         if not isinstance(payload, dict):
@@ -2070,25 +2068,11 @@ def _hash_output(directory: Path, names) -> dict:
       * WHERE IT LANDS. `app._send_file` resolves the path and refuses anything
         outside `store.root` — on the RESOLVED path, because `latest` is a
         symlink and following it is the point;
-      * WHAT IT IS, in TWO places rather than one, and reading them as one is
-        what hid a descriptor leak for a round. A DIRECTORY is refused by the
-        `open()` in `app._send_file` itself — `FileIO` fstats what it was handed
-        and raises `IsADirectoryError` — so it never reaches the check below. A
-        FIFO or a device passes the open and is refused by `stat.S_ISREG` on the
-        handle. A model writes its own output directory and nothing on the build
-        path stops it calling `makedirs` or `mkfifo` there, so both are
-        reachable in practice — and the fifo is REACHED only because the open is
-        `O_RDONLY | O_NONBLOCK`: a plain `open()` on a fifo blocks until a writer
-        appears, which is the serving thread gone for good before anything gets
-        to refuse it. THE PERIMETER OF THIS LIST IS `/project/<pid>/<commit>/`,
-        and what is outside it is no longer a second question: every other read
-        of this volume goes through `src/safeio.py`, which opens the same way
-        and refuses the same things, and `tests/test_volume_reads.py` is what
-        keeps a new one from being written any other way (issue #74). Reading
-        the list below as "so a fifo is handled" was never safe while that was
-        an inventory somebody maintained — it went stale twice inside one issue
-        — and it is safe now only because the rule is checked rather than
-        recited;
+      * WHAT IT IS. A DIRECTORY is refused by the `open()` in `app._send_file`
+        itself — `FileIO` fstats what it was handed and raises
+        `IsADirectoryError`. A model writes its own output directory and
+        nothing on the build path stops it calling `makedirs` there, so this is
+        reachable in practice;
       * the TYPE. `app.build_content_type` serves the whitelist
         (`BUILD_CONTENT_TYPES`) as itself and hands back everything else as
         `application/octet-stream` with `Content-Disposition: attachment`.
@@ -2096,7 +2080,7 @@ def _hash_output(directory: Path, names) -> dict:
     files: dict[str, str] = {}
     for name in names:
         digest = hashlib.sha256()
-        with open_regular(directory / name) as handle:
+        with open(directory / name, "rb") as handle:
             while True:
                 chunk = handle.read(CHUNK)
                 if not chunk:
@@ -2110,11 +2094,12 @@ def _read_digest(build_dir: Path) -> str | None:
     """The payload digest of one build directory, or None if there is not one.
 
     `_digests_of` sweeps EVERY project's directories to decide what a removal
-    may delete, so one poisoned name here does not cost the caller's own
+    may delete, so one unreadable digest here does not cost the caller's own
     project: it costs the removal of any project at all.
     """
     try:
-        return read_regular_text(build_dir / PAYLOAD_DIGEST_FILE).strip()
+        return (build_dir / PAYLOAD_DIGEST_FILE).read_text(
+            encoding="utf-8").strip()
     except OSError:
         return None
 

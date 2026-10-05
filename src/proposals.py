@@ -69,7 +69,6 @@ from loguru import logger
 from src.errors import ProposalError
 from src.records import (WIP_PREFIX, check_body_printable, one_line,
                          sweep_leftovers)
-from src.safeio import read_regular_text
 from src.store import SAFE_ID, atomic_write_bytes, utcnow_iso
 
 
@@ -263,21 +262,16 @@ def _read_record(path: Path) -> dict | None:
     all — so the warning fired on every page load of every project nobody has
     drawn on, naming a file that was never supposed to exist.
 
-    EVERYTHING ELSE GOES ON WARNING, because a damaged file, a directory or a
-    fifo where the record should be is real and this line is the only sign of
-    it anywhere.
-
-    THROUGH `safeio` FOR THE REASON `comments._read_record` GIVES: this path is
-    under `data/`, a build can write anywhere on that volume, and a plain
-    `open()` on a fifo planted there parks the request thread for good.
-    `NotRegularFile` is an `OSError`, so it lands in the arm already written.
+    EVERYTHING ELSE GOES ON WARNING, because a damaged file or a directory
+    where the record should be is real and this line is the only sign of it
+    anywhere.
 
     NO WRITE-BACK, for the reason `comments._read_record` gives: this runs per
     request rather than into a registry a start builds, so there is no long-lived
     copy to diverge from the volume (#107).
     """
     try:
-        record = json.loads(read_regular_text(path))
+        record = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as error:

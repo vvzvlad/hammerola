@@ -159,13 +159,12 @@ from hammerola import buildnames
 from src import onboarding, proposals, render
 from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
                           normalize_since, validate_payload)
-from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
-                      QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
+from src.jobs import (HANDOVER_ERROR, QUEUE_FULL_ERROR,
+                      QUEUE_FULL_RETRY_AFTER_SECONDS,
                       STATE_FAILED, STOPPED_ERROR, SUBMIT_ACCEPTED,
                       SUBMIT_QUEUE_FULL, BuildQueue, BuildTask, CompareTask,
                       JobStore)
 from src.multipart import MultipartError, parse_multipart
-from src.safeio import nonblocking, read_regular_bytes
 from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK,
                        POINTER_NAMES, PROJECT_BUILDS_FILE, PublishError,
                        SITE_INDEX_FILE, Store)
@@ -668,7 +667,7 @@ def make_handler(store: Store, comment_store: CommentStore,
             if not path.is_file():
                 return self._json(200, [], CACHE_NONE, with_body=with_body)
             try:
-                cards = json.loads(read_regular_bytes(path))
+                cards = json.loads(path.read_bytes())
                 for card in cards:
                     card["status"] = self._draft_status(card["pid"])
             except (ValueError, OSError, TypeError, KeyError) as error:
@@ -811,37 +810,12 @@ def make_handler(store: Store, comment_store: CommentStore,
             # slot being swapped, or somebody clearing space by hand — and the
             # client then gets a Content-Length with nothing behind it while the
             # log gets a traceback for a situation that is entirely normal.
-            #
-            # O_NONBLOCK IS WHAT MAKES THAT ORDER SAFE, and it is not an
-            # optimisation: a plain `open()` on a FIFO blocks until a writer
-            # appears, so the S_ISREG refusal just below is never reached and
-            # the handler thread is gone for good. Model code writes its own
-            # output directory and nothing on the build path stops it from
-            # calling mkfifo there — an UNDECLARED one at that, which no
-            # declaration check ever sees — and publication moves that directory
-            # whole, so the fifo lands at a public URL. `runner._verified_files`
-            # names the same hazard ("a fifo is a read that never returns") for
-            # DECLARED names; this is the other half. On a regular file the flag
-            # changes nothing about the read below.
-            #
-            # A DIRECTORY AND A FIFO ARE REFUSED IN TWO DIFFERENT PLACES, and
-            # they are not one check: the directory never reaches `S_ISREG` at
-            # all, because `open()` fstats what the opener handed it and raises
-            # `IsADirectoryError` — caught here as the 404; the fifo passes the
-            # open and is refused by `S_ISREG` below. Both land on the same
-            # answer, which is why the leak this shape closed was invisible:
-            # every response was already correct while `os.fdopen(os.open(...))`
-            # lost one descriptor per request on a directory (see
-            # `safeio.nonblocking`), on a public unauthenticated route, until
-            # `accept()` had none left.
             try:
-                handle = open(resolved, "rb", opener=nonblocking)
+                handle = open(resolved, "rb")
             except OSError:
                 return self._error(404, "not found", with_body=with_body)
             with handle:
                 info = os.fstat(handle.fileno())
-                if not stat.S_ISREG(info.st_mode):
-                    return self._error(404, "not found", with_body=with_body)
                 if content is not None:
                     ctype, extra = content
                 elif uploaded:
@@ -1227,7 +1201,7 @@ def make_handler(store: Store, comment_store: CommentStore,
             away from being a page. Cached not at all — the URL is behind a
             token and the reader is an agent.
 
-            `follow_symlinks=False` KEEPS THE ANSWER HONEST TO ITS URL, and it
+            `O_NOFOLLOW` KEEPS THE ANSWER HONEST TO ITS URL, and it
             is not a barrier against anybody: this route takes EDIT_TOKEN, the
             symlink would be planted by a build, and a build takes EDIT_TOKEN
             too — there is nothing here for a stranger to reach. What it is
@@ -1248,7 +1222,9 @@ def make_handler(store: Store, comment_store: CommentStore,
             if ctype is None:
                 return self._error(404, "not found", with_body=with_body)
             try:
-                data = read_regular_bytes(path, follow_symlinks=False)
+                with open(path, "rb", opener=lambda p, f: os.open(
+                        p, f | os.O_NOFOLLOW)) as handle:
+                    data = handle.read()
             except OSError:
                 return self._error(404, "not found", with_body=with_body)
             return self._send(200, data, ctype, CACHE_NONE,
@@ -1969,40 +1945,11 @@ def make_handler(store: Store, comment_store: CommentStore,
                 # builds. An empty body rather than a 404 when the log is
                 # missing — the code is there, so the revision is, and 404 would
                 # say something different and untrue.
-                #
-                # READ WITH A CEILING, for the reason `JobStore.log` spells out
-                # about its own copy: `data/` is one volume and every build can
-                # write anywhere in it, so the size of the file that comes back
-                # is not a number this hub gets to decide. A model can plant a
-                # multi-gigabyte `log.txt` beside an empty archive and this
-                # branch would pull all of it into the request thread — the
-                # container carries no memory ceiling on purpose (step 0).
-                #
-                # THE SAME PREMISE ALSO DECIDES THE TYPE, and for a round it was
-                # only carried as far as the size: what a build plants there can
-                # be a FIFO as easily as a large file, and a plain `open()` on
-                # one never comes back. `safeio` is where both follow from the
-                # one sentence now.
-                #
-                # `MAX_LOG_BYTES` rather than a number of our own:
-                # `Store.keep_build_log` already says the ceiling belongs to
-                # whoever captured the log, and a second constant is how the
-                # two come apart. Truncation is not written back, again as the
-                # job copy reasons — the oversized file is evidence about a
-                # build that misbehaved, and rewriting it destroys what
-                # somebody came to read.
                 log = store.source_log(revision)
                 try:
-                    raw = read_regular_bytes(log, MAX_LOG_BYTES + 1)
+                    raw = log.read_bytes()
                 except OSError:
                     raw = b""
-                if len(raw) > MAX_LOG_BYTES:
-                    logger.warning(
-                        f"revision {revision}: its stored log is over "
-                        f"{MAX_LOG_BYTES} bytes, which is more than a "
-                        f"build can produce; serving it truncated")
-                    raw = (raw[:MAX_LOG_BYTES]
-                           + LOG_TRUNCATED_NOTE.encode("utf-8"))
                 return self._send(200, raw, "text/plain; charset=utf-8",
                                   CACHE_NONE, with_body=with_body)
 

@@ -54,7 +54,7 @@ one PUSHER from another OVER HTTP; neither is a boundary on the volume, and this
 module cannot make one.
 
 What it can do, and does, is stop being harmed by what it reads back: the
-ceilings below on how much of a record and of a log it will read, and
+ceiling below on how much of a record it will read, and
 `_read_record` rebuilding every field into a known shape instead of believing
 one. The failure that motivates this is not subtle — `json.loads` accepts `NaN`
 while `json.dumps(allow_nan=False)` refuses it, so one planted record used to be
@@ -137,7 +137,6 @@ from src.buildproc import (
     run_build,
     run_compare,
 )
-from src.safeio import read_regular_bytes
 from src.store import (DEV_LINK, JSON_TMP_PREFIX,
                        PublishError, atomic_write_bytes, utcnow_iso)
 
@@ -863,19 +862,7 @@ class JobStore:
         Read off the volume on every request rather than held in memory: a log
         runs to megabytes, the registry keeps one per push for ever, and it is
         fetched roughly once per push. Holding them all would be the volume
-        deciding this process's resident size. `_write_log` caps what the hub
-        itself puts there, so what this ceiling is really for is everything
-        else: the directory is writable by every build (see the module
-        docstring), so the size of the file that comes back is not a number this
-        hub gets to decide.
-
-        THE TRUNCATION IS NOT WRITTEN BACK, and that is deliberate. The cap
-        bounds every single read, so nothing is gained by making the file
-        smaller — and a log is EVIDENCE about a build that misbehaved, so
-        rewriting one to make a read cheaper would destroy the thing somebody
-        came to look at. Nothing else on the volume grows because of it: an
-        oversized `log.txt` sits inside a job directory that is not going
-        anywhere either way.
+        deciding this process's resident size.
         """
         if not isinstance(job_id, str) or not SAFE_JOB_ID.match(job_id):
             return None
@@ -883,24 +870,12 @@ class JobStore:
             if job_id not in self._records:
                 return None
         try:
-            # One byte over the ceiling, which is what makes "too big"
-            # distinguishable from "exactly at the ceiling". Through `safeio`
-            # for the same reason the ceiling is here at all: the directory is
-            # writable by every build, so neither the size of what is at that
-            # name nor its TYPE is decided by this hub.
-            raw = read_regular_bytes(self.root / job_id / LOG_NAME,
-                                     MAX_LOG_BYTES + 1)
+            raw = (self.root / job_id / LOG_NAME).read_bytes()
         except OSError:
             # Queued, still building, or ended before there was anything to
             # say. An empty log is the honest answer; a 404 would mean the job
             # does not exist, which is a different thing entirely.
             return ""
-        if len(raw) > MAX_LOG_BYTES:
-            logger.warning(
-                f"job {job_id}: its log is over {MAX_LOG_BYTES} bytes, which is "
-                f"more than a build can produce; serving it truncated")
-            return (raw[:MAX_LOG_BYTES].decode("utf-8", errors="replace")
-                    + LOG_TRUNCATED_NOTE)
         return raw.decode("utf-8", errors="replace")
 
     # -- writing -----------------------------------------------------------
@@ -1646,13 +1621,9 @@ class BuildQueue:
 def _capped_log(log: str) -> bytes:
     """One build log as bytes, cut to MAX_LOG_BYTES with a note if it did not fit.
 
-    Cut on the WAY IN, not only on the way out. MAX_LOG_BYTES is what the read
-    path is willing to serve, so anything written past it comes back truncated
-    under a warning about a log larger than a build can produce — and on these
-    paths the hub itself wrote it. The ceiling is derived to fit the worst case a
-    build can hand over (see MAX_LOG_BYTES), so the cut is unreachable for a log
-    this hub captured; it is what keeps the file inside the ceiling anyway on the
-    day either number moves.
+    The ceiling is derived to fit the worst case a build can hand over (see
+    MAX_LOG_BYTES), so the cut is unreachable for a log this hub captured; it is
+    what keeps the file inside the ceiling anyway on the day either number moves.
 
     ONE function for BOTH copies of the log — the job's and the one stored beside
     a revision's code — because the alternative is two ceilings on the same text
@@ -1809,18 +1780,10 @@ def _read_capped(path: Path, limit: int) -> bytes | None:
 
     One byte over the limit is read so that "too big" can be told from "exactly
     the limit", and nothing beyond that ever reaches memory.
-
-    THE ONE READ ON THIS VOLUME THAT RUNS BEFORE THE SOCKET IS BOUND, which is
-    why it goes through `safeio` even though the failure it prevents looks like
-    every other. It is reached from `_read_record` <- `_load` <-
-    `JobStore.__init__` <- `create_server`, so a fifo at
-    `data/jobs/<id>/job.json` did not cost a request thread — it cost the
-    PROCESS: the hub never finished starting, never answered `/health`, and came
-    up from the same volume next time, so it never started again. Silently, and
-    with no log line to say why.
     """
     try:
-        data = read_regular_bytes(path, limit + 1)
+        with open(path, "rb") as handle:
+            data = handle.read(limit + 1)
     except OSError:
         return None
     if len(data) > limit:

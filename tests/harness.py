@@ -109,8 +109,7 @@ class Hub:
     def get(self, path, **kw):
         # `timeout` is a default rather than fixed, so a test whose SUBJECT is
         # the request coming back at all can name its own deadline instead of
-        # inheriting one it cannot see — see the fifo test in test_serving.py,
-        # where a hung handler thread has to fail rather than wedge the suite.
+        # inheriting one it cannot see.
         kw.setdefault("trust_env", self.TRUST_ENV)
         kw.setdefault("timeout", 10)
         return httpx.get(self.url + path, follow_redirects=False, **kw)
