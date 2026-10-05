@@ -439,14 +439,13 @@ def _safe_name(name: str) -> bool:
     of a build's JSON reads as "did not declare" unless the build really wrote
     it AND declared it. Builds already on disk sit in immutable directories and
     cannot be re-pushed, so a name that got in before could now stop being
-    served. Two things are why that is acceptable, and NEITHER of them is
+    served. What makes that acceptable is NOT
     `store.SAFE_COMPONENT` — that alphabet holds the members of the uploaded
     ARCHIVE, which since the move is the model's SOURCE tree, while what gets
     served is what the BUILD wrote, and no alphabet is applied to an output name
     anywhere: `runner._verify_output_file` checks the path's shape, its symlinks
-    and that the file exists, and stops there. What is true is that this service
-    has never been deployed (AGENTS.md, step 0), so no build exists anywhere
-    holding an old name to lose; and that an honest `cadbuild` writes only
+    and that the file exists, and stops there. It is that an honest `cadbuild`
+    writes only
     `<stem>.stl|.step|.3mf`, `<vid>.json`, `<stem>_preview.png`, `meta.json` and
     `metrics.json`. A DISHONEST model could have written such a name — it names
     its own output — which is exactly why the tightening is recorded here rather
