@@ -202,10 +202,10 @@ def test_the_version_this_client_is_has_an_entry_of_its_own():
 # -- which file this writes over ---------------------------------------------
 def test_a_tool_running_out_of_a_package_directory_has_nothing_to_write_over():
     """THE STATE THIS SUITE IS IN, which is what makes it worth asserting here:
-    the checkout and an installed distribution both put this module inside a
-    package DIRECTORY, and only the zipapp puts it inside a file. Neither of the
-    two is updatable by this verb, and what they must get is the sentence naming
-    the tool that does update them — not a traceback out of a rename."""
+    a checkout puts this module inside a package DIRECTORY, and only the zipapp
+    puts it inside a file. A checkout is not updatable by this verb, and what it
+    must get is the sentence naming the tool that does update it — not a
+    traceback out of a rename."""
     with pytest.raises(ClientError) as raised:
         update._target()
 
