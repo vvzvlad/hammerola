@@ -12,7 +12,6 @@ import json
 import os
 import re
 
-import pytest
 from harness import (DEFAULT_EXPORTS, good_build, meta_bytes, tar_gz,
                      view_bytes)
 
