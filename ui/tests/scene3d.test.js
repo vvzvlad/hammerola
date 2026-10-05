@@ -35,7 +35,8 @@ import * as THREE from '../../static/_v/three.module.js'
 
 import { internals } from '../src/viewport/internals.js'
 import {
-  GIZMO_ORDER, HANDLE_ORDER, RINGS_ORDER, createScene3D, widgetMaterial,
+  GIZMO_ORDER, HANDLE_ORDER, RINGS_ORDER, createScene3D, joinPresses,
+  widgetMaterial,
 } from '../src/viewport/scene3d.js'
 import { RECT, framesAsked, rendered, stubFrames } from './component.js'
 import { fakeViewer, fakeViewport, orthoCamera, realCamera } from './fakes.js'
@@ -515,40 +516,6 @@ describe('what a handle promises the rest of the scene', () => {
     }
   })
 
-  it('bands the three widgets in the reverse of the order they are built', () => {
-    // THE PAINT ORDER IS THE PRESS ORDER INVERTED, which is the one claim no
-    // single widget's suite can make. All three read the canvas in a
-    // capture-phase listener on the window and refuse the press they take with
-    // `stopImmediatePropagation`, which silences only listeners registered
-    // LATER — so the one built FIRST keeps a contested press, and it has to be
-    // the one drawn ON TOP or the reader presses the widget they can see and
-    // drives the one underneath it. That is exactly the bug this band replaced:
-    // the rings were the only blended widget, three draws its transparent list
-    // last, and a knob painted over a quad answered to neither.
-    //
-    // READ OFF `element.js` and not restated here, because the construction
-    // order is that file's — `tests/test_ui_source.py` is what pins it there,
-    // and this is what keeps the bands pointing the other way from whatever it
-    // says.
-    const built = readFileSync(
-      resolve(process.cwd(), 'src/viewport/element.js'), 'utf8')
-    const widgets = [
-      ['createGizmo(', GIZMO_ORDER],
-      ['createHandle(', HANDLE_ORDER],
-      ['createRings(', RINGS_ORDER],
-    ]
-    for (const [call] of widgets) {
-      expect(built.indexOf(call), call).toBeGreaterThan(-1)
-    }
-    const bands = [...widgets]
-      .sort((a, b) => built.indexOf(a[0]) - built.indexOf(b[0]))
-      .map(([, band]) => band)
-    expect(new Set(bands).size, 'three distinct bands').toBe(3)
-    bands.forEach((band, k) => {
-      if (k) expect(band, `band ${k}`).toBeLessThan(bands[k - 1])
-    })
-  })
-
   it('stays on layer 0, where the id-picker never looks', () => {
     // The picker renders the scene BY CAMERA LAYER and marks what is pickable
     // with `layers.enable` (viewer/src/rendering/id-picking.ts), so an object
@@ -607,19 +574,16 @@ describe('the press', () => {
   })
 
   it('takes the press away from the OTHER window listener too, not just onward', () => {
-    // `rings.js` reads its press off the canvas in a capture-phase listener on
-    // this very node, and `stopPropagation` does not reach a second listener on
-    // the SAME node -- it only stops the event travelling on. While the section
-    // grip was a div, a press on it never had the canvas as its target and
-    // `rings.js` declined it on that ground alone; both read the canvas now, so
-    // without `stopImmediatePropagation` one press would take the grip AND start
-    // a rotation. That gesture was not reachable before and nobody asked for it.
+    // The press is refused on the WINDOW, in the capture phase, and
+    // `stopPropagation` does not reach a second listener on the SAME node -- it
+    // only stops the event travelling on. Without `stopImmediatePropagation` a
+    // window listener added after the widgets' own would still see a press one
+    // of them had taken.
     //
     // WHAT THIS DOES AND DOES NOT SAY. It says the refusal reaches a listener on
-    // the same node, which is the mechanism. It does NOT say the grip is built
-    // before the rings -- "immediate" silences only what was registered LATER,
-    // and nothing here knows the construction order in element.js. That half is
-    // pinned on the source, in tests/test_ui_source.py.
+    // the same node, which is the mechanism. Which of two widgets keeps a press
+    // they could both take is the paint band, and the dispatcher's own tests
+    // below are what say so.
     const s = aimed()
     drawn(s)
     const later = vi.fn()
@@ -722,6 +686,43 @@ describe('the press', () => {
     drawn(s)
 
     expect(pressAt(s.canvas, [400, 300]).stopImmediatePropagation).not.toHaveBeenCalled()
+  })
+})
+
+describe('the one press listener on a viewport', () => {
+  // NO GEOMETRY AND NO RAY: each participant here is a bare `take` that says
+  // yes or no, so what is measured is the dispatcher's choice and nothing a
+  // widget does before it answers.
+  function join(vp, order, takes) {
+    const take = vi.fn(() => takes)
+    widgets.push({ destroy: joinPresses(vp, order, take) })
+    return take
+  }
+
+  it('gives the press to the highest band, whatever order the bands joined in', () => {
+    const vp = {}
+    const one = join(vp, 1, true)
+    const two = join(vp, 2, true)
+    const three = join(vp, 3, true)
+
+    const event = pressAt(document.body, [400, 300])
+    expect(three).toHaveBeenCalledTimes(1)
+    expect(two).not.toHaveBeenCalled()
+    expect(one).not.toHaveBeenCalled()
+    expect(event.stopImmediatePropagation).toHaveBeenCalled()
+    expect(event.preventDefault).toHaveBeenCalled()
+  })
+
+  it('passes it down to the next band when the top one declines', () => {
+    const vp = {}
+    const one = join(vp, 1, true)
+    const two = join(vp, 2, true)
+    const three = join(vp, 3, false)
+
+    pressAt(document.body, [400, 300])
+    expect(three).toHaveBeenCalledTimes(1)
+    expect(two).toHaveBeenCalledTimes(1)
+    expect(one).not.toHaveBeenCalled()
   })
 })
 

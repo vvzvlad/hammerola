@@ -869,9 +869,9 @@ describe('where the dot is drawn', () => {
 
   it('stands in the topmost band, in the one list all three widgets share', () => {
     // TWO HALVES OF ONE ANSWER. The band is where this widget is drawn among
-    // the three standing in this scene, and it is the TOPMOST because
-    // `element.js` builds this one FIRST and the earliest-built keeps a
-    // contested press — what the reader presses has to be what they can see.
+    // the three standing in this scene, and it is also which of them wins a
+    // contested press (`joinPresses` in scene3d.js), so the TOPMOST is the one
+    // that keeps it — what the reader presses has to be what they can see.
     // A quad and a knob really do cross, so the pair that matters is this band
     // against the rings'.
     //

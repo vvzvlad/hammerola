@@ -339,36 +339,11 @@ export class HmrViewport extends HTMLElement {
     // none of them has a root to append. Their lifecycle lines are in `show()`,
     // where the scene they live in is replaced.
     //
-    // AND THIS ORDER IS LOAD-BEARING, for all three. Every one of them reads
-    // its press off the canvas in a capture-phase `pointerdown` on the window,
-    // and each refuses a press it takes with `stopImmediatePropagation`, which
-    // silences only listeners registered LATER — so the order these lines run
-    // in is the whole of which widget wins a press two of them could take.
-    // Swap any two and one press does two things at once with every suite still
-    // green: `tests/test_ui_source.py` is what says so instead.
-    //
-    // WHAT THE ORDER IS CHOSEN FOR is the crossing that actually happens. The
-    // arrows and the rings are two halves of ONE widget standing on one part,
-    // so a quad and a knob really do cross — and NOT because one target is
-    // fuller than the other: every drawn mesh in rings.js is `NO_HIT` and what
-    // answers a ray there is the invisible disc inside the knob, so the contest
-    // is a 20 px knob against a 16 px quad, both filled. It is WHERE THE HAND
-    // ALREADY IS that decides. The quads and the arrows cluster at the part's
-    // centre, which is where the reader has aimed to move it, and a knob only
-    // reaches that far in when the projection has flattened its ring nearly
-    // edge-on. The paint now says the same thing — `GIZMO_ORDER` stands over
-    // `RINGS_ORDER` in scene3d.js — so what wins the press is what is drawn on
-    // top.
-    //
-    // AND THE ARROWS COME BEFORE THE GRIP FOR THE THIRD CROSSING, which the
-    // DOM used to settle on its own: while the arrows were a layer of divs, a
-    // press where one lay over the grip was the arrow's, because the grip reads
-    // the CANVAS and a press on a div is not aimed at one. Both are meshes now
-    // and nothing but this order decides it. It stays the arrow's — the reader
-    // armed the Move tool and the manipulator is what they armed it for, where
-    // the grip is a handle on a cut that happens to be standing — and the
-    // crossing needs the two within a few pixels of each other, with either
-    // widget reachable anywhere else along its length.
+    // WHICH OF THEM A PRESS GOES TO IS THE PAINT BAND, NOT THIS ORDER: one
+    // window listener (`joinPresses`, scene3d.js) asks the top band first. The
+    // arrows are on top because Move was armed for them, and where a quad meets
+    // a knob the hand is already at the part's centre, where the arrows cluster.
+    // Only the hover cursor still goes by it, written by each widget's own move.
     this.gizmo = createGizmo(this);
     this.handle = createHandle(this);
     this.rings = createRings(this);

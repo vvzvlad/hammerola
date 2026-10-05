@@ -27,8 +27,8 @@
 // than a fourth widget: they share its anchor, its `wanted`, its lifecycle, its
 // paint band and its one press listener, and Fusion's section manipulator is
 // likewise one thing carrying an arrow and two rotation handles. What a fourth
-// widget would have cost is in `scene3d.js` — another band, another rung of the
-// press-order ladder, and three more pins in tests/test_ui_source.py.
+// widget would have cost is in `scene3d.js` — another band, which is its place
+// in the press order as well as in the paint.
 
 import { cameraBasis, ndcAt, ndcRay } from "./camera.js";
 import { internals } from "./internals.js";
