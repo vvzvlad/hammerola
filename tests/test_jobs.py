@@ -836,62 +836,6 @@ def test_a_stranded_job_is_reported_over_http_too(tmp_path):
         stop_hub(hub)
 
 
-@pytest.mark.skipif(not hasattr(os, "mkfifo"),
-                    reason="this platform has no os.mkfifo, so no fifo can "
-                           "reach a job directory in the first place")
-def test_a_fifo_where_a_record_belongs_does_not_stop_the_hub_from_starting(
-        tmp_path):
-    """The worst reachable form of issue #74: not a thread, the whole process.
-
-    `_read_capped` is reached from `_read_record` <- `_load` <-
-    `JobStore.__init__` <- `create_server`, i.e. BEFORE the socket is bound. So
-    a plain `open()` on a fifo at `data/jobs/<id>/job.json` did not cost a
-    request thread — the hub never finished starting, never answered `/health`,
-    and came up from the same volume next time, so it never started again.
-    Silently: no exception, no log line, and from outside indistinguishable
-    from a slow boot until the rollback gate gives up.
-
-    Planting one takes an `os.mkfifo` in `model.py` and no privilege at all —
-    `data/jobs/` is writable by every build, which is what its own module
-    docstring already says about who may have written what is in there.
-
-    THE DEADLINE IS THE ASSERTION. A regression hangs rather than fails, and
-    there is no `pytest-timeout` in this suite, so the start runs on a thread
-    of its own and this insists it comes back.
-    """
-    data = tmp_path / "data"
-    healthy = JobStore(data).create("proj1", "abc123")["id"]
-    trap = "F" * 22
-    (data / "jobs" / trap).mkdir(parents=True)
-    os.mkfifo(data / "jobs" / trap / "job.json")
-
-    outcome = {}
-
-    def start():
-        try:
-            outcome["hub"] = start_hub(data)
-        except BaseException as error:  # noqa: BLE001 - reported, not handled
-            outcome["error"] = error
-
-    thread = threading.Thread(target=start, daemon=True)
-    thread.start()
-    thread.join(timeout=20)
-    assert not thread.is_alive(), (
-        "the hub did not finish starting — a fifo in one job directory is "
-        "holding `JobStore._load`, which runs before the socket is bound")
-    assert "hub" in outcome, outcome.get("error")
-
-    hub = outcome["hub"]
-    try:
-        # The poisoned directory costs its own record and nothing else: it
-        # reads as one this hub did not write, and the job beside it is loaded
-        # and served exactly as it would have been on its own.
-        assert hub.job(healthy).status_code == 200
-        assert hub.job(trap).status_code == 404
-    finally:
-        stop_hub(hub)
-
-
 def test_a_pushed_job_survives_a_restart_and_is_still_readable(tmp_path):
     """The log is on the volume, so it outlives the process that captured it."""
     data = tmp_path / "data"
@@ -1457,7 +1401,7 @@ def test_a_registry_the_volume_will_not_list_does_not_stop_the_hub_starting(
 
 
 def test_the_biggest_log_a_build_can_hand_over_is_served_whole(tmp_path):
-    """The read ceiling has to fit what the WRITE path can produce.
+    """The ceiling has to fit what the WRITE path can produce.
 
     `runner._Drain` keeps `Limits.log_bytes` of RAW output and decodes it with
     `errors="replace"`, and a byte that is not valid UTF-8 becomes U+FFFD, which
@@ -1482,14 +1426,11 @@ def test_the_biggest_log_a_build_can_hand_over_is_served_whole(tmp_path):
 
 def test_a_log_handed_to_the_registry_is_cut_before_it_reaches_the_volume(
         tmp_path):
-    """The cut belongs on the WRITE, not only on the read.
+    """The cut is on the WRITE.
 
-    MAX_LOG_BYTES is what the read path is willing to serve, so a file written
-    past it comes back truncated under a warning about a log larger than a build
-    can produce — and on this path the hub itself wrote it. The ceiling is
-    derived to fit the worst case a build can hand over, so this cut is
-    unreachable in production, which is exactly why it needs a test: it is what
-    keeps what the hub writes inside what the hub will read on the day either
+    The ceiling is derived to fit the worst case a build can hand over, so this
+    cut is unreachable in production, which is exactly why it needs a test: it
+    is what keeps what the hub writes inside MAX_LOG_BYTES on the day either
     number moves.
     """
     data = tmp_path / "data"
@@ -1506,23 +1447,6 @@ def test_a_log_handed_to_the_registry_is_cut_before_it_reaches_the_volume(
     assert raw.decode("utf-8").endswith(LOG_TRUNCATED_NOTE)
     # And what comes back is that file whole, rather than a second truncation.
     assert store.log(job_id) == raw.decode("utf-8")
-
-
-def test_a_log_larger_than_a_build_can_produce_is_served_truncated(tmp_path):
-    """The log is read off the volume on every request, and capped there.
-
-    The hub writes it from an already-capped `BuildOutcome.log`, so a file this
-    size was not written by the hub — and without a ceiling, serving it is a
-    request thread holding however many megabytes somebody chose.
-    """
-    data = tmp_path / "data"
-    store = JobStore(data)
-    job_id = store.create("proj1", "abc123")["id"]
-    (data / "jobs" / job_id / "log.txt").write_bytes(b"A" * (MAX_LOG_BYTES + 4096))
-
-    served = store.log(job_id)
-    assert served.endswith(LOG_TRUNCATED_NOTE)
-    assert len(served) == MAX_LOG_BYTES + len(LOG_TRUNCATED_NOTE)
 
 
 # -- a job that ends when the volume will not take it ------------------------

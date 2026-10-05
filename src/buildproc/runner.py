@@ -69,10 +69,6 @@ from src.buildproc.child import (
     EXIT_UNCAPPED,
 )
 from src.buildproc.limits import DEFAULT_LIMITS, WRAPPER_EXIT_CODES
-# `src.safeio` and NOT `src.store`: it imports nothing of its own, which is what
-# lets the build half of this package read a file the same way the hub does
-# without pulling the hub in behind it.
-from src.safeio import read_regular_text
 
 
 # The repository root: src/buildproc/runner.py -> src/buildproc -> src -> here.
@@ -665,15 +661,9 @@ def _read_result_file(path):
     costs nothing here -- the only honest writer of this file is child.py, forty
     lines away -- and it is what keeps a forged result from smuggling a field
     past a reader that only checked the ones it knew about.
-
-    AND THE FILE ITSELF IS AS UNTRUSTED AS ITS CONTENTS. `--result` names a path
-    the child is free to replace with a fifo -- one `os.mkfifo` in `model.py`,
-    and the read below never returns while the parent has already reaped the
-    process and is holding a build worker. `safeio` refuses it as an `OSError`,
-    which is the arm this already had.
     """
     try:
-        data = json.loads(read_regular_text(path))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if not isinstance(data, dict) or set(data) != {"files"}:

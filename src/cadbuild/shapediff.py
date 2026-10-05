@@ -29,15 +29,6 @@ the CAD kernel.
 import hashlib
 import io
 
-# THE ONE IMPORT FROM THE HUB HALF, and it is a leaf: `safeio` imports nothing
-# from `src/` itself, deliberately, so that the build side can use it too. What
-# it buys here is the FIRST touch of each file being the one that refuses a
-# fifo: `data/` is one volume every build can write anywhere in, so a `lid.step`
-# that is a fifo rather than a file is an ordinary `model.py` mistake -- and a
-# plain open on one never returns, while OCCT's own `ReadFile` a few lines later
-# would block in C++ with no way back at all.
-from src.safeio import open_regular
-
 
 __all__ = [
     "EPS_RELATIVE",
@@ -80,13 +71,12 @@ def step_digest(path):
     exports of one unchanged shape differ in bytes every time. Read this as a
     fast path INTO "no difference" and never as evidence OF one.
 
-    RAISES `OSError` when the path is not a regular file it can read, and that
-    is the contract the caller walks on: this runs before `measure` on every
-    part, so it is where a directory, a fifo or a missing file becomes an
-    exception the walk can turn into one part's line instead of OCCT hanging on
-    it.
+    RAISES `OSError` when the path is not a file it can read, and that is the
+    contract the caller walks on: this runs before `measure` on every part, so
+    it is where a directory or a missing file becomes an exception the walk can
+    turn into one part's line.
     """
-    with open_regular(path, "rb") as handle:
+    with open(path, "rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 

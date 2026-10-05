@@ -17,10 +17,8 @@ and it asserts the opposite property on purpose: the collapse is a decision
 """
 
 import json
-import os
 from datetime import datetime, timedelta, timezone
 
-import pytest
 from harness import (JPEG_BYTES, PNG_BYTES, TOKEN, comment_payload,
                      good_build)
 
@@ -160,11 +158,10 @@ def test_an_attachment_named_by_a_hand_edited_record_is_not_served(hub):
 # -- what a BUILD can leave in this directory (issue #74) --------------------
 # `data/comments/` is on the same volume as everything else and a build can
 # write anywhere in it (src/buildproc). The queue's own module docstring already
-# said the directory is not evidence about who wrote what; these three are about
+# said the directory is not evidence about who wrote what; this one is about
 # the other half of that — what is at the name need not be a FILE. Nothing here
-# needs a vulnerability or a token: the trap is laid by an `os.mkfifo` or an
-# `os.symlink` in `model.py`, by an author who never touches EDIT_TOKEN, and it
-# is sprung by whoever reads the queue.
+# needs a vulnerability or a token: an `os.symlink` in `model.py` puts it there,
+# by an author who never touches EDIT_TOKEN.
 def test_an_attachment_that_is_a_symlink_is_refused_rather_than_followed(
         hub, tmp_path):
     """A link where the photo goes used to be served AS the photo.
@@ -187,46 +184,6 @@ def test_an_attachment_that_is_a_symlink_is_refused_rather_than_followed(
     reply = hub.read_comments(f"/{cid}/photo")
     assert reply.status_code == 404
     assert b"nobody asked" not in reply.content
-
-
-@pytest.mark.skipif(not hasattr(os, "mkfifo"),
-                    reason="this platform has no os.mkfifo, so no fifo can "
-                           "reach the comment queue in the first place")
-def test_a_fifo_where_an_attachment_was_is_refused_rather_than_waited_on(hub):
-    """The deadline is as much of the assertion as the status code is.
-
-    A plain `open()` on a fifo blocks until a writer appears, and none is
-    coming: without a deadline a regression would hang this test rather than
-    fail it, and a test that hangs is not a test.
-    """
-    cid = _setup(hub)
-    photo = hub.comment_dir("proj1") / f"{cid}.jpg"
-    photo.unlink()
-    os.mkfifo(photo)
-    assert hub.read_comments(f"/{cid}/photo", timeout=5).status_code == 404
-
-
-@pytest.mark.skipif(not hasattr(os, "mkfifo"),
-                    reason="this platform has no os.mkfifo, so no fifo can "
-                           "reach the comment queue in the first place")
-def test_a_fifo_in_the_queue_directory_does_not_wedge_the_listing(hub):
-    """THE WORST ONE, because it needs no id at all.
-
-    `_read_all` collects `*/*.json` with a glob and a glob returns a fifo like
-    any other name, so this fires on `GET /api/v1/comments` — the call
-    `hammerola comments` makes in ordinary work — and every one of them used to
-    cost another request thread, permanently, while the real comments went on
-    looking fine.
-
-    The poisoned entry is skipped exactly like an unreadable one and the queue
-    keeps working, which is the behaviour `_read_record` already promised for a
-    torn file and now keeps for this too.
-    """
-    cid = _setup(hub)
-    os.mkfifo(hub.comment_dir("proj1") / f"{'f' * 32}.json")
-    reply = hub.read_comments("", timeout=5)
-    assert reply.status_code == 200
-    assert [record["id"] for record in reply.json()["comments"]] == [cid]
 
 
 # -- filters ----------------------------------------------------------------

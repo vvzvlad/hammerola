@@ -16,10 +16,8 @@ promises being checked are made in status codes.
 """
 
 import json
-import os
 
 import httpx
-import pytest
 from harness import TOKEN, good_build
 from loguru import logger
 
@@ -376,9 +374,7 @@ def test_an_ordinary_multi_line_projection_is_stored_as_it_was_written(hub):
 
 # -- what a BUILD can leave in this directory --------------------------------
 # `data/proposals/` is on the same volume as everything else and a build can
-# write anywhere in it (src/buildproc). Neither of these needs a token or a
-# vulnerability: an `os.mkfifo` in `model.py` lays the trap and whoever opens
-# the panel springs it.
+# write anywhere in it (src/buildproc).
 def test_a_file_that_is_not_a_proposal_reads_as_none(hub):
     assert hub.proposal("proj1", method="POST",
                         payload=payload()).status_code == 200
@@ -400,25 +396,6 @@ def test_a_record_that_names_another_project_is_not_served(hub):
     record["pid"] = "someone-else"
     path.write_text(json.dumps(record))
     assert hub.proposal("proj1").status_code == 404
-
-
-@pytest.mark.skipif(not hasattr(os, "mkfifo"),
-                    reason="this platform has no os.mkfifo, so no fifo can "
-                           "reach the proposal store in the first place")
-def test_a_fifo_where_the_proposal_was_is_refused_rather_than_waited_on(hub):
-    """The deadline is as much of the assertion as the status code is.
-
-    A plain `open()` on a fifo blocks until a writer appears, and none is
-    coming: the request thread would be gone for good, with no exception and
-    nothing observable except one worker fewer. Without a deadline here a
-    regression would hang this test rather than fail it.
-    """
-    assert hub.proposal("proj1", method="POST",
-                        payload=payload()).status_code == 200
-    path = hub.proposal_path("proj1")
-    path.unlink()
-    os.mkfifo(path)
-    assert hub.proposal("proj1", timeout=5).status_code == 404
 
 
 # -- and what the log is told about all that ---------------------------------

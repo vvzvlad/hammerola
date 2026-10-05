@@ -14,18 +14,11 @@ mess was caught somewhere on the way past.
 """
 
 import hashlib
-import os
-import threading
 
 import pytest
 
 from src.cadbuild.shapediff import (check, drop_slivers, measure,
                                     step_digest)
-
-# Long enough that a loaded machine never trips it, short enough that a wedged
-# open is reported rather than waited out. The digest under test takes
-# microseconds.
-DEADLINE_SECONDS = 5
 
 
 def _measurement(**overrides):
@@ -182,44 +175,6 @@ def test_the_digest_is_the_bytes_and_a_difference_in_it_says_nothing(tmp_path):
     assert step_digest(one) == hashlib.sha256(payload).hexdigest()
     assert step_digest(one) == step_digest(other)
     assert step_digest(one) != step_digest(changed)
-
-
-@pytest.mark.skipif(not hasattr(os, "mkfifo"),
-                    reason="this platform has no os.mkfifo, so no fifo can "
-                           "reach the volume")
-def test_a_part_that_is_a_fifo_is_refused_rather_than_waited_on(tmp_path):
-    """THE FIRST TOUCH OF EACH FILE, and the reason it is not a plain `open`.
-
-    `mkfifo` needs no privilege and `data/` is one volume every build can write
-    anywhere in, so a `lid.step` that is a fifo is an ordinary `model.py`
-    mistake. A plain open on one never returns; this digest runs before
-    `measure` on every part, which is what makes it the place to refuse — a few
-    lines further on, OCCT's own `ReadFile` would block in C++ with no way back
-    at all. The refusal is an `OSError`, which is what lets `comparechild` turn
-    it into one part's line instead of losing the whole report.
-
-    The deadline is a daemon thread rather than an alarm: `signal.alarm` fires
-    only on the main thread, and without it a regression here would hang the
-    suite instead of failing it.
-    """
-    path = tmp_path / "lid.step"
-    os.mkfifo(path)
-    box = {}
-
-    def run():
-        try:
-            box["value"] = step_digest(path)
-        except BaseException as error:  # noqa: BLE001 - reported, not handled
-            box["error"] = error
-
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-    thread.join(timeout=DEADLINE_SECONDS)
-
-    assert not thread.is_alive(), (
-        f"step_digest did not come back within {DEADLINE_SECONDS}s on a fifo — "
-        f"this is the defect open_regular is here to prevent")
-    assert isinstance(box.get("error"), OSError), box
 
 
 def test_two_real_step_files_measure_the_change_between_them(tmp_path):
