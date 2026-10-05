@@ -245,10 +245,10 @@ def _not_from_the_hub(what: str, value) -> ClientError:
 
 # `repr`, cut short — and cut short BEFORE it is built, which is the whole
 # reason this is `reprlib` and not a slice of `repr(value)`. The value is
-# somebody else's document: a refused `parts` can be the whole of it, and the
-# ceiling on a reply is `MAX_REPLY_BYTES` (`hammerola/hub.py`), i.e. tens of
-# megabytes. Slicing at 120 characters materialized every one of those bytes as
-# a Python string first and threw all but 117 away — the docstring said "can be
+# somebody else's document: a refused `parts` can be the whole of it, and a
+# reply is read whole with no ceiling on its size. Slicing at 120 characters
+# materialized every one of those bytes as a Python string first and threw all
+# but 117 away — the docstring said "can be
 # the whole megabyte of it" while the code built exactly that. `reprlib` builds
 # only what it prints: `repr_str` slices to `maxstring` BEFORE calling `repr` on
 # it, and `_repr_iterable` walks a list through `islice`. It calls `repr` on the

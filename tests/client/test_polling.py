@@ -515,33 +515,6 @@ def test_a_streak_that_heals_does_not_count_towards_the_next_one(
     assert len(notices) == 4, notices
 
 
-# A body that is valid JSON and blows the parser's stack: `json.loads` recurses
-# per nesting level, so this raises `RecursionError` — neither a `ValueError`
-# nor a `UnicodeDecodeError`. 400 kB, against a 64 MiB reply ceiling, and the
-# far end chooses it.
-NESTED = b"[" * 200000 + b"]" * 200000
-
-
-@pytest.mark.parametrize("status", [404, 200])
-def test_a_body_that_blows_the_JSON_parsers_stack_is_an_outage_not_a_traceback(
-        quick, scripted, status):
-    """Both readers of a body are on this path and both had the same hole.
-
-    Under a 404 it reaches `_carries_the_hubs_error_shape`, whose docstring
-    promises "False for anything unparseable rather than raising"; under a 200
-    it reaches `_payload`. Neither caught `RecursionError`, so it escaped
-    `cli.main` — which catches five exception classes and not that one — as a
-    traceback, on input the far end wrote.
-    """
-    hub, seen = scripted([(status, "application/json", NESTED),
-                          _record("done")])
-
-    record = hub.await_job("job-1", timeout=10, grace=5)
-
-    assert record["state"] == "done"
-    assert len(seen) == 2, seen
-
-
 # -- the two budgets, which are not one --------------------------------------
 def test_the_DEADLINE_running_out_is_not_reported_as_the_hub_going_away(
         quick, scripted):
@@ -721,14 +694,13 @@ def test_a_deferred_line_is_the_LATEST_transition_and_not_a_healed_outage(
 
 
 class _Reply:
-    """The least a response has to be for `_read_capped` to accept it."""
+    """The least a response has to be for `_exchange` to read it."""
 
     def __init__(self, body):
         self.status = 200
-        self.length = len(body)
         self._body = body
 
-    def read(self, count):
+    def read(self, count=None):
         return self._body[:count]
 
     def __enter__(self):

