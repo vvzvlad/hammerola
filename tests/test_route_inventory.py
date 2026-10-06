@@ -19,12 +19,12 @@ the three tables the dispatchers walk plus `PUBLISH_PREFIX`, the one route
 asked of `_route_rest`, the matcher the dispatchers use, so this file holds no
 second reading of a pattern.
 
-WHAT IS COMPARED IS THE DISPATCH PREFIX and not the whole path, because the
-prefix is all the three tables know: `/api/v1/comments/<id>/photo` and
-`/api/v1/comments/<id>/shot` are ONE entry in the GET table, and which of them
-exists is decided inside `_serve_comments`. So the docstring is free to say more
-than the tables do — a row per document, which is what a reader needs — while
-every row of it has to fall under an entry that is really there.
+A TABLE ENTRY CLAIMS A PREFIX and, for a fixed-length route, a segment count:
+`/api/v1/comments/<id>/photo` and `/api/v1/comments/<id>/shot` are ONE entry in
+the GET table, and which of them exists is decided inside `_serve_comments`. So
+the docstring is free to say more than the tables do — a row per document,
+which is what a reader needs — while every row of it has to fall under an entry
+that is really there.
 """
 
 import re
@@ -113,7 +113,7 @@ def test_every_route_the_hub_answers_is_documented(verb, documented):
 
 
 @pytest.mark.parametrize("verb", sorted(TABLES))
-def test_each_entry_answers_its_own_path(verb, hub, monkeypatch):
+def test_each_entry_answers_its_own_path(verb, hub, monkeypatch, documented):
     """No branch in a dispatcher takes a path an entry of its table claims.
 
     Each entry's `call` is wrapped in a recorder of its own and a request is
@@ -146,4 +146,22 @@ def test_each_entry_answers_its_own_path(verb, hub, monkeypatch):
         assert fired == [index], (
             f"{verb} {path} (answered {reply.status_code}) should have reached "
             f"entry {index} of {TABLES[verb]} and reached {fired} instead: "
+            f"something in the dispatcher answers it before the table does")
+
+    # And every documented row, with `probe` in each free segment: a narrow
+    # branch for a real sub-path under a wide prefix (#105's shape) leaves the
+    # bare prefix above to the entry and is only seen here.
+    for row in documented[verb]:
+        owner = next((index for index, (pattern, _) in enumerate(table)
+                      if answers(pattern, row)), None)
+        if owner is None:
+            continue  # publish, answered before the table
+        fired.clear()
+        path = "/" + "/".join("probe" if part.startswith("<") else part
+                              for part in row)
+        reply = hub.request(verb, path,
+                            headers={"Authorization": f"Bearer {TOKEN}"})
+        assert fired == [owner], (
+            f"{verb} {path} (answered {reply.status_code}) should have reached "
+            f"entry {owner} of {TABLES[verb]} and reached {fired} instead: "
             f"something in the dispatcher answers it before the table does")
