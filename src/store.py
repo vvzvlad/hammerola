@@ -109,17 +109,12 @@ from src import render
 # holds the client's copies of three of the ceilings against this module's, and
 # `CHUNK` is the buffer `_hash_output` below reads with. One import here and no
 # caller of any of them has to know where they are defined.
-from src.archive import (ALPHABET_FAULT, ARCHIVE_OVERHEAD_BYTES, CHUNK,
-                         CORRUPT_ARCHIVE_ERRORS, ELLIPSIS, LAYOUT_ERRNOS,
-                         MAX_COMPONENT_CHARS, MAX_HEADER_READS_PER_MEMBER,
-                         MAX_MEMBER_NAME_CHARS, MAX_MEMBERS, MAX_PATH_DEPTH,
-                         MAX_PAX_HEADER_CHARS, MAX_REFUSED_NAME_CHARS,
-                         MAX_REFUSED_NAMES_REPORTED, MAX_SINGLE_READ_BYTES,
-                         PAX_WIRE_BYTES_PER_CHAR, PER_ENTRY_OVERHEAD_BYTES,
-                         SAFE_COMPONENT, _CountingReader, _create_member_file,
-                         _cut_middle, _is_the_disk, _member_parts, _members_of,
-                         _open_member_dir, _pax_header_chars,
-                         _refused_names_error, _shown_untrusted, unpack)
+from src.archive import (ALPHABET_FAULT, CHUNK, CORRUPT_ARCHIVE_ERRORS,
+                         LAYOUT_ERRNOS, MAX_COMPONENT_CHARS, MAX_MEMBERS,
+                         MAX_PATH_DEPTH, MAX_REFUSED_NAMES_REPORTED,
+                         SAFE_COMPONENT, _create_member_file, _is_the_disk,
+                         _member_parts, _members_of, _open_member_dir,
+                         _refused_names_error, unpack)
 from src.errors import PublishError
 
 # Identifiers that arrive in the URL. No dot at all: that keeps a build directory
