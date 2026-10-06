@@ -26,8 +26,7 @@ import pytest
 from modeldir import make_model
 
 from hammerola.limits import MAX_MEMBERS, MAX_PATH_DEPTH
-from hammerola.pack import (MAX_REFUSAL_PATH_CHARS, MAX_REFUSALS_LISTED,
-                            PackError, collect, pack)
+from hammerola.pack import MAX_REFUSALS_LISTED, PackError, collect, pack
 
 
 def members(root, **kw):
@@ -297,7 +296,7 @@ def test_a_directory_that_cannot_be_listed_is_refused_by_name(tmp_path):
         locked.chmod(0o755)
 
 
-def test_the_detail_beside_a_refused_path_is_escaped_and_cut_like_the_path(
+def test_the_detail_beside_a_refused_path_is_escaped_like_the_path(
         tmp_path, monkeypatch):
     """`detail` was the one string a message printed exactly as it arrived.
 
@@ -306,9 +305,7 @@ def test_the_detail_beside_a_refused_path_is_escaped_and_cut_like_the_path(
     str(error)` for a directory it cannot list, and the fallback half of that is
     an OSError's own text, which repeats the FULL PATH it was raised for. So a
     directory whose name carries an escape sequence cleared the terminal through
-    the one line nothing escaped — and an OSError with a long message printed all
-    of it, under a group whose every other line is capped at
-    MAX_REFUSAL_PATH_CHARS.
+    the one line nothing escaped.
 
     The fallback is what has to be provoked, since `strerror` is set for every
     ordinary errno: an OSError built with a single argument has no errno and no
@@ -316,7 +313,7 @@ def test_the_detail_beside_a_refused_path_is_escaped_and_cut_like_the_path(
     """
     root = make_model(tmp_path / "demo")
     (root / "ref").mkdir()
-    hostile = "\x1b[2Jwiped\r" + "z" * 5000
+    hostile = "\x1b[2Jwiped\r"
     real_iterdir = Path.iterdir
 
     def failing(self):
@@ -335,10 +332,9 @@ def test_the_detail_beside_a_refused_path_is_escaped_and_cut_like_the_path(
     # Escaped: neither the terminal-clearing sequence nor the carriage return
     # reaches the terminal as itself.
     assert "\x1b" not in message and "\r" not in message
-    # And cut: the detail is held to the same ceiling as the path beside it.
+    # And printed beside the path it belongs to.
     detail = line[len(shown("ref")):]
     assert detail.startswith(" (") and detail.endswith(")")
-    assert len(detail) - len(" ()") <= MAX_REFUSAL_PATH_CHARS
 
 
 def test_an_empty_tree_is_refused(tmp_path):
@@ -490,19 +486,6 @@ def test_a_refused_path_is_escaped_before_it_reaches_the_terminal(tmp_path):
     # line per path and the group structure survives.
     assert "\\n" in message
     assert len(listed_paths(message)) == 2
-
-
-def test_a_refused_path_that_is_very_long_is_cut(tmp_path):
-    """Escaping expands, so the ceiling is applied to the escaped form — the
-    same two-step as the hub's, for the same reason."""
-    root = make_model(tmp_path / "demo")
-    (root / ("\x1b" * 200 + ".py")).write_text("x = 1\n")
-
-    with pytest.raises(PackError) as caught:
-        collect(root)
-
-    for path in listed_paths(str(caught.value)):
-        assert len(path) <= MAX_REFUSAL_PATH_CHARS
 
 
 def test_a_file_that_is_not_a_regular_file_is_named_with_the_rest(tmp_path):

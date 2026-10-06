@@ -13,8 +13,8 @@
   `src/store.py`** — `store.SAFE_COMPONENT` is what `app.py`, `onboarding.py`
   and `tests/client/test_limits.py` already quote, and the re-export is what
   kept the move from touching any of them. A RE-EXPORT BINDS A NAME, IT DOES
-  NOT REDIRECT A LOOKUP: code in this module resolves `_CountingReader`,
-  `SAFE_COMPONENT` and `gzip` in THIS module's globals, so a test that replaces
+  NOT REDIRECT A LOOKUP: code in this module resolves `SAFE_COMPONENT` and
+  `gzip` in THIS module's globals, so a test that replaces
   one of them has to patch `src.archive` — patching `src.store` sets an
   attribute nothing reads, and the test then passes without exercising
   anything. Three tests in `tests/test_archive_security.py` did exactly that
