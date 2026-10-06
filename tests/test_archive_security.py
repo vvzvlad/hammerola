@@ -501,7 +501,7 @@ def test_a_chain_of_extended_headers_is_not_a_crash_wherever_it_sits(
 
 
 def test_a_malformed_sparse_map_is_a_refusal_and_not_a_crash(hub):
-    """`_members_of`, and why it catches by fact rather than by type.
+    """The catch around `tarfile.open`, and why it catches by fact rather than by type.
 
     A map whose numbers are not numbers raises a bare `ValueError` inside
     `tarfile`'s own header parsing — out of the reach of CORRUPT_ARCHIVE_ERRORS,
