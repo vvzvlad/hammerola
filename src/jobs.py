@@ -48,8 +48,9 @@ JSON object whose `id` is its directory's name and whose `state` is one of
 KNOWN_STATES; anything else is skipped with a warning naming the directory, and
 the directory stays where it is. The hub does not write a torn record
 (`atomic_write_bytes`) or a non-finite number (`finish` goes through `_number`),
-so what fails the parse is a hand edit, a failing disk or a model's mistake on
-a volume every build can write (`src/buildproc/__init__.py`) — none of them a
+so what fails the parse is a hand edit, a failing disk, a hub killed between
+`create`'s `mkdir` and its write, or a model's mistake on a volume every build
+can write (`src/buildproc/__init__.py`) — none of them a
 reason to keep the hub from starting, or to delete what somebody may want to
 look at.
 
