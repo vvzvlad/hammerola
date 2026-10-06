@@ -55,6 +55,7 @@ from pathlib import Path
 
 import pytest
 
+from src.app import POST_ROUTES
 from src.comments import PHOTO_KIND, SHOT_KIND, validate_payload
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -462,16 +463,36 @@ def test_the_library_stylesheet_is_still_on_the_page():
 
 # -- the comment endpoint ----------------------------------------------------
 
+class _Reached:
+    """A stand-in handler that remembers which of its methods were asked for."""
+
+    def __init__(self):
+        self.names = []
+
+    def __getattr__(self, name):
+        self.names.append(name)
+        return lambda *args, **kwargs: None
+
+
 def test_the_comment_post_goes_where_the_hub_listens():
     """The route in the component is the one src/app.py dispatches on.
 
-    app.py matches on a list of path segments, so the URL the browser has to use
-    is that list joined — derived here rather than repeated.
+    app.py matches on a prefix of path segments, so the URL the browser has to
+    use is that prefix joined — derived here rather than repeated. The entry is
+    the one of `POST_ROUTES` whose `call` reaches `_handle_comment_post`, asked
+    of the call itself, so its place in the table does not decide which is read.
     """
-    app = read(ROOT / "src" / "app.py")
-    match = re.search(r'segments\[:3\]\s*==\s*\[([^\]]+)\]', app)
-    assert match, "app.py no longer dispatches comments on a segment prefix"
-    prefix = "/" + "/".join(re.findall(r'"([^"]+)"', match.group(1)))
+    leading = []
+    for (prefix, count), call in POST_ROUTES:
+        reached = _Reached()
+        call(reached, ["probe"] * ((count or len(prefix) + 1) - len(prefix)),
+             "", False, True)
+        if "_handle_comment_post" in reached.names:
+            leading.append(prefix)
+    assert len(leading) == 1, (
+        f"expected one POST_ROUTES entry to reach _handle_comment_post, "
+        f"found {leading}")
+    prefix = "/" + "/".join(leading[0])
     assert f"`{prefix}/" in read(COMPONENT), (
         f"the component does not post to {prefix}/<pid>/<commit>")
 
