@@ -919,13 +919,6 @@ def make_handler(store: Store, comment_store: CommentStore,
             build directory can exist without being publishable (nothing else
             creates one, but a restore or a hand-copy can), and a page that then
             fails every fetch is worse than a 404.
-
-            `store.resolve_inside` for the reason `_send_file` gives, and this is
-            the SECOND of the two sites rather than a second observation: both
-            failures issue #70 recorded were files, not pages. `build_dir` is
-            `<project>/latest` whenever the URL named that pointer, so this
-            resolve crosses the same symlink at the same instant — a 404 here
-            costs the whole page instead of one fetch.
             """
             try:
                 store.resolve_inside(build_dir / BUILD_META_FILE)
