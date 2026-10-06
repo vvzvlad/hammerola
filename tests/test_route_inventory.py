@@ -113,7 +113,7 @@ def test_every_route_the_hub_answers_is_documented(verb, documented):
 
 
 @pytest.mark.parametrize("verb", sorted(TABLES))
-def test_each_entry_answers_its_own_path(verb, hub, monkeypatch, documented):
+def test_each_entry_answers_its_own_path(verb, hub, monkeypatch):
     """No branch in a dispatcher takes a path an entry of its table claims.
 
     Each entry's `call` is wrapped in a recorder of its own and a request is
@@ -150,15 +150,18 @@ def test_each_entry_answers_its_own_path(verb, hub, monkeypatch, documented):
 
     # And every documented row, with `probe` in each free segment: a narrow
     # branch for a real sub-path under a wide prefix (#105's shape) leaves the
-    # bare prefix above to the entry and is only seen here.
-    for row in documented[verb]:
+    # bare prefix above to the entry and is only seen here. The row's own URL
+    # is requested, trailing slash kept: without it a page answers 302.
+    for row_verb, url in ROW.findall(app.__doc__):
+        if row_verb != verb:
+            continue
+        row = documented_path(url)
         owner = next((index for index, (pattern, _) in enumerate(table)
                       if answers(pattern, row)), None)
         if owner is None:
-            continue  # publish, answered before the table
+            continue  # publish: `_handle_post` answers it below the table
         fired.clear()
-        path = "/" + "/".join("probe" if part.startswith("<") else part
-                              for part in row)
+        path = re.sub(r"<[^>]+>", "probe", url.split("?", 1)[0])
         reply = hub.request(verb, path,
                             headers={"Authorization": f"Bearer {TOKEN}"})
         assert fired == [owner], (
