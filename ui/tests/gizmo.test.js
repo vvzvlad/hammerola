@@ -1498,7 +1498,7 @@ describe('one whole drag', () => {
 
   it('concludes a drag the scene is being pulled out from under', async () => {
     // The twin of `vp.endGesture`, and the reason it is a third call rather than
-    // the same one: the press was taken in a window listener this widget owns,
+    // the same one: the press was taken in a window listener the widgets share,
     // so neither that gesture nor the idle clock that defers the swap ever saw
     // it.
     const s = scene()

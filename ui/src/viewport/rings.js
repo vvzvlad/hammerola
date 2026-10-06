@@ -922,7 +922,7 @@ export function createRings(vp) {
    *
    * THE TWIN OF `vp.endGesture`, of the grip's `endDrag` and of the arrows',
    * and it exists for the failure all three were written for: the press was
-   * taken in a window listener this widget owns, so neither that gesture nor
+   * taken in a window listener the widgets share, so neither that gesture nor
    * the idle clock that defers the swap ever saw it, and the release that would
    * have concluded it never comes. Concluding rather than abandoning, and the
    * reason is what ABANDONING costs: the part stands turned in `vp.moved` with

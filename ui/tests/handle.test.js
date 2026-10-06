@@ -716,9 +716,9 @@ describe('one whole drag', () => {
 
   it('concludes a drag the scene is being pulled out from under', () => {
     // The twin of `vp.endGesture`, and the reason it is a second call rather
-    // than the same one: the press was taken in a window listener of the grip's
-    // own, so neither that gesture nor the idle clock that defers the swap ever
-    // saw it. Ending it CONCLUDES rather than abandons — `restoreSection`
+    // than the same one: the press was taken in a window listener of the
+    // viewport's, so neither that gesture nor the idle clock that defers the
+    // swap ever saw it. Ending it CONCLUDES rather than abandons — `restoreSection`
     // subtracts `state.cutOffset` from the captured point, so a stale one would
     // put the seed off the face that was clicked.
     const { viewer, vp, canvas, handle } = scene()

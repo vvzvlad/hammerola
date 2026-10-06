@@ -724,6 +724,44 @@ describe('the one press listener on a viewport', () => {
     expect(two).toHaveBeenCalledTimes(1)
     expect(one).not.toHaveBeenCalled()
   })
+
+  it('asks equal bands in the order they joined', () => {
+    const vp = {}
+    const first = join(vp, 1, true)
+    const second = join(vp, 1, true)
+
+    pressAt(document.body, [400, 300])
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(second).not.toHaveBeenCalled()
+  })
+
+  it('leaves the window with the last participant and comes back for the next', () => {
+    // A viewport put back into the document builds its widgets again on the
+    // same `vp`, and they have to find a dispatcher that listens.
+    const removed = vi.spyOn(globalThis, 'removeEventListener')
+    try {
+      const vp = {}
+      const a = vi.fn(() => false)
+      const leaveA = joinPresses(vp, 1, a)
+      const leaveB = joinPresses(vp, 2, () => false)
+
+      leaveB()
+      pressAt(document.body, [400, 300])
+      expect(a).toHaveBeenCalledTimes(1)
+      expect(removed).not.toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+
+      leaveA()
+      leaveA()
+      expect(removed).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+
+      const c = join(vp, 1, true)
+      pressAt(document.body, [400, 300])
+      expect(a).toHaveBeenCalledTimes(1)
+      expect(c).toHaveBeenCalledTimes(1)
+    } finally {
+      removed.mockRestore()
+    }
+  })
 })
 
 describe('the cursor', () => {

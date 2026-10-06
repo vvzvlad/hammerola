@@ -760,7 +760,7 @@ export function createHandle(vp) {
    * IT CONCLUDES RATHER THAN ABANDONS. A swap can arrive mid-drag: the interface
    * waits for the hand to come off the model but gives up after a deadline, and
    * that wait does not see this press at all — the idle clock listens on
-   * `vp.box`, and this press is taken in a window listener of the widget's own.
+   * `vp.box`, and this press is taken in a window listener of the viewport's.
    * So without this, `restoreSection` would subtract a `state.cutOffset` from
    * before the drag out of a point the drag had already moved, and the seed
    * would come back off the face that was clicked, with the interface printing a

@@ -452,11 +452,10 @@ export class HmrViewport extends HTMLElement {
     if (this.viewcube) this.viewcube.destroy();
     if (this.handle) this.handle.destroy();
     if (this.gizmo) this.gizmo.destroy();
-    // AND THE RINGS, which own one thing the other three do not: a SECOND pair
-    // of capture-phase window listeners of their own — the hand-over that ends
-    // a neighbour's gesture on any press, and the hover that decides which knob
-    // is lit — beside the pair `scene3d.js` keeps for every widget in the
-    // scene. Left behind they would answer for a scene that is gone.
+    // AND THE RINGS, which own one thing the others do not: a hover listener of
+    // their own on the window, which decides which knob is lit, beside the one
+    // `scene3d.js` keeps for each widget. Left behind it would answer for a
+    // scene that is gone.
     if (this.rings) this.rings.destroy();
     try {
       if (this.viewer) this.viewer.dispose();
@@ -729,19 +728,20 @@ export class HmrViewport extends HTMLElement {
       // same point in its render path, for the same reason.
       if (this.endGesture) this.endGesture();
       // The grip's drag is a SECOND gesture and needs saying so separately: its
-      // press is taken in a window listener of its own, so neither the line above
-      // nor the idle clock that defers this swap ever sees it.
+      // press is taken in a window listener of the viewport's, so neither the
+      // line above nor the idle clock that defers this swap ever sees it.
       this.handle.endDrag();
       // And a drag of an axis arrow or a plane quad is a THIRD one, taken in a
-      // window listener of its own in the same way. It is concluded rather than
-      // abandoned, and the reason is what ABANDONING would cost here: the part
+      // window listener of the viewport's in the same way. It is concluded
+      // rather than abandoned, and the reason is what ABANDONING would cost
+      // here: the part
       // is standing displaced in `this.moved` with nothing in the document
       // claiming it, and the next push would send it home under the reader's
       // hand.
       this.gizmo.endDrag();
       // And a drag of a RING is a FOURTH, on a widget in the scene whose press
-      // was taken in a window listener of its own — which the idle clock cannot
-      // see either.
+      // was taken in a window listener of the viewport's — which the idle clock
+      // cannot see either.
       // Concluded for the same reason, one field of the node over: the part
       // stands turned in `this.moved` with nothing claiming it, and the next
       // push straightens it under the reader's hand.
