@@ -464,7 +464,7 @@ def _read_record(path: Path) -> dict | None:
     read by a listing endpoint, and one damaged entry must not take the whole
     queue offline.
 
-    NO WRITE-BACK, UNLIKE `jobs._read_record`, and the difference is the reader
+    NO WRITE-BACK, UNLIKE `JobStore._load`, and the difference is the reader
     rather than the trust. That one feeds a registry built in `JobStore.__init__`
     before the socket is bound, and writes back because a job left `queued` must
     be recorded terminal or the same warning prints at every start. This one runs

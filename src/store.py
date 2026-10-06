@@ -2122,18 +2122,11 @@ def atomic_write_bytes(path: Path, data: bytes, *, tmp_dir: Path = None) -> None
 
     `tmp_dir` puts the temporary file somewhere other than beside the target. It
     has to be ON THE SAME FILESYSTEM or the rename stops being a rename — it
-    becomes EXDEV, and this function raises rather than silently copying. The
-    caller is `src/jobs.py`, which keeps its temporaries in `data/jobs/` instead
-    of inside each job directory, so that the one thing that collects strays
-    from that tree — `JobStore._sweep_strangers`, at startup — is looking where
-    a leftover of a killed write actually lands. Inside a live job's directory
-    nothing ever collects one.
-
-    NOT `_sweep_leftovers`, which is the near miss worth naming: the sweep above
-    this one walks `self.root` and the project directories, and `data/jobs/` is
-    neither, so a `.wip-` file under it is invisible here however familiar the
-    prefix looks. `JobStore._sweep_strangers` carries its own short cutoff for
-    that prefix for exactly this reason.
+    becomes EXDEV, and this function raises rather than silently copying.
+    `src/jobs.py` passes the data root, so the temporaries of a job's record
+    and log land where `_sweep_leftovers` collects a leftover of a killed write:
+    that sweep walks `self.root` and the project directories, and neither
+    `data/jobs/` nor a job directory is one of them.
 
     WHAT IT IS NOT is a defence against a build making one write fail. That was
     the reason it was first proposed and it does not work, so it is written down
@@ -2143,7 +2136,7 @@ def atomic_write_bytes(path: Path, data: bytes, *, tmp_dir: Path = None) -> None
     PermissionError either way. The only layout that would defuse it is one
     where no per-job directory exists at all, and what makes a pointwise
     failure survivable here is instead that nothing shared between records is
-    written per record at all (see `JobStore._rewrite_locked` in `src/jobs.py`).
+    written per record at all (see the note on `order.json` in `src/jobs.py`).
     """
     parent = path.parent if tmp_dir is None else Path(tmp_dir)
     tmp = parent / f"{JSON_TMP_PREFIX}{path.name}-{uuid.uuid4().hex}"

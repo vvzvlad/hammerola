@@ -39,25 +39,16 @@
 - `src/jobs.py` — the asynchronous half of a push (SPEC 8A.2 step 5): `JobStore`
   is the registry (a directory per job under `data/jobs/`, `job.json` and
   `log.txt` beside it), `BuildTask` is what the request hands over, `BuildQueue`
-  is the bounded queue and the worker threads that build and then publish. Read
-  its docstring before touching it: `data/jobs/` is on a volume every build can
-  write, so NOTHING there is evidence about who wrote it, and everything the
-  registry reads back is rebuilt into a known shape and capped in size on the
-  way in and on the way out — and whatever that normalization changed is WRITTEN
-  BACK, because a correction that stays in memory leaves the planted value on
-  disk for the next start to read again. A build can overwrite another job's
-  `log.txt`, or `rmtree` its directory outright, and the hub believes what is
-  left; that is accepted rather than fixed, because there is no boundary on the
-  volume to fix it with (SPEC 8A.4). Records are never deleted — no retention,
-  by decision of 2026-08-27 (SPEC §5.3) — so no count ceiling decides which jobs
-  to throw away; only strangers get swept, and only by age. The second rule is
-  the one that cost three rounds and outlives the file that taught it: anything
-  that is a property of the SET of records must not be stored per record. A pass
-  writes them one at a time, a build chooses which of those writes fails
-  (`chmod 0500` on one directory, no vulnerability needed), and a half-applied
-  pass then leaves a state the hub was never in. Creation order used to be
-  stored that way; it is now stored nowhere at all, because retention was its
-  only reader
+  is the bounded queue and the worker threads that build and then publish. At
+  start a record that does not parse, names another directory or carries an
+  unknown state is logged and skipped, its directory left where it is; jobs a
+  restart stranded in `queued`/`building` are failed and only those are
+  rewritten. Records are never deleted — no retention, by decision of
+  2026-08-27 (SPEC §5.3). Anything that is a property of the SET of records
+  must not be stored per record: a pass writes them one at a time, one write
+  can fail, and a half-applied pass leaves a state the hub was never in.
+  Creation order used to be stored that way; it is now stored nowhere at all,
+  because retention was its only reader
 - `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs
   in a model's directory (issue #26). `build` fills the `dev` slot, `commit`
   publishes an immutable revision; around them sit `login`, `create`, `status`,

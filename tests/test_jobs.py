@@ -38,17 +38,15 @@ from loguru import logger
 from src import jobs as jobs_module
 from src.buildproc import (STATUS_FAILED, STATUS_LIMITS_ERROR, STATUS_OK,
                            Limits, run_build)
-from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE,
-                      MAX_LOG_BYTES, MAX_RECORD_BYTES,
+from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
                       QUEUE_FULL_RETRY_AFTER_SECONDS, RESTART_CODE,
                       STATE_BUILDING, STATE_DONE, STATE_FAILED, STATE_QUEUED,
                       STOPPED_ERROR, SUBMIT_ACCEPTED, SUBMIT_STOPPED,
                       WORKER_THREAD_PREFIX, BuildQueue, BuildTask, JobStore,
                       build_arguments)
-from src import store as store_module
-from src.store import (BODY_PREFIX, DEV_LINK, JSON_TMP_PREFIX,
-                       LEFTOVER_PREFIXES, PAYLOAD_DIGEST_FILE, SOURCE_PREFIX,
-                       PublishError, Store, utcnow_iso)
+from src.store import (BODY_PREFIX, DEV_LINK, LEFTOVER_PREFIXES,
+                       PAYLOAD_DIGEST_FILE, SOURCE_PREFIX, PublishError, Store,
+                       utcnow_iso)
 
 # TOKEN comes from the harness rather than being spelled again here: the hub
 # under test is built with that value, and a copy of it in this file was one
@@ -67,14 +65,7 @@ def _leftovers(hub, pid):
 
 
 def _plant_job(data, job_id, **fields):
-    """Write a job.json by hand — the way a BUILD can, and that is the point.
-
-    `data/jobs/` is on the volume, and the volume is fully writable by every
-    build (src/buildproc/__init__.py, SPEC 8A.4). So every field here is
-    attacker-controlled in the only sense that matters, and `json.dumps` is
-    called with its default `allow_nan=True` on purpose: that is exactly the
-    asymmetry — Python writes `NaN` happily and the hub's own writer refuses it.
-    """
+    """Write a job.json by hand, as a record left by an earlier hub would be."""
     directory = Path(data) / "jobs" / job_id
     directory.mkdir(parents=True, exist_ok=True)
     record = {"id": job_id, "pid": "proj1", "commit": "abc123",
@@ -96,10 +87,10 @@ def _job_dirs(data):
 def _volume_records(data):
     """Every job.json as it really is ON THE VOLUME — not as memory has it.
 
-    The distinction is the whole subject of several tests below: `_read_record`
-    and `_load` normalize what they read, and a normalization that stays in
-    memory leaves the planted value on disk for the next start to read again.
-    `JobStore.get` cannot see that, because it answers from memory by design.
+    The distinction is the whole subject of several tests below: `_load` fails a
+    stranded job in memory, and a failure that stays in memory leaves the job
+    `building` on disk for the next start to find again. `JobStore.get` cannot
+    see that, because it answers from memory by design.
     """
     jobs_dir = Path(data) / "jobs"
     return {entry.name: json.loads((entry / "job.json").read_text())
@@ -156,30 +147,6 @@ def _staged(store, pid, commit, marker):
     for name, data in DEFAULT_EXPORTS.items():
         (staging / name).write_bytes(data)
     return staging, ("meta.json", "assembled.json", *DEFAULT_EXPORTS)
-
-
-class _CountedHandle:
-    """A file object that remembers the size argument every read was given.
-
-    Enough of one for `_read_capped`, which opens, reads once and leaves. What
-    it is for is the difference between "the file was refused" and "the file was
-    refused without being read" — the second is the claim a byte ceiling on a
-    volume somebody else writes to actually makes.
-    """
-
-    def __init__(self, handle, sizes):
-        self._handle = handle
-        self._sizes = sizes
-
-    def read(self, size=-1):
-        self._sizes.append(size)
-        return self._handle.read(size)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exception):
-        return self._handle.__exit__(*exception)
 
 
 class GatedBuilder:
@@ -772,7 +739,7 @@ def test_a_job_stranded_by_a_restart_is_failed_at_startup(tmp_path):
     assert after.get(finished)["build_url"] == "/project/proj1/ccc333/"
 
 
-def test_a_start_rewrites_only_the_records_it_changed(tmp_path):
+def test_a_start_rewrites_only_the_jobs_it_failed(tmp_path):
     """Every write back is two fsyncs, and no retention bounds how many there are.
 
     The number of job records is the number of pushes over the volume's whole
@@ -780,10 +747,10 @@ def test_a_start_rewrites_only_the_records_it_changed(tmp_path):
     `create_server` BEFORE the socket is bound. A pass that rewrote all of them
     would put that whole cost in front of the first `/health` on an old volume —
     against a `start_period` of 30 s in the compose file and an auto-update
-    rollback gate that gives up around 120. So a record the rebuild did not
-    change must not be written at all.
+    rollback gate that gives up around 120. So the only record a start writes
+    is one it had to fail.
 
-    Measured by INODE rather than by mtime: `atomic_write_bytes` writes a
+    Measured by INODE as well as by mtime: `atomic_write_bytes` writes a
     temporary file and renames it over the target, so a rewrite always changes
     the inode, while two writes inside one clock tick can share an mtime.
     """
@@ -795,30 +762,30 @@ def test_a_start_rewrites_only_the_records_it_changed(tmp_path):
         first.finish(job_id, state=STATE_DONE, code=201,
                      build_url=f"/project/proj1/ccc{index}/")
         untouched.append(job_id)
-    # One record this start really does have to correct, so the test cannot pass
+    # One record this start really does have to write, so the test cannot pass
     # by the write-back having stopped happening at all.
-    planted = "P" * 22
-    _plant_job(data, planted, state=STATE_BUILDING,
-               duration_seconds=float("nan"))
+    stranded = first.create("proj1", "ddd")["id"]
+    first.start(stranded)
 
-    def inode(job_id):
-        return (data / "jobs" / job_id / "job.json").stat().st_ino
+    def identity(job_id):
+        info = (data / "jobs" / job_id / "job.json").stat()
+        return info.st_ino, info.st_mtime_ns
 
-    before = {job_id: inode(job_id) for job_id in [*untouched, planted]}
+    before = {job_id: identity(job_id) for job_id in [*untouched, stranded]}
     again = JobStore(data)
 
     for job_id in untouched:
         assert again.get(job_id)["state"] == STATE_DONE
-        assert inode(job_id) == before[job_id], (
+        assert identity(job_id) == before[job_id], (
             f"{job_id} was written again although nothing about it changed")
 
     # And the one that DID change reached the volume, which is the guarantee
-    # this must not trade away: a correction left in memory is read back off the
-    # volume at the next start and corrected again, for the life of the volume.
-    assert inode(planted) != before[planted]
-    on_disk = _volume_records(data)[planted]
+    # this must not trade away: a failure left in memory is found `building`
+    # again at the next start, and failed again, for the life of the volume.
+    assert identity(stranded)[0] != before[stranded][0]
+    on_disk = _volume_records(data)[stranded]
     assert on_disk["state"] == STATE_FAILED
-    assert on_disk["duration_seconds"] is None
+    assert on_disk["code"] == RESTART_CODE
 
 
 def test_a_stranded_job_is_reported_over_http_too(tmp_path):
@@ -876,8 +843,6 @@ def test_the_default_ceilings_are_the_documented_ones(tmp_path):
     """
     assert jobs_module.MAX_CONCURRENT_BUILDS == 4
     assert jobs_module.MAX_QUEUED_JOBS >= jobs_module.MAX_CONCURRENT_BUILDS
-    assert jobs_module.MAX_STRANGERS_SWEPT == 1024
-    assert jobs_module.STRANGER_MAX_AGE_SECONDS == 14 * 24 * 3600
 
     # AND THERE IS NO CEILING ON THE REGISTRY ITSELF, which is a fact about this
     # module rather than about a number, so it is asserted as one: no job is
@@ -921,39 +886,8 @@ def test_the_default_ceilings_are_the_documented_ones(tmp_path):
 
 
 # -- what a build can leave on the volume ------------------------------------
-def test_a_record_the_hub_cannot_write_back_does_not_stop_it_starting(tmp_path):
-    """One planted `NaN` used to be a hub that never started again.
-
-    `json.loads` accepts `NaN` and `Infinity` — a Python extension, on by
-    default — and `json.dumps(allow_nan=False)`, which is what this module
-    writes with, refuses them. `_load` rewrites every job it finds in flight, so
-    a record left `building` with a non-finite number in it raised out of
-    `JobStore.__init__`, out of `create_server` and out of `main()`. From the
-    volume, on every start, for ever — and the volume is writable by every
-    build.
-    """
-    data = tmp_path / "data"
-    real = JobStore(data)
-    kept = real.create("proj1", "abc123")["id"]
-    real.finish(kept, state=STATE_DONE, code=201,
-                build_url="/project/proj1/abc123/")
-
-    poisoned = "P" * 22
-    _plant_job(data, poisoned, state=STATE_BUILDING,
-               duration_seconds=float("nan"))
-
-    again = JobStore(data)
-    # The hub is up, and the jobs it really wrote are exactly as they were.
-    assert again.get(kept)["state"] == STATE_DONE
-    # The planted one was read into the shape this module writes: no non-finite
-    # number survived, so it could be failed like any other stranded job.
-    record = again.get(poisoned)
-    assert record["state"] == STATE_FAILED
-    assert record["duration_seconds"] is None
-
-
 def test_a_record_this_hub_did_not_write_is_skipped_rather_than_believed(tmp_path):
-    """Three shapes, three reasons, one answer: it is not a record.
+    """Two shapes, two reasons, one answer: it is not a record.
 
     A state outside the four is the worst of them — `_load` only ever fails a
     `queued`/`building` one, so a fifth word is a record no rule can reach, and
@@ -962,238 +896,47 @@ def test_a_record_this_hub_did_not_write_is_skipped_rather_than_believed(tmp_pat
     """
     data = tmp_path / "data"
     JobStore(data)
-    wrong_state, wrong_id, too_big = "S" * 22, "I" * 22, "B" * 22
+    wrong_state, wrong_id = "S" * 22, "I" * 22
     _plant_job(data, wrong_state, state="pending-for-ever")
     _plant_job(data, wrong_id, id="J" * 22)
-    _plant_job(data, too_big, error="x" * (MAX_RECORD_BYTES + 1024))
 
     store = JobStore(data)
-    for planted in (wrong_state, wrong_id, too_big):
+    for planted in (wrong_state, wrong_id):
         assert store.get(planted) is None, planted
         # Left where it is rather than deleted: unreadable is not proof of who
         # wrote it, and somebody may want to look at it.
         assert (data / "jobs" / planted).is_dir(), planted
 
 
-# -- what is under data/jobs/ and is not a job -------------------------------
-# No job is ever swept, whatever its age (SPEC 5.3): the sweep below is about
-# everything ELSE in that directory, which is writable by every build.
+def test_a_record_that_is_not_json_is_skipped_logged_and_left_in_place(
+        tmp_path):
+    """The hub starts, says which directory it skipped, and deletes nothing.
 
-
-def test_a_directory_with_no_record_in_it_is_swept_once_it_ages_out(tmp_path):
-    """A job directory is kept for ever; a directory that is not one is not.
-
-    A directory under `data/jobs/` is not necessarily a job — the volume is
-    writable by every build — and the hub makes one itself a moment before it
-    writes the record into it, so a volume that fills up leaves one too.
-    Refusing to believe them was never the same as collecting them, and until
-    this sweep nothing ever removed one.
-    """
-    data = tmp_path / "data"
-    store = JobStore(data)
-    kept = store.create("proj1", "abc123")["id"]
-    store.finish(kept, state=STATE_DONE, code=201,
-                 build_url="/project/proj1/abc123/")
-
-    old_empty = data / "jobs" / ("E" * 22)
-    old_empty.mkdir()
-    old_garbage = data / "jobs" / ("G" * 22)
-    old_garbage.mkdir()
-    (old_garbage / "job.json").write_bytes(b"this is not a job record")
-    fresh_empty = data / "jobs" / ("N" * 22)
-    fresh_empty.mkdir()
-    stale = time.time() - 7200
-    for directory in (old_empty, old_garbage):
-        os.utime(directory, (stale, stale))
-
-    reopened = JobStore(data, stranger_max_age_seconds=3600)
-
-    assert not old_empty.exists()
-    assert not old_garbage.exists()
-    # The fresh one stays: being unreadable is not proof of who wrote it, and it
-    # may be evidence somebody wants. It goes the same way once it is as old.
-    assert fresh_empty.is_dir()
-    assert reopened.get(kept) is not None
-
-
-def test_the_startup_sweep_reaches_everything_that_is_not_a_job(tmp_path):
-    """The sweep reaches every SHAPE of stranger, not just one.
-
-    The previous version of it missed in two directions at once. By NAME: only directories whose
-    name was a well-formed job id ever reached the sweep, so a stray file, a
-    directory called anything else, or a symlink was skipped before the age
-    ceiling could look at it and stayed for the life of the volume. By TIME: the
-    mtime is a value a build sets freely, and one dated in the future is never
-    past any cutoff, so a directory carrying one would be immune for the life of
-    the volume.
-
-    The mtime is not CORRECTED, and that is worth saying rather than working
-    around: writing a corrected one back would destroy the evidence the sweep is
-    being careful about, because the mtime IS the evidence. So a date in the
-    future simply buys no immunity.
-    """
-    data = tmp_path / "data"
-    store = JobStore(data)
-    kept = store.create("proj1", "abc123")["id"]
-    store.finish(kept, state=STATE_DONE, code=201,
-                 build_url="/project/proj1/abc123/")
-
-    stale = time.time() - 7200
-    jobs_dir = data / "jobs"
-    odd_name = jobs_dir / "not-a-job-id"
-    odd_name.mkdir()
-    stray_file = jobs_dir / "leftover.tmp"
-    stray_file.write_bytes(b"x" * 16)
-    link = jobs_dir / ("L" * 22)
-    link.symlink_to(jobs_dir / kept)
-    for entry in (odd_name, stray_file):
-        os.utime(entry, (stale, stale))
-    os.utime(link, (stale, stale), follow_symlinks=False)
-    # A directory dated in 2999 — with a name the sweep DOES recognise, so this
-    # is the time hole on its own and not the name one over again.
-    future = jobs_dir / ("U" * 22)
-    future.mkdir()
-    os.utime(future, (time.time() + 10 * 365 * 24 * 3600,) * 2)
-
-    reopened = JobStore(data, stranger_max_age_seconds=3600)
-
-    assert not odd_name.exists(), "a directory outside the id alphabet was skipped"
-    assert not stray_file.exists(), "a stray file was skipped"
-    assert not link.is_symlink(), "a symlink was skipped"
-    assert not future.exists(), "a date in the future bought immunity"
-    # The real job, and its log, are untouched — including the one the symlink
-    # was pointing at, which must go with the LINK and not with its target.
-    assert reopened.get(kept) is not None
-    assert (jobs_dir / kept / "job.json").is_file()
-
-
-def test_a_half_written_record_lands_where_the_sweep_looks(tmp_path,
-                                                           monkeypatch):
-    """The registry's temporary files go in `data/jobs/`, not inside a job.
-
-    `atomic_write_bytes` writes a temporary file and renames it, so a process
-    killed between the two leaves the temporary behind. Beside its target it
-    would be INSIDE a job directory, and nothing collects one there: the sweep
-    removes whole entries under `data/jobs/` that are not jobs of this registry,
-    and a live job's directory is a job. In the shared directory it is a
-    stranger like any other and ages out with everything else.
-
-    THIS IS NOT A DEFENCE against a build making one write fail, which is what
-    the relocation was first proposed for. `rename(tmp, dir/name)` needs write
-    permission on the DESTINATION directory exactly as `open(dir/tmp)` did, so
-    `chmod 0500` on a job directory refuses both — measured, both ways. What
-    makes a pointwise failure survivable is that nothing shared between records
-    is written per record any more.
-    """
-    data = tmp_path / "data"
-    store = JobStore(data)
-    job_id = store.create("proj1", "abc123")["id"]
-
-    renamed = []
-    landing = store_module.os.rename
-    monkeypatch.setattr(
-        store_module.os, "rename",
-        lambda src, dst: (renamed.append(Path(src)), landing(src, dst))[1])
-    store.finish(job_id, state=STATE_DONE, code=201,
-                 build_url="/project/proj1/abc123/", log="a build said this\n")
-    monkeypatch.undo()
-
-    assert renamed, "nothing was written, so this test proves nothing"
-    assert all(path.parent == data / "jobs" for path in renamed), (
-        f"a temporary file was written inside a job directory, where nothing "
-        f"ever collects a leftover: {[str(p) for p in renamed]}")
-
-    # And the halves of the reason, on the volume: a leftover in the shared
-    # directory ages out, one inside a job directory does not — which is why
-    # the writer no longer puts one there.
-    stale = time.time() - 7200
-    shared = data / "jobs" / f"{JSON_TMP_PREFIX}job.json-{'a' * 32}"
-    shared.write_bytes(b"half a record")
-    inside = data / "jobs" / job_id / f"{JSON_TMP_PREFIX}job.json-{'b' * 32}"
-    inside.write_bytes(b"half a record")
-    for leftover in (shared, inside):
-        os.utime(leftover, (stale, stale))
-
-    reopened = JobStore(data, stranger_max_age_seconds=3600)
-    assert not shared.exists()
-    assert inside.exists()
-    assert reopened.get(job_id) is not None
-
-
-def test_a_leftover_of_a_killed_write_is_not_kept_for_fourteen_days(tmp_path):
-    """Landing where the sweep looks is only half of it; WHEN matters too.
-
-    `Store._sweep_leftovers` — the thing that collects a `.wip-` file everywhere
-    else — walks the data root and the project directories, and `data/jobs/` is
-    neither, so it never enters this tree at all. That leaves
-    `_sweep_strangers`, and on the record ceiling a stray would wait fourteen
-    days and a restart. In the old place it went with the job at the next prune,
-    i.e. in hours — so the relocation, taken on its own, made the wait LONGER.
-    A `.wip-log.txt-*` is up to MAX_LOG_BYTES, so that wait is measured in
-    megabytes apiece.
-
-    The short cutoff is safe here and only here: `_sweep_strangers` runs from
-    `JobStore.__init__`, before the pool exists and before the socket is bound,
-    so nothing in this process is writing into `data/jobs/` while it looks.
-    """
-    data = tmp_path / "data"
-    store = JobStore(data)
-    kept = store.create("proj1", "abc123")["id"]
-    store.finish(kept, state=STATE_DONE, code=201,
-                 build_url="/project/proj1/abc123/")
-
-    two_hours_ago = time.time() - 7200
-    stray = data / "jobs" / f"{JSON_TMP_PREFIX}log.txt-{'c' * 32}"
-    stray.write_bytes(b"half a log")
-    # The same age, and NOT of that shape: this one is somebody's evidence about
-    # a build, so it keeps the record ceiling. Here to show the short cutoff
-    # belongs to the PREFIX rather than to the sweep as a whole.
-    evidence = data / "jobs" / ("E" * 22)
-    evidence.mkdir()
-    for entry in (stray, evidence):
-        os.utime(entry, (two_hours_ago, two_hours_ago))
-
-    # The DEFAULT age ceiling — fourteen days — which is the whole point: on it,
-    # nothing else on this volume would have collected the stray.
-    reopened = JobStore(data)
-
-    assert not stray.exists(), (
-        "a half-written file of the hub's own is sitting in data/jobs/ under "
-        "the record ceiling, and nothing else there ever collects one")
-    assert evidence.is_dir()
-    assert reopened.get(kept) is not None
-
-
-def test_a_flooded_registry_does_not_flood_the_log(tmp_path):
-    """One aggregated line, whatever the count.
-
-    The sweep used to warn once per entry, so the 988 directories of the
-    experiment were 988 warnings in every start of the hub — for ever, because
-    the entries are on the volume and the sweep keeps them until they age out.
-    The compose file caps the container log at 5 files of 10 MB, so what the
-    planted directories push out is the service's own logs: the thing somebody
-    would have been reading to find out about them.
+    There is no retention (SPEC 5.3), and a record a start cannot take is no
+    exception to it: the directory may be somebody's evidence. What the start
+    owes is a line in the log naming it, and a 404 rather than a guess.
     """
     data = tmp_path / "data"
     JobStore(data)
-    for index in range(30):
-        (data / "jobs" / f"q{index:02d}".ljust(22, "z")).mkdir()
+    broken = "T" * 22
+    directory = data / "jobs" / broken
+    directory.mkdir()
+    (directory / "job.json").write_bytes(b"{")
 
     said = []
     sink = logger.add(said.append, level="WARNING")
     try:
-        JobStore(data)
+        hub = start_hub(data)
     finally:
         logger.remove(sink)
+    try:
+        assert hub.job(broken).status_code == 404
+    finally:
+        stop_hub(hub)
 
-    # ONE line, and it does not count up: the sweep's aggregate, written
-    # per-START rather than per-entry. That is the property under test — the
-    # number of warnings must not be a number a build gets to choose.
-    assert len(said) == 1, (
-        f"the start wrote {len(said)} warnings for 30 planted directories; a "
-        f"build gets to choose that number")
-    assert "past the stranger age ceiling" in said[0]
-    assert "30" in said[0]
+    assert [line for line in said if broken in line], (
+        f"no warning named the skipped directory: {said}")
+    assert (directory / "job.json").read_bytes() == b"{"
 
 
 def test_a_corrupted_record_does_not_take_a_real_job_down_with_it(tmp_path):
@@ -1228,9 +971,8 @@ def test_a_corrupted_record_does_not_take_a_real_job_down_with_it(tmp_path):
     survivors = [job_id for job_id in made if reopened.get(job_id) is not None]
     assert survivors == made[:-5], (
         "a build that corrupted five records took real jobs down with them")
-    # The broken ones are not believed and not deleted on the spot either —
-    # being unreadable is not proof of who wrote it, so they go by age like any
-    # other stranger.
+    # The broken ones are not believed and not deleted either — being
+    # unreadable is not proof of who wrote it, and there is no retention.
     for job_id in broken:
         assert reopened.get(job_id) is None
         assert (data / "jobs" / job_id).is_dir()
@@ -1259,6 +1001,65 @@ def test_a_job_the_volume_refuses_to_record_leaves_nothing_in_memory(
         store.create("proj1", "abc123")
 
     assert store.get(issued) is None
+
+
+def test_a_job_the_volume_refuses_to_record_leaves_no_directory_behind(
+        tmp_path, monkeypatch):
+    """Nothing else would ever remove it, and every later start would warn.
+
+    There is no retention and nothing sweeps `data/jobs/`, so an empty job
+    directory left by a failed `create` would stay for the life of the volume.
+    """
+    store = JobStore(tmp_path / "data")
+    issued = "K" * 22
+    monkeypatch.setattr(jobs_module.secrets, "token_urlsafe", lambda _n: issued)
+
+    def full_volume(*_args, **_kw):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(store, "_write", full_volume)
+    with pytest.raises(OSError):
+        store.create("proj1", "abc123")
+
+    assert not (store.root / issued).exists()
+
+
+def test_a_jobs_temporary_files_land_where_the_startup_sweep_looks(
+        tmp_path, monkeypatch):
+    """`Store._sweep_leftovers` collects `.wip-` in the data root, not below it.
+
+    `atomic_write_bytes` writes a temporary file and renames it, so a process
+    killed between the two leaves the temporary behind. In `data/jobs/` or in a
+    job's own directory nothing would ever collect it; in the data root the
+    store's startup sweep does.
+
+    Asserted at the call rather than by hunting for a file afterwards, because
+    on every path that does not crash the temporary is renamed or unlinked
+    before anything could look: what has to hold is WHERE it would have been.
+    """
+    data = tmp_path / "data"
+    store = JobStore(data)
+    written = []
+    real = jobs_module.atomic_write_bytes
+
+    def recording(path, payload, *, tmp_dir=None):
+        # The EFFECTIVE directory: `atomic_write_bytes` falls back to the
+        # target's own parent, so `None` here means "beside the target".
+        written.append((path, Path(tmp_dir) if tmp_dir else path.parent))
+        return real(path, payload, tmp_dir=tmp_dir)
+
+    monkeypatch.setattr(jobs_module, "atomic_write_bytes", recording)
+    job_id = store.create("proj1", "abc123")["id"]
+    store.start(job_id)
+    store.finish(job_id, state=STATE_DONE, code=201,
+                 build_url="/project/proj1/abc123/", log="a build said this\n")
+    monkeypatch.undo()
+
+    assert {path.name for path, _ in written} == {"job.json", "log.txt"}
+    for target, tmp in written:
+        assert tmp == data.resolve(), (
+            f"a .wip- for {target} would land in {tmp}, which the startup "
+            f"sweep does not walk")
 
 
 def test_a_log_that_cannot_be_written_at_all_still_finishes_the_job(tmp_path,
