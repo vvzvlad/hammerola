@@ -752,6 +752,7 @@ describe('the one press listener on a viewport', () => {
 
       leaveA()
       leaveA()
+      expect(removed).toHaveBeenCalledTimes(1)
       expect(removed).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
 
       const c = join(vp, 1, true)

@@ -734,10 +734,9 @@ export class HmrViewport extends HTMLElement {
       // And a drag of an axis arrow or a plane quad is a THIRD one, taken in a
       // window listener of the viewport's in the same way. It is concluded
       // rather than abandoned, and the reason is what ABANDONING would cost
-      // here: the part
-      // is standing displaced in `this.moved` with nothing in the document
-      // claiming it, and the next push would send it home under the reader's
-      // hand.
+      // here: the part is standing displaced in `this.moved` with nothing in
+      // the document claiming it, and the next push would send it home under
+      // the reader's hand.
       this.gizmo.endDrag();
       // And a drag of a RING is a FOURTH, on a widget in the scene whose press
       // was taken in a window listener of the viewport's — which the idle clock
