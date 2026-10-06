@@ -70,12 +70,10 @@ import { internals } from "./internals.js";
  * highest — and, having no depth test either, it is drawn over the part it is
  * standing on rather than inside it.
  *
- * AND THREE BANDS RATHER THAN ONE, because the paint order is the press order
- * INVERTED. `element.js` builds the manipulator, then the grip, then the rings,
- * and the earliest-built keeps a contested press, since
- * `stopImmediatePropagation` silences only what was registered later — so what
- * the reader presses has to be what they see on top, or the widget under the
- * hand and the widget that answers are two different widgets.
+ * AND THREE BANDS RATHER THAN ONE, because the band is the press order too:
+ * `joinPresses` hands a contested press to the highest band that takes it, so
+ * what the reader presses is what they see on top, and the widget under the
+ * hand and the widget that answers cannot be two different widgets.
  *
  * EACH WIDGET'S OWN LADDER IS UNTOUCHED INSIDE ITS BAND: three carries a
  * group's `renderOrder` down as `groupOrder` and sorts on that BEFORE each
@@ -168,6 +166,53 @@ function fanoutOn(viewer) {
   return hook[FANOUT];
 }
 
+/** The viewport's one press listener, tagged on it so a second widget finds it. */
+const PRESSES = Symbol("hammerola.presses");
+
+/**
+ * Put `take(event)` among the viewport's presses at paint band `order`, and
+ * return the call that takes it back out.
+ *
+ * ONE WINDOW LISTENER FOR EVERY WIDGET, because between listeners on one node
+ * only the order they were added in decides, and that is a fact about
+ * `element.js` that no widget can state. Here the highest band is asked first,
+ * ties in the order they joined, and the first `take` to answer true keeps the
+ * press — so what answers is what is drawn on top.
+ *
+ * ON `vp` AND LAZY, for `fanoutOn`'s reason: the list is that viewport's and
+ * dies with it, and the listener is on the window only while somebody is in it.
+ */
+export function joinPresses(vp, order, take) {
+  if (!vp[PRESSES]) {
+    const members = new Set();
+    const onDown = (event) => {
+      // `sort` is stable, which is the whole of the tie-break.
+      const ranked = [...members].sort((a, b) => b.order - a.order);
+      for (const member of ranked) {
+        if (!member.take(event)) continue;
+        // ONE CALL AND NOT TWO: `stopImmediatePropagation` sets the propagation
+        // flag as well (DOM, "stop immediate propagation flag"), so a
+        // `stopPropagation` beside it is a line that cannot change anything. The
+        // tests therefore ask whether the neighbour RAN, not which method was
+        // called.
+        event.stopImmediatePropagation();
+        event.preventDefault();
+        return;
+      }
+    };
+    vp[PRESSES] = { members, onDown };
+    addEventListener("pointerdown", onDown, true);
+  }
+  const { members, onDown } = vp[PRESSES];
+  const member = { order, take };
+  members.add(member);
+  return () => {
+    if (!members.delete(member) || members.size) return;
+    removeEventListener("pointerdown", onDown, true);
+    delete vp[PRESSES];
+  };
+}
+
 /**
  * One widget living in the library's scene: `{refresh, attach, detach, destroy}`.
  *
@@ -194,9 +239,14 @@ function fanoutOn(viewer) {
  * — where two pieces cross, the press has to go to the one the reader can see.
  * `gizmo.js` states that rule where it keeps its own `RANK`.
  *
+ * `handOver(event)` is optional and is called on every press the higher bands
+ * left, BEFORE `wanted` and the ray are asked: for a widget whose press has
+ * gestures to end even when it misses. `rings.js` is the one that has them.
+ *
  * `order` is the caller's own band out of the three above, and the caller picks
  * it because which widget is drawn over which is a fact about the set of them
- * rather than about this scaffolding.
+ * rather than about this scaffolding. It is the widget's place in
+ * `joinPresses` as well.
  *
  * `place` ANSWERS RATHER THAN HIDING, which is the one place this departs from
  * `createLayer`'s contract: there each layer owns the `display` of its own
@@ -205,8 +255,8 @@ function fanoutOn(viewer) {
  * of them ran last.
  */
 export function createScene3D(vp,
-                              { wanted, build, place, press, rank, cursor,
-                                order }) {
+                              { wanted, build, place, press, handOver, rank,
+                                cursor, order }) {
   // Null until the first `attach` brings the namespace; everything below that
   // needs three checks for the group rather than for the module, because the two
   // arrive together and the group is the one the work is done on.
@@ -360,31 +410,19 @@ export function createScene3D(vp,
    * and a press it does not want is a press it has no business taking away from
    * anybody else.
    *
-   * IMMEDIATE, AND THAT WORD IS WHAT KEEPS TWO WIDGETS IN ONE SCENE APART.
-   * Every widget built here puts its `onDown` on this same node in this same
-   * phase, and `rings.js` puts a `handOver` of its own beside them;
-   * `stopPropagation` does not reach a second listener on the SAME node — it
-   * only stops the event travelling onward — so without the immediate form one
-   * press would be taken by the grip AND start a rotation, which is not a
-   * gesture anybody asked for. Which of the two keeps it is decided by ORDER,
-   * since "immediate" silences only what was registered LATER: the guarantee is
-   * really "the grip is built before the rings" in `element.js`. That is a fact
-   * about that file and not about either widget, which is why it is pinned on
-   * the source rather than here — see `tests/test_ui_source.py`. A listener
-   * carries nothing that says whose it is.
+   * TRUE IS THE WHOLE ANSWER, and `joinPresses` makes the refusals on it. It is
+   * also what keeps two widgets in one scene apart: the press goes to the
+   * highest band that answers true and no further, so one press cannot be taken
+   * by the grip AND start a rotation, and where the two overlap the one drawn
+   * on top keeps it.
    */
   function onDown(event) {
+    if (handOver) handOver(event);
     const g = wanted() ? internals(vp.viewer) : null;
-    if (!g || event.target !== g.canvas) return;
+    if (!g || event.target !== g.canvas) return false;
     const at = hit(g, event);
-    if (!at) return;
-    if (!press(event, g, at)) return;
-    // ONE CALL AND NOT TWO: `stopImmediatePropagation` sets the propagation flag
-    // as well (DOM, "stop immediate propagation flag"), so a `stopPropagation`
-    // beside it is a line that cannot change anything. The tests below therefore
-    // ask whether the neighbour RAN, not which method was called.
-    event.stopImmediatePropagation();
-    event.preventDefault();
+    if (!at) return false;
+    return press(event, g, at);
   }
 
   /** Where the cursor is standing, for the cursor alone. */
@@ -420,7 +458,7 @@ export function createScene3D(vp,
     if (viewer) viewer.update(true, false);
   }
 
-  addEventListener("pointerdown", onDown, true);
+  const leavePresses = joinPresses(vp, order, onDown);
   addEventListener("pointermove", onMove, true);
 
   return {
@@ -497,7 +535,7 @@ export function createScene3D(vp,
 
     destroy() {
       leave();
-      removeEventListener("pointerdown", onDown, true);
+      leavePresses();
       removeEventListener("pointermove", onMove, true);
       wear(null);
       if (group && group.parent) group.parent.remove(group);

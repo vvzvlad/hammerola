@@ -16,14 +16,10 @@
 //
 // WHICH IS NOT THE SAME AS "THEY CANNOT COLLIDE", and that changed when both
 // halves became objects in the scene. Every widget here reads its press off the
-// CANVAS in a capture-phase listener on the window, so all of them see every
-// press; what settles a contested one is the ORDER they were constructed in,
-// since `stopImmediatePropagation` silences only what was registered later.
-// `element.js` builds THESE FIRST, then the grip, then the rings, so a press
-// two of them could take is this widget's; `tests/test_ui_source.py` holds all
-// three pairwise orders, because a listener carries nothing that says whose it
-// is. The paint says the same thing the other way up — `GIZMO_ORDER` is the
-// topmost band in scene3d.js — so what the reader sees on top is what answers.
+// CANVAS, so all of them could answer one press; what settles a contested one
+// is the paint band, since `joinPresses` in scene3d.js asks the topmost band
+// first. `GIZMO_ORDER` is that band, so a press two of them could take is this
+// widget's, and what the reader sees on top is what answers.
 //
 // WHY IT EXISTS. The Move tool used to drag a part freely in the plane of the
 // screen, off a press on the part itself, which is the right gesture for "put
@@ -758,9 +754,9 @@ export function createGizmo(vp) {
    * own `event.target !== g.canvas` and was declined there by construction.
    * Both widgets read the same node now, so the separation is: each answers
    * only for a ray that landed on its OWN meshes, and where two really do
-   * overlap the ORDER `element.js` builds them in decides — these are built
-   * first, so `stopImmediatePropagation` here silences the rings and not the
-   * other way about. `tests/test_ui_source.py` holds that order.
+   * overlap the paint band decides — `GIZMO_ORDER` is above `RINGS_ORDER`, so
+   * `joinPresses` asks this widget first and the rings never see a press it
+   * keeps.
    *
    * MEASURED ONCE AND HELD FOR THE WHOLE GESTURE, exactly as `onDown` in
    * handle.js takes the plane's screen axis and `onDown` in rings.js its ring:
@@ -799,9 +795,9 @@ export function createGizmo(vp) {
     // spells the cost of.
     //
     // AND IT IS THIS FILE'S JOB rather than `handOver`'s in rings.js, because a
-    // press this widget keeps never reaches that listener at all: it was
-    // registered LATER, and `scene3d.js` refuses the event with
-    // `stopImmediatePropagation`.
+    // press this widget keeps never reaches that hand-over at all: the rings
+    // stand in a lower band, and `joinPresses` in scene3d.js stops at the first
+    // band that takes the press.
     //
     // NO CHECK THAT THE NEIGHBOUR IS THERE, and that is a fact about
     // `element.js` rather than optimism. It builds this widget and then the
@@ -913,7 +909,7 @@ export function createGizmo(vp) {
    *
    * THE TWIN OF `vp.endGesture`, of the section grip's `endDrag` and of the
    * rings', and it exists for the same failure all three were written for: the
-   * press was taken in a window listener this widget owns, so neither that
+   * press was taken in a window listener the widgets share, so neither that
    * gesture nor the idle clock that defers the swap ever saw it, and the
    * release that would have concluded it never comes. Concluding rather than
    * abandoning, and the reason is what ABANDONING costs: the part stands

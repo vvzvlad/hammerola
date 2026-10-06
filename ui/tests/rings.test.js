@@ -133,13 +133,9 @@ const CENTRE_AT = [0, 0, 45]
  * DOM really dispatched at one. The rect is stubbed on because jsdom computes
  * no layout.
  *
- * `arrows` STANDS THE OTHER HALF UP FOR REAL, and it does it BEFORE the rings
- * because `element.js` does: both halves now read their press off the canvas in
- * a capture-phase listener on the window, and `stopImmediatePropagation`
- * silences only what was registered LATER — so construction order is the whole
- * of which one wins a contested press, and a fixture that built them the other
- * way round would be testing a page that does not exist.
- * `tests/test_ui_source.py` is what holds the real order.
+ * `arrows` STANDS THE OTHER HALF UP FOR REAL, on the same viewport and so in
+ * the same press listener (`joinPresses` in scene3d.js): which of the two wins
+ * a contested press is their paint band, whatever order this builds them in.
  */
 function scene({
   selected = [PART], groups = { [PART]: solid(PART) }, camera, gridSize = 100,
@@ -560,11 +556,10 @@ describe('what a ring is built out of', () => {
 
   it('stands in the lowest band, in the one list all three widgets share', () => {
     // TWO HALVES OF ONE ANSWER. The band is where this widget is drawn among
-    // the three standing in this scene, and it is the LOWEST because
-    // `element.js` builds the rings LAST and the earliest-built keeps a
-    // contested press — what the reader presses has to be what they can see. A
-    // knob over a quad it does not answer for is the exact failure this widget
-    // exists to avoid.
+    // the three standing in this scene, and it is the LOWEST because a
+    // contested press goes to the highest band — what the reader presses has to
+    // be what they can see. A knob over a quad it does not answer for is the
+    // exact failure this widget exists to avoid.
     //
     // AND `transparent` IS WHY THE BAND CAN SAY THAT AT ALL: three sorts into
     // its opaque and its transparent lists by that flag before it looks at any
@@ -972,8 +967,8 @@ describe('what takes the press', () => {
     // window listeners from stealing it was `event.target !== g.canvas`. Both
     // read the same canvas now, so what keeps them out of each other's way is
     // that each answers only for a ray that landed on its OWN meshes — and,
-    // where two really do overlap, the order `element.js` builds them in, which
-    // `tests/test_ui_source.py` holds.
+    // where two really do overlap, the paint band, which `joinPresses` in
+    // scene3d.js asks from the top.
     //
     // SO THE TWO TARGETS ARE PRESSED IN TURN, on one canvas, in one scene.
     const s = scene({ arrows: true })
@@ -1062,7 +1057,7 @@ describe('what takes the press', () => {
     expect(b.vp.moved.get(PART).turn).not.toEqual([0, 0, 0])
 
     // AND ON A PRESS THAT MISSES EVERY KNOB, which is the whole reason the
-    // hand-over is a listener of its own rather than the head of the press
+    // hand-over runs ahead of the ray rather than as the head of the press
     // `scene3d.js` routes: that one is called only for a press the ray LANDED
     // on. This is the same reader stranding the same gesture with a second
     // finger on the bare model.
@@ -1107,6 +1102,25 @@ describe('what takes the press', () => {
     rendered(missed.viewer)
     press(missed.canvas, AT_CURVE)
     expect(missed.vp.endGesture).not.toHaveBeenCalled()
+  })
+
+  it('hands over with no rings to stand, and not on a press the arrows kept', () => {
+    // AHEAD OF `wanted`, because what a press strands does not depend on the
+    // rings being on screen. And only for a press no higher band kept: after
+    // the arrows took one, a hand-over would stop the slide just started.
+    const idle = scene({ tool: null })
+    rendered(idle.viewer)
+    expect(shown(idle), 'the premise: no rings are wanted').toBe(false)
+    press(idle.canvas, MIDDLE)
+    expect(idle.vp.gizmo.endDrag).toHaveBeenCalledTimes(1)
+
+    const both = scene({ arrows: true })
+    rendered(both.viewer)
+    const endDrag = vi.spyOn(both.gizmo, 'endDrag')
+    const event = press(both.canvas, onArrow(both, 0))
+    expect(event.stopImmediatePropagation, 'the premise: the arrow took it')
+      .toHaveBeenCalled()
+    expect(endDrag).not.toHaveBeenCalled()
   })
 })
 
@@ -1388,8 +1402,8 @@ describe('one whole drag', () => {
 
   it('concludes a drag the scene is being pulled out from under', async () => {
     // The twin of `vp.endGesture`, and the reason it is a fourth call rather
-    // than the same one: the press was taken in a window listener this widget
-    // owns, so neither that gesture nor the idle clock that defers the swap
+    // than the same one: the press was taken in a window listener the widgets
+    // share, so neither that gesture nor the idle clock that defers the swap
     // ever saw it.
     const s = scene()
     rendered(s.viewer)
