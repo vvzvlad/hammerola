@@ -645,17 +645,10 @@ def _extract_members(tar, dest: Path, real_dest: str,
                     # `fdopen` adopts the descriptor only once it has
                     # succeeded; if it raises, nothing owns `fd` any more and
                     # nothing will ever close it — one leaked descriptor per
-                    # member, on a process that also serves every read.
-                    #
-                    # An `open()` opener would not need this guard: what it
-                    # returns is owned by `FileIO` on every failure path of
-                    # its own, while this is owned only because the guard
-                    # here exists. What keeps this one off
-                    # the opener is `dir_fd=parent_fd` in
-                    # `_create_member_file` — `open()`'s opener is called
-                    # with `(path, flags)` and nothing else, so the directory
-                    # descriptor would have to ride in on a closure. It
-                    # could; this is a choice rather than an impossibility.
+                    # member, on a process that also serves every read. An
+                    # `open()` opener would own `fd` on failure by itself, but
+                    # it is called with `(path, flags)` only, and
+                    # `dir_fd=parent_fd` would have to ride in on a closure.
                     os.close(fd)
                     raise
                 with out:
