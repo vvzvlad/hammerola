@@ -786,12 +786,7 @@ def make_handler(store: Store, comment_store: CommentStore,
             and it costs one stat. Note it must be done on the RESOLVED path:
             `latest` is a symlink, and following it is the whole point, so the
             question is not "is there a symlink" but "where did it land".
-
-            `store.resolve_inside` is what asks both halves of that, with
-            `resolve_settled` AND NOT `resolve`, because that symlink is being
-            swapped under this reader by whoever is publishing — `safeio` carries
-            the measurement (issue #70). It is the same answer with an EINVAL
-            retried; a missing file is still refused on the first try.
+            `store.resolve_inside` is what asks both halves of that.
 
             `uploaded` says whether the bytes came out of a push, which decides
             how narrowly the content type is whitelisted. `content` overrides
@@ -923,13 +918,6 @@ def make_handler(store: Store, comment_store: CommentStore,
             build directory can exist without being publishable (nothing else
             creates one, but a restore or a hand-copy can), and a page that then
             fails every fetch is worse than a 404.
-
-            `store.resolve_inside` for the reason `_send_file` gives, and this is
-            the SECOND of the two sites rather than a second observation: both
-            failures issue #70 recorded were files, not pages. `build_dir` is
-            `<project>/latest` whenever the URL named that pointer, so this
-            resolve crosses the same symlink at the same instant — a 404 here
-            costs the whole page instead of one fetch.
             """
             try:
                 store.resolve_inside(build_dir / BUILD_META_FILE)

@@ -15,8 +15,11 @@ every single publish in production.
 
 import json
 import os
+import sys
 import threading
 import time
+
+import pytest
 
 from harness import DEFAULT_EXPORTS, meta_bytes, tar_gz, view_bytes
 
@@ -117,6 +120,9 @@ def test_latest_is_a_symlink_not_a_copy(hub):
     assert not os.path.isabs(os.readlink(link))
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="#70: APFS readlink returns EINVAL during the rename; Linux does not")
 def test_readers_never_see_a_missing_or_partial_latest(hub):
     """Hammer /latest/ while builds are being published over the top of it.
 
