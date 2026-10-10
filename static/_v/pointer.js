@@ -27,13 +27,30 @@ const PID = location.pathname.split("/")[2];
 // that traps the back button.
 const go = (name) => location.replace(name + "/");
 
+// The key the interface keeps the owner's token under (ui/src/store.js); the
+// spelling is compared from tests/test_pointer_memory.py.
+const TOKEN_KEY = "hammerola.token";
+
+function readToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch (e) {
+    // Private mode or blocked site data: no token, so builds.json answers 401
+    // and the reader lands on `latest`.
+    return null;
+  }
+}
+
 /** Is the local slot actually occupied? (SPEC 7.6) */
 async function hasDev() {
   try {
     // `no-store` because the answer decides where the reader lands: builds.json
     // is served no-cache, but a revalidation skipped by a back/forward cache
-    // would resolve today's visit on yesterday's slot.
-    const r = await fetch("builds.json", { cache: "no-store" });
+    // would resolve today's visit on yesterday's slot. It takes the token, so
+    // only a browser holding one can learn the draft exists.
+    const token = readToken();
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const r = await fetch("builds.json", { cache: "no-store", headers });
     if (!r.ok) return false;
     const info = await r.json();
     return Boolean(info && info.has_dev);

@@ -48,11 +48,7 @@ def run(args) -> int:
     limit = _limit(args.limit)
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
-    # The token is required even though `builds.json` is public, and that is a
-    # choice rather than an oversight: this tool has ONE secret and one login,
-    # so a machine that cannot answer "as whom" is a machine that has not been
-    # set up — and being told that here, by a command somebody runs first, is
-    # better than being told it by the first push.
+    # The token is required: `builds.json`, the list read below, is behind it.
     hub = hub_for(root)
 
     title = project.read_project_title(root)

@@ -10,17 +10,18 @@
 //                                       guarded too and are simply not listed
 //     /start                            where to get the skill and the client,
 //                                       and whether anything is published here
-//                                       yet -- PUBLIC. `meta.json` and
-//                                       `builds.json` below are asked for
-//                                       without a token as well; what is
-//                                       special here is that the ANSWER is for
-//                                       a reader who has no token at all
+//                                       yet -- PUBLIC. `meta.json` below is
+//                                       asked for without a token as well;
+//                                       what is special here is that the
+//                                       ANSWER is for a reader who has no
+//                                       token at all
 //     /project/<pid>/                   the project, on whichever pointer the
 //                                       reader was last on (SPEC 9)
 //     /project/<pid>/<slot>/            the page, where <slot> is a commit id
 //                                       or one of the two moving names
 //     /project/<pid>/<slot>/meta.json   this build: title, views, part catalogue
 //     /project/<pid>/builds.json        the picker: pointers plus the history
+//                                       -- EDIT_TOKEN
 //     /project/<pid>/<slot>/<view file> the geometry, ~2 MB of it
 //     /project/<pid>/<a>/compare/<b>/   the two documents of one comparison --
 //                                       EDIT_TOKEN, both of them; see the
@@ -155,8 +156,13 @@ export const loadMeta = (fresh, base) =>
   getJson(`${base === undefined ? PAGE.base : base}meta.json`,
           fresh ? { cache: 'no-store' } : undefined);
 
-/** The build picker: `{pid, project, title, has_dev, latest, builds[]}`. */
-export const loadBuilds = () => getJson(`/project/${PAGE.pid}/builds.json`);
+/** The build picker: `{pid, project, title, has_dev, latest, builds[]}`.
+ *
+ * Behind the token: it lists every revision and the draft, and a shared build
+ * link must open that build alone.
+ */
+export const loadBuilds = (token) =>
+  getJson(`/project/${PAGE.pid}/builds.json`, { headers: bearer(token) });
 
 // -- the front page ---------------------------------------------------------
 

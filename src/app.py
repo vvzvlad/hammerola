@@ -20,7 +20,7 @@ Routing (SPEC 3, 7.4):
     GET  /project/<pid>/                      picks the pointer this reader last
                                               opened (SPEC 9); the URL without
                                               the slash 302s to this one
-    GET  /project/<pid>/builds.json           build picker
+    GET  /project/<pid>/builds.json           build picker             EDIT_TOKEN
     GET  /project/<pid>/latest/<file>         newest build of a commit, no-cache
     GET  /project/<pid>/dev/<file>            the local slot, no-cache
     GET  /project/<pid>/<commit>/<file>       one build's files, immutable forever
@@ -78,10 +78,10 @@ exact because the two halves look inconsistent side by side. A BUILD is public:
 its page, its meta.json, its geometry, all anonymous and cached for a year. That
 is the product — a permanent link somebody was given and pasted into a chat, and
 a link that asks the recipient for a secret is not one. THE LIST OF WHAT EXISTS
-is not: `/index.json` is the only document that answers "what is on this hub",
-nobody is handed it, and every id in it is the prefix of every permanent URL that
-project will ever have. So the rule is that being given a link gets you that
-build, and nothing gets you the enumeration.
+is not: `/index.json` answers "what is on this hub", `builds.json` answers "what
+else this project has" — every revision and whether a draft exists — and nobody
+is handed either. So the rule is that being given a link gets you that build,
+and nothing gets you the enumeration.
 
 `/start` IS THE ONE EXCEPTION TO THE SECOND HALF OF THAT, at the width of a
 single boolean. It is public because it exists to be read by somebody who has no
@@ -573,10 +573,10 @@ DELETE_ROUTES = (
 
 
 class HubHandler(BaseHTTPRequestHandler):
-    # HTTP/1.1 for keep-alive: a build page pulls meta.json, builds.json and a
-    # 2 MB view, and a fresh connection for each is pure latency. Every reply
-    # below therefore carries an accurate Content-Length, which is what makes
-    # persistent connections legal.
+    # HTTP/1.1 for keep-alive: a build page pulls meta.json, a 2 MB view and,
+    # for the owner, builds.json, and a fresh connection for each is pure
+    # latency. Every reply below therefore carries an accurate Content-Length,
+    # which is what makes persistent connections legal.
     protocol_version = "HTTP/1.1"
     server_version = "hammerola"
     sys_version = ""
@@ -1037,6 +1037,8 @@ class HubHandler(BaseHTTPRequestHandler):
 
         second = rest[1]
         if second == PROJECT_BUILDS_FILE and len(rest) == 2:
+            if not self._require_token(with_body):
+                return None
             return self._send_file(self.server.store.builds_json_path(pid),
                                    CACHE_NONE, with_body)
 
