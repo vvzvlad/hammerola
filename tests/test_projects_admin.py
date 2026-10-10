@@ -60,7 +60,7 @@ def test_a_rename_shows_up_where_a_project_is_named(hub):
     revision = _publish(hub)
     assert _rename(hub, "proj1", "The bracket, mk2").status_code == 200
 
-    picker = hub.get("/project/proj1/builds.json").json()
+    picker = hub.builds("proj1").json()
     assert picker["title"] == "The bracket, mk2"
     card, = hub.index().json()
     assert card["title"] == "The bracket, mk2"
@@ -90,11 +90,11 @@ def test_the_next_push_supersedes_a_rename(hub):
     outrank every future push for ever."""
     _publish(hub)
     assert _rename(hub, "proj1", "Renamed on the hub").status_code == 200
-    assert hub.get("/project/proj1/builds.json").json()["title"] == \
+    assert hub.builds("proj1").json()["title"] == \
         "Renamed on the hub"
 
     _publish(hub, body=good_build("second"))
-    assert hub.get("/project/proj1/builds.json").json()["title"] == \
+    assert hub.builds("proj1").json()["title"] == \
         "Demo project"
 
 
@@ -110,7 +110,7 @@ def test_renaming_needs_the_publishing_secret_and_says_nothing_without_it(hub):
         unknown = _rename(hub, "nosuchproject", "nope", token=token)
         assert unknown.status_code == 401
         assert unknown.json() == refused.json()
-    assert hub.get("/project/proj1/builds.json").json()["title"] == \
+    assert hub.builds("proj1").json()["title"] == \
         "Demo project"
 
 
@@ -132,7 +132,7 @@ def test_a_title_that_could_rewrite_the_line_around_it_is_refused(hub):
         assert _rename(hub, "proj1", bad).status_code == 422, bad
     assert _rename(hub, "proj1", None).status_code == 422
     assert _rename(hub, "proj1", "x", body=b"not json").status_code == 422
-    assert hub.get("/project/proj1/builds.json").json()["title"] == \
+    assert hub.builds("proj1").json()["title"] == \
         "Demo project"
 
 

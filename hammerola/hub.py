@@ -47,7 +47,7 @@ other is meant.
 And the routes the READ-ONLY commands stand on, none of which is new — `status`
 and `comments` are spelled out of what the browser already fetches:
 
-    GET  /project/<pid>/builds.json       PUBLIC. `{pid, project, title,
+    GET  /project/<pid>/builds.json       Bearer. `{pid, project, title,
                                           has_dev, latest, builds[]}`, and
                                           404 for a project that has never
                                           published anything.

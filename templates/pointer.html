@@ -26,7 +26,8 @@
      localStorage, which only the browser can read.
 
      This page is deliberately tiny and pulls NONE of the viewer: its whole job
-     is to read one key and leave. Everything it shows lives in the header —
+     is to read the remembered pointer (and, for `dev`, the token it is checked
+     with) and leave. Everything it shows lives in the header —
      and that header is a COPY, not something borrowed. It reads as borrowed
      because site.css used to dress all three pages, but build.html and
      index.html have both dropped it: they are drawn by the React bundle, which

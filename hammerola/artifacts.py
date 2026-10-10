@@ -9,12 +9,11 @@ secret and lives in a tree the file server cannot reach at all. One verb with a
 something a person has to remember; two verbs make it something they choose.
 
 THE ROUTE THIS USES NEEDS NO SECRET — it is the same URL the build page fetches
-— and the command still expects the machine to be logged in, exactly as `status`
-does and for the same reason: this tool has one login, and a machine that cannot
-say where the hub is has not been set up. What the split buys is not a command
-that works without credentials; it is that fetching a model's CODE is a
-different word from fetching its printable output, so neither can be done by
-accident while meaning the other.
+— and the command still expects the machine to be logged in: this tool has one
+login, and a machine that cannot say where the hub is has not been set up. What
+the split buys is not a command that works without credentials; it is that
+fetching a model's CODE is a different word from fetching its printable output,
+so neither can be done by accident while meaning the other.
 
 WHAT IT FETCHES IS WHAT `meta.json` DECLARES, and there is no directory listing
 anywhere on the service to fetch instead — deliberately: the hub serves files by

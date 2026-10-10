@@ -182,9 +182,9 @@ def test_builds_json_answers_has_dev_for_real(hub):
     """
     hub.publish("proj1", "abc123", good_build())
     # True from the first publish: a commit fills the slot with itself (#78).
-    assert hub.get("/project/proj1/builds.json").json()["has_dev"] is True
+    assert hub.builds("proj1").json()["has_dev"] is True
     hub.publish_dev("proj1", good_build())
-    assert hub.get("/project/proj1/builds.json").json()["has_dev"] is True
+    assert hub.builds("proj1").json()["has_dev"] is True
 
     # And it is read off the disk rather than assumed: with the slot taken away
     # the next rewrite of the file says so. A rename is what rewrites it without
@@ -195,7 +195,7 @@ def test_builds_json_answers_has_dev_for_real(hub):
                        headers={"Content-Type": "application/json",
                                 "Authorization": f"Bearer {TOKEN}"},
                        ).status_code == 200
-    assert hub.get("/project/proj1/builds.json").json()["has_dev"] is False
+    assert hub.builds("proj1").json()["has_dev"] is False
 
 
 # -- what records the choice --------------------------------------------------
@@ -233,6 +233,22 @@ def test_the_writer_and_the_reader_spell_the_same_key():
     assert namespace.group(1) + built.group(1) == prefix.group(1), (
         f"the interface writes `{namespace.group(1) + built.group(1)}<pid>` and "
         f"the resolver reads `{prefix.group(1)}<pid>`")
+
+    # The token is the second key the resolver reads behind the interface's back:
+    # it carries it to builds.json, and a drift sends the owner to `latest`.
+    resolver_token = re.search(r'const TOKEN_KEY = "([^"]+)"', _code(RESOLVER))
+    assert resolver_token, "static/_v/pointer.js no longer declares TOKEN_KEY"
+    store_token = re.search(r"const TOKEN_KEY = `\$\{NS\}([^`$]*)`", store)
+    assert store_token, \
+        "ui/src/store.js no longer builds the token key out of NS"
+    assert namespace.group(1) + store_token.group(1) == resolver_token.group(1), (
+        f"the interface writes `{namespace.group(1) + store_token.group(1)}` and "
+        f"the resolver reads `{resolver_token.group(1)}`")
+    # And CARRIED: a key read and never sent lands the owner on `latest` too.
+    resolver = _code(RESOLVER)
+    assert re.search(r'fetch\("builds\.json",[^)]*headers', resolver), \
+        "static/_v/pointer.js asks for builds.json without the token's header"
+    assert "Authorization: `Bearer ${token}`" in resolver
 
 
 def test_a_stored_value_that_is_not_a_pointer_reads_as_nothing():

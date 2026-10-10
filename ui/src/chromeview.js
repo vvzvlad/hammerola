@@ -45,6 +45,7 @@ export function chromeView(s, props, deps) {
     set, setState, stateNow, toast, toolsOff, subtitle,
     applyTheme, closeTab, compareRevisions, fitView, saveFrame, showView,
     loadFeed, loadProposal, proposalMoves, proposalOverlay, stageProposal,
+    refreshBuilds, viewQuery,
   } = deps;
 
   const cmpReady = s.cmp.length === 2;
@@ -89,6 +90,8 @@ export function chromeView(s, props, deps) {
   // are three chances for the button to name a view the rows disagree with.
   const views = (meta && meta.views) || [];
   const shownView = views.find((v) => v.id === s.view);
+
+  const draft = (meta && meta.commit) === 'dev';
 
   return {
     // -- the header row ------------------------------------------------------
@@ -146,8 +149,13 @@ export function chromeView(s, props, deps) {
     // whole already.
     slotTitle: shortId(PAGE.slot) === PAGE.slot ? '' : PAGE.slot,
     slotDate: meta ? stamp(meta.built) : '',
-    revToggle: stop(() => setState({ revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false })),
-    revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid var(--line);background:var(--card-bg);border-radius:6px;cursor:pointer',
+    // WITHOUT A TOKEN THE BUTTON IS A LABEL: builds.json is behind the token,
+    // so a reader holding a shared link has no list to open and no menu.
+    revPicker: !viewer,
+    revToggle: viewer ? undefined
+      : stop(() => setState({ revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false })),
+    revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid var(--line);background:var(--card-bg);border-radius:6px'
+      + (viewer ? '' : ';cursor:pointer'),
     revMenuStyle: popover({
       narrow, anchor: 'left:0;top:40px', width: '430px', radius: '9px', z: 40, open: s.revOpen }),
     revRows,
@@ -158,6 +166,28 @@ export function chromeView(s, props, deps) {
     cmpLabel: cmpReady ? `${shortId(s.cmp[0])} → ${shortId(s.cmp[1])}` : '',
     compareBtnStyle: `padding:7px 14px;border-radius:6px;font:600 12px ${SANS};cursor:pointer;` + (cmpReady ? ON_ACCENT : 'background:var(--sunken-bg);color:var(--text-faint);pointer-events:none'),
     startCompare: stop(() => compareRevisions(s.cmp)),
+
+    // -- the permanent link of the build on screen ---------------------------
+    //
+    // `meta.commit` and not `PAGE.slot`: on `latest` the address is a moving
+    // name, while meta names the revision that answered. The local slot's
+    // commit is the constant `dev`, which has no permanent address to give.
+    // No `stop()`: it opens nothing, so the click may close a menu elsewhere.
+    shareTitle: draft ? 'A draft has no permanent link — publish it with hammerola commit' : '',
+    shareBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)'
+      + (draft ? ';color:var(--text-faint);cursor:default' : ''),
+    // `writeText` refuses through its promise (no focus, no permission), and
+    // `navigator.clipboard` is missing altogether outside https — both have to
+    // end in the failure toast rather than in "copied".
+    copyLink: (draft || !meta) ? undefined : () => {
+      const link = `${location.origin}${projectUrl(PAGE.pid)}${encodeURIComponent(meta.commit)}/${viewQuery(s.view, views)}`;
+      return Promise.resolve()
+        .then(() => navigator.clipboard.writeText(link))
+        .then(() => toast('link copied'), (error) => {
+          console.warn('clipboard', error);
+          toast('Could not copy the link');
+        });
+    },
 
     statusChipStyle: `display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:6px;font:500 11.5px ${SANS};` + status.style,
     statusText: status.text,
@@ -217,6 +247,8 @@ export function chromeView(s, props, deps) {
                       // no third. From the callback for the reason the feed
                       // is: the request reads `stateNow().token`.
                       loadProposal();
+                      // And the revision list, behind the same token.
+                      refreshBuilds();
                       stageProposal(stateNow().proposal || emptyProposal());
                     });
       toast('Editing is on in this browser');
@@ -259,7 +291,9 @@ export function chromeView(s, props, deps) {
       // until some later edit happened to send a document.
       setState({ token: null, tokenPop: false, tokenDraft: '',
                       composer: null, notePop: null, feed: [],
-                      opsOpen: false, settingsOpen: false, proposalOff: true });
+                      opsOpen: false, settingsOpen: false, proposalOff: true,
+                      // The revision list and its menu were read under it too.
+                      builds: null, revOpen: false });
       proposalOverlay(null);
       proposalMoves(dropMoves(stateNow().proposal));
       set({ tool: null });

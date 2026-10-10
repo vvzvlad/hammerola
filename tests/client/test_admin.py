@@ -74,7 +74,7 @@ def test_rename_moves_the_title_in_both_places(hub, model, capsys):
     out = capsys.readouterr().out
 
     assert project_json(model)["title"] == "The bracket, mk2"
-    assert hub.get("/project/demo0001/builds.json").json()["title"] == \
+    assert hub.builds("demo0001").json()["title"] == \
         "The bracket, mk2"
     assert "The bracket, mk2" in out
 
@@ -145,7 +145,7 @@ def test_renaming_a_project_that_was_never_pushed_still_works(hub_factory,
 
     assert run(model, "build") == 0
     capsys.readouterr()
-    assert building.get("/project/demo0001/builds.json").json()["title"] == \
+    assert building.builds("demo0001").json()["title"] == \
         "Not yet published"
 
 
@@ -161,12 +161,12 @@ def test_a_rename_survives_the_next_push_because_the_file_moved_too(
 
     assert run(model, "rename", "Sticks") == 0
     capsys.readouterr()
-    assert building.get("/project/demo0001/builds.json").json()["title"] == \
+    assert building.builds("demo0001").json()["title"] == \
         "Sticks"
 
     (model / "model.py").write_text("# another revision\n")
     publish(model, capsys)
-    assert building.get("/project/demo0001/builds.json").json()["title"] == \
+    assert building.builds("demo0001").json()["title"] == \
         "Sticks"
 
 

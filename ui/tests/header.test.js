@@ -70,6 +70,7 @@ const onSlot = (slot) => {
 beforeEach(() => onSlot(REV))
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
+import { loadBuilds } from '../src/hub.js'
 import { makeComponent } from './component.js'
 import { collect } from './eltree.js'
 
@@ -402,5 +403,139 @@ describe('the comment rail', () => {
     // outlives a visit.
     const store = await import('../src/store.js')
     expect(Object.keys(store).filter((name) => /rail|comment/i.test(name))).toEqual([])
+  })
+})
+
+// -- a shared link: what its reader is shown, and how the owner gets one -------
+
+describe('a reader without the token', () => {
+  it('gets the revision as a label, with no picker to open', () => {
+    // builds.json is behind the token, so there is no list to open and the
+    // button must not pretend there is one.
+    const c = component()
+    c.state.token = null
+    const v = c.computed()
+    expect(v.revPicker).toBe(false)
+    expect(v.revToggle).toBeUndefined()
+  })
+
+  it('keeps the picker for the owner', () => {
+    const v = component().computed()
+    expect(v.revPicker).toBe(true)
+    expect(typeof v.revToggle).toBe('function')
+  })
+
+  it('is drawn no menu, and the owner is', () => {
+    // The render half of the claim above: a computed flag nobody reads would
+    // leave the rows and Compare on the page.
+    const compareButtons = (c) => collect(c.render(), (el) =>
+      ([].concat(el.props.children).includes('Compare ') ? el : undefined))
+    const viewer = component()
+    viewer.state.token = null
+    expect(compareButtons(viewer)).toHaveLength(0)
+    expect(compareButtons(component())).toHaveLength(1)
+  })
+
+  it('never asks for the list of revisions', () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    try {
+      const c = component()
+      c.state.token = null
+      c.refreshBuilds()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('while the owner asks for it with the token', async () => {
+    // Without the header the owner gets a 401 and an empty picker, silently.
+    const seen = []
+    vi.stubGlobal('fetch', (url, init) => {
+      seen.push(init)
+      return Promise.resolve({ ok: true, json: () => ({}) })
+    })
+    try {
+      await loadBuilds('sekrit')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(seen[0].headers).toEqual({ Authorization: 'Bearer sekrit' })
+  })
+})
+
+describe('Copy link', () => {
+  /** Run the button's click with a stubbed clipboard; what was written, and the toast. */
+  const copy = async (c, writeText) => {
+    const written = []
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: writeText || ((t) => { written.push(t) }) },
+      configurable: true,
+    })
+    try {
+      await c.computed().copyLink()
+    } finally {
+      delete navigator.clipboard
+    }
+    return { written, toast: c.state.toast }
+  }
+
+  it('copies the revision behind `latest`, not the moving name', async () => {
+    onSlot('latest')
+    const { written, toast } = await copy(component())
+    expect(written).toEqual([`${location.origin}/project/proj1/${REV}/`])
+    expect(toast).toBe('link copied')
+  })
+
+  it('carries the view on screen when it is not the first one', async () => {
+    const c = component()
+    c.state.meta.views = [
+      { id: 'assembled', name: 'assembled', file: 'a.json', parts: [], gzip: 0 },
+      { id: 'print', name: 'print', file: 'p.json', parts: [], gzip: 0 },
+    ]
+    c.state.view = 'print'
+    const { written } = await copy(c)
+    expect(written).toEqual([`${location.origin}/project/proj1/${REV}/?v=print`])
+  })
+
+  it('works for a reader without the token too', async () => {
+    const c = component()
+    c.state.token = null
+    const { written } = await copy(c)
+    expect(written).toEqual([`${location.origin}/project/proj1/${REV}/`])
+  })
+
+  it('says so when the clipboard refuses, rather than "copied"', async () => {
+    const { toast } = await copy(component(), () => Promise.reject(new Error('denied')))
+    expect(toast).toBe('Could not copy the link')
+  })
+
+  it('is a button that does it', async () => {
+    // Render half: the handler has to be on the element that says Copy link.
+    const c = component()
+    const button = collect(c.render(), (el) =>
+      (el.props.children === 'Copy link' ? el : undefined))
+    expect(button).toHaveLength(1)
+    const written = []
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: (t) => { written.push(t) } }, configurable: true,
+    })
+    try {
+      await button[0].props.onClick()
+    } finally {
+      delete navigator.clipboard
+    }
+    expect(written).toEqual([`${location.origin}/project/proj1/${REV}/`])
+  })
+
+  it('has nothing to copy in the draft slot', () => {
+    // The local slot is rewritten by every push and has no permanent address.
+    onSlot('dev')
+    const c = component()
+    c.state.meta.commit = 'dev'
+    const v = c.computed()
+    expect(v.copyLink).toBeUndefined()
+    expect(v.shareTitle).toMatch(/hammerola commit/)
   })
 })

@@ -26,7 +26,7 @@ def _build(marker, built="2026-08-21T04:16:00Z"):
 
 
 def _picker(hub, pid="proj1"):
-    r = hub.get(f"/project/{pid}/builds.json")
+    r = hub.builds(pid)
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -52,9 +52,8 @@ def test_a_row_carries_what_its_revision_said_it_was(hub):
     two revisions apart without saying what either one is. The message travels
     on the push, is stored with the record, and is projected here beside the id.
 
-    A revision pushed without one gets no key rather than an empty string. The
-    picker is fetched by every visitor of every build page of the project, and
-    "absent" is what every revision published before this field looks like — so
+    A revision pushed without one gets no key rather than an empty string.
+    "Absent" is what every revision published before this field looks like — so
     the browser has to read it as optional either way.
     """
     hub.publish("proj1", "aaa111", _build("c1", "2026-08-01T00:00:00Z"),
@@ -118,8 +117,7 @@ def test_the_picker_follows_what_is_in_the_slot(hub):
 def test_the_picker_is_never_cached(hub):
     """It changes on every publish, so a cached copy offers a stale history."""
     hub.publish("proj1", "aaa111", _build("c1"))
-    assert hub.get("/project/proj1/builds.json"
-                   ).headers["Cache-Control"] == "no-cache"
+    assert hub.builds("proj1").headers["Cache-Control"] == "no-cache"
 
 
 def test_every_offered_destination_actually_answers(hub):

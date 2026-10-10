@@ -1900,7 +1900,9 @@ export default class HammerolaViewer extends React.Component {
 
   async load() {
     const meta = await loadMeta();
-    const builds = await loadBuilds().catch((error) => {
+    // Asked for only with a token: the list is behind it, so a reader holding a
+    // shared link sees that build and no picker (`builds` stays null).
+    const builds = !this.state.token ? null : await loadBuilds(this.state.token).catch((error) => {
       // A project with no builds.json is a project whose picker is empty, not a
       // page that failed: the model in front of the reader is unaffected.
       console.warn('builds', error);
@@ -2370,10 +2372,16 @@ export default class HammerolaViewer extends React.Component {
       // trip of the reader's time on something they are not looking at. Best
       // effort for the same reason the first load treats it that way — a project
       // whose builds.json is missing has an empty picker, not a failed page.
-      loadBuilds()
-        .then((builds) => { if (!this._gone) this.setState({ builds }); })
-        .catch((error) => console.warn('builds', error));
+      this.refreshBuilds();
     });
+  }
+
+  /** Re-read builds.json into the picker — only with a token, which it is behind. */
+  refreshBuilds() {
+    if (!this.state.token) return;
+    loadBuilds(this.state.token)
+      .then((builds) => { if (!this._gone) this.setState({ builds }); })
+      .catch((error) => console.warn('builds', error));
   }
 
   /**
@@ -6253,6 +6261,8 @@ export default class HammerolaViewer extends React.Component {
       showView: this.showView.bind(this),
       loadFeed: this.loadFeed.bind(this),
       loadProposal: this.loadProposal.bind(this),
+      refreshBuilds: this.refreshBuilds.bind(this),
+      viewQuery: this.viewQuery.bind(this),
       proposalMoves: this.proposalMoves.bind(this),
       proposalOverlay: this.proposalOverlay.bind(this),
       stageProposal: this.stageProposal.bind(this),
@@ -6646,36 +6656,43 @@ export default class HammerolaViewer extends React.Component {
               <span style={css(v.statusDotStyle)} />
               <span style={css(HEAD_MONO)}>{v.slot}</span>
               <span style={css(META_MONO)}>{v.slotDate}</span>
-              <span style={css('font-size:9px;color:var(--text-faint)')}>&#9662;</span>
+              {v.revPicker && <span style={css('font-size:9px;color:var(--text-faint)')}>&#9662;</span>}
             </div>
 
             {/* pointers on top, the history below; the ticks pick two to compare */}
-            <div style={css(v.revMenuStyle)}>
-              <div style={css('max-height:308px;overflow:auto')}>
-                {v.revRows.map((r) => (
-                  <React.Fragment key={r.key}>
-                    <div style={css(r.headStyle)}>{r.head}</div>
-                    <div style={css(r.style)}>
-                      <span onClick={r.onCmp} style={css(r.cmpStyle)}>{r.cmpMark}</span>
-                      <span onClick={r.onPick} style={css('display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;min-width:0')}>
-                        <span style={css(r.idStyle)}>{r.id}</span>
-                        <span style={css(r.badgeStyle)}>{r.badge}</span>
-                        <span title={r.message} style={css(r.messageStyle)}>{r.message}</span>
-                        <span style={css(META_MONO)}>{r.date}</span>
-                      </span>
+            {v.revPicker && (
+              <div style={css(v.revMenuStyle)}>
+                <div style={css('max-height:308px;overflow:auto')}>
+                  {v.revRows.map((r) => (
+                    <React.Fragment key={r.key}>
+                      <div style={css(r.headStyle)}>{r.head}</div>
+                      <div style={css(r.style)}>
+                        <span onClick={r.onCmp} style={css(r.cmpStyle)}>{r.cmpMark}</span>
+                        <span onClick={r.onPick} style={css('display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;min-width:0')}>
+                          <span style={css(r.idStyle)}>{r.id}</span>
+                          <span style={css(r.badgeStyle)}>{r.badge}</span>
+                          <span title={r.message} style={css(r.messageStyle)}>{r.message}</span>
+                          <span style={css(META_MONO)}>{r.date}</span>
+                        </span>
+                      </div>
+                    </React.Fragment>
+                  ))}
+                  {v.revEmpty && (
+                    <div style={css(`padding:12px 14px;font:400 11.5px ${SANS};color:var(--text-muted)`)}>
+                      This project has no other builds yet.
                     </div>
-                  </React.Fragment>
-                ))}
-                {v.revEmpty && (
-                  <div style={css(`padding:12px 14px;font:400 11.5px ${SANS};color:var(--text-muted)`)}>
-                    This project has no other builds yet.
-                  </div>
-                )}
+                  )}
+                </div>
+                <div style={css('display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line-soft)')}>
+                  <div onClick={v.startCompare} style={css(v.compareBtnStyle)}>Compare {v.cmpLabel}</div>
+                </div>
               </div>
-              <div style={css('display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line-soft)')}>
-                <div onClick={v.startCompare} style={css(v.compareBtnStyle)}>Compare {v.cmpLabel}</div>
-              </div>
-            </div>
+            )}
+          </div>
+
+          {/* the permanent link of the build on screen, for every reader */}
+          <div onClick={v.copyLink} title={v.shareTitle} style={css(v.shareBtnStyle)}>
+            Copy link
           </div>
 
           {v.showStatus && <div style={css(v.statusChipStyle)}>{v.statusText}</div>}

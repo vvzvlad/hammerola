@@ -221,10 +221,20 @@ def test_a_build_stays_public_while_the_list_does_not(hub):
     for path in ("/", "/project/proj1/", "/project/proj1/abc123/",
                  "/project/proj1/abc123/meta.json",
                  "/project/proj1/abc123/assembled.json",
-                 "/project/proj1/builds.json",
                  "/project/proj1/latest/meta.json",
                  "/_v/site.css"):
         assert hub.get(path).status_code == 200, path
+
+
+def test_the_list_of_revisions_needs_the_token(hub):
+    """A shared build link opens that build and not the project's history.
+
+    `builds.json` names every revision, `latest` and the draft, so it is an
+    enumeration like `/index.json` and takes the same token.
+    """
+    hub.publish("proj1", "abc123", good_build())
+    assert hub.builds("proj1", token=None).status_code == 401
+    assert hub.builds("proj1").status_code == 200
 
 
 def test_the_front_page_shell_needs_no_token(hub):
@@ -308,7 +318,7 @@ def test_latest_serves_the_newest_build(hub):
 
 def test_builds_json_is_served_and_not_cached(hub):
     hub.publish("proj1", "abc123", good_build())
-    r = hub.get("/project/proj1/builds.json")
+    r = hub.builds("proj1")
     assert r.status_code == 200
     assert r.headers["Cache-Control"] == "no-cache"
     assert [b["commit"] for b in r.json()["builds"]] == ["abc123"]

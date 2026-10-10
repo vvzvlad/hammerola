@@ -213,7 +213,7 @@ def _stored(hub, revision, pid="demo0001"):
 
 
 def _picker(hub, pid="demo0001"):
-    r = hub.get(f"/project/{pid}/builds.json")
+    r = hub.builds(pid)
     assert r.status_code == 200, r.text
     return r.json()
 

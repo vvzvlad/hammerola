@@ -1342,8 +1342,8 @@ def _picker_entry(meta: dict) -> dict:
 
     A PROJECTION AND NOT A COPY, which is why it is spelled out rather than
     filtered: a build's meta.json is several hundred kilobytes of catalogue and
-    view records, and this file is fetched by every visitor of every build page
-    of the project. Only what a row draws is carried.
+    view records, and this file is re-read on every load and every revision
+    switch of the owner's page. Only what a row draws is carried.
 
     `message` is present only when the revision has one (issue #67) — a project
     whose revisions were pushed without `-m` gets exactly the file it got

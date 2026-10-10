@@ -125,6 +125,15 @@ class Hub:
         headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
         return self.get("/index.json", headers=headers)
 
+    def builds(self, pid, token=TOKEN):
+        """GET /project/<pid>/builds.json, which takes the token like `index`.
+
+        It lists every revision of the project and its draft, so a shared build
+        link must not open it; `token=None` asks what an anonymous reader gets.
+        """
+        headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
+        return self.get(f"/project/{pid}/builds.json", headers=headers)
+
     def request(self, method, path, **kw):
         """For the verbs the two helpers above do not cover (HEAD, mostly)."""
         kw.setdefault("trust_env", self.TRUST_ENV)
