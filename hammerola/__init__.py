@@ -41,14 +41,13 @@ THE VERSION BOTH SIDES COMPARE IS `VERSION` BELOW: the hub repeats it in its
 manifest as `client_version`, and `build` and `commit` refuse to publish from a
 client older than that. Replacing this tool with the hub's copy is `hammerola
 update`'s job and `cli.py` describes it; what belongs here is that it can serve
-ONE of the three doors, which is why the doors are worth listing: the installed
-`hammerola` script; `python3 -m hammerola` out of a checkout, pointed at the
-model with `-C`
+ONE of the two doors, which is why the doors are worth listing:
+`python3 -m hammerola` out of a checkout, pointed at the model with `-C`
 (`__main__.py` has the working forms and why the obvious one is not among them);
-and the zipapp, for a machine with neither. Only the last is a single file this
-tool can replace — a checkout is updated with git and an installed distribution
-with pip, and `update` says so rather than writing into either. The first and
-the last carry their own modules, so they run from anywhere and need no `-C`.
+and the zipapp, for a machine without a checkout. Only the zipapp is a single
+file this tool can replace — a checkout is updated with git, and `update` says
+so rather than writing into it. The zipapp carries its own modules, so it runs
+from anywhere and needs no `-C`.
 
 STDLIB ONLY, EVERY MODULE BELOW. This runs on the author's machine, under
 whatever python3 is there, so it takes nothing from `requirements.txt` — not
@@ -63,16 +62,10 @@ than duplicated.
 """
 
 # WHICH VERSION OF THE TOOL THIS IS, and a constant rather than metadata because
-# of how the tool is usually installed: the zipapp carries no `pyproject.toml`
-# and was never `pip install`ed, so `importlib.metadata` has nothing to answer
+# the zipapp is never installed, so `importlib.metadata` has nothing to answer
 # with on the machine that matters most. A module-level literal is readable
 # three ways that all have to work — imported by the running program, read out
 # of the served archive by an older client before it replaces itself
 # (`update._member_value`), and imported by the hub to state `client_version` in
 # its manifest (`src/onboarding.py`).
-#
-# IT IS THE SAME NUMBER AS `pyproject.toml`'s, held there by
-# `tests/test_packaging.py`: the two would otherwise disagree the first time
-# somebody installed the distribution, and the version an installed copy reports
-# is exactly the one `build` refuses to publish from.
 VERSION = "0.1.0"

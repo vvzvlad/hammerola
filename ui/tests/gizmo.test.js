@@ -869,9 +869,9 @@ describe('where the dot is drawn', () => {
 
   it('stands in the topmost band, in the one list all three widgets share', () => {
     // TWO HALVES OF ONE ANSWER. The band is where this widget is drawn among
-    // the three standing in this scene, and it is the TOPMOST because
-    // `element.js` builds this one FIRST and the earliest-built keeps a
-    // contested press — what the reader presses has to be what they can see.
+    // the three standing in this scene, and it is also which of them wins a
+    // contested press (`joinPresses` in scene3d.js), so the TOPMOST is the one
+    // that keeps it — what the reader presses has to be what they can see.
     // A quad and a knob really do cross, so the pair that matters is this band
     // against the rings'.
     //
@@ -1498,7 +1498,7 @@ describe('one whole drag', () => {
 
   it('concludes a drag the scene is being pulled out from under', async () => {
     // The twin of `vp.endGesture`, and the reason it is a third call rather than
-    // the same one: the press was taken in a window listener this widget owns,
+    // the same one: the press was taken in a window listener the widgets share,
     // so neither that gesture nor the idle clock that defers the swap ever saw
     // it.
     const s = scene()

@@ -71,7 +71,6 @@ from loguru import logger
 from src.errors import CommentError
 from src.records import (WIP_PREFIX, check_body_printable, one_line,
                          sweep_leftovers)
-from src.safeio import read_regular_text
 from src.store import SAFE_ID, atomic_write_bytes, utcnow_iso
 
 # A comment id, as it appears in a URL and as a filename. uuid4 hex and nothing
@@ -465,15 +464,7 @@ def _read_record(path: Path) -> dict | None:
     read by a listing endpoint, and one damaged entry must not take the whole
     queue offline.
 
-    THROUGH `safeio` BECAUSE THE CALLER IS A GLOB. `_read_all` collects
-    `*/*.json` and a glob returns a fifo like any other name, so the worst
-    version of this was not a comment somebody had to know the id of — it was
-    the LISTING, i.e. `hammerola comments`, losing a request thread on every
-    call for as long as the file sat there. `NotRegularFile` is an `OSError`, so
-    it lands in the arm already written below and reads as one more unreadable
-    entry.
-
-    NO WRITE-BACK, UNLIKE `jobs._read_record`, and the difference is the reader
+    NO WRITE-BACK, UNLIKE `JobStore._load`, and the difference is the reader
     rather than the trust. That one feeds a registry built in `JobStore.__init__`
     before the socket is bound, and writes back because a job left `queued` must
     be recorded terminal or the same warning prints at every start. This one runs
@@ -482,7 +473,7 @@ def _read_record(path: Path) -> dict | None:
     (#107).
     """
     try:
-        record = json.loads(read_regular_text(path))
+        record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         logger.warning(f"unreadable comment {path}: {error}")
         return None

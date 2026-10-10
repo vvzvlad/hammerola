@@ -13,8 +13,8 @@
   `src/store.py`** — `store.SAFE_COMPONENT` is what `app.py`, `onboarding.py`
   and `tests/client/test_limits.py` already quote, and the re-export is what
   kept the move from touching any of them. A RE-EXPORT BINDS A NAME, IT DOES
-  NOT REDIRECT A LOOKUP: code in this module resolves `_CountingReader`,
-  `SAFE_COMPONENT` and `gzip` in THIS module's globals, so a test that replaces
+  NOT REDIRECT A LOOKUP: code in this module resolves `SAFE_COMPONENT` and
+  `gzip` in THIS module's globals, so a test that replaces
   one of them has to patch `src.archive` — patching `src.store` sets an
   attribute nothing reads, and the test then passes without exercising
   anything. Three tests in `tests/test_archive_security.py` did exactly that
@@ -39,25 +39,16 @@
 - `src/jobs.py` — the asynchronous half of a push (SPEC 8A.2 step 5): `JobStore`
   is the registry (a directory per job under `data/jobs/`, `job.json` and
   `log.txt` beside it), `BuildTask` is what the request hands over, `BuildQueue`
-  is the bounded queue and the worker threads that build and then publish. Read
-  its docstring before touching it: `data/jobs/` is on a volume every build can
-  write, so NOTHING there is evidence about who wrote it, and everything the
-  registry reads back is rebuilt into a known shape and capped in size on the
-  way in and on the way out — and whatever that normalization changed is WRITTEN
-  BACK, because a correction that stays in memory leaves the planted value on
-  disk for the next start to read again. A build can overwrite another job's
-  `log.txt`, or `rmtree` its directory outright, and the hub believes what is
-  left; that is accepted rather than fixed, because there is no boundary on the
-  volume to fix it with (SPEC 8A.4). Records are never deleted — no retention,
-  by decision of 2026-08-27 (SPEC §5.3) — so no count ceiling decides which jobs
-  to throw away; only strangers get swept, and only by age. The second rule is
-  the one that cost three rounds and outlives the file that taught it: anything
-  that is a property of the SET of records must not be stored per record. A pass
-  writes them one at a time, a build chooses which of those writes fails
-  (`chmod 0500` on one directory, no vulnerability needed), and a half-applied
-  pass then leaves a state the hub was never in. Creation order used to be
-  stored that way; it is now stored nowhere at all, because retention was its
-  only reader
+  is the bounded queue and the worker threads that build and then publish. At
+  start a record that does not parse, names another directory or carries an
+  unknown state is logged and skipped, its directory left where it is; jobs a
+  restart stranded in `queued`/`building` are failed and only those are
+  rewritten. Records are never deleted — no retention, by decision of
+  2026-08-27 (SPEC §5.3). Anything that is a property of the SET of records
+  must not be stored per record: a pass writes them one at a time, one write
+  can fail, and a half-applied pass leaves a state the hub was never in.
+  Creation order used to be stored that way; it is now stored nowhere at all,
+  because retention was its only reader
 - `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs
   in a model's directory (issue #26). `build` fills the `dev` slot, `commit`
   publishes an immutable revision; around them sit `login`, `create`, `status`,
@@ -172,7 +163,7 @@
   reader who already has a token goes to the list and never touches this route —
   and every failure of that fetch is silence: a hint must not be able to take a
   sign-in form down (`loadStart` in `ui/src/hub.js`)
-- **The client has THREE doors now, and only two of them are used here.** Out of
+- **The client has TWO doors.** Out of
   a checkout it
   is `python3 -m hammerola`, STARTED IN THE CHECKOUT ROOT because that is where
   `hammerola` is importable — so the model directory is an argument and not the
@@ -188,28 +179,11 @@
   the very name the hub's bootstrap writes with `curl -o`, and a write through a
   symlink lands in the link's TARGET — so the download quietly overwrote the
   repository's own copy while the command went on working, with `git status` as
-  the only symptom. THE PACKAGING ENTRY POINT NOW EXISTS, and this paragraph used
-  to say the opposite: while the client was `src/client/`, the repo's one
-  importable top-level name was `src`, and `pip install`ing that onto a laptop
-  would have shadowed every other project's `src`. So the client moved OUT of
-  `src/` and became the top-level package `hammerola/`, taking the three shared
-  stdlib-only modules with it — an installed distribution that imported
-  `src.buildnames` would have to ship `src` as well, which is the shadowing all
-  over again. `pyproject.toml` declares the name, the `>=3.9` floor (equal to
-  `onboarding.MIN_PYTHON`), no dependencies at all and the console script, so
-  `pip install <this checkout>` puts a `hammerola` on the PATH — the THIRD door,
-  counted the same way `hammerola/__init__.py` and `hammerola/__main__.py` count
-  it. IT IS NOT A NEW RECOMMENDED INSTALL, and nothing here uses it: no target
-  runs it, the hub is still where the tool comes from, and if a `pip install`
-  and the bootstrap `curl -o` both land in `~/.local/bin` the download wins.
-  The name exists because
-  `hammerola update` had nowhere to install to; that mechanism (issue #77) IS
-  built now and lives in `hammerola/update.py`, and this door is the one it
-  cannot serve — a `pip install`ed copy is a package directory rather than a
-  single file, so `update` names pip instead of writing into site-packages.
-  `pyproject.toml`'s `version` is the fourth thing in it nothing would notice
-  going stale, and it is held equal to `hammerola.VERSION` by
-  `tests/test_packaging.py`
+  the only symptom. The client is the top-level package `hammerola/` rather
+  than a part of `src/`, and carries the three shared stdlib-only modules with
+  it, so the zipapp holds no `src` at all. `hammerola update` (issue #77,
+  `hammerola/update.py`) replaces the zipapp in place; a checkout is not a
+  single file and is updated with git
 - `checklib.py` — at the ROOT, and not a stray file: `import checklib` is part
   of the contract with every model.py in the fleet, exactly like `parts()` and
   `views()`. It re-exports `src/cadbuild/checklib.py` under that name, and
@@ -299,10 +273,9 @@
   other way (`-dark` for dark ink) and that reading is a coin toss whose losing
   side is an invisible logo, so the test asserts the naming: each file's ribbon
   has to be on the opposite side of mid-grey from the background its name
-  promises. Only `mark-on-light.svg` is rendered today, because the interface is
-  light everywhere; `mark-on-dark.svg` is wired in by issue #35, and is
-  kept — rather than dropped as dead weight — because its geometry is held to
-  the same check meanwhile
+  promises. `mark-on-dark.svg` is the reference for the dark palette: the dark
+  theme's tokens in `static/_v/tokens.css` are taken from its inks, and
+  `ui/tests/chrome.test.js` checks them against this file
 - `model_template/` — the starter project `hammerola create` unpacks, served at
   `/start/template.tar.gz`: a `model.py` that BUILDS AS IT STANDS, a
   `.gitignore`, a `ref/measurements.md` for the numbers the model claims to
@@ -401,10 +374,4 @@
   what `ui/src/viewport/` reaches into at its own risk. Listed here because the
   only way in used to be a comment inside the code that needed them (#100)
 - `main.py` — thin entry point over `src/`
-- `pyproject.toml` — packaging metadata for the CLIENT and for nothing else: the
-  distribution name `hammerola`, the `>=3.9` floor, no dependencies at all and
-  the `hammerola` console script. `packages` names the one package explicitly
-  rather than letting setuptools discover them, because `src/` is the SERVICE and
-  must never be packaged. The hub is not installable and is not meant to be — it
-  ships as the image — so nothing here describes it
 

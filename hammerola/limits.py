@@ -1,6 +1,6 @@
 """What the hub will accept, as the client knows it.
 
-A COPY of seven numbers and two patterns — and the copy is deliberate, because
+A COPY of six numbers and two patterns — and the copy is deliberate, because
 this file has to import on a laptop's bare python3 (see `hammerola/__init__.py`
 for why the client takes nothing from requirements.txt) and `src.store` pulls in
 loguru and half the service.
@@ -80,22 +80,3 @@ MAX_TEXT_CHARS = 200
 # would accept, not a promise: the hub answers 413 with its own number, and that
 # answer is the one that counts.
 MAX_BUILD_BYTES = 64 * 1024 * 1024
-
-# What ONE FILE A BUILD PRODUCED may weigh. Authority:
-# `src.buildproc.limits.Limits.file_bytes`, the RLIMIT_FSIZE a build runs under.
-#
-# IT IS FOUR TIMES THE PUSH CEILING, and that is not slack — it is the shape of
-# the work. A push is source code; what comes back is meshes. The number is the
-# argument, and it is the number a test compares directly; the comment beside it
-# on the hub's side is NOT support for "such files are ordinary" and must not be
-# cited that way — it says "an exported part an order of magnitude larger than
-# the entire input is already pathological", i.e. 256 MiB was chosen to be
-# unreachable. What follows from it is narrower and enough: a part that big is
-# one the hub WILL serve, so holding `hammerola artifacts` to the push's number
-# would refuse to fetch a file the hub is serving — a refusal with nothing wrong
-# behind it.
-#
-# Kept apart from MAX_BUILD_BYTES rather than folded into one "big enough"
-# number, because the two answer different questions: what may be SENT, and what
-# a build may have MADE. Merging them would move both the day either is retuned.
-MAX_ARTIFACT_BYTES = 256 * 1024 * 1024

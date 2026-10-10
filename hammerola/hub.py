@@ -116,7 +116,6 @@ import urllib.parse
 import urllib.request
 
 from hammerola.config import header_value_problem
-from hammerola.limits import MAX_ARTIFACT_BYTES, MAX_BUILD_BYTES
 
 # One request. Generous because the request that matters carries the whole
 # archive up a domestic uplink; the WAIT for a build is a separate budget
@@ -237,36 +236,6 @@ SLOW_BUILD_SECONDS = 180
 
 TERMINAL_STATES = ("done", "failed")
 
-# TWO CEILINGS ON WHAT ONE REPLY MAY WEIGH, applied as the bytes are read rather
-# than after them. The unpacker's ceilings are counted from the tar headers,
-# which is a check that happens once the whole body is already in memory — so a
-# hub answering with a gigabyte is a gigabyte of the author's RAM before anything
-# looks at it.
-#
-# They are two because the replies are two KINDS. Everything this tool parses —
-# a manifest, a job record, a build log, a source archive — is bounded by what a
-# push may be, since a source tree is what produced it. A BUILD ARTEFACT is not:
-# an STL is OUTPUT, and the hub lets one build write a file four times the size
-# of any archive it would accept (`buildproc.Limits.file_bytes`, 256 MiB against
-# this tool's 64). The reasoning rests on that number and on the shape — a push
-# is source, a reply here is meshes — and NOT on any claim that such exports are
-# routine. `file_bytes` says the opposite in as many words: "The whole upload is
-# capped at 64 MiB elsewhere (MAX_BUILD_BYTES), so an exported part an order of
-# magnitude larger than the entire input is already pathological." It is a
-# ceiling chosen to be unreachable, and the point here is only that the hub will
-# serve anything under it. One number for both would mean the hub publishing a
-# part that `hammerola artifacts` then refuses to fetch, with a message claiming
-# no reply may be that big — which, for that reply, would be false.
-#
-# NEITHER IS A STATEMENT ABOUT THE HUB. Both are copies of a default (see
-# `limits.py`), and a deployment may be configured differently; what they bound
-# is how much THIS TOOL will hold in memory. The honest alternative for the
-# artefact half is to stream it to a file and have no ceiling at all — worth
-# doing the day a fetch is written that way, and not worth restructuring
-# `artifacts.py` for today.
-MAX_REPLY_BYTES = MAX_BUILD_BYTES
-MAX_ARTIFACT_REPLY_BYTES = MAX_ARTIFACT_BYTES
-
 # Loopback is never reached through a proxy, and a machine whose environment or
 # system settings name one would otherwise send the whole push into it. This is
 # the shape that breaks `make test` on a laptop behind a corporate proxy — the
@@ -365,12 +334,8 @@ class Hub:
 
     # -- transport ---------------------------------------------------------
     def _call(self, path: str, *, method: str = "GET", body=None,
-              content_type=None, max_bytes=None, timeout=None, message=None):
+              content_type=None, timeout=None, message=None):
         """(status, bytes). Raises HubError only when there was no answer.
-
-        `max_bytes` is how much of the answer this call will hold; it defaults to
-        `MAX_REPLY_BYTES`, and the ONE caller that raises it is the one fetching
-        a build's artefacts (see the constants above).
 
         `message` is the one header this client sends that is somebody's PROSE,
         and it is percent-encoded for that reason. An HTTP header value is
@@ -398,7 +363,6 @@ class Hub:
         that means nothing, and every guarded route answers exactly the same
         401 to it as to no header at all.
         """
-        cap = MAX_REPLY_BYTES if max_bytes is None else max_bytes
         headers = {}
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
@@ -416,10 +380,9 @@ class Hub:
             # HTTPError` clause of THIS try — and an exception raised in a
             # handler is not offered to the handlers beside it, so a 500 whose
             # chunked body stopped early went straight past every clause below
-            # as a traceback. Putting the body ceiling on error replies made
-            # that path more reachable, not less. One statement in the try, and
-            # both reads are behind the same diagnosis.
-            return self._exchange(request, self.url + path, cap, timeout)
+            # as a traceback. One statement in the try, and both reads are
+            # behind the same diagnosis.
+            return self._exchange(request, timeout)
         except ValueError as error:
             # THE LAST RESORT, AND DELIBERATELY NEUTRAL. It used to say "the
             # token contains a character that cannot be sent in an HTTP header"
@@ -431,11 +394,11 @@ class Hub:
             # somebody to replace the one secret of the system over a header
             # they did not write.
             #
-            # Each of those now has a check of its own, ahead of this line —
-            # `_origin` for the address, `_refuse_unsendable_token` for the
-            # secret, `_SameOriginRedirects.http_error_302` for the Location —
-            # so what reaches here is something none of the three anticipated.
-            # It says so, and names nothing it cannot know.
+            # The address and the secret each have a check of their own, ahead
+            # of this line — `_origin` and `_refuse_unsendable_token` — so what
+            # reaches here is something neither anticipated. It says so, and
+            # names nothing it cannot know. An unparseable `Location` from a
+            # proxy lands here too, and that answer to it is accepted (#114).
             #
             # THE EXCEPTION'S OWN TEXT IS NOT REPEATED, and that is the whole
             # care in this clause: `http.client` puts the offending header in
@@ -486,14 +449,13 @@ class Hub:
             raise HubError(f"cannot reach {self.url}: {error}") from error
         except http.client.IncompleteRead as error:
             # A BODY THAT STOPPED, AND IT IS NOT THE SAME STORY AS THE ONE
-            # BELOW. `Content-Length` truncation is caught in `_read_capped`;
-            # this is its CHUNKED twin, where the framing is in the stream and
-            # `http.client` raises rather than returning short. It shares that
-            # clause's meaning, not this file's "not HTTP" one — the far end
-            # spoke HTTP perfectly well and then stopped, which is a proxy, a
-            # restart or a timeout, and telling that reader to check their
-            # SCHEME is a correct refusal with somebody else's cause on it.
-            # That is the exact defect this round was fixing elsewhere.
+            # BELOW. `_exchange` reads the body with no argument, and that read
+            # raises this for either framing — a `Content-Length` body that came
+            # up short and a chunked one whose stream ended — rather than
+            # handing back something short. The far end spoke HTTP perfectly
+            # well and then stopped, which is a proxy, a restart or a timeout,
+            # and telling that reader to check their SCHEME is a correct
+            # refusal with somebody else's cause on it.
             #
             # Its text is counts (`IncompleteRead(10 bytes read, 30 more
             # expected)`), not far-end bytes, but it goes through `quoted`
@@ -540,10 +502,7 @@ class Hub:
             # `quoted` IS LOAD-BEARING HERE ABOVE EVERYWHERE ELSE.
             # `BadStatusLine` carries the line the far end sent, decoded and
             # unescaped, up to `http.client._MAXLINE` — 65536 bytes. Printed
-            # raw that is a 65 kB message on stderr with whatever ANSI escapes
-            # the sender chose in it, and the threat model is the redirect
-            # handler's: an address typed with one character wrong, at a domain
-            # somebody has registered.
+            # raw that is a 65 kB message on stderr.
             raise HubError(
                 f"{self.url} answered something that is not HTTP "
                 f"({type(error).__name__}: {quoted(error)}).\n"
@@ -552,7 +511,7 @@ class Hub:
                 f"  like this, and so does a captive portal or a proxy "
                 f"answering in its place.") from error
 
-    def _exchange(self, request, where: str, cap: int, timeout=None):
+    def _exchange(self, request, timeout=None):
         """Send it, and read the body — of a 2xx and of an error alike.
 
         ONE PLACE, so that both reads sit inside `_call`'s single `try` and get
@@ -565,34 +524,28 @@ class Hub:
         An HTTP status IS an answer, and every 4xx this hub gives carries the
         sentence explaining it, so the code and the body are returned rather
         than raised — raising would throw that sentence away and report
-        "HTTP Error 422" instead. The body is capped like a 200's: an error body
-        is a body, and a hub answering 500 with a gigabyte fills the same
-        memory.
+        "HTTP Error 422" instead.
+
+        `read()` WITH NO ARGUMENT, and the absence is the integrity check: it
+        raises `IncompleteRead` on a body shorter than its `Content-Length`,
+        while `read(n)` hands back whatever arrived. `_call` names that.
         """
         budget = self.timeout if timeout is None else timeout
         try:
             with self._opener.open(request, timeout=budget) as response:
-                return response.status, _read_capped(response, where, cap)
+                return response.status, response.read()
         except urllib.error.HTTPError as error:
             try:
-                return error.code, _read_capped(error, where, cap)
+                return error.code, error.read()
             finally:
                 error.close()
 
     @staticmethod
     def _payload(status: int, raw: bytes) -> dict:
-        """The reply as a dict, or a sentence about what it was instead.
-
-        `RecursionError` IS CAUGHT BESIDE THE VALUE ERRORS AND IT IS NOT
-        TIDINESS. `json.loads` recurses per nesting level, so a body of
-        `[[[[...]]]]` raises it rather than `ValueError` — and 400 kB of
-        brackets is nothing against a 64 MiB reply ceiling. Uncaught it left
-        this path as a traceback out of `cli.main`, which catches five exception
-        classes and not that one. The far end chooses this body.
-        """
+        """The reply as a dict, or a sentence about what it was instead."""
         try:
             payload = json.loads(raw.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError, RecursionError):
+        except (ValueError, UnicodeDecodeError):
             payload = None
         if not isinstance(payload, dict):
             raise HubError(
@@ -760,9 +713,9 @@ class Hub:
             # matters ("Check HUB_URL: an `http://` address where the hub speaks
             # `https://`..."), leaving a mangled quotation and no advice.
             return None, f"the hub could not be reached ({error})"
-        # ASKED ONLY OF THE TWO STATUSES THAT CAN BE A VERDICT. It parses a body
-        # the far end chose, up to the reply ceiling, so running it on every 200
-        # as well would be work — and exposure — for an answer nothing reads.
+        # ASKED ONLY OF THE TWO STATUSES THAT CAN BE A VERDICT. It parses the
+        # body, so running it on every 200 as well would be work for an answer
+        # nothing reads.
         mine = status in (401, 404) and _carries_the_hubs_error_shape(raw)
         if status == 401 and mine:
             raise HubError(UNAUTHORIZED)
@@ -1051,17 +1004,10 @@ class Hub:
         None for a 404 rather than an exception, because "this revision ships no
         such file" is an answer several callers act on: a build published before
         the model wrote metrics.json is an ordinary thing to run into.
-
-        THE ONE CALL WITH A CEILING OF ITS OWN, and the reason is above
-        `MAX_ARTIFACT_REPLY_BYTES`: what comes back here is a build's OUTPUT, and
-        the hub lets a build write files several times the size of any archive it
-        would accept. Holding this to the push's number would refuse to fetch a
-        part the hub is serving.
         """
         code, raw = self._call(
             f"/project/{urllib.parse.quote(pid)}/{urllib.parse.quote(name)}"
-            f"/{urllib.parse.quote(filename)}",
-            max_bytes=MAX_ARTIFACT_REPLY_BYTES)
+            f"/{urllib.parse.quote(filename)}")
         if code == 404:
             return None
         if code != 200:
@@ -1338,15 +1284,9 @@ class Hub:
         """One file the manifest NAMED, by its path on this hub.
 
         The path comes back from the hub, so its SHAPE is checked before it is
-        used: one leading slash and no second one. What that buys is precision
-        about the reading, not safety — be exact about it, because the sentence
-        that used to stand here was not. `//elsewhere.example/x` does NOT
-        become another host: this fetch concatenates the path onto the base
-        address, so what urllib is handed is `http://hub//elsewhere.example/x`,
-        whose host is the hub. The check refuses a manifest that WROTE
-        something host-shaped anyway — a path that reads as an address is not a
-        path this hub is naming on itself, and answering it would be reading
-        the manifest as something other than what it says.
+        used: one leading slash. This fetch concatenates the path onto the base
+        address, and without the slash `start/x` would be glued onto the end of
+        it — `http://hubstart/x` — rather than requested from it.
 
         ITS SENDABILITY IS CHECKED IN THE SAME PLACE, and that is why the two
         checks sit together rather than one here and one in the transport. This
@@ -1359,14 +1299,8 @@ class Hub:
         request line, and a NON-ASCII one, which fails earlier still because the
         request line is encoded as ASCII (`UnicodeEncodeError`, a ValueError, so
         it landed in the "please report it" clause — for untrusted input).
-
-        WHAT ACTUALLY HOLDS THE CREDENTIAL is `_SameOriginRedirects`, installed
-        on the opener for every request this tool makes: a hub can name a path
-        on itself and then answer it with a redirect, and urllib follows a 3xx
-        carrying the request's headers. Do not read the shape check as that
-        protection; it is one refusal earlier, and cheaper.
         """
-        if not path.startswith("/") or path.startswith("//"):
+        if not path.startswith("/"):
             raise HubError(
                 f"the hub named {quoted(path)}, which is not a path on this "
                 f"hub. Nothing was fetched.")
@@ -1424,8 +1358,7 @@ def quoted(text, limit: int = QUOTE_LIMIT) -> str:
     file — `http.client` repr-escapes the URL in one `InvalidURL` message and
     interpolates a raw string in the other, and `BadStatusLine` carries up to
     65536 bytes of whatever the far end sent, decoded and untouched. A 65 kB
-    error message full of ANSI escapes is what that produced, on stderr, from a
-    server reached because an address was typed with one character wrong.
+    error message on stderr is what that produced.
 
     ONE CALLER IS DELIBERATELY NOT HERE: `job_log` and `revision_log` return the
     build's own output, which the CLI prints in full. That is the whole point of
@@ -1433,21 +1366,17 @@ def quoted(text, limit: int = QUOTE_LIMIT) -> str:
     from the hub that a person asked to see.
 
     BE EXACT ABOUT WHAT THAT EXEMPTION COSTS, because it is two things and only
-    the first is obvious. The log is unbounded up to the reply ceiling (64 MiB),
-    AND it is unescaped: whatever control characters and terminal escapes it
-    carries go to the terminal as they are. For the log of your own model that
-    is the right trade — the log is the product of the command. For a "log"
-    served by a host reached through a typo in HUB_URL it is not a trade at all,
-    and nothing here distinguishes the two. It is accepted, not overlooked.
+    the first is obvious. The log is unbounded, AND it is unescaped: whatever
+    control characters and terminal escapes it carries go to the terminal as
+    they are. For the log of your own model that is the right trade — the log
+    is the product of the command.
 
-    THE SOURCE IS CUT BEFORE IT IS ESCAPED, and the order matters in a module
-    whose ceilings exist because "a gigabyte in a reply is a gigabyte of the
-    author's RAM": escaping first built a second copy of the whole string —
-    several times its size, since `repr` expands — only to throw all but 200
-    characters away. A manifest path is bounded by the reply ceiling, which is
-    megabytes. The cut takes `limit` characters, which is a generous margin
-    because escaping only ever grows a string, and the LENGTH reported is the
-    source's, which is the number a reader wants anyway.
+    THE SOURCE IS CUT BEFORE IT IS ESCAPED, and the order matters because what
+    is quoted can be a whole reply body: escaping first built a second copy of
+    the whole string — several times its size, since `repr` expands — only to
+    throw all but 200 characters away. The cut takes `limit` characters, which
+    is a generous margin because escaping only ever grows a string, and the
+    LENGTH reported is the source's, which is the number a reader wants anyway.
 
     `bytes` are decoded HERE rather than at each call site, and the reason is
     that there are three of them holding a response body — one decoding rule in
@@ -1520,11 +1449,6 @@ def _carries_the_hubs_error_shape(raw: bytes) -> bool:
 
     False for anything unparseable rather than raising: this is a question, and
     "cannot tell" and "no" mean the same thing to the one caller.
-    `RecursionError` is in the tuple for that promise to be true —
-    `json.loads` recurses per nesting level, so `[[[[...]]]]` raises it rather
-    than a `ValueError`, and 400 kB of brackets is nothing against a 64 MiB
-    reply ceiling. Uncaught, a body the far end chose became a traceback out of
-    `cli.main`.
 
     AND THE `error` KEY IS PART OF THE TEST, not decoration on an isinstance.
     `{"detail": "Not Found"}` is what Starlette and FastAPI answer by default,
@@ -1534,209 +1458,9 @@ def _carries_the_hubs_error_shape(raw: bytes) -> bool:
     """
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError, RecursionError):
+    except (ValueError, UnicodeDecodeError):
         return False
     return isinstance(payload, dict) and "error" in payload
-
-
-def _bytes_text(count: int) -> str:
-    """A ceiling as the number that was actually configured.
-
-    `count / 1e6` was here and it turned every one of these into a number that
-    appears nowhere else in the system: MAX_BUILD_BYTES is 64 MiB and printed as
-    "67 MB", the artefact ceiling 256 MiB as "268", and a ceiling lowered under
-    a megabyte as "0 MB". Somebody grepping the settings for the number in the
-    message would find nothing.
-    """
-    for unit, size in (("MiB", 1024 ** 2), ("KiB", 1024)):
-        if count >= size:
-            return f"{count / size:.0f} {unit}"
-    return f"{count} bytes"
-
-
-def _read_capped(response, where: str, cap: int) -> bytes:
-    """The body, refusing to hold more than `cap` bytes and refusing a short one.
-
-    Read as `cap + 1` bytes so that crossing the ceiling is observable without
-    reading past it: this runs before anything has looked at what arrived, and
-    the whole point is not to hold it.
-
-    The message says what the ceiling IS rather than what the hub may send: the
-    two numbers here are copies of defaults, and a deployment configured
-    differently is entitled to answer with more than this tool will hold.
-
-    AND THE LENGTH IS CHECKED, WHICH THE CAP TOOK AWAY. `response.read()` with
-    no argument raises `IncompleteRead` when the body is shorter than the
-    `Content-Length` the reply declared; `response.read(n)` does NOT — it hands
-    back whatever arrived and closes the connection, silently. Moving to the
-    capped read was right on its own and it removed the only integrity check
-    this reply had, so the check is restored here explicitly.
-
-    IT MATTERS MOST WHERE NOTHING ELSE LOOKS. A JSON body and a tar both verify
-    themselves — a truncated one fails to parse — so the paths that were safe
-    were the ones with a format behind them. A build ARTEFACT has none: a short
-    read of an `.stl` or a `.step` was written to disk, its shortened size
-    printed, and the command exited zero. That is a corrupt file with nothing
-    anywhere saying so, which is worse than the traceback the unbounded read
-    used to give.
-
-    Only when a length was DECLARED — and a chunked reply, which declares none,
-    is NOT the hole this used to claim it was. Its framing is in the stream, so
-    `http.client` raises `IncompleteRead` when it stops early rather than
-    handing back a short body; that is caught in `_call`, in a clause of its
-    own. What is left unverifiable is narrower and duller: a reply with neither
-    a length nor chunking, ended by closing the connection.
-
-    The length is taken BEFORE the read, because `.length` is what remains and
-    the read is what consumes it.
-    """
-    declared = _declared_length(response)
-    data = response.read(cap + 1)
-    if len(data) > cap:
-        raise HubError(
-            f"{quoted(where)} answered with more than {_bytes_text(cap)}, "
-            f"which is "
-            f"more than this tool will hold in memory for one reply — nothing "
-            f"was kept.")
-    if declared is not None and len(data) < declared:
-        raise HubError(
-            f"{quoted(where)} sent {len(data)} bytes of the {declared} it "
-            f"declared, "
-            f"then the connection ended.\n"
-            f"  Nothing was kept: an incomplete reply is not a shorter one, "
-            f"and a truncated artefact\n"
-            f"  written to disk would look like a finished file. Try again.")
-    return data
-
-
-def _declared_length(response):
-    """How many bytes the body is FRAMED to carry, as the library parsed it.
-
-    ASKED OF THE LIBRARY AND NOT OF THE HEADER, and that is the correctness of
-    it rather than a preference. `HTTPResponse.begin` decides the framing once:
-    it sets `.chunked` from `Transfer-Encoding` and then reads `Content-Length`
-    only `if length and not self.chunked` — because the standard says chunked
-    framing WINS and the header is to be ignored. Reading the header here
-    instead meant a complete chunked reply that happened to carry both was
-    refused as truncated, in the same breath as a docstring saying a chunked
-    answer is a legal one. `.length` is that decision: None for chunked, the
-    count for a declared body.
-
-    None for anything that has no such field, which includes an unframed reply
-    ended by closing the connection — every one of those means the same thing
-    here, that completeness cannot be checked.
-
-    THE RESPONSE IS NOT ALWAYS THE RESPONSE. On an error path the object is an
-    `HTTPError`, which wraps the real `HTTPResponse` in `.fp`; the field is
-    looked for in both places rather than assumed, so the check covers a 500's
-    body as well as a 200's.
-
-    ONE KNOWN WAY THIS WOULD FALSELY REFUSE, recorded because it is cheap to
-    know and expensive to rediscover: `begin()` sets `.length = 0` outright for
-    a 204, a 304, a 1xx and a HEAD, so a reply carrying such a status AND a body
-    would read as... nothing, since zero is never more than what arrived. It is
-    the reverse case — such a status with a non-zero declared body — that has no
-    way to be seen at all. Unreachable today: this client sends no conditional
-    headers, issues no HEAD and the hub answers neither code. The day a caching
-    layer goes in front of the hub is the day to check it.
-    """
-    for holder in (response, getattr(response, "fp", None)):
-        length = getattr(holder, "length", None)
-        if isinstance(length, int) and not isinstance(length, bool):
-            return length if length >= 0 else None
-    return None
-
-
-class _SameOriginRedirects(urllib.request.HTTPRedirectHandler):
-    """Refuse a redirect that leaves the hub. Installed on EVERY request.
-
-    THE HEADER TRAVELS, WHICH IS THE WHOLE PROBLEM. urllib follows a 3xx on its
-    own and copies the request's headers to the new URL, `Authorization`
-    included — verified against two local servers, where the second one received
-    `Bearer <the token>` intact. So a hub whose address was typed with one
-    character wrong, at a domain somebody has registered, can answer every
-    tokenized verb — `build`, `commit`, `source`, `comments` — with a redirect
-    and be handed the one secret of the system: the same string that deletes a
-    project outright.
-
-    Refusing on a change of scheme, host or port covers that, and it costs
-    nothing real: a redirect WITHIN the hub is still followed, which is what an
-    ordinary trailing-slash or HTTPS-upgrade redirect is.
-
-    Raising HubError rather than returning None: None makes urllib treat the 3xx
-    as the final response, so the caller would see a 302 with an empty body and
-    no idea why. The exception is not one urllib catches, so it arrives at
-    `cli.main`, which prints it as the sentence it is.
-    """
-
-    def http_error_302(self, req, fp, code, msg, headers):
-        """The base handler, with an unreadable `Location` named as one.
-
-        THIS IS EARLIER THAN `redirect_request`, WHICH IS THE POINT. urllib
-        parses the header and joins it onto the request's URL BEFORE it asks
-        this class whether the redirect may be followed, so a `Location` of
-        `http://[evil` raises `ValueError: Invalid IPv6 URL` inside
-        `urlparse` — above `_same_origin`, which swallows its own. That
-        ValueError then landed in the one clause in `_call` that used to explain
-        a token which cannot go in a header, and a stranger's malformed header
-        told somebody to replace the system's secret.
-
-        The existing test for that story sends a non-numeric port, which is the
-        variant that DOES reach `_same_origin`; this covers the variant that
-        never gets there.
-
-        The four aliases below are what the base class does with these codes,
-        restated because overriding one method does not re-point the others.
-        """
-        try:
-            return super().http_error_302(req, fp, code, msg, headers)
-        except ValueError as error:
-            raise HubError(
-                f"{quoted(req.full_url)} answered {code} with a Location "
-                f"this tool cannot read ({quoted(error)}).\n"
-                f"  Refused, and nothing was sent there. That header is the "
-                f"other end's — it is not\n"
-                f"  your token and not HUB_URL.") from error
-
-    http_error_301 = http_error_303 = http_error_307 = http_error_302
-    http_error_308 = http_error_302
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if not _same_origin(req.full_url, newurl):
-            raise HubError(
-                f"{quoted(req.full_url)} redirected to {quoted(newurl)}, "
-                f"which is a different host.\n"
-                f"  Refused, and nothing was sent there: this tool presents the "
-                f"hub's token on most\n"
-                f"  requests, and following a redirect off the hub would hand "
-                f"that token to whoever\n"
-                f"  answers at the other end. Check HUB_URL.")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
-def _same_origin(url: str, other: str) -> bool:
-    """Same scheme, host and port — the three things a credential is scoped to.
-
-    Ports are compared as they were WRITTEN rather than defaulted, which is the
-    conservative direction: `https://hub` and `https://hub:443` are the same
-    origin in fact and are refused here as different, and the cost of that
-    refusal is a message telling somebody to check HUB_URL.
-
-    ANY FAILURE TO PARSE IS A NO, and that is not tidiness either. `.port` RAISES
-    on `http://host:notaport`, and a ValueError escaping here used to be caught
-    by the one clause on this path that explains a token which cannot go in a
-    header — so a malformed `Location` from the other end told somebody to
-    rotate the system's secret. Refusing an address that cannot be read is the
-    right answer to it anyway.
-    """
-    try:
-        first, second = urllib.parse.urlsplit(url), urllib.parse.urlsplit(other)
-        return (first.scheme == second.scheme
-                and (first.hostname or "").lower()
-                == (second.hostname or "").lower()
-                and first.port == second.port)
-    except ValueError:
-        return False
 
 
 def _origin(url: str):
@@ -1898,16 +1622,12 @@ def _refuse_unsendable_token(token) -> None:
 
 
 def _opener_for(origin):
-    """The opener, with redirects held to this hub on every request.
-
-    The proxy handler is the older half and applies to loopback only; the
-    redirect handler applies to everything, because the failure it prevents is
-    about the credential rather than about the address.
+    """The opener, with the machine's proxy bypassed for loopback only.
 
     Takes the PARSED address rather than the string: `urlsplit` is where an
     unreadable one raises, and it has already been called once, in `_origin`.
     """
-    handlers = [_SameOriginRedirects()]
+    handlers = []
     host = origin.hostname or ""
     if host in LOOPBACK_HOSTS or host.startswith("127."):
         handlers.append(urllib.request.ProxyHandler({}))

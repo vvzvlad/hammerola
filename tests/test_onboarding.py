@@ -663,9 +663,7 @@ SKILL_BUDGET = re.compile(r"its\s+own\s+budget:\s+(\d+)\s+seconds")
 # not a coincidence: the review of #81 twice caught a fresh unpinned copy that
 # the fix for #81 had itself just written into this file, once as arithmetic off
 # the slow-build threshold. Prose that recomputes a ceiling belongs on this side
-# of the HTTP boundary. The one exception left in the skill is the sentence
-# saying the wall WAS 900 before the units landed -- past tense, dated, and true
-# whatever the number becomes.
+# of the HTTP boundary.
 SKILL_WALL_MINUTES = re.compile(r"A\s+build\s+has\s+(\w+)\s+minutes\s+of\s+wall\s+clock")
 SKILL_WALL = re.compile(r"kills\s+a\s+build\s+at\s+(\d+)\s+seconds")
 SKILL_WALL_WHOLE = re.compile(r"whole\s+(\w+)-minute\s+wall\s+clock")

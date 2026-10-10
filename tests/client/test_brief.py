@@ -5,7 +5,7 @@ IT HAD NO TEST AT ALL, and the one case that reaches it
 test_fetching.py) reads only the words around it — the field named and the
 closing sentence — so every ceiling on this function could have been deleted
 without a red run. What it is FOR is the reason that matters: the value is a
-refused fragment of a reply, i.e. untrusted text of up to `MAX_REPLY_BYTES`,
+refused fragment of a reply, i.e. untrusted text of any size the reply had,
 printed straight into a terminal by `_not_from_the_hub`. Both halves of that
 are checked here — WHAT THE CEILINGS ACTUALLY BOUND, which is the whole
 rendering on a string and one pointer per key on a dict, and that nothing
@@ -29,7 +29,7 @@ from hammerola import artifacts
 # editor that reads it — including, here, the file that tests the escaping.
 BIDI = "\u202e"
 
-# What `hub.MAX_REPLY_BYTES` allows is tens of megabytes; four is enough to be
+# A reply has no ceiling on its size; four megabytes is enough to be
 # unmistakable in the meter below and small enough to build in a test.
 HUGE = 4 * 1024 * 1024
 

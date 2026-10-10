@@ -321,11 +321,6 @@ run: install ## Run the application (auto-creates .venv if missing)
 # and the failure it would head off is one message that says exactly what is
 # wrong. `hammerola/__main__.py` has the whole argument, and `make test` is what
 # holds it.
-#
-# THE PACKAGE HAS A DISTRIBUTION NAME NOW (`pyproject.toml`), so `pip install .`
-# would work — and there is deliberately no target for that either: installing
-# the tool from the checkout is the collision above wearing different clothes,
-# and the hub is still the one place it is installed from.
 
 # --- Frontend ----------------------------------------------------------------
 # The browser bundle is BUILT, never committed — see .gitignore for why — so it

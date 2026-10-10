@@ -1,16 +1,8 @@
 """What the client does with an answer that is not the one it asked for.
 
-Everything here is about the wire rather than about a verb, and all three cases
-were found by attacking the code rather than by reading it:
+Everything here is about the wire rather than about a verb, and the case below
+was found by attacking the code rather than by reading it:
 
-  * A REDIRECT OFF THE HUB TAKES THE TOKEN WITH IT. urllib follows a 3xx on its
-    own and copies the request's headers to the new URL, `Authorization`
-    included — so a hub address typed with one character wrong, at a domain
-    somebody has registered, is handed the one secret of the system on any verb
-    that presents it. That is the same string that deletes a project.
-  * A REPLY IS READ INTO MEMORY BEFORE ANYTHING LOOKS AT IT. The unpacker's
-    ceilings are counted from the tar headers, which happens once the body is
-    already there, so an answer of a gigabyte is a gigabyte of the author's RAM.
   * AN ADDRESS THAT CANNOT BE REQUESTED ARRIVES AS A TRACEBACK, from three
     different modules depending on which character is wrong — and one of the
     three is reachable from the hub's own manifest, i.e. from untrusted input.
@@ -49,283 +41,22 @@ class _Recorder(http.server.BaseHTTPRequestHandler):
         pass
 
 
-# The second server is a different HOST and not another port of 127.0.0.1, and
-# that difference is the whole test. Two ports of one address exercise only the
-# port comparison: the reviewer's mutations proved it — dropping the hostname
-# check and dropping the scheme check both left the suite green, while the
-# failure this story is about is a MISTYPED DOMAIN.
-#
-# 127.0.0.2 is the better staging of it: a different address as well as a
-# different name, so nothing in the comparison is shared with the origin. It is
-# aliased on Linux out of the box and NOT on macOS, where binding it fails with
-# EADDRNOTAVAIL unless somebody has run `ifconfig lo0 alias 127.0.0.2`.
-OTHER_HOST = "127.0.0.2"
-
-# ...so where that address cannot be bound, the second server is addressed by a
-# different NAME for the loopback instead. SKIPPING WAS THE FIRST SHAPE OF THIS
-# AND IT WAS WRONG: the test that matters most here — the token does not leave
-# the hub — then did not run at all on the platform this is developed on, which
-# is the same "green because a check disappeared" the CI gate counts its own
-# verdicts to avoid. The fallback is weaker in exactly one way, that the two
-# origins share an address, and equal in every other: `localhost` against
-# `127.0.0.1` is a change of host to `_same_origin`, which compares the origin
-# as it was WRITTEN, and a mistyped domain is a change of host and nothing else.
-FALLBACK_HOST = "localhost"
-
-
-def _serve(handler, host="127.0.0.1", name=None):
-    """One threaded server on an ephemeral port. -> (url, server).
-
-    `name` is what the URL says when it differs from what the socket is bound
-    to — the fallback above, where one loopback server is addressed under a
-    second name for it.
-    """
-    server = http.server.ThreadingHTTPServer((host, 0), handler)
+def _serve(handler):
+    """One threaded server on an ephemeral port. -> (url, server)."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever,
                               kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
-    return f"http://{name or host}:{server.server_address[1]}", server
+    return f"http://127.0.0.1:{server.server_address[1]}", server
 
 
 @pytest.fixture
-def elsewhere():
-    """A second HOST, standing in for whoever owns the mistyped domain."""
+def recorder():
+    """A `_Recorder` server, to see whether a request reached it. -> its url."""
     _Recorder.seen = []
-    try:
-        url, server = _serve(_Recorder, host=OTHER_HOST)
-    except OSError:  # no alias for 127.0.0.2 here — see FALLBACK_HOST
-        url, server = _serve(_Recorder, host="127.0.0.1", name=FALLBACK_HOST)
+    url, server = _serve(_Recorder)
     try:
         yield url
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-@pytest.fixture
-def redirector(elsewhere):
-    """A "hub" whose every answer is "go to the other host"."""
-    target = elsewhere
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(302)
-            self.send_header("Location", f"{target}/landed")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def log_message(self, *args):
-            pass
-
-    url, server = _serve(Handler)
-    try:
-        yield url
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
-def test_every_redirect_code_goes_through_the_same_refusal(code, elsewhere):
-    """All five, because a hub may answer any of them and the token must stay.
-
-    This reaches `redirect_request`, which every code gets to through the base
-    class regardless of the aliases; the test that observes the ALIASES is the
-    malformed-`Location` one below. Both are wanted: this one says the credential
-    is safe under each code, that one says the diagnosis is.
-    """
-    target = elsewhere
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(code)
-            self.send_header("Location", f"{target}/landed")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def log_message(self, *args):
-            pass
-
-    url, server = _serve(Handler)
-    try:
-        with pytest.raises(HubError) as raised:
-            Hub(url, "SUPER-SECRET-EDIT-TOKEN", timeout=10).start()
-        assert "different host" in str(raised.value), code
-        assert _Recorder.seen == [], (
-            f"a {code} carried the token to the other host")
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def test_a_redirect_to_another_host_is_refused_and_the_token_stays_here(
-        redirector, elsewhere):
-    """THE ONE THAT MATTERS: the secret must not leave the hub it was stored for.
-
-    Checked from both ends — the call fails with a sentence naming the other
-    host, and the other host received nothing at all, so there is no version of
-    this where the header went and the error came back anyway.
-    """
-    hub = Hub(redirector, "SUPER-SECRET-EDIT-TOKEN", timeout=10)
-
-    with pytest.raises(HubError) as raised:
-        hub.job("whatever")
-
-    assert "different host" in str(raised.value)
-    assert elsewhere.split("//")[1] in str(raised.value)
-    assert _Recorder.seen == [], (
-        "the request reached the other host, so the Authorization header went "
-        "with it — which is the whole failure this refuses")
-
-
-def test_the_refusal_covers_every_verb_and_not_only_the_public_one(redirector):
-    """The handler is on the opener, so it applies to whatever is called next.
-
-    `fetch_path` checks the PATH the manifest named, and that check was written
-    as the protection; it is not one on its own, because the path is checked and
-    then urllib follows whatever the answer redirects to. This is the half that
-    actually holds, and it holds for `build`, `commit`, `source` and the comment
-    queue as much as for `/start`.
-    """
-    hub = Hub(redirector, "token", timeout=10)
-    for call in (lambda: hub.start(),
-                 lambda: hub.fetch_path("/start/template.tar.gz"),
-                 lambda: hub.builds("demo0001"),
-                 lambda: hub.revision_archive("a" * 64)):
-        with pytest.raises(HubError) as raised:
-            call()
-        assert "different host" in str(raised.value)
-
-
-def test_the_host_is_compared_by_NAME_and_not_only_by_address():
-    """`localhost` and `127.0.0.1` are one machine and two hosts.
-
-    This needs no second server at all — one server, addressed two ways — and it
-    is here because it fails the moment the hostname comparison is dropped, which
-    a port-only test does not.
-    """
-    state = {"port": None}
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(302)
-            self.send_header("Location",
-                             f"http://127.0.0.1:{state['port']}/landed")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def log_message(self, *args):
-            pass
-
-    url, server = _serve(Handler)
-    state["port"] = server.server_address[1]
-    try:
-        hub = Hub(url.replace("127.0.0.1", "localhost"), "token", timeout=10)
-        with pytest.raises(HubError) as raised:
-            hub.start()
-        assert "different host" in str(raised.value)
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def test_a_redirect_that_only_changes_the_scheme_is_refused():
-    """Downgrade is the other half of the same theft: `https` to `http` puts the
-    token on the wire in clear. Refused before a connection is made, which is
-    what lets this be tested without a certificate."""
-    state = {"port": None}
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(302)
-            self.send_header("Location",
-                             f"https://127.0.0.1:{state['port']}/landed")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def log_message(self, *args):
-            pass
-
-    url, server = _serve(Handler)
-    state["port"] = server.server_address[1]
-    try:
-        with pytest.raises(HubError) as raised:
-            Hub(url, "token", timeout=10).start()
-        assert "different host" in str(raised.value)
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def test_a_location_with_an_unusable_port_is_refused_as_one(monkeypatch):
-    """And it is not reported as a broken TOKEN, which is where it landed.
-
-    `urlsplit(...).port` raises ValueError on `http://host:notaport`, and the
-    only `except ValueError` on this path is the one explaining that a token
-    cannot go in a header — so a malformed header from the OTHER end sent
-    somebody to rotate the system's secret.
-    """
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(302)
-            self.send_header("Location", "http://127.0.0.1:notaport/landed")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def log_message(self, *args):
-            pass
-
-    url, server = _serve(Handler)
-    try:
-        with pytest.raises(HubError) as raised:
-            Hub(url, "token", timeout=10).start()
-        message = str(raised.value)
-        assert "different host" in message
-        assert "hammerola login" not in message, (
-            "a malformed header from the other end tells the operator to "
-            "replace the system's one secret")
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
-def test_a_location_that_cannot_be_parsed_is_refused_as_a_LOCATION(code):
-    """The half of that story the port case cannot reach.
-
-    urllib parses `Location` and joins it onto the request's URL BEFORE it asks
-    `redirect_request` anything, so `http://[evil` raises inside `urlparse` —
-    above `_same_origin`, which swallows its own ValueError. That landed in the
-    clause explaining a token which cannot go in a header, so a stranger's
-    malformed header told the operator to replace the system's one secret.
-
-    PARAMETRIZED BECAUSE THIS IS WHAT THE ALIASES ARE FOR, and the origin test
-    beside it is not: the base class's own `http_error_301` is a reference to
-    the base `http_error_302`, which calls `self.redirect_request` — so the
-    same-origin refusal reaches every code through inheritance whether the
-    aliases are restated here or not. The ValueError wrapper does NOT: it lives
-    in the override, and without the two alias lines four of these five codes
-    go to the base method and raise out of `urlparse` again. Deleting them left
-    the suite green until this was parametrized.
-    """
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(code)
-            self.send_header("Location", "http://[evil")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def log_message(self, *args):
-            pass
-
-    url, server = _serve(Handler)
-    try:
-        with pytest.raises(HubError) as raised:
-            Hub(url, "token", timeout=10).start()
-        message = str(raised.value)
-        assert "Location" in message
-        assert "hammerola login" not in message, (
-            "somebody else's header sends the operator to replace the secret")
     finally:
         server.shutdown()
         server.server_close()
@@ -407,7 +138,7 @@ def test_a_legal_address_is_not_refused_by_any_of_those_checks(url):
     ("/x\x00y", "a NUL"),
 ])
 def test_a_path_the_hub_named_that_cannot_be_sent_never_reaches_the_wire(
-        elsewhere, path, what_is_wrong):
+        recorder, path, what_is_wrong):
     """UNTRUSTED INPUT, which is the case `fetch_path` exists for.
 
     The path comes out of the hub's own manifest, so `\\r\\n` in it is an attempt
@@ -418,11 +149,11 @@ def test_a_path_the_hub_named_that_cannot_be_sent_never_reaches_the_wire(
     the secret are both checked, so this is neither — please report it". A false
     sentence, in the one place where the input is somebody else's.
 
-    Checked from both ends, like the redirect test: a HubError comes back, and
-    the server saw no request at all, so there is no version of this where the
-    line went out and the error came back anyway.
+    Checked from both ends: a HubError comes back, and the server saw no
+    request at all, so there is no version of this where the line went out and
+    the error came back anyway.
     """
-    hub = Hub(elsewhere, "token", timeout=10)
+    hub = Hub(recorder, "token", timeout=10)
 
     with pytest.raises(HubError) as raised:
         hub.fetch_path(path)
@@ -435,7 +166,7 @@ def test_a_path_the_hub_named_that_cannot_be_sent_never_reaches_the_wire(
         "the request reached the server, so the injected header went with it")
 
 
-def test_the_transport_still_refuses_an_unsendable_path_on_its_own(elsewhere):
+def test_the_transport_still_refuses_an_unsendable_path_on_its_own(recorder):
     """The backstop below `fetch_path`, reached directly because nothing else
     can reach it any more.
 
@@ -445,7 +176,7 @@ def test_the_transport_still_refuses_an_unsendable_path_on_its_own(elsewhere):
     depth, and defence in depth that no test can reach is indistinguishable from
     a clause that was deleted — so it is exercised at the level it lives on.
     """
-    hub = Hub(elsewhere, "token", timeout=10)
+    hub = Hub(recorder, "token", timeout=10)
 
     with pytest.raises(HubError) as raised:
         hub._call("/x\r\nX-Evil: 1")
@@ -566,9 +297,7 @@ def test_what_the_far_end_wrote_is_escaped_and_trimmed_before_it_is_printed():
 
     `BadStatusLine` carries the line it could not parse — decoded, unescaped, up
     to `http.client._MAXLINE` (65536). Interpolated raw, that is a 65 kB error
-    on stderr with whatever ANSI escapes the sender chose, and the threat model
-    is the redirect handler's exactly: an address typed with one character
-    wrong, at a domain somebody has registered.
+    on stderr.
 
     The clause one line above this one in `_call` had reasoned the question
     through and concluded its own text was safe. The reasoning was not carried
@@ -651,9 +380,9 @@ def test_the_quoting_helper_escapes_then_trims_and_says_the_true_length():
     THE ORDER IS PART OF THE CONTRACT IN BOTH DIRECTIONS. Escaping has to happen
     before the trim or a cut can land inside an escape sequence and the ceiling
     would be measured on the wrong string; the SOURCE has to be cut before the
-    escaping or a 256 MB reply is copied and expanded in a module whose ceilings
-    exist to stop exactly that. Both hold at once: cut with a margin, escape,
-    trim the result, and report the length of the SOURCE.
+    escaping or a 256 MB reply is copied and expanded only to be thrown away.
+    Both hold at once: cut with a margin, escape, trim the result, and report
+    the length of the SOURCE.
     """
     from hammerola.hub import QUOTE_LIMIT, quoted
 
@@ -681,8 +410,7 @@ def test_the_source_is_cut_before_it_is_escaped(payload):
     """WHICH THE OUTPUT CANNOT SHOW, so it is measured.
 
     Escaping the whole string and trimming afterwards produces the same
-    characters, so the difference is memory only — in a module whose ceilings
-    exist because "a gigabyte in a reply is a gigabyte of the author's RAM".
+    characters, so the difference is memory only.
     4 MiB of a character `repr` expands fourfold peaks at ~2 KiB cutting first
     and ~16 MiB escaping first: three orders of magnitude, so the threshold sits
     nowhere near either and cannot flap.
@@ -762,7 +490,7 @@ def test_no_route_prints_what_the_far_end_wrote_without_quoting_it(route):
     coverage said and the test did not. These are the ordinary commands
     (`hammerola comments`, `rm`, `rename`, `status`), reached long before
     anybody meets an exotic transport failure, and each interpolated a string
-    straight out of the reply body with only the 64 MiB reply cap on it.
+    straight out of the reply body.
 
     `fetch_path` is in the list for the other half of the same rule: what it
     prints is the PATH, and on the manifest route the hub chose that too.
@@ -801,104 +529,7 @@ def test_no_route_prints_what_the_far_end_wrote_without_quoting_it(route):
         server.server_close()
 
 
-def test_the_redirect_refusal_does_not_let_the_far_end_choose_its_length(
-        elsewhere):
-    """The two sites in the redirect handler, which nothing observed.
-
-    They are saved from escape sequences by accident and by two DIFFERENT
-    accidents — urllib percent-quotes the header in one, the formatting goes
-    through a repr in the other — which is precisely the case-by-case reasoning
-    this file's helper exists to stop needing. Length was never saved at all.
-
-    And this class is not an exotic corner: its whole docstring is about an
-    address typed with one character wrong, at a domain somebody has registered.
-    """
-    target = f"{elsewhere}/{'A' * 60000}"
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(302)
-            self.send_header("Location", target)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def log_message(self, *args):
-            pass
-
-    url, server = _serve(Handler)
-    try:
-        with pytest.raises(HubError) as raised:
-            Hub(url, "token", timeout=10).start()
-        message = str(raised.value)
-        assert "different host" in message
-        assert len(message) < 1000, f"{len(message)} characters"
-        assert _Recorder.seen == []
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-@pytest.mark.parametrize("second_hop", ["another host", "an unreadable Location"])
-def test_neither_refusal_lets_a_FOLLOWED_redirect_choose_the_length_either(
-        elsewhere, second_hop):
-    """`req.full_url` is far-end text too, after one hop.
-
-    A redirect WITHIN the hub is followed — that is deliberate, an ordinary
-    trailing-slash 302 has to keep working — and the URL it lands on is the
-    hub's host with a path the far end wrote. Both messages in this class print
-    that URL, so both are as long as somebody else decided.
-    """
-    long_path = "/" + "A" * 60000
-    state = {}
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path != long_path:
-                # ...within the hub, so it is followed.
-                location = f"{state['url']}{long_path}"
-            elif second_hop == "another host":
-                location = f"{elsewhere}/landed"
-            else:
-                location = "http://[evil"
-            self.send_response(302)
-            self.send_header("Location", location)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def log_message(self, *args):
-            pass
-
-    url, server = _serve(Handler)
-    state["url"] = url
-    try:
-        with pytest.raises(HubError) as raised:
-            Hub(url, "token", timeout=10).start()
-        message = str(raised.value)
-        assert len(message) < 1000, f"{second_hop}: {len(message)} characters"
-        assert _Recorder.seen == []
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def test_the_ceiling_message_does_not_let_the_hub_choose_its_length(
-        monkeypatch, big_body):
-    """The transport's own two messages name the URL, and on the manifest route
-    the hub named the path in it.
-
-    The caller one level up already quotes that path; this one did not, so the
-    same string was safe in one sentence and 60 kB in the next.
-    """
-    from hammerola import hub as hub_module
-
-    monkeypatch.setattr(hub_module, "MAX_REPLY_BYTES", 1024)
-
-    with pytest.raises(HubError) as raised:
-        Hub(big_body, "token", timeout=10).fetch_path(HOSTILE_PATH)
-    assert len(str(raised.value)) < 1000, len(str(raised.value))
-
-
-def test_the_last_resort_clause_is_a_sentence_and_not_a_traceback(elsewhere):
+def test_the_last_resort_clause_is_a_sentence_and_not_a_traceback(recorder):
     """The clause that says "this is none of them — please report it".
 
     Coverage said no test in the suite executed it, which is this project's own
@@ -907,7 +538,7 @@ def test_the_last_resort_clause_is_a_sentence_and_not_a_traceback(elsewhere):
     round. It is reached here the way the other backstop is: at the level it
     lives on, below the checks that keep the public entry points away from it.
     """
-    hub = Hub(elsewhere, "token", timeout=10)
+    hub = Hub(recorder, "token", timeout=10)
 
     with pytest.raises(HubError) as raised:
         hub._call("/старт")
@@ -954,8 +585,7 @@ def test_an_error_reply_whose_body_stops_early_is_named_and_not_a_traceback():
     It used to happen inside `_call`'s own `except HTTPError` clause, and Python
     does not offer an exception raised in a handler to the handlers beside it —
     so a 500 with a truncated chunked body went past every clause as a
-    traceback, while the identical 200 was named properly. Putting a ceiling on
-    error bodies is what made this reachable.
+    traceback, while the identical 200 was named properly.
     """
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -1010,30 +640,19 @@ def test_a_complete_reply_carrying_BOTH_framings_is_not_called_truncated():
         server.server_close()
 
 
-@pytest.mark.parametrize("count, expected", [
-    (64 * 1024 * 1024, "64 MiB"),
-    (256 * 1024 * 1024, "256 MiB"),
-    (4096, "4 KiB"),
-    (512, "512 bytes"),
-])
-def test_a_ceiling_is_printed_as_the_number_that_was_configured(count, expected):
-    """`cap / 1e6` turned 64 MiB into "67 MB" and a lowered ceiling into "0 MB".
-
-    Neither number appears in `limits.py`, in the settings or in anything the
-    hub answers, so somebody grepping for the one in the message found nothing.
-    """
-    from hammerola import hub as hub_module
-
-    assert hub_module._bytes_text(count) == expected
-
-
 # -- a reply that stopped early ---------------------------------------------
 @pytest.fixture
-def truncated():
-    """A server that declares 40 bytes, sends 10 and hangs up. -> its url."""
+def truncated(request):
+    """A server that declares 40 bytes, sends 10 and hangs up. -> its url.
+
+    The status is the test's parameter when it gives one: an error reply's body
+    is read by a second `read()` call, and that one has to stay argument-free too.
+    """
+    status = getattr(request, "param", 200)
+
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", "40")
             self.end_headers()
@@ -1051,18 +670,19 @@ def truncated():
         server.server_close()
 
 
+@pytest.mark.parametrize("truncated", [200, 500], indirect=True)
 def test_a_reply_shorter_than_it_declared_is_refused_and_not_returned(
         truncated):
-    """The integrity check the CAP took away, restored explicitly.
+    """The integrity check a reply has, and it is the library's own.
 
     `response.read()` raises `IncompleteRead` on a short body; `response.read(n)`
-    does not — it returns what arrived and closes the connection. Moving to the
-    capped read was right and it silently removed the only check this reply had.
+    does not — it returns what arrived and closes the connection. So the body is
+    read with no argument, and `_call` names the exception.
     """
     with pytest.raises(HubError) as raised:
         Hub(truncated, "token", timeout=10).fetch_path("/start/template.tar.gz")
     message = str(raised.value)
-    assert "10" in message and "40" in message
+    assert "stopped sending part-way" in message
     assert "Nothing was kept" in message
 
 
@@ -1082,159 +702,15 @@ def test_a_truncated_ARTEFACT_is_refused_rather_than_handed_back_short(
     assert "Nothing was kept" in str(raised.value)
 
 
-def test_a_manifest_naming_something_host_shaped_is_not_followed(elsewhere):
+def test_a_manifest_path_without_a_leading_slash_is_not_fetched(recorder):
     """The cheap shape check in `fetch_path`, which nothing observed.
 
-    It is not the protection — `_SameOriginRedirects` is, and the docstring
-    says so — but it is still a guard, and a guard whose removal changes
-    nothing observable is one nobody can tell has gone. A manifest naming
-    `//host/x` is a manifest writing an address where a path belongs, and this
-    refuses to fetch it at all.
+    A guard whose removal changes nothing observable is one nobody can tell has
+    gone. A manifest naming a path with no leading slash is not naming a path
+    on this hub, and this refuses to fetch it at all.
     """
-    hub = Hub(elsewhere, "token", timeout=10)
+    hub = Hub(recorder, "token", timeout=10)
 
-    with pytest.raises(HubError) as raised:
-        hub.fetch_path("//elsewhere.example/x")
-    assert "not a path on this hub" in str(raised.value)
-    assert _Recorder.seen == [], "it was fetched anyway"
-
-    # ...and the same for a path that is not a path at all.
     with pytest.raises(HubError):
         hub.fetch_path("start/template.tar.gz")
     assert _Recorder.seen == []
-
-
-def test_a_redirect_within_the_hub_is_still_followed():
-    """The refusal is about the ORIGIN, not about redirects: a hub that answers
-    a trailing-slash 302 to itself has to go on working."""
-    state = {"url": None}
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path != "/moved":
-                self.send_response(302)
-                self.send_header("Location", f"{state['url']}/moved")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-            body = b'{"landed": true}'
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *args):
-            pass
-
-    url, server = _serve(Handler)
-    state["url"] = url
-    try:
-        assert Hub(url, "token", timeout=10).start() == {"landed": True}
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-BIG_BODY = b"x" * (64 * 1024)
-
-
-@pytest.fixture
-def big_body(request):
-    """A server that answers 64 KB to anything. -> its url.
-
-    THE STATUS IS A PARAMETER, and that is not decoration. There are TWO reads
-    of a body in `Hub._call` and only one of them is on the 200: urllib raises
-    `HTTPError` for a 4xx/5xx, and the body of that exception is read by a
-    second call to `_read_capped`. A fixture that could only answer 200 left
-    that second one covered by nothing — swapping it for a plain `error.read()`
-    kept the suite green, while a hub answering 500 with a gigabyte fills the
-    same memory as one answering 200 with it.
-    """
-    status = getattr(request, "param", 200)
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(status)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(len(BIG_BODY)))
-            self.end_headers()
-            self.wfile.write(BIG_BODY)
-
-        def log_message(self, *args):
-            pass
-
-    url, server = _serve(Handler)
-    try:
-        yield url
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-@pytest.mark.parametrize("big_body", [200, 500], indirect=True)
-def test_a_reply_bigger_than_this_tool_will_hold_is_refused_as_it_is_read(
-        monkeypatch, big_body):
-    """Capped as it is READ, so the memory is never taken.
-
-    The ceiling is lowered for the test rather than a hundred megabytes being
-    sent: what is under test is that the read stops, not the number.
-
-    Run against BOTH statuses, because they take different paths out of urllib
-    and each does its own read — the 500 is the one that was uncovered.
-    """
-    from hammerola import hub as hub_module
-
-    monkeypatch.setattr(hub_module, "MAX_REPLY_BYTES", 1024)
-
-    with pytest.raises(HubError) as raised:
-        Hub(big_body, "token", timeout=10).fetch_path("/start/template.tar.gz")
-    message = str(raised.value)
-    assert "nothing was kept" in message
-    # ...and the ceiling is named as the number that was set. `cap / 1e6` was
-    # here and printed this one as "0 MB", and the production 64 MiB as "67".
-    assert "1 KiB" in message, message
-
-
-def test_an_artefact_is_held_to_the_BUILD_ceiling_and_not_to_the_push_one(
-        monkeypatch, big_body):
-    """A part the hub published must not be one `artifacts` refuses to fetch.
-
-    Both ceilings are lowered so the SAME 64 KB body lands on either side of the
-    line: over what a push may be, under what one build may write. The push-sized
-    routes refuse it and the artefact route takes it, which is the whole reason
-    there are two numbers — one ceiling for both meant the hub serving an STL the
-    client would not accept, with a message saying no reply may be that big.
-    """
-    from hammerola import hub as hub_module
-
-    monkeypatch.setattr(hub_module, "MAX_REPLY_BYTES", 1024)
-    monkeypatch.setattr(hub_module, "MAX_ARTIFACT_REPLY_BYTES", 1024 * 1024)
-    hub = Hub(big_body, "token", timeout=10)
-
-    fetched = hub.build_file("demo0001", "latest", "body.stl")
-    assert fetched == BIG_BODY
-
-    with pytest.raises(HubError):
-        hub.revision_archive("a" * 64)
-
-
-def test_the_artefact_ceiling_is_a_BIGGER_number_and_not_the_absence_of_one(
-        monkeypatch, big_body):
-    """The other half of the pair, and the one that keeps it honest.
-
-    "Artefacts get their own ceiling" is a licence to hold more, not a licence
-    to hold whatever arrives: the route is public and takes no token, so a hub
-    that was mistyped answers it as readily as the right one. With the artefact
-    number below the body, the same fetch that succeeds above is refused —
-    which is what says the second ceiling is applied at all.
-    """
-    from hammerola import hub as hub_module
-
-    monkeypatch.setattr(hub_module, "MAX_REPLY_BYTES", 1024)
-    monkeypatch.setattr(hub_module, "MAX_ARTIFACT_REPLY_BYTES", 4096)
-
-    with pytest.raises(HubError) as raised:
-        Hub(big_body, "token", timeout=10).build_file(
-            "demo0001", "latest", "body.stl")
-    assert "nothing was kept" in str(raised.value)

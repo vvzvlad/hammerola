@@ -866,8 +866,8 @@ describe('show', () => {
   })
 
   it('ends a drag of the section handle before it replaces the scene', async () => {
-    // The grip's press is taken in a window listener of its own, so neither
-    // `endGesture` nor the idle clock that defers this swap ever sees it:
+    // The grip's press is taken in a window listener of the viewport's, so
+    // neither `endGesture` nor the idle clock that defers this swap ever sees it:
     // without this call a reader holding the arrow when a build lands keeps
     // dragging against a scene that is gone, and the depth the interface prints
     // stops matching the plane. BEFORE `render()` is the whole of it — the

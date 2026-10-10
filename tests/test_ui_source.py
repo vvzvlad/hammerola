@@ -55,6 +55,7 @@ from pathlib import Path
 
 import pytest
 
+from src.app import POST_ROUTES
 from src.comments import PHOTO_KIND, SHOT_KIND, validate_payload
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -462,16 +463,36 @@ def test_the_library_stylesheet_is_still_on_the_page():
 
 # -- the comment endpoint ----------------------------------------------------
 
+class _Reached:
+    """A stand-in handler that remembers which of its methods were asked for."""
+
+    def __init__(self):
+        self.names = []
+
+    def __getattr__(self, name):
+        self.names.append(name)
+        return lambda *args, **kwargs: None
+
+
 def test_the_comment_post_goes_where_the_hub_listens():
     """The route in the component is the one src/app.py dispatches on.
 
-    app.py matches on a list of path segments, so the URL the browser has to use
-    is that list joined — derived here rather than repeated.
+    app.py matches on a prefix of path segments, so the URL the browser has to
+    use is that prefix joined — derived here rather than repeated. The entry is
+    the one of `POST_ROUTES` whose `call` reaches `_handle_comment_post`, asked
+    of the call itself, so its place in the table does not decide which is read.
     """
-    app = read(ROOT / "src" / "app.py")
-    match = re.search(r'segments\[:3\]\s*==\s*\[([^\]]+)\]', app)
-    assert match, "app.py no longer dispatches comments on a segment prefix"
-    prefix = "/" + "/".join(re.findall(r'"([^"]+)"', match.group(1)))
+    leading = []
+    for (prefix, count), call in POST_ROUTES:
+        reached = _Reached()
+        call(reached, ["probe"] * ((count or len(prefix) + 1) - len(prefix)),
+             "", False, True)
+        if "_handle_comment_post" in reached.names:
+            leading.append(prefix)
+    assert len(leading) == 1, (
+        f"expected one POST_ROUTES entry to reach _handle_comment_post, "
+        f"found {leading}")
+    prefix = "/" + "/".join(leading[0])
     assert f"`{prefix}/" in read(COMPONENT), (
         f"the component does not post to {prefix}/<pid>/<commit>")
 
@@ -1485,84 +1506,3 @@ def test_the_document_module_reaches_no_module_that_reaches_the_viewer():
         "ui/src/viewport/math.js has grown an import, so it is no longer the "
         "leaf `proposal.js` is allowed to reach through — either keep it a "
         "leaf, or move the arithmetic `proposal.js` needs somewhere that is")
-
-def test_the_section_grip_is_built_before_the_rotation_rings():
-    """One press cannot both slide the section and start a rotation.
-
-    Both widgets read their press off the CANVAS, in a capture-phase
-    `pointerdown` on the window: `scene3d.js` because a mesh has no element to
-    hang a listener on, `rings.js` because a ring is a curve and never had one
-    either. The grip refuses a press it takes with `stopImmediatePropagation`,
-    and that silences only listeners registered LATER on the same node -- so the
-    whole of the guarantee is the order these two are CONSTRUCTED in.
-
-    It is asserted here, on the source, because no listener carries anything
-    that says whose it is: they are anonymous closures on one node, for one
-    event, in one phase. Swap the two lines in `element.js` and both widgets'
-    own suites stay green while the gesture goes wrong on the page.
-    """
-    text = (VIEWPORT / "element.js").read_text(encoding="utf-8")
-    grip = text.index("createHandle(")
-    rings = text.index("createRings(")
-    assert grip < rings, (
-        "createRings is built before createHandle: a press on the section grip "
-        "would now also start a rotation"
-    )
-
-def test_the_axis_arrows_are_built_before_the_rotation_rings():
-    """A press on a plane quad cannot also start a rotation.
-
-    The two halves of the move manipulator stand on the SAME part, so a quad
-    and a knob really do cross -- and both read their press off the canvas in a
-    capture-phase `pointerdown` on the window, refusing the one they take with
-    `stopImmediatePropagation`, which silences only listeners registered LATER.
-    So the order these two are CONSTRUCTED in is the whole of which one gets a
-    contested press.
-
-    THIS WAY ROUND AND NOT THE OTHER, and not because one target is fuller than
-    the other: every drawn mesh in rings.js is `NO_HIT`, and what answers a ray
-    there is the invisible disc inside the knob, so the contested press is a
-    20 px knob against a 16 px quad and both are filled. It is WHERE THE HAND
-    ALREADY IS that decides -- the quads and the arrows cluster at the part's
-    centre, where the reader has aimed in order to move it, and a knob only
-    reaches that far in when the projection has flattened its ring nearly
-    edge-on. The paint says the same thing now: `GIZMO_ORDER` stands over
-    `RINGS_ORDER` in scene3d.js, so what wins the press is what is drawn on top.
-
-    On the source, for `test_the_section_grip_is_built_before_the_rotation_rings`'s
-    reason: the listeners are anonymous closures on one node, for one event, in
-    one phase, so swapping the two lines leaves both widgets' own suites green
-    while the gesture goes wrong on the page.
-    """
-    text = (VIEWPORT / "element.js").read_text(encoding="utf-8")
-    arrows = text.index("createGizmo(")
-    rings = text.index("createRings(")
-    assert arrows < rings, (
-        "createRings is built before createGizmo: a press on a plane quad "
-        "would now also start a rotation"
-    )
-
-
-def test_the_axis_arrows_are_built_before_the_section_grip():
-    """A press on an arrow that crosses the grip stays the arrow's.
-
-    THE DOM USED TO SETTLE THIS AND NO LONGER CAN. While the arrows were a
-    layer of divs they took their presses on their own elements, and the grip
-    declined any target but the canvas -- so an arrow lying over the grip won by
-    construction. Both are meshes reading the same canvas now, and the order
-    they are CONSTRUCTED in is the whole of it, exactly as for the two crossings
-    above.
-
-    THIS WAY ROUND because the reader armed the Move tool and the manipulator is
-    what they armed it for, where the grip is a handle on a cut that merely
-    happens to be standing. Keeping it also keeps every precedence the flat
-    widget had, so nothing about which widget answers a press changed on the day
-    the arrows moved into the scene.
-    """
-    text = (VIEWPORT / "element.js").read_text(encoding="utf-8")
-    arrows = text.index("createGizmo(")
-    grip = text.index("createHandle(")
-    assert arrows < grip, (
-        "createHandle is built before createGizmo: a press on an axis arrow "
-        "crossing the section grip would now drag the cut instead"
-    )

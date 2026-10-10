@@ -162,9 +162,9 @@ def test_a_job_from_years_ago_is_still_there(tmp_path):
     planted["created"] = "2019-01-01T00:00:00Z"
     planted["finished"] = "2019-01-01T00:00:00Z"
     on_disk.write_text(json.dumps(planted))
-    # The DIRECTORY's mtime is aged too. `_sweep_strangers` goes by mtime, and
-    # this is what proves it is not reaching a real job: a directory this old
-    # holding a readable record must be left exactly where it is.
+    # The DIRECTORY's mtime is aged too, so an age ceiling that went by the
+    # volume's own dates rather than by the record would be caught here as well:
+    # a directory this old holding a readable record must be left where it is.
     old = 0.0
     os.utime(store.root / job_id, (old, old))
 

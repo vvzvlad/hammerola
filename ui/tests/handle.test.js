@@ -313,9 +313,9 @@ describe('what it is built out of', () => {
   it('stands in the grip`s own band, in the one list all three widgets share', () => {
     // TWO HALVES OF ONE ANSWER, and neither is worth anything without the
     // other. The band is where this widget is drawn among the three that stand
-    // in this scene — over the rings, under the move manipulator, which is the
-    // reverse of the order `element.js` builds them in, because the widget that
-    // wins a contested press has to be the one the reader can see. And
+    // in this scene — over the rings, under the move manipulator — and it is
+    // also which of them wins a contested press (`joinPresses` in scene3d.js),
+    // so the widget that wins is the one the reader can see. And
     // `transparent` is what puts all three in ONE of the renderer's lists at
     // all: three sorts by that flag before it looks at any order, so an opaque
     // grip beside a blended ring is drawn FIRST whatever band it carries, and
@@ -716,9 +716,9 @@ describe('one whole drag', () => {
 
   it('concludes a drag the scene is being pulled out from under', () => {
     // The twin of `vp.endGesture`, and the reason it is a second call rather
-    // than the same one: the press was taken in a window listener of the grip's
-    // own, so neither that gesture nor the idle clock that defers the swap ever
-    // saw it. Ending it CONCLUDES rather than abandons — `restoreSection`
+    // than the same one: the press was taken in a window listener of the
+    // viewport's, so neither that gesture nor the idle clock that defers the
+    // swap ever saw it. Ending it CONCLUDES rather than abandons — `restoreSection`
     // subtracts `state.cutOffset` from the captured point, so a stale one would
     // put the seed off the face that was clicked.
     const { viewer, vp, canvas, handle } = scene()

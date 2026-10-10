@@ -353,23 +353,20 @@ function turnRecord(vp, paths, anchor, proposal) {
 }
 
 export function createRings(vp) {
-  // THE HAND-OVER IS REGISTERED BEFORE `createScene3D`, AND THAT IS
-  // LOAD-BEARING. `handOver` ends the two gestures a new press strands, and
-  // `onDown` below builds the new one; both are capture-phase listeners on the
-  // window, and listeners on one node in one phase run in the order they were
-  // added. The other way round, `onDown` would build a drag and `handOver`
-  // would immediately stop it. It is two listeners rather than one because
-  // `scene3d.js` calls `onDown` only for a press its ray LANDED on, and the
-  // gestures a press strands are stranded by a press that misses too.
-  addEventListener("pointerdown", handOver, true);
   addEventListener("pointermove", onMove, true);
 
   // The group, the place in the library's render pass, the pixel scale, the
   // press and the teardown are `scene3d.js`'s. `wanted`, `build`, `place` and
   // `onDown` are the declarations below; nothing is called until the first
   // `attach` and the first frame the library draws after it.
+  //
+  // `handOver` IS A CALLBACK OF ITS OWN AND NOT THE HEAD OF `onDown`, because
+  // `scene3d.js` calls `onDown` only for a press its ray LANDED on, and the
+  // gestures a press strands are stranded by a press that misses too. It is
+  // called first, so the drag `onDown` builds is never the one it stops.
   const widget = createScene3D(vp, {
-    wanted, build, place, press: onDown, cursor: "grab", order: RINGS_ORDER,
+    wanted, build, place, press: onDown, handOver, cursor: "grab",
+    order: RINGS_ORDER,
   });
 
   // Built with the group, because the namespace they come from arrives with it.
@@ -829,10 +826,10 @@ export function createRings(vp) {
    * node. They overwrite each other frame by frame and both report at the
    * release. `gizmo.js`'s own `onDown` carries the argument at length.
    *
-   * ON A PRESS THAT MISSES EVERY KNOB TOO, which is why this is a listener of
-   * its own rather than the head of `onDown`: this is the reader putting a
-   * second finger on the MODEL while an arrow is still held, which strands that
-   * drag exactly as a press on a knob would.
+   * ON A PRESS THAT MISSES EVERY KNOB TOO, which is why `scene3d.js` calls
+   * this ahead of its ray rather than as the head of `onDown`: this is the
+   * reader putting a second finger on the MODEL while an arrow is still held,
+   * which strands that drag exactly as a press on a knob would.
    *
    * BEFORE ANY RECORD IS BUILT, which is what makes the hand-over clean:
    * concluding the arrow's drag leaves its offset standing in `vp.moved`, and
@@ -925,7 +922,7 @@ export function createRings(vp) {
    *
    * THE TWIN OF `vp.endGesture`, of the grip's `endDrag` and of the arrows',
    * and it exists for the failure all three were written for: the press was
-   * taken in a window listener this widget owns, so neither that gesture nor
+   * taken in a window listener the widgets share, so neither that gesture nor
    * the idle clock that defers the swap ever saw it, and the release that would
    * have concluded it never comes. Concluding rather than abandoning, and the
    * reason is what ABANDONING costs: the part stands turned in `vp.moved` with
@@ -948,11 +945,10 @@ export function createRings(vp) {
       // goes with it, so the pose there would be to report is one nothing is
       // left standing at — the same ending tools.js's own teardown takes.
       finish();
-      // AND THE TWO LIFELONG LISTENERS WITH IT, which the gesture's own are
-      // not: these are on the window for the whole life of the widget rather
-      // than for the length of a gesture, so a viewport unmounted with no drag
-      // in progress would still leave them there holding a scene that is gone.
-      removeEventListener("pointerdown", handOver, true);
+      // AND THE LIFELONG HOVER LISTENER WITH IT, which the gesture's own are
+      // not: it is on the window for the whole life of the widget rather than
+      // for the length of a gesture, so a viewport unmounted with no drag in
+      // progress would still leave it there holding a scene that is gone.
       removeEventListener("pointermove", onMove, true);
       widget.destroy();
       group = null;

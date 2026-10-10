@@ -109,29 +109,6 @@ EXCLUDED_FILES = ("*.pyc", "*.pyo", "*~")
 # one that should not be packed at all, and the tail line says so.
 MAX_REFUSALS_LISTED = 100
 
-# And how much of ONE path is printed.
-#
-# THESE NAMES ARE NOT THE AUTHOR'S OWN, whatever it looks like from a laptop. A
-# model directory is normally a clone, and putting a file into a clone is not an
-# attack that needs anything — `\x1b[2Jwiped\rboom.py` clears the terminal and
-# rewrites the line that was supposed to report it, and a name holding a newline
-# breaks the indentation this message is read by. The hub spent a ceiling and a
-# double cut on exactly this (`src/store.py`, MAX_REFUSED_NAME_CHARS); the
-# client is the other end of the same wire and the same reasoning reaches it.
-#
-# The mechanism is the hub's, deliberately not shared with it: `src/store.py`
-# imports loguru and pydantic, and every module here is stdlib only. What is
-# NOT shared is the number, and that is not an oversight either — the hub's 80
-# is about how much attacker text a 422 and a log line may repeat, while this
-# one only has to keep a path readable on a terminal.
-#
-# Nor is the cut the same SHAPE, and the difference is the point: the hub cuts
-# the raw name before escaping it as well, because a tar member's name is
-# bounded by nothing. A path here is bounded by the filesystem — 255 bytes a
-# component, MAX_PATH_DEPTH components — so escaping is handed kilobytes at
-# worst and one cut, on the escaped result, is the whole job. See `_shown`.
-MAX_REFUSAL_PATH_CHARS = 160
-
 
 class PackError(Exception):
     """The tree cannot be sent as it stands, and here is which file is why."""
@@ -383,52 +360,22 @@ def _refusal_message(root: Path, refusals: list) -> str:
     return "\n".join(lines)
 
 
-ELLIPSIS = "..."
-
-
-def _cut_middle(text: str, cap: int) -> str:
-    """`text` reduced to AT MOST `cap` characters, with the middle taken out.
-
-    A second copy of `store._cut_middle` and it has to be: every module here
-    imports the standard library and nothing else, while `src/store.py` brings
-    in loguru and pydantic. The reasoning behind the shape — why the middle and
-    not the tail, and why a cap no bigger than the ellipsis needs a branch of its
-    own rather than the arithmetic below — lives there, with the ceiling it
-    serves.
-    """
-    if cap <= len(ELLIPSIS):
-        return text[:cap]
-    keep = cap - len(ELLIPSIS)
-    head = keep // 2
-    tail = keep - head
-    return text[:head] + ELLIPSIS + text[-tail:]
-
-
 def _shown(root: Path, path: Path) -> str:
-    """One path as a refusal prints it: relative, escaped, and cut to size.
+    """One path as a refusal prints it: relative and escaped.
 
     THE ONE PLACE every refused path passes through, so the escaping is here
     rather than at each of the six places that record one. It is the relative
-    path that is this function's own business; the escaping and the cut below it
-    are in `_shown_text`, because a refusal prints one string that is not a path
-    (see there).
+    path that is this function's own business; the escaping below it is in
+    `_shown_text`, because a refusal prints one string that is not a path (see
+    there).
 
-    ESCAPED because these names are not the author's own, whatever it looks like
-    from a laptop — see MAX_REFUSAL_PATH_CHARS. `repr` escapes exactly what
+    ESCAPED because a file name can hold a control character or a newline, and
+    printed raw it rewrites the terminal line that was supposed to report it or
+    breaks the indentation this message is read by. `repr` escapes exactly what
     `str.isprintable()` rejects, so a control character or a newline becomes
     visible text while a cyrillic name still reads as one; and the quotes it
     adds earn their place separately, since a name with a trailing space is
     otherwise a line that looks right and cannot be typed.
-
-    CUT AFTER ESCAPING AND ONLY THEN, which is where this parts company with
-    `store._shown_untrusted`. That one cuts the raw name first as well,
-    because a tar member's name is bounded by nothing at all and `repr` of a
-    megabyte of control characters builds four megabytes before anything gets to
-    cut it. A path out of this walk cannot be that: the filesystem bounds a
-    component at 255 bytes and MAX_PATH_DEPTH bounds the components, so what
-    `repr` is handed here is a couple of kilobytes at worst. The pre-cut would
-    be a second mechanism guarding against something that cannot arrive — and
-    nothing could tell whether it still worked.
     """
     try:
         shown = path.relative_to(root).as_posix()
@@ -438,7 +385,7 @@ def _shown(root: Path, path: Path) -> str:
 
 
 def _shown_text(text: str) -> str:
-    """The escaping and the cut on their own, for the strings that are not paths.
+    """The escaping on its own, for the strings that are not paths.
 
     THE `detail` OF A REFUSAL IS ONE OF THEM, and it was the single string a
     message printed raw. `_walk` records `error.strerror or str(error)` for a
@@ -453,10 +400,7 @@ def _shown_text(text: str) -> str:
     they earn their place there as much as on a path: "Permission denied" and
     anything with a trailing space or a newline in it read the same otherwise.
     """
-    quoted = repr(text)
-    if len(quoted) > MAX_REFUSAL_PATH_CHARS:
-        quoted = _cut_middle(quoted, MAX_REFUSAL_PATH_CHARS)
-    return quoted
+    return repr(text)
 
 
 def pack(root: Path, max_bytes: int = MAX_BUILD_BYTES) -> Packed:

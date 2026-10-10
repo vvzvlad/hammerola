@@ -27,8 +27,8 @@
 // than a fourth widget: they share its anchor, its `wanted`, its lifecycle, its
 // paint band and its one press listener, and Fusion's section manipulator is
 // likewise one thing carrying an arrow and two rotation handles. What a fourth
-// widget would have cost is in `scene3d.js` — another band, another rung of the
-// press-order ladder, and three more pins in tests/test_ui_source.py.
+// widget would have cost is in `scene3d.js` — another band, which is its place
+// in the press order as well as in the paint.
 
 import { cameraBasis, ndcAt, ndcRay } from "./camera.js";
 import { internals } from "./internals.js";
@@ -760,7 +760,7 @@ export function createHandle(vp) {
    * IT CONCLUDES RATHER THAN ABANDONS. A swap can arrive mid-drag: the interface
    * waits for the hand to come off the model but gives up after a deadline, and
    * that wait does not see this press at all — the idle clock listens on
-   * `vp.box`, and this press is taken in a window listener of the widget's own.
+   * `vp.box`, and this press is taken in a window listener of the viewport's.
    * So without this, `restoreSection` would subtract a `state.cutOffset` from
    * before the drag out of a point the drag had already moved, and the seed
    * would come back off the face that was clicked, with the interface printing a

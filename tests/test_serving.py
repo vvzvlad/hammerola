@@ -12,7 +12,6 @@ import json
 import os
 import re
 
-import pytest
 from harness import (DEFAULT_EXPORTS, good_build, meta_bytes, tar_gz,
                      view_bytes)
 
@@ -682,31 +681,6 @@ def test_the_payload_digest_file_is_not_served(hub):
     hub.publish("proj1", "abc123", good_build())
     assert (hub.project_dir("proj1") / "abc123" / ".payload.sha256").is_file()
     assert hub.get("/project/proj1/abc123/.payload.sha256").status_code == 404
-
-
-@pytest.mark.skipif(not hasattr(os, "mkfifo"),
-                    reason="this platform has no os.mkfifo, so no fifo can "
-                           "reach a build directory in the first place")
-def test_a_fifo_in_a_build_is_refused_rather_than_waited_on(hub):
-    """A file the name rule and the type whitelist both let through.
-
-    Model code writes its own output directory and nothing on the build path
-    stops it from calling mkfifo there. The name need not be DECLARED — nothing
-    prunes an undeclared file and publication moves the directory whole — so it
-    lands at a public URL, and a plain `open()` on it blocks until a writer
-    appears: a serving thread gone for good, from one GET, with no vulnerability
-    involved. `_send_file` refuses it on `S_ISREG`, and it can only get there
-    because the open is `O_NONBLOCK`.
-
-    The timeout is spelled out here rather than inherited from `Hub.get`, and
-    it is as much of the assertion as the status code is: without one a
-    regression would hang this test instead of failing it, and a test that
-    hangs is not a test.
-    """
-    hub.publish("proj1", "abc123", good_build())
-    os.mkfifo(hub.project_dir("proj1") / "abc123" / "pipe.json")
-    assert hub.get("/project/proj1/abc123/pipe.json",
-                   timeout=5).status_code == 404
 
 
 def test_a_directory_in_a_build_is_refused_without_leaking_a_descriptor(hub):
