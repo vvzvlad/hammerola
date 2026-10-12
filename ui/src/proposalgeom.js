@@ -95,9 +95,11 @@ function envelope(geoms) {
  * `edges` and `obj_vertices` go out EMPTY on purpose. A mesh has facet
  * boundaries, not edges, and which were real corners is information the kernel
  * discarded. Every rule tried for guessing them drew something false: all
- * boundaries gave a wire ball (160 lines on a d12 cylinder); an angle filter
- * was exact on primitives but broke on boolean results, whose T-junctions leave
- * edges with no partner. A line across a flat face is a feature nobody asked
+ * boundaries gave a wire ball (160 lines on a d12 cylinder, 992 on a d16
+ * sphere); an angle filter was exact on primitives (12 edges on a box, 64 on a
+ * cylinder, 0 on a sphere) but broke on boolean results, whose T-junctions leave
+ * edges with no partner; splitting those junctions first removed debris but
+ * still invented edges. A line across a flat face is a feature nobody asked
  * for, so nothing is drawn; flat per-face normals keep the form readable.
  */
 function mesh(geom) {

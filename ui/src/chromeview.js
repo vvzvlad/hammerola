@@ -552,9 +552,9 @@ export function chromeView(s, props, deps) {
       // Both halves of the widget in one line, since this is the only place
       // describing the tool while it is in force: it slides and turns.
       //
-      // The disc, not the ring: the press is taken by the coloured handle, and
-      // the arc through it is drawn by the trackball (`rings.js`) and takes no
-      // press.
+      // The disc, not the ring: the press is taken by the coloured handle. The
+      // arc through it is drawn by `rings.js` but answers no ray, so a press on
+      // it falls through to the trackball and orbits.
       //
       // The arrow and the quad likewise: a press on the part itself moves
       // nothing (`viewport/tools.js`) — a drag that starts off the widget

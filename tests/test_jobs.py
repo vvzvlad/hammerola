@@ -1443,8 +1443,8 @@ def test_stopping_the_pool_takes_the_queued_sources_with_it(tmp_path):
     """A dropped job still owns an unpacked tree, and nothing else removes it.
 
     `Store._sweep_leftovers` runs from `Store.__init__` only and skips everything
-    younger than an hour, while a container comes back in seconds, so the stop
-    itself has to remove the tree.
+    younger than `store.LEFTOVER_MAX_AGE_SECONDS` (four hours), while a container
+    comes back in seconds, so the stop itself has to remove the tree.
     """
     data = tmp_path / "data"
     store = _bare_store(data)
@@ -1663,7 +1663,8 @@ def test_a_push_handed_over_after_the_stop_began_is_refused(tmp_path):
     The thread serving a push keeps running while `shutdown` empties the queue on
     another. A task queued after that is never read: the pusher is told 202 about a
     build nobody runs, and its unpacked tree stays on the volume
-    (`Store._sweep_leftovers` skips everything younger than an hour).
+    (`Store._sweep_leftovers` skips everything younger than
+    `store.LEFTOVER_MAX_AGE_SECONDS`, four hours).
 
     The refusal says which refusal it is, because the caller acts differently: a
     full queue leaves the job for the request thread to fail, a stop has already

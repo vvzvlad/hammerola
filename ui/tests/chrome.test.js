@@ -671,9 +671,9 @@ describe('the mark', () => {
   /**
    * A `var(--…)` reference resolved through the LIGHT palette, anything else
    * unchanged.
-   * that it follows the page, while the designer's file has to hold
+   *
    * The component draws the mark in `var(--mark-ink)` / `var(--mark-hole)` so
-   * that it follows the page (issue #35), while the designer's file has to hold
+   * that it follows the page, while the designer's file has to hold
    * real ink — it is a document an image viewer opens. Resolving one side here
    * is what keeps the comparison below element-for-element instead of dropping
    * the two attributes that carry the colour: the triangle is component ->

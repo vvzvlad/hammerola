@@ -447,10 +447,9 @@ def _catalogue(raw: dict, files: dict) -> dict:
     reads as absent and is not emitted; `kind` is not optional, so `kind: null`
     is refused.
 
-    A printable carries files, and the catalogue carries at least one printable,
-    mirroring the build side: `cadbuild.printables.export_printables` exports
-    STEP, STL and 3MF for every printable, and `cadbuild.parts.read_catalogue`
-    refuses a catalogue with nothing to print.
+    A printable carries files, mirroring the build side:
+    `cadbuild.printables.export_printables` exports STEP, STL and 3MF for every
+    printable. A catalogue with no printable in it publishes like any other.
 
     A FIELD WRITTEN `null` IS THEREFORE AN ABSENT ONE, uniformly, and that is a
     reading rather than an oversight: `null` is the JSON spelling of "nothing

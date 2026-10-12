@@ -28,8 +28,10 @@ the sources of a failed build are not kept.
 
 A start parses what it reads back rather than rebuilding it. A record is taken
 when it is a JSON object whose `id` is its directory's name and whose `state` is
-in KNOWN_STATES; anything else is skipped with a warning and left in place (a
-hand edit, a failing disk, a kill between `create`'s `mkdir` and its write).
+in KNOWN_STATES; anything else is skipped with a warning and left in place. The
+hub never writes a torn record (`atomic_write_bytes`), so what fails the parse is
+a hand edit, a failing disk, a kill between `create`'s `mkdir` and its write, or
+a build writing into `data/jobs/`, which every build can (`src/buildproc/__init__.py`).
 
 The only records a start writes are jobs stranded `queued` or `building`: each
 is failed with RESTART_CODE, persisted so later starts do not warn again.

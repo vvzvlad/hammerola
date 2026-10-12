@@ -1846,7 +1846,7 @@ def atomic_write_bytes(path: Path, data: bytes, *, tmp_dir: Path = None) -> None
     just as `open(dir/tmp)` does, so `chmod 0500` on a job directory refuses both
     (measured: PermissionError either way). What makes a pointwise failure
     survivable is that nothing shared between records is written per record
-    (see the note on `order.json` in `src/jobs.py`).
+    (see the comment on the registry owning no file of its own in `src/jobs.py`).
     """
     parent = path.parent if tmp_dir is None else Path(tmp_dir)
     tmp = parent / f"{JSON_TMP_PREFIX}{path.name}-{uuid.uuid4().hex}"
