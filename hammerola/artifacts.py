@@ -119,15 +119,11 @@ def run(args) -> int:
     declared = _declared(meta)
     if not declared:
         # NOT ONE POINTER ON THE WHOLE DOCUMENT, which no build of a model
-        # produces and which the hub does not publish either. BOTH HALVES SAY
-        # SO NOW, and they say it about different things:
-        # `cadbuild.parts.read_catalogue` refuses a catalogue with nothing
-        # printable in it and `export_printables` writes three files for every
-        # printable it finds, while `render._catalogue` on the receiving side
-        # refuses a catalogue with no printable in it AND a printable with no
-        # `files`. So an honest answer cannot land here at all; what can is a
-        # document edited on the volume, a hub of another version, or something
-        # in between that rewrote the reply.
+        # produces: `cadbuild.build` writes the `assembled` view's overview mesh
+        # whatever the catalogue holds, a catalogue with nothing printable in
+        # it included. So an honest answer cannot land here; what
+        # can is a hand-made push, a document edited on the volume, a hub of
+        # another version, or something in between that rewrote the reply.
         #
         # It stays a message and a zero all the same, because the answer is
         # well formed and merely empty — there is nothing here to download and
@@ -136,8 +132,8 @@ def run(args) -> int:
         print(f"{name} declares no downloadable artefacts.")
         print(f"  Nothing in its meta.json names one: {_fields_sentence()} are "
               f"all absent.")
-        print("  A build of a model exports at least one printable and writes "
-              "the assembled mesh, so this document was not written by one.")
+        print("  A build of a model always writes the assembled mesh, so this "
+              "document was not written by one.")
         return 0
 
     dest = _destination(args, name)

@@ -487,13 +487,13 @@ def stop_hub(hub):
 
 
 # -- archive building -------------------------------------------------------
-# THE EXPORTS THE DEFAULT CATALOGUE NAMES, as archive members. Two rules the hub
-# grew to mirror what a build can actually produce make these compulsory rather
-# than decorative: a catalogue with no printable in it is a 422, and so is a
-# printable that declares no `files` (`render._catalogue`) — while
-# `cadbuild.printables.export_printables` writes STEP, STL and 3MF for every
-# printable it finds. So the smallest archive this suite can publish is the
-# document, the view file, and one export per printable.
+# THE EXPORTS THE DEFAULT CATALOGUE NAMES, as archive members. A rule the hub
+# grew to mirror what a build can actually produce makes these compulsory rather
+# than decorative: a printable that declares no `files` is a 422
+# (`render._catalogue`) — while `cadbuild.printables.export_printables` writes
+# STEP, STL and 3MF for every printable it finds. So the smallest archive with
+# a printable this suite can publish is the document, the view file, and one
+# export per printable.
 #
 # A CONSTANT AND NOT TWO LITERALS PER TEST, because a test builds its archive by
 # hand exactly when it wants to vary ONE thing about it: spelling the exports
@@ -524,13 +524,12 @@ def meta_bytes(views=None, parts=None, **extra):
     declares.
 
     EVERY DEFAULT PRINTABLE CARRIES AN EXPORT, because a printable that carries
-    none is a 422 (`render._catalogue`) and a catalogue with no printable in it
-    is another — the two rules the hub grew to mirror what a build can actually
-    produce, `export_printables` writing STEP, STL and 3MF for every printable
-    it finds. ONE export each rather than three: what the fixture stands for is
-    the SHAPE — a printable owns a non-empty `files` naming files this build
-    published — and two more names per part would be two more archive members
-    in every test that pushes one, for nothing. `good_build` is what puts
+    none is a 422 (`render._catalogue`) — the rule the hub grew to mirror what a
+    build can actually produce, `export_printables` writing STEP, STL and 3MF
+    for every printable it finds. ONE export each rather than three: what the
+    fixture stands for is the SHAPE — a printable owns a non-empty `files`
+    naming files this build published — and two more names per part would be
+    two more archive members in every test that pushes one, for nothing. `good_build` is what puts
     `lid.stl` and `pin.stl` in the archive; a test that hands this its own
     `parts` names its own files and takes them there too.
     """
