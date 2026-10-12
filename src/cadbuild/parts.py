@@ -403,14 +403,6 @@ def read_catalogue(model):
         read[key] = {"shape": shape, "mesh": mesh, "kind": kind,
                      "color": color, "note": note}
 
-    if not printable_keys(read):
-        raise BuildError(
-            "the catalogue has nothing to print: every entry is "
-            f"{KIND_HARDWARE!r} or {KIND_MOCK!r}. A model project exists to "
-            "produce a part, so at least one entry has to be "
-            f"{KIND_PRINTABLE!r}."
-        )
-
     return read
 
 

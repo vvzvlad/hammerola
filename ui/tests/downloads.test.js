@@ -662,9 +662,9 @@ describe('the header\'s downloads menu', () => {
   it('says so on a document carrying no catalogue, instead of drawing an empty menu', () => {
     // The branch is not dead and its reader is named: a hand-made document, or
     // one this page did not get from a push, with no `meta.parts` on it at all.
-    // No push produces one — the hub refuses a catalogue that is empty or has
-    // nothing printable in it — and no build from before issue #75 gets here
-    // either, since those named the list `variants` and this page reads
+    // No push produces one — the hub refuses a catalogue that is empty — and
+    // no build from before issue #75 gets here either, since those named the
+    // list `variants` and this page reads
     // `meta.views` unguarded. The row menu has a sentence for the same
     // document, and the two must not drift apart: a menu with nothing in it
     // reads as a menu that failed to load.

@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 19
+version: 20
 ---
 
 # hammerola
@@ -247,10 +247,10 @@ the first solid existed.
 different objects. Say back what the object is as a shape, what it touches and
 what holds it, then commit a **block preview**: the whole layout in boxes and
 cylinders, as a catalogue and an `assembled` view. It closes this phase, is not
-optional, and is the project's first revision. A build needs one `printable`,
-so the part goes in as a box of its overall size, its surroundings beside it as
-`mock` and `hardware`. The template's `checks()` then reddens in its last
-section, which walks `parts()` and so lands on YOUR box:
+optional, and is the project's first revision. The part goes in as a
+`printable` box of its overall size, its surroundings beside it as `mock` and
+`hardware`. The template's `checks()` then reddens in its last section, which
+walks `parts()` and so lands on YOUR box:
 `bracket.stl is 684 bytes, which is not a printable mesh`.
 Rewrite `checks()` to what is known (envelope ≤ space available) or delete it;
 gutting it fails. ("Semicircular bracket" went into geometry 36 seconds after
@@ -498,9 +498,10 @@ section. In short: `model.py` defines `parts()` and `views()`, may define
 * **`kind` is required and has no default**: `printable` is exported with
   download buttons; `hardware` is bought and goes into the product (a screw, a
   bearing, a heat-set insert); `mock` is scenery (the wall, the board the case
-  closes over). At least one `printable`. Colour follows the kind unless the
-  record names one: a palette entry chosen by the KEY for a printable, dark grey
-  for hardware, light grey for a mock.
+  closes over). No `printable` is required: a catalogue of only `hardware` and
+  `mock` publishes, with nothing to download. Colour follows the kind unless
+  the record names one: a palette entry chosen by the KEY for a printable, dark
+  grey for hardware, light grey for a mock.
 * **`views()` — tabs of REFERENCES into the catalogue.** A list of
   `{"id", "name", "parts": [...]}`; `name` captions the picker and falls back to
   the id. **A view carries no geometry of its own.** Each entry of `parts` is:

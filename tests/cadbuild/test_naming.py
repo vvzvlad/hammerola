@@ -342,10 +342,13 @@ def test_an_unknown_kind_is_refused_and_the_three_are_named():
     assert "'mock'" in message
 
 
-def test_a_catalogue_with_nothing_to_print_is_refused():
-    """A model project exists to produce a part."""
-    message = refusal({"screw": entry("hardware"), "wall": entry("mock")})
-    assert "nothing to print" in message
+def test_a_catalogue_with_nothing_to_print_is_read():
+    """A bought enclosure around factory boards is a model with nothing to
+    print, and it still has to build."""
+    read = read_catalogue(Model({"screw": entry("hardware"),
+                                 "wall": entry("mock")}))
+    assert list(read) == ["screw", "wall"]
+    assert printable_keys(read) == []
 
 
 def test_printable_keys_are_the_printable_ones_in_order():

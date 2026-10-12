@@ -3,7 +3,7 @@
 
 THIS FILE IS THE CONTRACT, and it is a working example of it rather than a
 description. It is not the SMALLEST model the hub will build -- a catalogue
-holding a single printable is that -- it is the one that works all three kinds
+holding a single part is that -- it is the one that works all three kinds
 of part and both view ids that mean something. What it does NOT demonstrate is
 described where each of them belongs, in the docstrings below, and used by
 nothing here: a group, `deformed`, `alpha`, `color`, and the `print` view's
@@ -447,7 +447,8 @@ def parts():
     exported and gets download buttons, `hardware` is bought and goes into the
     product, `mock` is neither -- it is what the design has to fit, and nothing
     is exported for it either -- and defaulting to the first would offer a
-    bought bearing for printing. At least one entry has to be `printable`.
+    bought bearing for printing. No entry has to be `printable`: a catalogue
+    of bought parts and mocks alone builds, with nothing to download.
 
     A part that names no colour is painted by what it IS: the palette for a
     printable, dark grey for hardware, a paler grey for a mock. So the picture

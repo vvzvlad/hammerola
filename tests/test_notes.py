@@ -60,10 +60,9 @@ from src.render import MAX_PARTS, MAX_TEXT
 
 
 # THE EXPORT THE CATALOGUE'S ONE PRINTABLE DECLARES — an archive member and a
-# pointer in the document at once, because the hub now requires both halves of
-# that statement: a `printable` declaring no files is a 422 and so is a
-# catalogue with no printable in it (`render._catalogue`). One name whatever the
-# keys are, and deliberately so: nothing in this file is about the export, so
+# pointer in the document at once, because a `printable` declaring no files is
+# a 422 (`render._catalogue`). One name whatever the keys are, and
+# deliberately so: nothing in this file is about the export, so
 # `lid.stl` beside a key spelled `корпус` is a stand-in rather than a claim
 # about how a build names what it writes.
 PRINTABLE_EXPORT = "lid.stl"
@@ -197,10 +196,8 @@ def test_a_catalogue_record_that_is_not_an_object_is_refused(hub):
     malformed push into a 422 is the one being checked here, and the message is
     read for that reason.
 
-    THE RECORD BESIDE IT IS A GOOD ONE, so the catalogue still has a printable
-    in it and the refusal cannot be "nothing to print" — the rule this document
-    would otherwise be answered by. `views` names only that good key, which is
-    what keeps `_view_parts` and `_match_selection` out of the way as well.
+    THE RECORD BESIDE IT IS A GOOD ONE, and `views` names only that good key,
+    which is what keeps `_view_parts` and `_match_selection` out of the way.
     """
     for bad in ("lid.stl", ["lid.stl"], 3, True, []):
         body = tar_gz({

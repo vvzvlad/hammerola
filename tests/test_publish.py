@@ -767,25 +767,18 @@ def test_every_kind_the_build_can_write_publishes(hub, kind):
     directly in tests/cadbuild/test_naming.py. This is the other witness: that
     each word really survives a push, rather than only appearing in a tuple.
     """
-    # TWO RECORDS, AND THE SECOND ONE IS FIXED. A catalogue with nothing
-    # printable in it is a 422 of its own, so `hardware` and `mock` cannot be
-    # asked this question by a one-record document at all; and a printable that
-    # declares no files is refused too, so the record under test carries an
-    # export exactly when it is the printable. What is asserted below is
-    # untouched — the word survives the push and reaches the reader.
+    # A printable that declares no files is refused, so the record carries an
+    # export exactly when it is the printable.
     varying = {"kind": kind}
     if kind == "printable":
         varying["files"] = {"stl": "lid.stl"}
     body = tar_gz({
         "meta.json": meta_bytes(
-            parts={"lid": varying,
-                   "anchor": {"kind": "printable",
-                              "files": {"stl": "anchor.stl"}}},
+            parts={"lid": varying},
             views=[{"id": "assembled", "name": "assembled",
-                    "file": "assembled.json", "parts": ["lid", "anchor"]}]),
-        "assembled.json": view_bytes(keys=("lid", "anchor")),
-        "lid.stl": b"solid lid",
-        "anchor.stl": b"solid anchor"})
+                    "file": "assembled.json", "parts": ["lid"]}]),
+        "assembled.json": view_bytes(keys=("lid",)),
+        "lid.stl": b"solid lid"})
     assert hub.publish("proj1", "abc123", body).status_code == 201
     meta = hub.get("/project/proj1/abc123/meta.json").json()
     assert meta["parts"]["lid"]["kind"] == kind
@@ -861,46 +854,21 @@ def test_a_printable_that_declares_no_files_is_refused(hub):
     assert not (hub.project_dir("proj1") / "abc123").exists()
 
 
-def test_a_catalogue_with_nothing_printable_in_it_is_refused(hub):
-    """The mirror of `cadbuild.parts.read_catalogue`, which says it in as many
-    words: "the catalogue has nothing to print".
-
-    A model project exists to produce a part, so a document describing nothing
-    but bought screws and scenery was not written by a build of one — and the
-    front page would list it as a build with nothing in it to print. Both kinds
-    are here rather than one, because the two are excluded for the same reason
-    and a check written against `hardware` alone would take a catalogue of
-    mocks.
-
-    WHAT IS NOT ASKED FOR is a view called `assembled` or an `overview` on it,
-    though the build guarantees both: that is an id the BUILD half invented, and
-    requiring it would write its vocabulary into the receiving side. See
-    `render._catalogue`, which argues it where the rule lives.
+def test_a_catalogue_with_nothing_printable_in_it_publishes(hub):
+    """An assembly of bought parts and scenery is a model worth showing too:
+    a purchased enclosure around factory boards has nothing to print and still
+    has to be looked at. Both non-printed kinds are here, and nothing else.
     """
     body = tar_gz({
         "meta.json": meta_bytes(
             parts={"screw": {"kind": "hardware"}, "wall": {"kind": "mock"}},
             views=[{"id": "assembled", "name": "assembled",
                     "file": "assembled.json", "parts": ["screw", "wall"]}]),
-        "assembled.json": view_bytes(keys=("screw", "wall")),
-        **DEFAULT_EXPORTS})
+        "assembled.json": view_bytes(keys=("screw", "wall"))})
     r = hub.publish("proj1", "abc123", body)
-    assert r.status_code == 422, r.text
-    assert "nothing to print" in r.json()["error"], r.text
-    assert not (hub.project_dir("proj1") / "abc123").exists()
-
-    # ...and one printable among them is enough, so the refusal is about the
-    # catalogue as a whole rather than about the records beside it.
-    body = tar_gz({
-        "meta.json": meta_bytes(
-            parts={"screw": {"kind": "hardware"}, "wall": {"kind": "mock"},
-                   "lid": {"kind": "printable", "files": {"stl": "lid.stl"}}},
-            views=[{"id": "assembled", "name": "assembled",
-                    "file": "assembled.json",
-                    "parts": ["lid", "screw", "wall"]}]),
-        "assembled.json": view_bytes(keys=("lid", "screw", "wall")),
-        **DEFAULT_EXPORTS})
-    assert hub.publish("proj1", "def456", body).status_code == 201
+    assert r.status_code == 201, r.text
+    served = hub.get("/project/proj1/abc123/meta.json").json()["parts"]
+    assert served == {"screw": {"kind": "hardware"}, "wall": {"kind": "mock"}}
 
 
 def test_no_views_is_422(hub):
@@ -2181,12 +2149,9 @@ def test_more_file_pointers_than_the_build_has_files_is_refused(hub, spread):
                              "files": {f"stl{i}": "model.stl"
                                        for i in range(count)}}}
         else:
-            # STILL ONE POINTER PER RECORD — the count this case is about is
-            # untouched — but the first record is now the catalogue's printable
-            # and the rest are scenery. Two rules force it: a catalogue with
-            # nothing printable in it is refused, and so is a printable that
-            # declares no files, so the pointer every other record spends is a
-            # picture rather than an export.
+            # ONE POINTER PER RECORD, spent as an export by the printable and
+            # as a picture by the scenery, because a non-printable may not
+            # declare files.
             parts = {"part0": {"kind": "printable",
                                "files": {"stl": "model.stl"}}}
             parts.update({f"part{i}": {"kind": "mock", "preview": "model.stl"}

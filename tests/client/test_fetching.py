@@ -425,15 +425,11 @@ def test_artifacts_can_fetch_the_dev_slot(hub, tmp_path, capsys):
 
 def test_a_build_declaring_nothing_at_all_says_so_and_still_succeeds(
         hub, tmp_path, capsys):
-    """A shape NEITHER HALF produces any more — staged on the volume, as it must be.
+    """A shape no BUILD produces — staged on the volume.
 
-    IT USED TO BE A PUSH, and it cannot be one now. The build guaranteed the
-    shape was impossible on its side (`read_catalogue` refuses a catalogue with
-    nothing printable in it, and every printable is exported), while the hub
-    took a document of nothing but bought screws quite happily; the review of
-    this change closed that gap, so `render._catalogue` refuses both a
-    catalogue with no printable in it and a printable declaring no files, and
-    there is no longer any push that lands here.
+    `cadbuild.build` puts the `assembled` view's overview mesh on every
+    document, a catalogue of nothing but bought parts included. Only a
+    hand-made push or an edited document can land here.
 
     THE BRANCH IS NOT DEAD CODE, which is why the test moved rather than went.
     `data/` is writable by every build (SPEC §7.4), so one project's build can
@@ -441,7 +437,7 @@ def test_a_build_declaring_nothing_at_all_says_so_and_still_succeeds(
     rewrote the reply on the way, answers whatever it likes. The technique is
     the one
     test_a_declared_name_the_hub_could_never_serve_is_refused uses and for the
-    same reason: the case exists only in an answer the hub did not write.
+    same reason: the case exists only in an answer no build wrote.
 
     IT STILL SUCCEEDS, and that is the decision the message carries: the
     document is well formed and merely empty, so there is nothing to download

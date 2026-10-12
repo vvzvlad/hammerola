@@ -634,12 +634,12 @@ def _catalogue(raw: dict, files: dict) -> dict:
     is what the four flat maps this replaces made every reader do, and what the
     viewer got wrong on a part with a dot in its name.
 
-    REQUIRED AND NON-EMPTY, exactly like `views`: a build whose catalogue holds
-    nothing printable is refused by the build's own gate, so a document with no
-    catalogue is not one this hub can have written — and `_usable_meta` in
-    store.py refuses the same shape from the other end, which is the pairing
-    that has to stay true. Accepting an empty one here would publish a build the
-    index then silently declines to list.
+    REQUIRED AND NON-EMPTY, exactly like `views`: the build refuses a `parts()`
+    that returns an empty dict, so a document with no catalogue is not one this
+    hub can have written — and `_usable_meta` in store.py refuses the same
+    shape from the other end, which is the pairing that has to stay true.
+    Accepting an empty one here would publish a build the index then silently
+    declines to list.
 
     EVERY OPTIONAL FIELD BELOW IS READ WITH AN EXPLICIT `is None`, never
     `record.get(field) or {}`. That spelling turns a falsy non-object — `[]`,
@@ -675,18 +675,16 @@ def _catalogue(raw: dict, files: dict) -> dict:
     field this does not apply to, because it is not optional: `kind: null` is
     refused with every other non-kind.
 
-    A PRINTABLE CARRIES FILES, AND THE CATALOGUE CARRIES A PRINTABLE. Those are
-    the two claims this side makes about what a BUILD can produce, and both
-    arrived late because their MIRROR IMAGES were already here: a non-printable
-    that declares files is a 422 four lines from the printable that declared
-    none and was accepted, and "the catalogue is non-empty" stood next to
-    "something in it is printed" without it. Both are checked on the build side
-    and can be read there: `cadbuild.printables.export_printables` writes STEP,
-    STL and 3MF for EVERY printable and `cadbuild.build` files them under the
-    record, so a printable with no `files` is a record no build wrote; and
-    `cadbuild.parts.read_catalogue` refuses a catalogue whose every entry is
-    hardware or a mock, in as many words ("the catalogue has nothing to
-    print").
+    A PRINTABLE CARRIES FILES. That is the claim this side makes about what a
+    BUILD can produce, and it arrived late because its MIRROR IMAGE was already
+    here: a non-printable that declares files is a 422 four lines from the
+    printable that declared none and was accepted. It is checked on the build
+    side and can be read there: `cadbuild.printables.export_printables` writes
+    STEP, STL and 3MF for EVERY printable and `cadbuild.build` files them under
+    the record, so a printable with no `files` is a record no build wrote. A
+    catalogue with NO printable in it is a build like any other — a bought
+    enclosure around factory boards has nothing to print and is still worth
+    looking at.
 
     WHAT IS DELIBERATELY NOT ASKED HERE, so that nobody completes the symmetry
     later: the build ALSO guarantees a view called `assembled` and an
@@ -695,7 +693,7 @@ def _catalogue(raw: dict, files: dict) -> dict:
     nothing about a view beyond its `id`, its `file` and the keys it selects,
     and demanding a particular id would write the build half's vocabulary into
     the receiving side — a coupling that does not exist today and costs more
-    than the hole it closes. The two rules above need no such vocabulary:
+    than the hole it closes. The rule above needs no such vocabulary:
     `printable` is a word this module already spells (`KIND_PRINTABLE`) and
     `files` is a field it already reads.
     """
@@ -805,19 +803,6 @@ def _catalogue(raw: dict, files: dict) -> dict:
 
         read[key] = entry
 
-    # THE MIRROR OF `read_catalogue` ON THE BUILD SIDE, which refuses a
-    # catalogue whose every entry is hardware or a mock. A model project exists
-    # to produce a part, so a document describing nothing but bought screws and
-    # scenery was not written by a build of one — and the front page would list
-    # it as a build with nothing in it to print. Checked AFTER the walk and not
-    # before it, because `kind` is what answers it and the walk is what
-    # validates `kind`; a pre-pass would be a second reading of the same field,
-    # free to disagree with this one about what counts.
-    if not any(entry["kind"] == KIND_PRINTABLE for entry in read.values()):
-        raise ValueError(
-            f"the catalogue has nothing to print: not one of its "
-            f"{len(read)} entries is {KIND_PRINTABLE!r}, and a build of a "
-            f"model produces at least one part")
     return read
 
 
